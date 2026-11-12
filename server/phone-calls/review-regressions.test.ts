@@ -1,3 +1,4 @@
+import { phoneOwnerRoute } from "./owner-routes.ts";
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, afterEach, expect, it, vi } from "vitest";
 import { PhoneCallService, servePhoneTool } from "./service.ts";
@@ -277,4 +278,49 @@ it.each(["failed", "attempted"] as const)("durable %s abandonment DELETE is not 
     expect(f.store.get(id)?.abandonCancel).toBe("failed");
     expect(f.fetch.mock.calls.filter(c => c[1].method === "DELETE")).toHaveLength(1);
   } finally { f.db.close(); }
+});
+
+
+it.each([false, true])("normal completion releases a superseded assistant (first deletion fails: %s)", async failFirst => {
+  const f = fixture();
+  try {
+    await f.service.saveSettings(defaultSettings("number", "Owner"));
+    const placed = await f.service.place(args);
+    if (!placed.ok) throw new Error("fixture placement failed");
+    await f.service.saveSettings(defaultSettings("other", "Owner"));
+    const remove = vi.spyOn(f.adapter, "deleteAssistant").mockResolvedValue();
+    if (failFirst) remove.mockRejectedValueOnce(new Error("offline"));
+    vi.spyOn(f.adapter, "result").mockResolvedValue({ vendorId: "vendor-1", status: "ended", transcript: "Done", structured: { outcome: "done" } });
+    await f.service.result({ call: placed.value.call });
+    expect(remove).toHaveBeenCalledTimes(1);
+    expect(f.revisions.get(1) === undefined).toBe(!failFirst);
+    // A later owner refresh must retry even though there are no outstanding calls.
+    await phoneOwnerRoute(() => f.service, { method: "GET", path: "/api/phone-calls", desktop: true, botCredential: false });
+    expect(remove).toHaveBeenCalledTimes(failFirst ? 2 : 1);
+    expect(f.revisions.get(1)).toBeUndefined();
+  } finally { f.db.close(); }
+});
+
+it.each(["live", "starting"] as const)("completion retains a superseded assistant used by another %s call", async other => {
+  const f = fixture();
+  const hold = gate();
+  try {
+    await f.service.saveSettings(defaultSettings("number", "Owner"));
+    const placed = await f.service.place(args);
+    if (!placed.ok) throw new Error("fixture placement failed");
+    if (other === "starting") vi.spyOn(f.adapter, "start").mockImplementationOnce(async () => { await hold.promise; return { vendorId: "second", status: "ringing" }; });
+    const second = f.service.place({ ...args, goal: "Second" });
+    await vi.waitFor(() => expect([...f.store.live()]).toHaveLength(2));
+    await f.service.saveSettings(defaultSettings("other", "Owner"));
+    const remove = vi.spyOn(f.adapter, "deleteAssistant").mockResolvedValue();
+    vi.spyOn(f.adapter, "result").mockResolvedValue({ vendorId: "vendor-1", status: "ended", transcript: "Done", structured: { outcome: "done" } });
+    await f.service.result({ call: placed.value.call });
+    expect(remove).not.toHaveBeenCalled();
+    expect(f.revisions.get(1)).toBeDefined();
+    hold.release();
+    const placedSecond = await second;
+    if (!placedSecond.ok) throw new Error("fixture placement failed");
+    await f.service.result({ call: placedSecond.value.call });
+    expect(remove).toHaveBeenCalledTimes(1);
+  } finally { hold.release(); f.db.close(); }
 });

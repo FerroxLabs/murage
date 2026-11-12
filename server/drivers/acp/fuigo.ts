@@ -1,3 +1,5 @@
+import { applyFuigoNoLimitsHome } from "./fuigo-no-limits.ts";
+import { NotModelRequest } from "../../../shared/engine-transport.ts";
 // Fuigo — Ferrox Labs' own engine, `fuigo agent stdio` over ACP.
 //
 // THE ONE THING THAT MAKES THIS DRIVER DIFFERENT FROM EVERY OTHER FLUX PATH.
@@ -9,8 +11,10 @@
 //     provider table leads with { id: "fluxrouter", env_vars:
 //     ["FUIGO_API_KEY", "FUIGO_CODE_API_KEY", "FLUX_API_KEY"], … }
 // so `applyFluxSurface` is deliberately NOT called here. Handing the child a
-// single `FUIGO_API_KEY` is the whole of the routing, and OPENAI_BASE_URL /
-// OPENAI_MODEL would be a lie in the env that a routing badge would repeat.
+// single `FUIGO_API_KEY` plus Fuigo's own base names (FUIGO_FLUX_BASE_ENV,
+// so a staging image reaches the staging router) is the whole of the
+// routing, and OPENAI_BASE_URL / OPENAI_MODEL would be a lie in the env that
+// a routing badge would repeat.
 //
 // Proven live against the staged 1.0.2 binary on 2026-09-03, on a temp HOME
 // with no ~/.fuigo at all and FUIGO_API_KEY as the only credential in the
@@ -34,6 +38,7 @@ import { fuigoConfigOverlay } from "../../flux-memory-headers.ts";
 import { catalogFetchAllowed, noteCatalogResult } from "../../flux-key-health.ts";
 import { isFluxKeyShape } from "../../../electron/provider-connections.mjs";
 import { FLUX_TIERS, mergeFluxCatalog } from "../../flux-surface.ts";
+import { FLUX_OPENAI_BASE } from "../../flux-routing.ts";
 import { execCli } from "../../procs.ts";
 import { createAcpDriver, type AcpConfig, type AcpSupport } from "./core.ts";
 import { fuigoToolResultDirs, sessionFolders } from "../../own-tool-results.ts";
@@ -53,7 +58,7 @@ import { applyFuigoPolicyEnv, checkFuigoPolicyAck, ensureFuigoPolicy, fuigoPolic
 
 /** CONTRACT with the wiring in flux-routing.ts / builtIn.ts / the picker's
  *  defaultSelection. Renaming this renames the engine everywhere. */
-const DRIVER_KIND = "fuigoAgent";
+export const DRIVER_KIND = "fuigoAgent";
 
 /**
  * The credential names Fuigo itself reads, in its own precedence order
@@ -98,6 +103,28 @@ export function scrubFuigoCredentialEnv(
   for (const name of Object.keys(env)) {
     if (isFuigoKeyName(name, platform) && !isFluxKeyShape(env[name] ?? "")) delete env[name];
   }
+}
+
+/**
+ * The base names Fuigo reads for its built-in FluxRouter provider (fuigo-shell
+ * agent/config.rs; the compiled default is https://api.fluxrouter.ai/v1).
+ * Murage names the base on every turn that carries its Flux key, from
+ * FLUX_OPENAI_BASE (flux-routing.ts), so the engine talks to the same router
+ * as the rest of the server. A staging image rewrites that constant to
+ * api-staging.fluxrouter.ai in source (deploy/cloud-home/build-image.sh) but
+ * cannot rewrite the Fuigo binary: without these names a staging home's Fuigo
+ * dialled the prod host, the egress proxy refused it at DNS, and the turn
+ * hung while Fuigo retried in silence. A model-connection route sets both
+ * names again for its own endpoint (provider-routing.ts applyProviderRoute,
+ * after this), and the Cloud launcher checks the value against the image's
+ * fuigoAgent egress host.
+ */
+export const FUIGO_FLUX_BASE_ENV = ["FUIGO_API_BASE_URL", "FUIGO_MODELS_BASE_URL"] as const;
+
+/** Point Fuigo's FluxRouter provider at FLUX_OPENAI_BASE (in place), every casing of the names replaced. */
+export function pointFuigoAtFlux(env: Record<string, string | undefined>, platform: NodeJS.Platform = process.platform): void {
+  deleteEnvNames(env, FUIGO_FLUX_BASE_ENV, platform);
+  for (const name of FUIGO_FLUX_BASE_ENV) env[name] = FLUX_OPENAI_BASE;
 }
 
 /**
@@ -676,6 +703,9 @@ const support: AcpSupport = {
     queueChanged: ["_fuigo/queue/changed", "fuigo/queue/changed"],
   },
 
+  applyMountEnv: (env, { botId, noLimits }) => {
+    if (noLimits && process.env.MURAGE_CLOUD_ROLE !== "home") applyFuigoNoLimitsHome(env, botId);
+  },
   models: STATIC_FUIGO_MODELS,
   resolveModels,
   // A local pick (`host::model`) becomes Murage's own `[model.*]` entry and
@@ -698,7 +728,7 @@ const support: AcpSupport = {
     // No reported current model: send anyway, which fails closed.
     if (currentModelId && currentModelId === turn.model) return;
     try {
-      await request("session/set_model", { sessionId, modelId: turn.model });
+      await NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", request("session/set_model", { sessionId, modelId: turn.model }));
     } catch (e) {
       const detail = (e instanceof Error ? e.message : String(e)).replaceAll("\u2014", ", ");
       throw new Error(
@@ -834,7 +864,7 @@ const support: AcpSupport = {
   /** The generation decides the spawn, the advert and the primer's folder line. */
   spawnNeedsCliVersion: true,
 
-  /** 1.0.19/1.0.20 answer session/new before the `mcpServers` are connected
+  /** Fuigo answers session/new before the `mcpServers` are connected
    *  and emit `_fuigo/mcp_initialized {sessionId, mcpToolCount, elapsedMs}`
    *  once every server (the user's imported ones too) has settled. The core
    *  holds the first prompt for it, bounded (core.ts MCP_READY_WAIT_MS). */
@@ -905,12 +935,14 @@ const support: AcpSupport = {
    */
   // A bare cloud-model id still goes out on the Flux key Fuigo was handed, so it takes the memory opt-outs
   // like a flux-* pick. A local `host::model` pick talks to the user's own server and never reaches Flux.
-  reachesFlux: (model, env) => !decodeInjectId(model) && presentedFuigoKey(env) !== null,
+  requestBaseUrl: (model) => !decodeInjectId(model) ? "https://api.fluxrouter.ai/v1" : undefined,
   applyFluxMemory: (env, { decision }) => {
     env.FUIGO_CONFIG = fuigoConfigOverlay(decision.headers, env.FUIGO_CONFIG);
   },
   transformEnv: (env) => {
     reachBundledFuigo(env);
+    // Page reads use Murage web_read and its saved-document continuation.
+    env.FUIGO_WEB_FETCH = "0";
     isolateFuigoFromExternalMcp(env);
     // Ambient siblings go first: `FUIGO_CODE_API_KEY` is read by the same
     // provider row (key_discovery.rs:60-70) and a stale one in the user's
@@ -918,7 +950,12 @@ const support: AcpSupport = {
     // `FLUX_API_KEY` is already gone via the strip; deleting it again is free
     // and keeps this correct if a caller ever lands before the strip.
     // `fluxKey()` is null for anything not shaped like a Flux key.
-    scrubFuigoCredentialEnv(env, fluxKey());
+    const key = fluxKey();
+    scrubFuigoCredentialEnv(env, key);
+    // On Murage's Flux key the engine is told which router to call, never
+    // left on its compiled prod default (see FUIGO_FLUX_BASE_ENV).
+    // Cloud home only: a desktop keeps whatever base the user or the route set.
+    if (key && process.env.MURAGE_CLOUD_ROLE === "home") pointFuigoAtFlux(env);
     // 1.0.32: no other provider's key, no startup model refresh, no agent Fuigo starts on its own.
     withholdFuigoProviderEnv(env);
     applyFuigoParkPin(env, presentedFuigoKey(env));
@@ -1036,3 +1073,6 @@ const support: AcpSupport = {
 };
 
 export const FuigoAgentDriver = createAcpDriver(support);
+
+/** The env the Fuigo child is spawned with (support.transformEnv), for tests that pin the Cloud-home base pin by behaviour. */
+export function fuigoTransformEnv(env: Record<string, string | undefined>): void { support.transformEnv?.(env, {} as AcpConfig); }

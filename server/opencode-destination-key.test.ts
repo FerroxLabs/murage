@@ -69,6 +69,7 @@ retained("D5 warm unreadable database closes under an unprivileged identity and 
     writeFileSync(join(root, "package.json"), '{"type":"module"}');
     const result = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e",
       'import { permissionFixture } from "./fixture.ts"; await permissionFixture(process.env.X4_PERMISSION_ROOT);'], {
+      windowsHide: true,
       cwd: root, uid: 65534, gid: 65534, encoding: "utf8", timeout: 20_000, killSignal: "SIGKILL",
       env: { PATH: process.env.PATH, HOME: root, USERPROFILE: root, X4_PERMISSION_ROOT: fixtureRoot, X4_PERMISSION_MODULE: "./opencode-destination-key.ts" },
     });

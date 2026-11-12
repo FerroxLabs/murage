@@ -34,3 +34,10 @@ test("on and unencrypted follow the choice and the door", () => {
   assert.equal(lanPairingView({ setting: false, deviceDoor: { mode: "tailnet" }, deviceCount: 0 }).on, false);
   assert.equal(lanPairingView({ setting: null, deviceDoor: { mode: "lan" }, deviceCount: 0 }).on, true);
 });
+
+test("SIMPLE-COPY R1: the saved switch stays true under an inherited bind, and the real route is `mode` (the renderer reads mode)", () => {
+  assert.deepEqual(
+    lanPairingView({ setting: true, deviceDoor: { mode: "loopback" }, deviceCount: 0 }),
+    { on: true, chosen: true, mode: "loopback", unencrypted: true, note: null },
+  );
+});

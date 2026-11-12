@@ -77,6 +77,6 @@ describe("textOnlyErrorResultLine", () => {
 
   it("is applied to every answer the MCP bridge sends back from the far side", () => {
     const bridge = readFileSync(new URL("./mcp-bridge.ts", import.meta.url), "utf8");
-    expect(bridge).toMatch(/pipeMcpLines\(child\.stdout, \(line\) => answer\(textOnlyErrorResultLine\(toolLists\.rewriteResponse\(line\)\)\)/);
+    expect(bridge).toMatch(/pipeMcpLines\(child\.stdout, \(line\) => \{ answer\(textOnlyErrorResultLine\(toolLists\.rewriteResponse\(line\)\)\)\.catch\(transportFailed\); \}/);
   });
 });

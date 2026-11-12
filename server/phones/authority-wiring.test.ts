@@ -132,3 +132,13 @@ describe("phone authority wiring in server/index.ts", () => {
     expect(countOf("await phoneRpc(internalClaim,")).toBe(1);
   });
 });
+
+
+it("MAIN binding is unique, precedes mounts, and checks the stored profile and origin", () => {
+  expect(countOf("servicePermissions.bindServiceTurn(")).toBe(1);
+  const start=source.indexOf("servicePermissions.bindServiceTurn(");
+  const end=source.indexOf("internalTurnOwners.get(threadId)!.triggerMessageId",start);
+  const binding=source.slice(start,end);
+  expect(binding).toContain("noLimitsAppliesTo(origin, store.bot(bot.id))");
+  expect(start).toBeLessThan(source.indexOf("serviceNoLimits(dispatchClaimId, threadId, bot.id) && phonesOfferedNow()"));
+});

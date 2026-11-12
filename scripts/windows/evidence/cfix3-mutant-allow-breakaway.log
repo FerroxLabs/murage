@@ -1,0 +1,174 @@
+✖ MAIN 1: suspended job has no breakaway and verifies empty after owner close (3.825345ms)
+✔ MAIN 2: full task snapshots and prefix-only new-task cleanup (0.714734ms)
+✔ MAIN 3: HTTPS dispatch is handoff only; Desktop keeps refusal rows (0.285443ms)
+✔ MAIN 4: registration diff is Handoff-only and guarded by machine (0.319971ms)
+✔ MAIN 5: only operator finalizes after cleanup; receipt needs cleanup proof (8.825006ms)
+✔ p11b 1: TimeoutSeconds 60, prelaunch CIM blocked beyond 150s still has operator-owned wrapper cleanup (1.228851ms)
+✔ p11b 2: schtasks beyond 30s uses suspended job creation, job timeout and empty proof (0.500359ms)
+✔ p11b 2: no Process.Kill or Stop-Process in Windows production scripts (2.199257ms)
+✔ p11b 3: all six MAIN mutants are installed (0.265756ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 8
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 83.096163
+
+✖ failing tests:
+
+test at scripts/windows/ownership.node-test.mjs:5:1
+✖ MAIN 1: suspended job has no breakaway and verifies empty after owner close (3.825345ms)
+  AssertionError [ERR_ASSERTION]: The input was expected to not match the regular expression /limits.basic.flags=0x2000\s*\|/. Input:
+  
+  '# Windows Job Object: the gate and all descendants die with this handle,\n' +
+    '# including if Task Scheduler terminates the wrapper on its deadline. Start\n' +
+    '# suspended so no descendant can escape before assignment. No breakaway flag.\n' +
+    'function Initialize-OwnedProcess {\n' +
+    "  if ('MurageGateProcess' -as [type]) { return }\n" +
+    "  Add-Type -TypeDefinition @'\n" +
+    'using System;\n' +
+    'using System.ComponentModel;\n' +
+    'using System.Runtime.InteropServices;\n' +
+    'using System.Text;\n' +
+    'using System.IO;\n' +
+    'public static class MurageGateProcess {\n' +
+    '  [StructLayout(LayoutKind.Sequential)] struct STARTUPINFO {\n' +
+    '    public int cb; public IntPtr reserved, desktop, title;\n' +
+    '    public int x,y,xSize,ySize,xChars,yChars,fill,flags;\n' +
+    '    public short show,reserved2; public IntPtr reservedPtr,input,output,error;\n' +
+    '  }\n' +
+    '  [StructLayout(LayoutKind.Sequential)] struct STARTUPINFOEX { public STARTUPINFO startup; public IntPtr attributes; }\n' +
+    '  [StructLayout(LayoutKind.Sequential)] struct PROCESS_INFORMATION {\n' +
+    '    public IntPtr process,thread; public uint pid,tid;\n' +
+    '  }\n' +
+    '  [StructLayout(LayoutKind.Sequential)] struct BASIC_LIMIT {\n' +
+    '    public long processTime,jobTime; public uint flags;\n' +
+    '    public UIntPtr minWorking,maxWorking; public uint active;\n' +
+    '    public UIntPtr affinity; public uint priority,scheduling;\n' +
+    '  }\n' +
+    '  [StructLayout(LayoutKind.Sequential)] struct IO_COUNTERS {\n' +
+    '    public ulong readOps,writeOps,otherOps,readBytes,writeBytes,otherBytes;\n' +
+    '  }\n' +
+    '  [StructLayout(LayoutKind.Sequential)] struct EXTENDED_LIMIT {\n' +
+    '    public BASIC_LIMIT basic; public IO_COUNTERS io;\n' +
+    '    public UIntPtr processMemory,jobMemory,peakProcessMemory,peakJobMemory;\n' +
+    '  }\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr attributes,string name);\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern bool SetInformationJobObject(IntPtr job,int kind,ref EXTENDED_LIMIT limits,uint length);\n' +
+    '  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcess(string app,StringBuilder command,IntPtr pa,IntPtr ta,bool inherit,uint flags,IntPtr env,string cwd,ref STARTUPINFOEX si,out PROCESS_INFORMATION pi);\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job,IntPtr process);\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern uint ResumeThread(IntPtr thread);\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle,uint ms);\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process,out uint code);\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern bool InitializeProcThreadAttributeList(IntPtr list,int count,uint flags,ref IntPtr size);\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern bool UpdateProcThreadAttribute(IntPtr list,uint flags,IntPtr attribute,IntPtr value,IntPtr size,IntPtr previous,IntPtr returned);\n' +
+    '  [DllImport("kernel32.dll")] static extern void DeleteProcThreadAttributeList(IntPtr list);\n' +
+    '  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateJobObject(IntPtr job,uint code);\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr job,int kind,IntPtr info,uint size,out uint returned);\n' +
+    '  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr OpenJobObject(uint access,bool inherit,string name);\n' +
+    '  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();\n' +
+    '  [DllImport("kernel32.dll", SetLastError=true)] static extern bool IsProcessInJob(IntPtr process,IntPtr job,out bool result);\n' +
+    '  public class Proof { public bool ownerClosed; public bool empty; public uint flags; public int[] remaining; }\n' +
+    '  public static readonly System.Collections.Generic.List<Proof> Proofs=new System.Collections.Generic.List<Proof>();\n' +
+    '  public static bool InNamedJob(string name) {\n' +
+    '    var j=OpenJobObject(4,false,name); Check(j!=IntPtr.Zero);\n' +
+    '    try { bool inside; Check(IsProcessInJob(GetCurrentProcess(),j,out inside)); return inside; } finally {CloseHandle(j);}\n' +
+    '  }\n' +
+    '  public static void JoinNamedJob(string name) {\n' +
+    '    var j=OpenJobObject(1,false,name); Check(j!=IntPtr.Zero);\n' +
+    '    try {Check(AssignProcessToJobObject(j,GetCurrentProcess()));} finally {CloseHandle(j);}\n' +
+    '  }\n' +
+    '  static void AssertEmpty(IntPtr audit,int timeoutMilliseconds=15000) {\n' +
+    '    // Audit is a distinct parent job: keeping its handle does not retain the\n' +
+    '    // kill-on-close child job. Query the parent AFTER closing the owner handle.\n' +
+    '    var buffer=Marshal.AllocHGlobal(65536);\n' +
+    '    try {\n' +
+    '      var deadline=DateTime.UtcNow.AddMilliseconds(timeoutMilliseconds);\n' +
+    '      do {\n' +
+    '        uint returned; Check(QueryInformationJobObject(audit,3,buffer,65536,out returned));\n' +
+    '        if(Marshal.ReadInt32(buffer)==0 && Marshal.ReadInt32(buffer,4)==0) return;\n' +
+    '        System.Threading.Thread.Sleep(50);\n' +
+    '      } while(DateTime.UtcNow<deadline);\n' +
+    '      throw new InvalidOperationException("Job descendants survived owner close");\n' +
+    '    } finally {Marshal.FreeHGlobal(buffer);}\n' +
+    '  }\n' +
+    '  // The operator retains this handle across Scheduler /Run and wrapper startup.\n' +
+    '  // Global namespace bridges the SSH operator and interactive desktop sessions.\n' +
+    '  public sealed class WrapperJob : IDisposable {\n' +
+    '    IntPtr handle;\n' +
+    '    internal WrapperJob(string name) {\n' +
+    '      handle=CreateJobObject(IntPtr.Zero,name); Check(handle!=IntPtr.Zero);\n' +
+    '      if(Marshal.GetLastWin32Error()==183) {CloseHandle(handle);handle=IntPtr.Zero;throw new InvalidOperationException("Wrapper job already exists");}\n' +
+    '      try {\n' +
+    '        EXTENDED_LIMIT limits=new EXTENDED_LIMIT(); limits.basic.flags=0x2000 | 0x800;\n' +
+    '        Check(SetInformationJobObject(handle,9,ref limits,(uint)Marshal.SizeOf(limits)));\n' +
+    '      } catch {Dispose();throw;}\n' +
+    '    }\n' +
+    '    public bool TerminateAndProveEmpty(int timeoutMilliseconds=8000) {\n' +
+    '      Check(TerminateJobObject(handle,1)); AssertEmpty(handle,timeoutMilliseconds); return true;\n' +
+    '    }\n' +
+    '    public void Dispose() {if(handle!=IntPtr.Zero){CloseHandle(handle);handle=IntPtr.Zero;}}\n' +
+    '  }\n' +
+    '  public static WrapperJob CreateWrapperJob(string name) {return new WrapperJob(name);}\n' +
+    '  public static int RunNative(string exe,string args,string cwd,int timeoutSeconds,string input,string output,string error,int proofTimeoutMilliseconds=15000) {\n' +
+    '    using(var stdin=new FileStream(input,FileMode.Open,FileAccess.Read,FileShare.Read|FileShare.Inheritable))\n' +
+    '    using(var stdout=new FileStream(output,FileMode.CreateNew,FileAccess.Write,FileShare.Read|FileShare.Inheritable))\n' +
+    '    using(var stderr=new FileStream(error,FileMode.CreateNew,FileAccess.Write,FileShare.Read|FileShare.Inheritable)) {\n' +
+    '      return RunCore(exe,args,cwd,timeoutSeconds,false,new IntPtr[]{stdin.SafeFileHandle.DangerousGetHandle(),stdout.SafeFileHandle.DangerousGetHandle(),stderr.SafeFileHandle.DangerousGetHandle()},proofTimeoutMilliseconds);\n' +
+    '    }\n' +
+    '  }\n' +
+    '  static readonly object jobsGuard=new object();\n' +
+    '  static readonly System.Collections.Generic.List<IntPtr> jobs=new System.Collections.Generic.List<IntPtr>();\n' +
+    '  public static void CancelAll() { lock(jobsGuard) { foreach(var job in jobs) Check(TerminateJobObject(job,1)); } }\n' +
+    '  static void Check(bool ok) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }\n' +
+    '  public static System.Threading.Tasks.Task<int> RunInBackground(string exe,string args,string cwd,int timeoutSeconds,bool visible) {\n' +
+    '    return System.Threading.Tasks.Task.Factory.StartNew(() => RunCore(exe,args,cwd,timeoutSeconds,visible));\n' +
+    '  }\n' +
+    '  public static int Run(string exe,string args,string cwd,int timeoutSeconds) { return RunCore(exe,args,cwd,timeoutSeconds,false); }\n' +
+    '  static int RunCore(string exe,string args,string cwd,int timeoutSeconds,bool visible,IntPtr[] stdHandles=null,int proofTimeoutMilliseconds=15000) {\n' +
+    '    IntPtr audit=CreateJobObject(IntPtr.Zero,null);\n' +
+    '    Check(audit!=IntPtr.Zero);\n' +
+    '    // Only the outer scenario launcher names its job. Nested helper jobs stay anonymous.\n' +
+    '    string name=stdHandles==null ? Environment.GetEnvironmentVariable("MURAGE_GATE_CREATE_JOB") : null;\n' +
+    '    IntPtr job=CreateJobObject(IntPtr.Zero,name);\n' +
+    '    if(job==IntPtr.Zero) {CloseHandle(audit);Check(false);}\n' +
+    '    if(name!=null && Marshal.GetLastWin32Error()==183) {CloseHandle(job);CloseHandle(audit);throw new InvalidOperationException("Run job already exists");}\n' +
+    '    lock(jobsGuard) { jobs.Add(job); }\n' +
+    '    PROCESS_INFORMATION pi=new PROCESS_INFORMATION();\n' +
+    '    IntPtr attributes=IntPtr.Zero,jobList=IntPtr.Zero,handleList=IntPtr.Zero;\n' +
+    '    bool attributesReady=false;\n' +
+    '    try {\n' +
+    '      EXTENDED_LIMIT limits=new EXTENDED_LIMIT(); limits.basic.flags=0x2000;\n' +
+    '      Check(SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(limits)));\n' +
+    '      IntPtr size=IntPtr.Zero;\n' +
+    '      InitializeProcThreadAttributeList(IntPtr.Zero,stdHandles==null?1:2,0,ref size);\n' +
+    '      attributes=Marshal.AllocHGlobal(size);\n' +
+    '      Check(InitializeProcThreadAttributeList(attributes,stdHandles==null?1:2,0,ref size)); attributesReady=true;\n' +
+    '      jobList=Marshal.AllocHGlobal(IntPtr.Size*2);\n' +
+    '      Marshal.WriteIntPtr(jobList,0,audit); Marshal.WriteIntPtr(jobList,IntPtr.Size,job);\n' +
+    '      // PROC_THREAD_ATTRIBUTE_JOB_LIST: atomic assignment, including on failure.\n' +
+    '      // There is never an unassigned process to terminate if creation fails.\n' +
+    '      Check(UpdateProcThreadAttribute(attributes,0,new IntPtr(0x2000D),jobList,new IntPtr(IntPtr.Size*2),IntPtr.Zero,IntPtr.Zero));\n' +
+    '      STARTUPINFOEX si=new STARTUPINFOEX(); si.startup.cb=Marshal.SizeOf(si); si.attributes=attributes;\n' +
+    '      if(stdHandles!=null) {\n' +
+    '        si.startup.flags=0x100; si.startup.input=stdHandles[0];si.startup.output=stdHandles[1];si.startup.error=stdHandles[2];\n' +
+    '        handleList=Marshal.AllocHGlobal(IntPtr.Size*3);\n' +
+    '        for(int i=0;i<3;i++) Marshal.WriteIntPtr(handleList,i*IntPtr.Size,stdHandles[i]);\n' +
+    '        // Inherit only these three handles, never the job owner or audit handle.\n' +
+    '        Check(UpdateProcThreadAttri'... 2961 more characters
+  
+      at TestContext.<anonymous> (file:///work/scripts/windows/ownership.node-test.mjs:8:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: `# Windows Job Object: the gate and all descendants die with this handle,\n# including if Task Scheduler terminates the wrapper on its deadline. Start\n# suspended so no descendant can escape before assignment. No breakaway flag.\nfunction Initialize-OwnedProcess {\n  if ('MurageGateProcess' -as [type]) { return }\n  Add-Type -TypeDefinition @'\nusing System;\nusing System.ComponentModel;\nusing System.Runtime.InteropServices;\nusing System.Text;\nusing System.IO;\npublic static class MurageGateProcess {\n  [StructLayout(LayoutKind.Sequential)] struct STARTUPINFO {\n    public int cb; public IntPtr reserved, desktop, title;\n    public int x,y,xSize,ySize,xChars,yChars,fill,flags;\n    public short show,reserved2; public IntPtr reservedPtr,input,output,error;\n  }\n  [StructLayout(LayoutKind.Sequential)] struct STARTUPINFOEX { public STARTUPINFO startup; public IntPtr attributes; }\n  [StructLayout(LayoutKind.Sequential)] struct PROCESS_INFORMATION {\n    public IntPtr process,thread; public uint pid,tid;\n  }\n  [StructLayout(LayoutKind.Sequential)] struct BASIC_LIMIT {\n    public long processTime,jobTime; public uint flags;\n    public UIntPtr minWorking,maxWorking; public uint active;\n    public UIntPtr affinity; public uint priority,scheduling;\n  }\n  [StructLayout(LayoutKind.Sequential)] struct IO_COUNTERS {\n    public ulong readOps,writeOps,otherOps,readBytes,writeBytes,otherBytes;\n  }\n  [StructLayout(LayoutKind.Sequential)] struct EXTENDED_LIMIT {\n    public BASIC_LIMIT basic; public IO_COUNTERS io;\n    public UIntPtr processMemory,jobMemory,peakProcessMemory,peakJobMemory;\n  }\n  [DllImport("kernel32.dll", SetLastError=true)] static extern IntPtr CreateJobObject(IntPtr attributes,string name);\n  [DllImport("kernel32.dll", SetLastError=true)] static extern bool SetInformationJobObject(IntPtr job,int kind,ref EXTENDED_LIMIT limits,uint length);\n  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcess(string app,StringBuilder command,IntPtr pa,IntPtr ta,bool inherit,uint flags,IntPtr env,string cwd,ref STARTUPINFOEX si,out PROCESS_INFORMATION pi);\n  [DllImport("kernel32.dll", SetLastError=true)] static extern bool AssignProcessToJobObject(IntPtr job,IntPtr process);\n  [DllImport("kernel32.dll", SetLastError=true)] static extern uint ResumeThread(IntPtr thread);\n  [DllImport("kernel32.dll", SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle,uint ms);\n  [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process,out uint code);\n  [DllImport("kernel32.dll", SetLastError=true)] static extern bool InitializeProcThreadAttributeList(IntPtr list,int count,uint flags,ref IntPtr size);\n  [DllImport("kernel32.dll", SetLastError=true)] static extern bool UpdateProcThreadAttribute(IntPtr list,uint flags,IntPtr attribute,IntPtr value,IntPtr size,IntPtr previous,IntPtr returned);\n  [DllImport("kernel32.dll")] static extern void DeleteProcThreadAttributeList(IntPtr list);\n  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);\n  [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateJobObject(IntPtr job,uint code);\n  [DllImport("kernel32.dll", SetLastError=true)] static extern bool QueryInformationJobObject(IntPtr job,int kind,IntPtr info,uint size,out uint returned);\n  [DllImport("kernel32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern IntPtr OpenJobObject(uint access,bool inherit,string name);\n  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();\n  [DllImport("kernel32.dll", SetLastError=true)] static extern bool IsProcessInJob(IntPtr process,IntPtr job,out bool result);\n  public class Proof { public bool ownerClosed; public bool empty; public uint flags; public int[] remaining; }\n  public static readonly System.Collections.Generic.List<Proof> Proofs=new System.Collections.Generic.List<Proof>();\n  public static bool InNamedJob(string name) {\n    var j=OpenJobObject(4,false,name); Check(j!=IntPtr.Zero);\n    try { bool inside; Check(IsProcessInJob(GetCurrentProcess(),j,out inside)); return inside; } finally {CloseHandle(j);}\n  }\n  public static void JoinNamedJob(string name) {\n    var j=OpenJobObject(1,false,name); Check(j!=IntPtr.Zero);\n    try {Check(AssignProcessToJobObject(j,GetCurrentProcess()));} finally {CloseHandle(j);}\n  }\n  static void AssertEmpty(IntPtr audit,int timeoutMilliseconds=15000) {\n    // Audit is a distinct parent job: keeping its handle does not retain the\n    // kill-on-close child job. Query the parent AFTER closing the owner handle.\n    var buffer=Marshal.AllocHGlobal(65536);\n    try {\n      var deadline=DateTime.UtcNow.AddMilliseconds(timeoutMilliseconds);\n      do {\n        uint returned; Check(QueryInformationJobObject(audit,3,buffer,65536,out returned));\n        if(Marshal.ReadInt32(buffer)==0 && Marshal.ReadInt32(buffer,4)==0) return;\n        System.Threading.Thread.Sleep(50);\n      } while(DateTime.UtcNow<deadline);\n      throw new InvalidOperationException("Job descendants survived owner close");\n    } finally {Marshal.FreeHGlobal(buffer);}\n  }\n  // The operator retains this handle across Scheduler /Run and wrapper startup.\n  // Global namespace bridges the SSH operator and interactive desktop sessions.\n  public sealed class WrapperJob : IDisposable {\n    IntPtr handle;\n    internal WrapperJob(string name) {\n      handle=CreateJobObject(IntPtr.Zero,name); Check(handle!=IntPtr.Zero);\n      if(Marshal.GetLastWin32Error()==183) {CloseHandle(handle);handle=IntPtr.Zero;throw new InvalidOperationException("Wrapper job already exists");}\n      try {\n        EXTENDED_LIMIT limits=new EXTENDED_LIMIT(); limits.basic.flags=0x2000 | 0x800;\n        Check(SetInformationJobObject(handle,9,ref limits,(uint)Marshal.SizeOf(limits)));\n      } catch {Dispose();throw;}\n    }\n    public bool TerminateAndProveEmpty(int timeoutMilliseconds=8000) {\n      Check(TerminateJobObject(handle,1)); AssertEmpty(handle,timeoutMilliseconds); return true;\n    }\n    public void Dispose() {if(handle!=IntPtr.Zero){CloseHandle(handle);handle=IntPtr.Zero;}}\n  }\n  public static WrapperJob CreateWrapperJob(string name) {return new WrapperJob(name);}\n  public static int RunNative(string exe,string args,string cwd,int timeoutSeconds,string input,string output,string error,int proofTimeoutMilliseconds=15000) {\n    using(var stdin=new FileStream(input,FileMode.Open,FileAccess.Read,FileShare.Read|FileShare.Inheritable))\n    using(var stdout=new FileStream(output,FileMode.CreateNew,FileAccess.Write,FileShare.Read|FileShare.Inheritable))\n    using(var stderr=new FileStream(error,FileMode.CreateNew,FileAccess.Write,FileShare.Read|FileShare.Inheritable)) {\n      return RunCore(exe,args,cwd,timeoutSeconds,false,new IntPtr[]{stdin.SafeFileHandle.DangerousGetHandle(),stdout.SafeFileHandle.DangerousGetHandle(),stderr.SafeFileHandle.DangerousGetHandle()},proofTimeoutMilliseconds);\n    }\n  }\n  static readonly object jobsGuard=new object();\n  static readonly System.Collections.Generic.List<IntPtr> jobs=new System.Collections.Generic.List<IntPtr>();\n  public static void CancelAll() { lock(jobsGuard) { foreach(var job in jobs) Check(TerminateJobObject(job,1)); } }\n  static void Check(bool ok) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }\n  public static System.Threading.Tasks.Task<int> RunInBackground(string exe,string args,string cwd,int timeoutSeconds,bool visible) {\n    return System.Threading.Tasks.Task.Factory.StartNew(() => RunCore(exe,args,cwd,timeoutSeconds,visible));\n  }\n  public static int Run(string exe,string args,string cwd,int timeoutSeconds) { return RunCore(exe,args,cwd,timeoutSeconds,false); }\n  static int RunCore(string exe,string args,string cwd,int timeoutSeconds,bool visible,IntPtr[] stdHandles=null,int proofTimeoutMilliseconds=15000) {\n    IntPtr audit=CreateJobObject(IntPtr.Zero,null);\n    Check(audit!=IntPtr.Zero);\n    // Only the outer scenario launcher names its job. Nested helper jobs stay anonymous.\n    string name=stdHandles==null ? Environment.GetEnvironmentVariable("MURAGE_GATE_CREATE_JOB") : null;\n    IntPtr job=CreateJobObject(IntPtr.Zero,name);\n    if(job==IntPtr.Zero) {CloseHandle(audit);Check(false);}\n    if(name!=null && Marshal.GetLastWin32Error()==183) {CloseHandle(job);CloseHandle(audit);throw new InvalidOperationException("Run job already exists");}\n    lock(jobsGuard) { jobs.Add(job); }\n    PROCESS_INFORMATION pi=new PROCESS_INFORMATION();\n    IntPtr attributes=IntPtr.Zero,jobList=IntPtr.Zero,handleList=IntPtr.Zero;\n    bool attributesReady=false;\n    try {\n      EXTENDED_LIMIT limits=new EXTENDED_LIMIT(); limits.basic.flags=0x2000;\n      Check(SetInformationJobObject(job,9,ref limits,(uint)Marshal.SizeOf(limits)));\n      IntPtr size=IntPtr.Zero;\n      InitializeProcThreadAttributeList(IntPtr.Zero,stdHandles==null?1:2,0,ref size);\n      attributes=Marshal.AllocHGlobal(size);\n      Check(InitializeProcThreadAttributeList(attributes,stdHandles==null?1:2,0,ref size)); attributesReady=true;\n      jobList=Marshal.AllocHGlobal(IntPtr.Size*2);\n      Marshal.WriteIntPtr(jobList,0,audit); Marshal.WriteIntPtr(jobList,IntPtr.Size,job);\n      // PROC_THREAD_ATTRIBUTE_JOB_LIST: atomic assignment, including on failure.\n      // There is never an unassigned process to terminate if creation fails.\n      Check(UpdateProcThreadAttribute(attributes,0,new IntPtr(0x2000D),jobList,new IntPtr(IntPtr.Size*2),IntPtr.Zero,IntPtr.Zero));\n      STARTUPINFOEX si=new STARTUPINFOEX(); si.startup.cb=Marshal.SizeOf(si); si.attributes=attributes;\n      if(stdHandles!=null) {\n        si.startup.flags=0x100; si.startup.input=stdHandles[0];si.startup.output=stdHandles[1];si.startup.error=stdHandles[2];\n        handleList=Marshal.AllocHGlobal(IntPtr.Size*3);\n        for(int i=0;i<3;i++) Marshal.WriteIntPtr(handleList,i*IntPtr.Size,stdHandles[i]);\n        // Inherit only these three handles, never the job owner or audit handle.\n        Check(UpdateProcThreadAttri`... 2961 more characters,
+    expected: /limits.basic.flags=0x2000\s*\|/,
+    operator: 'doesNotMatch',
+    diff: 'simple'
+  }

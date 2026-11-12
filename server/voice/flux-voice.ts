@@ -1,10 +1,11 @@
+import { fluxRouteFor, registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 import { classifyFluxRefusal } from "../../shared/flux-refusal.ts";
 // Speech to text, on the Flux key the workspace already has.
 //
 // WHY THIS FILE EXISTS, AND WHAT FLUX ACTUALLY OFFERS
 // ---------------------------------------------------
 // This file is TRANSCRIPTION, at `POST /v1/audio/transcriptions`
-// (flux-router `src/audio_route.py`). Speech in the other direction is its
+// (`the Flux router's batch audio route`). Speech in the other direction is its
 // own file, `../tts/flux-speech.ts`, on Flux's `POST /v1/audio/speech`,
 // alongside the ElevenLabs and system voices in `../tts/`.
 //
@@ -26,6 +27,7 @@ import { classifyFluxRefusal } from "../../shared/flux-refusal.ts";
 import { fluxKey } from "../flux-config.ts";
 import { fluxCallHeaders } from "../flux-memory-headers.ts";
 import { notPermitted, markBudgetReached, isBudgetReached } from "./voice-routes.ts";
+import { authorizeFluxDispatch, reportFlux402 } from "../flux-start-gate.ts";
 
 /** OpenAI-compatible base. Read per call, NOT captured at module load: a
  *  module-level const is resolved before a test's `beforeAll` can point it
@@ -108,7 +110,7 @@ export function transcriptionConfigured(env: NodeJS.ProcessEnv = process.env): b
 
 async function safeJson(res: Response): Promise<any> {
   try {
-    return await res.json();
+    return await registerBusyloopPayloadSite("read", res.json());
   } catch {
     return null;
   }
@@ -267,8 +269,9 @@ export async function transcribe(recording: Recording, options: TranscribeOption
   const call = options.fetchImpl ?? fetch;
     if (!own && isBudgetReached({ via: "flux", label: "Flux", baseUrl: options.endpoint?.baseUrl ?? apiBase(), key, model: "flux-voice" })) throw new TranscriptionUnavailable("budget", "This Flux key has reached its budget.");
   let res: Response;
+  if (!own) await authorizeFluxDispatch(key); // spend gate
   try {
-    res = await call(`${options.endpoint ? options.endpoint.baseUrl.replace(/\/+$/, "") : apiBase()}/audio/transcriptions`, {
+    res = await call(fluxRouteFor(`${options.endpoint ? options.endpoint.baseUrl.replace(/\/+$/, "") : apiBase()}/audio/transcriptions`).requestUrl, {
       method: "POST",
       // Bearer, not a vendor header: this is the same key the chat surfaces
       // use, and it must never be logged or echoed back to a renderer.
@@ -281,7 +284,9 @@ export async function transcribe(recording: Recording, options: TranscribeOption
   }
 
   if (!res.ok) {
-    const failure = failureFor(res.status, await safeJson(res));
+    const failureBody = await safeJson(res);
+    if (!own && res.status === 402) { try { reportFlux402(JSON.stringify(failureBody), key); } catch { /* not JSON: today's behavior */ } } // UX-L2C-PAUSE r6: the audio 402 arms its scoped refusal
+    const failure = failureFor(res.status, failureBody);
     if (own && failure.reason === "budget") throw new TranscriptionUnavailable("premium", "Check this provider’s billing and limits.");
     if (!own && failure.reason === "budget") markBudgetReached({ via: "flux", label: "Flux", baseUrl: options.endpoint?.baseUrl ?? apiBase(), key, model: "flux-voice" });
     failure.provider = own?.via ?? "flux";

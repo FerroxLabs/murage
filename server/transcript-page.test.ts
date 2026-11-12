@@ -11,7 +11,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { SseReplay } from "./sse-buffer.ts";
-import { Store } from "./store.ts";
+import { ApprovalFixtureStore as Store } from "./testing/approval-card-fixture.ts";
 import { takesCardsBeside, transcriptPage, wirePage } from "./transcript-page.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 

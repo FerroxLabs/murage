@@ -84,7 +84,6 @@ export interface EngineHistoryResult {
   foreignHomes?: Record<string, { app?: string; holders?: Array<{ pid: number; ppid: number; name: string | null; exe: string | null; argv: string[]; by: string }>; kinds?: string[] }>;
 }
 export interface EngineHistoryOptions {
-  workerPath?: string;
   timeoutMs?: number;
   onWorker?: (worker: Worker) => void;
   /** Test only: how workers are made. */
@@ -127,7 +126,7 @@ function settlesWithin(promise: Promise<unknown>, ms: number): Promise<boolean> 
 
 function runOne(job: EngineHistoryJob, options: EngineHistoryOptions): { result: Promise<EngineHistoryResult>; exited: Promise<void> } {
   let worker: Worker;
-  try { worker = options.createWorker ? options.createWorker(options.workerPath ?? SPAWNED_PROXIES.engineHistoryWorker) : new Worker(options.workerPath ?? SPAWNED_PROXIES.engineHistoryWorker); }
+  try { worker = options.createWorker ? options.createWorker(SPAWNED_PROXIES.engineHistoryWorker) : new Worker(SPAWNED_PROXIES.engineHistoryWorker); }
   catch {
     return { result: Promise.resolve(failedResult(job, "worker-unavailable")), exited: Promise.resolve() };
   }

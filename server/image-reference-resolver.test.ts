@@ -1,9 +1,10 @@
+import { fixtureLink } from "./testing/platform-fixtures.ts";
 // IMG-SEED (F5-T4, media design M4): uploaded, generated, saved and workspace
 // images resolve through one exact-byte reference flow, all-or-nothing and
 // before any approval or billing. A numeric seed is never a substitute.
 import { attachmentsHomeOf } from "./attachment-read.ts";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -223,13 +224,13 @@ describe("resolve-image-reference: authority", () => {
     refusal(await internal(f, { source: { kind: "workspace", relativePath: "mine.png" } }, claim(f, f.threadId, f.otherBotId)), 404, "unavailable");
   });
 
-  it.skipIf(process.platform === "win32")("refuses links, private files, changed revisions and files that are not images", async () => {
+  it("refuses links, private files, changed revisions and files that are not images", async () => {
     const f = fixture();
     writeFileSync(join(f.root, "real.png"), png(0x91));
     const outside = mkdtempSync(join(tmpdir(), "murage-imgref-outside-")); cleanups.push(() => removeTempDirSync(outside));
     writeFileSync(join(outside, "x.png"), png(0x92));
-    symlinkSync(join(outside, "x.png"), join(f.root, "linked.png"));
-    symlinkSync(outside, join(f.root, "linked-dir"));
+    fixtureLink(join(outside, "x.png"), join(f.root, "linked.png"), "file");
+    fixtureLink(outside, join(f.root, "linked-dir"), "dir");
     mkdirSync(join(f.root, "memory")); writeFileSync(join(f.root, "memory", "face.png"), png(0x93));
     refusal(await internal(f, { source: { kind: "workspace", relativePath: "linked.png" } }), 403, "denied", 0);
     refusal(await internal(f, { source: { kind: "workspace", relativePath: "linked-dir/x.png" } }), 403, "denied", 0);

@@ -1,3 +1,4 @@
+import { readTurnPolicy } from "./decision/index.ts";
 import { executionStore } from "./execution-audience.ts";
 import { partitionFileRefusal } from "./partition-files.ts";
 import { createHash, randomUUID } from "node:crypto";
@@ -69,16 +70,16 @@ export function workspacePathWithin(path: string, base: string): boolean {
 export function isPrivateWorkspaceName(name: string, last: boolean): boolean {
   return /^(memory|skills|credentials)$/i.test(name) || (last && /^(MEMORY|SOUL|AGENTS|CLAUDE)\.md$/i.test(name));
 }
-function relativePath(path: string) {
+function relativePath(path: string, noLimits = false) {
   if (typeof path !== "string" || path.length > 2048 || /[\\\u0000-\u001f:]/.test(path) || isAbsolute(path)) fail(400, "Use a relative file path inside this task's workspace.");
   const parts = path.split("/");
-  if (parts.some(part => !part || part === "." || part === ".." || part.startsWith(".") || part.length > 255)) fail(400, "Use a relative file path inside this task's workspace.");
-  if (parts.some((part, index) => isPrivateWorkspaceName(part, index === parts.length - 1))) fail(403, "Private setup and memory files are not deliverables.");
+  if (parts.some(part => !part || part === "." || part === ".." || (!noLimits && part.startsWith(".")) || part.length > 255)) fail(400, "Use a relative file path inside this task's workspace.");
+  if (!noLimits && parts.some((part, index) => isPrivateWorkspaceName(part, index === parts.length - 1))) fail(403, "Private setup and memory files are not deliverables.");
   return parts;
 }
-function sourceFile(root: string, relative: string) {
+function sourceFile(root: string, relative: string, noLimits = false) {
   const observed: Array<[string, Stats]> = [[root, directory(root)]];
-  let path = root; const parts = relativePath(relative);
+  let path = root; const parts = relativePath(relative, noLimits);
   for (const [index, part] of parts.entries()) {
     path = join(path, part); const stat = lstatSync(path);
     if (stat.isSymbolicLink()) fail(409, "Linked files are not supported.");
@@ -212,7 +213,7 @@ function matching(row: Row, access: ArtifactAccess) {
 }
 function publicRow(row: Row, scope: ArtifactScope, storageRoot: string): Artifact {
   let sourceState: Artifact["sourceState"] = "unavailable", savedState: Artifact["savedState"] = "unavailable";
-  try { sourceState = fingerprint(sourceFile(row.source_root, row.relative_path).stat) === row.source_fingerprint ? "current" : "changed"; }
+  try { sourceState = fingerprint(sourceFile(row.source_root, row.relative_path, true).stat) === row.source_fingerprint ? "current" : "changed"; }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") sourceState = "missing"; }
   try { directory(storageRoot); const stat = lstatSync(join(storageRoot, blobName(row))); savedState = stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size === row.bytes ? "available" : "unavailable"; }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") savedState = "missing"; }
@@ -231,10 +232,11 @@ export function registerArtifact(db: DatabaseSync, storageRoot: string, input: A
   if (provenance.publicationId !== undefined && (typeof provenance.publicationId !== "string" || !/^[a-f0-9-]{36}$/.test(provenance.publicationId))) fail(400, "Invalid file publication.");
   if (input.name !== undefined && (typeof input.name !== "string" || !input.name.trim() || input.name.length > 200)) fail(400, "Use a short file title.");
   try {
+    const noLimits = !!scope.runId && readTurnPolicy({ threadId: input.threadId, generation: scope.runId })?.permission.noLimits === true;
     const bot = executionStore()?.bot(input.botId);
-    const denied = bot ? partitionFileRefusal(bot, input.threadId, [input.relativePath], scope.workspaceRoot) : null;
+    const denied = bot && !noLimits ? partitionFileRefusal(bot, input.threadId, [input.relativePath], scope.workspaceRoot) : null;
     if (denied) fail(403, denied);
-    const root = rootPath(scope.workspaceRoot), source = sourceFile(root, input.relativePath);
+    const root = rootPath(scope.workspaceRoot), source = sourceFile(root, input.relativePath, noLimits);
     const bytes = readVerified(source.path, ARTIFACT_MAX_BYTES, source.stat);
     if (source.observed.some(([path, stat]) => !same(stat, lstatSync(path)))) fail(409, "The file location changed during verification.");
     const sha256 = hash(bytes);

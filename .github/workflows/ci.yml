@@ -1,10 +1,15 @@
 name: CI
+run-name: ${{ inputs.invocation_id && format('ci {0}', inputs.invocation_id) || 'CI' }}
 
 on:
   # Branches created by GITHUB_TOKEN do not emit their own push event, so the
   # release-prep workflow dispatches this one explicitly for the version PR.
   workflow_dispatch:
     inputs:
+      invocation_id:
+        description: "CITRY invocation id"
+        required: false
+        type: string
       windows_only:
         description: "Confirm Windows-only fixture changes; reuse unaffected platform evidence"
         type: boolean
@@ -42,6 +47,8 @@ jobs:
         # supported host platforms. POSIX-only process tests self-skip.
         os: ${{ fromJSON(inputs.windows_only && '["windows-latest"]' || '["macos-latest","ubuntu-24.04","windows-latest"]') }}
     runs-on: ${{ matrix.os }}
+    env:
+      NODE_OPTIONS: ${{ matrix.os == 'macos-latest' && '--max-old-space-size=6144' || '--max-old-space-size=12288' }}
     # Ubuntu also runs the complete desktop/mobile human suite after runtime
     # checks; the recorded 16-minute prelude left too little of the old 20m cap.
     timeout-minutes: ${{ matrix.os == 'windows-latest' && 40 || matrix.os == 'ubuntu-24.04' && 55 || 20 }}
@@ -81,6 +88,10 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      - name: Qualify Signal Windows storage ownership
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: ./scripts/ci-signal-windows.ps1
       - name: Validate locale catalogs
         if: matrix.os == 'ubuntu-24.04'
         run: pnpm i18n:check
@@ -89,6 +100,9 @@ jobs:
         # to ci/extended-tests.txt; docs/testing.md has the rule.
         if: matrix.os == 'ubuntu-24.04'
         run: node scripts/ci-test-tiers.mjs check
+      - name: Validate delegation pack surface inventory
+        if: matrix.os == 'ubuntu-24.04'
+        run: node scripts/delegation-pack-inventory.mjs --check
       - name: Validate the bundled model metadata snapshot
         # Offline on purpose: this compares the committed snapshot against what
         # scripts/build-model-metadata.mjs renders from it, and checks its
@@ -97,6 +111,11 @@ jobs:
         # that deliberately with `pnpm models:build`.
         if: matrix.os == 'ubuntu-24.04'
         run: pnpm models:check
+      - name: Check Signal surface declarations
+        run: node scripts/signal-inventory.mjs --check-surfaces
+      - name: Report Signal activation evidence
+        # Pending G0 blocks Signal activation and release, not unrelated quality gates.
+        run: node scripts/signal-inventory.mjs --pin-status
       - name: Prepare Electron test runtime
         # Electron 43 lazily downloads its runtime on first import. Resolve it
         # before Vitest starts so a cold download cannot consume the fixture
@@ -113,11 +132,22 @@ jobs:
           MURAGE_REQUIRE_ELECTRON_LINK_TEST: "1"
         run: pnpm exec vitest run server/link-removal.electron.test.ts
       - name: Typecheck
-        # The server project outgrew Node's default heap on the 7 GB macOS
-        # runner (tsc -p tsconfig.server.json aborted with exit 134).
-        env:
-          NODE_OPTIONS: --max-old-space-size=6144
+        # The complete tsc gate runs on 16 GB hosts. The 7 GB Mac bundles only.
+        if: matrix.os != 'macos-latest'
         run: pnpm typecheck
+      - name: Keep Windows child processes windowless
+        run: node scripts/check-windows-hide.mjs
+      - name: Windows child entry ordering
+        run: node scripts/check-windows-hide-entries.mjs
+      - name: Windows child runtime defaults
+        run: node --test shared/win-hide-child-process.node-test.mjs shared/win-hide-overloads.node-test.mjs scripts/windows-hide-posix.node-test.mjs
+      - name: Windows hide generated and preload regressions
+        if: matrix.os == 'ubuntu-latest'
+        run: node --test shared/win-hide-generated.node-test.mjs shared/win-hide-inheritance.node-test.mjs shared/win-hide-preload-order.node-test.mjs shared/win-hide-mutants.node-test.mjs scripts/windows-hide-checker-generated.node-test.mjs scripts/windows-hide-references.node-test.mjs electron/os-shell.node-test.mjs scripts/windows-hide-gate.node-test.mjs scripts/windows-hide-package-manifest.node-test.mjs
+      - name: Windows desktop gate fail-closed checks and parsing
+        if: matrix.os == 'ubuntu-latest'
+        shell: pwsh
+        run: ./scripts/windows-hide-gate-checks.test.ps1
       - run: pnpm lint
       - name: Typecheck the Composio broker Worker
         # `pnpm test` runs the Worker's Vitest suite, but the suite does not
@@ -135,6 +165,9 @@ jobs:
         # the vitest chain caught it: a stale catalog reached the 0.1.55
         # candidate before the release verification pass found it.
         run: pnpm catalog:check
+      - name: Prepare pinned historical restore and downgrade inspectors
+        shell: bash
+        run: node scripts/prepare-historical-test-fixtures.mjs --allow-fetch
       - name: Stage pinned backup test fixtures
         # Test-only: hash-pinned upstream age/restic bytes that backup tests read
         # or execute, plus this host's age tools for MURAGE_BACKUP_TEST_AGE_DIR
@@ -144,6 +177,10 @@ jobs:
       - name: Build the server bundle that packaged-layout tests import
         run: pnpm build:server
       - run: pnpm test:electron
+      - name: No limits host egress self-test
+        # Linux Docker namespaces are the containment fixture; action-policy tests stay all-OS.
+        if: matrix.os == 'ubuntu-24.04'
+        run: node scripts/no-limits-live/egress/self-test.mjs --out "${{ runner.temp }}/nolim-host-egress"
       # Murage for Chrome build and registration scripts. Windows registration
       # has its own tests in electron/browser-extension-windows.node-test.mjs.
       - name: Murage for Chrome script tests
@@ -261,7 +298,8 @@ jobs:
           $fixtureVersion = '7.4.13'
           $fixturePowerShell = Join-Path $env:RUNNER_TEMP "pwsh-$fixtureVersion"
           $fixtureArchive = Join-Path $env:RUNNER_TEMP "pwsh-$fixtureVersion.zip"
-          Invoke-WebRequest "https://github.com/PowerShell/PowerShell/releases/download/v$fixtureVersion/PowerShell-$fixtureVersion-win-x64.zip" -OutFile $fixtureArchive
+          node scripts/fetch-build-input.mjs D079 $fixtureArchive
+          if ($LASTEXITCODE -ne 0) { throw 'Pinned PowerShell fixture download failed' }
           Expand-Archive $fixtureArchive $fixturePowerShell -Force
           $actual = & "$fixturePowerShell/pwsh.exe" -NoProfile -NonInteractive -Command '$PSVersionTable.PSVersion.ToString()'
           if ($LASTEXITCODE -ne 0 -or $actual -ne $fixtureVersion) { throw 'Required pwsh version did not answer' }
@@ -299,11 +337,21 @@ jobs:
           case "$RUNNER_OS_NAME" in ubuntu-*) os=linux ;; macos-*) os=mac ;; windows-*) os=windows ;; *) exit 1 ;; esac
           # The real Windows backup round trip runs as a standard user in its own step below, never in an elevated shard.
           node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --shard "$SHARD" \
-            --skip server/installation-windows-backup-roundtrip.test.ts > "$RUNNER_TEMP/vitest-args.txt"
+            --skip server/installation-windows-backup-roundtrip.test.ts --skip server/cloud-home/placeholder-launcher-root.test.ts > "$RUNNER_TEMP/vitest-args.txt"
           args=(); while IFS= read -r arg; do args+=("${arg%$'\r'}"); done < "$RUNNER_TEMP/vitest-args.txt"
           test "${#args[@]}" -gt 0 || { echo "::error::no GATE files selected for $os shard $SHARD"; exit 1; }
           echo "GATE files for $os, shard $SHARD: ${#args[@]} arguments"
           node node_modules/vitest/vitest.mjs run --tags-filter='!nightly && !perf-budget' "${args[@]}"
+      - name: Run the root-only placeholder-launcher test as root
+        # server/cloud-home/placeholder-launcher-root.test.ts is left out of the shard run above and runs here as root: the launcher
+        # makes .agents a 0555 directory and then creates the mask targets inside it, which only root (the Cloud home launcher's
+        # user) can do, so its tests (the .agents placeholder and the freeze that lasts for the turn only) fail loudly for any other
+        # user. The rest of the launcher tests are in server/cloud-home/placeholder-launcher.test.ts, which runs in the shards as the
+        # runner user: as root the launcher refuses the runner-owned checkout as a root-owned executable path, and nothing about
+        # that check is weakened. Nothing skips either file. One shard carries this step; sudo -E keeps the environment and PATH is passed through.
+        if: ${{ !cancelled() && inputs.vitest_file == '' && matrix.os == 'ubuntu-24.04' && matrix.vitest_shard == 1 }}
+        shell: bash
+        run: sudo -E env "PATH=$PATH" "$(command -v node)" node_modules/vitest/vitest.mjs run server/cloud-home/placeholder-launcher-root.test.ts
       - name: Scoped Vitest confirmation
         if: inputs.vitest_file != ''
         shell: bash
@@ -389,6 +437,8 @@ jobs:
     if: ${{ !inputs.windows_only && !inputs.human_files }}
     name: S4 power block (Linux arm64)
     runs-on: ubuntu-24.04-arm
+    env:
+      NODE_OPTIONS: --max-old-space-size=12288
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -491,6 +541,33 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  opencode-pinned:
+    if: ${{ !inputs.windows_only && !inputs.human_files && !inputs.vitest_file }}
+    name: OpenCode 1.19.5 engine gate (Ubuntu)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: ./.github/actions/vitest-runtime
+      - name: Stage exact npm engine packages
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/opencode-pinned/linux"
+          node scripts/fetch-build-input.mjs D080 "$RUNNER_TEMP/opencode-pinned/opencode-ai-1.19.5.tgz"
+          node scripts/fetch-build-input.mjs D081 "$RUNNER_TEMP/opencode-pinned/opencode-linux-x64-1.19.5.tgz"
+          tar -xzf "$RUNNER_TEMP/opencode-pinned/opencode-linux-x64-1.19.5.tgz" -C "$RUNNER_TEMP/opencode-pinned/linux"
+          echo "MURAGE_OPENCODE_PINNED_BIN=$RUNNER_TEMP/opencode-pinned/linux/package/bin/opencode" >> "$GITHUB_ENV"
+      - name: Require real pinned ACP and local Zen captures
+        run: node scripts/ci-opencode-pinned.mjs
+
   extended:
     # EXTENDED tests (ci/extended-tests.txt): Linux only, visible, never blocking. Job-level continue-on-error keeps
     # a failed or timed-out shard from failing the run's conclusion, which is what scripts/release-ci-gate.mjs reads;
@@ -537,7 +614,7 @@ jobs:
   required:
     if: ${{ always() && !inputs.windows_only && !inputs.vitest_file && !inputs.human_files }}
     name: required CI completion
-    needs: [quality, vitest, host-power-arm64, human, control-plane, mobile, package-linux]
+    needs: [quality, vitest, host-power-arm64, human, control-plane, mobile, package-linux, opencode-pinned]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -551,6 +628,7 @@ jobs:
           CONTROL_PLANE: ${{ needs.control-plane.result }}
           MOBILE: ${{ needs.mobile.result }}
           PACKAGE_LINUX: ${{ needs.package-linux.result }}
+          OPENCODE_PINNED: ${{ needs.opencode-pinned.result }}
         run: |
           test "$QUALITY" = success
           test "$VITEST" = success
@@ -559,6 +637,7 @@ jobs:
           test "$CONTROL_PLANE" = success
           test "$MOBILE" = success
           test "$PACKAGE_LINUX" = success
+          test "$OPENCODE_PINNED" = success
 
   human-confirmation:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.human_files != '' }}
@@ -661,6 +740,8 @@ jobs:
     # launcher; nothing else runs it. Xcode and Gradle stay
     # off CI, and the fixture oracles also run in the root suite.
     runs-on: ubuntu-24.04
+    env:
+      NODE_OPTIONS: --max-old-space-size=12288
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -685,6 +766,8 @@ jobs:
     if: ${{ !inputs.windows_only && !inputs.human_files }}
     name: package + smoke (Ubuntu 24.04 x64)
     runs-on: ubuntu-24.04
+    env:
+      NODE_OPTIONS: --max-old-space-size=12288
     # The GEPA runtime build adds about 3 minutes (CPython from source can take
     # longer on a cold runner); package-linux.yml runs the same sequence in ~16.
     timeout-minutes: 110
@@ -748,7 +831,7 @@ jobs:
           python3 -I native/gepa/build-linux.py "$RUNNER_TEMP/gepa-linux"
       - name: Package from the verified offline CUA stage
         env:
-          NODE_OPTIONS: --max-old-space-size=6144
+          NODE_OPTIONS: --max-old-space-size=12288
         run: |
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
           pnpm package:linux:offline "--config.extraMetadata.murageGepaManifests.linux-x64=$gepa_hash"

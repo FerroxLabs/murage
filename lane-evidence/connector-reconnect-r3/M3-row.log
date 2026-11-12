@@ -1,0 +1,73 @@
+
+ RUN  v4.1.12 /work
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R3e row-level Flux auth never creates an incident
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1a failed probe still awaits EXPIRED inventory
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1b failed probe still awaits EXPIRED inventory
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1c ACTIVE uncertainty is unverified
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1d ACTIVE uncertainty is unverified
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1e success re-reads ACTIVE, clears only that account and its unverified state
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1f failed inventory retains incident and renders unverified copy
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1g Flux kind=auth is an outage and still re-reads inventory
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after transport
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after http
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after brokerAuth
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after upstreamAuth
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after toolError
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after ok
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1 unknown keeps an existing incident; alias change preserves unverified
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1 removal between probe and refresh blocks that ID on scheduled dispatch
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=false) cannot replace post-probe EXPIRED inventory
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=true) cannot replace post-probe EXPIRED inventory
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3d preflight response.error.status 403 with ACTIVE creates an incident
+ × server/connector-reconnect-r3-preflight.test.ts > R3e row-level Flux auth never creates an incident 47ms
+   → expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1f late timed-out inventory cannot clear or create incidents
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1 durable unknown survives reopening and a status change clears it
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1e healthy recovery clears a durable unknown check
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope error-kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-error-kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3 broker diagnostic in a failed row only suppresses reconnect
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R3e row-level Flux auth never creates an incident
+AssertionError: expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "accounts": [
++       {
++         "alias": "work",
++         "id": "A",
++       },
++     ],
++     "label": "Gmail",
++     "slug": "gmail",
++   },
++ ]
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:102:46
+    100| it("R3e row-level Flux auth never creates an incident",async()=>{
+    101|   reply={data:{results:[{index:0,tool_slug:"GMAIL_GET_PROFILE",success…
+    102|   expect(composio.appsNeedingReconnect(cfg)).toEqual([]); expect(reads…
+       |                                              ^
+    103| });
+    104|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 26 skipped (27)
+   Start at  05:12:04
+   Duration  9.54s (transform 7.42s, setup 8.39s, import 955ms, tests 52ms, environment 0ms)
+

@@ -1,0 +1,15 @@
+murage-vt1: generated output absent: node_modules
+murage-vt1: generated output absent: dist-server
+murage-vt1: generated output absent: .test-tmp/cfix3-winscen
+murage-vt1: no cfix3-winscen containers remain
+murage-vt3: generated output absent: node_modules
+murage-vt3: generated output absent: dist-server
+murage-vt3: generated output absent: .test-tmp/cfix3-winscen
+murage-vt3: no cfix3-winscen containers remain
+murage-rig-runner-2: generated output absent: node_modules
+murage-rig-runner-2: generated output absent: dist-server
+murage-rig-runner-2: generated output absent: .test-tmp/cfix3-winscen
+murage-rig-runner-2: no cfix3-winscen containers remain
+build-host: generated output absent: node_modules
+build-host: generated output absent: dist-server
+build-host: generated output absent: .test-tmp/cfix3-winscen

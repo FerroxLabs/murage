@@ -1,8 +1,22 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+
+// Bootstrap must work in a clean checkout before zod/vitest exist. No lifecycle
+// scripts or release credentials are used here; every mutation still imports
+// and calls the unchanged prerequisite below.
+export function bootstrapDependencies(run = spawnSync) {
+  const result = run("npm", ["exec", "--yes", "--ignore-scripts", "--package=pnpm@10.33.0", "--",
+    "pnpm", "install", "--frozen-lockfile", "--ignore-scripts"], { stdio: "inherit", timeout: 10 * 60_000 });
+  if (result.error || result.status !== 0) throw new Error("release dependency bootstrap failed");
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href && process.argv[2] === "bootstrap") {
+  bootstrapDependencies();
+  process.exit(0);
+}
+const { assertSignalReleaseReady } = await import("./signal-release-prerequisites.mjs");
 
 export const RELEASE_REPO = "FerroxLabs/murage-releases";
 
@@ -40,7 +54,7 @@ export function nextVersion(current, bump, requested) {
 
 const execute = (command, args) => spawnSync(command, args, {
   encoding: "utf8", maxBuffer: 4 * 1024 * 1024,
-  timeout: args.some(arg => arg.startsWith("https://uploads.github.com/")) ? 10 * 60_000 : 30_000,
+  timeout: (args[0] === "run" && args[1] === "download") || args.some(arg => arg.startsWith("https://uploads.github.com/")) ? 10 * 60_000 : 30_000,
 });
 
 export const DRAFT_CONFIRM_ATTEMPTS = 6;
@@ -186,6 +200,7 @@ export function assertCompleteDraftDigests(expected, assets) {
  * compared to those bytes; without it every asset must at least carry a
  * well-formed GitHub digest. Either way a missing digest holds publication. */
 export function publishDraft(version, id, assetsDir, run = execute) {
+  assertSignalReleaseReady();
   const draft = assertDraft(version, id, run);
   if (assetsDir) assertCompleteDraftDigests(stagedDigests(assetsDir), draft.assets);
   else {
@@ -206,6 +221,7 @@ export function publishDraft(version, id, assetsDir, run = execute) {
  * target_commitish and name again, and then the release is verified: its record, and for a published release the tag
  * on the remote (git ls-remote) and the releases/latest API. */
 export function setReleaseBody(version, id, notesFile, target, run = execute) {
+  assertSignalReleaseReady();
   parseVersion(version);
   if (!Number.isSafeInteger(id) || id <= 0) throw new Error("release id must be a positive integer");
   if (!/^[A-Za-z0-9._/-]+$/.test(String(target ?? ""))) throw new Error("target_commitish must be a branch name or commit SHA");
@@ -236,7 +252,35 @@ export function verifyReleaseTag(version, id, run = execute) {
   return release;
 }
 
+/** Exercise the token against a unique throwaway draft after qualification. */
+export function probeReleaseToken(probe, run = execute) {
+  assertSignalReleaseReady();
+  if (!/^release-preflight-\d+-\d+$/.test(probe ?? "")) throw new Error("invalid release probe name");
+  const draft = JSON.parse(checked("gh", ["api", "--method", "POST", `repos/${RELEASE_REPO}/releases`,
+    "--raw-field", `tag_name=${probe}`, "--raw-field", `name=${probe}`, "--field", "draft=true"], run));
+  if (!Number.isSafeInteger(draft.id) || draft.id <= 0 || draft.tag_name !== probe || draft.draft !== true) {
+    throw new Error("release token probe returned an invalid draft");
+  }
+  // Bind deletion to the exact draft just created and recheck its identity.
+  const current = apiGet(`repos/${RELEASE_REPO}/releases/${draft.id}`, { run });
+  if (current.id !== draft.id || current.tag_name !== probe || current.draft !== true || current.immutable === true) {
+    throw new Error("release probe changed; refusing deletion");
+  }
+  checked("gh", ["api", "--method", "DELETE", `repos/${RELEASE_REPO}/releases/${draft.id}`], run);
+  return draft.id;
+}
+
+/** GitHub's notes endpoint uses POST too; keep it at the same boundary. */
+export function generateReleaseNotes(version, repository, target, run = execute) {
+  assertSignalReleaseReady();
+  parseVersion(version);
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repository ?? "") || !/^[a-f0-9]{40}$/.test(target ?? "")) throw new Error("invalid notes source");
+  return checked("gh", ["api", "--method", "POST", `repos/${repository}/releases/generate-notes`,
+    "--raw-field", `tag_name=v${version}`, "--raw-field", `target_commitish=${target}`, "--jq", ".body"], run);
+}
+
 export function uploadDraft(version, directory, notesFile, run = execute) {
+  assertSignalReleaseReady();
   parseVersion(version);
   const files = readdirSync(directory).sort().map(name => {
     const file = join(directory, name);
@@ -343,8 +387,97 @@ function output(values) {
   for (const [key, value] of Object.entries(values)) appendFileSync(process.env.GITHUB_OUTPUT, `${key}=${value}\n`);
 }
 
+/** Poll the jobs API for this exact attempt, without giving the build gate a
+ * write token. Step completion opens preflight; completed staging proves all
+ * build/CI dependencies and artifact validation finished successfully. */
+export function waitForReleaseBarrier(kind, env = process.env, run = execute, attempts = 660) {
+  if (!['probe', 'stage'].includes(kind) || !/^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY ?? '') ||
+      !/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID ?? '') || !/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ATTEMPT ?? '')) throw new Error("invalid release barrier source");
+  const name = kind === 'probe' ? 'Release the verified assets' : 'Stage and verify the release assets';
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (attempt) pause(30_000, run);
+    const jobs = [];
+    for (let page = 1; page <= 10; page++) {
+      const response = apiGet(`repos/${env.GITHUB_REPOSITORY}/actions/runs/${env.GITHUB_RUN_ID}/attempts/${env.GITHUB_RUN_ATTEMPT}/jobs?per_page=100&page=${page}`, {run});
+      if (!Array.isArray(response?.jobs) || !Number.isSafeInteger(response.total_count)) throw new Error('invalid release jobs response');
+      jobs.push(...response.jobs);
+      if (jobs.length >= response.total_count) break;
+      if (page === 10 || response.jobs.length === 0) throw new Error('release jobs pagination incomplete');
+    }
+    const matches = jobs.filter(job => job.name === name && String(job.run_id) === env.GITHUB_RUN_ID && String(job.run_attempt) === env.GITHUB_RUN_ATTEMPT);
+    if (matches.length > 1) throw new Error('ambiguous release barrier job');
+    const job = matches[0];
+    if (!job) continue;
+    const target = kind === 'probe' ? job.steps?.find(step => step.name === 'Probe release token before builds') : job;
+    if (target?.status === 'completed') {
+      if (target.conclusion !== 'success') throw new Error(`${kind} failed; release stopped`);
+      if (kind === 'probe' && job.status === 'completed' && job.conclusion !== 'success') throw new Error('probe job failed; release stopped');
+      return;
+    }
+    if (job.status === 'completed') throw new Error(`${kind} never completed; release stopped`);
+  }
+  throw new Error(`${kind} timed out; release stopped`);
+}
+
+/** Download data only, into a dedicated directory, from this run. Never
+ * extract dependency/code artifacts into the privileged checkout. */
+export function downloadPreparedAssets(env = process.env, run = execute) {
+  if (!/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ID ?? "") || !/^[1-9][0-9]*$/.test(env.GITHUB_RUN_ATTEMPT ?? "") || !/^[\w.-]+\/[\w.-]+$/.test(env.GITHUB_REPOSITORY ?? "")) throw new Error("invalid artifact source");
+  mkdirSync("assets");
+  checked("gh", ["run", "download", env.GITHUB_RUN_ID, "--repo", env.GITHUB_REPOSITORY,
+    "--name", `release-staged-assets-${env.GITHUB_RUN_ATTEMPT}`, "--dir", "assets"], run);
+  // Fail closed on an empty or non-file payload before any release call.
+  stagedDigests("assets");
+  // The review record is data from stage (which depends on the CI gate), not
+  // code or environment text. Keep it outside the release asset set.
+  mkdirSync("release-review");
+  checked("gh", ["run", "download", env.GITHUB_RUN_ID, "--repo", env.GITHUB_REPOSITORY,
+    "--name", `release-ci-review-${env.GITHUB_RUN_ATTEMPT}`, "--dir", "release-review"], run);
+}
+
+export function prepareReleaseNotes(env = process.env, run = execute) {
+  assertSignalReleaseReady();
+  parseVersion(env.VERSION);
+  const file = join(env.RUNNER_TEMP, "release-notes.md");
+  let notes;
+  try { notes = generateReleaseNotes(env.VERSION, env.GITHUB_REPOSITORY, env.SHA, run); }
+  catch { notes = ""; }
+  if (!notes?.trim()) notes = `Built by the release workflow from ${env.GITHUB_REPOSITORY}@${env.SHA}.\n`;
+  if (env.REVIEW_FILE) {
+    const review = JSON.parse(readFileSync(env.REVIEW_FILE, "utf8"));
+    const keys = ['SHA','WAIVER_PATH','WAIVER_SHA256','WAIVER_RUN','WAIVER_RUN_URL','WAIVER_APPROVAL'];
+    if (Object.keys(review).some(key => !keys.includes(key)) || keys.some(key => typeof review[key] !== 'string') || review.SHA !== env.SHA) throw new Error('invalid CI review record');
+    env = {...env, ...review};
+  }
+  if (env.WAIVER_PATH) {
+    const record = `\n## CI review record\n\nBuilt from ${env.GITHUB_REPOSITORY}@${env.SHA}. CI run ${env.WAIVER_RUN} (${env.WAIVER_RUN_URL}) was reviewed and released under the approved waiver \`${env.WAIVER_PATH}\` (sha256 \`${env.WAIVER_SHA256}\`), approved by ${env.WAIVER_APPROVAL}.\n`;
+    notes += record;
+    if (env.GITHUB_STEP_SUMMARY) appendFileSync(env.GITHUB_STEP_SUMMARY, record);
+  }
+  writeFileSync(file, notes);
+  return file;
+}
+
 async function main([command, ...args]) {
-  if (command === "version") {
+  if (command === "probe-prepared") {
+    probeReleaseToken(`release-preflight-${process.env.GITHUB_RUN_ID}-${process.env.GITHUB_RUN_ATTEMPT}`);
+    const release = findRelease(process.env.VERSION);
+    if (release && (!release.draft || release.immutable === true)) throw new Error('version is already published or immutable');
+  }
+  else if (command === "wait-probe") waitForReleaseBarrier('probe', process.env, execute, 24);
+  else if (command === "wait-stage") waitForReleaseBarrier('stage');
+  else if (command === "download") downloadPreparedAssets();
+  else if (command === "notes-file") prepareReleaseNotes();
+  else if (command === "upload-prepared") output({ release_id: uploadDraft(process.env.VERSION, "assets", join(process.env.RUNNER_TEMP, "release-notes.md")) });
+  else if (command === "verify-digests") {
+    assertSignalReleaseReady();
+    const { verifyReleaseCommand } = await import("./release-digests.mjs");
+    await verifyReleaseCommand(process.env.VERSION, process.env.RELEASE_ID, "assets");
+  } else if (command === "publish-prepared") {
+    publishDraft(process.env.VERSION, Number(process.env.RELEASE_ID), "assets");
+    console.log(`v${process.env.VERSION} is live`);
+  }
+  else if (command === "version") {
     const version = JSON.parse(readFileSync("package.json", "utf8")).version;
     parseVersion(version); console.log(version);
   } else if (command === "should-release") console.log(shouldRelease(...args));
@@ -355,6 +488,8 @@ async function main([command, ...args]) {
       throw new Error(`v${args[0]} already exists${release.draft ? " as a draft" : " as a published release"}`);
     }
   } else if (command === "branch") output(inspectReleaseBranch(args[0], process.env.GITHUB_REPOSITORY));
+  else if (command === "probe") console.log(probeReleaseToken(args[0]));
+  else if (command === "notes") process.stdout.write(generateReleaseNotes(...args));
   else if (command === "upload") console.log(uploadDraft(...args));
   else if (command === "body") {
     const [version, rawId, notesFile, target] = args;
@@ -385,6 +520,6 @@ async function main([command, ...args]) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   // The browser-extension commands load their module on demand, so the other
-  // commands keep working from a lone copy of this file.
+  // commands do not load the browser-extension module.
   main(process.argv.slice(2)).catch(error => { console.error(`::error::${error.message}`); process.exitCode = 1; });
 }

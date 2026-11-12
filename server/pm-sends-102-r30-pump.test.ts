@@ -5,10 +5,11 @@
 // bots per pump, never a page of waiting heads per bot. Statements per pump are the same with 10 and with 500 bots that each have waiting teams. Fails on
 // 7f28cf52b (there the pump drained every bot, each waking 8 waiting heads).
 import { mkdirSync } from "node:fs";
-import type { DatabaseSync } from "node:sqlite";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DatabaseSync, StatementSync } from "node:sqlite";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
+import { messageSearchIndexReady, stopSearchIndex } from "./message-search-index.ts";
 import { _resetPending, onDelegationReceipt } from "./delegations.ts";
 import { _resetOwnerMigration } from "./pending-delegations-schema.ts";
 import { botsWithReadyTeams } from "./shared-ready.ts";
@@ -18,21 +19,24 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 const fresh = () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); _resetDrainDiagnostics(); _resetSharedPump(); };
-beforeEach(fresh);
-afterEach(() => { onDelegationReceipt(undefined); _resetOwnerMigration(); _resetPending(); closeDatabase(); });
+let counting = false, statements = 0;
+beforeEach(() => {
+  fresh();
+  // Intercept execution before any serving handle prepares statements. Statement reuse (61df74473d, io-budget.ts)
+  // otherwise returns already wrapped statements, double-counting some calls and missing previously cached ones.
+  for (const method of ["all", "get", "run", "iterate"] as const) {
+    const original = StatementSync.prototype[method];
+    vi.spyOn(StatementSync.prototype, method).mockImplementation(function(this: StatementSync, ...args: unknown[]) {
+      if (counting) statements++;
+      return Reflect.apply(original, this, args);
+    });
+  }
+});
+afterEach(() => { counting = false; vi.restoreAllMocks(); onDelegationReceipt(undefined); _resetOwnerMigration(); _resetPending(); closeDatabase(); });
 
-function counted(db: DatabaseSync, run: () => void): number {
-  let statements = 0;
-  const original = db.prepare.bind(db);
-  (db as { prepare: unknown }).prepare = (sql: string) => {
-    const statement = original(sql);
-    for (const key of ["all", "get", "run", "iterate"] as const) {
-      const fn = (statement[key] as (...a: unknown[]) => unknown).bind(statement);
-      (statement as unknown as Record<string, unknown>)[key] = (...args: unknown[]) => { statements++; return fn(...args); };
-    }
-    return statement;
-  };
-  try { run(); } finally { (db as { prepare: unknown }).prepare = original; }
+function counted(_db: DatabaseSync, run: () => void): number {
+  statements = 0; counting = true;
+  try { run(); } finally { counting = false; }
   return statements;
 }
 const COLUMNS = "id,root_id,group_id,verb,from_kind,to_bot_id,target_thread_id,state,created_at,deadline_at,root_thread_id,origin,audience_fingerprint,not_owner_audience,unattended,admission_key,execution_audience";
@@ -41,6 +45,9 @@ const COLUMNS = "id,root_id,group_id,verb,from_kind,to_bot_id,target_thread_id,s
 async function measure(bots: number): Promise<{ quiet: number; event: number; started: string[] }> {
   fresh();
   const w = sharedWorld();
+  // MAIN-RULINGS-AMEND2 #4: compare histories within the same search/cache state. A longer warm-up otherwise
+  // lets the independent search worker enable per-commit intent pruning only for the large fixture (5d5a791f19).
+  expect(await stopSearchIndex()).toBe(true);
   const db = database();
   const insert = db.prepare(`INSERT INTO room_requests(${COLUMNS}) VALUES(?,?,?,?,?,?,?,?,?,?,?,'desktop','fp',0,0,?,?)`);
   const provenance = db.prepare("INSERT INTO shared_request_provenance(request_id, origin) VALUES(?, 'none')");
@@ -62,15 +69,25 @@ async function measure(bots: number): Promise<{ quiet: number; event: number; st
   expect(botsWithReadyTeams(db, "", 1)).toEqual([]);
   expect((db.prepare("SELECT count(*) AS n FROM shared_ready_teams WHERE waiting=1").get() as { n: number }).n).toBe(bots * 3);
   // a pump with no event: nothing is ready, nothing waiting is looked at
+  expect(messageSearchIndexReady(db)).toBe(false);
   const quiet = counted(db, () => pumpSharedWork(now));
   // an event: one hand-off for Iris; the pump drains Iris alone
   w.handoff("E1");
+  expect(messageSearchIndexReady(db)).toBe(false);
   const event = counted(db, () => pumpSharedWork(now));
   await tick(); await tick();
   return { quiet, event, started: w.turns.map((turn) => turn.id) };
 }
 
 describe("5. a pump's work does not grow with the number of bots", () => {
+  it("counts every cached statement execution once, including statements prepared before the window", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      const cached = db.prepare("SELECT 1");
+      expect(counted(db, () => { cached.get(); cached.get(); })).toBe(2);
+      expect(counted(db, () => { cached.get(); })).toBe(1);
+    } finally { db.close(); }
+  });
   it("10 vs 500 bots with waiting teams: the same statements for a quiet pump and for a pump after one event, and the event's hand-off starts", async () => {
     const small = await measure(10), large = await measure(500);
     expect(small.started).toEqual(["E1"]);

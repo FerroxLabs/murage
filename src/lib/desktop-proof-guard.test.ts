@@ -38,6 +38,7 @@ const ALLOW: ReadonlyArray<{ file: string; needle: string; why: string }> = [
   { file: "lib/workspace-pane.ts", needle: "fetchImpl: FetchLike", why: "the default delegate of workspaceApi(), which adds the surface mark and secret to every call before it reaches here" },
   { file: "lib/composer-attachments.ts", needle: "fetch(`/api/attachments", why: "the shared parser takes the proof from its caller; composer-image-upload.ts always supplies it and the test below stops components importing the bare function" },
   { file: "lib/silero-vad.ts", needle: "fetch(modelUrl", why: "fetches the bundled VAD model file, not an /api route" },
+  { file: "lib/owner-code.ts", needle: "fetch(path, { method: \"POST\"", why: "runs only after onHomePage() (a page a Cloud home served), where the browser's own session cookie is the proof and no desktop secret exists" },
 ];
 
 function sourceFiles(dir: string, out: string[] = []): string[] {
@@ -177,6 +178,7 @@ const RESOURCE_ALLOW: ReadonlyArray<{ file: string; needle: string; why: string 
   { file: "lib/announcements.ts", needle: "window.open(url", why: "guarded by an https:// test two lines above: only external links reach it" },
   { file: "lib/save-file.ts", needle: "link.href = url", why: "clickDownload is handed a blob: or data: URL, or one its caller already ticketed at the click (saveUrl, ImageMedia)" },
   { file: "lib/image-thumbnail.ts", needle: "probe.src = url", why: "the only caller passes an <img>'s currentSrc, which is already the proven URL" },
+  { file: "lib/signin-tab.ts", needle: "window.open(", why: "openSignInTab and reserveSignInTab open only about:blank or what checkAuthUrl accepted: the engine vendor's external sign-in page, never a harness path" },
 ];
 
 export interface ResourceSink {
@@ -336,8 +338,8 @@ describe("every raw request from src/ to the harness carries the desktop proof",
   });
 
   it("the allow list stays short and every entry still matches a call", () => {
-    expect(ALLOW.length).toBeLessThanOrEqual(8);
-    expect(RESOURCE_ALLOW.length).toBeLessThanOrEqual(16);
+    expect(ALLOW.length).toBeLessThanOrEqual(9);
+    expect(RESOURCE_ALLOW.length).toBeLessThanOrEqual(17);
     for (const entry of [...ALLOW, ...RESOURCE_ALLOW]) {
       expect(readFileSync(join(SRC, entry.file), "utf8"), entry.why).toContain(entry.needle.replace(/\($/, ""));
       expect(entry.why.length).toBeGreaterThan(10);

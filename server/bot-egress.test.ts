@@ -132,7 +132,7 @@ describe("the hand-off boundary reaches the store only through its ports", () =>
   const imports = [...source.matchAll(/^import (type )?(.*?) from "([^"]+)";$/gm)].map(match => ({ typeOnly: match[1] !== undefined, names: match[2], from: match[3] }));
   // ./done-when.ts: U4 S3's one done-when line check (it imports only ./redact.ts), read at the hand-off boundary.
   const ALLOWED = new Set([
-    "./done-when.ts", "./app-trigger-zero.ts", "./boundary-ports.ts", "./card-result-source.ts", "./contracts.ts", "./coordination-budget.ts", "./coordination-target.ts", "./database.ts", "./delegated-reply-check.ts", "./delegations.ts", "./event-limit.ts",
+    "./done-when.ts", "./app-trigger-zero.ts", "./boundary-ports.ts", "./card-result-source.ts", "./contracts.ts", "./coordination-budget.ts", "./coordination-target.ts", "./database.ts", "./delegated-reply-check.ts", "./delegation-pack/types.ts", "./delegations.ts", "./event-limit.ts",
     "./execution-audience.ts", "./fold-steps.ts", "./handoff-outcome.ts", "./handoff-reply.ts", "./handoff-replay.ts", "./human-principals.ts", "./internal-capabilities.ts", "./peer-approval.ts",
     "./project-prompt.ts", "./project-records.ts", "./project-review.ts", "./project-routines.ts", "./result-egress.ts", "./room-requests.ts", "./routine-permissions.ts",
     "./shared-work.ts", "./task-resolution.ts", "./released-text.ts", "./murage-status.ts", "./bot-egress.ts", "./store.ts", "./work-admission.ts", "node:crypto", "node:http",

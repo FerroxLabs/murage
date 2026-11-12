@@ -1,0 +1,25 @@
+P11D SCANNER FIXTURE HIT RATE 57/57 (100%); PARSE-FAILURE COUNT 0
+✔ p11d: crev4 exact parenthesized multiline CIM input is rejected (578.904393ms)
+✔ p11d: valid hostile fixtures are detected without masking parser failures (674.916464ms)
+✔ p11d: malformed PowerShell, JavaScript, C# and batch source fails closed (1794.528905ms)
+✔ p11d: harmless syntax and command-looking data do not produce violations (980.069451ms)
+✔ p11d: a missing PowerShell parser fails closed (6.358252ms)
+✔ p11d: JavaScript bindings respect lexical scopes (8.126254ms)
+P11E SCANNER FIXTURE HIT RATE 94/94 (100%); PARSE-FAILURE COUNT 0
+P11E ALLOWED FIXTURES 45/45
+✔ p11e: crev5 exact parenthesized imported alias is rejected (25.497921ms)
+✔ p11e: every valid hostile allowlist fixture fails recursively (173.266766ms)
+✔ p11e: each allowed process form and harmless data remain accepted (52.165379ms)
+P11F BANNED FIXTURES 81/81; PARSE-FAILURE COUNT 0
+P11F ALLOWED FIXTURES 15/15
+✔ p11f: crev6 exact Function-constructor input is rejected (24.693574ms)
+✔ p11f: MAIN cheap structural bans reject valid JavaScript (141.780626ms)
+✔ p11f: ordinary local functions, data and lexical scopes remain accepted (34.599391ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4334.019201

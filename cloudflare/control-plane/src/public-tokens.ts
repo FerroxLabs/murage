@@ -19,7 +19,10 @@ import { DB_NOW, fencedBatch, q, type HomeLease, type Q } from "./billing-lease"
 export const TOKEN_PURPOSES = ["confirm", "repudiate", "clarify"] as const;
 export type TokenPurpose = (typeof TOKEN_PURPOSES)[number];
 export type ClarifyAction = "withdraw_now" | "cancel_at_end";
-export type SubjectKind = "notice" | "cancellation";
+export type SubjectKind = "notice" | "cancellation" | "device_join";
+/** email_gen of a device_join link: a constant. Those links compare the email address only (door-confirm DESIGN.md r8, handoff check 2): a
+ *  Supabase updated_at moves on an ordinary sign-in, which would otherwise kill a Yes link during its own wait. */
+export const DEVICE_JOIN_EMAIL_GEN = "-";
 
 export const LINK_TTL_MS = 7 * 86_400_000;
 /** The refund deadline: nothing is valid past received + 14 days. */
@@ -150,6 +153,8 @@ export interface IssueOptions {
   /** Cancellation hold links only (WP8 r2): valid through capAt itself, without the 7-days-from-issue limit. The subject's own state decides
    *  whether the link still acts (a hold is possible only while the cancellation is open and before its hold_until). */
   throughCap?: boolean;
+  /** device_join links only (required for them): the lifetime from now in ms, still capped by capAt when one is given. */
+  ttlMs?: number;
   /** Issue only if this condition holds at the write (an `EXISTS (...)` text and its binds): WP8 r2 issues a hold link only while its mail
    *  delivery is still claimed by the caller, so a sender whose claim lapsed never replaces the link another sender delivered. */
   when?: Q;
@@ -171,10 +176,12 @@ export async function prepareToken(env: Env, deps: TokenDeps, b: TokenBinding, o
   if (b.classificationRev !== undefined && !Number.isInteger(b.classificationRev)) throw new Error("invalid_binding");
   const email = b.accountEmail.trim().toLowerCase();
   if (!b.subjectId || !b.accountId || !email || !b.supabaseUpdatedAt || !Number.isFinite(b.receivedAt)) throw new Error("invalid_binding");
-  if (b.capAt !== undefined && (b.subjectKind !== "cancellation" || !Number.isFinite(b.capAt))) throw new Error("invalid_binding");
+  if (b.capAt !== undefined && (b.subjectKind === "notice" || !Number.isFinite(b.capAt))) throw new Error("invalid_binding");
+  if ((b.subjectKind === "device_join") !== (opts.ttlMs !== undefined) || (opts.ttlMs !== undefined && !(opts.ttlMs > 0))) throw new Error("invalid_binding");
+  if (b.subjectKind === "device_join" && b.supabaseUpdatedAt !== DEVICE_JOIN_EMAIL_GEN) throw new Error("invalid_binding");
   const now = clock(deps);
   if (opts.throughCap && (b.subjectKind !== "cancellation" || b.capAt === undefined)) throw new Error("invalid_binding");
-  const expiresAt = opts.throughCap ? b.capAt! : Math.min(now + LINK_TTL_MS, b.capAt ?? b.receivedAt + RECEIPT_CAP_MS);
+  const expiresAt = opts.throughCap ? b.capAt! : b.subjectKind === "device_join" ? Math.min(now + opts.ttlMs!, b.capAt ?? Infinity) : Math.min(now + LINK_TTL_MS, b.capAt ?? b.receivedAt + RECEIPT_CAP_MS);
   if (expiresAt <= now) return null;
   const selector = randomB64u(16);
   const secret = randomB64u(32);
@@ -218,15 +225,27 @@ export async function peekToken(env: Env, deps: TokenDeps, selector: string, sec
 // --- redeem -----------------------------------------------------------------------------------------------------------------------
 
 /** All the checks, no writes. `action` is the button the request names (clarify). A token of another purpose or button is link_invalid. */
-export async function verifyToken(env: Env, deps: TokenDeps, selector: string, secret: string, purpose: TokenPurpose, action?: ClarifyAction): Promise<Verified | Refusal> {
+export async function verifyToken(env: Env, deps: TokenDeps, selector: string, secret: string, purpose: TokenPurpose, action?: ClarifyAction,
+  opts: { skipIdentity?: boolean } = {}): Promise<Verified | Refusal> {
   const now = clock(deps);
   const row = await genuine(env, selector, secret);
   if (!row || row.purpose !== purpose || row.action !== (action ?? "")) return { ok: false, code: "link_invalid" };
   if (row.usedAt !== null) return { ok: false, code: "link_used", row };
   if (now >= row.expiresAt) return { ok: false, code: "link_expired", row };
-  const identity = await readIdentity(env, deps, row.accountId);
+  // A device_join No or Remove only reduces power, so it never needs the identity reader (opts.skipIdentity); its Yes compares the email only.
+  if (row.subjectKind === "device_join" && opts.skipIdentity) {
+    return { ok: true, row, identity: { id: row.accountId, email: row.email, updatedAt: row.emailGen }, opId: crypto.randomUUID(), now,
+      ...(deps.now ? { clock: deps.now } : {}) };
+  }
+  // A device_join link carries the LOCAL Cloud account id; the reader answers for the Supabase sub that account is mapped to.
+  const readId = row.subjectKind === "device_join"
+    ? (await env.DB.prepare("SELECT sub FROM supabase_identities WHERE user_id=?").bind(row.accountId).first<{ sub: string }>())?.sub ?? null
+    : row.accountId;
+  if (readId === null) return { ok: false, code: "identity_unavailable" };
+  const read = await readIdentity(env, deps, readId);
+  const identity = read && row.subjectKind === "device_join" ? { ...read, id: row.accountId } : read;
   if (!identity) return { ok: false, code: "identity_unavailable" };
-  if (identity.email !== row.email || identity.updatedAt !== row.emailGen) return { ok: false, code: "identity_changed" };
+  if (identity.email !== row.email || (row.subjectKind !== "device_join" && identity.updatedAt !== row.emailGen)) return { ok: false, code: "identity_changed" };
   // The reader can take seconds: a link that expired while it ran is expired (commitToken re-checks on the database's clock as well).
   if (clock(deps) >= row.expiresAt) return { ok: false, code: "link_expired", row };
   return { ok: true, row, identity, opId: crypto.randomUUID(), now, ...(deps.now ? { clock: deps.now } : {}) };

@@ -129,7 +129,9 @@ describe("a shell startup file asks at every level", () => {
     expect(verdict("No limits", cmd, OWNER_TURN)).toMatchObject({ source: "no-limits", rule: "held=gate:shell-rc" });
     expect(verdict("No limits", cmd, OWNER_TURN).approve).toBeTruthy();
     const marked = verdict("No limits", cmd, { ownerStarted: true, fullAccessOrigin: "owner" });
-    expect(marked).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" }); // the reader holds a marked turn before the key guard
+    // NOLIM 1.0.19: the reader still holds a marked turn before the key guard; unreadable is not a wipe row, so the owner's No limits turn runs it
+    expect(marked).toMatchObject({ source: "no-limits" });
+    expect(marked.approve).toBeTruthy();
   });
 });
 

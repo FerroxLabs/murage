@@ -1,0 +1,12 @@
+BASE d17265ac2df4d83aee7e134a7b7b64cbb9c3debd
+COMMAND node_modules/.bin/vitest run server/decision/contract.test.ts
+
+ RUN  v4.1.12 /work
+
+ ✓ server/decision/contract.test.ts (16 tests) 81ms
+
+ Test Files  1 passed (1)
+      Tests  16 passed (16)
+   Start at  08:14:52
+   Duration  4.37s (transform 3.20s, setup 3.92s, import 261ms, tests 81ms, environment 0ms)
+

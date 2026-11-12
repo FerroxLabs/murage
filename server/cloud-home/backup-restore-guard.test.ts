@@ -29,7 +29,7 @@ function runGuard(present: string[]): { status: number | null; reached: boolean;
   let body = guard;
   for (const path of GUARDED) body = body.split(`"${path}:`).join(`"${root}${path}:`);
   for (const path of GUARDED) expect(body).toContain(`"${root}${path}:`);
-  const result = spawnSync("bash", ["-c", `set -euo pipefail\n${body}echo REACHED`], { encoding: "utf8" });
+  const result = spawnSync("bash", ["-c", `set -euo pipefail\n${body}echo REACHED`], { windowsHide: true, encoding: "utf8" });
   return { status: result.status, reached: result.stdout.includes("REACHED"), stderr: result.stderr };
 }
 

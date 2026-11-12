@@ -1,0 +1,5 @@
+PASS snapshot worker execution plus empty proof fits 60-second deadline
+PASS snapshot worker has explicit result file
+PASS deadline wrapper reads isolated worker result
+PASS expired cleanup never starts a native worker
+PASS worker timeout propagates without an unbounded fallback

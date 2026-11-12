@@ -12,7 +12,7 @@ import { LEARNING_EVENT_KINDS_V4, LEARNING_EVENT_KINDS_V5 } from "./learning-kin
 import { startupMark } from "../startup-trace.ts";
 import { revocationIndexReady } from "./revocation.ts";
 import { lineageDowngradeMarked, lineageDowngradeSlice } from "./lineage-backfill.ts";
-import { OPTIONAL_INDEXES, buildOptionalIndexOffThread, dropOptionalIndexes, optionalIndexReady, optionalIndexText, registerOptionalIndex } from "./optional-index.ts";
+import { REQUIRED_INDEXES, registerRequiredIndex, OPTIONAL_INDEXES, buildOptionalIndexOffThread, dropOptionalIndexes, optionalIndexReady, optionalIndexText, registerOptionalIndex } from "./optional-index.ts";
 import { ROOT_SET_RECLAIM_TABLES } from "./root-set-reclaim.ts";
 import { DEFAULT_MEMORY_LEARNING, DEFAULT_MEMORY_LEARNING_V2, memoryLearningSchema, memoryLearningV1Schema, memoryLearningV2Schema, upgradeMemoryLearning, downgradeMemoryLearning, upgradeMemoryLearningV3, downgradeMemoryLearningV3, learningSpendSeed, seedLearningSpend } from "./learning-policy.ts";
 import { CONSOLIDATION_V11_FIELDS, learningSpendMonth } from "../../shared/memory-learning-contract.ts";
@@ -20,6 +20,8 @@ import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 import { foldMapLost, repairFoldMap } from "./revoke-fold.ts";
 import { removeCopy, SETTLE_INTO_SUFFIX, settledCopyKept, settleFtsCopy } from "../settle-copy.ts";
 import { noteWrittenFile } from "../io-written.ts";
+import { SETTLE_SEEDING_FOLD_PREDICATE } from "./settle-queries.ts";
+export { SETTLE_SEEDING_FOLD_PREDICATE } from "./settle-queries.ts";
 
 /** Ordinary authoritative tables only. Search indexes are rebuilt separately. */
 export const MEMORY_SCHEMA_V1 = `
@@ -606,6 +608,15 @@ export const EVIDENCE_SOURCE_INDEX = "memory_evidence_source";
 export const EVIDENCE_SOURCE_INDEX_SQL = `CREATE INDEX IF NOT EXISTS ${EVIDENCE_SOURCE_INDEX} ON memory_evidence(source_id)`;
 /** Indexes a file from schema 8 on may hold or not, each with the exact text SQLite stores for it. (Superseded by
  * REVOKE_LATE_OBJECTS: never created any more, still accepted and dropped, for a development file that has it.) */
+/** Direct settlement requires these access paths. The existing optional-index worker builds
+ * them; absent indexes refuse classification, so opening a file never adds a foreground scan. */
+export const SETTLE_SEEDING_FOLD = registerOptionalIndex({ name: "memory_revoke_jobs_seeding_fold", table: "memory_revoke_jobs", minSchemaVersion: 10,
+  sql: `CREATE INDEX IF NOT EXISTS memory_revoke_jobs_seeding_fold ON memory_revoke_jobs(revoke_id) WHERE ${SETTLE_SEEDING_FOLD_PREDICATE}` });
+export const SETTLE_ACTIVE_FLOW = registerOptionalIndex({ name: "memory_revoke_jobs_active_flow", table: "memory_revoke_jobs", minSchemaVersion: 10,
+  sql: "CREATE INDEX IF NOT EXISTS memory_revoke_jobs_active_flow ON memory_revoke_jobs(revoke_id) WHERE state='active' AND phase='flow'" });
+/** Bounded raw candidates; eligibility and audience probes happen only after this cap. */
+export const REVOKE_MARK_CAP = registerOptionalIndex({ name: "memory_revoke_jobs_mark_cap", table: "memory_revoke_jobs", minSchemaVersion: 10,
+  sql: "CREATE INDEX IF NOT EXISTS memory_revoke_jobs_mark_cap ON memory_revoke_jobs(started_lsn DESC, revoke_id) WHERE state='active' AND phase='mark'" });
 /** 1.0.2 rc3f: the live-receipts partial index (revokeAllDisclosures and the sliced receipt passes use it when present, and read the same
  * rows by the state index or the key range without it). Building it reads every receipt, so it is NOT made at open: ensureDisclosuresLiveIndex
  * builds it through the idle-gated worker (buildOptionalIndexesWhenIdle). Validation accepts a file with or without it, with this exact text. */
@@ -658,9 +669,16 @@ export const TOMBSTONE_FORGETS = registerOptionalIndex({ name: TOMBSTONE_FORGETS
 export const SOURCE_LSN_FLOOR_INDEX = "memory_source_lsn_created";
 export const SOURCE_LSN_FLOOR = registerOptionalIndex({ name: SOURCE_LSN_FLOOR_INDEX, table: "memory_source_lsn", minSchemaVersion: 13, preListen: true,
   sql: `CREATE INDEX IF NOT EXISTS ${SOURCE_LSN_FLOOR_INDEX} ON memory_source_lsn(created_lsn)` });
+// SQLite checks child keys even when inserting a parent source version. Without
+// this index the owner's insert scans all evidence. Build once before listen,
+// keep a bounded fallback on failure, retry while idle and on start, and drop on downgrade.
+export const EVIDENCE_VERSION = registerRequiredIndex({ name: "memory_evidence_source_version", table: "memory_evidence", minSchemaVersion: 9, preListen: true,
+  sql: "CREATE INDEX IF NOT EXISTS memory_evidence_source_version ON memory_evidence(source_id,source_revision)" });
+export const REVOKE_JOB_STATE = registerOptionalIndex({ name: "memory_revoke_jobs_state_kind_phase", table: "memory_revoke_jobs", minSchemaVersion: 13, preListen: true,
+  sql: "CREATE INDEX IF NOT EXISTS memory_revoke_jobs_state_kind_phase ON memory_revoke_jobs(state,kind,phase,revoke_id)" });
 const LATE_INDEXES = new Map([
   [EVIDENCE_SOURCE_INDEX, { tbl: "memory_evidence", sql: EVIDENCE_SOURCE_INDEX_SQL.replace(" IF NOT EXISTS", "") }],
-  ...OPTIONAL_INDEXES.map(index => [index.name, { tbl: index.table, sql: optionalIndexText(index) }] as const),
+  ...[...REQUIRED_INDEXES, ...OPTIONAL_INDEXES].map(index => [index.name, { tbl: index.table, sql: optionalIndexText(index) }] as const),
 ]);
 /** Starts the live-receipts index on a worker thread (the idle-gated sweep; tests call it directly). Readers check optionalIndexReady(db, DISCLOSURES_LIVE_INDEX). */
 export function ensureDisclosuresLiveIndex(db: DatabaseSync, options: { inline?: boolean } = {}): Promise<boolean> {
@@ -693,6 +711,10 @@ export function ownerPinIndexPresent(db: DatabaseSync): boolean {
  *  - memory_revoke_fold: the 1.0.3 revoke fold's map (revoke-fold.ts), one row per folded revoke id to the fold bulk that took it over,
  *    permanent (old marks keep their ids); bulk_id is how a fold bulk is recognised after its job row is pruned or recreated. */
 export const REVOKE_LATE_SQL = `
+CREATE TABLE IF NOT EXISTS memory_capture_deferred (
+ source_id TEXT PRIMARY KEY NOT NULL, source TEXT NOT NULL CHECK(json_valid(source))) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS memory_capture_deferred_order ON memory_capture_deferred(
+ json_extract(source,'$.threadId'),json_extract(source,'$.sequence'),source_id);
 CREATE TABLE IF NOT EXISTS memory_deny (
  kind TEXT NOT NULL CHECK(kind IN ('thread','scope')), id TEXT NOT NULL, epoch INTEGER NOT NULL, created_at INTEGER NOT NULL,
  PRIMARY KEY(kind,id)) WITHOUT ROWID;
@@ -721,8 +743,8 @@ CREATE INDEX IF NOT EXISTS memory_revoke_fold_bulk ON memory_revoke_fold(bulk_id
  * itself and refuses these (MEMORY_SCHEMA_UNSUPPORTED), so the step to v10 drops them; the next 1.0.3 open makes them again (ensureRevokeLateObjects)
  * and rebuilds the map's rows from the fold bulks' job rows, which stay (revoke-fold.ts repairFoldMap). */
 export const REVOKE_LATE_103_NAMES = ["memory_revoke_fold_bulk", "memory_revoke_fold"] as const;
-const REVOKE_LATE_103_DROP = "DROP INDEX IF EXISTS memory_revoke_fold_bulk; DROP TABLE IF EXISTS memory_revoke_fold;";
-const REVOKE_LATE_DROP = `DROP TRIGGER IF EXISTS memory_evidence_by_source_insert; DROP TRIGGER IF EXISTS memory_evidence_by_source_delete;
+const REVOKE_LATE_103_DROP = "DROP TABLE IF EXISTS memory_capture_deferred; DROP INDEX IF EXISTS memory_revoke_fold_bulk; DROP TABLE IF EXISTS memory_revoke_fold;";
+const REVOKE_LATE_DROP = `DROP TABLE IF EXISTS memory_capture_deferred; DROP TRIGGER IF EXISTS memory_evidence_by_source_insert; DROP TRIGGER IF EXISTS memory_evidence_by_source_delete;
  DROP TRIGGER IF EXISTS memory_source_origins_insert; DROP TABLE IF EXISTS memory_evidence_by_source; DROP TABLE IF EXISTS memory_source_origins;
  DROP INDEX IF EXISTS memory_disclosures_live; DROP TABLE IF EXISTS memory_late_build; DROP TABLE IF EXISTS memory_revocation_targets; DROP TABLE IF EXISTS memory_deny; DROP TABLE IF EXISTS memory_revoke_fold;`;
 let revokeLateExpected: Map<string, { type: string; tbl_name: string; sql: string | null }> | null = null;
@@ -2784,10 +2806,11 @@ export function downgradeMemorySchema(db: DatabaseSync, to: MemoryDowngradeTarge
   // same file and the next 1.0.18 start makes the indexes again before listen.
   if (from === 13 && to === 13) {
     const present = db.prepare("SELECT 1 FROM sqlite_schema WHERE type='index' AND name=?");
-    const extra = OPTIONAL_INDEXES.filter(index => index.table.startsWith("memory_") && !OPTIONAL_INDEXES_KNOWN_TO_117.has(index.name) && present.get(index.name));
-    if (!extra.length) return { status: "already-v13", from, to };
+    const extra = [...REQUIRED_INDEXES, ...OPTIONAL_INDEXES].filter(index => index.table.startsWith("memory_") && !OPTIONAL_INDEXES_KNOWN_TO_117.has(index.name) && present.get(index.name));
+    const deferred = db.prepare("SELECT 1 FROM sqlite_schema WHERE name='memory_capture_deferred'").get();
+    if (!extra.length && !deferred) return { status: "already-v13", from, to };
     db.exec("BEGIN IMMEDIATE");
-    try { for (const index of extra) db.exec(`DROP INDEX IF EXISTS ${index.name}`); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; }
+    try { for (const index of extra) db.exec(`DROP INDEX IF EXISTS ${index.name}`); db.exec("DROP TABLE IF EXISTS memory_capture_deferred"); db.exec("COMMIT"); } catch (error) { db.exec("ROLLBACK"); throw error; }
     return { status: "downgraded", from, to };
   }
   if (from === 10 && to === 10) {
@@ -2820,7 +2843,8 @@ export function downgradeMemorySchema(db: DatabaseSync, to: MemoryDowngradeTarge
     // branch walks, the pending browser checks and the places of the fills) exist only from 1.0.2 on. An older build's archive inspector accepts no object it
     // does not write itself, and an older writer would not keep them: they go, with their completion state, and the next newer start builds them again.
     // every optional index leaves first: an older build's inspector accepts none of them (1.0.2 and later make and keep their own)
-    if (to >= 10) { for (const index of OPTIONAL_INDEXES) if (!OPTIONAL_INDEXES_KEPT_FOR_102.has(index.name)) db.exec(`DROP INDEX IF EXISTS ${index.name}`); }
+    db.exec("DROP TABLE IF EXISTS memory_capture_deferred");
+    if (to >= 10) { for (const index of [...REQUIRED_INDEXES, ...OPTIONAL_INDEXES]) if (!OPTIONAL_INDEXES_KEPT_FOR_102.has(index.name)) db.exec(`DROP INDEX IF EXISTS ${index.name}`); }
     else dropOptionalIndexes(db);
     if (from >= 10) dropRecordKeys(db); // the 1.0.3 derived objects (above): no older build knows them
     // The claim's settle sweep and the park reconciliation key their done markers on the app version, and a round trip through

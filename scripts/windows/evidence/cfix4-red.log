@@ -1,0 +1,362 @@
+✖ p11c 1: cleanup removes the fixed wrapper before any bounded snapshot diff (1.673862ms)
+✖ p11c 2: reviewer snapshot helper >300s has one job owner for every Node native (0.562576ms)
+✖ p11c 3: scanner flags every reviewer form recursively, including test/check/mutate (0.345248ms)
+✖ p11c 3: complete Windows tree passes exact-path ownership scanner (0.209288ms)
+✖ p11c 4: four additional real source mutants exist (0.166839ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 0
+ℹ fail 5
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 96.153603
+
+✖ failing tests:
+
+test at scripts/windows/p11c.node-test.mjs:8:1
+✖ p11c 1: cleanup removes the fixed wrapper before any bounded snapshot diff (1.673862ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /wrapperTask=/. Input:
+  
+  '# OpenSSH is not the desktop. Register /IT under an explicitly named logged-on\n' +
+    '# account; no password, SYSTEM account, service session or stored credential.\n' +
+    '[CmdletBinding()]\n' +
+    'param(\n' +
+    "  [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$Commit,\n" +
+    "  [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$PackageSha256,\n" +
+    '  [Parameter(Mandatory=$true)][string]$InteractiveUser,\n' +
+    '  [Parameter(Mandatory=$true)][string]$OutputDirectory,\n' +
+    "  [string]$Executable = 'C:\\murage-ci\\app\\Murage.exe',\n" +
+    "  [string]$ScenarioScript = 'C:\\murage-ci\\source\\scripts\\windows\\full-packaged-scenario.ps1',\n" +
+    "  [ValidateSet('Desktop','Handoff')][string]$Mode='Desktop',\n" +
+    '  [string]$HandoffReceipt,\n' +
+    "  [string]$Node='C:\\murage-ci\\node\\node.exe',\n" +
+    "  [string]$FeedDirectory='C:\\murage-ci\\feed',\n" +
+    '  [ValidateRange(60,3600)][int]$TimeoutSeconds = 1200\n' +
+    ')\n' +
+    "$ErrorActionPreference = 'Stop'\n" +
+    'Set-StrictMode -Version Latest\n' +
+    "if ($env:OS -ne 'Windows_NT') { throw 'Windows required' }\n" +
+    ". (Join-Path $PSScriptRoot 'gate-paths.ps1')\n" +
+    ". (Join-Path $PSScriptRoot 'run-ledger.ps1')\n" +
+    ". (Join-Path $PSScriptRoot 'ownership.ps1')\n" +
+    ". (Join-Path $PSScriptRoot 'finalize-receipt.ps1')\n" +
+    ". (Join-Path $PSScriptRoot 'gate-admission.ps1')\n" +
+    'Assert-GateAdmission -Mode $Mode -Operator\n' +
+    'foreach($path in @($PSScriptRoot,$Executable,$ScenarioScript,$OutputDirectory,$Node,$FeedDirectory,$HandoffReceipt) | Where-Object {$_}){[void](Assert-GatePath $path)}\n' +
+    '$identity=Assert-StagedPackage $PackageSha256\n' +
+    "if($Commit -ne $identity.commit){throw 'Caller commit differs from packaged build provenance'}\n" +
+    "# schtasks can otherwise ask for another account's password. This launcher\n" +
+    "# intentionally has no credential path: SSH as the desktop's logged-on user.\n" +
+    '$account = New-Object Security.Principal.NTAccount($InteractiveUser)\n' +
+    '$ownerSid = $account.Translate([Security.Principal.SecurityIdentifier]).Value\n' +
+    "if ($Mode -eq 'Handoff') {\n" +
+    "  if($env:COMPUTERNAME -ine 'gate-win-nogit'){throw 'Handoff is gate-win-nogit only'}\n" +
+    "  $marker=Get-Content -LiteralPath 'C:\\murage-ci\\gate-user.json' -Raw | ConvertFrom-Json\n" +
+    "  if($marker.sid -ne $ownerSid){throw 'Task must use provisioned gate user'}\n" +
+    "  $ScenarioScript='C:\\murage-ci\\source\\scripts\\windows\\updates-handoff.ps1'\n" +
+    "} elseif (-not $HandoffReceipt) {throw 'Desktop gate requires the handoff receipt and its artifacts'}\n" +
+    "if ($Mode -ne 'Handoff' -and $ownerSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { throw 'SSH/task registration must use the same account as the logged-on Desktop user; no credentials are accepted' }\n" +
+    "$root = 'C:\\murage-ci'\n" +
+    '$Executable = (Resolve-Path -LiteralPath $Executable).Path\n' +
+    '$ScenarioScript = (Resolve-Path -LiteralPath $ScenarioScript).Path\n' +
+    "$output = [IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\\')\n" +
+    'foreach ($file in @($Executable, $ScenarioScript, $output)) {\n' +
+    "  if (-not $file.StartsWith($root + '\\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Inputs and evidence must be under C:\\murage-ci' }\n" +
+    '}\n' +
+    "if (Test-Path -LiteralPath $output) { throw 'OutputDirectory must be new (prevents stale evidence)' }\n" +
+    'New-GateDirectory $output\n' +
+    "$prefix='MurageCI-'+[Guid]::NewGuid().ToString('N')+'-'\n" +
+    "$ledger=Join-Path $output 'launcher-ledger.jsonl'\n" +
+    "[IO.File]::WriteAllText($ledger,'')\n" +
+    "$request = Join-Path $output 'request.json'\n" +
+    "[ordered]@{ prefix=$prefix; wrapperJob=('Global\\'+$prefix+'wrapper'); ledger=$ledger; packageSha256=$PackageSha256; executable=$Executable; scenarioScript=$ScenarioScript; commit=$Commit; timeoutSeconds=$TimeoutSeconds; mode=$Mode; handoffReceipt=$HandoffReceipt; node=$Node; feedDirectory=$FeedDirectory } |\n" +
+    '  ConvertTo-Json | Set-Content -LiteralPath $request -Encoding UTF8\n' +
+    ". (Join-Path $PSScriptRoot 'owned-process.ps1')\n" +
+    "$task = $prefix+'wrapper'\n" +
+    "$scheduler = Join-Path $env:SystemRoot 'System32\\schtasks.exe'\n" +
+    "$powershell = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'\n" +
+    "$action = ((@($powershell, '-NoP', '-NonI', '-EP', 'Bypass', '-W', 'Hidden', '-File', (Join-Path $PSScriptRoot 'desktop-task.ps1'), '-Request', $request) | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' ')\n" +
+    "if ($action.Length -gt 260) { throw 'Task action exceeds schtasks /TR limit; use a shorter OutputDirectory' }\n" +
+    '# /SC ONCE is only a safety trigger; /Run starts the task immediately. A past\n' +
+    '# date prevents an accidental second run if the machine stays up overnight.\n' +
+    '$launcherBefore=@(Get-TaskSnapshot)\n' +
+    '$launcherCleanup=$null\n' +
+    '$registered = $false\n' +
+    '$complete = $false\n' +
+    '$wrapperJob=$null\n' +
+    '$wrapperJobEmpty=$false\n' +
+    "$saved=Set-FixtureEnvironment (Join-Path $output 'launcher-env')\n" +
+    'try {\n' +
+    '  Initialize-OwnedProcess\n' +
+    "  $wrapperJob=[MurageGateProcess]::CreateWrapperJob('Global\\'+$prefix+'wrapper')\n" +
+    "  Add-RunLedger $ledger $prefix 'task' $task\n" +
+    "  $create = Invoke-WindowsNative $scheduler @('/Create', '/TN', $task, '/TR', $action, '/SC', 'ONCE', '/SD', '01/01/2000', '/ST', '00:00', '/RU', $InteractiveUser, '/IT', '/RL', 'LIMITED')\n" +
+    '  if ($create.ExitCode -ne 0) { throw "Interactive task registration failed: $($create.Stdout) $($create.Stderr)" }\n' +
+    '  $registered = $true\n' +
+    "  $xml = Invoke-WindowsNative $scheduler @('/Query', '/TN', $task, '/XML')\n" +
+    '  if ($xml.ExitCode -ne 0) { throw "Task XML readback failed: $($xml.Stderr)" }\n' +
+    "  $xml.Stdout | Set-Content -LiteralPath (Join-Path $output 'task.xml') -Encoding UTF8\n" +
+    '  [xml]$definition = $xml.Stdout\n' +
+    "  if ($definition.Task.Principals.Principal.LogonType -ne 'InteractiveToken') { throw 'Task is not InteractiveToken (/IT)' }\n" +
+    "  $started = Invoke-WindowsNative $scheduler @('/Run', '/TN', $task)\n" +
+    '  if ($started.ExitCode -ne 0) { throw "Task start failed: $($started.Stderr)" }\n' +
+    '  $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds + 90)\n' +
+    "  $statusFile = Join-Path $output 'task-status.json'\n" +
+    '  while (-not (Test-Path -LiteralPath $statusFile -PathType Leaf)) {\n' +
+    "    if ([DateTime]::UtcNow -gt $deadline) { throw 'Interactive task timed out; verify the named user is logged on to the Desktop' }\n" +
+    '    Start-Sleep -Milliseconds 500\n' +
+    '  }\n' +
+    '  $status = Get-Content -LiteralPath $statusFile -Raw | ConvertFrom-Json\n' +
+    '  # Wait for the task process itself to finish after committing its status.\n' +
+    "  $service = New-Object -ComObject 'Schedule.Service'\n" +
+    '  $service.Connect()\n' +
+    "  $registeredTask = $service.GetFolder('\\').GetTask($task)\n" +
+    '  while ($registeredTask.State -eq 4) {\n' +
+    "    if ([DateTime]::UtcNow -gt $deadline) { throw 'Task wrote status but did not exit' }\n" +
+    '    Start-Sleep -Milliseconds 500\n' +
+    '  }\n' +
+    "  [ordered]@{ name=$task; lastRunTime=$registeredTask.LastRunTime.ToString('O'); lastTaskResult=$registeredTask.LastTaskResult; state=$registeredTask.State } |\n" +
+    "    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'task-result.json') -Encoding UTF8\n" +
+    '  $complete = $true\n' +
+    "  if (Test-Path -LiteralPath (Join-Path $output 'result.txt')) { Get-Content -LiteralPath (Join-Path $output 'result.txt') }\n" +
+    '  if (-not $status.ok -or $registeredTask.LastTaskResult -ne 0) { throw "Desktop gate failed: $($status.error); evidence=$output" }\n' +
+    '} finally {\n' +
+    '  try {\n' +
+    '  Complete-RunLedger -Ledger $ledger -Prefix $prefix -Before $launcherBefore -Enumerate {\n' +
+    '    Get-TaskSnapshot\n' +
+    '  } -Delete {param($ownedTask)\n' +
+    "    if($ownedTask.id -ieq ('\\'+$task)) {\n" +
+    '      Remove-WrapperTask -Item $ownedTask -Prefix $prefix -Before $launcherBefore -Empty {param($budget) $wrapperJob.TerminateAndProveEmpty($budget) }\n' +
+    '    } else {Remove-SnapshotTask $ownedTask}\n' +
+    '  } -Result ([ref]$launcherCleanup)\n' +
+    '  # Even if the task disappeared before enumeration, its job must be empty.\n' +
+    "  if($null -ne $wrapperJob){$wrapperJobEmpty=$wrapperJob.TerminateAndProveEmpty();if(-not $wrapperJobEmpty){throw 'Wrapper job not empty'}}\n" +
+    '\n' +
+    '  } catch {\n' +
+    '    $message=$_.Exception.Message\n' +
+    "    [ordered]@{status='FAIL';commit=$Commit;packageSha256=$PackageSha256;task=('\\'+$task);error=$message} |\n" +
+    "      ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'failure.json') -Encoding UTF8\n" +
+    "    ('FAIL '+$message) | Set-Content -LiteralPath (Join-Path $output 'result.txt') -Encoding UTF8\n" +
+    '    throw\n' +
+    '  } finally {\n' +
+    '    try {\n' +
+    "      @{wrapper=@{name=('Global\\'+$prefix+'wrapper');empty=$wrapperJobEmpty};nativeJobs=@([MurageGateProcess]::Proofs.ToArray())} |\n" +
+    "        ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $output 'launcher-jobs.json') -Encoding UTF8\n" +
+    "      $launcherCleanup | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $output 'launcher-cleanup.json') -Encoding UTF8\n" +
+    '    } finally {\n' +
+    '      if($null -ne $wrapperJob){$wrapperJob.Dispose()}\n' +
+    '      Restore-FixtureEnvironment $saved\n' +
+    '    }\n' +
+    '  }\n' +
+    '}\n' +
+    '\n' +
+    "if(-not $complete -or -not $status.ok){throw 'Child did not finish successfully; no receipt'}\n" +
+    '$requestDataForFinalizer=Get-Content -LiteralPath $request -Raw | ConvertFrom-Json\n' +
+    'Finalize-GateReceipt -Output $output -Status $status -Request $requestDataForFinalizer -LauncherCleanup $launcherCleanup\n'
+  
+      at TestContext.<anonymous> (file:///work/scripts/windows/p11c.node-test.mjs:10:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: `# OpenSSH is not the desktop. Register /IT under an explicitly named logged-on\n# account; no password, SYSTEM account, service session or stored credential.\n[CmdletBinding()]\nparam(\n  [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$Commit,\n  [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$PackageSha256,\n  [Parameter(Mandatory=$true)][string]$InteractiveUser,\n  [Parameter(Mandatory=$true)][string]$OutputDirectory,\n  [string]$Executable = 'C:\\murage-ci\\app\\Murage.exe',\n  [string]$ScenarioScript = 'C:\\murage-ci\\source\\scripts\\windows\\full-packaged-scenario.ps1',\n  [ValidateSet('Desktop','Handoff')][string]$Mode='Desktop',\n  [string]$HandoffReceipt,\n  [string]$Node='C:\\murage-ci\\node\\node.exe',\n  [string]$FeedDirectory='C:\\murage-ci\\feed',\n  [ValidateRange(60,3600)][int]$TimeoutSeconds = 1200\n)\n$ErrorActionPreference = 'Stop'\nSet-StrictMode -Version Latest\nif ($env:OS -ne 'Windows_NT') { throw 'Windows required' }\n. (Join-Path $PSScriptRoot 'gate-paths.ps1')\n. (Join-Path $PSScriptRoot 'run-ledger.ps1')\n. (Join-Path $PSScriptRoot 'ownership.ps1')\n. (Join-Path $PSScriptRoot 'finalize-receipt.ps1')\n. (Join-Path $PSScriptRoot 'gate-admission.ps1')\nAssert-GateAdmission -Mode $Mode -Operator\nforeach($path in @($PSScriptRoot,$Executable,$ScenarioScript,$OutputDirectory,$Node,$FeedDirectory,$HandoffReceipt) | Where-Object {$_}){[void](Assert-GatePath $path)}\n$identity=Assert-StagedPackage $PackageSha256\nif($Commit -ne $identity.commit){throw 'Caller commit differs from packaged build provenance'}\n# schtasks can otherwise ask for another account's password. This launcher\n# intentionally has no credential path: SSH as the desktop's logged-on user.\n$account = New-Object Security.Principal.NTAccount($InteractiveUser)\n$ownerSid = $account.Translate([Security.Principal.SecurityIdentifier]).Value\nif ($Mode -eq 'Handoff') {\n  if($env:COMPUTERNAME -ine 'gate-win-nogit'){throw 'Handoff is gate-win-nogit only'}\n  $marker=Get-Content -LiteralPath 'C:\\murage-ci\\gate-user.json' -Raw | ConvertFrom-Json\n  if($marker.sid -ne $ownerSid){throw 'Task must use provisioned gate user'}\n  $ScenarioScript='C:\\murage-ci\\source\\scripts\\windows\\updates-handoff.ps1'\n} elseif (-not $HandoffReceipt) {throw 'Desktop gate requires the handoff receipt and its artifacts'}\nif ($Mode -ne 'Handoff' -and $ownerSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { throw 'SSH/task registration must use the same account as the logged-on Desktop user; no credentials are accepted' }\n$root = 'C:\\murage-ci'\n$Executable = (Resolve-Path -LiteralPath $Executable).Path\n$ScenarioScript = (Resolve-Path -LiteralPath $ScenarioScript).Path\n$output = [IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\\')\nforeach ($file in @($Executable, $ScenarioScript, $output)) {\n  if (-not $file.StartsWith($root + '\\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Inputs and evidence must be under C:\\murage-ci' }\n}\nif (Test-Path -LiteralPath $output) { throw 'OutputDirectory must be new (prevents stale evidence)' }\nNew-GateDirectory $output\n$prefix='MurageCI-'+[Guid]::NewGuid().ToString('N')+'-'\n$ledger=Join-Path $output 'launcher-ledger.jsonl'\n[IO.File]::WriteAllText($ledger,'')\n$request = Join-Path $output 'request.json'\n[ordered]@{ prefix=$prefix; wrapperJob=('Global\\'+$prefix+'wrapper'); ledger=$ledger; packageSha256=$PackageSha256; executable=$Executable; scenarioScript=$ScenarioScript; commit=$Commit; timeoutSeconds=$TimeoutSeconds; mode=$Mode; handoffReceipt=$HandoffReceipt; node=$Node; feedDirectory=$FeedDirectory } |\n  ConvertTo-Json | Set-Content -LiteralPath $request -Encoding UTF8\n. (Join-Path $PSScriptRoot 'owned-process.ps1')\n$task = $prefix+'wrapper'\n$scheduler = Join-Path $env:SystemRoot 'System32\\schtasks.exe'\n$powershell = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'\n$action = ((@($powershell, '-NoP', '-NonI', '-EP', 'Bypass', '-W', 'Hidden', '-File', (Join-Path $PSScriptRoot 'desktop-task.ps1'), '-Request', $request) | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' ')\nif ($action.Length -gt 260) { throw 'Task action exceeds schtasks /TR limit; use a shorter OutputDirectory' }\n# /SC ONCE is only a safety trigger; /Run starts the task immediately. A past\n# date prevents an accidental second run if the machine stays up overnight.\n$launcherBefore=@(Get-TaskSnapshot)\n$launcherCleanup=$null\n$registered = $false\n$complete = $false\n$wrapperJob=$null\n$wrapperJobEmpty=$false\n$saved=Set-FixtureEnvironment (Join-Path $output 'launcher-env')\ntry {\n  Initialize-OwnedProcess\n  $wrapperJob=[MurageGateProcess]::CreateWrapperJob('Global\\'+$prefix+'wrapper')\n  Add-RunLedger $ledger $prefix 'task' $task\n  $create = Invoke-WindowsNative $scheduler @('/Create', '/TN', $task, '/TR', $action, '/SC', 'ONCE', '/SD', '01/01/2000', '/ST', '00:00', '/RU', $InteractiveUser, '/IT', '/RL', 'LIMITED')\n  if ($create.ExitCode -ne 0) { throw "Interactive task registration failed: $($create.Stdout) $($create.Stderr)" }\n  $registered = $true\n  $xml = Invoke-WindowsNative $scheduler @('/Query', '/TN', $task, '/XML')\n  if ($xml.ExitCode -ne 0) { throw "Task XML readback failed: $($xml.Stderr)" }\n  $xml.Stdout | Set-Content -LiteralPath (Join-Path $output 'task.xml') -Encoding UTF8\n  [xml]$definition = $xml.Stdout\n  if ($definition.Task.Principals.Principal.LogonType -ne 'InteractiveToken') { throw 'Task is not InteractiveToken (/IT)' }\n  $started = Invoke-WindowsNative $scheduler @('/Run', '/TN', $task)\n  if ($started.ExitCode -ne 0) { throw "Task start failed: $($started.Stderr)" }\n  $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds + 90)\n  $statusFile = Join-Path $output 'task-status.json'\n  while (-not (Test-Path -LiteralPath $statusFile -PathType Leaf)) {\n    if ([DateTime]::UtcNow -gt $deadline) { throw 'Interactive task timed out; verify the named user is logged on to the Desktop' }\n    Start-Sleep -Milliseconds 500\n  }\n  $status = Get-Content -LiteralPath $statusFile -Raw | ConvertFrom-Json\n  # Wait for the task process itself to finish after committing its status.\n  $service = New-Object -ComObject 'Schedule.Service'\n  $service.Connect()\n  $registeredTask = $service.GetFolder('\\').GetTask($task)\n  while ($registeredTask.State -eq 4) {\n    if ([DateTime]::UtcNow -gt $deadline) { throw 'Task wrote status but did not exit' }\n    Start-Sleep -Milliseconds 500\n  }\n  [ordered]@{ name=$task; lastRunTime=$registeredTask.LastRunTime.ToString('O'); lastTaskResult=$registeredTask.LastTaskResult; state=$registeredTask.State } |\n    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'task-result.json') -Encoding UTF8\n  $complete = $true\n  if (Test-Path -LiteralPath (Join-Path $output 'result.txt')) { Get-Content -LiteralPath (Join-Path $output 'result.txt') }\n  if (-not $status.ok -or $registeredTask.LastTaskResult -ne 0) { throw "Desktop gate failed: $($status.error); evidence=$output" }\n} finally {\n  try {\n  Complete-RunLedger -Ledger $ledger -Prefix $prefix -Before $launcherBefore -Enumerate {\n    Get-TaskSnapshot\n  } -Delete {param($ownedTask)\n    if($ownedTask.id -ieq ('\\'+$task)) {\n      Remove-WrapperTask -Item $ownedTask -Prefix $prefix -Before $launcherBefore -Empty {param($budget) $wrapperJob.TerminateAndProveEmpty($budget) }\n    } else {Remove-SnapshotTask $ownedTask}\n  } -Result ([ref]$launcherCleanup)\n  # Even if the task disappeared before enumeration, its job must be empty.\n  if($null -ne $wrapperJob){$wrapperJobEmpty=$wrapperJob.TerminateAndProveEmpty();if(-not $wrapperJobEmpty){throw 'Wrapper job not empty'}}\n\n  } catch {\n    $message=$_.Exception.Message\n    [ordered]@{status='FAIL';commit=$Commit;packageSha256=$PackageSha256;task=('\\'+$task);error=$message} |\n      ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'failure.json') -Encoding UTF8\n    ('FAIL '+$message) | Set-Content -LiteralPath (Join-Path $output 'result.txt') -Encoding UTF8\n    throw\n  } finally {\n    try {\n      @{wrapper=@{name=('Global\\'+$prefix+'wrapper');empty=$wrapperJobEmpty};nativeJobs=@([MurageGateProcess]::Proofs.ToArray())} |\n        ConvertTo-Json -Depth 10 | Set-Content -LiteralPath (Join-Path $output 'launcher-jobs.json') -Encoding UTF8\n      $launcherCleanup | ConvertTo-Json -Depth 40 | Set-Content -LiteralPath (Join-Path $output 'launcher-cleanup.json') -Encoding UTF8\n    } finally {\n      if($null -ne $wrapperJob){$wrapperJob.Dispose()}\n      Restore-FixtureEnvironment $saved\n    }\n  }\n}\n\nif(-not $complete -or -not $status.ok){throw 'Child did not finish successfully; no receipt'}\n$requestDataForFinalizer=Get-Content -LiteralPath $request -Raw | ConvertFrom-Json\nFinalize-GateReceipt -Output $output -Status $status -Request $requestDataForFinalizer -LauncherCleanup $launcherCleanup\n`,
+    expected: /wrapperTask=/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at scripts/windows/p11c.node-test.mjs:19:1
+✖ p11c 2: reviewer snapshot helper >300s has one job owner for every Node native (0.562576ms)
+  AssertionError [ERR_ASSERTION]: The input was expected to not match the regular expression /node:child_process|\.kill\s*\(/i. Input:
+  
+  "import {verifyStagedPackage,assertPhysicalPath} from './package-identity.mjs';\n" +
+    '// Real packaged app driver. No routes, IPC handlers, updater or browser engines are replaced.\n' +
+    "import nodeAssert from 'node:assert/strict';\n" +
+    'let assertionCount=0,lastRecordedAssertion=0;\n' +
+    'const assert=new Proxy(nodeAssert,{\n' +
+    ' apply(fn,receiver,args){const answer=Reflect.apply(fn,receiver,args);assertionCount++;return answer;},\n' +
+    " get(target,key){const fn=target[key];return typeof fn==='function'? (...args)=>{const answer=Reflect.apply(fn,target,args);assertionCount++;return answer;}:fn;}\n" +
+    '});\n' +
+    "import { _electron } from '@playwright/test';\n" +
+    "import { createServer } from 'node:http';\n" +
+    "import { spawn, spawnSync } from 'node:child_process';\n" +
+    "import { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, unlinkSync } from 'node:fs';\n" +
+    "import { join, dirname, resolve } from 'node:path';\n" +
+    "import { pathToFileURL, fileURLToPath } from 'node:url';\n" +
+    "import { createHash, randomBytes } from 'node:crypto';\n" +
+    "import { seedTermsAccepted } from '../control-murage.ts';\n" +
+    "import { handleToolCall } from '../mcp-server.ts';\n" +
+    "import { desktopGroups } from './receipt-pair.mjs';\n" +
+    "import { validateFeed, fixtureEngineEntry } from './fixture-feed.mjs';\n" +
+    "const here=dirname(fileURLToPath(import.meta.url)), repo=resolve(here,'../..');\n" +
+    "const options=JSON.parse(readFileSync(process.argv[2],'utf8').replace(/^\\uFEFF/,''));\n" +
+    'const {executable,fixture,feedDirectory,kind}=options;\n' +
+    "assert.equal(process.platform,'win32');\n" +
+    "assert.match(process.env.MURAGE_GATE_RUN_PREFIX ?? '',/^MurageCI-[a-f0-9]{32}-$/);\n" +
+    'assert.equal(process.env.MURAGE_GATE_CREATE_JOB,undefined);\n' +
+    "const admission=spawnSync(join(process.env.SystemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe'),['-NoProfile','-File',join(here,'admission-check.ps1')],{windowsHide:true,stdio:'pipe',timeout:30000});\n" +
+    "assert.equal(admission.status,0,'direct Node entry requires real launcher job membership');\n" +
+    "for(const p of [executable,fixture,feedDirectory,options.node,repo])assertPhysicalPath(p,'C:\\\\murage-ci');\n" +
+    "const evidence=join(fixture,'evidence'); mkdirSync(evidence,{recursive:true});\n" +
+    'const json=(file,value)=>writeFileSync(file,JSON.stringify(value,null,2));\n' +
+    "const digest=file=>createHash('sha256').update(readFileSync(file)).digest('hex');\n" +
+    'const manifest=validateFeed(feedDirectory,executable,options.commit);\n' +
+    'const {commit}=manifest.identity;\n' +
+    'const node=options.node;\n' +
+    'const pe=readFileSync(node), offset=pe.readUInt32LE(0x3c);\n' +
+    "assert.equal(pe.readUInt16LE(offset+24+68),3,'MCP must use a console-subsystem node.exe');\n" +
+    'const env={};\n' +
+    "for(const key of ['SystemRoot','WINDIR','COMSPEC','PATHEXT','LANG','TZ','COMPUTERNAME','USERNAME','MURAGE_GATE_RUN_PREFIX','MURAGE_GATE_JOB_NAME','MURAGE_GATE_TASK_HELPER']) if(process.env[key]) env[key]=process.env[key];\n" +
+    'let home,data;\n' +
+    "if(kind==='desktop') {\n" +
+    " home=join(fixture,'home'); data=join(fixture,'data');\n" +
+    " Object.assign(env,{HOME:home,USERPROFILE:home,APPDATA:join(home,'AppData','Roaming'),LOCALAPPDATA:join(home,'AppData','Local'),MURAGE_DATA_DIR:data,MURAGE_USER_DATA:join(fixture,'user-data')});\n" +
+    '} else {\n' +
+    " assert.equal(process.env.COMPUTERNAME?.toLowerCase(),'gate-win-nogit'); assert.equal(process.env.USERNAME,'murage-gate');\n" +
+    " for(const key of ['HOME','USERPROFILE','APPDATA','LOCALAPPDATA']) if(process.env[key]) env[key]=process.env[key];\n" +
+    " home=env.USERPROFILE; data=join(home,'.murage');\n" +
+    " assert(!existsSync(data),'handoff requires a fresh gate user default profile');\n" +
+    '}\n' +
+    "Object.assign(env,{PATH:dirname(node),TEMP:join(fixture,'temp'),TMP:join(fixture,'temp'),MURAGE_ANNOUNCEMENTS_URL:'off',MURAGE_PUSH_RELAY_URL:'off'});\n" +
+    'for(const p of [home,data,env.APPDATA,env.LOCALAPPDATA,env.MURAGE_USER_DATA,env.TEMP].filter(Boolean)) mkdirSync(p,{recursive:true});\n' +
+    'seedTermsAccepted(data);\n' +
+    "json(join(data,'whats-new.json'),{seen:['1.0.19',manifest.version],lastVersion:'1.0.19'});\n" +
+    "const echoLog=join(evidence,'echo-protocol.jsonl'), modeFile=join(fixture,'echo-mode'); writeFileSync(modeFile,'echo');\n" +
+    "const fake=join(repo,'server','testing','fake-codex-app-server.ts');\n" +
+    "const fallbackMarker=join(evidence,'shell-fallback.txt');\n" +
+    "const shellCli=join(fixture,'gate-echo.cmd');\n" +
+    'writeFileSync(shellCli,`@echo off\\r\\necho shell-fallback-entered>>"${fallbackMarker}"\\r\\n"${node}" "${join(here,\'echo-mcp.mjs\')}" "${echoLog}" "${modeFile}"\\r\\n`);\n' +
+    'env.PATH=`${fixture};${dirname(node)}`;\n' +
+    "const mountsFile=join(evidence,'engine-mounts.jsonl');\n" +
+    "const engineEntry=join(fixture,'fake-engine-entry.mjs');\n" +
+    '// Observe only these two non-secret fixture mounts, then run the existing fake unchanged.\n' +
+    'writeFileSync(engineEntry,fixtureEngineEntry(pathToFileURL(fake).href,mountsFile));\n' +
+    "const environment={FAKE_CUSTOM_TOOL_SERVER:'gateecho',FAKE_CODEX_MODE:'happy',FAKE_CODEX_UNIQUE_THREADS:'1',WINSCEN_ECHO:'parent-value'};\n" +
+    "const claudeDump=join(evidence,'claude-chain.json');\n" +
+    'const instances=Object.fromEntries([\'direct\',\'shell\'].map(name=>[name,{driver:\'codex\',environment:{...environment,WINSCEN_ENGINE_KIND:name},config:{cli:`"${node}" --experimental-strip-types "${engineEntry}"`,fullAuto:true}}]));\n' +
+    'instances.claude={driver:\'claudeAgent\',environment:{...environment,FAKE_CUSTOM_TOOL_SERVER:\'gatechain\',FAKE_CLAUDE_MODE:\'happy\',FAKE_CLAUDE_DUMP:claudeDump},config:{cli:`"${node}" --experimental-strip-types "${join(repo,\'server/testing/fake-claude-cli.ts\')}"`}};\n' +
+    "json(join(data,'config.json'),{engineDiscovery:'explicit',instances,mcpServers:{\n" +
+    " gatechain:{command:node,args:[join(here,'echo-mcp.mjs'),echoLog,modeFile],env:{WINSCEN_ECHO:'override-confirmed',WINSCEN_CMD_CHAIN:'1'},enabled:true},\n" +
+    " gateecho:{command:node,args:[join(here,'echo-mcp.mjs'),echoLog,modeFile],env:{WINSCEN_ECHO:'override-confirmed'},enabled:true},\n" +
+    ' // The extensionless command has no .exe. CreateProcess returns ENOENT; the\n' +
+    ' // packaged Codex collision launcher retries through cmd, which resolves .cmd.\n' +
+    " gatefallback:{command:'gate-echo',args:[],env:{WINSCEN_ECHO:'override-confirmed'},enabled:true}\n" +
+    '}});\n' +
+    "const updateConfig=join(dirname(executable),'resources','app-update.yml');\n" +
+    'const originalFeed=readFileSync(updateConfig);\n' +
+    '// This is the supported electron-builder generic feed configuration, outside app.asar.\n' +
+    'const localFeedConfig=`provider: generic\\nurl: ${manifest.feedUrl}\\nchannel: latest\\nupdaterCacheDirName: murage-gate-updater\\n`;\n' +
+    'const requests=[]; let app,page; const groups=[]; const owned=[];\n' +
+    'const feed=createServer((req,res)=>{\n' +
+    ' requests.push({at:Date.now(),url:req.url});\n' +
+    ' let name;try{name=decodeURIComponent(new URL(req.url,manifest.feedUrl).pathname).slice(1);}catch{res.writeHead(400);res.end();return;}\n' +
+    " if(name==='page') {res.setHeader('content-type','text/html');res.end('<!doctype html><title>Murage gate local page</title><h1>gate navigation confirmed</h1>');return;}\n" +
+    " if(!['latest.yml',manifest.installer,`${manifest.installer}.blockmap`].includes(name)){res.writeHead(404);res.end();return;}\n" +
+    " try {const bytes=readFileSync(join(feedDirectory,name));res.setHeader('content-length',bytes.length);res.end(bytes);} catch {res.writeHead(404);res.end();}\n" +
+    '});\n' +
+    'const delay=ms=>new Promise(r=>setTimeout(r,ms));\n' +
+    'async function until(fn,label,ms=120000) {const end=Date.now()+ms;let last;do{last=await fn();if(last)return last;await delay(250);}while(Date.now()<end);throw new Error(`timeout: ${label}`);}\n' +
+    'function native(file,args,timeout=300000) {return new Promise((resolve,reject)=>{\n' +
+    " const child=spawn(file,args,{env,windowsHide:true,stdio:['ignore','pipe','pipe']});owned.push(child);\n" +
+    " let stdout='',stderr='';child.stdout.on('data',d=>stdout+=d);child.stderr.on('data',d=>stderr+=d);\n" +
+    ' const timer=setTimeout(()=>{child.kill();reject(new Error(`timeout ${file}`));},timeout);\n' +
+    " child.on('error',error=>{clearTimeout(timer);reject(error);}); child.on('close',code=>{clearTimeout(timer);code===0?resolve(stdout):reject(new Error(`${file} exit=${code}: ${stderr} ${stdout}`));});\n" +
+    '});}\n' +
+    "const ps=join(env.SystemRoot,'System32','WindowsPowerShell','v1.0','powershell.exe');\n" +
+    'async function launch() {\n' +
+    ' app=await _electron.launch({executablePath:executable,args:[],env,timeout:120000});\n' +
+    ' assert.equal(await app.evaluate(({app})=>app.isPackaged),true);\n' +
+    " assert.equal(await app.evaluate(({app})=>app.getVersion()),'1.0.19');\n" +
+    " page=await until(async()=>app.windows().find(p=>p.url().startsWith('http://127.0.0.1:')),'packaged main window');\n" +
+    ' await page.waitForFunction(()=>window.muragebox?.updater);\n' +
+    ' await page.evaluate(()=>{window.__gateUpdates=[];window.muragebox.updater.onState(s=>window.__gateUpdates.push(s));});\n' +
+    '}\n' +
+    'async function stopApp(){if(app){await app.close();app=null;}}\n' +
+    'async function api(method,path,body){\n' +
+    " const answer=await page.evaluate(async({method,path,body})=>{const r=await fetch(path,{method,headers:{'content-type':'application/json'},...(body===undefined?{}:{body:JSON.stringify(body)})});return {status:r.status,body:await r.json()};},{method,path,body});\n" +
+    ' assert(answer.status>=200&&answer.status<300,`${method} ${path}: ${JSON.stringify(answer)}`);return answer.body;\n' +
+    '}\n' +
+    "const call=(name,args)=>handleToolCall(name,args,(path,opts={})=>api(opts.method??'GET',path,opts.body?JSON.parse(opts.body):undefined));\n" +
+    "const logs=()=>existsSync(echoLog)?readFileSync(echoLog,'utf8').trim().split('\\n').filter(Boolean).map(JSON.parse):[];\n" +
+    "async function bot(instance='direct') {\n" +
+    " const {bot}=await api('POST','/api/bots',{name:`Gate ${instance}`,modelSelection:{instanceId:instance,model:instance==='claude'?'claude-sonnet-5':'gpt-fake-default'}});\n" +
+    " await api('PATCH',`/api/bots/${bot.id}`,{computer:'off',browser:false,composio:false,autoApprove:true});return bot;\n" +
+    '}\n' +
+    "async function send(b,text){return call('send_bot_message',{bot_id:b.id,text});}\n" +
+    "async function settle(b){const r=await call('wait_for_conversation',{target_type:'bot',target_id:b.id,timeout_seconds:120});assert.equal(r.status,'settled',JSON.stringify(r));return r;}\n" +
+    "async function messages(b){return call('get_bot_messages',{bot_id:b.id,limit:30});}\n" +
+    'const timings=new Map();\n' +
+    'async function control(group,edge) {\n' +
+    " const id=randomBytes(16).toString('hex'),request=jo"... 13192 more characters
+  
+      at TestContext.<anonymous> (file:///work/scripts/windows/p11c.node-test.mjs:21:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'import {verifyStagedPackage,assertPhysicalPath} from \'./package-identity.mjs\';\n// Real packaged app driver. No routes, IPC handlers, updater or browser engines are replaced.\nimport nodeAssert from \'node:assert/strict\';\nlet assertionCount=0,lastRecordedAssertion=0;\nconst assert=new Proxy(nodeAssert,{\n apply(fn,receiver,args){const answer=Reflect.apply(fn,receiver,args);assertionCount++;return answer;},\n get(target,key){const fn=target[key];return typeof fn===\'function\'? (...args)=>{const answer=Reflect.apply(fn,target,args);assertionCount++;return answer;}:fn;}\n});\nimport { _electron } from \'@playwright/test\';\nimport { createServer } from \'node:http\';\nimport { spawn, spawnSync } from \'node:child_process\';\nimport { readFileSync, writeFileSync, mkdirSync, existsSync, renameSync, unlinkSync } from \'node:fs\';\nimport { join, dirname, resolve } from \'node:path\';\nimport { pathToFileURL, fileURLToPath } from \'node:url\';\nimport { createHash, randomBytes } from \'node:crypto\';\nimport { seedTermsAccepted } from \'../control-murage.ts\';\nimport { handleToolCall } from \'../mcp-server.ts\';\nimport { desktopGroups } from \'./receipt-pair.mjs\';\nimport { validateFeed, fixtureEngineEntry } from \'./fixture-feed.mjs\';\nconst here=dirname(fileURLToPath(import.meta.url)), repo=resolve(here,\'../..\');\nconst options=JSON.parse(readFileSync(process.argv[2],\'utf8\').replace(/^\\uFEFF/,\'\'));\nconst {executable,fixture,feedDirectory,kind}=options;\nassert.equal(process.platform,\'win32\');\nassert.match(process.env.MURAGE_GATE_RUN_PREFIX ?? \'\',/^MurageCI-[a-f0-9]{32}-$/);\nassert.equal(process.env.MURAGE_GATE_CREATE_JOB,undefined);\nconst admission=spawnSync(join(process.env.SystemRoot,\'System32\',\'WindowsPowerShell\',\'v1.0\',\'powershell.exe\'),[\'-NoProfile\',\'-File\',join(here,\'admission-check.ps1\')],{windowsHide:true,stdio:\'pipe\',timeout:30000});\nassert.equal(admission.status,0,\'direct Node entry requires real launcher job membership\');\nfor(const p of [executable,fixture,feedDirectory,options.node,repo])assertPhysicalPath(p,\'C:\\\\murage-ci\');\nconst evidence=join(fixture,\'evidence\'); mkdirSync(evidence,{recursive:true});\nconst json=(file,value)=>writeFileSync(file,JSON.stringify(value,null,2));\nconst digest=file=>createHash(\'sha256\').update(readFileSync(file)).digest(\'hex\');\nconst manifest=validateFeed(feedDirectory,executable,options.commit);\nconst {commit}=manifest.identity;\nconst node=options.node;\nconst pe=readFileSync(node), offset=pe.readUInt32LE(0x3c);\nassert.equal(pe.readUInt16LE(offset+24+68),3,\'MCP must use a console-subsystem node.exe\');\nconst env={};\nfor(const key of [\'SystemRoot\',\'WINDIR\',\'COMSPEC\',\'PATHEXT\',\'LANG\',\'TZ\',\'COMPUTERNAME\',\'USERNAME\',\'MURAGE_GATE_RUN_PREFIX\',\'MURAGE_GATE_JOB_NAME\',\'MURAGE_GATE_TASK_HELPER\']) if(process.env[key]) env[key]=process.env[key];\nlet home,data;\nif(kind===\'desktop\') {\n home=join(fixture,\'home\'); data=join(fixture,\'data\');\n Object.assign(env,{HOME:home,USERPROFILE:home,APPDATA:join(home,\'AppData\',\'Roaming\'),LOCALAPPDATA:join(home,\'AppData\',\'Local\'),MURAGE_DATA_DIR:data,MURAGE_USER_DATA:join(fixture,\'user-data\')});\n} else {\n assert.equal(process.env.COMPUTERNAME?.toLowerCase(),\'gate-win-nogit\'); assert.equal(process.env.USERNAME,\'murage-gate\');\n for(const key of [\'HOME\',\'USERPROFILE\',\'APPDATA\',\'LOCALAPPDATA\']) if(process.env[key]) env[key]=process.env[key];\n home=env.USERPROFILE; data=join(home,\'.murage\');\n assert(!existsSync(data),\'handoff requires a fresh gate user default profile\');\n}\nObject.assign(env,{PATH:dirname(node),TEMP:join(fixture,\'temp\'),TMP:join(fixture,\'temp\'),MURAGE_ANNOUNCEMENTS_URL:\'off\',MURAGE_PUSH_RELAY_URL:\'off\'});\nfor(const p of [home,data,env.APPDATA,env.LOCALAPPDATA,env.MURAGE_USER_DATA,env.TEMP].filter(Boolean)) mkdirSync(p,{recursive:true});\nseedTermsAccepted(data);\njson(join(data,\'whats-new.json\'),{seen:[\'1.0.19\',manifest.version],lastVersion:\'1.0.19\'});\nconst echoLog=join(evidence,\'echo-protocol.jsonl\'), modeFile=join(fixture,\'echo-mode\'); writeFileSync(modeFile,\'echo\');\nconst fake=join(repo,\'server\',\'testing\',\'fake-codex-app-server.ts\');\nconst fallbackMarker=join(evidence,\'shell-fallback.txt\');\nconst shellCli=join(fixture,\'gate-echo.cmd\');\nwriteFileSync(shellCli,`@echo off\\r\\necho shell-fallback-entered>>"${fallbackMarker}"\\r\\n"${node}" "${join(here,\'echo-mcp.mjs\')}" "${echoLog}" "${modeFile}"\\r\\n`);\nenv.PATH=`${fixture};${dirname(node)}`;\nconst mountsFile=join(evidence,\'engine-mounts.jsonl\');\nconst engineEntry=join(fixture,\'fake-engine-entry.mjs\');\n// Observe only these two non-secret fixture mounts, then run the existing fake unchanged.\nwriteFileSync(engineEntry,fixtureEngineEntry(pathToFileURL(fake).href,mountsFile));\nconst environment={FAKE_CUSTOM_TOOL_SERVER:\'gateecho\',FAKE_CODEX_MODE:\'happy\',FAKE_CODEX_UNIQUE_THREADS:\'1\',WINSCEN_ECHO:\'parent-value\'};\nconst claudeDump=join(evidence,\'claude-chain.json\');\nconst instances=Object.fromEntries([\'direct\',\'shell\'].map(name=>[name,{driver:\'codex\',environment:{...environment,WINSCEN_ENGINE_KIND:name},config:{cli:`"${node}" --experimental-strip-types "${engineEntry}"`,fullAuto:true}}]));\ninstances.claude={driver:\'claudeAgent\',environment:{...environment,FAKE_CUSTOM_TOOL_SERVER:\'gatechain\',FAKE_CLAUDE_MODE:\'happy\',FAKE_CLAUDE_DUMP:claudeDump},config:{cli:`"${node}" --experimental-strip-types "${join(repo,\'server/testing/fake-claude-cli.ts\')}"`}};\njson(join(data,\'config.json\'),{engineDiscovery:\'explicit\',instances,mcpServers:{\n gatechain:{command:node,args:[join(here,\'echo-mcp.mjs\'),echoLog,modeFile],env:{WINSCEN_ECHO:\'override-confirmed\',WINSCEN_CMD_CHAIN:\'1\'},enabled:true},\n gateecho:{command:node,args:[join(here,\'echo-mcp.mjs\'),echoLog,modeFile],env:{WINSCEN_ECHO:\'override-confirmed\'},enabled:true},\n // The extensionless command has no .exe. CreateProcess returns ENOENT; the\n // packaged Codex collision launcher retries through cmd, which resolves .cmd.\n gatefallback:{command:\'gate-echo\',args:[],env:{WINSCEN_ECHO:\'override-confirmed\'},enabled:true}\n}});\nconst updateConfig=join(dirname(executable),\'resources\',\'app-update.yml\');\nconst originalFeed=readFileSync(updateConfig);\n// This is the supported electron-builder generic feed configuration, outside app.asar.\nconst localFeedConfig=`provider: generic\\nurl: ${manifest.feedUrl}\\nchannel: latest\\nupdaterCacheDirName: murage-gate-updater\\n`;\nconst requests=[]; let app,page; const groups=[]; const owned=[];\nconst feed=createServer((req,res)=>{\n requests.push({at:Date.now(),url:req.url});\n let name;try{name=decodeURIComponent(new URL(req.url,manifest.feedUrl).pathname).slice(1);}catch{res.writeHead(400);res.end();return;}\n if(name===\'page\') {res.setHeader(\'content-type\',\'text/html\');res.end(\'<!doctype html><title>Murage gate local page</title><h1>gate navigation confirmed</h1>\');return;}\n if(![\'latest.yml\',manifest.installer,`${manifest.installer}.blockmap`].includes(name)){res.writeHead(404);res.end();return;}\n try {const bytes=readFileSync(join(feedDirectory,name));res.setHeader(\'content-length\',bytes.length);res.end(bytes);} catch {res.writeHead(404);res.end();}\n});\nconst delay=ms=>new Promise(r=>setTimeout(r,ms));\nasync function until(fn,label,ms=120000) {const end=Date.now()+ms;let last;do{last=await fn();if(last)return last;await delay(250);}while(Date.now()<end);throw new Error(`timeout: ${label}`);}\nfunction native(file,args,timeout=300000) {return new Promise((resolve,reject)=>{\n const child=spawn(file,args,{env,windowsHide:true,stdio:[\'ignore\',\'pipe\',\'pipe\']});owned.push(child);\n let stdout=\'\',stderr=\'\';child.stdout.on(\'data\',d=>stdout+=d);child.stderr.on(\'data\',d=>stderr+=d);\n const timer=setTimeout(()=>{child.kill();reject(new Error(`timeout ${file}`));},timeout);\n child.on(\'error\',error=>{clearTimeout(timer);reject(error);}); child.on(\'close\',code=>{clearTimeout(timer);code===0?resolve(stdout):reject(new Error(`${file} exit=${code}: ${stderr} ${stdout}`));});\n});}\nconst ps=join(env.SystemRoot,\'System32\',\'WindowsPowerShell\',\'v1.0\',\'powershell.exe\');\nasync function launch() {\n app=await _electron.launch({executablePath:executable,args:[],env,timeout:120000});\n assert.equal(await app.evaluate(({app})=>app.isPackaged),true);\n assert.equal(await app.evaluate(({app})=>app.getVersion()),\'1.0.19\');\n page=await until(async()=>app.windows().find(p=>p.url().startsWith(\'http://127.0.0.1:\')),\'packaged main window\');\n await page.waitForFunction(()=>window.muragebox?.updater);\n await page.evaluate(()=>{window.__gateUpdates=[];window.muragebox.updater.onState(s=>window.__gateUpdates.push(s));});\n}\nasync function stopApp(){if(app){await app.close();app=null;}}\nasync function api(method,path,body){\n const answer=await page.evaluate(async({method,path,body})=>{const r=await fetch(path,{method,headers:{\'content-type\':\'application/json\'},...(body===undefined?{}:{body:JSON.stringify(body)})});return {status:r.status,body:await r.json()};},{method,path,body});\n assert(answer.status>=200&&answer.status<300,`${method} ${path}: ${JSON.stringify(answer)}`);return answer.body;\n}\nconst call=(name,args)=>handleToolCall(name,args,(path,opts={})=>api(opts.method??\'GET\',path,opts.body?JSON.parse(opts.body):undefined));\nconst logs=()=>existsSync(echoLog)?readFileSync(echoLog,\'utf8\').trim().split(\'\\n\').filter(Boolean).map(JSON.parse):[];\nasync function bot(instance=\'direct\') {\n const {bot}=await api(\'POST\',\'/api/bots\',{name:`Gate ${instance}`,modelSelection:{instanceId:instance,model:instance===\'claude\'?\'claude-sonnet-5\':\'gpt-fake-default\'}});\n await api(\'PATCH\',`/api/bots/${bot.id}`,{computer:\'off\',browser:false,composio:false,autoApprove:true});return bot;\n}\nasync function send(b,text){return call(\'send_bot_message\',{bot_id:b.id,text});}\nasync function settle(b){const r=await call(\'wait_for_conversation\',{target_type:\'bot\',target_id:b.id,timeout_seconds:120});assert.equal(r.status,\'settled\',JSON.stringify(r));return r;}\nasync function messages(b){return call(\'get_bot_messages\',{bot_id:b.id,limit:30});}\nconst timings=new Map();\nasync function control(group,edge) {\n const id=randomBytes(16).toString(\'hex\'),request=jo'... 13192 more characters,
+    expected: /node:child_process|\.kill\s*\(/i,
+    operator: 'doesNotMatch',
+    diff: 'simple'
+  }
+
+test at scripts/windows/p11c.node-test.mjs:26:1
+✖ p11c 3: scanner flags every reviewer form recursively, including test/check/mutate (0.345248ms)
+  AssertionError [ERR_ASSERTION]: recursive native scanner missing
+      at TestContext.<anonymous> (file:///work/scripts/windows/p11c.node-test.mjs:28:2)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at scripts/windows/p11c.node-test.mjs:39:1
+✖ p11c 3: complete Windows tree passes exact-path ownership scanner (0.209288ms)
+  AssertionError [ERR_ASSERTION]: recursive native scanner missing
+      at TestContext.<anonymous> (file:///work/scripts/windows/p11c.node-test.mjs:40:58)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at scripts/windows/p11c.node-test.mjs:44:1
+✖ p11c 4: four additional real source mutants exist (0.166839ms)
+  AssertionError [ERR_ASSERTION]: new source mutants missing
+      at TestContext.<anonymous> (file:///work/scripts/windows/p11c.node-test.mjs:45:56)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

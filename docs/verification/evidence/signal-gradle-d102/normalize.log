@@ -1,0 +1,17 @@
+{
+  "components": 192,
+  "artifacts": 342,
+  "sha256": 342,
+  "pgpArtifacts": 334,
+  "pgpSigningKeys": 37,
+  "sha256Only": 8,
+  "missingKeys": [
+    "94B291AEF984A085",
+    "CF776DADF519DEE3"
+  ],
+  "extensions": {
+    ".jar": 142,
+    ".module": 93,
+    ".pom": 107
+  }
+}

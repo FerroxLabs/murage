@@ -37,6 +37,10 @@ export default defineConfig({
             export default { fetch() { return new Response(null, { status: 404 }); } };`,
         }],
         bindings: {
+          // The suite is a staging rig (test Stripe keys, CP0 routes, the Worker-secret KEK); production-shaped cases set MURAGE_ENV themselves.
+          MURAGE_ENV: "staging",
+          // Sales are parsed strictly (unset is shut), so the staging rig opens them like env.staging does.
+          CLOUD_SALES_OPEN: "true",
           BETTER_AUTH_SECRET: TEST_AUTH_SECRET,
           CLOUDFLARE_API_TOKEN: TEST_CLOUDFLARE_TOKEN,
           SENDLANE_API_KEY: TEST_SENDLANE_API_KEY,

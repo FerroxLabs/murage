@@ -1,3 +1,4 @@
+const { withHideInherit } = require("../shared/win-hide-child-process.mjs");
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -94,12 +95,12 @@ function runCuaCommand(binary, args, {
     let overflowed = false;
     let stdout = Buffer.alloc(0);
     let stderr = Buffer.alloc(0);
-    const child = spawn(binary, args, {
+    const child = spawn(binary, [...args], withHideInherit({
       env,
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
-    });
+    }));
 
     const finish = (fn, value) => {
       if (settled) return;
@@ -220,7 +221,7 @@ function runGetent(args, {
   timeoutMs = GETENT_TIMEOUT_MS,
   maxOutputBytes = GETENT_MAX_OUTPUT_BYTES,
 } = {}) {
-  const result = spawnCommand(GETENT_BINARY, args, {
+  const result = spawnCommand(GETENT_BINARY, [...args], withHideInherit({
     encoding: "utf8",
     env: { LANG: "C", LC_ALL: "C" },
     maxBuffer: maxOutputBytes,
@@ -228,7 +229,7 @@ function runGetent(args, {
     stdio: ["ignore", "pipe", "pipe"],
     timeout: timeoutMs,
     windowsHide: true,
-  });
+  }));
   if (result?.error || result?.status !== 0 || typeof result?.stdout !== "string") {
     return {
       ok: false,

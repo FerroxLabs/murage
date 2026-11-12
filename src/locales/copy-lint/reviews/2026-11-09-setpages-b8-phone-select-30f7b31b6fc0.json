@@ -1,0 +1,335 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "sonnet-b8",
+  "date": "2026-11-09",
+  "base": "521e56b9c",
+  "scope": "setpages-b8-phone-select",
+  "strings": {
+    "en:settings.pageSelectAria": {
+      "text": "Settings page",
+      "en": "Settings page",
+      "verdict": "pass"
+    },
+    "en:plugins.appCount.one": {
+      "text": "{count} app",
+      "en": "{count} app",
+      "verdict": "pass"
+    },
+    "en:plugins.appCount.other": {
+      "text": "{count} apps",
+      "en": "{count} apps",
+      "verdict": "pass"
+    },
+    "en:plugins.appCount.plus": {
+      "text": "{count}+ apps",
+      "en": "{count}+ apps",
+      "verdict": "pass"
+    },
+    "en:plugins.browseAll.one": {
+      "text": "Browse all {count} app",
+      "en": "Browse all {count} app",
+      "verdict": "pass"
+    },
+    "en:plugins.browseAll.other": {
+      "text": "Browse all {count} apps",
+      "en": "Browse all {count} apps",
+      "verdict": "pass"
+    },
+    "en:plugins.browseAll.plus": {
+      "text": "Browse all {count}+ apps",
+      "en": "Browse all {count}+ apps",
+      "verdict": "pass"
+    },
+    "en:plugins.browseAll.fallback": {
+      "text": "Browse all apps",
+      "en": "Browse all apps",
+      "verdict": "pass"
+    },
+    "de:settings.pageSelectAria": {
+      "text": "Einstellungsseite",
+      "en": "Settings page",
+      "verdict": "pass"
+    },
+    "de:plugins.appCount.one": {
+      "text": "{count} App",
+      "en": "{count} app",
+      "verdict": "pass"
+    },
+    "de:plugins.appCount.other": {
+      "text": "{count} Apps",
+      "en": "{count} apps",
+      "verdict": "pass"
+    },
+    "de:plugins.appCount.plus": {
+      "text": "{count}+ Apps",
+      "en": "{count}+ apps",
+      "verdict": "pass"
+    },
+    "de:plugins.browseAll.one": {
+      "text": "Alle ansehen ({count} App)",
+      "en": "Browse all {count} app",
+      "verdict": "pass"
+    },
+    "de:plugins.browseAll.other": {
+      "text": "Alle ansehen ({count} Apps)",
+      "en": "Browse all {count} apps",
+      "verdict": "pass"
+    },
+    "de:plugins.browseAll.plus": {
+      "text": "Alle ansehen ({count}+ Apps)",
+      "en": "Browse all {count}+ apps",
+      "verdict": "pass"
+    },
+    "de:plugins.browseAll.fallback": {
+      "text": "Alle Apps ansehen",
+      "en": "Browse all apps",
+      "verdict": "pass"
+    },
+    "es:settings.pageSelectAria": {
+      "text": "Página de ajustes",
+      "en": "Settings page",
+      "verdict": "pass"
+    },
+    "es:plugins.appCount.one": {
+      "text": "{count} aplicación",
+      "en": "{count} app",
+      "verdict": "pass"
+    },
+    "es:plugins.appCount.other": {
+      "text": "{count} aplicaciones",
+      "en": "{count} apps",
+      "verdict": "pass"
+    },
+    "es:plugins.appCount.plus": {
+      "text": "{count}+ aplicaciones",
+      "en": "{count}+ apps",
+      "verdict": "pass"
+    },
+    "es:plugins.browseAll.one": {
+      "text": "Ver todas ({count} app)",
+      "en": "Browse all {count} app",
+      "verdict": "pass"
+    },
+    "es:plugins.browseAll.other": {
+      "text": "Ver todas ({count} apps)",
+      "en": "Browse all {count} apps",
+      "verdict": "pass"
+    },
+    "es:plugins.browseAll.plus": {
+      "text": "Ver todas ({count}+ apps)",
+      "en": "Browse all {count}+ apps",
+      "verdict": "pass"
+    },
+    "es:plugins.browseAll.fallback": {
+      "text": "Ver todas las apps",
+      "en": "Browse all apps",
+      "verdict": "pass"
+    },
+    "fr:settings.pageSelectAria": {
+      "text": "Page des réglages",
+      "en": "Settings page",
+      "verdict": "pass"
+    },
+    "fr:plugins.appCount.one": {
+      "text": "{count} application",
+      "en": "{count} app",
+      "verdict": "pass"
+    },
+    "fr:plugins.appCount.other": {
+      "text": "{count} applications",
+      "en": "{count} apps",
+      "verdict": "pass"
+    },
+    "fr:plugins.appCount.plus": {
+      "text": "{count}+ applications",
+      "en": "{count}+ apps",
+      "verdict": "pass"
+    },
+    "fr:plugins.browseAll.one": {
+      "text": "Tout parcourir ({count} app)",
+      "en": "Browse all {count} app",
+      "verdict": "pass"
+    },
+    "fr:plugins.browseAll.other": {
+      "text": "Tout parcourir ({count} apps)",
+      "en": "Browse all {count} apps",
+      "verdict": "pass"
+    },
+    "fr:plugins.browseAll.plus": {
+      "text": "Tout parcourir ({count}+ apps)",
+      "en": "Browse all {count}+ apps",
+      "verdict": "pass"
+    },
+    "fr:plugins.browseAll.fallback": {
+      "text": "Parcourir toutes les apps",
+      "en": "Browse all apps",
+      "verdict": "pass"
+    },
+    "hi:settings.pageSelectAria": {
+      "text": "सेटिंग का पेज",
+      "en": "Settings page",
+      "verdict": "pass"
+    },
+    "hi:plugins.appCount.one": {
+      "text": "{count} ऐप",
+      "en": "{count} app",
+      "verdict": "pass"
+    },
+    "hi:plugins.appCount.other": {
+      "text": "{count} ऐप",
+      "en": "{count} apps",
+      "verdict": "pass"
+    },
+    "hi:plugins.appCount.plus": {
+      "text": "{count}+ ऐप",
+      "en": "{count}+ apps",
+      "verdict": "pass"
+    },
+    "hi:plugins.browseAll.one": {
+      "text": "सभी देखें ({count} ऐप)",
+      "en": "Browse all {count} app",
+      "verdict": "pass"
+    },
+    "hi:plugins.browseAll.other": {
+      "text": "सभी देखें ({count} ऐप)",
+      "en": "Browse all {count} apps",
+      "verdict": "pass"
+    },
+    "hi:plugins.browseAll.plus": {
+      "text": "सभी देखें ({count}+ ऐप)",
+      "en": "Browse all {count}+ apps",
+      "verdict": "pass"
+    },
+    "hi:plugins.browseAll.fallback": {
+      "text": "सभी ऐप देखें",
+      "en": "Browse all apps",
+      "verdict": "pass"
+    },
+    "ja:settings.pageSelectAria": {
+      "text": "設定のページ",
+      "en": "Settings page",
+      "verdict": "pass"
+    },
+    "ja:plugins.appCount.one": {
+      "text": "{count}個のアプリ",
+      "en": "{count} app",
+      "verdict": "pass"
+    },
+    "ja:plugins.appCount.other": {
+      "text": "{count}個のアプリ",
+      "en": "{count} apps",
+      "verdict": "pass"
+    },
+    "ja:plugins.appCount.plus": {
+      "text": "{count}個以上のアプリ",
+      "en": "{count}+ apps",
+      "verdict": "pass"
+    },
+    "ja:plugins.browseAll.one": {
+      "text": "すべて見る（{count}個のアプリ）",
+      "en": "Browse all {count} app",
+      "verdict": "pass"
+    },
+    "ja:plugins.browseAll.other": {
+      "text": "すべて見る（{count}個のアプリ）",
+      "en": "Browse all {count} apps",
+      "verdict": "pass"
+    },
+    "ja:plugins.browseAll.plus": {
+      "text": "すべて見る（{count}個以上のアプリ）",
+      "en": "Browse all {count}+ apps",
+      "verdict": "pass"
+    },
+    "ja:plugins.browseAll.fallback": {
+      "text": "すべてのアプリを見る",
+      "en": "Browse all apps",
+      "verdict": "pass"
+    },
+    "pt-br:settings.pageSelectAria": {
+      "text": "Página das configurações",
+      "en": "Settings page",
+      "verdict": "pass"
+    },
+    "pt-br:plugins.appCount.one": {
+      "text": "{count} aplicativo",
+      "en": "{count} app",
+      "verdict": "pass"
+    },
+    "pt-br:plugins.appCount.other": {
+      "text": "{count} aplicativos",
+      "en": "{count} apps",
+      "verdict": "pass"
+    },
+    "pt-br:plugins.appCount.plus": {
+      "text": "{count}+ aplicativos",
+      "en": "{count}+ apps",
+      "verdict": "pass"
+    },
+    "pt-br:plugins.browseAll.one": {
+      "text": "Ver todos ({count} app)",
+      "en": "Browse all {count} app",
+      "verdict": "pass"
+    },
+    "pt-br:plugins.browseAll.other": {
+      "text": "Ver todos ({count} apps)",
+      "en": "Browse all {count} apps",
+      "verdict": "pass"
+    },
+    "pt-br:plugins.browseAll.plus": {
+      "text": "Ver todos ({count}+ apps)",
+      "en": "Browse all {count}+ apps",
+      "verdict": "pass"
+    },
+    "pt-br:plugins.browseAll.fallback": {
+      "text": "Ver todos os apps",
+      "en": "Browse all apps",
+      "verdict": "pass"
+    },
+    "zh:settings.pageSelectAria": {
+      "text": "设置页面",
+      "en": "Settings page",
+      "verdict": "pass"
+    },
+    "zh:plugins.appCount.one": {
+      "text": "{count} 个应用",
+      "en": "{count} app",
+      "verdict": "pass"
+    },
+    "zh:plugins.appCount.other": {
+      "text": "{count} 个应用",
+      "en": "{count} apps",
+      "verdict": "pass"
+    },
+    "zh:plugins.appCount.plus": {
+      "text": "{count}+ 个应用",
+      "en": "{count}+ apps",
+      "verdict": "pass"
+    },
+    "zh:plugins.browseAll.one": {
+      "text": "浏览全部（{count} 个应用）",
+      "en": "Browse all {count} app",
+      "verdict": "pass"
+    },
+    "zh:plugins.browseAll.other": {
+      "text": "浏览全部（{count} 个应用）",
+      "en": "Browse all {count} apps",
+      "verdict": "pass"
+    },
+    "zh:plugins.browseAll.plus": {
+      "text": "浏览全部（{count}+ 个应用）",
+      "en": "Browse all {count}+ apps",
+      "verdict": "pass"
+    },
+    "zh:plugins.browseAll.fallback": {
+      "text": "浏览全部应用",
+      "en": "Browse all apps",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

@@ -1,0 +1,17 @@
+MUTANT RED: one-receipt bypass rejected by both missing-half tests
+file:///work/server/testing/safe-wipe.mjs:290
+  if (!admitted) throw new SafeWipeRefused(path, "not under the OS temp directory, not marked scratch/evidence/.e2e, and no `within` root given");
+                       ^
+
+SafeWipeRefused: safe-wipe REFUSED to delete /work/scripts/windows/.receipt-mutant-WR9iOu: not under the OS temp directory, not marked scratch/evidence/.e2e, and no `within` root given. Nothing was deleted. Only OS temp, *scratch*/*evidence*/*.e2e* paths, or a caller-named build root may be wiped, and never a Murage data directory (see docs/verification/data-safety.md).
+    at assertSafeToWipe (file:///work/server/testing/safe-wipe.mjs:290:24)
+    at safeWipeSync (file:///work/server/testing/safe-wipe.mjs:323:20)
+    at file:///work/scripts/windows/mutate-receipt-pair.mjs:18:12
+    at ModuleJob.run (node:internal/modules/esm/module_job:561:25)
+    at async node:internal/modules/esm/loader:647:26
+    at async asyncRunEntryPointWithESMLoader (node:internal/modules/run_main:101:5) {
+  path: '/work/scripts/windows/.receipt-mutant-WR9iOu',
+  reason: 'not under the OS temp directory, not marked scratch/evidence/.e2e, and no `within` root given'
+}
+
+Node.js v24.21.0

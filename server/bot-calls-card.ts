@@ -17,7 +17,7 @@ export const callCardId = (intentId: string): string => `botcall-${intentId}`;
 const SOURCE_LABELS: Readonly<Record<OutsideSource, true>> = {
   "web page": true, "web search": true, email: true, "another person": true, "another bot": true, "browser page": true, "outside tool": true,
   "downloaded file": true, "network command": true, "package install": true, git: true, archive: true, interpreter: true, helper: true,
-  "earlier turn": true, "earlier session": true, memory: true, "cloned folder": true,
+  "earlier turn": true, "earlier session": true, memory: true, "cloned folder": true, "folder not checked": true,
 };
 
 /** needs_owner_now on a marked turn: the owner is told what is behind it. Anything but one of our labels is never printed: the

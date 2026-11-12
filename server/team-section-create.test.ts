@@ -63,6 +63,7 @@ posixOnly("a team lead starts a client team, and only its own", () => {
       instances: { claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE } } },
     }));
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

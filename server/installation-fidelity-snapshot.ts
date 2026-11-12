@@ -70,6 +70,9 @@ export async function inventoryFidelity(installation:OfflineInstallation,stage:{
     else fail("UNSAFE_SNAPSHOT_ENTRY",relative);
   };
   if(roots.includes("channels"))walkChannels("channels");
+  // Every retained component needs actual payload bytes, not only an
+  // "included" coverage row. Database snapshots and startup prefs are above.
+  for(const name of roots)if(classifyDataDirEntry(name)?.backup==="retained"&&!["channels","memory-index.db","startup-background.json"].includes(name))walkChannels(name);
   if(selectedFiles.length>(options.maxFiles??MAX_BACKUP_FILES))fail("SNAPSHOT_LIMIT_EXCEEDED");
   let bytes=0;
   for(const file of selectedFiles){

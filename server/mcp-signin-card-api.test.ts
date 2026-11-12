@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { BASE, MCP_COMMIT_TOKEN as COMMIT_TOKEN, DESKTOP_HEADERS, api, desktopApi, fakeClaudeDump, startInternalFixtureTurn, stopFixtureTurn } from "./testing/index-harness.ts";
 import { startFakeRemoteMcp, type FakeRemoteMcp } from "./testing/fake-remote-mcp.ts";
+import { raiseLevel } from './testing/raise-level.ts';
 import { MCP_SIGNIN_PHONE_NOTE, mcpSignInCardText, mcpSignInResumeKey, mcpSignInToolText } from "./mcp-signin-card.ts";
 
 let fake: FakeRemoteMcp;
@@ -28,11 +29,16 @@ const rpc = (method: string, id: number) => ({ jsonrpc: "2.0", id, method });
 const cardsOf = async (botId: string) =>
   ((await api("GET", "/api/bots?messages=200")).body.bots.find((bot: { id: string }) => bot.id === botId)?.messages ?? []).filter((m: { kind: string }) => m.kind === "mcpSignIn");
 
-async function withEndedSignIn<T>(name: string, run: (ctx: { botId: string; token: string; turn: Awaited<ReturnType<typeof startInternalFixtureTurn>>; threadId: string }) => Promise<T>): Promise<T> {
+async function withEndedSignIn<T>(name: string, run: (ctx: { botId: string; token: string; turn: Awaited<ReturnType<typeof startInternalFixtureTurn>>; threadId: string }) => Promise<T>, noLimits = false): Promise<T> {
   expect((await desktopApi("POST", "/api/mcp/servers", { name, url: fake.mcpUrl, confirmLocal: "this-computer", auth: "oauth" })).status).toBe(201);
   expect((await desktopApi("PATCH", `/api/mcp/servers/${name}`, { enabled: true })).status).toBe(200);
   expect((await commit("PUT", `/api/mcp/servers/${name}/secrets`, { origin: fake.origin, oauth: { accessToken: "at_stale_value_1" } })).status).toBe(200);
   const bot = (await desktopApi("POST", "/api/bots", { name: "Sign-in card fixture" })).body.bot;
+  if (noLimits) {
+    expect((await desktopApi('PATCH',`/api/bots/${bot.id}`,{computer:'off',browser:false,autoReview:'off'})).status).toBe(200);
+    const raised=await raiseLevel(desktopApi, bot.id, { noLimits: true, acknowledgeNoLimits: true });
+    expect(raised.status,JSON.stringify(raised.body)).toBe(200);
+  }
   let turn: Awaited<ReturnType<typeof startInternalFixtureTurn>> | undefined;
   try {
     turn = await startInternalFixtureTurn(bot.id, undefined, "__fixture_hold_authority__");
@@ -192,4 +198,12 @@ describe("a sign-in that ended mid-turn", () => {
       expect((await cardsOf(botId))[0].mcpSignIn.dismissed).toBe(true);
     });
   });
+});
+
+it('GNL-A4 expired MCP sign-in at No limits gives one plain off line with no sign-in card or resume', async () => {
+  await withEndedSignIn('gnlsignin', async ({ botId, token }) => {
+    const result = await relay(token, 'gnlsignin', rpc('tools/list', 51));
+    expect(result.body.error).toBe('gnlsignin is signed out; turn it on in App Settings → Connections → Your MCP servers.');
+    expect(await cardsOf(botId)).toHaveLength(0);
+  }, true);
 });

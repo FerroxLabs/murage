@@ -1,0 +1,50 @@
+COMMAND node_modules/.bin/vitest run server/decision/faults.test.ts -t M51
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/faults.test.ts > A5 M51 non-owner ask faults use frozen BASE callback
+[memory] index build before listen name=memory_records_pinned ms=2
+[memory] index build before listen name=memory_source_lsn_created ms=2
+[sqlite] storage file=1 wal=2 freelist=0
+
+stdout | server/decision/faults.test.ts > A5 M51 non-owner auto faults use frozen BASE callback
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=63 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+
+ ❯ server/decision/faults.test.ts (16 tests | 1 failed | 12 skipped) 2548ms
+   ↓ A5 M38 protected match wins before stored-source failure; reads run (M28)
+   ↓ A5 stored browser fault refuses without inventing a card
+   ✓ A5 M51 non-owner ask faults use frozen BASE callback  603ms
+   ✓ A5 M51 non-owner auto faults use frozen BASE callback  648ms
+   ✓ A5 M51 non-owner full faults use frozen BASE callback  653ms
+   × A5 M51 non-owner unlimited faults use frozen BASE callback 637ms
+   ↓ R9 M23 M24 unproven owner does not mint BASE card; missing command runs
+   ↓ R16 M21 deny revision is rechecked immediately before RUN delivery
+   ↓ M23 reader throws: owner clean runs, guest retains BASE fault behavior
+   ↓ R9 record creation failure denies the engine without a second card
+   ↓ R9 provenance/level reader failures produce bounded refusal, never a waiting engine
+   ↓ R9 answer row failure delivers deny and bounded text without another card
+   ↓ A5 X10 non-owner ask faults retain BASE fault CARD even when normal BASE would RUN
+   ↓ A5 X10 non-owner auto faults retain BASE fault CARD even when normal BASE would RUN
+   ↓ A5 X10 non-owner full faults retain BASE fault CARD even when normal BASE would RUN
+   ↓ A5 X10 non-owner unlimited faults retain BASE fault CARD even when normal BASE would RUN
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 passed | 12 skipped (16)
+   Start at  07:41:54
+   Duration  11.44s (transform 7.00s, setup 8.33s, import 421ms, tests 2.55s, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/faults.test.ts > A5 M51 non-owner unlimited faults use frozen BASE callback
+AssertionError: expected "vi.fn()" to be called once, but got 0 times
+ ❯ server/decision/faults.test.ts:13:93
+     11| it.each(['ask','auto','full','unlimited'] as const)('A5 M51 non-owner …
+     12|  const f=fixture(level,{k:'webhook'});const base=vi.fn<d.BaseVerdictFn…
+     13|  expect(d.decide(f.open('guest',{command:'rm -rf ~'}),base).kind).toBe…
+       |                                                                                             ^
+     14| });
+     15| it('R9 M23 M24 unproven owner does not mint BASE card; missing command…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

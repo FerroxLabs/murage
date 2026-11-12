@@ -247,8 +247,8 @@ Applications MUST forward these headers for distributed tracing:
 
 ```shell
 istioctl proxy-status                                    # All proxy status
-istioctl proxy-config routes deploy/user-service -n prod # Envoy routes
-istioctl proxy-config clusters deploy/user-service       # Envoy clusters
+istioctl proxy-config routes deployment/user-service -n prod # Envoy routes
+istioctl proxy-config clusters deployment/user-service       # Envoy clusters
 istioctl analyze -n production                           # Config issues
 istioctl dashboard kiali                                 # Mesh visualization
 istioctl dashboard grafana                               # Metrics

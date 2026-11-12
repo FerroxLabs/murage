@@ -1,0 +1,3659 @@
+[
+  {
+    "id": "contacts.search",
+    "family": "contacts",
+    "method": "POST",
+    "path": "/contacts/search",
+    "version": "2021-07-28",
+    "scope": "contacts.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/search-contacts-advanced",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "contacts.get",
+    "family": "contacts",
+    "method": "GET",
+    "path": "/contacts/:contactId",
+    "version": "2021-07-28",
+    "scope": "contacts.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/get-contact",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get"
+    ],
+    "reconciliation": []
+  },
+  {
+    "id": "contacts.create",
+    "family": "contacts",
+    "method": "POST",
+    "path": "/contacts/",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/create-contact",
+    "pathResourceSegment": null,
+    "preflight": [
+      "location.customFields.list",
+      "contacts.search",
+      "contacts.get"
+    ],
+    "reconciliation": [
+      "contacts.search",
+      "contacts.get"
+    ]
+  },
+  {
+    "id": "contacts.update",
+    "family": "contacts",
+    "method": "PUT",
+    "path": "/contacts/:contactId",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/update-contact",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get",
+      "location.customFields.list"
+    ],
+    "reconciliation": [
+      "contacts.get"
+    ]
+  },
+  {
+    "id": "contacts.upsert",
+    "family": "contacts",
+    "method": "POST",
+    "path": "/contacts/upsert",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/upsert-contact",
+    "pathResourceSegment": null,
+    "preflight": [
+      "location.customFields.list",
+      "contacts.get",
+      "contacts.search"
+    ],
+    "reconciliation": [
+      "contacts.get",
+      "contacts.search"
+    ]
+  },
+  {
+    "id": "contacts.delete",
+    "family": "contacts",
+    "method": "DELETE",
+    "path": "/contacts/:contactId",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/delete-contact",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get"
+    ],
+    "reconciliation": [
+      "contacts.get"
+    ]
+  },
+  {
+    "id": "contacts.tags.add",
+    "family": "contacts",
+    "method": "POST",
+    "path": "/contacts/:contactId/tags",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/add-tags",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get"
+    ],
+    "reconciliation": [
+      "contacts.get"
+    ]
+  },
+  {
+    "id": "contacts.tags.remove",
+    "family": "contacts",
+    "method": "DELETE",
+    "path": "/contacts/:contactId/tags",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/remove-tags",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get"
+    ],
+    "reconciliation": [
+      "contacts.get"
+    ]
+  },
+  {
+    "id": "contacts.tags.bulk",
+    "family": "contacts",
+    "method": "POST",
+    "path": "/contacts/bulk/tags/update/:type",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/create-association",
+    "pathResourceSegment": null,
+    "preflight": [
+      "contacts.get",
+      "contacts.search"
+    ],
+    "reconciliation": [
+      "contacts.get"
+    ]
+  },
+  {
+    "id": "contacts.notes.list",
+    "family": "contacts",
+    "method": "GET",
+    "path": "/contacts/:contactId/notes",
+    "version": "2021-07-28",
+    "scope": "contacts.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/get-all-notes",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get"
+    ],
+    "reconciliation": []
+  },
+  {
+    "id": "contacts.notes.get",
+    "family": "contacts",
+    "method": "GET",
+    "path": "/contacts/:contactId/notes/:noteId",
+    "version": "2021-07-28",
+    "scope": "contacts.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/get-note",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get",
+      "contacts.notes.get"
+    ],
+    "reconciliation": []
+  },
+  {
+    "id": "contacts.notes.create",
+    "family": "contacts",
+    "method": "POST",
+    "path": "/contacts/:contactId/notes",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/create-note",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get",
+      "contacts.notes.list"
+    ],
+    "reconciliation": [
+      "contacts.notes.list"
+    ]
+  },
+  {
+    "id": "contacts.notes.update",
+    "family": "contacts",
+    "method": "PUT",
+    "path": "/contacts/:contactId/notes/:noteId",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/update-note",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get",
+      "contacts.notes.get"
+    ],
+    "reconciliation": [
+      "contacts.notes.get"
+    ]
+  },
+  {
+    "id": "contacts.notes.delete",
+    "family": "contacts",
+    "method": "DELETE",
+    "path": "/contacts/:contactId/notes/:noteId",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/delete-note",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get",
+      "contacts.notes.get"
+    ],
+    "reconciliation": [
+      "contacts.notes.get"
+    ]
+  },
+  {
+    "id": "contacts.tasks.list",
+    "family": "contacts",
+    "method": "GET",
+    "path": "/contacts/:contactId/tasks",
+    "version": "2021-07-28",
+    "scope": "contacts.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/get-all-tasks",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get"
+    ],
+    "reconciliation": []
+  },
+  {
+    "id": "contacts.tasks.get",
+    "family": "contacts",
+    "method": "GET",
+    "path": "/contacts/:contactId/tasks/:taskId",
+    "version": "2021-07-28",
+    "scope": "contacts.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/get-task",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get",
+      "contacts.tasks.get"
+    ],
+    "reconciliation": []
+  },
+  {
+    "id": "contacts.tasks.create",
+    "family": "contacts",
+    "method": "POST",
+    "path": "/contacts/:contactId/tasks",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/create-task",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get",
+      "contacts.tasks.list"
+    ],
+    "reconciliation": [
+      "contacts.tasks.list"
+    ]
+  },
+  {
+    "id": "contacts.tasks.update",
+    "family": "contacts",
+    "method": "PUT",
+    "path": "/contacts/:contactId/tasks/:taskId",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/update-task",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get",
+      "contacts.tasks.get"
+    ],
+    "reconciliation": [
+      "contacts.tasks.get"
+    ]
+  },
+  {
+    "id": "contacts.tasks.complete",
+    "family": "contacts",
+    "method": "PUT",
+    "path": "/contacts/:contactId/tasks/:taskId/completed",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/update-task-completed",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get",
+      "contacts.tasks.get"
+    ],
+    "reconciliation": [
+      "contacts.tasks.get"
+    ]
+  },
+  {
+    "id": "contacts.tasks.delete",
+    "family": "contacts",
+    "method": "DELETE",
+    "path": "/contacts/:contactId/tasks/:taskId",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/delete-task",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get",
+      "contacts.tasks.get"
+    ],
+    "reconciliation": [
+      "contacts.tasks.get"
+    ]
+  },
+  {
+    "id": "contacts.appointments.list",
+    "family": "contacts",
+    "method": "GET",
+    "path": "/contacts/:contactId/appointments",
+    "version": "2021-07-28",
+    "scope": "contacts.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/get-appointments-for-contact",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get"
+    ],
+    "reconciliation": []
+  },
+  {
+    "id": "contacts.followers.add",
+    "family": "contacts",
+    "method": "POST",
+    "path": "/contacts/:contactId/followers",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/add-followers-contact",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get"
+    ],
+    "reconciliation": [
+      "contacts.get"
+    ]
+  },
+  {
+    "id": "contacts.followers.remove",
+    "family": "contacts",
+    "method": "DELETE",
+    "path": "/contacts/:contactId/followers",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/remove-followers-contact",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get"
+    ],
+    "reconciliation": [
+      "contacts.get"
+    ]
+  },
+  {
+    "id": "opportunities.pipelines.list",
+    "family": "opportunities",
+    "method": "GET",
+    "path": "/opportunities/pipelines",
+    "version": "2021-07-28",
+    "scope": "opportunities.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/opportunities/get-pipelines",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "opportunities.search",
+    "family": "opportunities",
+    "method": "GET",
+    "path": "/opportunities/search",
+    "version": "2021-07-28",
+    "scope": "opportunities.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/opportunities/search-opportunity",
+    "pathResourceSegment": null,
+    "preflight": [
+      "opportunities.pipelines.list",
+      "contacts.get"
+    ],
+    "reconciliation": []
+  },
+  {
+    "id": "opportunities.get",
+    "family": "opportunities",
+    "method": "GET",
+    "path": "/opportunities/:opportunityId",
+    "version": "2021-07-28",
+    "scope": "opportunities.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/opportunities/get-opportunity",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "opportunities.get",
+      "opportunities.pipelines.list"
+    ],
+    "reconciliation": []
+  },
+  {
+    "id": "opportunities.create",
+    "family": "opportunities",
+    "method": "POST",
+    "path": "/opportunities/",
+    "version": "2021-07-28",
+    "scope": "opportunities.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/opportunities/create-opportunity",
+    "pathResourceSegment": null,
+    "preflight": [
+      "opportunities.pipelines.list",
+      "contacts.get",
+      "users.get",
+      "opportunities.search",
+      "users.list"
+    ],
+    "reconciliation": [
+      "opportunities.search"
+    ]
+  },
+  {
+    "id": "opportunities.update",
+    "family": "opportunities",
+    "method": "PUT",
+    "path": "/opportunities/:opportunityId",
+    "version": "2021-07-28",
+    "scope": "opportunities.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/opportunities/update-opportunity",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "opportunities.get",
+      "opportunities.pipelines.list",
+      "users.get",
+      "users.list"
+    ],
+    "reconciliation": [
+      "opportunities.get"
+    ]
+  },
+  {
+    "id": "opportunities.status",
+    "family": "opportunities",
+    "method": "PUT",
+    "path": "/opportunities/:opportunityId/status",
+    "version": "2021-07-28",
+    "scope": "opportunities.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/opportunities/update-opportunity-status",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "opportunities.get",
+      "opportunities.pipelines.list"
+    ],
+    "reconciliation": [
+      "opportunities.get"
+    ]
+  },
+  {
+    "id": "opportunities.upsert",
+    "family": "opportunities",
+    "method": "POST",
+    "path": "/opportunities/upsert",
+    "version": "2021-07-28",
+    "scope": "opportunities.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/opportunities/upsert-opportunity",
+    "pathResourceSegment": null,
+    "preflight": [
+      "opportunities.get",
+      "opportunities.pipelines.list",
+      "users.get",
+      "opportunities.search",
+      "users.list",
+      "contacts.get"
+    ],
+    "reconciliation": [
+      "opportunities.get",
+      "opportunities.search"
+    ]
+  },
+  {
+    "id": "opportunities.delete",
+    "family": "opportunities",
+    "method": "DELETE",
+    "path": "/opportunities/:opportunityId",
+    "version": "2021-07-28",
+    "scope": "opportunities.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/opportunities/delete-opportunity",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "opportunities.get",
+      "opportunities.pipelines.list"
+    ],
+    "reconciliation": [
+      "opportunities.get"
+    ]
+  },
+  {
+    "id": "opportunities.followers.add",
+    "family": "opportunities",
+    "method": "POST",
+    "path": "/opportunities/:opportunityId/followers",
+    "version": "2021-07-28",
+    "scope": "opportunities.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/opportunities/add-followers-opportunity",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "opportunities.get",
+      "opportunities.pipelines.list",
+      "users.get",
+      "users.list"
+    ],
+    "reconciliation": [
+      "opportunities.get"
+    ]
+  },
+  {
+    "id": "opportunities.followers.remove",
+    "family": "opportunities",
+    "method": "DELETE",
+    "path": "/opportunities/:opportunityId/followers",
+    "version": "2021-07-28",
+    "scope": "opportunities.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/opportunities/remove-followers-opportunity",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "opportunities.get",
+      "opportunities.pipelines.list",
+      "users.get",
+      "users.list"
+    ],
+    "reconciliation": [
+      "opportunities.get"
+    ]
+  },
+  {
+    "id": "opportunities.pipelines.create",
+    "family": "opportunities",
+    "method": "POST",
+    "path": "/opportunities/pipelines",
+    "version": "2021-07-28",
+    "scope": "pipelines.create",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/opportunities/create-pipeline",
+    "pathResourceSegment": null,
+    "preflight": [
+      "opportunities.pipelines.list"
+    ],
+    "reconciliation": [
+      "opportunities.pipelines.list"
+    ]
+  },
+  {
+    "id": "opportunities.pipelines.update",
+    "family": "opportunities",
+    "method": "PUT",
+    "path": "/opportunities/pipelines/:pipelineId",
+    "version": "2021-07-28",
+    "scope": "pipelines.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/opportunities/update-pipeline",
+    "pathResourceSegment": 3,
+    "preflight": [
+      "opportunities.pipelines.list"
+    ],
+    "reconciliation": [
+      "opportunities.pipelines.list"
+    ]
+  },
+  {
+    "id": "opportunities.pipelines.delete",
+    "family": "opportunities",
+    "method": "DELETE",
+    "path": "/opportunities/pipelines/:pipelineId",
+    "version": "2021-07-28",
+    "scope": "pipelines.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/opportunities/delete-pipeline",
+    "pathResourceSegment": 3,
+    "preflight": [
+      "opportunities.pipelines.list"
+    ],
+    "reconciliation": [
+      "opportunities.pipelines.list"
+    ]
+  },
+  {
+    "id": "conversations.search",
+    "family": "conversations",
+    "method": "GET",
+    "path": "/conversations/search",
+    "version": "2021-04-15",
+    "scope": "conversations.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/search-conversation",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "conversations.get",
+    "family": "conversations",
+    "method": "GET",
+    "path": "/conversations/:conversationId",
+    "version": "2021-04-15",
+    "scope": "conversations.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/get-conversation",
+    "pathResourceSegment": 2,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "conversations.messages.list",
+    "family": "conversations",
+    "method": "GET",
+    "path": "/conversations/:conversationId/messages",
+    "version": "2021-04-15",
+    "scope": "conversations/message.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/get-messages",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "conversations.get"
+    ],
+    "reconciliation": []
+  },
+  {
+    "id": "conversations.message.get",
+    "family": "conversations",
+    "method": "GET",
+    "path": "/conversations/messages/:messageId",
+    "version": "2021-04-15",
+    "scope": "conversations/message.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/get-message",
+    "pathResourceSegment": 3,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "conversations.email.get",
+    "family": "conversations",
+    "method": "GET",
+    "path": "/conversations/messages/email/:emailMessageId",
+    "version": "2021-04-15",
+    "scope": "conversations/message.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/get-email-by-id",
+    "pathResourceSegment": 4,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "conversations.create",
+    "family": "conversations",
+    "method": "POST",
+    "path": "/conversations/",
+    "version": "2021-04-15",
+    "scope": "conversations.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/create-conversation",
+    "pathResourceSegment": null,
+    "preflight": [
+      "contacts.get",
+      "conversations.search"
+    ],
+    "reconciliation": [
+      "conversations.search"
+    ]
+  },
+  {
+    "id": "conversations.update",
+    "family": "conversations",
+    "method": "PUT",
+    "path": "/conversations/:conversationId",
+    "version": "2021-04-15",
+    "scope": "conversations.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/update-conversation",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "conversations.get"
+    ],
+    "reconciliation": [
+      "conversations.get"
+    ]
+  },
+  {
+    "id": "conversations.delete",
+    "family": "conversations",
+    "method": "DELETE",
+    "path": "/conversations/:conversationId",
+    "version": "2021-04-15",
+    "scope": "conversations.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/delete-conversation",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "conversations.get"
+    ],
+    "reconciliation": [
+      "conversations.get"
+    ]
+  },
+  {
+    "id": "conversations.send.sms",
+    "family": "conversations",
+    "method": "POST",
+    "path": "/conversations/messages",
+    "version": "2021-04-15",
+    "scope": "conversations/message.write",
+    "risk": "C",
+    "gate": "GC+",
+    "send": true,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/send-a-new-message",
+    "pathResourceSegment": null,
+    "preflight": [
+      "contacts.get",
+      "conversations.search",
+      "conversations.messages.list",
+      "conversations.get"
+    ],
+    "reconciliation": [
+      "conversations.search",
+      "conversations.messages.list"
+    ]
+  },
+  {
+    "id": "conversations.send.email",
+    "family": "conversations",
+    "method": "POST",
+    "path": "/conversations/messages",
+    "version": "2021-04-15",
+    "scope": "conversations/message.write",
+    "risk": "C",
+    "gate": "GC+",
+    "send": true,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/send-a-new-message",
+    "pathResourceSegment": null,
+    "preflight": [
+      "contacts.get",
+      "conversations.search",
+      "conversations.messages.list",
+      "conversations.get"
+    ],
+    "reconciliation": [
+      "conversations.search",
+      "conversations.messages.list"
+    ]
+  },
+  {
+    "id": "conversations.send.whatsapp",
+    "family": "conversations",
+    "method": "POST",
+    "path": "/conversations/messages",
+    "version": "2021-04-15",
+    "scope": "conversations/message.write",
+    "risk": "C",
+    "gate": "GC+",
+    "send": true,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/send-a-new-message",
+    "pathResourceSegment": null,
+    "preflight": [
+      "contacts.get",
+      "conversations.search",
+      "conversations.messages.list",
+      "conversations.get"
+    ],
+    "reconciliation": [
+      "conversations.search",
+      "conversations.messages.list"
+    ]
+  },
+  {
+    "id": "conversations.send.facebook",
+    "family": "conversations",
+    "method": "POST",
+    "path": "/conversations/messages",
+    "version": "2021-04-15",
+    "scope": "conversations/message.write",
+    "risk": "C",
+    "gate": "GC+",
+    "send": true,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/send-a-new-message",
+    "pathResourceSegment": null,
+    "preflight": [
+      "contacts.get",
+      "conversations.search",
+      "conversations.messages.list",
+      "conversations.get"
+    ],
+    "reconciliation": [
+      "conversations.search",
+      "conversations.messages.list"
+    ]
+  },
+  {
+    "id": "conversations.send.instagram",
+    "family": "conversations",
+    "method": "POST",
+    "path": "/conversations/messages",
+    "version": "2021-04-15",
+    "scope": "conversations/message.write",
+    "risk": "C",
+    "gate": "GC+",
+    "send": true,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/send-a-new-message",
+    "pathResourceSegment": null,
+    "preflight": [
+      "contacts.get",
+      "conversations.search",
+      "conversations.messages.list",
+      "conversations.get"
+    ],
+    "reconciliation": [
+      "conversations.search",
+      "conversations.messages.list"
+    ]
+  },
+  {
+    "id": "conversations.send.gmb",
+    "family": "conversations",
+    "method": "POST",
+    "path": "/conversations/messages",
+    "version": "2021-04-15",
+    "scope": "conversations/message.write",
+    "risk": "C",
+    "gate": "GC+",
+    "send": true,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/send-a-new-message",
+    "pathResourceSegment": null,
+    "preflight": [
+      "contacts.get",
+      "conversations.search",
+      "conversations.messages.list",
+      "conversations.get"
+    ],
+    "reconciliation": [
+      "conversations.search",
+      "conversations.messages.list"
+    ]
+  },
+  {
+    "id": "conversations.send.livechat",
+    "family": "conversations",
+    "method": "POST",
+    "path": "/conversations/messages",
+    "version": "2021-04-15",
+    "scope": "conversations/message.write",
+    "risk": "C",
+    "gate": "GC+",
+    "send": true,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/send-a-new-message",
+    "pathResourceSegment": null,
+    "preflight": [
+      "contacts.get",
+      "conversations.search",
+      "conversations.messages.list",
+      "conversations.get"
+    ],
+    "reconciliation": [
+      "conversations.search",
+      "conversations.messages.list"
+    ]
+  },
+  {
+    "id": "conversations.send.scheduledSms",
+    "family": "conversations",
+    "method": "POST",
+    "path": "/conversations/messages",
+    "version": "2021-04-15",
+    "scope": "conversations/message.write",
+    "risk": "C",
+    "gate": "GC+",
+    "send": true,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/send-a-new-message",
+    "pathResourceSegment": null,
+    "preflight": [
+      "contacts.get",
+      "conversations.search",
+      "conversations.messages.list",
+      "conversations.get"
+    ],
+    "reconciliation": [
+      "conversations.search",
+      "conversations.messages.list"
+    ]
+  },
+  {
+    "id": "conversations.send.scheduledEmail",
+    "family": "conversations",
+    "method": "POST",
+    "path": "/conversations/messages",
+    "version": "2021-04-15",
+    "scope": "conversations/message.write",
+    "risk": "C",
+    "gate": "GC+",
+    "send": true,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/send-a-new-message",
+    "pathResourceSegment": null,
+    "preflight": [
+      "contacts.get",
+      "conversations.search",
+      "conversations.messages.list",
+      "conversations.get"
+    ],
+    "reconciliation": [
+      "conversations.search",
+      "conversations.messages.list"
+    ]
+  },
+  {
+    "id": "conversations.schedule.cancel",
+    "family": "conversations",
+    "method": "DELETE",
+    "path": "/conversations/messages/:messageId/schedule",
+    "version": "2021-04-15",
+    "scope": "conversations/message.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/cancel-scheduled-message",
+    "pathResourceSegment": 3,
+    "preflight": [
+      "conversations.message.get",
+      "conversations.get"
+    ],
+    "reconciliation": [
+      "conversations.message.get"
+    ]
+  },
+  {
+    "id": "conversations.schedule.cancelEmail",
+    "family": "conversations",
+    "method": "DELETE",
+    "path": "/conversations/messages/email/:emailMessageId/schedule",
+    "version": "2021-04-15",
+    "scope": "conversations/message.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/cancel-scheduled-email-message",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "conversations.email.get",
+      "conversations.get"
+    ],
+    "reconciliation": [
+      "conversations.email.get"
+    ]
+  },
+  {
+    "id": "conversations.attachment.upload",
+    "family": "conversations",
+    "method": "POST",
+    "path": "/conversations/messages/upload",
+    "version": "2021-04-15",
+    "scope": "conversations/message.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/conversations/upload-file-attachments",
+    "pathResourceSegment": null,
+    "preflight": [
+      "conversations.get",
+      "conversations.messages.list"
+    ],
+    "reconciliation": [
+      "conversations.messages.list"
+    ]
+  },
+  {
+    "id": "calendars.list",
+    "family": "calendars",
+    "method": "GET",
+    "path": "/calendars/",
+    "version": "2021-07-28",
+    "scope": "calendars.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/get-calendars",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "calendars.get",
+    "family": "calendars",
+    "method": "GET",
+    "path": "/calendars/:calendarId",
+    "version": "2021-07-28",
+    "scope": "calendars.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/get-calendar",
+    "pathResourceSegment": 2,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "calendars.freeSlots",
+    "family": "calendars",
+    "method": "GET",
+    "path": "/calendars/:calendarId/free-slots",
+    "version": "2021-07-28",
+    "scope": "calendars.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/get-slots",
+    "pathResourceSegment": 2,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "calendars.groups.list",
+    "family": "calendars",
+    "method": "GET",
+    "path": "/calendars/groups",
+    "version": "2021-07-28",
+    "scope": "calendars/groups.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/get-groups",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "calendars.resources.list",
+    "family": "calendars",
+    "method": "GET",
+    "path": "/calendars/resources/:resourceType",
+    "version": "2021-07-28",
+    "scope": "calendars/resources.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/fetch-calendar-resources",
+    "pathResourceSegment": 3,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "calendars.create",
+    "family": "calendars",
+    "method": "POST",
+    "path": "/calendars/",
+    "version": "2021-07-28",
+    "scope": "calendars.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/create-calendar",
+    "pathResourceSegment": null,
+    "preflight": [
+      "calendars.list"
+    ],
+    "reconciliation": [
+      "calendars.list"
+    ]
+  },
+  {
+    "id": "calendars.update",
+    "family": "calendars",
+    "method": "PUT",
+    "path": "/calendars/:calendarId",
+    "version": "2021-07-28",
+    "scope": "calendars.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/update-calendar",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "calendars.get"
+    ],
+    "reconciliation": [
+      "calendars.get"
+    ]
+  },
+  {
+    "id": "calendars.delete",
+    "family": "calendars",
+    "method": "DELETE",
+    "path": "/calendars/:calendarId",
+    "version": "2021-07-28",
+    "scope": "calendars.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/delete-calendar",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "calendars.get"
+    ],
+    "reconciliation": [
+      "calendars.get"
+    ]
+  },
+  {
+    "id": "calendars.events.list",
+    "family": "calendars",
+    "method": "GET",
+    "path": "/calendars/events",
+    "version": "2021-07-28",
+    "scope": "calendars/events.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/get-calendar-events",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "calendars.appointment.get",
+    "family": "calendars",
+    "method": "GET",
+    "path": "/calendars/events/appointments/:eventId",
+    "version": "2021-07-28",
+    "scope": "calendars/events.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/get-appointment",
+    "pathResourceSegment": 4,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "calendars.appointment.book",
+    "family": "calendars",
+    "method": "POST",
+    "path": "/calendars/events/appointments",
+    "version": "2021-07-28",
+    "scope": "calendars/events.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/create-appointment",
+    "pathResourceSegment": null,
+    "preflight": [
+      "calendars.freeSlots",
+      "contacts.get",
+      "calendars.events.list"
+    ],
+    "reconciliation": [
+      "calendars.events.list"
+    ]
+  },
+  {
+    "id": "calendars.appointment.reschedule",
+    "family": "calendars",
+    "method": "PUT",
+    "path": "/calendars/events/appointments/:eventId",
+    "version": "2021-07-28",
+    "scope": "calendars/events.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/edit-appointment",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "calendars.appointment.get",
+      "calendars.freeSlots"
+    ],
+    "reconciliation": [
+      "calendars.appointment.get"
+    ]
+  },
+  {
+    "id": "calendars.appointment.cancel",
+    "family": "calendars",
+    "method": "PUT",
+    "path": "/calendars/events/appointments/:eventId",
+    "version": "2021-07-28",
+    "scope": "calendars/events.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/edit-appointment",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "calendars.appointment.get"
+    ],
+    "reconciliation": [
+      "calendars.appointment.get"
+    ]
+  },
+  {
+    "id": "calendars.event.delete",
+    "family": "calendars",
+    "method": "DELETE",
+    "path": "/calendars/events/:eventId",
+    "version": "2021-07-28",
+    "scope": "calendars/events.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/delete-event",
+    "pathResourceSegment": 3,
+    "preflight": [
+      "calendars.appointment.get"
+    ],
+    "reconciliation": [
+      "calendars.appointment.get"
+    ]
+  },
+  {
+    "id": "calendars.blockSlot.create",
+    "family": "calendars",
+    "method": "POST",
+    "path": "/calendars/events/block-slots",
+    "version": "2021-07-28",
+    "scope": "calendars/events.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/create-block-slot",
+    "pathResourceSegment": null,
+    "preflight": [
+      "calendars.events.list"
+    ],
+    "reconciliation": [
+      "calendars.events.list"
+    ]
+  },
+  {
+    "id": "calendars.blockSlot.update",
+    "family": "calendars",
+    "method": "PUT",
+    "path": "/calendars/events/block-slots/:eventId",
+    "version": "2021-07-28",
+    "scope": "calendars/events.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/edit-block-slot",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "calendars.events.list"
+    ],
+    "reconciliation": [
+      "calendars.events.list"
+    ]
+  },
+  {
+    "id": "calendars.appointmentNotes.list",
+    "family": "calendars",
+    "method": "GET",
+    "path": "/calendars/appointments/:appointmentId/notes",
+    "version": "2021-07-28",
+    "scope": "calendars/events.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/get-appointment-notes",
+    "pathResourceSegment": 3,
+    "preflight": [
+      "calendars.appointment.get"
+    ],
+    "reconciliation": []
+  },
+  {
+    "id": "calendars.appointmentNotes.create",
+    "family": "calendars",
+    "method": "POST",
+    "path": "/calendars/appointments/:appointmentId/notes",
+    "version": "2021-07-28",
+    "scope": "calendars/events.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/create-appointment-note",
+    "pathResourceSegment": 3,
+    "preflight": [
+      "calendars.appointment.get",
+      "calendars.appointmentNotes.list"
+    ],
+    "reconciliation": [
+      "calendars.appointmentNotes.list"
+    ]
+  },
+  {
+    "id": "calendars.appointmentNotes.update",
+    "family": "calendars",
+    "method": "PUT",
+    "path": "/calendars/appointments/:appointmentId/notes/:noteId",
+    "version": "2021-07-28",
+    "scope": "calendars/events.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/update-appointment-note",
+    "pathResourceSegment": 5,
+    "preflight": [
+      "calendars.appointment.get",
+      "calendars.appointmentNotes.list"
+    ],
+    "reconciliation": [
+      "calendars.appointmentNotes.list"
+    ]
+  },
+  {
+    "id": "calendars.appointmentNotes.delete",
+    "family": "calendars",
+    "method": "DELETE",
+    "path": "/calendars/appointments/:appointmentId/notes/:noteId",
+    "version": "2021-07-28",
+    "scope": "calendars/events.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/calendars/delete-appointment-note",
+    "pathResourceSegment": 5,
+    "preflight": [
+      "calendars.appointment.get",
+      "calendars.appointmentNotes.list"
+    ],
+    "reconciliation": [
+      "calendars.appointmentNotes.list"
+    ]
+  },
+  {
+    "id": "automations.workflows.list",
+    "family": "automations",
+    "method": "GET",
+    "path": "/workflows/",
+    "version": "2021-07-28",
+    "scope": "workflows.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/workflows/get-workflow",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "automations.campaigns.list",
+    "family": "automations",
+    "method": "GET",
+    "path": "/campaigns/",
+    "version": "2021-07-28",
+    "scope": "campaigns.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/campaigns/get-campaigns",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "automations.workflow.addContact",
+    "family": "automations",
+    "method": "POST",
+    "path": "/contacts/:contactId/workflow/:workflowId",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/add-contact-to-workflow",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get",
+      "automations.workflows.list"
+    ],
+    "reconciliation": [
+      "contacts.get"
+    ]
+  },
+  {
+    "id": "automations.workflow.removeContact",
+    "family": "automations",
+    "method": "DELETE",
+    "path": "/contacts/:contactId/workflow/:workflowId",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/delete-contact-from-workflow",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get",
+      "automations.workflows.list"
+    ],
+    "reconciliation": [
+      "contacts.get"
+    ]
+  },
+  {
+    "id": "automations.campaign.addContact",
+    "family": "automations",
+    "method": "POST",
+    "path": "/contacts/:contactId/campaigns/:campaignId",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/add-contact-to-campaign",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get",
+      "automations.campaigns.list"
+    ],
+    "reconciliation": [
+      "contacts.get"
+    ]
+  },
+  {
+    "id": "automations.campaign.removeContact",
+    "family": "automations",
+    "method": "DELETE",
+    "path": "/contacts/:contactId/campaigns/:campaignId",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/remove-contact-from-campaign",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get",
+      "automations.campaigns.list"
+    ],
+    "reconciliation": [
+      "contacts.get"
+    ]
+  },
+  {
+    "id": "automations.campaign.removeAll",
+    "family": "automations",
+    "method": "DELETE",
+    "path": "/contacts/:contactId/campaigns/remove-all",
+    "version": "2021-07-28",
+    "scope": "contacts.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/contacts/remove-contact-from-every-campaign",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "contacts.get"
+    ],
+    "reconciliation": [
+      "contacts.get"
+    ]
+  },
+  {
+    "id": "location.get",
+    "family": "location",
+    "method": "GET",
+    "path": "/locations/:locationId",
+    "version": "2021-07-28",
+    "scope": "locations.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/get-location",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "location.customFields.list",
+    "family": "location",
+    "method": "GET",
+    "path": "/locations/:locationId/customFields",
+    "version": "2021-07-28",
+    "scope": "locations/customFields.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/get-custom-fields",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "location.customFields.get",
+    "family": "location",
+    "method": "GET",
+    "path": "/locations/:locationId/customFields/:fieldId",
+    "version": "2021-07-28",
+    "scope": "locations/customFields.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/get-custom-field",
+    "pathResourceSegment": 4,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "location.customFields.create",
+    "family": "location",
+    "method": "POST",
+    "path": "/locations/:locationId/customFields",
+    "version": "2021-07-28",
+    "scope": "locations/customFields.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/create-custom-field",
+    "pathResourceSegment": null,
+    "preflight": [
+      "location.customFields.list"
+    ],
+    "reconciliation": [
+      "location.customFields.list"
+    ]
+  },
+  {
+    "id": "location.customFields.update",
+    "family": "location",
+    "method": "PUT",
+    "path": "/locations/:locationId/customFields/:fieldId",
+    "version": "2021-07-28",
+    "scope": "locations/customFields.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/update-custom-field",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "location.customFields.get"
+    ],
+    "reconciliation": [
+      "location.customFields.get"
+    ]
+  },
+  {
+    "id": "location.customFields.delete",
+    "family": "location",
+    "method": "DELETE",
+    "path": "/locations/:locationId/customFields/:fieldId",
+    "version": "2021-07-28",
+    "scope": "locations/customFields.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/delete-custom-field",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "location.customFields.get"
+    ],
+    "reconciliation": [
+      "location.customFields.get"
+    ]
+  },
+  {
+    "id": "location.customValues.list",
+    "family": "location",
+    "method": "GET",
+    "path": "/locations/:locationId/customValues",
+    "version": "2021-07-28",
+    "scope": "locations/customValues.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/get-custom-values",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "location.customValues.get",
+    "family": "location",
+    "method": "GET",
+    "path": "/locations/:locationId/customValues/:valueId",
+    "version": "2021-07-28",
+    "scope": "locations/customValues.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/get-custom-value",
+    "pathResourceSegment": 4,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "location.customValues.create",
+    "family": "location",
+    "method": "POST",
+    "path": "/locations/:locationId/customValues",
+    "version": "2021-07-28",
+    "scope": "locations/customValues.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/create-custom-value",
+    "pathResourceSegment": null,
+    "preflight": [
+      "location.customValues.list"
+    ],
+    "reconciliation": [
+      "location.customValues.list"
+    ]
+  },
+  {
+    "id": "location.customValues.update",
+    "family": "location",
+    "method": "PUT",
+    "path": "/locations/:locationId/customValues/:valueId",
+    "version": "2021-07-28",
+    "scope": "locations/customValues.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/update-custom-value",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "location.customValues.get"
+    ],
+    "reconciliation": [
+      "location.customValues.get"
+    ]
+  },
+  {
+    "id": "location.customValues.delete",
+    "family": "location",
+    "method": "DELETE",
+    "path": "/locations/:locationId/customValues/:valueId",
+    "version": "2021-07-28",
+    "scope": "locations/customValues.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/delete-custom-value",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "location.customValues.get"
+    ],
+    "reconciliation": [
+      "location.customValues.get"
+    ]
+  },
+  {
+    "id": "location.tags.list",
+    "family": "location",
+    "method": "GET",
+    "path": "/locations/:locationId/tags",
+    "version": "2021-07-28",
+    "scope": "locations/tags.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/get-location-tags",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "location.tags.get",
+    "family": "location",
+    "method": "GET",
+    "path": "/locations/:locationId/tags/:tagId",
+    "version": "2021-07-28",
+    "scope": "locations/tags.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/get-tag-by-id",
+    "pathResourceSegment": 4,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "location.tags.create",
+    "family": "location",
+    "method": "POST",
+    "path": "/locations/:locationId/tags",
+    "version": "2021-07-28",
+    "scope": "locations/tags.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/create-tag",
+    "pathResourceSegment": null,
+    "preflight": [
+      "location.tags.list"
+    ],
+    "reconciliation": [
+      "location.tags.list"
+    ]
+  },
+  {
+    "id": "location.tags.update",
+    "family": "location",
+    "method": "PUT",
+    "path": "/locations/:locationId/tags/:tagId",
+    "version": "2021-07-28",
+    "scope": "locations/tags.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/update-tag",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "location.tags.get"
+    ],
+    "reconciliation": [
+      "location.tags.get"
+    ]
+  },
+  {
+    "id": "location.tags.delete",
+    "family": "location",
+    "method": "DELETE",
+    "path": "/locations/:locationId/tags/:tagId",
+    "version": "2021-07-28",
+    "scope": "locations/tags.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/delete-tag",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "location.tags.get"
+    ],
+    "reconciliation": [
+      "location.tags.get"
+    ]
+  },
+  {
+    "id": "location.tasks.search",
+    "family": "location",
+    "method": "POST",
+    "path": "/locations/:locationId/tasks/search",
+    "version": "2021-07-28",
+    "scope": "locations/tasks.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/task-search",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "location.templates.list",
+    "family": "location",
+    "method": "GET",
+    "path": "/locations/:locationId/templates",
+    "version": "2021-07-28",
+    "scope": "locations/templates.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/locations/get-all-or-email-sms-templates",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "users.list",
+    "family": "users",
+    "method": "GET",
+    "path": "/users/",
+    "version": "2021-07-28",
+    "scope": "users.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/users/get-user-by-location",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "users.get",
+    "family": "users",
+    "method": "GET",
+    "path": "/users/:userId",
+    "version": "2021-07-28",
+    "scope": "users.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/users/get-user",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "users.list"
+    ],
+    "reconciliation": []
+  },
+  {
+    "id": "users.create",
+    "family": "users",
+    "method": "POST",
+    "path": "/users/",
+    "version": "2021-07-28",
+    "scope": "users.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/users/create-user",
+    "pathResourceSegment": null,
+    "preflight": [
+      "users.list"
+    ],
+    "reconciliation": [
+      "users.list"
+    ]
+  },
+  {
+    "id": "users.update",
+    "family": "users",
+    "method": "PUT",
+    "path": "/users/:userId",
+    "version": "2021-07-28",
+    "scope": "users.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/users/update-user",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "users.list",
+      "users.get"
+    ],
+    "reconciliation": [
+      "users.get"
+    ]
+  },
+  {
+    "id": "users.delete",
+    "family": "users",
+    "method": "DELETE",
+    "path": "/users/:userId",
+    "version": "2021-07-28",
+    "scope": "users.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/users/delete-user",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "users.list",
+      "users.get"
+    ],
+    "reconciliation": [
+      "users.get"
+    ]
+  },
+  {
+    "id": "forms.list",
+    "family": "forms",
+    "method": "GET",
+    "path": "/forms/",
+    "version": "2021-07-28",
+    "scope": "forms.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/forms/get-forms",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "forms.submissions",
+    "family": "forms",
+    "method": "GET",
+    "path": "/forms/submissions",
+    "version": "2021-07-28",
+    "scope": "forms.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/forms/get-forms-submissions",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "forms.surveys.list",
+    "family": "forms",
+    "method": "GET",
+    "path": "/surveys/",
+    "version": "2021-07-28",
+    "scope": "surveys.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/surveys/get-surveys",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "forms.surveys.submissions",
+    "family": "forms",
+    "method": "GET",
+    "path": "/surveys/submissions",
+    "version": "2021-07-28",
+    "scope": "surveys.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/surveys/get-surveys-submissions",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "payments.invoices.list",
+    "family": "payments",
+    "method": "GET",
+    "path": "/invoices/",
+    "version": "2021-07-28",
+    "scope": "invoices.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/invoices/list-invoices",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "payments.invoices.get",
+    "family": "payments",
+    "method": "GET",
+    "path": "/invoices/:invoiceId",
+    "version": "2021-07-28",
+    "scope": "invoices.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/invoices/get-invoice",
+    "pathResourceSegment": 2,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "payments.invoice.create",
+    "family": "payments",
+    "method": "POST",
+    "path": "/invoices/",
+    "version": "2021-07-28",
+    "scope": "invoices.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/invoices/create-invoice",
+    "pathResourceSegment": null,
+    "preflight": [
+      "contacts.get",
+      "payments.invoices.list",
+      "payments.invoices.get"
+    ],
+    "reconciliation": [
+      "payments.invoices.list",
+      "payments.invoices.get"
+    ]
+  },
+  {
+    "id": "payments.invoice.update",
+    "family": "payments",
+    "method": "PUT",
+    "path": "/invoices/:invoiceId",
+    "version": "2021-07-28",
+    "scope": "invoices.write",
+    "risk": "D",
+    "gate": "GDp",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/invoices/update-invoice",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "payments.invoices.get"
+    ],
+    "reconciliation": [
+      "payments.invoices.get"
+    ]
+  },
+  {
+    "id": "payments.invoice.send",
+    "family": "payments",
+    "method": "POST",
+    "path": "/invoices/:invoiceId/send",
+    "version": "2021-07-28",
+    "scope": "invoices.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/invoices/send-invoice",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "payments.invoices.get"
+    ],
+    "reconciliation": [
+      "payments.invoices.get"
+    ]
+  },
+  {
+    "id": "payments.invoice.void",
+    "family": "payments",
+    "method": "POST",
+    "path": "/invoices/:invoiceId/void",
+    "version": "2021-07-28",
+    "scope": "invoices.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/invoices/void-invoice",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "payments.invoices.get"
+    ],
+    "reconciliation": [
+      "payments.invoices.get"
+    ]
+  },
+  {
+    "id": "payments.invoice.delete",
+    "family": "payments",
+    "method": "DELETE",
+    "path": "/invoices/:invoiceId",
+    "version": "2021-07-28",
+    "scope": "invoices.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/invoices/delete-invoice",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "payments.invoices.get"
+    ],
+    "reconciliation": [
+      "payments.invoices.get"
+    ]
+  },
+  {
+    "id": "payments.invoice.recordPayment",
+    "family": "payments",
+    "method": "POST",
+    "path": "/invoices/:invoiceId/record-payment",
+    "version": "2021-07-28",
+    "scope": "invoices.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/invoices/record-invoice",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "payments.invoices.get"
+    ],
+    "reconciliation": [
+      "payments.invoices.get"
+    ]
+  },
+  {
+    "id": "payments.invoice.text2pay",
+    "family": "payments",
+    "method": "POST",
+    "path": "/invoices/text2pay",
+    "version": "2021-07-28",
+    "scope": "invoices.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/invoices/text-2-pay-invoice",
+    "pathResourceSegment": null,
+    "preflight": [
+      "contacts.get",
+      "payments.invoices.list",
+      "payments.invoices.get"
+    ],
+    "reconciliation": [
+      "payments.invoices.list",
+      "payments.invoices.get"
+    ]
+  },
+  {
+    "id": "payments.orders.list",
+    "family": "payments",
+    "method": "GET",
+    "path": "/payments/orders",
+    "version": "2021-07-28",
+    "scope": "payments/orders.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/payments/list-orders",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "payments.orders.get",
+    "family": "payments",
+    "method": "GET",
+    "path": "/payments/orders/:orderId",
+    "version": "2021-07-28",
+    "scope": "payments/orders.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/payments/get-order-by-id",
+    "pathResourceSegment": 3,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "payments.transactions.list",
+    "family": "payments",
+    "method": "GET",
+    "path": "/payments/transactions",
+    "version": "2021-07-28",
+    "scope": "payments/transactions.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/payments/list-transactions",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "payments.transactions.get",
+    "family": "payments",
+    "method": "GET",
+    "path": "/payments/transactions/:transactionId",
+    "version": "2021-07-28",
+    "scope": "payments/transactions.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/payments/get-transaction-by-id",
+    "pathResourceSegment": 3,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "payments.subscriptions.list",
+    "family": "payments",
+    "method": "GET",
+    "path": "/payments/subscriptions",
+    "version": "2021-07-28",
+    "scope": "payments/subscriptions.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/payments/list-subscriptions",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "payments.subscriptions.get",
+    "family": "payments",
+    "method": "GET",
+    "path": "/payments/subscriptions/:subscriptionId",
+    "version": "2021-07-28",
+    "scope": "payments/subscriptions.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/payments/get-subscription-by-id",
+    "pathResourceSegment": 3,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "payments.products.list",
+    "family": "payments",
+    "method": "GET",
+    "path": "/products/",
+    "version": "2021-07-28",
+    "scope": "products.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/products/list-invoices",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "payments.products.get",
+    "family": "payments",
+    "method": "GET",
+    "path": "/products/:productId",
+    "version": "2021-07-28",
+    "scope": "products.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/products/get-product-by-id",
+    "pathResourceSegment": 2,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "payments.refund",
+    "family": "payments",
+    "method": null,
+    "path": null,
+    "version": "2021-07-28",
+    "scope": null,
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/llms/2021-07-28/payments.md",
+    "pathResourceSegment": null,
+    "preflight": [
+      "payments.orders.get"
+    ],
+    "reconciliation": [
+      "payments.orders.get"
+    ]
+  },
+  {
+    "id": "social.accounts.list",
+    "family": "social",
+    "method": "GET",
+    "path": "/social-media-posting/:locationId/accounts",
+    "version": "2021-07-28",
+    "scope": "socialplanner/account.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/social-planner/get-account",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "social.accounts.disconnect",
+    "family": "social",
+    "method": "DELETE",
+    "path": "/social-media-posting/:locationId/accounts/:accountId",
+    "version": "2021-07-28",
+    "scope": "socialplanner/account.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/social-planner/delete-account",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "social.accounts.list"
+    ],
+    "reconciliation": [
+      "social.accounts.list"
+    ]
+  },
+  {
+    "id": "social.posts.list",
+    "family": "social",
+    "method": "POST",
+    "path": "/social-media-posting/:locationId/posts/list",
+    "version": "2021-07-28",
+    "scope": "socialplanner/post.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/social-planner/get-posts",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "social.posts.get",
+    "family": "social",
+    "method": "GET",
+    "path": "/social-media-posting/:locationId/posts/:postId",
+    "version": "2021-07-28",
+    "scope": "socialplanner/post.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/social-planner/get-post",
+    "pathResourceSegment": 4,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "social.categories.list",
+    "family": "social",
+    "method": "GET",
+    "path": "/social-media-posting/:locationId/categories",
+    "version": "2021-07-28",
+    "scope": "socialplanner/category.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/social-planner/get-categories-location-id",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "social.tags.list",
+    "family": "social",
+    "method": "GET",
+    "path": "/social-media-posting/:locationId/tags",
+    "version": "2021-07-28",
+    "scope": "socialplanner/tag.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/social-planner/get-tags-location-id",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "social.posts.createDraft",
+    "family": "social",
+    "method": "POST",
+    "path": "/social-media-posting/:locationId/posts",
+    "version": "2021-07-28",
+    "scope": "socialplanner/post.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/social-planner/create-post",
+    "pathResourceSegment": null,
+    "preflight": [
+      "social.accounts.list",
+      "social.posts.list"
+    ],
+    "reconciliation": [
+      "social.posts.list"
+    ]
+  },
+  {
+    "id": "social.posts.createPublished",
+    "family": "social",
+    "method": "POST",
+    "path": "/social-media-posting/:locationId/posts",
+    "version": "2021-07-28",
+    "scope": "socialplanner/post.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/social-planner/create-post",
+    "pathResourceSegment": null,
+    "preflight": [
+      "social.accounts.list",
+      "social.posts.list"
+    ],
+    "reconciliation": [
+      "social.posts.list"
+    ]
+  },
+  {
+    "id": "social.posts.updateDraft",
+    "family": "social",
+    "method": "PUT",
+    "path": "/social-media-posting/:locationId/posts/:postId",
+    "version": "2021-07-28",
+    "scope": "socialplanner/post.write",
+    "risk": "D",
+    "gate": "GDp",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/social-planner/edit-post",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "social.posts.get"
+    ],
+    "reconciliation": [
+      "social.posts.get"
+    ]
+  },
+  {
+    "id": "social.posts.publishDraft",
+    "family": "social",
+    "method": "PUT",
+    "path": "/social-media-posting/:locationId/posts/:postId",
+    "version": "2021-07-28",
+    "scope": "socialplanner/post.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/social-planner/edit-post",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "social.posts.get"
+    ],
+    "reconciliation": [
+      "social.posts.get"
+    ]
+  },
+  {
+    "id": "social.posts.updatePublished",
+    "family": "social",
+    "method": "PUT",
+    "path": "/social-media-posting/:locationId/posts/:postId",
+    "version": "2021-07-28",
+    "scope": "socialplanner/post.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/social-planner/edit-post",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "social.posts.get"
+    ],
+    "reconciliation": [
+      "social.posts.get"
+    ]
+  },
+  {
+    "id": "social.posts.delete",
+    "family": "social",
+    "method": "DELETE",
+    "path": "/social-media-posting/:locationId/posts/:postId",
+    "version": "2021-07-28",
+    "scope": "socialplanner/post.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/social-planner/delete-post",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "social.posts.get"
+    ],
+    "reconciliation": [
+      "social.posts.get"
+    ]
+  },
+  {
+    "id": "blogs.sites.list",
+    "family": "blogs",
+    "method": "GET",
+    "path": "/blogs/site/all",
+    "version": "2021-07-28",
+    "scope": "blogs/list.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/blogs/get-blogs",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "blogs.posts.list",
+    "family": "blogs",
+    "method": "GET",
+    "path": "/blogs/posts/all",
+    "version": "2021-07-28",
+    "scope": "blogs/posts.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/blogs/get-blog-post",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "blogs.authors.list",
+    "family": "blogs",
+    "method": "GET",
+    "path": "/blogs/authors",
+    "version": "2021-07-28",
+    "scope": "blogs/author.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/blogs/get-all-blog-authors-by-location",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "blogs.categories.list",
+    "family": "blogs",
+    "method": "GET",
+    "path": "/blogs/categories",
+    "version": "2021-07-28",
+    "scope": "blogs/category.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/blogs/get-all-categories-by-location",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "blogs.slug.check",
+    "family": "blogs",
+    "method": "GET",
+    "path": "/blogs/posts/url-slug-exists",
+    "version": "2021-07-28",
+    "scope": "blogs/check-slug.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/blogs/check-url-slug-exists",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "blogs.posts.createDraft",
+    "family": "blogs",
+    "method": "POST",
+    "path": "/blogs/posts",
+    "version": "2021-07-28",
+    "scope": "blogs/post.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/blogs/create-blog-post",
+    "pathResourceSegment": null,
+    "preflight": [
+      "blogs.sites.list",
+      "blogs.posts.list",
+      "blogs.authors.list",
+      "blogs.categories.list",
+      "blogs.slug.check"
+    ],
+    "reconciliation": [
+      "blogs.posts.list"
+    ]
+  },
+  {
+    "id": "blogs.posts.createPublished",
+    "family": "blogs",
+    "method": "POST",
+    "path": "/blogs/posts",
+    "version": "2021-07-28",
+    "scope": "blogs/post.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/blogs/create-blog-post",
+    "pathResourceSegment": null,
+    "preflight": [
+      "blogs.sites.list",
+      "blogs.posts.list",
+      "blogs.authors.list",
+      "blogs.categories.list",
+      "blogs.slug.check"
+    ],
+    "reconciliation": [
+      "blogs.posts.list"
+    ]
+  },
+  {
+    "id": "blogs.posts.updateDraft",
+    "family": "blogs",
+    "method": "PUT",
+    "path": "/blogs/posts/:postId",
+    "version": "2021-07-28",
+    "scope": "blogs/post-update.write",
+    "risk": "D",
+    "gate": "GDp",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/blogs/update-blog-post",
+    "pathResourceSegment": 3,
+    "preflight": [
+      "blogs.posts.list",
+      "blogs.authors.list",
+      "blogs.categories.list",
+      "blogs.slug.check"
+    ],
+    "reconciliation": [
+      "blogs.posts.list"
+    ]
+  },
+  {
+    "id": "blogs.posts.publish",
+    "family": "blogs",
+    "method": "PUT",
+    "path": "/blogs/posts/:postId",
+    "version": "2021-07-28",
+    "scope": "blogs/post-update.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/blogs/update-blog-post",
+    "pathResourceSegment": 3,
+    "preflight": [
+      "blogs.posts.list",
+      "blogs.authors.list",
+      "blogs.categories.list",
+      "blogs.slug.check"
+    ],
+    "reconciliation": [
+      "blogs.posts.list"
+    ]
+  },
+  {
+    "id": "blogs.posts.updatePublished",
+    "family": "blogs",
+    "method": "PUT",
+    "path": "/blogs/posts/:postId",
+    "version": "2021-07-28",
+    "scope": "blogs/post-update.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/blogs/update-blog-post",
+    "pathResourceSegment": 3,
+    "preflight": [
+      "blogs.posts.list",
+      "blogs.authors.list",
+      "blogs.categories.list",
+      "blogs.slug.check"
+    ],
+    "reconciliation": [
+      "blogs.posts.list"
+    ]
+  },
+  {
+    "id": "blogs.posts.delete",
+    "family": "blogs",
+    "method": null,
+    "path": null,
+    "version": "2021-07-28",
+    "scope": null,
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/llms/2021-07-28/blogs.md",
+    "pathResourceSegment": null,
+    "preflight": [
+      "blogs.posts.list"
+    ],
+    "reconciliation": [
+      "blogs.posts.list"
+    ]
+  },
+  {
+    "id": "media.files.list",
+    "family": "media",
+    "method": "GET",
+    "path": "/medias/files",
+    "version": "2021-07-28",
+    "scope": "medias.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/medias/fetch-media-content",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "media.files.upload",
+    "family": "media",
+    "method": "POST",
+    "path": "/medias/upload-file",
+    "version": "2021-07-28",
+    "scope": "medias.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/medias/upload-media-content",
+    "pathResourceSegment": null,
+    "preflight": [
+      "media.files.list"
+    ],
+    "reconciliation": [
+      "media.files.list"
+    ]
+  },
+  {
+    "id": "media.folders.create",
+    "family": "media",
+    "method": "POST",
+    "path": "/medias/folder",
+    "version": "2021-07-28",
+    "scope": "none",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/medias/create-media-folder",
+    "pathResourceSegment": null,
+    "preflight": [
+      "media.files.list"
+    ],
+    "reconciliation": [
+      "media.files.list"
+    ]
+  },
+  {
+    "id": "media.files.delete",
+    "family": "media",
+    "method": "DELETE",
+    "path": "/medias/:fileId",
+    "version": "2021-07-28",
+    "scope": "medias.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/medias/delete-media-content",
+    "pathResourceSegment": 2,
+    "preflight": [
+      "media.files.list"
+    ],
+    "reconciliation": [
+      "media.files.list"
+    ]
+  },
+  {
+    "id": "documents.list",
+    "family": "documents",
+    "method": "GET",
+    "path": "/proposals/document",
+    "version": "2021-07-28",
+    "scope": "documents_contracts/list.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/proposals/list-documents-contracts",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "documents.templates.list",
+    "family": "documents",
+    "method": "GET",
+    "path": "/proposals/templates",
+    "version": "2021-07-28",
+    "scope": "documents_contracts_templates/list.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/proposals/list-documents-contracts-templates",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "documents.send",
+    "family": "documents",
+    "method": "POST",
+    "path": "/proposals/document/send",
+    "version": "2021-07-28",
+    "scope": "documents_contracts/sendlink.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/proposals/send-documents-contracts",
+    "pathResourceSegment": null,
+    "preflight": [
+      "documents.list",
+      "contacts.get"
+    ],
+    "reconciliation": [
+      "documents.list"
+    ]
+  },
+  {
+    "id": "documents.templates.send",
+    "family": "documents",
+    "method": "POST",
+    "path": "/proposals/templates/send",
+    "version": "2021-07-28",
+    "scope": "documents_contracts_templates/sendlink.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/proposals/send-documents-contracts-template",
+    "pathResourceSegment": null,
+    "preflight": [
+      "documents.templates.list",
+      "contacts.get",
+      "documents.list"
+    ],
+    "reconciliation": [
+      "documents.list"
+    ]
+  },
+  {
+    "id": "documents.delete",
+    "family": "documents",
+    "method": null,
+    "path": null,
+    "version": "2021-07-28",
+    "scope": null,
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/llms/2021-07-28/proposals.md",
+    "pathResourceSegment": null,
+    "preflight": [
+      "documents.list"
+    ],
+    "reconciliation": [
+      "documents.list"
+    ]
+  },
+  {
+    "id": "funnels.list",
+    "family": "funnels",
+    "method": "GET",
+    "path": "/funnels/funnel/list",
+    "version": "2021-07-28",
+    "scope": "funnels/funnel.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/funnels/get-funnels",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "funnels.pages.list",
+    "family": "funnels",
+    "method": "GET",
+    "path": "/funnels/page",
+    "version": "2021-07-28",
+    "scope": "funnels/page.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/funnels/get-pages-by-funnel-id",
+    "pathResourceSegment": null,
+    "preflight": [
+      "funnels.list"
+    ],
+    "reconciliation": []
+  },
+  {
+    "id": "funnels.pages.count",
+    "family": "funnels",
+    "method": "GET",
+    "path": "/funnels/page/count",
+    "version": "2021-07-28",
+    "scope": "funnels/pagecount.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/funnels/get-pages-count-by-funnel-id",
+    "pathResourceSegment": null,
+    "preflight": [
+      "funnels.list"
+    ],
+    "reconciliation": []
+  },
+  {
+    "id": "funnels.redirects.list",
+    "family": "funnels",
+    "method": "GET",
+    "path": "/funnels/lookup/redirect/list",
+    "version": "2021-07-28",
+    "scope": "funnels/redirect.readonly",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/funnels/fetch-redirects-list",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "funnels.redirects.create",
+    "family": "funnels",
+    "method": "POST",
+    "path": "/funnels/lookup/redirect",
+    "version": "2021-07-28",
+    "scope": "funnels/redirect.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/funnels/create-redirect",
+    "pathResourceSegment": null,
+    "preflight": [
+      "funnels.redirects.list"
+    ],
+    "reconciliation": [
+      "funnels.redirects.list"
+    ]
+  },
+  {
+    "id": "funnels.redirects.update",
+    "family": "funnels",
+    "method": "PATCH",
+    "path": "/funnels/lookup/redirect/:redirectId",
+    "version": "2021-07-28",
+    "scope": "funnels/redirect.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/funnels/update-redirect-by-id",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "funnels.redirects.list"
+    ],
+    "reconciliation": [
+      "funnels.redirects.list"
+    ]
+  },
+  {
+    "id": "funnels.redirects.delete",
+    "family": "funnels",
+    "method": "DELETE",
+    "path": "/funnels/lookup/redirect/:redirectId",
+    "version": "2021-07-28",
+    "scope": "funnels/redirect.write",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/funnels/delete-redirect-by-id",
+    "pathResourceSegment": 4,
+    "preflight": [
+      "funnels.redirects.list"
+    ],
+    "reconciliation": [
+      "funnels.redirects.list"
+    ]
+  },
+  {
+    "id": "funnels.pages.edit",
+    "family": "funnels",
+    "method": null,
+    "path": null,
+    "version": "2021-07-28",
+    "scope": null,
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/llms/2021-07-28/funnels.md",
+    "pathResourceSegment": null,
+    "preflight": [
+      "funnels.pages.list"
+    ],
+    "reconciliation": [
+      "funnels.pages.list"
+    ]
+  },
+  {
+    "id": "courses.import",
+    "family": "courses",
+    "method": "POST",
+    "path": "/courses/courses-exporter/public/import",
+    "version": "2021-07-28",
+    "scope": "courses.write",
+    "risk": "C",
+    "gate": "GC",
+    "send": false,
+    "precondition": "none",
+    "disposition": "ready",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/courses/import-courses",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "courses.list",
+    "family": "courses",
+    "method": null,
+    "path": null,
+    "version": "2021-07-28",
+    "scope": null,
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/llms/2021-07-28/courses.md",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "courses.offers.list",
+    "family": "courses",
+    "method": null,
+    "path": null,
+    "version": "2021-07-28",
+    "scope": null,
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/llms/2021-07-28/courses.md",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "courses.memberships.access.grant",
+    "family": "courses",
+    "method": null,
+    "path": null,
+    "version": "2021-07-28",
+    "scope": null,
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/llms/2021-07-28/courses.md",
+    "pathResourceSegment": null,
+    "preflight": [
+      "contacts.get",
+      "courses.offers.list"
+    ],
+    "reconciliation": [
+      "contacts.get"
+    ]
+  },
+  {
+    "id": "courses.memberships.access.revoke",
+    "family": "courses",
+    "method": null,
+    "path": null,
+    "version": "2021-07-28",
+    "scope": null,
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/llms/2021-07-28/courses.md",
+    "pathResourceSegment": null,
+    "preflight": [
+      "contacts.get",
+      "courses.offers.list"
+    ],
+    "reconciliation": [
+      "contacts.get"
+    ]
+  },
+  {
+    "id": "saas.location.get",
+    "family": "saas",
+    "method": "GET",
+    "path": "/saas/saas-locations/:companyId",
+    "version": "2021-07-28",
+    "scope": "none",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/saas-api/get-saas-locations",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "saas.subscription.update",
+    "family": "saas",
+    "method": "PUT",
+    "path": "/saas/update-saas-subscription/:locationId",
+    "version": "2021-07-28",
+    "scope": "none",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/saas-api/generate-payment-link",
+    "pathResourceSegment": null,
+    "preflight": [
+      "saas.location.get"
+    ],
+    "reconciliation": [
+      "saas.location.get"
+    ]
+  },
+  {
+    "id": "saas.subscription.pause",
+    "family": "saas",
+    "method": "POST",
+    "path": "/saas/pause/:locationId",
+    "version": "2021-07-28",
+    "scope": "none",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/saas-api/pause-location",
+    "pathResourceSegment": null,
+    "preflight": [
+      "saas.location.get"
+    ],
+    "reconciliation": [
+      "saas.location.get"
+    ]
+  },
+  {
+    "id": "saas.enable",
+    "family": "saas",
+    "method": "POST",
+    "path": "/saas/enable-saas/:locationId",
+    "version": "2021-07-28",
+    "scope": "none",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/saas-api/enable-saas-location",
+    "pathResourceSegment": null,
+    "preflight": [
+      "saas.location.get"
+    ],
+    "reconciliation": [
+      "saas.location.get"
+    ]
+  },
+  {
+    "id": "snapshots.list",
+    "family": "snapshots",
+    "method": "GET",
+    "path": "/snapshots/",
+    "version": "2021-07-28",
+    "scope": "none",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/snapshots/get-custom-snapshots",
+    "pathResourceSegment": null,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "snapshots.status",
+    "family": "snapshots",
+    "method": "GET",
+    "path": "/snapshots/snapshot-status/:snapshotId",
+    "version": "2021-07-28",
+    "scope": "none",
+    "risk": "R",
+    "gate": "R",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/snapshots/get-snapshot-push",
+    "pathResourceSegment": 3,
+    "preflight": [],
+    "reconciliation": []
+  },
+  {
+    "id": "snapshots.shareLink.create",
+    "family": "snapshots",
+    "method": "POST",
+    "path": "/snapshots/share/link",
+    "version": "2021-07-28",
+    "scope": "none",
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/2021-07-28/ghl/snapshots/create-snapshot-share-link",
+    "pathResourceSegment": null,
+    "preflight": [
+      "snapshots.list"
+    ],
+    "reconciliation": [
+      "snapshots.list"
+    ]
+  },
+  {
+    "id": "snapshots.apply",
+    "family": "snapshots",
+    "method": null,
+    "path": null,
+    "version": "2021-07-28",
+    "scope": null,
+    "risk": "D",
+    "gate": "GD",
+    "send": false,
+    "precondition": "none",
+    "disposition": "provider_absent",
+    "docUrl": "https://marketplace.gohighlevel.com/docs/llms/2021-07-28/snapshots.md",
+    "pathResourceSegment": null,
+    "preflight": [
+      "snapshots.list"
+    ],
+    "reconciliation": [
+      "snapshots.list"
+    ]
+  }
+]

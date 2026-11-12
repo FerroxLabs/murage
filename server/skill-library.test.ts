@@ -78,8 +78,8 @@ describe("bundled skill library", () => {
 
   it("chooses trigger-term skills from the audience's catalogue on direct and room turns", () => {
     const index = readFileSync(join(import.meta.dirname, "index.ts"), "utf8");
-    expect(index).toContain("skillsForAudience(pinnedProcedures.catalogue, directOwnerAudience && ownServersAllowedFor(bot), murageSkill)");
-    expect(index).toContain("const audienceSkills = skillsForAudience(skills, roomOwnerAudience && ownServersAllowedFor(bot), murageSkill);");
+    expect(index).toContain("skillsForAudience(pinnedProcedures.catalogue, directOwnerAudience && ownServersAllowedFor(bot, serviceNoLimits(dispatchClaimId, threadId, bot.id)), murageSkill)");
+    expect(index).toContain("const audienceSkills = skillsForAudience(skills, roomOwnerAudience && ownServersAllowedFor(bot, serviceNoLimits(internalGeneration, threadId, bot.id)), murageSkill);");
     expect(index.match(/^\s+audienceSkills,$/gmu)).toHaveLength(2);
   });
 

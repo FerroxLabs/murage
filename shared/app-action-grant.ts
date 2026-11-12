@@ -35,6 +35,7 @@
 // Older grants not in a shape this writes are dropped at load (server/store.ts,
 // shared/app-action-words.ts isStaleGrant).
 
+import { observed, type ReaderVerdict } from "./no-limits-decision.ts";
 import { CONNECTED_APPS_SERVER, exposedToolName, serviceToolName } from "./connected-app-names.ts";
 import { dispatchedCall, slugOf } from "./connected-app-calls.ts";
 import { APP_ACTION_PREFIX, APP_LOOKUPS, isGenericTool, ownAppTool } from "./app-action-words.ts";
@@ -362,12 +363,17 @@ export function stampedToolCall(call: GrantCall): { name: string; input: unknown
  * joined. The guards read it beside the card text, so a terminal command
  * inside a wrapper or an MCP tool is judged like one the engine's own shell
  * tool asked for. Undefined when the arguments carry none. */
-export function commandArgument(input: unknown): string | undefined {
+// Python str.strip whitespace, matching the code reader.
+export function pythonHasText(text: string): boolean {
+  // eslint-disable-next-line no-control-regex
+  return /[^\u0009-\u000d\u001c-\u0020\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]/u.test(text);
+}
+export function commandArgument(input: unknown, pythonWhitespace = false): string | undefined {
   const body = object(input);
   if (!body) return undefined;
   for (const key of ["command", "cmd", "script", "code"]) {
     const raw = body[key];
-    if (typeof raw === "string" && raw.trim()) return raw;
+    if (typeof raw === "string" && (pythonWhitespace ? pythonHasText(raw) : raw.trim())) return raw;
     if (Array.isArray(raw) && raw.length && raw.every((part) => typeof part === "string")) return (raw as string[]).join(" ");
   }
   return undefined;
@@ -383,7 +389,7 @@ export function commandArgument(input: unknown): string | undefined {
  * its total of string text (shared/scan-limits.ts), and then the text is not
  * the whole call and the caller must not treat it as one. Empty and whole
  * when there is no structured input. */
-export function placeArgumentScan(input: unknown): { text: string; cut: boolean } {
+export function placeArgumentScan(input: unknown): { text: string; cut: boolean; verdict: ReaderVerdict } {
   const out: string[] = [];
   let budget = SCAN_NODES;
   let total = 0;
@@ -407,5 +413,5 @@ export function placeArgumentScan(input: unknown): { text: string; cut: boolean 
     for (const inner of Object.values(body)) walk(inner, depth + 1);
   };
   walk(input, 0);
-  return { text: out.join("\n"), cut };
+  return { text: out.join("\n"), cut, verdict: observed("argument-scan", cut ? "cut" : "") };
 }

@@ -1,4 +1,16 @@
 {
+  "de:browser.BrowserPreflight.1": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
+    }
+  ],
+  "de:browser.BrowserSetupCard.10": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
+    }
+  ],
   "de:browserUnavailable.userChrome": [
     {
       "token": "chrome://inspect/#remote-debugging.",
@@ -59,10 +71,40 @@
       "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
     }
   ],
+  "de:ux.cloud.ownerBanner.expired": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "de:ux.cloud.terms.agreeOnSite": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "de:ux.cloud.terms.siteIntro": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
   "en:bringYourAi.lead": [
     {
       "token": "x.ai",
       "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "en:browser.BrowserPreflight.1": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
+    }
+  ],
+  "en:browser.BrowserSetupCard.10": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
     }
   ],
   "en:browserUnavailable.userChrome": [
@@ -131,6 +173,24 @@
       "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
     }
   ],
+  "en:ux.cloud.ownerBanner.expired": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "en:ux.cloud.terms.agreeOnSite": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "en:ux.cloud.terms.siteIntro": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
   "en:ux.lcopyb.cloud.claudeSignin": [
     {
       "token": "claude.ai",
@@ -141,6 +201,18 @@
     {
       "token": "x.ai",
       "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "es:browser.BrowserPreflight.1": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
+    }
+  ],
+  "es:browser.BrowserSetupCard.10": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
     }
   ],
   "es:browserUnavailable.userChrome": [
@@ -209,6 +281,24 @@
       "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
     }
   ],
+  "es:ux.cloud.ownerBanner.expired": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "es:ux.cloud.terms.agreeOnSite": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "es:ux.cloud.terms.siteIntro": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
   "es:ux.lcopyb.cloud.claudeSignin": [
     {
       "token": "claude.ai",
@@ -219,6 +309,18 @@
     {
       "token": "x.ai",
       "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "fr:browser.BrowserPreflight.1": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
+    }
+  ],
+  "fr:browser.BrowserSetupCard.10": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
     }
   ],
   "fr:browserUnavailable.userChrome": [
@@ -287,6 +389,24 @@
       "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
     }
   ],
+  "fr:ux.cloud.ownerBanner.expired": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "fr:ux.cloud.terms.agreeOnSite": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "fr:ux.cloud.terms.siteIntro": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
   "fr:ux.lcopyb.cloud.claudeSignin": [
     {
       "token": "claude.ai",
@@ -297,6 +417,18 @@
     {
       "token": "x.ai",
       "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "hi:browser.BrowserPreflight.1": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
+    }
+  ],
+  "hi:browser.BrowserSetupCard.10": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
     }
   ],
   "hi:browserUnavailable.userChrome": [
@@ -365,6 +497,24 @@
       "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
     }
   ],
+  "hi:ux.cloud.ownerBanner.expired": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "hi:ux.cloud.terms.agreeOnSite": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "hi:ux.cloud.terms.siteIntro": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
   "hi:ux.lcopyb.cloud.claudeSignin": [
     {
       "token": "claude.ai",
@@ -375,6 +525,18 @@
     {
       "token": "x.ai",
       "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "ja:browser.BrowserPreflight.1": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
+    }
+  ],
+  "ja:browser.BrowserSetupCard.10": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
     }
   ],
   "ja:browserUnavailable.userChrome": [
@@ -443,6 +605,24 @@
       "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
     }
   ],
+  "ja:ux.cloud.ownerBanner.expired": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "ja:ux.cloud.terms.agreeOnSite": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "ja:ux.cloud.terms.siteIntro": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
   "ja:ux.lcopyb.cloud.claudeSignin": [
     {
       "token": "claude.ai",
@@ -453,6 +633,18 @@
     {
       "token": "x.ai",
       "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "pt-br:browser.BrowserPreflight.1": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
+    }
+  ],
+  "pt-br:browser.BrowserSetupCard.10": [
+    {
+      "token": "chrome://inspect/#remote-debugging",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
     }
   ],
   "pt-br:browserUnavailable.userChrome": [
@@ -521,6 +713,24 @@
       "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
     }
   ],
+  "pt-br:ux.cloud.ownerBanner.expired": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "pt-br:ux.cloud.terms.agreeOnSite": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "pt-br:ux.cloud.terms.siteIntro": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
   "pt-br:ux.lcopyb.cloud.claudeSignin": [
     {
       "token": "claude.ai",
@@ -531,6 +741,18 @@
     {
       "token": "x.ai",
       "reason": "xAI's site, where the owner signs in to Grok or makes an xAI key; no purchase step"
+    }
+  ],
+  "zh:browser.BrowserPreflight.1": [
+    {
+      "token": "chrome://inspect/#remote-debugging,开启远程调试,保持",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
+    }
+  ],
+  "zh:browser.BrowserSetupCard.10": [
+    {
+      "token": "chrome://inspect/#remote-debugging,开启远程调试,保持",
+      "reason": "Chrome's own local debugging page, opened to allow remote debugging; not a web destination"
     }
   ],
   "zh:browserUnavailable.userChrome": [
@@ -597,6 +819,24 @@
     {
       "token": "murage.ai",
       "reason": "Murage's own site, where a manual update is downloaded; no purchase step"
+    }
+  ],
+  "zh:ux.cloud.ownerBanner.expired": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "zh:ux.cloud.terms.agreeOnSite": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
+    }
+  ],
+  "zh:ux.cloud.terms.siteIntro": [
+    {
+      "token": "murage.ai",
+      "reason": "Murage's own site, where the owner agrees to the terms or opens Murage to change settings; no purchase step"
     }
   ],
   "zh:ux.lcopyb.cloud.claudeSignin": [

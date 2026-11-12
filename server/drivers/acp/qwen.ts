@@ -150,14 +150,14 @@ export const QWEN_ISOLATION_MIN = [0, 10, 0] as const;
  * A CLI whose version is unknown (the probe is retried once) or older than the first one with
  * the switches is rejected: the turn does not start and the owner is told to update Qwen.
  */
-export function qwenIsolationArgs(serverNames: readonly string[] | undefined, cliVersion: string | undefined): string[] {
+export function qwenIsolationArgs(serverNames: readonly string[] | undefined, cliVersion: string | undefined, noLimits = false): string[] {
   requireQwenIsolationVersion(cliVersion);
   const names = serverNames?.length ? serverNames : ["murage-no-servers"];
   // Qwen's ask mode, whatever its own default or the owner's setting: in its
   // "auto" mode Qwen's own classifier approves a shell command or a computer
   // click without asking Murage (qwen 0.25.3 ran them at Ask with no card), so
   // Murage's access level never applied.
-  return [...names.map((name) => `--allowed-mcp-server-names=${name}`), "-e", "none", "--exclude-tools=skill", "--approval-mode", "default"];
+  return [...names.map((name) => `--allowed-mcp-server-names=${name}`), "-e", "none", "--exclude-tools=skill", ...(noLimits ? [] : ["--exclude-tools=web_fetch"]), "--approval-mode", "default"];
 }
 
 /** Throws the update-required error for a Qwen that is unknown or older than QWEN_ISOLATION_MIN. Also run when the turn's env is
@@ -262,7 +262,7 @@ const support: AcpSupport = {
   spawnArgs: (_config, turn, ctx) => [
     "--acp",
     // The owner's personal MCP servers, extensions and skills stay out of the bot turn.
-    ...qwenIsolationArgs(ctx?.mcpServerNames, ctx?.cliVersion),
+    ...qwenIsolationArgs(ctx?.mcpServerNames, ctx?.cliVersion, (turn.permissionNow?.() ?? turn).noLimits === true),
     // A model-connection turn (a pasted key or a ChatGPT/Grok plan sign-in)
     // needs it for the same reason: the route's OPENAI_* env must win over a
     // saved Qwen OAuth selectedType, or the turn goes to Qwen's cloud.

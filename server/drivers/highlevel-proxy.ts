@@ -1,3 +1,5 @@
+import "../../shared/win-hide-child-process.mjs";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -18,7 +20,7 @@ const UNAVAILABLE = "HighLevel is not available in this conversation.";
 /** One loopback POST with no clock; `signal` withdraws it (a review wait ends when the engine cancels). */
 function post(url: URL, token: string, body: string, signal: AbortSignal): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const req = httpRequest(url, { method: "POST", signal, agent: false, headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
+    const req = NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", httpRequest(url, { method: "POST", signal, agent: false, headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
       const chunks: Buffer[] = [];
       let size = 0;
       res.on("data", (chunk: Buffer) => {
@@ -28,9 +30,9 @@ function post(url: URL, token: string, body: string, signal: AbortSignal): Promi
       });
       res.on("end", () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString() }));
       res.on("error", reject);
-    });
+    }));
     req.on("error", reject);
-    req.end(body);
+    NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.end(body));
   });
 }
 
@@ -54,7 +56,7 @@ export async function runHighLevelProxy(env: NodeJS.ProcessEnv = process.env, io
     reply ??= rpc.method === "tools/call"
       ? { jsonrpc: "2.0", id: rpc.id, result: { isError: true, content: [{ type: "text", text: UNAVAILABLE }] } }
       : { jsonrpc: "2.0", id: rpc.id, error: { code: -32001, message: UNAVAILABLE } };
-    await writeMcpLine(io.stdout, JSON.stringify(reply));
+    await NotModelRequest("MCP tool protocol or Chrome browser control; no model request is submitted", writeMcpLine(io.stdout, JSON.stringify(reply)));
   };
   let queue = Promise.resolve();
   const splitter = createLineSplitter((line) => {

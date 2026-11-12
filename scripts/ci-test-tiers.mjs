@@ -57,7 +57,7 @@ export function vitestFiles(root = ROOT) {
 /** Node gates run in the existing blocking test:electron job, not in Vitest shards. */
 export function nodeGateFiles(root = ROOT) {
   let command;try { command = JSON.parse(readFileSync(join(root,"package.json"),"utf8")).scripts?.["test:electron"] ?? ""; } catch { return []; }
-  return [...command.matchAll(/"([^"]+\.node-test\.mjs)"/g)].flatMap(match => [...globSync(match[1],{cwd:root})].map(file=>file.split("\\").join("/")));
+  return [...command.matchAll(/(?:["']([^"']+\.(?:node-test|test)\.mjs)["']|([^\s"']+\.(?:node-test|test)\.mjs))/g)].flatMap(match => [...globSync(match[1] ?? match[2],{cwd:root})].map(file=>file.split("\\").join("/")));
 }
 
 function parseOses(value, where) {

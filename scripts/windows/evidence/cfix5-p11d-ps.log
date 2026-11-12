@@ -1,0 +1,6 @@
+PASS fixed task dispatch deletes only new owned task; preserves unrelated task and fails
+PASS fixed Desktop dispatch never enumerates registrations
+PASS fixed Handoff dispatch enumerates and reads back registrations
+PASS production process comparison reports escape without executing a callback
+PASS fixed broker clock supplies bounded owned-helper timeout
+PASS fixed broker records native failure without inventing job proof

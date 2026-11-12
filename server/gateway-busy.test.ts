@@ -55,7 +55,7 @@ describe("only a real reset time names a time", () => {
   });
 });
 
-// Recorded on flux-router origin/master (rate_limiter.py, forge_hook.py _credit_402/_credit_429, flux_credit_state.py).
+// Recorded from the Flux service's rate-limit and credit responses.
 const FREE_CAP_BODY = { error: { type: "rate_limit_exceeded", state: "free_cap_reached", tier: "free",
   message: "Your account's monthly free-tier token allowance is exhausted. Free-tier allowances are enforced across every key on the account. Upgrade at https://fluxrouter.ai/home/billing to continue.",
   upgrade_url: "https://fluxrouter.ai/home/billing" } };
@@ -110,4 +110,8 @@ describe("the busy card survives the trip from the server to the app", () => {
     const page = wireThread(seq, "th", { messages: [row] }).messages as Message[];
     expect(page[0].tool?.busy?.reason).toBe("freeCap");
   });
+});
+
+it("monthly allowance words alone keep the free-cap copy even after the state was stripped", () => {
+  expect(gatewayBusy(with_("Your account's monthly free-tier token allowance is exhausted."), { resetsAt: null })).toBe("freeCap");
 });

@@ -87,12 +87,41 @@ class Watch:
         return flags
 
 
+STALE_TEMP_S = 600
+
+
+def sweep_stale_temps(events, now=None, between=None):
+    """A write cut short leaves a dot-prefixed temp file. Remove those older than STALE_TEMP_S; a younger one may be a write in progress and stays."""
+    now = time.time() if now is None else now
+    try:
+        names = os.listdir(events)
+    except OSError:
+        return
+    for name in names:
+        if name.startswith(".") and name.endswith(".tmp"):
+            path = os.path.join(events, name)
+            try:
+                if not os.path.isfile(path) or os.path.islink(path):
+                    continue
+                first = os.lstat(path)
+                if now - first.st_mtime <= STALE_TEMP_S:
+                    continue
+                if between is not None:
+                    between(path)  # test hook: runs between the two looks
+                again = os.lstat(path)  # identity is checked again right before the unlink; temp names are never reused
+                if (again.st_dev, again.st_ino) == (first.st_dev, first.st_ino) and now - again.st_mtime > STALE_TEMP_S:
+                    os.unlink(path)
+            except OSError:
+                pass
+
+
 def write_event(pid, now_ms=None, events=EVENTS):
     """One small file per detection, written atomically (dot-prefixed temp name, then rename)."""
     now_ms = int(time.time() * 1000) if now_ms is None else now_ms
     os.makedirs(events, mode=0o755, exist_ok=True)
+    sweep_stale_temps(events)
     name = "abuse.mining_suspected-%d-%d.json" % (now_ms, pid)
-    tmp = os.path.join(events, "." + name + ".tmp")
+    tmp = os.path.join(events, ".%s.%d-%s.tmp" % (name, os.getpid(), os.urandom(6).hex()))  # never a reused name
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as f:
         json.dump({"type": "abuse.mining_suspected", "at": now_ms}, f)
@@ -134,6 +163,12 @@ def selftest():
         name = write_event(42, 1234567890123, ev)
         assert os.listdir(ev) == [name], os.listdir(ev)  # no temp file left behind
         assert json.load(open(os.path.join(ev, name))) == {"type": "abuse.mining_suspected", "at": 1234567890123}
+        # Leftover temp files: an old one is swept on the next write, a fresh one (a write in progress) is never touched.
+        for leftover, age in ((".old-1.json.tmp", STALE_TEMP_S + 60), (".old-2.json.tmp", STALE_TEMP_S + 60), (".fresh.json.tmp", 0)):
+            open(os.path.join(ev, leftover), "w").close()
+            os.utime(os.path.join(ev, leftover), (time.time() - age, time.time() - age))
+        again = write_event(43, 1234567890124, ev)
+        assert sorted(os.listdir(ev)) == sorted([".fresh.json.tmp", name, again]), os.listdir(ev)
     print("selftest ok")
 
 

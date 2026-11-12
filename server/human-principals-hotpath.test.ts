@@ -9,8 +9,10 @@ import { ownerMemoryTicket } from "./memory/authority.ts";
 import { bindHumanThread, linkHumanBinding, observeVerifiedHuman, resolveHumanBinding, threadHumanPrincipal, OWNER } from "./human-principals.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 import * as principals from "./human-principals.ts";
+import { stopWalMaintenance } from "./wal-maintenance.ts";
+import { stopSearchIndex } from "./message-search-index.ts";
 
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); expect(await stopSearchIndex()).toBe(true); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 
 function person(userId: string) {
   const id = observeVerifiedHuman({ platform: "slack", authorityId: "TEAM", connectionId: "connection-" + userId, userId });

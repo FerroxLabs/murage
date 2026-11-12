@@ -8,7 +8,7 @@
 import { useEffect, useState } from "react";
 import { api } from "@/state/store";
 import { respondWithFreshAuth } from "./fresh-auth";
-import { emailOwnerActionCard, emailOwnerActionRequestId, type EmailBotView, type EmailOwnerAction, type EmailStatusView } from "../../shared/email-copy.ts";
+import { emailOwnerActionCard, emailOwnerActionRequestId, type EmailBotView, type EmailKeepRemoveProofAction, type EmailOwnerAction, type EmailStatusView } from "../../shared/email-copy.ts";
 import { EMAIL_STATUS_EVENT } from "./email-status-event";
 
 export type Api = (path: string, init?: RequestInit) => Promise<unknown>;
@@ -79,6 +79,14 @@ export async function emailOwnerAct(botId: string, threadId: string, action: Ema
   return respondWithFreshAuth(post, { threadId, requestId: emailOwnerActionRequestId(action, botId), decision: "allow", card, reason: card.title });
 }
 
+/** One Keep/Remove owner act on any contracted route that emailOwnerAct does not build (try-again, parked, other setups, restore). Same
+ *  proof, same card shape; `path` is the already validated route and `id` its own id. */
+export async function emailOwnerPost(path: string, threadId: string, action: EmailKeepRemoveProofAction, id: string, body: Record<string, unknown>, call: Api = api): Promise<unknown> {
+  const post = (extra?: Record<string, unknown>) => call(path, { method: "POST", body: JSON.stringify({ ...body, ...extra }) });
+  const card = emailOwnerActionCard(action, id, body);
+  return respondWithFreshAuth(post, { threadId, requestId: emailOwnerActionRequestId(action, id), decision: "allow", card, reason: card.title });
+}
+
 export async function readBotEmail(botId: string, call: Api = api): Promise<EmailBotView | null> {
   try { return await call(`/api/email/bots/${encodeURIComponent(botId)}`) as EmailBotView; } catch { return null; }
 }
@@ -110,6 +118,8 @@ export function emailSectionActions(view: Pick<EmailBotView, "state"> & Partial<
     case "restored_unverified": return ["reconnect", "remove"];
     // r2.5 closing (design 3.2 "Removing: undo until [date]"): Keep address brings it back with the same address
     case "remove_requested": case "closing": return ["keep"];
+    // a removal a restore parked: Keep address, or Remove again to finish it
+    case "removal_parked": return ["keep", "remove"];
     default: return [];
   }
 }

@@ -1,3 +1,4 @@
+import { routineServiceFixture } from './testing/service-queue-fixture.ts';
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { tmpdir } from "node:os";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { RoutineManager, type RoutineRun } from "./routines.ts";
 import { resetObserveWindows, setObserveSink } from "./observe.ts";
-import { RoutineRequestService, type RoutineRequestMessage, type RoutineRequestOptionCard } from "./routine-requests.ts";
+import { type RoutineRequestMessage, type RoutineRequestOptionCard } from "./routine-requests.ts";
 import { createRoutineWatchFileAdapter } from "./routine-watch-file.ts";
 import { listRoutineWatchFiles, routineWatchFileScope, selectRoutineWatchFile } from "./routine-watch-integration.ts";
 import type { RoutineWatchSource } from "../shared/routine-watch.ts";
@@ -48,7 +49,7 @@ function fixture() {
     appendMessage: (_thread: string, message: { card: RoutineRequestOptionCard }) => { const stored = { id: `m-${messages.length}`, card: message.card }; messages.push(stored); return stored; },
     patchMessage: (_thread: string, id: string, patch: { card: RoutineRequestOptionCard }) => { const message = messages.find(item => item.id === id); if (!message) return null; message.card = patch.card; return message; },
   };
-  const service = () => new RoutineRequestService({ store, routines: manager, now: () => now, timeZone: () => "UTC",
+  const service = () => routineServiceFixture({ store, routines: manager, now: () => now, timeZone: () => "UTC",
     validateTarget: (owner, target) => owner === "chief" && target.botId === "worker" ? null : "Wrong target",
     resolveWatchSource: (owner, bot, relativePath) => { const source = selectRoutineWatchFile(scope(), relativePath); validate(owner, bot, source); return source; },
   });

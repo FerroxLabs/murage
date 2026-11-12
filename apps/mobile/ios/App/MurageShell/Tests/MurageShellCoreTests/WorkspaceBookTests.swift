@@ -2,10 +2,10 @@ import XCTest
 @testable import MurageShellCore
 
 final class WorkspaceBookTests: XCTestCase {
-    let mac = WorkspaceOrigin(string: "https://mac.tailnet123.ts.net")!
-    let server = WorkspaceOrigin(string: "https://server.tailnet123.ts.net")!
+    let mac = WorkspaceOrigin(string: "https://mac.tail000000.ts.net")!
+    let server = WorkspaceOrigin(string: "https://server.tail000000.ts.net")!
 
-    private func host(_ index: Int) -> WorkspaceOrigin { WorkspaceOrigin(string: "https://host\(index).tailnet123.ts.net")! }
+    private func host(_ index: Int) -> WorkspaceOrigin { WorkspaceOrigin(string: "https://host\(index).tail000000.ts.net")! }
 
     private func decode(_ json: Any) throws -> WorkspaceBook {
         WorkspaceBook.decode(try JSONSerialization.data(withJSONObject: json))
@@ -16,8 +16,8 @@ final class WorkspaceBookTests: XCTestCase {
     func testSigningInSavesAndActivates() {
         var book = WorkspaceBook()
         book.signedIn(mac, name: "Sean's Mac", at: 1_000)
-        XCTAssertEqual(book.workspaces, [SavedWorkspace(origin: "https://mac.tailnet123.ts.net", name: "Sean's Mac", lastConnected: 1_000)])
-        XCTAssertEqual(book.active, "https://mac.tailnet123.ts.net")
+        XCTAssertEqual(book.workspaces, [SavedWorkspace(origin: "https://mac.tail000000.ts.net", name: "Sean's Mac", lastConnected: 1_000)])
+        XCTAssertEqual(book.active, "https://mac.tail000000.ts.net")
     }
 
     func testANameIsKeptUntilABetterOneArrives() {
@@ -108,15 +108,15 @@ final class WorkspaceBookTests: XCTestCase {
         XCTAssertEqual(WorkspaceBook.decode(Data("garbage".utf8)), WorkspaceBook())
         XCTAssertEqual(WorkspaceBook.decode(Data("[]".utf8)), WorkspaceBook())
         XCTAssertEqual(WorkspaceBook.decode(Data(#"{"workspaces":{}}"#.utf8)), WorkspaceBook())
-        let dirty = #"{"workspaces":[{"origin":"http://bad","name":"x","lastConnected":1},{"origin":"https://Mac.tailnet123.ts.net","name":"Mac","lastConnected":2}],"active":"http://bad"}"#
+        let dirty = #"{"workspaces":[{"origin":"http://bad","name":"x","lastConnected":1},{"origin":"https://Mac.tail000000.ts.net","name":"Mac","lastConnected":2}],"active":"http://bad"}"#
         let book = WorkspaceBook.decode(Data(dirty.utf8))
-        XCTAssertEqual(book.workspaces.map(\.origin), ["https://mac.tailnet123.ts.net"])
+        XCTAssertEqual(book.workspaces.map(\.origin), ["https://mac.tail000000.ts.net"])
         XCTAssertNil(book.active)
     }
 
     /// A damaged entry is dropped alone; the rest of the book survives.
     func testOneDamagedEntryDropsOnlyItself() {
-        let stored = #"{"workspaces":["x",7,null,{},{"origin":5},{"name":"no origin"},{"origin":"https://mac.tailnet123.ts.net","name":"Mac","lastConnected":"soon"},{"origin":"https://server.tailnet123.ts.net","name":["S"]}],"active":"https://server.tailnet123.ts.net"}"#
+        let stored = #"{"workspaces":["x",7,null,{},{"origin":5},{"name":"no origin"},{"origin":"https://mac.tail000000.ts.net","name":"Mac","lastConnected":"soon"},{"origin":"https://server.tail000000.ts.net","name":["S"]}],"active":"https://server.tail000000.ts.net"}"#
         let book = WorkspaceBook.decode(Data(stored.utf8))
         XCTAssertEqual(book.workspaces, [
             SavedWorkspace(origin: mac.serialized, name: "Mac", lastConnected: 0),
@@ -134,9 +134,9 @@ final class WorkspaceBookTests: XCTestCase {
 
     /// The book keeps origin, name and time only: no credential, cookie or unknown field survives a round trip.
     func testNeverPersistsCredentialsOrUnknownFields() throws {
-        let stored = #"{"workspaces":[{"origin":"https://mac.tailnet123.ts.net","name":"Mac","lastConnected":2,"credential":"murage_pair_secret","cookie":"murage_session=abc"}],"active":"https://mac.tailnet123.ts.net","token":"murage_pair_secret"}"#
+        let stored = #"{"workspaces":[{"origin":"https://mac.tail000000.ts.net","name":"Mac","lastConnected":2,"credential":"murage_pair_secret","cookie":"murage_session=abc"}],"active":"https://mac.tail000000.ts.net","token":"murage_pair_secret"}"#
         var book = WorkspaceBook.decode(Data(stored.utf8))
-        book.signedIn(WorkspaceOrigin(string: "https://server.tailnet123.ts.net/enter#murage_pair_other&installId=abcdefghijklmnop")!, name: nil, at: 3)
+        book.signedIn(WorkspaceOrigin(string: "https://server.tail000000.ts.net/enter#murage_pair_other&installId=abcdefghijklmnop")!, name: nil, at: 3)
         let encoded = String(decoding: book.encoded(), as: UTF8.self)
         for secret in ["murage_pair", "murage_session", "enter", "installId", "credential", "cookie", "token"] {
             XCTAssertFalse(encoded.contains(secret), encoded)
@@ -146,7 +146,7 @@ final class WorkspaceBookTests: XCTestCase {
         for item in try XCTUnwrap(json["workspaces"] as? [[String: Any]]) {
             XCTAssertEqual(Set(item.keys), ["origin", "name", "lastConnected"])
         }
-        XCTAssertEqual(book.active, "https://server.tailnet123.ts.net")
+        XCTAssertEqual(book.active, "https://server.tail000000.ts.net")
     }
 
     /// Every row of contract/origins.json: a saved origin survives decoding only if it parses, and only in its clean form.
@@ -163,14 +163,14 @@ final class WorkspaceBookTests: XCTestCase {
 
     func testDecodingCleansNamesDuplicatesAndTheLimit() throws {
         var list: [[String: Any]] = [
-            ["origin": "https://mac.tailnet123.ts.net", "name": 7, "lastConnected": 1],
-            ["origin": "https://MAC.tailnet123.ts.net", "name": "dup", "lastConnected": 2],
-            ["origin": "https://server.tailnet123.ts.net", "name": String(repeating: "s", count: 500), "lastConnected": 3],
+            ["origin": "https://mac.tail000000.ts.net", "name": 7, "lastConnected": 1],
+            ["origin": "https://MAC.tail000000.ts.net", "name": "dup", "lastConnected": 2],
+            ["origin": "https://server.tail000000.ts.net", "name": String(repeating: "s", count: 500), "lastConnected": 3],
         ]
         for index in 0..<30 { list.append(["origin": host(index).serialized, "name": "h", "lastConnected": 100 + index]) }
-        let book = try decode(["workspaces": list, "active": "https://MAC.tailnet123.ts.net"])
+        let book = try decode(["workspaces": list, "active": "https://MAC.tail000000.ts.net"])
         XCTAssertEqual(book.workspaces.count, WorkspaceBook.limit)
-        XCTAssertEqual(book.sorted.first?.origin, "https://host29.tailnet123.ts.net")
+        XCTAssertEqual(book.sorted.first?.origin, "https://host29.tail000000.ts.net")
         XCTAssertNil(book.entry(for: mac))
         // "active" must name a saved origin exactly.
         XCTAssertNil(book.active)
@@ -208,15 +208,15 @@ final class WorkspaceBookTests: XCTestCase {
 
     /// lastConnected is an integer or it is 0: a string such as "1e3", a fraction or a boolean is not read as a time.
     func testDecodingReadsOnlyIntegerTimes() {
-        let stored = #"{"workspaces":[{"origin":"https://mac.tailnet123.ts.net","lastConnected":"1e3"},"#
-            + #"{"origin":"https://server.tailnet123.ts.net","lastConnected":1.5},"#
-            + #"{"origin":"https://host1.tailnet123.ts.net","lastConnected":1700000000000},"#
-            + #"{"origin":"https://host2.tailnet123.ts.net","lastConnected":7},"#
-            + #"{"origin":"https://host3.tailnet123.ts.net","lastConnected":1.0},"#
-            + #"{"origin":"https://host4.tailnet123.ts.net","lastConnected":true},"#
-            + #"{"origin":"https://host5.tailnet123.ts.net","lastConnected":-5},"#
-            + #"{"origin":"https://host6.tailnet123.ts.net","lastConnected":9223372036854775808},"#
-            + #"{"origin":"https://host7.tailnet123.ts.net","lastConnected":null}]}"#
+        let stored = #"{"workspaces":[{"origin":"https://mac.tail000000.ts.net","lastConnected":"1e3"},"#
+            + #"{"origin":"https://server.tail000000.ts.net","lastConnected":1.5},"#
+            + #"{"origin":"https://host1.tail000000.ts.net","lastConnected":1700000000000},"#
+            + #"{"origin":"https://host2.tail000000.ts.net","lastConnected":7},"#
+            + #"{"origin":"https://host3.tail000000.ts.net","lastConnected":1.0},"#
+            + #"{"origin":"https://host4.tail000000.ts.net","lastConnected":true},"#
+            + #"{"origin":"https://host5.tail000000.ts.net","lastConnected":-5},"#
+            + #"{"origin":"https://host6.tail000000.ts.net","lastConnected":9223372036854775808},"#
+            + #"{"origin":"https://host7.tail000000.ts.net","lastConnected":null}]}"#
         let book = WorkspaceBook.decode(Data(stored.utf8))
         XCTAssertEqual(book.entry(for: mac)?.lastConnected, 0)
         XCTAssertEqual(book.entry(for: server)?.lastConnected, 0)
@@ -255,7 +255,7 @@ final class WorkspaceBookTests: XCTestCase {
     }
 
     func testDefaultNameIsTheMachineName() {
-        XCTAssertEqual(WorkspaceBook.defaultName(WorkspaceOrigin(string: "https://example-mac.tailnet123.ts.net")!), "example-mac")
+        XCTAssertEqual(WorkspaceBook.defaultName(WorkspaceOrigin(string: "https://example-mac.tail000000.ts.net")!), "example-mac")
         XCTAssertEqual(WorkspaceBook.defaultName(WorkspaceOrigin(string: "https://localhost:8444")!), "localhost")
     }
 }

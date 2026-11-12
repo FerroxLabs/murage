@@ -1,0 +1,10 @@
+REMOVED /work/node_modules
+REMOVED /work/dist-server
+REMOVED /work/.test-tmp/cfix6-winscen
+REMOVED /work/node_modules
+REMOVED /work/dist-server
+REMOVED /work/.test-tmp/cfix6-winscen
+REMOVED /work/build/winscen/wt/node_modules
+REMOVED /work/build/winscen/wt/dist-server
+REMOVED /work/build/winscen/wt/.test-tmp/cfix6-winscen
+No retained cfix6 containers; dependencies and generated build/test tooling removed.

@@ -1,0 +1,38 @@
+✖ ROUND 3: fallback retains an existing offender artifact and driver writes it first (1.33785ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 52.556665
+
+✖ failing tests:
+
+test at scripts/windows/winbox-proof-audit.node-test.mjs:33:1
+✖ ROUND 3: fallback retains an existing offender artifact and driver writes it first (1.33785ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /\$offenders=@\(Get-Content -LiteralPath \$offendersFile -Raw \| ConvertFrom-Json\)/. Input:
+
+  "if(-not (Test-Path -LiteralPath (Join-Path $output 'verdict.json'))) {\n" +
+    "    Save-Json (Join-Path $output 'offending-windows.json') @()\n" +
+    "    Save-Json (Join-Path $output 'verdict.json') @{gate='G-WINBOX';verdict='FAIL';selfTest=[bool]$SelfTest;selfTestPassed=$false;errors=@($failure)+@($observer.errors);offendingWindows=@();screenshot=$screenshot}\n" +
+    '  }\n' +
+    '  Restore-FixtureEnvironment $savedFixture\n' +
+    "  foreach($key in $savedGate.Keys){[Environment]::SetEnvironmentVariable($key,$savedGate[$key],'Process')}\n" +
+    '}\n' +
+    "Get-Content -LiteralPath (Join-Path $output 'verdict.json') -Raw\n" +
+    'exit $verdictCode\n'
+
+      at TestContext.<anonymous> (file:///work/.test-tmp/afix-winbox-gate-r3/mutant-empty-fallback/scripts/windows/winbox-proof-audit.node-test.mjs:36:10)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: "if(-not (Test-Path -LiteralPath (Join-Path $output 'verdict.json'))) {\n    Save-Json (Join-Path $output 'offending-windows.json') @()\n    Save-Json (Join-Path $output 'verdict.json') @{gate='G-WINBOX';verdict='FAIL';selfTest=[bool]$SelfTest;selfTestPassed=$false;errors=@($failure)+@($observer.errors);offendingWindows=@();screenshot=$screenshot}\n  }\n  Restore-FixtureEnvironment $savedFixture\n  foreach($key in $savedGate.Keys){[Environment]::SetEnvironmentVariable($key,$savedGate[$key],'Process')}\n}\nGet-Content -LiteralPath (Join-Path $output 'verdict.json') -Raw\nexit $verdictCode\n",
+    expected: /\$offenders=@\(Get-Content -LiteralPath \$offendersFile -Raw \| ConvertFrom-Json\)/,
+    operator: 'match',
+    diff: 'simple'
+  }

@@ -401,7 +401,7 @@ test("remote backup explicit save connect upload and uncertainty",async({page},i
  // Was: "Check existing remote copy" / "Existing remote copy verified. Nothing was uploaded again."
  const reconcile=panel.getByRole("button",{name:"Check existing off-site copy",exact:true});await expect(reconcile).toBeEnabled();await reconcile.focus();await page.keyboard.press("Enter");await expect(panel.getByText("Existing off-site copy verified. Nothing was uploaded again.")).toBeVisible();await expect(panel.getByText("Recorded off-site result for the latest backup:",{exact:false})).toContainText("copy verified by readback");expect(await page.evaluate(()=>(window as any).calls.filter((c:any)=>c.action==="remote-upload").length)).toBe(0);
  // Was: "A supported desktop build with its verified Restic tool is required."
- await page.evaluate(()=>{(window as any).remoteState.supported=false;});await refresh();await expect(password).toHaveCount(0);await expect(panel.getByText("Off-site copies need a supported desktop build with its verified backup tool.",{exact:false})).toBeVisible();expect(errors).toEqual([]);
+ await page.evaluate(()=>{(window as any).remoteState.supported=false;});await refresh();await expect(password).toHaveCount(0);await expect(panel.getByText("Off-site copies work in the Murage desktop app.",{exact:false})).toBeVisible();expect(errors).toEqual([]);
 });
 // The S3 / SFTP choice is one radio group (0a09731e): Tab reaches its checked
 // option and the arrow keys move within it, so an unchecked radio is not a Tab stop.

@@ -98,6 +98,7 @@ posixOnly("the events stream is scoped per client", () => {
     if (process.env.PATH) env.PATH = process.env.PATH;
 
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env,
       stdio: ["ignore", "pipe", "pipe"],

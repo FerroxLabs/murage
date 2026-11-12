@@ -147,10 +147,10 @@ export function HouseRulesSettings() {
   });
 
   return (
-    <section aria-labelledby="house-rules-heading" className="space-y-4">
+    <section aria-labelledby="house-rules-title" className="space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h3 id="house-rules-heading" className="text-[15px] font-medium text-ink">House rules</h3>
+          <h3 id="house-rules-title" className="text-[15px] font-medium text-ink">House rules</h3>
           <p className="mt-1 text-[12.5px] text-ink-secondary">Every bot follows these. Write them once, in your own words.</p>
         </div>
         {loaded && (

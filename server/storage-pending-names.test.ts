@@ -52,7 +52,7 @@ describe("a new bot on a start whose engine probe is still running", () => {
     expect(index).toMatch(/z\.object\(\{ action: z\.literal\("pair"\), label: [^\n]*, profileId: [^\n]*\}\)\.strict\(\)/);
     expect(index).toMatch(/store\.createBot\(\{ name: body\.label, title: "External browser connection" \}, \{ seedMessages: false \}\)/);
     expect(store).toMatch(/const born = profile\.modelSelection === undefined;/);
-    expect(store).toMatch(/modelSelection: this\.completeNewBotSelection\(born \? this\.birthSelection\(\) : profile\.modelSelection!\)/);
+    expect(store).toMatch(/modelSelection: this\.completeNewBotSelection\(born \|\| opts\.staged \? this\.birthSelection\(\) : profile\.modelSelection!\)/);
     expect(store).toMatch(/if \(born \|\| opts\.engineAutoPicked === true\) bot\.engineAutoPicked = true;/);
     expect(store).toMatch(/if \(!source && this\.birth\.copyChief && this\.birth\.firstBot\) \{/);
   });

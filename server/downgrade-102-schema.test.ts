@@ -20,6 +20,7 @@ import { roomShare } from "./room-shares.ts";
 import type { Message } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 import { stopWalMaintenance } from "./wal-maintenance.ts";
+import { initializeDelegationPacks } from "./delegation-pack/schema.ts";
 
 type Row = { type: string; name: string; tbl_name: string; sql: string | null };
 const fresh102 = (JSON.parse(readFileSync(join(import.meta.dirname, "testing", "schema-1.0.2-fresh.json"), "utf8")) as { objects: Row[] }).objects;
@@ -57,6 +58,24 @@ async function file103(indexes: "eager" | "all") {
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { closeDatabase(); });
 
+it.each([10, 12, 13] as const)("T-SCHEMA-DOWNGRADE: removes delegation packs at target %s; mutant omits the removal step", async target => {
+  const db = database();
+  initializeDelegationPacks(db);
+  db.exec("INSERT INTO delegation_packs(id,delegation_id,source_thread_id,source_bot_id,target_bot_id,refs,cut_at,created_at) VALUES('pack','job','source','sable','ember','[]',1,1)");
+  db.exec("INSERT INTO highlevel_thread_marks(thread_id,marked_at) VALUES('source',1)");
+  closeDatabase();
+  await stopWalMaintenance();
+  const file = join(DATA_DIR, "messages.db");
+  expect(schemaOf(file).filter(row => row.tbl_name === "delegation_packs").map(row => row.name)).toEqual(expect.arrayContaining(["delegation_packs", "delegation_packs_source", "delegation_packs_destination"]));
+  expect(downgradeInstallationMemorySchema(DATA_DIR, target)).toMatchObject({ status: "downgraded", to: target });
+  expect(schemaOf(file).filter(row => row.tbl_name === "delegation_packs")).toEqual([]);
+  expect(schemaOf(file).filter(row => row.tbl_name === "highlevel_thread_marks")).toEqual([]);
+  expect(downgradeInstallationMemorySchema(DATA_DIR, target)).toMatchObject({ to: target });
+  expect(schemaOf(file).filter(row => row.tbl_name === "delegation_packs")).toEqual([]);
+  expect(schemaOf(file).filter(row => row.tbl_name === "highlevel_thread_marks")).toEqual([]);
+  expect(database().prepare("SELECT COUNT(*) AS n FROM delegation_packs").get()).toEqual({ n: 0 });
+});
+
 it("the fixture is a fresh 1.0.2 install: the branch, line and card indexes and the eager memory indexes are there, no 1.0.3 object is", () => {
   const names = new Set(fresh102.map(key));
   for (const name of ["table:seg", "table:line", "table:open_card", "table:keyed_card", "table:thread_key", "table:transcript_index_state", "index:seg_attach", "index:keyed_card_family", "index:memory_records_canon", "index:memory_details_identity", "index:memory_records_waiting_review"]) expect(names.has(name), name).toBe(true);
@@ -93,7 +112,9 @@ it.each(["held", "posting", "pending", "sharing"].flatMap(state => [10, 12].map(
       }));
       expect(readFileSync(file)).toEqual(before);
     }
-    expect(readFileSync(new URL("../electron/main.mjs", import.meta.url), "utf8")).toContain('DOWNGRADE_WORK_PENDING: "Some messages, bot posts or other work are still waiting.');
+    expect(readFileSync(new URL("../electron/main.mjs", import.meta.url), "utf8")).toContain("DOWNGRADE_WORK_PENDING: downgradeWorkPendingMessage(language)");
+    const { downgradeWorkPendingMessage } = await import("../electron/prepare-work-pending.mjs");
+    expect(downgradeWorkPendingMessage("en")).toBe("Murage can't go back to the earlier version while messages or a restore are pending. Finish or cancel the pending restore first, then send or cancel any waiting messages and try again.");
     const finished = new DatabaseSync(file);
     try { finished.exec("UPDATE venue_posts SET state='declined'"); } finally { finished.close(); }
   }

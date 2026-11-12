@@ -13,8 +13,8 @@ import { removeTempDirSync } from "../testing/cleanup.ts";
 // the CLI starts a new child of its own (a tool's leftover shell).
 const SCRIPT = `
 const { spawn } = require("node:child_process");
-const keep = (args) => spawn(process.execPath, args, { stdio: ["pipe", "ignore", "ignore"] });
-const server = spawn(process.execPath, ["-e", "process.stdin.once('data', () => { require('node:child_process').spawn(process.env.GRAND_BIN, ['-e', 'setTimeout(() => {}, 60000)'], { stdio: 'ignore' }); process.stdout.write('ok\\\\n'); }); setTimeout(() => {}, 60000);"], { stdio: ["pipe", "pipe", "ignore"] });
+const keep = (args) => spawn(process.execPath, args, { windowsHide: true, stdio: ["pipe", "ignore", "ignore"] });
+const server = spawn(process.execPath, ["-e", "process.stdin.once('data', () => { require('node:child_process').spawn(process.env.GRAND_BIN, ['-e', 'setTimeout(() => {}, 60000)'], { windowsHide: true, stdio: 'ignore' }); process.stdout.write('ok\\\\n'); }); setTimeout(() => {}, 60000);"], { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
 process.stdin.once("data", () => {
   server.stdout.once("data", () => { keep(["-e", "setTimeout(() => {}, 60000)"]); process.stdout.write("grown\\n"); });
   server.stdin.write("go\\n");
@@ -49,7 +49,7 @@ const namedNode = (name: string) => {
 };
 
 const start = async (grandBin: string) => {
-  cli = spawn(process.execPath, ["-e", SCRIPT], { stdio: ["pipe", "pipe", "ignore"], env: { ...process.env, GRAND_BIN: grandBin } });
+  cli = spawn(process.execPath, ["-e", SCRIPT], { windowsHide: true, stdio: ["pipe", "pipe", "ignore"], env: { ...process.env, GRAND_BIN: grandBin } });
   await line(cli, "ready");
   const baseline = (await descendantPids(cli.pid!))!;
   expect(baseline.size).toBe(1);
@@ -232,7 +232,7 @@ describe.skipIf(process.platform === "win32")("descendantBaseline under a platfo
   afterEach(() => setPlatformProcessHooks({}));
 
   it("applies the started-after-init rule to the hook's pids; a pid whose start cannot be read is not baseline", async () => {
-    const child = spawn("sleep", ["30"], { stdio: "ignore" });
+    const child = spawn("sleep", ["30"], { windowsHide: true, stdio: "ignore" });
     try {
       await new Promise((resolve) => child.once("spawn", resolve));
       const root = 4242;
@@ -274,7 +274,7 @@ describe("settleArgsProbe", () => {
 
 describe.skipIf(process.platform === "win32")("untrackedIdentified", () => {
   it("an exempt entry must match pid AND start time: a recycled pid is new work, and a dead entry is not kept", async () => {
-    cli = spawn("sh", ["-c", "sleep 30 & echo $!; wait"], { stdio: ["ignore", "pipe", "ignore"] });
+    cli = spawn("sh", ["-c", "sleep 30 & echo $!; wait"], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] });
     const sleeper = await new Promise<number>((resolve) => cli!.stdout!.once("data", (chunk) => resolve(Number(String(chunk).trim()))));
     const ids = (await descendantIdentities(cli.pid!))!;
     expect(ids.has(sleeper)).toBe(true);
@@ -304,7 +304,7 @@ describe.skipIf(process.platform === "win32")("ps lookup under an empty PATH", (
     } finally {
       process.env.PATH = saved;
     }
-    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { windowsHide: true, stdio: "ignore" });
     try {
       const pid = child.pid!;
       const found = await tree.descendantIdentitiesKeepingUnknown(process.pid);
@@ -354,16 +354,16 @@ describe("a zombie is not work (ENGINE-PERSIST F1a)", () => {
   it.skipIf(process.platform === "win32")("real ps: a server that never reaps its child leaves nothing to report, a live worker does", async () => {
     // `exec` makes sleep the parent of the child, and sleep never waits for its children. The child outlives the exec: a `true`
     // that finished first was reaped by the shell before it exec'd, so no zombie ever showed (CI 41307336676 macOS 3/10).
-    const zombieServer = spawn("sh", ["-c", "sleep 0.3 & exec sleep 30"], { stdio: "ignore" });
-    const liveServer = spawn("sh", ["-c", "sleep 30 & exec sleep 30"], { stdio: "ignore" });
+    const zombieServer = spawn("sh", ["-c", "sleep 0.3 & exec sleep 30"], { windowsHide: true, stdio: "ignore" });
+    const liveServer = spawn("sh", ["-c", "sleep 30 & exec sleep 30"], { windowsHide: true, stdio: "ignore" });
     try {
       await vi.waitFor(() => {
-        const rows = execFileSync("ps", ["-A", "-o", "ppid=,stat="], { encoding: "utf8" });
+        const rows = execFileSync("ps", ["-A", "-o", "ppid=,stat="], { windowsHide: true, encoding: "utf8" });
         expect(rows.split("\n").some((row) => row.trim().startsWith(`${zombieServer.pid} Z`))).toBe(true);
       }, { timeout: 5_000 });
       // the test runner's listing: these two servers are the baseline, under this process
       const tree = await untrackedDescendants(process.pid, new Set([zombieServer.pid!, liveServer.pid!]));
-      const under = (pid: number) => execFileSync("ps", ["-A", "-o", "pid=,ppid="], { encoding: "utf8" }).split("\n").map((l) => l.trim().split(/\s+/).map(Number)).filter(([, ppid]) => ppid === pid).map(([p]) => p!);
+      const under = (pid: number) => execFileSync("ps", ["-A", "-o", "pid=,ppid="], { windowsHide: true, encoding: "utf8" }).split("\n").map((l) => l.trim().split(/\s+/).map(Number)).filter(([, ppid]) => ppid === pid).map(([p]) => p!);
       expect(under(zombieServer.pid!).some((pid) => tree?.has(pid))).toBe(false);
       expect(under(liveServer.pid!).some((pid) => tree?.has(pid))).toBe(true);
     } finally {

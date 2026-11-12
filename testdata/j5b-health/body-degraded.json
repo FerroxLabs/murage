@@ -1,0 +1,1 @@
+{"app": "murage", "door": "v2", "eventSpoolFailures": 0, "homeEvents": {"items": [{"at": 1800000000100, "id": "0000000000000064", "type": "restore.aborted"}, {"at": 1800000000101, "id": "0000000000000065", "type": "restore.stuck"}], "outboxDegraded": 2, "v": 1}, "instance": "iiiiiiiiiiiiiiii"}

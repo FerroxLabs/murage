@@ -13,6 +13,7 @@
 // desktop widths in both skins; reduced motion drops the animation; a remote
 // image makes no request until asked (and then sends no referrer); a local
 // path is never requested; opening a screen frame makes no request at all.
+import { laneDataDir } from "./lane-data-dir";
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
@@ -401,18 +402,18 @@ test("E1 scoped workspace pictures use real resolve, enlarge and Save verified b
   await expect(section.getByText("That picture is not in this conversation's folder right now.")).toBeVisible();
   await expect(section.getByText("Murage can't show this file as a picture.")).toBeVisible();
   await expect(section.getByText("That file is not available from this conversation.")).toBeVisible();
-  await page.screenshot({ path: join(process.env.MURAGE_E2E_DATA_DIR!, "workspace-inline.png"), fullPage: true });
+  await page.screenshot({ path: join(laneDataDir("media lightbox evidence"), "workspace-inline.png"), fullPage: true });
   await image.click(); await expect(lightbox(page)).toBeVisible();
   await expect.poll(() => lightboxImage(page).evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth === 320)).toBe(true);
-  await page.screenshot({ path: join(process.env.MURAGE_E2E_DATA_DIR!, "workspace-lightbox.png") });
+  await page.screenshot({ path: join(laneDataDir("media lightbox evidence"), "workspace-lightbox.png") });
   expect(workspaceReferences).toHaveLength(0);
   const reference = lightbox(page).getByRole("button", { name: "Use plot.png as a reference image in your next message" });
   await reference.click(); await expect(lightbox(page).getByRole("button", { name: "plot.png was added to your next message as a reference image" })).toBeVisible();
   expect(workspaceReferences[0]).toMatchObject({ ...workspaceScope, source: { kind: "workspace", relativePath: "outputs/plot.png", revision: expect.stringMatching(/^r1\./) } });
   expect(workspaceResolves.some(ref => ref.relativePath === "outputs/link.png")).toBe(false);
   const pending = page.waitForEvent("download"); await lightbox(page).getByRole("link", { name: /Download/ }).click();
-  const downloaded = await pending; await downloaded.saveAs(join(process.env.MURAGE_E2E_DATA_DIR!, "workspace-saved.png"));
-  expect((await import("node:fs")).readFileSync(join(process.env.MURAGE_E2E_DATA_DIR!, "workspace-saved.png"))).toEqual(png(320, 180, [40, 110, 220]));
+  const downloaded = await pending; await downloaded.saveAs(join(laneDataDir("media lightbox evidence"), "workspace-saved.png"));
+  expect((await import("node:fs")).readFileSync(join(laneDataDir("media lightbox evidence"), "workspace-saved.png"))).toEqual(png(320, 180, [40, 110, 220]));
   expect(workspaceRequests).toContain("/api/media/resolve");
 });
 
@@ -430,7 +431,7 @@ test("B8/B10/R2-G6 actual pane and collapsed/expanded artifact Markdown preserve
   for (const name of ["outputs/artifact.png", "outputs/expanded.png"]) expect(workspaceResolves.find(ref => ref.relativePath === name)?.scope).toEqual({ botId: markdownArtifact.botId, threadId: markdownArtifact.threadId });
   expect(workspaceResolves.find(ref => ref.relativePath === "outputs/plot.png")?.scope).toEqual(workspaceScope);
   expect(markdownArtifact.threadId).not.toBe(workspaceScope.threadId);
-  await page.screenshot({ path: join(process.env.MURAGE_E2E_DATA_DIR!, "workspace-pane.png"), fullPage: true });
+  await page.screenshot({ path: join(laneDataDir("media lightbox evidence"), "workspace-pane.png"), fullPage: true });
 });
 
 test("R32-PLAYER actual playback re-arms twice and later downloads each renew once", async ({ page }) => {
@@ -483,7 +484,7 @@ test("T3/R2-G3 a structurally complete decoder failure refreshes once then stays
   await expect(section.getByText("That picture changed or could not be loaded.")).toBeVisible();
   expect(workspaceResolves.filter(ref => ref.relativePath === "outputs/bad.jpg")).toHaveLength(before + 2);
   await expect(section.locator("img")).toHaveCount(0);
-  await page.screenshot({ path: join(process.env.MURAGE_E2E_DATA_DIR!, "workspace-decode-failed.png") });
+  await page.screenshot({ path: join(laneDataDir("media lightbox evidence"), "workspace-decode-failed.png") });
   await section.getByRole("button", { name: "Try again" }).click();
   await expect.poll(() => workspaceResolves.filter(ref => ref.relativePath === "outputs/bad.jpg").length).toBe(before + 4);
   await expect(section.getByText("That picture changed or could not be loaded.")).toBeVisible();
@@ -508,7 +509,7 @@ test("A13/E1 500 visible candidates bound discovery, chains and actual decoded s
   await expect.poll(async () => (await budget()).count).toBe(12);
   const value = await budget(); expect(value.bytes).toBe(191904000); expect(value.count).toBeLessThanOrEqual(32);
   await expect(page.getByTestId("flood-pictures").locator("img")).toHaveCount(12);
-  await page.screenshot({ path: join(process.env.MURAGE_E2E_DATA_DIR!, "workspace-flood.png") });
+  await page.screenshot({ path: join(laneDataDir("media lightbox evidence"), "workspace-flood.png") });
 });
 
 
@@ -521,7 +522,7 @@ test("H2 actual ChatView stored and popping messages keep the conversation ident
   await section.getByRole('button', { name: 'Finish fixture turn' }).click();
   await expect(section.getByRole('img', { name: 'Popping chat', exact: true })).toBeVisible();
   expect(await section.getByRole('img', { name: 'Popping chat', exact: true }).evaluate(el => !!el.closest('[data-testid="msg-bubble"]'))).toBe(false);
-  await page.screenshot({ path: join(process.env.MURAGE_E2E_DATA_DIR!, 'workspace-chat-popping.png') });
+  await page.screenshot({ path: join(laneDataDir("media lightbox evidence"), 'workspace-chat-popping.png') });
   expect(workspaceResolves.filter(ref => ref.relativePath === 'outputs/plot.png').every(ref => JSON.stringify(ref.scope) === JSON.stringify(workspaceScope))).toBe(true);
 });
 

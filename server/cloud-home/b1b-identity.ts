@@ -102,3 +102,40 @@ export function verifiedDoorTicket(input: SignedHomeKey, publicJwk: ControlPlane
     || claims.stepUpAt > claims.issuedAt || claims.stepUpAt < claims.issuedAt - 900_000) throw refuse(ticketRefusal(claims, homeId, generation, publicOrigin, now));
   return claims;
 }
+
+const termsProofSchema = z.object({
+  type: z.literal("murage-terms-v1"), homeId: z.string().min(1).max(128), generation: z.number().int().positive(), account: z.string().min(1).max(256),
+  homeTermsVersion: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  documents: z.object({ cloudTerms: z.string().min(1).max(128), termsOfService: z.string().min(1).max(128), privacyPolicy: z.string().min(1).max(128) }).strict(),
+  ageConfirmed: z.boolean(), acceptedAt: z.number().int(), source: z.enum(["checkout", "reaccept", "notice-period"]),
+  acceptanceId: z.string().min(1).max(128), consentId: z.string().min(1).max(128).nullable().optional(), screenVersion: z.string().min(1).max(128).nullable().optional(),
+  graceUntil: z.number().int().nullable().optional(), issuedAt: z.number().int(),
+}).strict();
+export type TermsProofClaims = z.infer<typeof termsProofSchema>;
+/** A control-plane terms proof: the same ES256 envelope and pinned key as the door ticket. Signature, type, strict shape, home and
+ *  generation are checked here. It has no expiry (it is evidence of an acceptance); account, version, age and times are the caller's. */
+export function verifiedTermsProof(input: { payload: string; signature: string }, publicJwk: ControlPlanePublicJwk, homeId: string, generation: number): TermsProofClaims {
+  const refuse = () => new Error(cloudHomeCopy.homeIdentityRefused);
+  let claims: TermsProofClaims;
+  try { claims = termsProofSchema.parse(verifiedPayload({ algorithm: "ES256", payload: input?.payload, signature: input?.signature }, publicJwk)); } catch { throw refuse(); }
+  if (!homeId || !Number.isSafeInteger(generation) || generation <= 0 || claims.homeId !== homeId || claims.generation !== generation) throw refuse();
+  return claims;
+}
+
+const ownerActProofSchema = z.object({
+  type: z.literal("murage-owner-act-v1"), homeId: z.string().min(1).max(128), generation: z.number().int().positive(), account: z.string().min(1).max(256),
+  deviceId: z.string().min(1).max(128), act: z.string().regex(/^[0-9a-f]{64}$/), nonce: z.string().min(16).max(128),
+  issuedAt: z.number().int(), expiresAt: z.number().int(),
+}).strict();
+export type OwnerActProofClaims = z.infer<typeof ownerActProofSchema>;
+/** A control-plane proof that the owner typed a fresh emailed code for ONE act: the same ES256 envelope and pinned key as the door
+ *  ticket. Signature, type, strict shape, home, generation and the 120 second life are checked here (the control plane signs 5 seconds of
+ *  clock skew in); account, device, act and the single spend of `nonce` are the caller's. Throws on any mismatch. */
+export function verifiedOwnerActProof(input: { payload: string; signature: string }, publicJwk: ControlPlanePublicJwk, homeId: string, generation: number, now = Date.now()): OwnerActProofClaims {
+  const refuse = () => new Error(cloudHomeCopy.homeIdentityRefused);
+  let claims: OwnerActProofClaims;
+  try { claims = ownerActProofSchema.parse(verifiedPayload({ algorithm: "ES256", payload: input?.payload, signature: input?.signature }, publicJwk)); } catch { throw refuse(); }
+  if (!homeId || !Number.isSafeInteger(generation) || generation <= 0 || claims.homeId !== homeId || claims.generation !== generation) throw refuse();
+  if (claims.issuedAt > now + 5_000 || claims.expiresAt <= now || claims.expiresAt - claims.issuedAt > 120_000) throw refuse();
+  return claims;
+}

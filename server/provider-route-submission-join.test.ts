@@ -5,12 +5,36 @@ import { expect, it, vi } from "vitest";
 import { launchVerificationServer } from "../scripts/control-murage.ts";
 import { ProviderConnectionsService } from "./provider-connections.ts";
 import { transformSync } from "esbuild";
+import ts from "typescript";
 import { TurnSubmissionBoundary } from "./turn-dispatch-guard.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
+// 4683132ffc shares these named validators between preparation and submission.
+// Lift the actual production callbacks, and pin both hooks to each validator.
+function submissionBodies(source: string): string[] {
+  const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
+  const bodies = new Map<string, string>();
+  const visit = (node: ts.Node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && /^validate(Direct|Room)Submission$/.test(node.name.text)) {
+      expect(node.initializer && ts.isArrowFunction(node.initializer)).toBe(true);
+      const callback = node.initializer as ts.ArrowFunction;
+      expect(ts.isBlock(callback.body)).toBe(true);
+      bodies.set(node.name.text, callback.body.getText(ast).slice(1, -1));
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ast);
+  expect([...bodies.keys()].sort()).toEqual(["validateDirectSubmission", "validateRoomSubmission"]);
+  for (const name of bodies.keys()) {
+    expect(source).toContain(`beforePrepare: () => submissionBoundary.beforePrepare(${name})`);
+    expect(source).toContain(`beforeSubmit: () => submissionBoundary.beforeSubmit(${name})`);
+  }
+  return [...bodies.values()];
+}
+
 it("actual direct and room submission callbacks reject changed provider revision before memory acceptance", () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-  const bodies = [...source.matchAll(/beforeSubmit: \(\) => submissionBoundary\.beforeSubmit\(\(\) => \{([\s\S]*?)\n\s*\}\),/g)].map(match => match[1]);
+  const bodies = submissionBodies(source);
   expect(bodies).toHaveLength(2);
   const cacheDir = mkdtempSync(join(tmpdir(), "grok-submit-revision-"));
   let revision = "r1";
@@ -34,7 +58,7 @@ it("actual direct and room submission callbacks reject changed provider revision
 const LIVE_ROOM_NAMES = ["abandoned", "isCancelled", "internalTurnOwners", "internalCapabilities", "threadId", "internalGeneration", "assertCursorNotSealed", "store", "bot", "instance", "instanceId", "resumeCursor", "keptSession", "assertBackupStillUsable", "turnSelection", "roomTurnSelection"] as const;
 // The callback bodies are lifted from index.ts as written, TypeScript included (the direct one casts `error as { code?: string }`):
 // esbuild erases the types first, so the real body runs and not a syntax error.
-const BODY_PARAMS = ["providerRouteIsCurrent", "providerRoute", "memoryReceipt", "opts", "trace", ...LIVE_ROOM_NAMES];
+const BODY_PARAMS = ["providerRouteIsCurrent", "providerRoute", "memoryReceipt", "opts", "trace", ...LIVE_ROOM_NAMES, "packGuard", "limitTurns"];
 const compileBody = (body: string) => new Function(...BODY_PARAMS,
   `${transformSync(`function liftedBody(${BODY_PARAMS.join(", ")}) {${body}\n}`, { loader: "ts" }).code}\nreturn liftedBody(${BODY_PARAMS.join(", ")});`);
 // `revoked`: the attempt's capability generation was revoked (CANCEL-TREE-104 R1: its request cancelled) while the turn owner still reads live
@@ -44,11 +68,11 @@ const liveRoom = (stopped: { abandoned?: boolean; cancelled?: boolean; generatio
     // THREAD-SEAL: both bodies check the seal first; an unsealed thread stands in for it here
     () => {}, { taskByThread: () => undefined }, { id: "bot" }, { instanceId: "engine" }, "engine", undefined, undefined,
     // U22 G20: a turn on the bot's own engine (no backup provenance) passes the dispatch gate
-    () => {}, { selection: { instanceId: "engine", model: "m" } }, undefined];
+    () => {}, { selection: { instanceId: "engine", model: "m" } }, undefined, { assertCurrent() {} }, { assertCanSubmit() {} }];
 
 it("U29 + CANCEL-TREE-104 R1: the room's one pre-submit check refuses a turn stopped after setup or whose generation was revoked, before the engine call and before memory acceptance", () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-  const bodies = [...source.matchAll(/beforeSubmit: \(\) => submissionBoundary\.beforeSubmit\(\(\) => \{([\s\S]*?)\n\s*\}\),/g)].map(match => match[1]);
+  const bodies = submissionBodies(source);
   const room = bodies.find(body => !body.includes("askerWakeId"));
   expect(room).toBeDefined();
   const run = (stopped: Parameters<typeof liveRoom>[0]) => {
@@ -79,7 +103,8 @@ it("owner key rotation during real Grok ACP setup prevents the old route from su
       await new Promise(resolve => setTimeout(resolve, 10));
     }
     out(m.id, {}); continue;`);
-  const fixture = await launchVerificationServer({}, undefined, { instrumentationSource: `
+  const fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+      globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;
     import { readFileSync, writeFileSync } from 'node:fs';
     import { join } from 'node:path';
     const root=process.env.MURAGE_DATA_DIR, cli=join(root,'fake-grok-gated.ts');

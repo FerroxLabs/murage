@@ -1,0 +1,235 @@
+{
+  "files": {
+    "01-402-flux_free_cap_reached.json": {
+      "sha256": "c75a2924a6c8c37e3b6df00b32dcc3e9c5c8000ad20bc3eb6761b35bdd0a034d",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/01-402-flux_free_cap_reached.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "staging-live",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "02-402-flux_builder_auto_bump.json": {
+      "sha256": "e15b98f5396bacb08b9b744c19aee8948d7ce3af0148071e732190369a2bea93",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/02-402-flux_builder_auto_bump.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "staging-live",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "03-402-flux_paid_cap_reached.json": {
+      "sha256": "c4b8d8c678cb1a4dd58cd879900c1031f5034ee825e80d6d708b72073f9342c8",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/03-402-flux_paid_cap_reached.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "staging-live",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "04-402-flux_key_revoked_entitlement.json": {
+      "sha256": "e607478343c43e26a6394d2562d259ef97aa6b23389cddf632af7f77813423d5",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/04-402-flux_key_revoked_entitlement.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "staging-live",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "05-402-flux_tier_rpm.json": {
+      "sha256": "0a9bb4d1a0f30abbac0626c3fe18d7ed950ff83caf5cef1c88587c85ba3a6ed2",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/05-402-flux_tier_rpm.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "staging-live",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "06-429-flux_billing_system_degraded.json": {
+      "sha256": "3be847c68e216c4c1c26c853db0d573e5c8eac6c86eafd3c0f6a24069ea2c0ce",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/06-429-flux_billing_system_degraded.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "from-code",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "07-429-litellm_key_rpm_tpm_paid_key.json": {
+      "sha256": "c02d8ebb8c73fc745c2ce5744be16fb14c6fa1fb8aeeaabc05d87b23131b4db3",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/07-429-litellm_key_rpm_tpm_paid_key.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "staging-live",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "08-402-litellm_key_rpm_tpm_free_key.json": {
+      "sha256": "8f7d60873d67e76d52058654992b4e12af7c5c3750e104a13604d5bb9b18a1b4",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/08-402-litellm_key_rpm_tpm_free_key.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "staging-live",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "09-429-flux_batch_rate_limited.json": {
+      "sha256": "c81b4b9009d79e5ee926c46f1c081da48ffa87fb4baf1bb025d7fe6f19297288",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/09-429-flux_batch_rate_limited.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "staging-live",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "10-429-hourly_burn_limit.json": {
+      "sha256": "8d11d20fa19ef7a55a7514cff71ccc6dc49fbe776333706647a28c42d86c113f",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/10-429-hourly_burn_limit.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "from-code",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "11-429-credit_concurrency.json": {
+      "sha256": "3bcbadab9d705c8b3cbdb9c091e231c4ad71a718696e22f142697c1d0a9a8ef6",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/11-429-credit_concurrency.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "from-code",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "12-402-key_budget_reached.json": {
+      "sha256": "7fa6b5de05d37a3e9a652ff42f44644474baba4e6c082de075d7145f7f663e7b",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/12-402-key_budget_reached.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "from-code",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "13-402-free_tier_exhausted_gate.json": {
+      "sha256": "2813f16e6c8146662d3be1c6c25940163f12ae9f8ba7c646f04f29794845628f",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/13-402-free_tier_exhausted_gate.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "from-code",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "14-402-litellm_max_budget_exceeded.json": {
+      "sha256": "f940f52a5575c6274092393d6df17e83a432da9e6eb74802c96e15c0d50a36e2",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/14-402-litellm_max_budget_exceeded.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "staging-live",
+        "/v1/messages": "from-code",
+        "/v1/responses": "from-code"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "15-402-account_monthly_budget_exhausted.json": {
+      "sha256": "e2a11d7a7e01e540ee74805be7a92ad74a5596876f935ea4f2182b9742509f6c",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/15-402-account_monthly_budget_exhausted.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "from-code",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "16-402-credit_exhausted.json": {
+      "sha256": "c057db7afd42e2e934c7a3b32d863e70b5fdcdc2ec2f58f063a30ba34e0a2c3f",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/16-402-credit_exhausted.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "from-code",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "17-402-paid_pause_included_exhausted.json": {
+      "sha256": "25f172c36fd87d8bc8724515fc6b32b4125fba134d1bc0eab92a36266c228a6e",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/17-402-paid_pause_included_exhausted.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "from-code",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "18-402-key_lifetime_cap_exhausted.json": {
+      "sha256": "cd8b2c4749a6e54a39103fdc834ba8217d7373885385b056ede10228e9e449d6",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/18-402-key_lifetime_cap_exhausted.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "from-code",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "19-429-provider_429_after_fallbacks.json": {
+      "sha256": "d3ffc726197a7e654dc9cc29aa16d6c01d3a8232c3b40b0b99d68b18c86c1910",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/19-429-provider_429_after_fallbacks.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "from-code",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "20-429-router_no_deployments_cooldown.json": {
+      "sha256": "5ea1cc2937663c8caaa0a60c8cccddfa8c29a60be23c38039ed61488b78d677b",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/20-429-router_no_deployments_cooldown.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "/v1/chat/completions": "from-code",
+        "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)",
+        "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    },
+    "PROVENANCE.json": {
+      "sha256": "f1b738dcdc352cdf193ebc880065c66dbaf634596d352620004dafe65a80bb46",
+      "source": "build-host:/work/build/busyloop-capture/flux-prod-429/PROVENANCE.json",
+      "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+      "capture_method": {
+        "staging-live": "real HTTP request to staging flux-proxy localhost:4100 /v1/chat/completions",
+        "from-code": "exception built from the 00000000 code path and rendered in the fixture env through the real LiteLLM 1.92.2 serializer (_serialize_http_exception_detail + ProxyException.to_dict) and the real Flux renderers (src/message_renderers/errors.py, src/responses/errors.py). Chat failure-hook branch replicated from src/gateway.py:25974-26255 and checked against the live captures (01, 07, 09 reproduce byte-for-byte).",
+        "test-fixture": "not used"
+      },
+      "redaction": "KEYHASH_REDACTED, <HTTP-date>"
+    }
+  }
+}

@@ -198,16 +198,14 @@ describe("where the shortcuts go", () => {
   });
 
   it("goes to the targets the settings really render", () => {
-    expect(readFileSync(new URL("./ImageSettings.tsx", import.meta.url), "utf8")).toContain('id="image-settings-heading"');
-    expect(readFileSync(new URL("./RoomTurnTimeoutSettings.tsx", import.meta.url), "utf8")).toContain('id="room-turn-timeout"');
-    const settings = readFileSync(new URL("./SettingsModal.tsx", import.meta.url), "utf8");
+    expect(readFileSync(new URL("./settings/pages/SearchImagesDictationPage.tsx", import.meta.url), "utf8")).toContain('card("images", "image-settings-heading"');
+    expect(readFileSync(new URL("./RoomTurnTimeoutSettings.tsx", import.meta.url), "utf8")).toContain('id="room-turn-timeout-input"');
     const tools = readFileSync(new URL("./ToolsSettings.tsx", import.meta.url), "utf8");
     expect(tools).toContain("id={`images-tab-${id}`}");
-    expect(settings).toMatch(/section === "webSearch"[\s\S]*?<ToolsSettings/);
-    expect(tools).toMatch(/<ImagesSettings \/>/);
+    expect(readFileSync(new URL("./settings/page-registry.tsx", import.meta.url), "utf8")).toContain('webSearch: () => import("./pages/SearchImagesDictationPage")');
+    expect(readFileSync(new URL("./settings/pages/SearchImagesDictationPage.tsx", import.meta.url), "utf8")).toMatch(/<ImagesSettings \/>/);
     expect(tools).toMatch(/function ImagesSettings\(\)[\s\S]*?<ImageSettings showLibrary=\{false\} \/>/);
-    expect(settings).toMatch(/section === "botDefaults"[\s\S]*?<BotsSettings/);
-    expect(readFileSync(new URL("./BotsSettings.tsx", import.meta.url), "utf8")).toMatch(/<RoomTurnTimeoutSettings \/>/);
+    expect(readFileSync(new URL("./settings/pages/BotDefaultsPage.tsx", import.meta.url), "utf8")).toMatch(/<RoomTurnTimeoutSettings \/>/);
   });
 
   it("loads the dialog, art included, only when the page opens", () => {

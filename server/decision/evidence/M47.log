@@ -1,0 +1,42 @@
+COMMAND node_modules/.bin/vitest run server/decision/ingress.test.ts -t M47
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/ingress.test.ts > A2 R16 M19 M22 M47 M48 first capture binds input, aliases and conflicts
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/ingress.test.ts (7 tests | 1 failed | 6 skipped) 386ms
+   × A2 R16 M19 M22 M47 M48 first capture binds input, aliases and conflicts 383ms
+   ↓ A2 M49 claims alone supply service identity; spec/options are frozen and reserved fields rejected
+   ↓ R16 actor substitution ignored and all authority objects frozen at registration
+   ↓ R12 decision never reads message history
+   ↓ service execution joins concurrent calls, retains frozen content and never uses caller mutations
+   ↓ ingress duplicate event envelope metadata does not change input identity
+   ↓ R16 service request keys are scoped to their verified conversation, never another owner handle
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 6 skipped (7)
+   Start at  06:33:05
+   Duration  5.30s (transform 3.91s, setup 4.53s, import 264ms, tests 386ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/ingress.test.ts > A2 R16 M19 M22 M47 M48 first capture binds input, aliases and conflicts
+AssertionError: expected 'card' to be 'run' // Object.is equality
+
+Expected: "run"
+Received: "card"
+
+ ❯ server/decision/ingress.test.ts:5:83
+      3| it('A2 R16 M19 M22 M47 M48 first capture binds input, aliases and conf…
+      4|  const f=fixture(); const e=f.event(); f.publish(e); const h=d.openReq…
+      5|  (e.toolCall!.input as any).command='rm -rf ~'; expect(d.decide(h,base…
+       |                                                                                   ^
+      6|  f.publish(f.event('r',{command:'rm -rf ~'})); expect(d.decide(h,baseC…
+      7|  expect(d.decide(d.openRequest({kind:'engine',threadId:'t',requestId:'…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

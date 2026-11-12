@@ -205,7 +205,14 @@ describe("migrations", () => {
     const numbers = names.map((n) => /^(\d{4})_[a-z0-9_]+\.sql$/.exec(n)?.[1]);
     expect(names.filter((_n, i) => numbers[i] === undefined)).toEqual([]);
     const dup = numbers.filter((n, i) => numbers.indexOf(n) !== i);
-    expect(dup).toEqual([]);
+    // Release 8b merge cut: ch1 (0146_sales_invites, 0147_refund_stop_op) and B1 (0146_announcement_optouts, 0147_flux_account_dispute_fence) each took 0146 and 0147.
+    // int19k also retains both independent 0111 changes: account issuer nullability and provision lease fencing.
+    // D1 tracks migrations by NAME; these exact disjoint pairs are accepted, and any other duplicate fails.
+    expect(dup).toEqual(["0111", "0146", "0147"]);
+    const pairs = (n: string) => names.filter((x) => x.startsWith(`${n}_`)).sort();
+    expect(pairs("0111")).toEqual(["0111_account_issuer_nullable.sql", "0111_provision_lease_token.sql"]);
+    expect(pairs("0146")).toEqual(["0146_announcement_optouts.sql", "0146_sales_invites.sql"]);
+    expect(pairs("0147")).toEqual(["0147_flux_account_dispute_fence.sql", "0147_refund_stop_op.sql"]);
     expect(names).toContain("0059_checkout_policy.sql");
   });
   it("adds the policy fields to checkout_consents", async () => {

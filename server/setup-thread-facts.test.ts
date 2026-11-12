@@ -59,6 +59,14 @@ describe("setup reads the Chief's tasks by index", () => {
     expect(readSetupThreadFacts(db, "task2").refusal).toEqual({ at: HISTORY + 5, refusal: { httpStatus: 402, provider: "anthropic" } });
   });
 
+  it("reads whether the owner wrote and whether anything is there, from the rows", () => {
+    const { db } = seed(2);
+    expect(readSetupThreadFacts(db, "task0")).toMatchObject({ ownerSpoke: true, hasMessages: true });
+    expect(readSetupThreadFacts(db, "missing")).toMatchObject({ ownerSpoke: false, hasMessages: false });
+    db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run("seeded", "g", 1, "bot", "text", "hi", JSON.stringify({ id: "g", at: 1, role: "bot", kind: "text", text: "hi" }));
+    expect(readSetupThreadFacts(db, "seeded")).toMatchObject({ ownerSpoke: false, hasMessages: true });
+  });
+
   it("costs the same at 10 and 2,000 task conversations, and nothing on a repeat poll", () => {
     const results: Array<{ cold: number; warm: number; reading: unknown }> = [];
     for (const tasks of [10, 2_000]) {
@@ -78,11 +86,11 @@ describe("setup reads the Chief's tasks by index", () => {
       cache.touch("task0");
       const before = counter.statements;
       readWorkspace(workspace, "chief");
-      expect(counter.statements - before).toBe(2);
+      expect(counter.statements - before).toBe(3);
     }
-    // per task: the same two bounded lookups, whatever the count; repeat polls: none
+    // per task: the same three bounded lookups (reply, refusal, owner), whatever the count; repeat polls: none
     expect(results[1]!.cold).toBe(results[0]!.cold);
-    expect(results[0]!.cold).toBe(2);
+    expect(results[0]!.cold).toBe(3);
     expect(results[0]!.warm).toBe(0);
     expect(results[1]!.warm).toBe(0);
     expect(results[1]!.reading).toEqual(results[0]!.reading);
@@ -102,6 +110,14 @@ describe("setup reads the Chief's tasks by index", () => {
     }
     // the two settled-reply probes and the refusal probe each lead with the conversation
     expect(plans.join("\n")).toMatch(/thread_id=\? AND kind=\?/);
+  });
+
+  it("finds the owner's messages by seek too, never a walk of the conversation", () => {
+    const { db } = seed(1);
+    const plan = (db.prepare(`EXPLAIN QUERY PLAN ${SETUP_FACT_STATEMENTS.owner}`).all("task0") as Array<{ detail: string }>).map(row => row.detail).join("\n");
+    expect(plan).toMatch(/SEARCH messages USING (COVERING )?INDEX messages_inbox \(role=\? AND kind=\? AND thread_id=\?\)/);
+    expect(plan).toMatch(/SEARCH messages USING (COVERING )?INDEX (messages_thread|sqlite_autoindex_messages_1) \(thread_id=\?\)/);
+    expect(plan).not.toMatch(/SCAN (?!CONSTANT)/);
   });
 
   it("keeps the facts equal to the transcript through replacement, edit and deletion", () => {

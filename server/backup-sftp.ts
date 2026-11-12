@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -154,7 +155,7 @@ export function sweepSshMaterial(workDirectory:string){
 
 function runTool(executable:string,args:string[],cwd:string,timeoutMs:number):Promise<{code:number|null;stdout:string;stderr:string;timedOut:boolean}>{
   return new Promise((resolve,reject)=>{
-    const child=spawn(executable,args,{cwd,env:sshChildEnvironment(cwd),stdio:["ignore","pipe","pipe"],windowsHide:true});
+    const child=spawn(executable,[...args],withHideInherit({cwd,env:sshChildEnvironment(cwd),stdio:["ignore","pipe","pipe"],windowsHide:true}));
     let stdout="",stderr="",timedOut=false;const timer=setTimeout(()=>{timedOut=true;child.kill("SIGKILL");},timeoutMs);
     child.stdout.on("data",chunk=>{if(stdout.length<256*1024)stdout+=chunk;});child.stderr.on("data",chunk=>{stderr=(stderr+chunk).slice(-16384);});
     child.once("error",()=>{clearTimeout(timer);reject(Error("RESTIC_SFTP_SSH_MISSING"));});
@@ -268,7 +269,7 @@ export type SftpFolderState="empty"|"repository"|"other-files";
  * proves it is writable with a throwaway file, and says what is in it. */
 export async function probeSftpFolder(input:{ssh:string;args:string[];folder:string;cwd:string;timeoutMs?:number}):Promise<SftpFolderState>{
   if(!plainPath(input.ssh))throw Error("RESTIC_SFTP_SSH_MISSING");
-  const child=spawn(input.ssh,input.args,{cwd:input.cwd,env:sshChildEnvironment(input.cwd),stdio:["pipe","pipe","pipe"],windowsHide:true});
+  const child=spawn(input.ssh,[...input.args],withHideInherit({cwd:input.cwd,env:sshChildEnvironment(input.cwd),stdio:["pipe","pipe","pipe"],windowsHide:true}));
   let stderr="",spawnFailed=false;child.stderr!.on("data",chunk=>{stderr=(stderr+chunk).slice(-16384);});child.once("error",()=>{spawnFailed=true;});
   const exited=new Promise<void>(resolve=>child.once("close",()=>resolve()));
   const timer=setTimeout(()=>child.kill("SIGKILL"),input.timeoutMs??60000);

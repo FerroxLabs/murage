@@ -137,6 +137,14 @@ const lowest = (a: RoutinePeerSource, b: RoutinePeerSource): RoutinePeerSource =
   permissionMode: ROUTINE_PERMISSION_MODES[Math.min(ROUTINE_PERMISSION_MODES.indexOf(a.permissionMode), ROUTINE_PERMISSION_MODES.indexOf(b.permissionMode))]!,
   triggerSource: a.triggerSource === "schedule" || b.triggerSource === "schedule" ? "schedule" : "manual",
 });
+/** A staged assignment keeps its original request and its admission-time ceiling.
+ * Pin once, before acknowledging the hold. Repeated drains and later source turns
+ * cannot replace it. Provenance commits before the file, so a torn write closes to Ask. */
+export function recordHeldAssignmentRoutineAuthority(requestId: string, authority: RoutinePeerSource | undefined): void {
+  if (provenanceOf(requestId)) return;
+  recordProvenance(requestId, authority);
+  if (authority) { ceilings().set(requestId, validCeiling(authority)); saveCeilings(); }
+}
 /** The ceiling of one request: the authority file's entry and the recorded provenance, whichever is lower.
  * A request recorded as routine-derived whose file entry is gone (absent file, `{}`) is Ask, never the
  * teammate's own level nor even the recorded one: when in doubt, Ask. */

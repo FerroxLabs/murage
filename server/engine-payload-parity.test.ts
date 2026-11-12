@@ -21,7 +21,8 @@ import { botMessages, botViewer } from "./bot-read.ts";
 import { promptQuoteTargets } from "./prompt-quotes.ts";
 import { authoredTurnPieces } from "./reply-action-guard.ts";
 import { transcriptText } from "./replies.ts";
-import { Store, type Message } from "./store.ts";
+import type { Message } from "./store.ts";
+import { ApprovalFixtureStore as Store } from "./testing/approval-card-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });

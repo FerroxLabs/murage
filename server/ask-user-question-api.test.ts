@@ -10,6 +10,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 
+import { redactSecrets } from "./redact.ts";
+
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 
 let fixture: VerificationServer;
@@ -31,6 +33,8 @@ const transcript = async (threadId: string) => JSON.stringify(await messages(thr
 /** The open (or last) question card on a thread. */
 const questionCard = async (threadId: string) =>
   (await messages(threadId)).filter((message) => message.card?.questions?.length).at(-1);
+// The decision sink redacts every string (REDACT-SINKS, 5fdb0c9a0c),
+// including UUIDs whose digit groups happen to match a financial identifier.
 const decisions = (): any[] => {
   const path = join(fixture.info.dataDir, "decisions.ndjson");
   if (!existsSync(path)) return [];
@@ -137,8 +141,8 @@ it("shows a question card in auto mode instead of auto-approving it", async () =
   // the audit keeps that the card was SHOWN, and nothing that says anyone or
   // anything approved it
   // the audit line is appended in the background; wait for it, never race it
-  await expect.poll(() => decisions().filter((row) => row.requestId === card.card.requestId).map((row) => row.decision), { timeout: 15_000 }).toEqual(["card-shown"]);
-  const rows = decisions().filter((row) => row.requestId === card.card.requestId);
+  await expect.poll(() => decisions().filter((row) => row.requestId === redactSecrets(card.card.requestId)).map((row) => row.decision), { timeout: 15_000 }).toEqual(["card-shown"]);
+  const rows = decisions().filter((row) => row.requestId === redactSecrets(card.card.requestId));
   expect(rows[0]).toMatchObject({ source: "question", tool: "AskUserQuestion" });
   expect(decisions().some((row) => row.decision === "auto-approved")).toBe(false);
   // autoReview is "enforce", and it still never asked a model to answer this
@@ -178,7 +182,7 @@ it("delivers the owner's answers to the engine exactly as they were chosen", asy
   expect(settled.card.expired).toBeFalsy();
   // An answer is conversation, not authorization. The audit keeps only that
   // the card was shown — never an approval, and never the answer itself.
-  await expect.poll(() => decisions().filter((row) => row.requestId === card.card.requestId).map((row) => row.decision), { timeout: 15_000 }).toEqual(["card-shown"]);
+  await expect.poll(() => decisions().filter((row) => row.requestId === redactSecrets(card.card.requestId)).map((row) => row.decision), { timeout: 15_000 }).toEqual(["card-shown"]);
   expect(JSON.stringify(decisions())).not.toContain("Intro");
 }, 40000);
 
@@ -234,7 +238,7 @@ it("skips a question as soon as the card is closed, instead of leaving the bot w
   expect(said).not.toContain("Couldn't deliver that answer");
   expect(said).not.toContain("best judgment");
   // the audit line is appended in the background; wait for it, never race it
-  await expect.poll(() => decisions().some((row) => row.requestId === card.card.requestId && row.decision === "question-skipped"), { timeout: 15_000 }).toBe(true);
+  await expect.poll(() => decisions().some((row) => row.requestId === redactSecrets(card.card.requestId) && row.decision === "question-skipped"), { timeout: 15_000 }).toBe(true);
 }, 40000);
 
 it("Stop expires an open question, and it still gets a late answer to the bot", async () => {
@@ -249,7 +253,7 @@ it("Stop expires an open question, and it still gets a late answer to the bot", 
   expect(expired.card.answered).toBe("expired");
   expect(expired.card.questions).toHaveLength(2);
   expect(expired.card.dismissed).toBeFalsy();
-  await expect.poll(() => decisions().some((row) => row.requestId === requestId && row.decision === "question-expired"), { timeout: 15_000 }).toBe(true);
+  await expect.poll(() => decisions().some((row) => row.requestId === redactSecrets(requestId) && row.decision === "question-expired"), { timeout: 15_000 }).toBe(true);
 
   // an expired question takes no engine answer — it says so, in a way the
   // card can act on rather than a flat failure
@@ -303,5 +307,5 @@ it("marks a question left open by a previous run as expired, never silently drop
   // it kept its questions, so the card can still be filled in and sent
   expect(swept.card.questions).toHaveLength(2);
   expect(swept.card.dismissed).toBeFalsy();
-  await expect.poll(() => decisions().some((row) => row.requestId === requestId && row.decision === "question-expired"), { timeout: 15_000 }).toBe(true);
+  await expect.poll(() => decisions().some((row) => row.requestId === redactSecrets(requestId) && row.decision === "question-expired"), { timeout: 15_000 }).toBe(true);
 }, 60000);

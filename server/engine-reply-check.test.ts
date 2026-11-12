@@ -88,7 +88,8 @@ describe("the hidden session", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ text: ENGINE_REPLY_PROMPT, proposalOnly: true, background: true, stopLine: true, sessionReset: true });
     expect(String(sent[0]!.threadId)).toMatch(/^memory-learning-/);
-    expect(Object.keys(sent[0]!).sort()).toEqual(["background", "cwd", "proposalOnly", "sessionReset", "stopLine", "text", "threadId", "usageFeature"]);
+    expect(sent[0]!.beforePrepare).toBeUndefined();
+    expect(Object.keys(sent[0]!).sort()).toEqual(["background", "beforePrepare", "cwd", "proposalOnly", "sessionReset", "stopLine", "text", "threadId", "usageFeature"]);
   });
   it("reads a sign-in the engine reported as data, whatever its words say", async () => {
     const { live } = hidden((id, emit) => { emit(event(id, { type: "runtime.error", message: "Something went wrong", authRequired: true })); emit(event(id, { type: "turn.completed", ok: false })); });

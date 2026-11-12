@@ -292,7 +292,7 @@ describe("startup and pruning exclude each other", () => {
     const lock = scopeLockPath(root);
     writeFileSync(lock, JSON.stringify({ pid: process.ppid, id: null }));
     expect(() => scopedCliHome(spec(real, "bot-lease"))).toThrow(/tidied up/); // the sync build never hands out a scope mid-prune, cached or not
-    const child = spawn(process.execPath, ["-e", `setTimeout(()=>{try{require("fs").unlinkSync(${JSON.stringify(lock)})}catch{}},3000)`], { stdio: "ignore", detached: true });
+    const child = spawn(process.execPath, ["-e", `setTimeout(()=>{try{require("fs").unlinkSync(${JSON.stringify(lock)})}catch{}},3000)`], { windowsHide: true, stdio: "ignore", detached: true });
     child.unref();
     let last = Date.now(); let maxGap = 0;
     const tick = setInterval(() => { const n = Date.now(); maxGap = Math.max(maxGap, n - last); last = n; }, 10);
@@ -515,7 +515,7 @@ describe("S5 site 10", () => {
   it.each((process.platform === "win32" ? ["symlink"] : ["outside", "symlink", "fifo"]) as Array<"outside" | "symlink" | "fifo">)("S5 site 10 refuses %s", mode => {
     const c = fixture(), target = join(c.dir, "target"), link = join(c.dest, "state");
     if (mode === "fifo") {
-      try { execFileSync("mkfifo", [target], { stdio: ["pipe", "pipe", "pipe"] }); }
+      try { execFileSync("mkfifo", [target], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }); }
       catch (error) { if (!lstatSync(target, { throwIfNoEntry: false })?.isFIFO()) throw error; }
       expect(lstatSync(target).isFIFO()).toBe(true);
     }

@@ -11,7 +11,7 @@ import { healthSchema, recordHealth } from "../../cloudflare/control-plane/src/o
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const dir = (name: string) => fileURLToPath(new URL(`../../deploy/cloud-home/${name}`, import.meta.url));
-const hasPython = (() => { try { execFileSync("python3", ["--version"]); return true; } catch { return false; } })();
+const hasPython = (() => { try { execFileSync("python3", ["--version"], { windowsHide: true }); return true; } catch { return false; } })();
 
 const script = `
 import importlib.machinery, importlib.util, json, sys
@@ -35,7 +35,7 @@ describe("mining event reaches the alert path", () => {
     try {
       // Noise that must be ignored: a non-allowlisted type and a dot-prefixed temp file.
       writeFileSync(join(events, "other.json"), JSON.stringify({ type: "secret.dump", at: 1, token: "nope" }));
-      const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, dir("murage-miner-watch.py"), dir("murage-control"), events], { encoding: "utf8" }));
+      const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, dir("murage-miner-watch.py"), dir("murage-control"), events], { windowsHide: true, encoding: "utf8" }));
       expect(out.health.events).toEqual([{ type: "abuse.mining_suspected", at: 1700000000000 }]);
       expect(out.consumed).toHaveLength(1);
 

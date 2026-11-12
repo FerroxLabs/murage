@@ -18,31 +18,32 @@ vi.resetModules();
 const { alwaysAskCommand } = await import("./always-ask.ts");
 const { expectProtectedPath } = await import("./testing/marks-doubt-free.ts");
 
-type Row = [cmd: string, rule: string | null];
+type Row = [cmd: string, rule: string | null, protectedWrite?: boolean];
 
+// S1-B3 RULING (MAIN 2026-11-11 09:30Z): install cwd and explicit output options are protected writes.
 const ATTACHED: Row[] = [
   // the review's example and every attached spelling of a mount
-  ["docker run -v/home/tester:/h alpine sh -c 'rm -rf /h/*'", "protected-path"],
-  ["docker run -v=/home/tester:/h img", "protected-path"],
-  ["docker run -itv/home/tester:/h img", "protected-path"],
-  ["docker run -itv /home/tester:/h img", "protected-path"],
-  ["docker run -itv ~:/h img", "protected-path"],
-  ["docker run -it -v~:/h img", "protected-path"],
-  ["docker run --rm -dv/:/host img", "protected-path"],
-  ["docker create -v/Volumes/Scratch:/m img", "protected-path"],
-  ["podman run -v/etc:/etc img", "protected-path"],
-  ["podman run -itv=/home/tester:/h img", "protected-path"],
-  ["nerdctl run -v /home/tester:/h img", "protected-path"],
-  ["nerdctl run -itv/:/host img", "protected-path"],
-  ["sudo docker run -v/home/tester:/h img", "protected-path"],
-  ["systemd-nspawn --bind=/home/tester:/h -D /tmp/root", "protected-path"],
+  ["docker run -v/home/tester:/h alpine sh -c 'rm -rf /h/*'", "protected-path", true],
+  ["docker run -v=/home/tester:/h img", "protected-path", true],
+  ["docker run -itv/home/tester:/h img", "protected-path", true],
+  ["docker run -itv /home/tester:/h img", "protected-path", true],
+  ["docker run -itv ~:/h img", "protected-path", true],
+  ["docker run -it -v~:/h img", "protected-path", true],
+  ["docker run --rm -dv/:/host img", "protected-path", true],
+  ["docker create -v/Volumes/Scratch:/m img", "protected-path", true],
+  ["podman run -v/etc:/etc img", "protected-path", true],
+  ["podman run -itv=/home/tester:/h img", "protected-path", true],
+  ["nerdctl run -v /home/tester:/h img", "protected-path", true],
+  ["nerdctl run -itv/:/host img", "protected-path", true],
+  ["sudo docker run -v/home/tester:/h img", "protected-path", true],
+  ["systemd-nspawn --bind=/home/tester:/h -D /tmp/root", "protected-path", true],
   ["systemd-nspawn --bind-ro /:/host -D /tmp/root", "protected-path"],
   // a short option's value glued to it, any program
-  ["tar -C/ -xf x.tgz", "protected-path"],
-  ["tar -xzf x.tgz -C/home/tester", "protected-path"],
+  ["tar -C/ -xf x.tgz", "protected-path", true],
+  ["tar -xzf x.tgz -C/home/tester", "protected-path", true],
   ["git -C/home/tester clean -fdx", "protected-path"],
-  ["make -C~ install", "protected-path"],
-  ["zorbtool -o/Volumes/Scratch", "protected-path"],
+  ["make -C~ install", "protected-path", true],
+  ["zorbtool -o/Volumes/Scratch", "protected-path", true],
   ["zorbtool -xo=/usr", "protected-path"],
   ["zorbtool '-dC:\\Users\\tester'", "protected-path"],
   // a command line glued to its option, or last in a cluster
@@ -77,19 +78,19 @@ const WRAPPED: Row[] = [
   ["env -iC/ zorb", "protected-path"],
   ["sudo --chdir=/usr bash -c 'true'", "protected-path"],
   ["sudo -D/ sh -c 'true'", "protected-path"],
-  ["flock /home/tester sh -c 'true'", "protected-path"],
-  ["flock /home/tester -c 'true'", "protected-path"],
-  ["nice -n 5 flock / sh -c 'true'", "protected-path"],
-  ["timeout 5 flock ~ bash -c 'true'", "protected-path"],
-  ["nohup flock /Volumes/Scratch sh -c 'true'", "protected-path"],
-  ["stdbuf -oL flock /usr sh -c 'true'", "protected-path"],
-  ["ionice -c3 flock / sh -c 'true'", "protected-path"],
-  ["taskset 0x1 flock / sh -c 'true'", "protected-path"],
-  ["chrt 10 flock / sh -c 'true'", "protected-path"],
-  ["setsid -f flock / sh -c 'true'", "protected-path"],
+  ["flock /home/tester sh -c 'true'", "protected-path", true],
+  ["flock /home/tester -c 'true'", "protected-path", true],
+  ["nice -n 5 flock / sh -c 'true'", "protected-path", true],
+  ["timeout 5 flock ~ bash -c 'true'", "protected-path", true],
+  ["nohup flock /Volumes/Scratch sh -c 'true'", "protected-path", true],
+  ["stdbuf -oL flock /usr sh -c 'true'", "protected-path", true],
+  ["ionice -c3 flock / sh -c 'true'", "protected-path", true],
+  ["taskset 0x1 flock / sh -c 'true'", "protected-path", true],
+  ["chrt 10 flock / sh -c 'true'", "protected-path", true],
+  ["setsid -f flock / sh -c 'true'", "protected-path", true],
   ["xargs -a /etc zorb", "protected-path"],
   ["xargs -a/home/tester zorb", "protected-path"],
-  ["time -o /home/tester sh -c 'true'", "protected-path"],
+  ["time -o /home/tester sh -c 'true'", "protected-path", true],
   ["unshare -w /home/tester sh -c 'true'", "protected-path"],
   ["nsenter --wd=/ -t 1 sh -c 'true'", "protected-path"],
   ["f() { true; }; env -C / f", "protected-path"],
@@ -124,9 +125,10 @@ const WRAPPED_ORDINARY: Row[] = [
 ];
 
 describe("A+: an option value glued to its option is read as the separate form", () => {
-  it.each(ATTACHED)("%s -> %s", (cmd, rule) => {
+  it.each(ATTACHED)("%s -> %s", (cmd, rule, protectedWrite) => {
     // MARKS r12 re-baseline (MurageMain 11-07 item 1): the doubt-free read names it; strict read and every level still card
-    if (rule === "protected-path") return expectProtectedPath(cmd, "/home/tester/dev/project");
+    // S1-B3 RULING (MAIN 2026-11-11 09:30Z): the marked fixtures write or expose a writable protected target.
+    if (rule === "protected-path") return expectProtectedPath(cmd, "/home/tester/dev/project", undefined, protectedWrite);
     expect(alwaysAskCommand(cmd, "/home/tester/dev/project")?.rule ?? null).toBe(rule);
   });
   it.each(ATTACHED_ORDINARY)("%s -> %s", (cmd, rule) => {
@@ -135,9 +137,10 @@ describe("A+: an option value glued to its option is read as the separate form",
 });
 
 describe("A+: a wrapper's own arguments are judged before what it runs", () => {
-  it.each(WRAPPED)("%s -> %s", (cmd, rule) => {
+  it.each(WRAPPED)("%s -> %s", (cmd, rule, protectedWrite) => {
     // MARKS r12 re-baseline (MurageMain 11-07 item 1): the doubt-free read names it; strict read and every level still card
-    if (rule === "protected-path") return expectProtectedPath(cmd, "/home/tester/dev/project");
+    // S1-B3 RULING (MAIN 2026-11-11 09:30Z): the marked fixtures write or expose a writable protected target.
+    if (rule === "protected-path") return expectProtectedPath(cmd, "/home/tester/dev/project", undefined, protectedWrite);
     expect(alwaysAskCommand(cmd, "/home/tester/dev/project")?.rule ?? null).toBe(rule);
   });
   it.each(WRAPPED_ORDINARY)("%s -> %s", (cmd, rule) => {

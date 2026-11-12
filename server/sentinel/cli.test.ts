@@ -9,10 +9,10 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { checkInstall, invokedAsMain, main, parseArgs, registrationMatches, type RegistrationState } from "./cli.ts";
 import { writeDescriptor } from "./paths.ts";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 import { runScan } from "./scan.ts";
 import { T0, cleanupFixtures, makeInstall, type FixtureInstall } from "./scan-fixtures.ts";
 import { EXIT } from "./supervisor.ts";
-import { removeTempDirSync } from "../testing/cleanup.ts";
 
 afterEach(() => cleanupFixtures());
 
@@ -74,7 +74,7 @@ describe("--once", () => {
     const seen: Array<{ args: readonly string[]; env: Record<string, string> }> = [];
     const code = await main([fx.descriptorPath, "--once"], {
       env: { HOME: "/home/owner", ANTHROPIC_API_KEY: "sk-secret" }, out: () => {}, entry: "/opt/Murage/cli.js", execArgv: [],
-      spawnChild: spec => { seen.push({ args: spec.args, env: spec.env }); return spawn(process.execPath, ["-e", "process.exit(0)"], { stdio: "ignore", env: {} }); },
+      spawnChild: spec => { seen.push({ args: spec.args, env: spec.env }); return spawn(process.execPath, ["-e", "process.exit(0)"], { windowsHide: true, stdio: "ignore", env: {} }); },
     });
     expect(code).toBe(EXIT.ok);
     expect(seen[0]!.args).toEqual(["/opt/Murage/cli.js", fx.descriptorPath, "--once"]);
@@ -85,7 +85,7 @@ describe("--once", () => {
     const fx = makeInstall();
     await main([fx.descriptorPath, "--once"], {
       env: {}, out: () => {}, entry: "/opt/Murage/cli.js", execArgv: [], deadlineMs: 200,
-      spawnChild: () => spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore", env: {} }),
+      spawnChild: () => spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: "ignore", env: {} }),
     });
     const failures = JSON.parse(readFileSync(join(fx.descriptor.outputRoot, "failures.json"), "utf8")) as { failures: number[] };
     expect(failures.failures).toHaveLength(1);

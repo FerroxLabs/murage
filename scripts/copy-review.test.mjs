@@ -269,13 +269,26 @@ function quietAccept(dir) {
 }
 
 describe("pending review list", () => {
-  it("allows exactly the four No limits keys", () => {
+  it("keeps the four historical No limits keys reviewed, with none pending in the shipped packs", () => {
     expect(PENDING_KEYS).toEqual([
       "ux.l1.confirm.unlimitedBody",
       "ux.l1.level.unlimitedDetail",
       "ux.lcopyb.level.unlimited",
       "ux.lcopyb.level.unlimitedHere",
     ]);
+    const dir = fileURLToPath(new URL("../src/locales", import.meta.url));
+    const inputs = readReviewInputs(dir);
+    const ledger = JSON.parse(inputs.ledgerText);
+    expect(JSON.parse(readFileSync(join(dir, "copy-lint/pending-review.json"), "utf8")).strings).toEqual({});
+    const copy = loadCopy(dir);
+    const shipped = shippedMap(copy);
+    for (const locale of ["en", "de", "es", "fr", "hi", "ja", "pt-br", "zh"]) {
+      for (const key of PENDING_KEYS) {
+        const id = `${locale}:${key}`;
+        expect(ledger.strings[id]?.sha256, id).toBe(exactHash(shipped.get(id)));
+      }
+    }
+    expect(ledgerProblems({ ...inputs, shipped, english: copy.english })).toEqual([]);
   });
 
   it("excepts a listed key at its exact hash, and propose leaves it out", () => {

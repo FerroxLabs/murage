@@ -4,8 +4,8 @@
 // The in-app decision client: ask a hosted fast decision model (Flux Router
 // /v1/decide) one typed question and get a typed, validated answer, or a
 // reason none came. FAIL-OPEN everywhere: every failure is `{ ok: false }`
-// and the caller keeps today's rule. ON by default when a Flux key is present
-// (the owner's saved switches win): a master switch and one switch per job.
+// and the caller keeps today's rule. OFF until the owner saves explicit
+// choices: a master switch and one switch per job.
 // A plan that cannot use it is remembered for a cooldown. Never throws.
 import { loadConfig } from "../config.ts";
 import { deciderUnavailable, markDeciderUnavailable } from "./availability.ts";
@@ -55,22 +55,12 @@ function resolveKey(settings: DecisionModelSettings, credential: () => string | 
 export function createDecider(deps: DeciderDeps = {}): Decider {
   const readSettings = deps.settings ?? (() => {
     try {
-      const stored = (loadConfig() as { decider?: { byoKey?: unknown } }).decider;
-      // With nothing saved, the decision model is on when there is a key to use.
-      const hasKey = Boolean(stored?.byoKey) || fluxKeyPresent();
-      return readDecisionModelSettings(stored as never, { defaultOn: hasKey });
+      return readDecisionModelSettings(loadConfig().decider);
     } catch {
       return DEFAULT_DECIDER_SETTINGS;
     }
   });
   const credential = deps.credential ?? (() => fluxKey());
-  const fluxKeyPresent = () => {
-    try {
-      return Boolean(credential());
-    } catch {
-      return false;
-    }
-  };
   const doFetch = deps.fetch ?? ((...args: Parameters<typeof fetch>) => fetch(...args));
 
   async function run(

@@ -1,3 +1,5 @@
+import { serviceQueue, serviceOwnerNoLimits, waitForProducerApproval, answerProducerRequestSync, producerBase, type ServiceAuthority } from "../narrow-denials.ts";
+import { readApproval } from "../decision/index.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 //
@@ -5,12 +7,10 @@
 // folder to a public Netlify address. This is a Murage tool, so every engine
 // reaches it the same way (the agents server), and the gate lives here:
 //
-//   * Every publish and every take-down raises a card of kind "publish" and
-//     WAITS for the owner's Allow. There is no auto-approval hook, no access
-//     mode that skips it (Full access and No limits included), no "always
-//     allow", and a card nobody answers closes after the wait and sends nothing.
-//   * The owner approves the exact file list this module built; the zip is
-//     built from a second listing that must match it.
+//   * The shared decision boundary authorizes each operation. Below No limits,
+//     publish and take-down retain the owner's approval card.
+//   * Verified No limits bypasses stored site grants and private-name filters.
+//     The upload uses the exact file snapshot passed to the decision boundary.
 //   * The bearer token is fetched when needed and handed to the Netlify
 //     adapter only. It is not stored here, logged, put in a card, a message
 //     or a result.
@@ -25,10 +25,10 @@ import { zipStore } from "./zip.ts";
 import { murageLine } from "../murage-line.ts";
 
 const ID = /^[A-Za-z0-9-]{1,64}$/;
-/** readPublishedSites keeps this many records, so a new site is refused before it is made once the list is full. */
+/** The BASE site creation limit; No limits retains the complete site registry. */
 const MAX_SITES_PER_BOT = 200;
 
-export interface PublishActor { botId: string; threadId: string; generation: string; signal: AbortSignal; assertActive: () => void;
+export interface PublishActor { authority?: ServiceAuthority; botId: string; threadId: string; generation: string; signal: AbortSignal; assertActive: () => void;
   /** The provider turn running this generation, read from the turn's capability (never a request body). */
   turnId?: string }
 export interface PublishResult {
@@ -63,7 +63,7 @@ const SHOWN_ON_CARD = new Set(["rate-limited", "host-down", "too-large", "too-ma
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const NETLIFY_LABEL = /^[a-z0-9][a-z0-9-]{0,62}$/;
 const BAD_SITE = "Paste the site's Netlify address (such as my-shop.netlify.app) or just its name.";
-const CONNECT_TEXT = "Netlify is not connected yet. Murage is showing the owner a Connect Netlify card in this chat. Tell them to press it, and try again once they say Netlify is connected.";
+const CONNECT_TEXT = "Netlify is off. Turn it on in Settings > Connections > Connected tools.";
 
 /** What an owner pasted to name a site they already have on Netlify: its id, its
  * address (any page of it) or just its name. Nothing else is looked up. */
@@ -83,16 +83,15 @@ export function parseSiteReference(input: unknown): { id: string } | { address: 
   return { address: `${host}.netlify.app` };
 }
 
-/** Only the computer running Murage can say yes to putting something public. Any door may say no. */
-export function publishAnswerAllowed(requestId: string, behavior: string, surface: "desktop" | "elsewhere"): boolean {
-  return !requestId.startsWith("publish-") || behavior !== "allow" || surface === "desktop";
+/** Only the computer running Murage can say yes to putting something public, or (on a Cloud home) the owner's browser with a fresh
+ *  emailed code for exactly this card ("proven"). Any door may say no. */
+export function publishAnswerAllowed(requestId: string, behavior: string, surface: "desktop" | "elsewhere" | "proven"): boolean {
+  return !requestId.startsWith("publish-") || behavior !== "allow" || surface === "desktop" || surface === "proven";
 }
 
-interface Pending { threadId: string; messageId: string; settle: (allow: boolean, source?: "user" | "system") => void; active: () => void }
 
 export class PublishOperations {
-  private readonly pending = new Map<string, Pending>();
-  private readonly busy = new Set<string>();
+  private readonly busy = new Map<string, number>();
   private readonly options: {
     store: Store; waiting: (threadId: string, waiting: boolean, requestId: string, messageId?: string, botId?: string) => void;
     /** The current Netlify bearer, or nothing when the owner has not connected. */
@@ -112,7 +111,7 @@ export class PublishOperations {
 
   // ---- site records: bot -> the sites it may change ----
   /** The sites this bot may update or take down. */
-  sitesFor(botId: string): PublishedSite[] { return readPublishedSites(this.options.store.bot(botId)?.publishedSites); }
+  sitesFor(botId: string): PublishedSite[] { return readPublishedSites(this.options.store.bot(botId)?.publishedSites, true); }
   private saveSite(botId: string, site: PublishedSite) {
     this.options.store.patchBot(botId, { publishedSites: [...this.sitesFor(botId).filter(item => item.siteId !== site.siteId), site] });
   }
@@ -149,7 +148,9 @@ export class PublishOperations {
   }
 
   async publish(actor: PublishActor, input: { folder?: string; name?: string; siteId?: string }): Promise<PublishResult> {
+    input={...input};
     return this.exclusive(actor, () => this.shownFailures(actor, { action: input.siteId ? "update" : "publish", url: this.guessUrl(actor.botId, input) }, async (mark) => {
+      const noLimits = serviceOwnerNoLimits(actor.authority);
       const token = this.token(), fetchImpl = this.options.fetchImpl;
       const workspace = this.options.workspaceFor(actor.botId, actor.threadId);
       if (!workspace) throw new PublishError("no-folder", "This bot has no files folder to publish from.");
@@ -160,11 +161,11 @@ export class PublishOperations {
       if (siteId === undefined) siteId = (slug ? mine.find(item => siteSlug(item.name) === slug) : mine.length === 1 ? mine[0] : undefined)?.siteId;
       if (siteId === undefined && !slug) throw new PublishError("bad-name", mine.length > 1 ? `Which site? This bot has ${mine.map(item => item.name).join(", ")}. Pass the site name.` : "Give the site a name made of letters or numbers, such as \"my-shop\".");
       const update = siteId !== undefined;
-      if (!update && mine.length >= MAX_SITES_PER_BOT) throw new PublishError("bad-name", "This bot already keeps as many sites as it can. Take one down first, then try again.");
+      if (!noLimits && !update && mine.length >= MAX_SITES_PER_BOT) throw new PublishError("bad-name", "This bot already keeps as many sites as it can. Take one down first, then try again.");
       if (update && !ID.test(siteId!)) throw new PublishError("bad-id", "That site id does not look right. Use the id I gave you when the site was published.");
-      const record = update ? this.owned(actor.botId, siteId!) : undefined;
-      const dir = resolveSiteFolder(workspace, input.folder ?? "site");
-      const listing = listSite(dir);
+      const record = update ? (noLimits ? mine.find(site => site.siteId === siteId) : this.owned(actor.botId, siteId!)) : undefined;
+      const dir = resolveSiteFolder(workspace, input.folder ?? "site", noLimits);
+      const listing = listSite(dir, undefined, noLimits);
       const target = update ? await getSite({ token, siteId: siteId!, fetchImpl }) : { siteId: undefined, url: `https://${slug}.netlify.app` };
       mark.url = target.url;
       const data: PublishCardData = { action: update ? "update" : "publish", host: "netlify", url: target.url, ...(update ? { siteId: target.siteId } : { siteName: slug }),
@@ -183,13 +184,13 @@ export class PublishOperations {
       // What goes up is exactly what was approved: the snapshot taken when the list was built.
       const fresh = listing;
       const phases: string[] = [];
-      const phase = (name: string, progress: PublishProgress, url?: string) => { phases.push(name); this.progress(actor, messageId, progress, url); };
+      let url = target.url, created = false, currentSite = target.siteId;
+      const phase = (name: string, progress: PublishProgress, _url?: string) => { phases.push(name); this.progress(actor, messageId, progress, url); };
       const zip = zipStore(fresh.files);
       const index = fresh.files.find(file => file.rel === "index.html")!;
       const marker = expectedFingerprint(index.data);
       const live = this.token();
       phase(`Uploading ${plural(fresh.files.length)}`, { step: "uploading", fileCount: fresh.files.length });
-      let url = target.url, created = false, currentSite = target.siteId;
       // A site made for this publish is removed if the publish fails. If Netlify will not remove it,
       // it goes in the bot's list marked as needing attention, with a Take down button there.
       let orphaned = false;
@@ -223,8 +224,8 @@ export class PublishOperations {
         throw error;
       }
       // A site the owner removed while this ran is not brought back.
-      if (record && !this.sitesFor(actor.botId).some(item => item.siteId === record.siteId)) throw new PublishError("not-yours", NOT_YOURS);
-      try { this.saveSite(actor.botId, { siteId: currentSite!, name: record?.name ?? slug, url, lastPublishedAt: Date.now(), lastFileCount: fresh.files.length, origin: record?.origin ?? "created" }); }
+      if (!serviceOwnerNoLimits(actor.authority) && record && !this.sitesFor(actor.botId).some(item => item.siteId === record.siteId)) throw new PublishError("not-yours", NOT_YOURS);
+      try { this.saveSite(actor.botId, { siteId: currentSite!, name: record?.name ?? (slug || new URL(url).hostname.split(".")[0] || "site"), url, lastPublishedAt: Date.now(), lastFileCount: fresh.files.length, origin: record?.origin ?? (update ? "assigned" : "created") }); }
       catch (error) { await rollback(); throw error; }
       phase(`Live at ${url}`, { step: "live", fileCount: fresh.files.length }, url);
       return { status: "live", url, siteId: currentSite!, deployId, fileCount: fresh.files.length, totalBytes: fresh.bytes, ...(fresh.skipped.length ? { skipped: fresh.skipped } : {}), phases,
@@ -233,11 +234,13 @@ export class PublishOperations {
   }
 
   async takeDown(actor: PublishActor, input: { siteId: string; deployId?: string }): Promise<PublishResult> {
+    input={...input};
     return this.exclusive(actor, () => this.shownFailures(actor, { action: "take-down", url: this.sitesFor(actor.botId).find(item => item.siteId === input.siteId)?.url }, async (mark) => {
+      const noLimits = serviceOwnerNoLimits(actor.authority);
       const token = this.token(), fetchImpl = this.options.fetchImpl;
       if (typeof input.siteId !== "string" || !ID.test(input.siteId)) throw new PublishError("bad-id", "That site id does not look right. Use the id I gave you when the site was published.");
       if (input.deployId !== undefined && !ID.test(input.deployId)) throw new PublishError("bad-id", "That deploy id does not look right.");
-      this.owned(actor.botId, input.siteId);
+      if (!noLimits) this.owned(actor.botId, input.siteId);
       const site = await getSite({ token, siteId: input.siteId, fetchImpl });
       mark.url = site.url;
       // A saved version is removed only if it belongs to the site the card names.
@@ -283,22 +286,17 @@ export class PublishOperations {
   }
 
   /** Patch the card the owner is looking at with how far along it is. */
-  private progress(actor: PublishActor, messageId: string, progress: PublishProgress, url?: string) {
-    const { store } = this.options;
-    const current = store.messageById(actor.threadId, messageId);
-    if (!current?.card?.publish) return;
-    store.patchMessage(actor.threadId, messageId, { card: { ...current.card, publish: { ...current.card.publish, ...(url ? { url } : {}), progress } } });
+  private progress(actor: PublishActor, messageId: string, progress: PublishProgress, _url?: string) {
+    const current=this.options.store.messageById(actor.threadId,messageId);
+    if(!current)return;
+    this.options.store.appendMessage(actor.threadId,murageLine({role:'bot',kind:'activity',tool:{name:progress.step,ok:progress.step!=='failed'}}));
   }
 
   /** The "Connect Netlify" card: one per chat until it is used. */
   private connectNotice(actor: PublishActor) {
     const { store } = this.options;
-    if (store.keyedCards(actor.threadId, "publish", "connect").some(item => item.card?.publish?.action === "connect" && item.card.publish.connect?.state === "needed")) return;
     const from = this.options.speaker?.(actor.threadId, actor.botId);
-    store.appendMessage(actor.threadId, murageLine({ role: "bot", kind: "options", ...(from ? { from } : {}), card: {
-      title: "Connect Netlify", subtitle: "", options: [], kind: "publish",
-      publish: { action: "connect", host: "netlify", url: "https://app.netlify.com", connect: { state: "needed", botId: actor.botId } },
-    } }));
+    store.appendMessage(actor.threadId, murageLine({ role: "bot", kind: "text", ...(from ? { from } : {}), text: CONNECT_TEXT }));
   }
 
   /** The bot a connect card was raised for. */
@@ -317,18 +315,19 @@ export class PublishOperations {
   }
 
   /** A closed card for a problem found before any approval was asked for: nothing waits on the owner. */
-  private failureNotice(actor: PublishActor, action: PublishCardData["action"], url: string | undefined, progress: PublishProgress) {
+  private failureNotice(actor: PublishActor, action: PublishCardData["action"], _url: string | undefined, _progress: PublishProgress) {
     const from = this.options.speaker?.(actor.threadId, actor.botId);
     const title = action === "take-down" ? "Take this site down?" : action === "update" ? "Update your live site?" : "Publish this site?";
-    this.options.store.appendMessage(actor.threadId, murageLine({ role: "bot", kind: "options", ...(from ? { from } : {}), card: {
-      title, subtitle: "", options: [], kind: "publish", answered: "failed", publish: { action, host: "netlify", url: url ?? "https://www.netlify.com", progress },
-    } }));
+    this.options.store.appendMessage(actor.threadId,murageLine({role:'bot',kind:'text',...(from?{from}:{}),text:title}));
   }
 
   private async exclusive<T>(actor: PublishActor, run: () => Promise<T>): Promise<T> {
-    if (this.busy.has(actor.botId)) throw new PublishError("cancelled", "A publish for this bot is already in progress. Wait for it to finish.");
-    this.busy.add(actor.botId);
-    try { return await run(); } finally { this.busy.delete(actor.botId); }
+    if (this.busy.has(actor.botId) && !serviceOwnerNoLimits(actor.authority)) throw new PublishError("cancelled", "A publish for this bot is already in progress. Wait for it to finish.");
+    this.busy.set(actor.botId, (this.busy.get(actor.botId) ?? 0) + 1);
+    try { return await run(); } finally {
+      const remaining = (this.busy.get(actor.botId) ?? 1) - 1;
+      if (remaining) this.busy.set(actor.botId, remaining); else this.busy.delete(actor.botId);
+    }
   }
 
   private settled(answer: Answer, what: "publish" | "take-down") {
@@ -337,40 +336,25 @@ export class PublishOperations {
     throw new PublishError("cancelled", "This turn ended before the owner answered. Nothing was changed.");
   }
 
-  private approve(actor: PublishActor, card: { title: string; subtitle: string; held: string; data: PublishCardData; pushBody: string }): Promise<{ answer: Answer; messageId: string }> {
-    const { store } = this.options, requestId = `publish-${randomUUID()}`;
-    const from = this.options.speaker?.(actor.threadId, actor.botId);
-    // No allowKey, taskAllowKey or routineAllowKey: nothing can be remembered.
-    // `held` lists what the model chose to publish: the card names the producing turn so it is withheld with that turn's inputs
-    const message = store.appendMessage(actor.threadId, murageLine({ role: "bot", kind: "options", turnId: actor.turnId, ...(from ? { from } : {}), card: {
-      title: card.title, subtitle: card.subtitle, held: card.held, options: ["Allow", "Deny"], requestId, tool: "publish_site",
-      kind: "publish", publish: card.data, pushBody: card.pushBody,
-    } }));
-    this.options.waiting(actor.threadId, true, requestId, message.id, actor.botId);
-    return new Promise<{ answer: Answer; messageId: string }>(resolve => {
-      let done = false;
-      const finish = (allow: boolean, source: "user" | "system" = "system") => {
-        if (done) return; done = true; actor.signal.removeEventListener("abort", abort); this.pending.delete(requestId);
-        const current = store.messageById(actor.threadId, message.id);
-        if (current?.card && !current.card.answered) store.patchMessage(actor.threadId, message.id, { card: { ...current.card, answered: source === "user" ? (allow ? "allow" : "deny") : "unavailable", dismissed: source !== "user" } });
-        this.options.waiting(actor.threadId, false, requestId, undefined, actor.botId);
-        resolve({ answer: source === "user" ? (allow ? "allow" : "deny") : "gone", messageId: message.id });
-      };
-      const abort = () => finish(false);
-      this.pending.set(requestId, { threadId: actor.threadId, messageId: message.id, settle: finish, active: actor.assertActive });
-      actor.signal.addEventListener("abort", abort, { once: true });
-      if (actor.signal.aborted) abort();
-    });
+  pendingApprovals() { return serviceQueue('publish').pendingApprovals(); }
+  approvalQueue() { return serviceQueue('publish'); }
+  private async approve(actor: PublishActor, card: { title: string; subtitle: string; held: string; data: PublishCardData; pushBody: string }): Promise<{ answer: Answer; messageId: string }> {
+    const requestId=`publish-${randomUUID()}`; let messageId='';
+    actor.assertActive();
+    const result=await waitForProducerApproval(serviceQueue('publish'),{
+      authority:actor.authority,ref:requestId,tool:card.data.action==='take-down'?'take_down_site':'publish_site',input:card.data,
+      action:{requestId,tool:'publish_site',kind:'publish',publish:{...card.data,opId:requestId},held:card.held,pushBody:card.pushBody,options:['Allow','Deny']},
+      view:{title:card.title,subtitle:card.subtitle},base:producerBase(true),
+    },{signal:actor.signal,presented:(_item,id)=>{messageId=id;this.options.waiting(actor.threadId,true,requestId,id,actor.botId);}});
+    this.options.waiting(actor.threadId,false,requestId,undefined,actor.botId);
+    return {answer:result==='cancelled'?'gone':result,messageId};
+  }
+  resolve(threadId:string,requestId:string,behavior:'allow'|'deny'|'answer'):'allowed-once'|'rejected'|'unavailable'|null {
+    if(!requestId.startsWith('publish-'))return null;
+    return answerProducerRequestSync(serviceQueue('publish'),threadId,requestId,behavior)?behavior==='allow'?'allowed-once':'rejected':'unavailable';
+  }
+  cancelThread(threadId:string) {
+    for(const item of this.pendingApprovals())if(readApproval(item.approvalId)?.threadId===threadId)void serviceQueue('publish').stop(item.approvalId);
   }
 
-  /** The owner's answer on a publish card. Null when the id is not a publish card's. */
-  resolve(threadId: string, requestId: string, behavior: "allow" | "deny" | "answer"): "allowed-once" | "rejected" | "unavailable" | null {
-    if (!requestId.startsWith("publish-")) return null;
-    const entry = this.pending.get(requestId);
-    if (!entry || entry.threadId !== threadId || behavior === "answer") return "unavailable";
-    try { entry.active(); } catch { entry.settle(false); return "unavailable"; }
-    entry.settle(behavior === "allow", "user");
-    return behavior === "allow" ? "allowed-once" : "rejected";
-  }
-  cancelThread(threadId: string) { for (const entry of [...this.pending.values()]) if (entry.threadId === threadId) entry.settle(false); }
 }

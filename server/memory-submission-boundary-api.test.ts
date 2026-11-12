@@ -47,6 +47,7 @@ describe.skipIf(process.platform==="win32")("memory refusal after an unknown sub
     expect(receipts.filter(row=>row.action)).toHaveLength(1);
     expect(receipts.filter(row=>row.skillAuthoring!==undefined)).toHaveLength(1);
     const messages=(await api("GET",`/api/threads/${threadId}/messages?limit=100`)).messages;
-    expect(messages.some((message:any)=>message.tool?.name?.includes("previous attempt may have started"))).toBe(true);
+    // This fake driver reports no submission boundary; retain the unknown-submission warning and never infer a confirmed release.
+    expect(messages.some((message:any)=>message.tool?.name?.includes("Context changed; previous attempt may have started. Review its output before trying again."))).toBe(true);
   },60000);
 });

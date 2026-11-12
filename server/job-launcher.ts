@@ -1,3 +1,5 @@
+import "../shared/win-hide-child-process.mjs";
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -70,7 +72,7 @@ const main = (): void => {
     cwd = typeof parsed.cwd === "string" && parsed.cwd ? parsed.cwd : undefined;
   } catch { report({ error: { code: "EINVAL", syscall: "spawn", path: command } }); process.exit(127); }
   let child: ReturnType<typeof spawn>;
-  try { child = spawn(command, args, { stdio: "inherit", env, cwd, windowsHide: true }); }
+  try { child = spawn(command, [...args], withHideInherit({ stdio: "inherit", env, cwd, windowsHide: true })); }
   catch (error) {
     // Node refuses some launches before any process exists (a .cmd or .bat without a shell: EINVAL). Reported like any other
     // spawn failure, so the server's child gets its `error` event instead of a silent exit.

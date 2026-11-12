@@ -1,0 +1,17 @@
+
+ RUN  v4.1.12 /evidence/wiring-gate-baseline
+
+ ✓ scripts/contract.test.mjs (7 tests | 6 skipped) 3ms
+
+ Test Files  1 passed (1)
+      Tests  1 passed | 6 skipped (7)
+   Start at  09:04:01
+   Duration  189ms (transform 62ms, setup 0ms, import 82ms, tests 3ms, environment 0ms)
+
+
+Underlying gate exit: 0
+Traceback (most recent call last):
+  File "/evidence/run-wiring-gate.py", line 25, in <module>
+    assert result.returncode!=0, 'RED: production wiring gate accepted the commented metadata-copy command'
+           ^^^^^^^^^^^^^^^^^^^^
+AssertionError: RED: production wiring gate accepted the commented metadata-copy command

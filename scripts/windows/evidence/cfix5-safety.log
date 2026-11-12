@@ -1,0 +1,6 @@
+PASS reparse ancestor under runs
+PASS outside root
+PASS fresh contained path
+PASS stale publication after successful scheduler exit
+PASS publication newer than tested run start
+PASS direct launch without ownership context refused

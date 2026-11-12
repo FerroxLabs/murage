@@ -11,7 +11,7 @@ import { validateArchiveFileList, writeInstallationArchive } from "./installatio
 import { writeEncryptedInstallationBackup, restoreEncryptedInstallationNew, windowsRestoreRefusal, windowsTotalRefusal } from "./installation-encrypted-backup.ts";
 import { restoreInstallation } from "./installation-restore.ts";
 import { reviewInstallation } from "./installation-activation.ts";
-import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
+import { backupFixture, testAgeKeys, optionalBackupAgeUnavailable } from "./testing/backup-fixture.ts";
 import { backupSkippedLines } from "../shared/backup-skipped.mjs";
 import { WINDOWS_BACKUP_BYTES } from "./installation-encrypted-backup.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -20,10 +20,10 @@ const selection = { scope: "application-data", credentialPolicy: "preserve-in-en
 
 // #1: a name with a backslash, or a bot name with a control character, in the
 // list of skipped items must never turn a good backup into a failure.
-it.skipIf(process.platform === "win32" || !process.env.MURAGE_BACKUP_TEST_AGE_DIR)("a skipped item named ..\\plug or \\ and a bot named with a bell still report a good backup", async () => {
+it.skipIf(process.platform === "win32" || optionalBackupAgeUnavailable())("a skipped item named ..\\plug or \\ and a bot named with a bell still report a good backup", async () => {
   const f = backupFixture(), keys = testAgeKeys();
   const desk = join(f.data, "workspaces", "bot"); mkdirSync(desk, { recursive: true });
-  execFileSync("mkfifo", [join(desk, "..\\plug")]);
+  execFileSync("mkfifo", [join(desk, "..\\plug")], { windowsHide: true });
   writeFileSync(join(desk, "\\"), "x"); chmodSync(join(desk, "\\"), 0o000);
   const bots = JSON.parse(readFileSync(join(f.data, "bots.json"), "utf8")); bots[0].name = "Be\u0007ll"; writeFileSync(join(f.data, "bots.json"), JSON.stringify(bots));
   try {

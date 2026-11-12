@@ -1,0 +1,106 @@
+✔ p11b 1: TimeoutSeconds 60, prelaunch CIM blocked beyond 150s still has operator-owned wrapper cleanup (1.137067ms)
+✔ p11b 2: schtasks beyond 30s uses suspended job creation, job timeout and empty proof (0.384393ms)
+✖ p11b 2: recursive ban includes all Windows source and test files (1040.840399ms)
+✔ p11b 3: all six MAIN mutants are installed (0.299701ms)
+SCANNER FIXTURE HIT RATE 57/57 (100%)
+✔ p11c 1: cleanup removes the fixed wrapper before any bounded snapshot diff (1.228358ms)
+✔ p11c 2: reviewer snapshot helper >300s has one job owner for every Node native (0.382893ms)
+✔ p11c 3: scanner flags every reviewer form recursively, including test/check/mutate (815.534833ms)
+✖ p11c 3: complete Windows tree passes exact-path ownership scanner (862.046923ms)
+✔ p11c 4: four additional real source mutants exist (0.274002ms)
+✔ p11c 3: owner basenames elsewhere are never allowlisted (500.361242ms)
+P11D SCANNER FIXTURE HIT RATE 57/57 (100%); PARSE-FAILURE COUNT 0
+✔ p11d: crev4 exact parenthesized multiline CIM input is rejected (652.127369ms)
+✔ p11d: valid hostile fixtures are detected without masking parser failures (671.567799ms)
+✔ p11d: malformed PowerShell, JavaScript, C# and batch source fails closed (1775.665779ms)
+✔ p11d: harmless syntax and command-looking data do not produce violations (1032.260804ms)
+✔ p11d: a missing PowerShell parser fails closed (7.008756ms)
+✔ p11d: JavaScript bindings respect lexical scopes (7.48088ms)
+P11E SCANNER FIXTURE HIT RATE 94/94 (100%); PARSE-FAILURE COUNT 0
+P11E ALLOWED FIXTURES 45/45
+✔ p11e: crev5 exact parenthesized imported alias is rejected (25.064546ms)
+✔ p11e: every valid hostile allowlist fixture fails recursively (256.575853ms)
+✔ p11e: each allowed process form and harmless data remain accepted (51.485222ms)
+P11F BANNED FIXTURES 81/81; PARSE-FAILURE COUNT 0
+P11F ALLOWED FIXTURES 15/15
+✔ p11f: crev6 exact Function-constructor input is rejected (26.653457ms)
+✔ p11f: MAIN cheap structural bans reject valid JavaScript (181.323814ms)
+✔ p11f: ordinary local functions, data and lexical scopes remain accepted (64.147216ms)
+ℹ tests 22
+ℹ suites 0
+ℹ pass 20
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 4430.072561
+
+✖ failing tests:
+
+test at scripts/windows/p11b.node-test.mjs:26:1
+✖ p11b 2: recursive ban includes all Windows source and test files (1040.840399ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+
+  + [
+  +   {
+  +     file: 'packaged-scenario.mjs',
+  +     line: 6,
+  +     rule: 'reflective JavaScript execution'
+  +   },
+  +   {
+  +     file: 'packaged-scenario.mjs',
+  +     line: 7,
+  +     rule: 'reflective JavaScript execution'
+  +   }
+  + ]
+  - []
+
+      at TestContext.<anonymous> (file:///work/scripts/windows/p11b.node-test.mjs:27:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ { file: 'packaged-scenario.mjs', line: 6, rule: 'reflective JavaScript execution' }, { file: 'packaged-scenario.mjs', line: 7, rule: 'reflective JavaScript execution' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }
+
+test at scripts/windows/p11c.node-test.mjs:42:1
+✖ p11c 3: complete Windows tree passes exact-path ownership scanner (862.046923ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+
+  + [
+  +   {
+  +     file: 'packaged-scenario.mjs',
+  +     line: 6,
+  +     rule: 'reflective JavaScript execution'
+  +   },
+  +   {
+  +     file: 'packaged-scenario.mjs',
+  +     line: 7,
+  +     rule: 'reflective JavaScript execution'
+  +   }
+  + ]
+  - []
+
+      at TestContext.<anonymous> (file:///work/scripts/windows/p11c.node-test.mjs:45:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ { file: 'packaged-scenario.mjs', line: 6, rule: 'reflective JavaScript execution' }, { file: 'packaged-scenario.mjs', line: 7, rule: 'reflective JavaScript execution' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

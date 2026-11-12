@@ -1,0 +1,25 @@
+COMMAND node_modules/.bin/vitest run server/decision/schema-lifecycle.test.ts -t M50
+
+ RUN  v4.1.12 /work
+
+ ❯ server/decision/schema-lifecycle.test.ts (4 tests | 1 failed | 3 skipped) 16ms
+   × A4 A5b M50 schema is registered once and migration DDL is atomic and restartable 13ms
+   ↓ A5c M57 restore/downgrade cancellation settles record before same-action row
+   ↓ A4 full downgrade with open engine and queue records is accepted by the real 1.0.1 inspector
+   ↓ A4 staged email redaction terminalizes records and changes display only
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 skipped (4)
+   Start at  06:33:23
+   Duration  5.03s (transform 3.98s, setup 4.60s, import 288ms, tests 16ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/schema-lifecycle.test.ts > A4 A5b M50 schema is registered once and migration DDL is atomic and restartable
+AssertionError: expected [ 'artifacts_bot_date', …(63) ] to include 'approval_request_once'
+ ❯ server/decision/schema-lifecycle.test.ts:9:138
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

@@ -1,0 +1,58 @@
+COMMAND node_modules/.bin/vitest run server/decision/faults.test.ts -t "A5 X10"
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/faults.test.ts > A5 X10 non-owner ask faults retain BASE fault CARD even when normal BASE would RUN
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+stdout | server/decision/faults.test.ts > A5 X10 non-owner auto faults retain BASE fault CARD even when normal BASE would RUN
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=50 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+
+ ❯ server/decision/faults.test.ts (17 tests | 4 failed | 13 skipped) 2355ms
+   ↓ A5 M38 protected match wins before stored-source failure; reads run (M28)
+   ↓ A5 stored browser fault refuses without inventing a card
+   ↓ A5 M51 non-owner ask faults use frozen BASE callback
+   ↓ A5 M51 non-owner auto faults use frozen BASE callback
+   ↓ A5 M51 non-owner full faults use frozen BASE callback
+   ↓ A5 M51 non-owner unlimited faults use frozen BASE callback
+   ↓ R9 M23 M24 unproven owner does not mint BASE card; missing command runs
+   ↓ R16 M21 deny revision is rechecked immediately before RUN delivery
+   ↓ M23 reader throws: owner clean runs, guest retains BASE fault behavior
+   ↓ R9 record creation failure denies the engine without a second card
+   ↓ R9 provenance/level reader failures produce bounded refusal, never a waiting engine
+   ↓ R9 answer row failure delivers deny and bounded text without another card
+   × A5 X10 non-owner ask faults retain BASE fault CARD even when normal BASE would RUN 605ms
+   × A5 X10 non-owner auto faults retain BASE fault CARD even when normal BASE would RUN 581ms
+   × A5 X10 non-owner full faults retain BASE fault CARD even when normal BASE would RUN 554ms
+   × A5 X10 non-owner unlimited faults retain BASE fault CARD even when normal BASE would RUN 609ms
+   ↓ R9 missing live authority is not weakened by a simultaneous action-reader fault
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 13 skipped (17)
+   Start at  07:53:08
+   Duration  11.14s (transform 7.01s, setup 8.24s, import 410ms, tests 2.35s, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/faults.test.ts > A5 X10 non-owner ask faults retain BASE fault CARD even when normal BASE would RUN
+ FAIL  server/decision/faults.test.ts > A5 X10 non-owner auto faults retain BASE fault CARD even when normal BASE would RUN
+ FAIL  server/decision/faults.test.ts > A5 X10 non-owner full faults retain BASE fault CARD even when normal BASE would RUN
+ FAIL  server/decision/faults.test.ts > A5 X10 non-owner unlimited faults retain BASE fault CARD even when normal BASE would RUN
+AssertionError: expected 'run' to be 'card' // Object.is equality
+
+Expected: "card"
+Received: "run"
+
+ ❯ server/decision/faults.test.ts:38:185
+     36| });
+     37| it.each(['ask','auto','full','unlimited'] as const)('A5 X10 non-owner …
+     38|  const f=fixture(level,{k:'webhook'});d.installDenySources({revision:(…
+       |                                                                                                                                                                                         ^
+     39| });
+     40|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+

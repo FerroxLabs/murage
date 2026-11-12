@@ -163,6 +163,23 @@ export function applyPreference(preference: ThemePreference): SkinId {
   return id;
 }
 
+/** The palette the page is painted with right now: what is stamped on <html>, else what the stored preference resolves to. */
+export function skinInUse(): SkinId {
+  try {
+    const stamped = typeof document === "undefined" ? undefined : document.documentElement?.dataset?.skin;
+    if (stamped === "light" || stamped === "dark") return stamped;
+  } catch {
+    /* no document: fall through */
+  }
+  return resolveSkin(readPreference());
+}
+
+/** The caption for the Appearance choice: System names the theme it resolves to ("System (Dark)"), an explicit choice is its own name. */
+export function themeStatusLabel(preference: ThemePreference, inUse: SkinId): string {
+  const name = inUse === "dark" ? "Dark" : "Light";
+  return preference === "auto" ? `System (${name})` : name;
+}
+
 /**
  * Follow the OS while the preference is "auto". Returns an unsubscribe.
  * Registered once at module scope from main.tsx, NOT inside a component — the

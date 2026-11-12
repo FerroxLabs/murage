@@ -34,6 +34,8 @@ it("production startup installs budget reset before the first render can request
   const add = vi.spyOn(events, "addEventListener");
   vi.stubGlobal("window", events);
   vi.stubGlobal("document", { getElementById: () => ({}) });
+  // fd2e454356 reads the pop-out query at startup, as a browser always permits.
+  vi.stubGlobal("location", { search: "" });
   const speech = budgetSpent();
   let firstSpeech: Promise<unknown> | undefined;
   render.mockImplementationOnce(() => {

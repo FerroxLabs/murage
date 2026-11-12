@@ -188,7 +188,7 @@ export function drainSteeredMessages(
     userMessage: Message,
     excludeIds: string[],
     /** Which kind of batch this is: a share or ask-intent line runs alone, from the phone named here. */
-    batch: { via: "share" | "ask-intent" | null; viaDevice: string | null },
+    batch: { via: "share" | "ask-intent" | null; viaDevice: string | null; viaProof: SendRow["viaProof"] },
   ) => void | Promise<unknown>,
   /** Holds a queue the thread's own busy flag cannot see, such as the bot
    * speaking in a room turn (upstream OpenMausBot #1664). */
@@ -308,7 +308,7 @@ export function drainSteeredMessages(
         prompt,
         last,
         appended.map((message) => message.id),
-        { via: first.via, viaDevice: first.via ? first.viaDevice : null },
+        { via: first.via, viaDevice: first.via ? first.viaDevice : null, viaProof: first.via === "ask-intent" && committed.length === 1 ? committed[0]!.viaProof : null },
       );
     } catch { /* same: the lines are already recorded */ }
     if (started && typeof (started as PromiseLike<unknown>).then === "function") {

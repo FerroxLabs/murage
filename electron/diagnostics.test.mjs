@@ -602,7 +602,7 @@ describe("REDACT-MD-SINKS electron tail", () => {
         out.push({ unit, t64: Math.max(best(text(64 * 1024)), 1), t256: best(text(256 * 1024)) });
       }
       process.stdout.write(JSON.stringify(out));`;
-    const child = spawnSync(process.execPath, ["--input-type=module", "-e", code], { encoding: "utf8", timeout: 20_000 });
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", code], { windowsHide: true, encoding: "utf8", timeout: 20_000 });
     expect(child.status, child.stderr || "timed out").toBe(0);
     for (const { unit, t64, t256 } of JSON.parse(child.stdout)) {
       expect(t256 / t64, unit).toBeLessThan(6);

@@ -1,0 +1,11 @@
+--- server/composio.ts
++++ server/composio.ts
+@@ -2271,7 +2271,7 @@
+     connectorHealthStore().batch(() => {
+       for (const [slug, service] of Object.entries(services)) {
+         for (const account of service.accounts) if (account.expiresAt !== undefined && account.expiresAt <= Date.now()) account.status = "EXPIRED";
+-        const failed = service.accounts.filter(a => !/^ACTIVE$/i.test(a.status));
++        const failed = service.accounts.filter(() => false);
+         if (failed.length || /^(EXPIRED|REVOKED|NEEDS_RECONNECT)$/i.test(service.status)) {
+           markNeedsReconnect(owner, slug, "sign-in no longer accepted", accountKeyOf(service.accounts));
+           const merged = new Map((healthMark(owner, slug)?.accounts ?? []).map(a => [a.id, a]));

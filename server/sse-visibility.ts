@@ -324,6 +324,7 @@ const nested = (payload: Record<string, unknown>, key: string): Record<string, u
  * of `index.ts` and fails if any of them is missing from this list, so a new
  * kind breaks the build and has to be classified on purpose. */
 export const KNOWN_FRAME_KINDS = [
+  "attention.settled",
   "speech.sessionClosed",
   "speech.ready",
   "speech.invalidate",
@@ -347,6 +348,7 @@ export const KNOWN_FRAME_KINDS = [
   "sidebar.order",
   "inbox.changed",
   "emailStatus",
+  "learning.flux-sent",
   "learning.remembered",
   "learning.improved",
   "memory.waiting",
@@ -447,6 +449,7 @@ export function frameSubject(payload: Record<string, unknown>): FrameSubject {
       return { scope: "desktop" };
     // Content-free ({kind} only): any app reads email status again when it lands; a stream without status access gets a 403 and keeps its last status.
     case "emailStatus":
+    case "learning.flux-sent":
       return WORKSPACE;
     // A memory the bot just kept (B5m): carries the entry's own words, so it
     // stays on the owner's desktop stream. A phone or browser reads the same

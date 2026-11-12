@@ -1,0 +1,59 @@
+
+ RUN  v4.1.12 /work
+
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1a failed probe still awaits EXPIRED inventory
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1b failed probe still awaits EXPIRED inventory
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1c ACTIVE uncertainty is unverified
+ × server/connector-reconnect-r3-preflight.test.ts > R1d ACTIVE uncertainty is unverified 48ms
+   → expected undefined to be 'unverified' // Object.is equality
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1e success re-reads ACTIVE, clears only that account and its unverified state
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1f failed inventory retains incident and renders unverified copy
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1g Flux kind=auth is an outage and still re-reads inventory
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after transport
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after http
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after brokerAuth
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after upstreamAuth
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after toolError
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after ok
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1 unknown keeps an existing incident; alias change preserves unverified
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1 removal between probe and refresh blocks that ID on scheduled dispatch
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=false) cannot replace post-probe EXPIRED inventory
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=true) cannot replace post-probe EXPIRED inventory
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3d preflight response.error.status 403 with ACTIVE creates an incident
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e row-level Flux auth never creates an incident
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1f late timed-out inventory cannot clear or create incidents
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1 durable unknown survives reopening and a status change clears it
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1e healthy recovery clears a durable unknown check
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope error-kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-error-kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3 broker diagnostic in a failed row only suppresses reconnect
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1d ACTIVE uncertainty is unverified
+AssertionError: expected undefined to be 'unverified' // Object.is equality
+
+- Expected:
+"unverified"
+
++ Received:
+undefined
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:48:65
+     46| });
+     47| it.each([["R1c","timeout"],["R1d","toolError"]])("%s ACTIVE uncertaint…
+     48|   probe=mode!; await check(); expect((await card()).checkState).toBe("…
+       |                                                                 ^
+     49| });
+     50| it("R1e success re-reads ACTIVE, clears only that account and its unve…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 26 skipped (27)
+   Start at  05:09:52
+   Duration  9.66s (transform 7.60s, setup 8.55s, import 904ms, tests 54ms, environment 0ms)
+

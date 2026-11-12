@@ -1,3 +1,6 @@
+import type { EngineTransport } from "../../shared/engine-transport.ts";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 import { botFolderOrThrow } from "../bot-folder.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
@@ -134,7 +137,7 @@ function parseEntry(entry: unknown): Launch | null {
 }
 
 const defaultSpawn = (command: string, args: string[], env: Record<string, string>, cwd: string): ChildProcess =>
-  spawnCli(command, args, { cwd, stdio: ["pipe", "pipe", "pipe"], env }, engineJob());
+  spawnCli(command, args, { cwd, windowsHide: true, stdio: ["pipe", "pipe", "pipe"], env }, engineJob());
 
 const noop = () => { /* drained */ };
 const validId = (id: unknown): boolean => typeof id === "number" || typeof id === "string" || id === null;
@@ -318,7 +321,8 @@ function chatMcpTeardown(child: ChildProcess, descendants: ChatMcpDescendants): 
   );
 }
 
-class ChatMcpConnection implements ChatMcpSession {
+class ChatMcpConnection implements ChatMcpSession, EngineTransport {
+  readonly engineTransport = true as const;
   readonly server: string;
   readonly teardown: ChildTeardown;
   readonly #child: ChildProcess;
@@ -408,7 +412,7 @@ class ChatMcpConnection implements ChatMcpSession {
   #write(message: Record<string, unknown>): boolean {
     if (this.#closed) return false;
     try {
-      this.#child.stdin?.write(`${JSON.stringify(message)}\n`);
+      NotModelRequest("MCP tool discovery, invocation or protocol reply; model inference is owned by the calling driver", this.#child.stdin?.write(`${JSON.stringify(message)}\n`));
       return true;
     } catch {
       this.close();
@@ -439,7 +443,7 @@ class ChatMcpConnection implements ChatMcpSession {
       const stop = (kind: "aborted" | "timeout") => {
         if (!this.#pending.delete(id)) return;
         cleanup();
-        this.notify("notifications/cancelled", { requestId: id, reason: kind === "timeout" ? "timed out" : "cancelled" });
+        NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", this.notify("notifications/cancelled", { requestId: id, reason: kind === "timeout" ? "timed out" : "cancelled" }));
         this.#shutdown(CHAT_MCP_CANCEL_GRACE_MS);
         reject(new ChatMcpError(kind));
       };
@@ -456,7 +460,7 @@ class ChatMcpConnection implements ChatMcpSession {
   async callTool(name: string, args: Record<string, unknown>, opts: ChatMcpCallOptions = {}): Promise<ChatMcpCallResult> {
     const timeoutMs = typeof opts.timeoutMs === "number" && Number.isFinite(opts.timeoutMs) && opts.timeoutMs > 0
       ? opts.timeoutMs : CHAT_MCP_CALL_TIMEOUT_MS;
-    const result = await this.request("tools/call", { name, arguments: args }, { signal: opts.signal, timeoutMs });
+    const result = await NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", this.request("tools/call", { name, arguments: args }, { signal: opts.signal, timeoutMs }));
     this.trackDescendants();
     return callResultOf(result, opts.scrub);
   }
@@ -487,7 +491,7 @@ class ChatMcpConnection implements ChatMcpSession {
     if (!line) return;
     if (++this.#frames > CHAT_MCP_MAX_FRAMES) { this.close(); return; }
     let message: unknown;
-    try { message = JSON.parse(line); } catch { this.close(); return; }
+    try { message = registerBusyloopPayloadSite("read", JSON.parse(line)); } catch { this.close(); return; }
     if (!isRecord(message) || message.jsonrpc !== "2.0") { this.close(); return; }
     const { id, method } = message;
     if (method !== undefined) {
@@ -535,20 +539,20 @@ function toolDefOf(raw: unknown): ChatMcpToolDef | null {
 }
 
 async function startSession(connection: ChatMcpConnection): Promise<ChatMcpToolDef[]> {
-  const init = await connection.request("initialize", {
+  const init = await NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", connection.request("initialize", {
     protocolVersion: CHAT_MCP_PROTOCOL_VERSION,
     capabilities: {},
     clientInfo: { name: "murage", version: "1" },
-  });
+  }));
   if (!isRecord(init)) throw new ChatMcpError("failed");
-  connection.notify("notifications/initialized");
+  NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", connection.notify("notifications/initialized"));
   const tools: ChatMcpToolDef[] = [];
   const names = new Set<string>();
   const cursors = new Set<string>();
   let cursor: string | undefined;
   for (let page = 0; ; page++) {
     if (page >= CHAT_MCP_MAX_LIST_PAGES) throw new ChatMcpError("failed");
-    const listed = await connection.request("tools/list", cursor === undefined ? undefined : { cursor });
+    const listed = await NotModelRequest("MCP initialization, tool discovery/invocation or protocol reply; no inference request", connection.request("tools/list", cursor === undefined ? undefined : { cursor }));
     if (!isRecord(listed) || (listed.tools !== undefined && !Array.isArray(listed.tools))) throw new ChatMcpError("failed");
     for (const raw of (listed.tools as unknown[] | undefined) ?? []) {
       const tool = toolDefOf(raw);
@@ -573,7 +577,7 @@ export async function openChatMcpServers(
   const { signal } = options;
   if (signal?.aborted) return { sessions: [], failed: [] };
   const cwd = botFolderOrThrow(options);
-  const spawn = options.spawn ?? defaultSpawn;
+  const launchMcp = options.spawn ?? defaultSpawn;
   const startupMs = typeof options.startupMs === "number" && options.startupMs > 0 ? options.startupMs : CHAT_MCP_STARTUP_MS;
   const slots: Array<{ name: string; connection?: ChatMcpConnection }> = [];
   // Everything is spawned and reported synchronously, before the first await.
@@ -582,7 +586,7 @@ export async function openChatMcpServers(
     if (!launch) { slots.push({ name }); continue; }
     let child: ChildProcess;
     try {
-      child = spawn(launch.command, launch.args, chatMcpChildEnv(launch.env), cwd);
+      child = launchMcp(launch.command, launch.args, chatMcpChildEnv(launch.env), cwd);
     } catch {
       slots.push({ name });
       continue;

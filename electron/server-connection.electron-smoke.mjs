@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
@@ -19,7 +20,7 @@ test("native server connection uses the real browser door and isolated fake engi
   try {
     const entry = join(evidence, "fixture.mjs");
     await build({ entryPoints: [fileURLToPath(new URL("./fixtures/server-connection.mjs", import.meta.url))], outfile: entry, bundle: true, platform: "node", format: "esm", external: ["electron"] });
-    const child = spawn(createRequire(import.meta.url)("electron"), [entry], { env: { PATH: process.env.PATH, HOME: evidence, TMPDIR: tmpdir(), MURAGE_CONNECTION_EVIDENCE: evidence, MURAGE_FIXTURE_HARNESS: engine.info.url }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(createRequire(import.meta.url)("electron"), [entry], withHideInherit({ env: { PATH: process.env.PATH, HOME: evidence, TMPDIR: tmpdir(), MURAGE_CONNECTION_EVIDENCE: evidence, MURAGE_FIXTURE_HARNESS: engine.info.url }, stdio: ["ignore", "pipe", "pipe"] }));
     let output = "";
     child.stdout.on("data", data => { output += data; });
     child.stderr.on("data", data => { output += data; });

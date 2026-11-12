@@ -1,0 +1,7 @@
+# Signal live qualification: all five remain required; RELEASE=1 must fail while pin.g0 is null.
+# file<TAB>exact test name; run: node scripts/signal-release-check.mjs
+scripts/signal-runtime-staging.test.mjs	T-PIN-RELEASABLE: committed pin is release ready
+server/signal-api.test.ts	T-B8-ACTIVATION: committed pin and G0 fixtures enable isolated desktop status 200
+src/components/SignalSettings.test.ts	T-B8-ACTIVATION: reviewed committed G0 adapters reveal the Settings card
+server/channels/signal/service.test.ts	T-RAW-REPLAY: G0 stdout admits only owner notes and applies delete/expiry
+server/channels/signal/service.test.ts	T-LINK-CONTRACT: G0 start/finish/accounts reach linked with captured identity

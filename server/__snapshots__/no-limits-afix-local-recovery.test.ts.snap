@@ -1,0 +1,953 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`local unread-word recovery: owner > case body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > case body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > earlier operand > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > earlier operand > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > fixed path prefix > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > fixed path prefix > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > for expansion > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > for expansion > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > function arguments > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > function arguments > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > function body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > function body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > later command > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > later command > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > later operand > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > later operand > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > later redirect > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > later redirect > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > nested shell > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > nested shell > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > unknown loop variable > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > unknown loop variable > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > unread substitution > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > unread substitution > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > until body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > until body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > while body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: owner > while body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > case body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > case body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > earlier operand > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > earlier operand > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > fixed path prefix > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > fixed path prefix > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > for expansion > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > for expansion > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > function arguments > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > function arguments > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > function body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > function body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > later command > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > later command > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > later operand > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > later operand > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > later redirect > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > later redirect > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > nested shell > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > nested shell > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > unknown loop variable > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > unknown loop variable > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > unread substitution > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > unread substitution > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > until body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > until body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > while body > Full access snapshot protected=false 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`local unread-word recovery: routine > while body > Full access snapshot protected=true 1`] = `
+{
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;

@@ -7,8 +7,10 @@ import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Antigravity. At Ask they may read and plan; every file change or command is refused before it runs, a turn whose
 // read-only switch cannot be set does not run, and the bot shows one plain note. Auto runs exactly as before.
 // Runs against the scripted fake ACP CLI and fake agy; no real engine is started.
-import { chmodSync, existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync, execSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { HOOK_LOADER } from "../hook-canon.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,19 +20,18 @@ import { ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../contracts.ts";
 import { turnPermissionEnforcement } from "../routine-permissions.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
-import { openclawSessionKey } from "../openclaw-profiles.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { createAcpDriver } from "./acp/core.ts";
 import { createCursorAgentDriver } from "./acp/cursor.ts";
 import {
   applyOpenclawAskStop,
+  OPENCLAW_DENY_REFUSAL,
+  OPENCLAW_READ_ONLY_NOTICE,
   openclawHasPermissionMode,
   OPENCLAW_ASK_STOP_DIRECTIVE,
-  openclawAskStopRecordPath,
   openclawPromptText,
   openclawSupport,
   openclawVersionNote,
-  type OpenclawGatewayCall,
 } from "./acp/openclaw.ts";
 import { buildAntigravityScopedHome } from "./antigravity-scope.ts";
 import {
@@ -44,8 +45,6 @@ import {
   ASK_STOP_NOTE,
   ASK_STOP_PROMPT,
   askStopChangeKind,
-  AskStopRefusal,
-  ASK_STOP_OPENCLAW_OLD_NOTE,
   askStopRefusesKind,
   askStopUnavailableLine,
   replyCarriesAskStopNote,
@@ -233,256 +232,44 @@ describe("Ask hard stop: Cursor (ACP, read-only session mode)", () => {
   });
 });
 
-describe("Ask hard stop: OpenClaw (Gateway session read-only mode)", () => {
+describe("Ask hard stop: OpenClaw deny fallback", () => {
   let dataDir: string;
-  beforeEach(() => { dataDir = mkdtempSync(join(tmpdir(), "murage-ask-stop-openclaw-")); });
-  afterEach(async () => { await removeTempDir(dataDir); });
+  let instance: ProviderInstance | undefined;
+  let recorder: EventRecorder | undefined;
+  beforeEach(() => { ensureDirs(); chmodSync(FAKE_ACP, 0o755); dataDir = mkdtempSync(join(tmpdir(), "murage-ask-stop-openclaw-")); });
+  afterEach(async () => { recorder?.stop(); await instance?.dispose(); instance = undefined; for (const name of FAKE_ENV) delete process.env[name]; await removeTempDir(dataDir); });
 
-  /** A Gateway stand-in: one session row whose permission mode the calls read and patch. */
-  const gateway = (start: string | null, opts: { confirm?: boolean; fail?: string } = {}) => {
-    const calls: Array<{ method: string; params: Record<string, unknown> }> = [];
-    let mode = start;
-    const call: OpenclawGatewayCall = async (_cli, method, params) => {
-      calls.push({ method, params });
-      if (opts.fail === method) throw new Error("gateway closed");
-      if (method === "sessions.list") return { sessions: [{ key: params.search, ...(mode ? { permissionMode: mode } : {}) }] };
-      if (method === "sessions.patch") {
-        if (opts.confirm !== false) mode = (params.permissionMode as string | null) ?? null;
-        return { ok: true, key: params.key, entry: mode ? { permissionMode: mode } : {} };
-      }
-      throw new Error(`unexpected ${method}`);
-    };
-    return { call, calls, mode: () => mode };
-  };
-  const config = { cli: "openclaw", fullAuto: false, agent: "fred" } as never;
-  // the turn's own Gateway session (1.0.4: one per conversation and audience, openclawSessionKey)
-  const turn = { threadId: "t-ask", warmIdentity: { audience: "owner" } } as never;
-  const KEY = openclawSessionKey("fred", { threadId: "t-ask", audience: "owner" });
-  const okVersion = async () => "OpenClaw 2026.10.10-beta.3 (abc1234)";
-
-  it("on a release below the floor (2026.7.35: no permissionMode on sessions.patch), an Ask turn is refused before anything runs, with one plain note", async () => {
-    const gw = gateway("guarded");
-    const old = async () => "OpenClaw 2026.7.35 (1b58cb9)";
-    await expect(applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gw.call, dataDir, old))
-      .rejects.toThrow("At Ask, this OpenClaw version cannot stop before changes. Choose Auto to let me act, or install OpenClaw 2026.8.1 or newer.");
-    expect(gw.calls).toEqual([]);
-    expect(existsSync(openclawAskStopRecordPath("openclaw", KEY, dataDir))).toBe(false);
-    // an unreadable version fails closed too
-    await expect(applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gw.call, dataDir, async () => { throw new Error("no cli"); })).rejects.toThrow(/cannot stop before changes/);
-    expect(gw.calls).toEqual([]);
-    // Auto on the old release calls nothing, as before
-    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: false }, gw.call, dataDir, old);
-    expect(gw.calls).toEqual([]);
-  });
-
-  it("the permissionMode floor is 2026.8.1: it and later pass (extended-stable 2026.9.33, latest 2026.10.5); earlier releases and its betas fail", () => {
-    for (const v of ["2026.8.1", "2026.8.35", "2026.9.1", "2026.9.33", "OpenClaw 2026.10.5 (1b58cb9)", "2026.10.10-beta.3", "2026.10.10", "2026.11.1", "2027.1.1"]) expect(openclawHasPermissionMode(v), v).toBe(true);
-    for (const v of ["2026.7.35", "2026.7.1-2", "2026.8.1-beta.1", "2026.6.1", "2025.12.31", "", "latest"]) expect(openclawHasPermissionMode(v), v).toBe(false);
-  });
-
-  it("on the npm latest release (2026.10.5), an Ask turn passes the version gate and runs read-only", async () => {
-    const gw = gateway("guarded");
-    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gw.call, dataDir, async () => "OpenClaw 2026.10.5 (1b58cb9)");
-    expect(gw.mode()).toBe("read-only");
-    expect(gw.calls.map((c) => c.method)).toEqual(["sessions.list", "sessions.patch"]);
-  });
-
-  it("fails closed on the Gateway's stored state, not our request: a patch answer without a read-only entry refuses the Ask turn", async () => {
-    const answers: Array<Record<string, unknown>> = [
-      { ok: true, key: KEY, entry: {} }, // the field was taken but not applied
-      { ok: true, key: KEY, entry: { permissionMode: "guarded" } }, // an older mode left in place
-      { ok: true, key: KEY }, // no entry at all
-      { ok: true, key: KEY, permissionMode: "read-only" }, // our request echoed, no stored entry
-      { ok: false, entry: { permissionMode: "read-only" } },
-    ];
-    for (const answer of answers) {
-      const call: OpenclawGatewayCall = async (_cli, method) =>
-        method === "sessions.list" ? { sessions: [{ key: KEY, permissionMode: "guarded" }] } : answer;
-      await expect(applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, call, dataDir, async () => "OpenClaw 2026.10.5 (1b58cb9)"),
-        JSON.stringify(answer)).rejects.toThrow(/did not confirm read-only/);
+  it("R2 old and unreadable versions disclose refusal without an Auto escape", async () => {
+    for (const version of ["2026.7.35", "2026.8.1-beta.1", ""]) {
+      expect(openclawVersionNote(version)).toBe(OPENCLAW_DENY_REFUSAL);
+      expect(openclawSupport.versionNote?.(version)).toBe(OPENCLAW_DENY_REFUSAL);
+      await expect(applyOpenclawAskStop({ env: {}, config: { cli: FAKE_ACP, fullAuto: false }, turn: { threadId: "old" }, askLevel: false }, async () => { throw new Error("must not call"); }, dataDir, async () => version)).rejects.toThrow(OPENCLAW_DENY_REFUSAL);
     }
   });
 
-  it("setup and engine detection show the same line beside an OpenClaw version below the floor, and none at or above it", () => {
-    for (const v of ["OpenClaw 2026.7.35 (1b58cb9)", "2026.8.1-beta.1", ""]) {
-      expect(openclawVersionNote(v)).toBe(ASK_STOP_OPENCLAW_OLD_NOTE);
-      expect(openclawSupport.versionNote?.(v)).toBe(ASK_STOP_OPENCLAW_OLD_NOTE);
+  it("the permissionMode floor remains separate from admission", () => {
+    for (const v of ["2026.8.1", "2026.10.5", "2026.10.10-beta.3", "2027.1.1"]) {
+      expect(openclawHasPermissionMode(v)).toBe(true);
+      expect(openclawVersionNote(v)).toBeUndefined();
     }
-    for (const v of ["OpenClaw 2026.10.5 (1b58cb9)", "2026.8.1", "OpenClaw 2026.10.10-beta.3 (abc1234)", "2026.10.10", "2026.11.1"]) expect(openclawSupport.versionNote?.(v)).toBeUndefined();
-    expect(ASK_STOP_OPENCLAW_OLD_NOTE).toBe("At Ask, this OpenClaw version cannot stop before changes. Choose Auto to let me act, or install OpenClaw 2026.8.1 or newer.");
+    for (const v of ["2026.7.35", "2026.8.1-beta.1", ""]) expect(openclawHasPermissionMode(v)).toBe(false);
   });
 
-  it("at Ask, records the session's mode once, then sets read-only and requires the Gateway to confirm it", async () => {
-    const gw = gateway("guarded");
-    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gw.call, dataDir, okVersion);
-    expect(gw.mode()).toBe("read-only");
-    expect(gw.calls.map((c) => c.method)).toEqual(["sessions.list", "sessions.patch"]);
-    expect(gw.calls[1]!.params).toEqual({ key: KEY, permissionMode: "read-only" });
-    const record = JSON.parse(readFileSync(openclawAskStopRecordPath("openclaw", KEY, dataDir), "utf8"));
-    expect(record).toEqual({ key: KEY, previous: "guarded" });
-    // a second Ask turn keeps the first record: it never records its own read-only as the owner's mode
-    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gw.call, dataDir, okVersion);
-    expect(gw.calls.map((c) => c.method)).toEqual(["sessions.list", "sessions.patch", "sessions.patch"]);
-    expect(JSON.parse(readFileSync(openclawAskStopRecordPath("openclaw", KEY, dataDir), "utf8")).previous).toBe("guarded");
-  });
-
-  it("fails closed: a Gateway that does not confirm read-only, or cannot be reached, refuses the Ask turn", async () => {
-    await expect(applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gateway(null, { confirm: false }).call, dataDir, okVersion)).rejects.toThrow(/did not confirm read-only/);
-    await expect(applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gateway(null, { fail: "sessions.patch" }).call, dataDir, okVersion)).rejects.toThrow(/gateway closed/);
-  });
-
-  it("at Auto, puts back the mode an Ask turn replaced (none: cleared), then forgets it", async () => {
-    const gw = gateway(null);
-    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gw.call, dataDir, okVersion);
-    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: false }, gw.call, dataDir, okVersion);
-    expect(gw.calls.at(-1)).toEqual({ method: "sessions.patch", params: { key: KEY, permissionMode: null } });
-    expect(gw.mode()).toBeNull();
-    expect(existsSync(openclawAskStopRecordPath("openclaw", KEY, dataDir))).toBe(false);
-    const before = gw.calls.length;
-    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: false }, gw.call, dataDir, okVersion);
-    expect(gw.calls.length).toBe(before); // no record: Auto calls nothing, exactly as before
-  });
-
-  it("at Auto, an owner who changed the mode since keeps their choice", async () => {
-    const gw = gateway("guarded");
-    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: true }, gw.call, dataDir, okVersion);
-    await gw.call("openclaw", "sessions.patch", { key: KEY, permissionMode: "workspace" }, {});
-    await applyOpenclawAskStop({ env: {}, config, turn, askLevel: false }, gw.call, dataDir, okVersion);
-    expect(gw.mode()).toBe("workspace");
-    expect(existsSync(openclawAskStopRecordPath("openclaw", KEY, dataDir))).toBe(false);
-  });
-
-  it("at Ask, the prompt's directive denies every shell command (unchanged)", () => {
+  it("R1 Ask and Auto both carry the deny directive", () => {
     expect(OPENCLAW_ASK_STOP_DIRECTIVE).toBe("/exec security=deny");
-    expect(openclawPromptText({ text: "go", askLevel: true }).split("\n")[0]).toBe("/exec security=deny");
+    for (const askLevel of [true, undefined] as const) expect(openclawPromptText({ text: "go", system: "Fred", askLevel })).toBe("/exec security=deny\nFred\n\ngo");
   });
 
-  it("at Auto and Full access, the prompt carries no /exec directive, as in 1.0.2 (ask=always refused redirects and &&)", () => {
-    const text = openclawPromptText({ text: "echo hi > out.txt && cat out.txt" });
-    expect(text).toBe("echo hi > out.txt && cat out.txt");
-    expect(text).not.toContain("/exec");
-    expect(openclawPromptText({ system: "You are Fred.", text: "go" })).toBe("You are Fred.\n\ngo");
-  });
-
-  describe("driver turns (fake ACP CLI)", () => {
-    let instance: ProviderInstance | undefined;
-    let recorder: EventRecorder | undefined;
-    let scratch: string;
-    beforeEach(() => {
-      ensureDirs();
-      chmodSync(FAKE_ACP, 0o755);
-      scratch = mkdtempSync(join(tmpdir(), "murage-ask-stop-oc-turn-"));
-      process.env.FAKE_ACP_MODE = "no-auth";
+  it("R6 the fallback notice is Murage authored even when the model refuses an edit", async () => {
+    instance = await createAcpDriver({ ...openclawSupport, prePrompt: { notice: OPENCLAW_READ_ONLY_NOTICE, refusal: OPENCLAW_DENY_REFUSAL, apply: async () => {} } }).create({
+      instanceId: "openclaw-ask", displayName: "OpenClaw", environment: { FAKE_ACP_MODE: "refused-edit" }, enabled: true,
+      config: { cli: FAKE_ACP, fullAuto: false },
     });
-    afterEach(async () => {
-      recorder?.stop();
-      await instance?.dispose();
-      instance = undefined;
-      for (const name of FAKE_ENV) delete process.env[name];
-      await removeTempDir(scratch);
-    });
-    const create = async (apply: (ctx: { askLevel: boolean }) => Promise<void>) => {
-      instance = await createAcpDriver({ ...openclawSupport, askStop: { apply } }).create({
-        instanceId: "openclaw-ask-stop", displayName: "OpenClaw", environment: {}, enabled: true,
-        config: { cli: FAKE_ACP, fullAuto: false },
-      });
-      recorder = recordEvents(instance.adapter);
-    };
-
-    it("the driver wires the Gateway switch: OpenClaw's own support carries it", () => {
-      expect(typeof openclawSupport.askStop?.apply).toBe("function");
-    });
-
-    it("engine detection carries the version line for an OpenClaw below the floor", async () => {
-      process.env.FAKE_ACP_VERSION = "OpenClaw 2026.7.35 (1b58cb9)";
-      await create(async () => {});
-      const snap = await instance!.snapshot();
-      expect(snap).toMatchObject({ state: "available", versionNote: ASK_STOP_OPENCLAW_OLD_NOTE });
-      expect(snap.version).toContain("2026.7.35");
-    });
-
-    it("at Ask, read-only is set before the prompt, which starts with the deny directive and the Ask line", async () => {
-      const promptDump = join(scratch, "prompt.json");
-      process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
-      const seen: boolean[] = [];
-      await create(async ({ askLevel }) => { seen.push(askLevel); expect(existsSync(promptDump)).toBe(false); });
-      await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-ask", text: "edit notes", routeAsks: true, askLevel: true });
-      const done = await recorder!.until((e) => e.type === "turn.completed");
-      expect(done).toMatchObject({ ok: true });
-      expect(seen).toEqual([true]);
-      const text = (JSON.parse(readFileSync(promptDump, "utf8")) as Array<{ text?: string }>).map((b) => b.text ?? "").join("");
-      expect(text.startsWith(`${OPENCLAW_ASK_STOP_DIRECTIVE}\n`)).toBe(true);
-      expect(text).toContain(ASK_STOP_PROMPT);
-    });
-
-    it("fails closed: an Ask turn whose read-only switch throws is not prompted", async () => {
-      await create(async ({ askLevel }) => { if (askLevel) throw new Error("gateway closed"); });
-      await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-fail", text: "edit notes", routeAsks: true, askLevel: true });
-      const done = await recorder!.until((e) => e.type === "turn.completed");
-      expect(done).toMatchObject({ ok: false });
-      const err = recorder!.events.find((e) => e.type === "runtime.error") as { message: string } | undefined;
-      expect(err?.message).toContain(askStopUnavailableLine("OpenClaw"));
-      expect(recorder!.events.some((e) => e.type === "content.delta")).toBe(false);
-    });
-
-    it("an OpenClaw too old for permissionMode refuses the turn with its own plain note, not the generic line", async () => {
-      await create(async () => { throw new AskStopRefusal(ASK_STOP_OPENCLAW_OLD_NOTE); });
-      await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-old", text: "edit notes", routeAsks: true, askLevel: true });
-      const done = await recorder!.until((e) => e.type === "turn.completed");
-      expect(done).toMatchObject({ ok: false });
-      const err = recorder!.events.find((e) => e.type === "runtime.error") as { message: string } | undefined;
-      expect(err?.message).toContain("At Ask, this OpenClaw version cannot stop before changes. Choose Auto to let me act, or install OpenClaw 2026.8.1 or newer.");
-      expect(recorder!.events.some((e) => e.type === "content.delta")).toBe(false);
-    });
-
-    it("an edit OpenClaw's read-only mode refused shows the note once", async () => {
-      process.env.FAKE_ACP_MODE = "refused-edit";
-      await create(async () => {});
-      await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-refused", text: "edit notes", routeAsks: true, askLevel: true });
-      await recorder!.until((e) => e.type === "turn.completed");
-      expect(notes(recorder!.events)).toHaveLength(1);
-    });
-
-    it("at Auto, the switch is told so (it puts back what an Ask turn set) and the prompt carries no /exec directive", async () => {
-      const promptDump = join(scratch, "prompt.json");
-      process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
-      const seen: boolean[] = [];
-      await create(async ({ askLevel }) => { seen.push(askLevel); });
-      await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-auto", text: "edit notes", routeAsks: true });
-      await recorder!.until((e) => e.type === "turn.completed");
-      expect(seen).toEqual([false]);
-      const text = (JSON.parse(readFileSync(promptDump, "utf8")) as Array<{ text?: string }>).map((b) => b.text ?? "").join("");
-      expect(text).not.toContain("/exec");
-      expect(text).not.toContain(ASK_STOP_PROMPT);
-    });
-
-    for (const [level, flags] of [["Auto", { routeAsks: true }], ["Full access", { stopLine: true }]] as const) {
-      it(`at ${level}, a command with a redirect and && is not routed to always-ask`, async () => {
-        const promptDump = join(scratch, "prompt.json");
-        process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
-        const seen: boolean[] = [];
-        await create(async ({ askLevel }) => { seen.push(askLevel); });
-        await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-oc-redirect-${flags.routeAsks ? "auto" : "full"}`, text: "run: echo hi > out.txt && cat out.txt", ...flags });
-        const done = await recorder!.until((e) => e.type === "turn.completed");
-        expect(done).toMatchObject({ ok: true });
-        expect(seen).toEqual([false]);
-        const text = (JSON.parse(readFileSync(promptDump, "utf8")) as Array<{ text?: string }>).map((b) => b.text ?? "").join("");
-        expect(text).not.toContain("/exec");
-        expect(text).toContain("echo hi > out.txt && cat out.txt");
-        expect(text).not.toContain(ASK_STOP_PROMPT);
-      });
-    }
-
-    it("at Ask, a command with a redirect still gets the deny directive (unchanged)", async () => {
-      const promptDump = join(scratch, "prompt.json");
-      process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
-      await create(async () => {});
-      await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-redirect-ask", text: "run: echo hi > out.txt", routeAsks: true, askLevel: true });
-      await recorder!.until((e) => e.type === "turn.completed");
-      const text = (JSON.parse(readFileSync(promptDump, "utf8")) as Array<{ text?: string }>).map((b) => b.text ?? "").join("");
-      expect(text.split("\n")[0]).toBe("/exec security=deny");
-      expect(text.match(/\/exec/g)).toHaveLength(1);
-    });
+    recorder = recordEvents(instance.adapter);
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "ask", text: "edit", askLevel: true, routeAsks: true });
+    await recorder.until(e => e.type === "turn.completed");
+    expect(notes(recorder.events)).toHaveLength(1);
+    expect(recorder.events.filter(e => e.type === "item.started" && e.itemType === "tool" && e.origin === "murage" && e.title === OPENCLAW_READ_ONLY_NOTICE)).toHaveLength(1);
   });
 });
 
@@ -513,7 +300,7 @@ describe("Ask hard stop: Antigravity (PreToolUse hook)", () => {
     const script = join(scratch, "hook.cjs");
     writeFileSync(script, ANTIGRAVITY_ASK_HOOK_SOURCE);
     const input = typeof tool === "string" ? JSON.stringify({ toolCall: { name: tool, args: {} } }) : String(tool);
-    return JSON.parse(execFileSync(process.execPath, [script], { input, encoding: "utf8" })) as { decision: string; reason?: string };
+    return JSON.parse(execFileSync(process.execPath, [script], { windowsHide: true, input, encoding: "utf8" })) as { decision: string; reason?: string };
   };
 
   it("the hook allows only reads and denies everything else with the note, unknown input included", () => {
@@ -525,14 +312,28 @@ describe("Ask hard stop: Antigravity (PreToolUse hook)", () => {
   });
 
   it("hooks.json runs the hook on every tool, through this program, quoted for sh and for cmd", () => {
+    const hash = createHash("sha256").update(ANTIGRAVITY_ASK_HOOK_SOURCE).digest("hex");
+    const script = join(scratch, "native", "antigravity-ask", `ask-hook-${hash.slice(0, 16)}.cjs`);
     const posix = JSON.parse(antigravityAskStopHooks(scratch, "/opt/Murage", "linux"));
     const group = posix["murage-ask-stop"].PreToolUse[0];
     expect(group.matcher).toBe("*");
-    expect(group.hooks[0].command).toMatch(/^"\/opt\/Murage" ".*ask-hook-[0-9a-f]{16}\.cjs"$/);
+    expect(group.hooks[0].command).toMatch(/^'\/opt\/Murage' -e "/);
+    expect(group.hooks[0].command).toMatch(/ '.*ask-hook-[0-9a-f]{16}\.cjs' [0-9a-f]{64}$/);
     const win = JSON.parse(antigravityAskStopHooks(scratch, "C:\\Program Files\\Murage\\Murage.exe", "win32"));
-    expect(win["murage-ask-stop"].PreToolUse[0].hooks[0].command).toMatch(/^""C:\/Program Files\/Murage\/Murage\.exe" ".*\.cjs""$/);
-    const script = readdirSync(join(scratch, "native", "antigravity-ask")).find((name) => name.endsWith(".cjs"))!;
-    expect(readFileSync(join(scratch, "native", "antigravity-ask", script), "utf8")).toBe(ANTIGRAVITY_ASK_HOOK_SOURCE);
+    const winCommand = win["murage-ask-stop"].PreToolUse[0].hooks[0].command;
+    expect(winCommand).toMatch(/^""C:\\Program Files\\Murage\\Murage\.exe" -e "/);
+    expect(winCommand).toMatch(/" ".*\.cjs" [0-9a-f]{64}"$/);
+    for (const command of [group.hooks[0].command, winCommand]) {
+      expect(command).toContain(`"${HOOK_LOADER.antigravity}"`);
+      expect(command).toContain(hash);
+    }
+    expect(readFileSync(script, "utf8")).toBe(ANTIGRAVITY_ASK_HOOK_SOURCE);
+    const command = JSON.parse(antigravityAskStopHooks(scratch))["murage-ask-stop"].PreToolUse[0].hooks[0].command;
+    expect(JSON.parse(execSync(command, { input: JSON.stringify({ toolCall: { name: "write_file", args: {} } }), encoding: "utf8" }))).toEqual({ decision: "deny", reason: ASK_STOP_NOTE });
+    // Design 3.3: the pinned loader verifies the full digest before executing the hook.
+    expect(group.hooks[0].command).toBe(`'/opt/Murage' -e "${HOOK_LOADER.antigravity}" '${script}' ${hash}`);
+    expect(win["murage-ask-stop"].PreToolUse[0].hooks[0].command).toBe(`""C:\\Program Files\\Murage\\Murage.exe" -e "${HOOK_LOADER.antigravity}" "${script}" ${hash}"`);
+    expect(readFileSync(script, "utf8")).toBe(ANTIGRAVITY_ASK_HOOK_SOURCE);
   });
 
   it("the Ask hook file is Murage's: it goes with the scoped home and never reaches the owner's own setup", () => {

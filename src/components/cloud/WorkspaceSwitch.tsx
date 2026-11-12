@@ -9,6 +9,7 @@ import { Suspense, lazy, useCallback, useEffect, useState } from "react";
 
 import { cloudCopy } from "@/lib/cloud-copy";
 import { cloudChoiceAction, cloudHomeBridge, loadCloudWorkspace, type CloudHomeBridge, type CloudWorkspace } from "@/lib/cloud-workspace";
+import { CloudReconnectingBannerView, REATTACH_POLL_MS, RECONNECT_GRACE_MS } from "./CloudUnreachableBanner";
 // The Connect panel (and its engine sign-ins) opens on a click, so it loads then, not with the first paint.
 const ConnectHome = lazy(() => import("./ConnectHome").then((module) => ({ default: module.ConnectHome })));
 
@@ -26,11 +27,15 @@ export function WorkspaceSwitch({ bridge = cloudHomeBridge() }: { bridge?: Cloud
   const [workspace, setWorkspace] = useState<CloudWorkspace>({ enabled: false });
   const [pairing, setPairing] = useState(false);
   const [error, setError] = useState("");
+  const [openingHome, setOpeningHome] = useState<string | null>(null);
+  const [signInRequest, setSignInRequest] = useState<{ homeId: string; bot: string; engine: string } | null>(null);
   const reload = useCallback(() => { void loadCloudWorkspace(bridge).then(setWorkspace); }, [bridge]);
   useEffect(() => { reload(); }, [reload]);
   useEffect(() => bridge?.onLive?.(() => reload()), [bridge, reload]);
   // This computer was disconnected (from the Cloud window's Settings, or from My Cloud): show the Connect panel.
   useEffect(() => bridge?.onShowConnect?.(() => { reload(); setPairing(true); }), [bridge, reload]);
+  // The Cloud window asked for a new bot's engine sign-in: show the Connect panel, which opens it.
+  useEffect(() => bridge?.onSignInRequested?.((request) => { reload(); setPairing(true); setSignInRequest(request); }), [bridge, reload]);
   // A Cloud link main handled (connect-cloud, a door link, an open-cloud for a home not connected here): show the card.
   useEffect(() => bridge?.onLinkEvent?.((event) => { reload(); if (event.kind !== "open-cloud") setPairing(true); }), [bridge, reload]);
   // A window opened after a disconnect also lands on the Connect panel.
@@ -40,19 +45,49 @@ export function WorkspaceSwitch({ bridge = cloudHomeBridge() }: { bridge?: Cloud
     void bridge.connectStatus().then((status) => { if (alive && status?.disconnected) setPairing(true); }, () => {});
     return () => { alive = false; };
   }, [bridge, workspace]);
+  useEffect(() => {
+    if (!bridge || !openingHome) return;
+    let stopped = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    // Timers and this deadline use elapsed time, so changing the system clock cannot prolong startup grace.
+    const deadline = performance.now() + RECONNECT_GRACE_MS;
+    const finish = (message = "") => {
+      stopped = true;
+      if (retry !== undefined) clearTimeout(retry);
+      clearTimeout(expiry);
+      setError(message);
+      setOpeningHome(null);
+    };
+    const expiry = setTimeout(() => finish(cloudCopy.homeUnreachable), RECONNECT_GRACE_MS);
+    const attempt = async () => {
+      try {
+        const result = await bridge.open(openingHome, true);
+        if (stopped) return;
+        if (result.opened) { finish(); return; }
+        if (performance.now() >= deadline) { finish(cloudCopy.homeUnreachable); return; }
+        retry = setTimeout(() => void attempt(), REATTACH_POLL_MS);
+      } catch (cause) {
+        if (!stopped) finish(cause instanceof Error && cause.message ? cause.message : "Something went wrong. Try again.");
+      }
+    };
+    void attempt();
+    return () => { stopped = true; clearTimeout(expiry); if (retry !== undefined) clearTimeout(retry); };
+  }, [bridge, openingHome]);
   if (!bridge || !workspace.enabled) return null;
 
   const chooseCloud = () => {
     const action = cloudChoiceAction(workspace);
     if (action.kind === "pair") { setPairing((open) => !open); return; }
+    if (openingHome) return;
     setError("");
-    void bridge.open(action.homeId).catch((cause: unknown) => setError(cause instanceof Error && cause.message ? cause.message : "Something went wrong. Try again."));
+    setOpeningHome(action.homeId);
   };
   return (
     <div className="flex flex-col gap-2 px-3 py-2">
       <WorkspaceSwitchView onCloud={chooseCloud} pairing={pairing} />
+      {openingHome ? <CloudReconnectingBannerView /> : null}
       {error ? <p role="alert" className="text-[13px] text-danger">{error}</p> : null}
-      {pairing ? <Suspense fallback={null}><ConnectHome bridge={bridge} paired={workspace.paired} onChanged={reload} /></Suspense> : null}
+      {pairing ? <Suspense fallback={null}><ConnectHome bridge={bridge} paired={workspace.paired} onChanged={reload} signInRequest={signInRequest} onSignInRequestHandled={() => setSignInRequest(null)} /></Suspense> : null}
     </div>
   );
 }

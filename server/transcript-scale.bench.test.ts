@@ -12,7 +12,8 @@ import { database, transaction } from "./database.ts";
 import { promptRows } from "./external-context-delivery.ts";
 import * as mdb from "./message-db.ts";
 import { botMessages, botViewer } from "./bot-read.ts";
-import { Store, type Message } from "./store.ts";
+import type { Message } from "./store.ts";
+import { ApprovalFixtureStore as Store } from "./testing/approval-card-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });

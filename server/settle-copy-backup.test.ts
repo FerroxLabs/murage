@@ -107,7 +107,10 @@ it("T9: a file with no search index at all still gets its VACUUM (freed pages of
   const db = new DatabaseSync(join(data, "messages.db")); databases.push(db);
   db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;");
   initializeMessageTables(db);
+  // The serving initializer no longer creates legacy FTS (5d5a791f19). Build then remove it explicitly.
+  holdMerges(db);
   db.exec("DROP TABLE messages_fts");
+  expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name GLOB 'messages_fts*'").get()).toBeUndefined();
   const insert = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES (?,?,?,?,?,?,?)");
   db.exec("BEGIN");
   for (let i = 0; i < 200; i++) {

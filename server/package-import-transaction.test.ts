@@ -1,5 +1,6 @@
+import { fixtureLink } from "./testing/platform-fixtures.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
@@ -21,9 +22,9 @@ it("permits absent first-use state without replacing unsafe existing roots", () 
   writeFileSync(file, "preserve");
   expect(() => recoverPackageImportTransaction(file, options)).toThrow();
   expect(readFileSync(file, "utf8")).toBe("preserve");
-  if (process.platform !== "win32") {
+  {
     const dangling = join(parent, "dangling");
-    symlinkSync(missing, dangling);
+    fixtureLink(missing, dangling, "dir");
     expect(() => recoverPackageImportTransaction(dangling, options)).toThrow();
   }
 });
@@ -133,12 +134,12 @@ it("enforces the payload byte budget and caller ownership before mutation", () =
   expect(existsSync(join(f.root, ".package-import-transaction"))).toBe(false);
 });
 
-it.skipIf(process.platform === "win32")("refuses symlinked payload parents without following them", () => {
+it("refuses symlinked payload parents without following them", () => {
   const f = fixture();
   const external = mkdtempSync(join(tmpdir(), "murage-transaction-external-")); cleanup.push(() => removeTempDirSync(external));
   // S5-DATADIR-PATHS r4.1: a linked `workspaces` ROOT is admitted (D5l, data-roots-package-import.test.ts); a linked
   // non-root parent such as skill-state is still refused without being followed, as at b17.
-  symlinkSync(external, join(f.root, "skill-state"));
+  fixtureLink(external, join(f.root, "skill-state"), "dir");
   expect(() => commitPackageImportFiles(f.root, f.replacements, f.expected, f.options)).toThrow("UNSAFE_PACKAGE_IMPORT_PATH");
   expect(existsSync(join(external, f.botId))).toBe(false);
 });

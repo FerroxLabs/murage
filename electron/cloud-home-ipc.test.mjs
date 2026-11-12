@@ -32,9 +32,9 @@ function setup({ token = "cp-secret-token", paired = [{ homeId: "home-1", origin
 }
 
 describe("registerCloudHomeIpc", () => {
-  it("registers exactly the eleven channels; the emailed-code channels are gone", () => {
+  it("registers exactly the twelve channels; the emailed-code channels are gone", () => {
     const channels = [...setup().handlers.keys()].sort();
-    expect(channels).toEqual(["cloud-home:connect-cancel", "cloud-home:connect-paste", "cloud-home:connect-start", "cloud-home:connect-status", "cloud-home:disconnect", "cloud-home:disconnect-this", "cloud-home:list-bots", "cloud-home:list-homes", "cloud-home:open", "cloud-home:reachable", "cloud-home:state"]);
+    expect(channels).toEqual(["cloud-home:connect-cancel", "cloud-home:connect-paste", "cloud-home:connect-start", "cloud-home:connect-status", "cloud-home:disconnect", "cloud-home:disconnect-this", "cloud-home:list-bots", "cloud-home:list-homes", "cloud-home:open", "cloud-home:reachable", "cloud-home:request-sign-in", "cloud-home:state"]);
     expect(channels).not.toContain("cloud-home:start-pairing");
     expect(channels).not.toContain("cloud-home:pair");
   });
@@ -131,6 +131,15 @@ describe("registerCloudHomeIpc", () => {
     t.client.activate.mockRejectedValueOnce(new CloudHomeError("pin-mismatch", "This isn't the Cloud home you paired with. Pair it again."));
     await expect(t.call("cloud-home:open", "home-1")).rejects.toThrow("This isn't the Cloud home you paired with. Pair it again.");
     expect(t.cloudHome.open).toHaveBeenCalledTimes(1); // a refused pin never opens a window
+  });
+
+  it("open: only a caller handling reconnect grace receives a retryable activation result", async () => {
+    const t = setup();
+    t.client.activate.mockRejectedValue(new CloudHomeError("unreachable", "Your Cloud home isn't reachable"));
+    await expect(t.call("cloud-home:open", "home-1")).rejects.toThrow("Your Cloud home isn't reachable");
+    expect(await t.call("cloud-home:open", "home-1", true)).toEqual({ opened: false });
+    expect(t.cloudHome.open).not.toHaveBeenCalled();
+    await expect(t.call("cloud-home:open", "home-1", false)).rejects.toThrow("Invalid request.");
   });
 
   it("reachable: a home that no longer knows this computer is resumed once; a revoked computer is forgotten and its window closed", async () => {

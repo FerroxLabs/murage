@@ -774,3 +774,84 @@ describe("OpenAICompatDriver key issuer guard", () => {
 
 // Adapter turns in this suite use an isolated durable store.
 useOutsideStoreFixture();
+describe("OpenAICompatDriver Cloud home Flux key policy", () => {
+  const HOME_KEY = `sk-flux-home-${"h".repeat(30)}`;
+  const PRIMARY = `sk-flux-${"p".repeat(30)}`;
+  beforeEach(() => { process.env.MURAGE_CLOUD_ROLE = "home"; });
+  afterEach(() => { delete process.env.MURAGE_CLOUD_ROLE; vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+  async function sent(url: string, key: string) {
+    const seen: Array<string | null> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string | URL, init?: RequestInit) => {
+      seen.push(new Headers(init?.headers).get("authorization"));
+      return new Response(JSON.stringify({ data: [] }), { status: 200 });
+    }));
+    const inst = await OpenAICompatDriver.create({ instanceId: "flux-policy", displayName: "Policy", enabled: true, config: { url, key, apiKeyEnv: "OPENAI_COMPAT_API_KEY" }, environment: {} });
+    const snap = await inst.snapshot();
+    await inst.dispose();
+    return { seen, snap };
+  }
+  it.each([
+    "https://api.fluxrouter.ai/v1", "https://fluxrouter.ai/v1", "https://eu.fluxrouter.ai/v1", "https://API.FluxRouter.AI./v1",
+    "https://user:pw@api.fluxrouter.ai/v1", "https://api.fluxrouter.ai:8443/v1", "http://api.fluxrouter.ai/v1", "https://api.fluxrouter.ai.evil.test/v1", "not a url fluxrouter.ai",
+  ])("never sends a primary Flux key to %s", async (url) => {
+    const { seen, snap } = await sent(url, PRIMARY);
+    expect(seen.filter(auth => auth?.includes(PRIMARY))).toEqual([]);
+    expect(snap).toMatchObject({ state: "unavailable", reason: expect.stringContaining("credits connection") });
+  });
+  // Findings 5 and 6: a Flux 402 on a home is worded by us (budget with its reset date, service hold, or the plain fallback for a shape we do not
+  // know), and the event carries NO generic provider card, which would replace that wording with payment advice or the router's own sentence.
+  async function refused(status: number, body: string, headers: Record<string, string> = {}) {
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => String(input).endsWith("/models")
+      ? new Response(JSON.stringify({ data: [] }), { status: 200 })
+      : new Response(body, { status, headers: { "content-type": "application/json", ...headers } })));
+    const inst = await OpenAICompatDriver.create({ instanceId: "flux-402", displayName: "Flux", enabled: true, config: { url: "https://api.fluxrouter.ai/v1", key: HOME_KEY, apiKeyEnv: "OPENAI_COMPAT_API_KEY" }, environment: {} });
+    const recorder = recordEvents(inst.adapter);
+    await inst.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-${status}-${Math.random()}`, text: "hello", model: "vendor/model" });
+    await recorder.until((event) => event.type === "turn.completed");
+    const events = [...recorder.events];
+    recorder.stop();
+    await inst.dispose();
+    return { error: events.find((event) => event.type === "runtime.error"), all: JSON.stringify(events) };
+  }
+  it("402 budget used: shows the reset date and no generic card", async () => {
+    const { error, all } = await refused(402, JSON.stringify({ error: { message: "Key fk_id_fake is over budget; manage at https://fluxrouter.ai/home/keys", provider_specific_fields: { error: "key_budget_reached", resets_at: "2030-03-05T00:00:00Z" } } }));
+    expect(error?.message).toContain("They come back on March 5.");
+    expect(error?.providerError).toBeUndefined();
+    expect(all).not.toMatch(/fk_id_fake|fluxrouter\.ai|Flux Router|sk-flux/);
+  });
+  it("402 service hold: never says credits", async () => {
+    const { error, all } = await refused(402, JSON.stringify({ error: { message: "Out of credits for fk_id_fake" } }), { "x-flux-hold-reason": "billing" });
+    expect(error?.message).toBe("This one is on our side, not something you did. Please try again soon.");
+    expect(error?.providerError).toBeUndefined();
+    expect(all).not.toMatch(/credit|fk_id_fake|fluxrouter\.ai/i);
+  });
+  it.each([
+    ["a body with a router sentence", JSON.stringify({ error: { message: "Key fk_id_fake rejected, manage it at https://fluxrouter.ai/home/keys/fk_id_fake" } })],
+    ["no body", ""],
+    ["an unfamiliar JSON shape", JSON.stringify({ detail: { code: "something_new", url: "https://fluxrouter.ai/x" } })],
+  ])("an unclassified Flux 402 with %s shows no router text", async (_name, body) => {
+    const { error, all } = await refused(402, body);
+    expect(error?.message).toBe("Your Flux credit is still getting ready. Try again in a minute; if it keeps happening, we've been told and are on it.");
+    expect(error?.providerError).toBeUndefined();
+    expect(all).not.toMatch(/fk_id_fake|fluxrouter\.ai|Flux Router|manage/i);
+  });
+  it("a customer's own provider keeps its own 402 wording on a home", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL | Request) => String(input).endsWith("/models")
+      ? new Response(JSON.stringify({ data: [] }), { status: 200 })
+      : new Response(JSON.stringify({ error: { message: "own provider says pay" } }), { status: 402 })));
+    const inst = await OpenAICompatDriver.create({ instanceId: "own-402", displayName: "Own", enabled: true, config: { url: "https://example.test/v1", apiKeyEnv: "TEST_KEY" }, environment: { TEST_KEY: "secret" } });
+    const recorder = recordEvents(inst.adapter);
+    await inst.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-own", text: "hello", model: "vendor/model" });
+    await recorder.until((event) => event.type === "turn.completed");
+    expect(recorder.events.find((event) => event.type === "runtime.error")?.providerError).toMatchObject({ kind: "payment" });
+    recorder.stop();
+    await inst.dispose();
+  });
+  it("sends the home key to Flux and nowhere else", async () => {
+    const ok = await sent("https://api.fluxrouter.ai/v1", HOME_KEY);
+    expect(ok.snap.state).not.toBe("unavailable");
+    const elsewhere = await sent("https://openrouter.ai/api/v1", HOME_KEY);
+    expect(elsewhere.seen.filter(auth => auth?.includes(HOME_KEY))).toEqual([]);
+    expect(elsewhere.snap.state).toBe("unavailable");
+  });
+});

@@ -14,7 +14,7 @@ import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { database } from "./database.ts";
 import { openRequestCardsStatus, withLongWayBudget } from "./message-db.ts";
-import { Store } from "./store.ts";
+import { ApprovalFixtureStore as Store } from "./testing/approval-card-fixture.ts";
 import { jsonDocument, jsonElementFor, streamThreadExport } from "./thread-export.ts";
 import { transcriptPage } from "./transcript-page.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";

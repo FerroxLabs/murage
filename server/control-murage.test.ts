@@ -25,7 +25,7 @@ describe("control-murage command mapping", () => {
       "--experimental-strip-types",
       join(process.cwd(), "scripts", "control-murage.ts"),
       "help",
-    ], { encoding: "utf8" });
+    ], { windowsHide: true, encoding: "utf8" });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("control-murage");
   });

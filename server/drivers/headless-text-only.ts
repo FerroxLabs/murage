@@ -1,3 +1,6 @@
+import { registerBusyloopPayloadSite, fluxRouteFor, registerBusyloopRequestSite } from "../../shared/flux-route.ts";
+import { cliRefusal, fluxResponseDecision } from "./flux-busyloop-readers.ts";
+import { isTerminal, type Decision } from "../../shared/flux-busyloop.ts";
 import { botFolderOrThrow } from "../bot-folder.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -65,6 +68,8 @@ export interface HeadlessRunOptions {
   schemaInPrompt?: boolean;
   /** Routed Claude uses the same Flux predicate without changing its schema delivery. */
   fluxUsage?: boolean;
+  /** Effective model endpoint from the bound child configuration. */
+  requestUrl?: string;
 }
 
 /**
@@ -148,6 +153,20 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
   const stopFailedSignal = new Promise<"stop-failed">((done) => { stopFailed = () => done("stop-failed"); });
   let stopRequest: Promise<boolean> | null = null;
   const stop = (): Promise<boolean> => (stopRequest ??= awaitCliTreeStopped(child).then((ok) => { if (!ok) stopFailed(); return ok; }, () => { stopFailed(); return false; }));
+  let fluxDecision: Decision | undefined;
+  const observeFluxFrame = (frame: Record<string, unknown>) => {
+    if (!fluxRouteFor(o.requestUrl).routed || isTerminal(fluxDecision)) return;
+    const message = frame.message as {content?: Array<{text?: unknown}>} | undefined;
+    const errorFrame = frame.is_api_error_message === true
+      ? {...frame, message:Array.isArray(message?.content) ? message.content.map(part=>typeof part.text === "string" ? part.text : "").join("\n") : frame.message}
+      : frame.is_error === true && Array.isArray(frame.errors) ? {...frame, message:frame.errors.join("\n")} : frame;
+    const decision = frame.is_api_error_message === true || frame.is_error === true || frame.type === "error" || frame.upstream
+      ? cliRefusal(registerBusyloopPayloadSite("classify", errorFrame)).decision
+      : fluxResponseDecision(registerBusyloopPayloadSite("classify", {status:200,body:frame}));
+    if (decision.action !== "PASS") fluxDecision = decision;
+    else if (frame.type === "result" && frame.is_error === false) fluxDecision = undefined;
+    if (isTerminal(fluxDecision)) void stop();
+  };
   const firstByte = setTimeout(() => { timedOut = true; void stop(); }, o.firstByteMs ?? FIRST_BYTE_MS);
   const deadline = setTimeout(() => { deadlineHit = true; void stop(); }, Math.max(0, deadlineAt - Date.now()));
   const onAbort = () => { aborted = true; void stop(); };
@@ -159,7 +178,7 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
     if (overBytes) return;
     bytes += chunk.length;
     chunks.push(chunk);
-    const parsed=parseHeadlessMessages(Buffer.concat(chunks));
+    const parsed=parseHeadlessMessages(Buffer.concat(chunks), observeFluxFrame);
     // The parser keeps the latest meaningful receipt across all buffered result lines.
     if(parsed.result){const next=parsed.result.usage;if(next?.inputTokens!==undefined||next?.outputTokens!==undefined)reportedUsage=next;if(bytes<=max)answerBytes=headlessAnswerBytes(parsed,o.engine);else if(!resultSeen)answerBytes=1;resultSeen=true;}
     if (bytes > max) { overBytes = true; chunks.length = 0; void stop(); return; }
@@ -169,7 +188,7 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
     ? fluxUsageReport({ prompt_tokens: usage?.inputTokens, completion_tokens: usage?.outputTokens, replyBytes: bytes, engineRun: true })
     : headlessUsageReport(usage, resultSeen, o.requestBytes ?? 0, bytes, answerBytes);
   const accountUsage = () => {
-    const reported = reportedUsage ?? parseHeadlessMessages(Buffer.concat(chunks)).result?.usage;
+    const reported = reportedUsage ?? parseHeadlessMessages(Buffer.concat(chunks), observeFluxFrame).result?.usage;
     const value = { inputTokens: reported?.inputTokens, outputTokens: reported?.outputTokens ?? Math.ceil(bytes / 3.5) };
     // Flux unknown usage keeps the reservation and counts one unseen, including silent cancellation.
     // Off Flux, tokenless completed runs use byte estimates; silent runs retain the existing finish behavior.
@@ -205,7 +224,7 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
     // With a gate, Claude's stdin write is the release: checked and written under the write lock (r8 section 1)
     let moved: unknown = null, written = false;
     if (!commitFailed && o.gate && promptText === undefined) {
-      try { o.gate.send(() => { try { child.stdin.end(o.stdinText ?? ""); } catch { /* a dead child is handled by close */ } }); written = true; }
+      try { o.gate.send(() => { try { child.stdin.end(registerBusyloopRequestSite(fluxRouteFor(o.requestUrl), o.stdinText ?? "")); } catch { /* a dead child is handled by close */ } }); written = true; }
       catch (error) { moved = error; if (error instanceof MemorySendCommitFailed) commitFailed = error; }
     } else if (!commitFailed && !o.gate) { try { runAdmissionFence(o.recheck); } catch (error) { moved = error; } }
     if (moved) {
@@ -216,7 +235,7 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
       finish(await stop());
       throw moved;
     }
-    if (!commitFailed && !written) { try { child.stdin.end(o.stdinText ?? ""); } catch { /* a dead child is handled by close */ } }
+    if (!commitFailed && !written) { try { child.stdin.end(registerBusyloopRequestSite(fluxRouteFor(o.requestUrl), o.stdinText ?? "")); } catch { /* a dead child is handled by close */ } }
 
     const first = await Promise.race([closed.then(() => "closed" as const), stopFailedSignal]);
     clearAll();
@@ -230,7 +249,7 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
       accountUsage();
       throw cancelled();
     }
-    const parsed = parseHeadlessMessages(Buffer.concat(chunks));
+    const parsed = parseHeadlessMessages(Buffer.concat(chunks), observeFluxFrame);
     let homeNewFiles: string[], cwdNewFiles: string[], rootNewFiles: string[];
     try {
       homeNewFiles = newFiles(beforeHome, listFiles(o.temp.home)); cwdNewFiles = newFiles(beforeCwd, listFiles(o.temp.work));
@@ -253,6 +272,9 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
         if (/\bhook\b[^\n]*(?:execut|running|spawn)|(?:execut|running|spawn)[^\n]*\bhook\b/i.test(debug)) verdict = { state: "unsupported", reason: "managed-config", detail: "hook-execution" };
       }
     } catch { verdict = { state: "refused", reason: "isolation", detail: "debug-inspection-failed", counted: true }; }
+    if (fluxDecision && fluxDecision.action !== "PASS") verdict = isTerminal(fluxDecision)
+      ? {state:"unsupported",reason:"auth",detail:fluxDecision.reason}
+      : {state:"refused",reason:"transient",detail:fluxDecision.reason,counted:false};
     finish(exited);
     // Retain the streamed receipt if overflow discarded the parser buffer.
     const next = parsed.result?.usage;
@@ -264,6 +286,7 @@ async function runHeadlessCliNow(o: HeadlessRunOptions): Promise<TextOnlyTurnRes
     const text = verdict.state === "validated" ? JSON.stringify(verdict.structured) : "";
     return {
       text, verdict, isolation,
+      ...(fluxDecision ? {fluxDecision} : {}),
       // Billed whether or not the output was admitted: the content is discarded, the spend is not (A.3).
       ...(reported ? { usage: reported } : {}),
       ...(o.maxOutputTokens !== undefined && isReportedOverLimit(usage?.outputTokens, o.maxOutputTokens) ? { reportedOverLimit: true } : {}),
@@ -308,7 +331,7 @@ export function headlessArgv(temp: TempRoot, model: string, schema: JsonSchema, 
 /** The reflection goes to Flux: the same test that picks the Flux Memory overlay. Today's Flux router answers 502/422 to the flat
  *  response_format json_schema that `--json-schema` makes Fuigo send, on every model, so such a run carries the schema in its prompt. */
 export function reflectionRoutesToFlux(input: Pick<TextOnlyTurnInput, "providerRoute">, cfg: { engine: PipEngine; fluxKey?: string }): boolean {
-  return input.providerRoute ? input.providerRoute.preset === "flux" : cfg.engine === "fuigo" && Boolean(cfg.fluxKey);
+  return fluxRouteFor(input.providerRoute?.baseUrl ?? (cfg.engine === "fuigo" && cfg.fluxKey ? "https://api.fluxrouter.ai/v1" : undefined)).routed;
 }
 
 /** The JSON-only instruction a Flux-routed prompt ends with, in place of `--json-schema`. The host validator stays the gate. */
@@ -351,7 +374,7 @@ async function withOneSchemaRetry(signal: AbortSignal, gate: LearningGate, run: 
   };
   try {
     const first = await once();
-    if (!schemaMiss(first.verdict) || signal.aborted) return first;
+    if (isTerminal(first.fluxDecision) || !schemaMiss(first.verdict) || signal.aborted) return first;
     journaled=journalMemoryRetry(reports[0]);
     if(!journaled)return first;
     if (signal.aborted) return first;
@@ -411,6 +434,7 @@ async function headlessAttempt(input: TextOnlyTurnInput, cfg: HeadlessEngineConf
   } catch (error) { removeTempRoot(cfg.tmpBase, temp.root); throw error; }
   return runHeadlessCli({
     cli: cfg.cli, args: [...(cfg.cliPrefixArgs ?? []), ...headlessArgv(temp, model, input.outputSchema, schemaInPrompt)], cwd: temp.work, env,
+    requestUrl: fluxRouteFor(input.providerRoute?.baseUrl ?? (cfg.engine === "fuigo" ? "https://api.fluxrouter.ai/v1" : env.OPENAI_BASE_URL)).requestUrl,
     requestBytes: Buffer.byteLength(prompt),
     temp, tmpBase: cfg.tmpBase, outputSchema: input.outputSchema, signal: input.signal, engine: cfg.engine,
     maxOutputBytes: input.maxOutputBytes, maxOutputTokens: input.maxOutputTokens, firstByteMs: cfg.firstByteMs,
@@ -486,7 +510,7 @@ const KEYCHAIN_SERVICE = "Claude Code-credentials";
 const KEYCHAIN_PROBE_MS = 2_000;
 const securityLookup: KeychainLookup = (args) => new Promise((done) => {
   // stdout is discarded: without -w or -g nothing secret is printed, and nothing printed is kept
-  execFile("security", args, { timeout: KEYCHAIN_PROBE_MS, encoding: "utf8", windowsHide: true }, (error) => {
+  execFile("security", [...args], { timeout: KEYCHAIN_PROBE_MS, encoding: "utf8", windowsHide: true }, (error) => {
     if (!error) return done(0);
     const code = (error as NodeJS.ErrnoException & { code?: unknown }).code;
     done(typeof code === "number" ? code : null);
@@ -516,13 +540,29 @@ export async function claudeKeychainItemPresent(full: NodeJS.ProcessEnv, lookup:
   return present;
 }
 
-const CLAUDE_GLOBAL_CONFIG = ".claude.json";
+export const CLAUDE_GLOBAL_CONFIG = ".claude.json";
+
+/** The single JSON parser for owner Claude configuration. Callers expose only their named projection. */
+function parseOwnerClaudeConfig(text: string): unknown { return registerBusyloopPayloadSite("read", JSON.parse(text)); }
+
+/** Import receives bytes from its anchored, bounded reader. Never opens a credential file or returns other config fields. */
+export function ownerClaudeMcpServers(text: string, maxDepth: number): unknown {
+  const parsed = parseOwnerClaudeConfig(text);
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Invalid Claude configuration");
+  const withinDepth = (value: unknown, depth: number): boolean => {
+    if (depth > maxDepth) return false;
+    return value === null || typeof value !== "object"
+      || Object.values(value).every(child => withinDepth(child, depth + 1));
+  };
+  if (!withinDepth(parsed, 1)) throw new Error("Claude configuration is too deep");
+  return Object.hasOwn(parsed, "mcpServers") ? (parsed as Record<string, unknown>).mcpServers : undefined;
+}
 const CREDMAN_SEED = '{"cachedGrowthBookFeatures":{"tengu_windows_credman":true}}';
 
 /** Windows: the owner CLI's own Credential Manager switch (its M4o): CLAUDE_CODE_FORCE_WINDOWS_CREDMAN=1, else the cached GrowthBook flag
  *  from `<Le()>/.config.json`, else `<CLAUDE_CONFIG_DIR || home>/.claude.json`, of the OWNER's dirs. An empty or missing file falls through;
  *  an unreadable or non-JSON one is false (plaintext). Only the boolean leaves: the parsed object is dropped, nothing is logged or
- *  written. This is the one place Murage parses an owner `.claude.json`. */
+ *  written. The shared parser above is the only JSON parser for owner Claude configuration. */
 export function ownerCredmanFlag(full: NodeJS.ProcessEnv): boolean {
   if (full.CLAUDE_CODE_FORCE_WINDOWS_CREDMAN === "1") return true;
   const home = full.USERPROFILE || homedir();
@@ -534,7 +574,7 @@ export function ownerCredmanFlag(full: NodeJS.ProcessEnv): boolean {
       return false;
     }
     if (!text.trim()) continue;
-    try { return (JSON.parse(text) as { cachedGrowthBookFeatures?: { tengu_windows_credman?: unknown } } | null)?.cachedGrowthBookFeatures?.tengu_windows_credman === true; }
+    try { return (parseOwnerClaudeConfig(text) as { cachedGrowthBookFeatures?: { tengu_windows_credman?: unknown } } | null)?.cachedGrowthBookFeatures?.tengu_windows_credman === true; }
     catch { return false; }
   }
   return false;
@@ -597,7 +637,8 @@ export async function claudeTextOnlyTurn(input: TextOnlyTurnInput, cfg: ClaudeTe
     firstByteMs: cfg.firstByteMs, deadlineAt: input.transport?.deadlineAt, context: input.context, bootEpoch: input.transport?.bootEpoch,
     history: input.transport?.history, hooks: input.transport?.hooks, fence: input.transport?.fence, recheck: input.transport?.recheck, ...(input.transport?.gate ? { gate: input.transport.gate } : {}), binaryIdentity: cfg.binaryIdentity,
     requestBytes: Buffer.byteLength(input.system)+Buffer.byteLength(input.text),
-    fluxUsage: reflectionRoutesToFlux(input, { engine: "claude" }),
+    requestUrl: fluxRouteFor(cfg.env.ANTHROPIC_BASE_URL).requestUrl,
+    fluxUsage: fluxRouteFor(cfg.env.ANTHROPIC_BASE_URL).routed,
     stdinText: input.text, allowedHomeNew: cfg.allowedHomeNew ?? CLAUDE_ALLOWED_HOME_NEW, postResultGraceMs: cfg.postResultGraceMs,
   }).then((result) => {
     // a run that did not validate may be a sign-in that moved: the Keychain answer is asked again next time

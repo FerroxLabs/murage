@@ -54,7 +54,7 @@ export async function acceptTerms(formData: FormData) {
   if (formData.get("termsAccepted") !== "on") redirect("/cloud?error=terms");
   const v = (k: string) => String(formData.get(k) ?? "");
   try {
-    await cp("/v1/account/terms/accept", { token, body: { termsAccepted: true, client: await clientInfo(),
+    await cp("/v1/account/terms/accept", { token, body: { termsAccepted: true, ageConfirmed: true, screenVersion: v("screenVersion"), client: await clientInfo(),
       documentVersions: { cloudTerms: v("docCloudTerms"), termsOfService: v("docTermsOfService"), privacyPolicy: v("docPrivacyPolicy") } } });
   } catch {
     redirect("/cloud?error=terms");

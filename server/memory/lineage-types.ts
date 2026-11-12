@@ -79,6 +79,8 @@ export type LineageRef =
       readonly copyOfShown?: true }
   /** A thread read wholesale up to headLsn (taken at write when absent): a `prefix` carry (project read_messages, conversation reads). */
   | { readonly kind: "prefix"; readonly threadId: string; readonly headLsn?: number;
+      /** Unlisted retained history through this lsn. null means a fresh, fully listed prompt; absent keeps legacy wholesale accounting. */
+      readonly held?: number | null;
       /** The lines of the thread a prompt showed in words (a replay): the send fence asks the marks of these again, so a line the owner
        * forgot after the prompt was built is caught (they were judged when it was built; a thread read wholesale lists none). */
       readonly shown?: readonly string[];
@@ -208,7 +210,7 @@ export interface LineageReader { readonly audience: LineageAudience | null; read
 
 /** Why a line is withheld. */
 export type DenyReason = "own-flag" | "tombstone" | "thread-deny" | "deny-line" | "deny-range" | "watermark" | "footprint"
-  | "deny-session" | "session-forgotten" | "deny-memory" | "scope-deny" | "murage-anchor" | "door-epoch";
+  | "deny-session" | "session-forgotten" | "deny-memory" | "scope-deny" | "murage-anchor" | "door-epoch" | "pack-ineligible";
 /** Why a line reads "checking" (withheld, with the lincold2 copy). Every unknown maps here (DESIGN-WRITETIME 3). */
 export type CheckingReason = "no-lineage" | "thread-not-ready" | "pending" | "footprint-wide" | "lookup-error" | "not-built";
 export type LineageVerdict =

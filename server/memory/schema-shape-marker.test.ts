@@ -5,14 +5,24 @@
 import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
-import { closeDatabase, database } from "../database.ts";
+import { database } from "../database.ts";
+import { settleTestHandles } from "../test-handle-registry.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { validateMemorySchema } from "./schema.ts";
-import { removeTempDirSync } from "../testing/cleanup.ts";
+import { removeTempDir } from "../testing/cleanup.ts";
 
 const saved = process.env.MURAGE_APP_VERSION;
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); process.env.MURAGE_APP_VERSION = "1.0.0"; reconcileMemoryRoster({ bots: [{ id: "bot", threadId: "chat" }], groups: [] }); });
-afterEach(() => { if (saved === undefined) delete process.env.MURAGE_APP_VERSION; else process.env.MURAGE_APP_VERSION = saved; closeDatabase(); });
+beforeEach(async () => {
+  // Several cases deliberately leave malformed rows behind. 5d5a791f19 also
+  // starts the search worker at open: await every handle before reusing paths.
+  await removeTempDir(DATA_DIR, { strict: true });
+  mkdirSync(DATA_DIR, { recursive: true }); process.env.MURAGE_APP_VERSION = "1.0.0";
+  reconcileMemoryRoster({ bots: [{ id: "bot", threadId: "chat" }], groups: [] });
+});
+afterEach(async () => {
+  if (saved === undefined) delete process.env.MURAGE_APP_VERSION; else process.env.MURAGE_APP_VERSION = saved;
+  await settleTestHandles(DATA_DIR);
+});
 
 function seed(from: number, count: number) {
   const db = database(), scope = ensureScope("bot", "bot");

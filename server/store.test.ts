@@ -1,9 +1,10 @@
+import { fixtureLink } from "./testing/platform-fixtures.ts";
 import { readChatsGen, readThreadSummary } from "./thread-summary.ts";
 // Store persistence contract: bots.json + messages-<threadId>.json are
 // the durable record — everything here must survive a process restart
 // except `busy`, which never does (no turn survives one either).
 import { createHash } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, readlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, readlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -579,6 +580,25 @@ describe("Store", () => {
     expect(reloaded.bot(truthy.id)).not.toHaveProperty("useMyChrome");
     const saved: BotRecord[] = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));
     expect(saved.filter((bot) => bot.useMyChrome).map((bot) => bot.id)).toEqual([kept]);
+  });
+
+  it("profile cleanup clears authoritative, queued and Switch back references across restart", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    store.commitBrowserChoice(bot.id, {browserMode:'builtin',browserProfile:'client',selectionRevision:3,
+      pendingBrowserChoice:{mode:'builtin',profile:'client',baseRevision:3,disclosureKey:'review'},
+      previousBrowserChoice:{mode:'builtin',profile:'client'}}, undefined);
+    store.clearBrowserProfile(bot.id, 'client');
+    const reloaded = new Store(selection).bot(bot.id)!;
+    expect(reloaded.browserProfile).toBeUndefined();
+    expect(reloaded.pendingBrowserChoice).toBeUndefined();
+    expect(reloaded.previousBrowserChoice).toBeUndefined();
+    expect(reloaded.selectionRevision).toBe(4);
+    const queued = store.createBot();
+    store.commitBrowserChoice(queued.id, {browserMode:'builtin',selectionRevision:0,
+      pendingBrowserChoice:{mode:'builtin',profile:'client',baseRevision:0,disclosureKey:'review'}}, undefined);
+    store.clearBrowserProfile(queued.id,'client');
+    expect(new Store(selection).bot(queued.id)?.pendingBrowserChoice).toBeUndefined();
   });
 
   // The voice note round-trips like any other optional field, and has exactly
@@ -1176,10 +1196,10 @@ describe("Store", () => {
       expect(reloaded.messagesFor(bot.threadId)[0].text).toBe("Legacy conversation");
     });
 
-    it.skipIf(process.platform === "win32")("does not treat dangling state symlinks as fresh installation", () => {
+    it("does not treat dangling state symlinks as fresh installation", () => {
       mkdirSync(DATA_DIR, { recursive: true });
       const target = join(DATA_DIR, "bots.json");
-      symlinkSync("missing-saved-state.json", target);
+      fixtureLink("missing-saved-state.json", target, "file");
       expect(() => new Store(selection)).toThrowError(expect.objectContaining({
         reason: "unreadable", readErrorCode: "ENOENT", filePath: target,
       }));
@@ -1367,6 +1387,20 @@ describe("Store", () => {
       expect(new Store(selection).bot(doomed.id)).toBeTruthy();
       expect(store.messagesFor(doomed.threadId).map((m) => m.text)).toEqual(["still here"]);
       expect(existsSync(workspace)).toBe(true);
+    });
+
+    // Restore park T14 (r3.1 section 6 condition 3): a delete whose save fails never reaches the email commit, the park/gate is left as it was.
+    it("a saveBots that throws withdraws the email intent, never commits it, and surfaces the error", () => {
+      const store = new Store(selection);
+      const doomed = store.createBot({ name: "Doomed" }, { seedMessages: false });
+      const channel = store.createGroup("Seats", [doomed.id]);
+      const calls: string[] = [];
+      store.emailDeletion = { record: (id) => calls.push(`record:${id}`), withdraw: (id) => calls.push(`withdraw:${id}`), commit: (id) => calls.push(`commit:${id}`) };
+      vi.spyOn(store as unknown as { saveBots: () => void }, "saveBots").mockImplementation(() => { throw new Error("disk full"); });
+      expect(() => store.deleteBot(doomed.id, { emailConfirm: "tok" })).toThrow("disk full");
+      expect(calls).toEqual([`record:${doomed.id}`, `withdraw:${doomed.id}`]);
+      expect(store.bot(doomed.id)).toBeTruthy();
+      expect(store.group(channel.id)!.memberIds).toEqual([doomed.id]);
     });
 
     it("calls releaseBotState exactly once with the id, before the bot disappears", () => {

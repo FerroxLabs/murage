@@ -1,3 +1,4 @@
+import { fluxRouteFor, registerBusyloopPayloadSite } from "../shared/flux-route.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Resolves the transport for the action checker: Flux by default, the bot's own engine on the owner's switch.
 // Text-only in both cases; never the bot's agent session, never charged to the bot's spend.
@@ -8,6 +9,7 @@ import { fluxCallHeaders } from "./flux-memory-headers.ts";
 import { fluxKeyMayCall, noteFluxModelRefused } from "./flux-key-models.ts";
 import type { CheckerTransport } from "./browser-action-checker.ts";
 import { learningGate, sampleLearningFence } from "./memory/learning-send.ts";
+import { authorizeFluxDispatch } from "./flux-start-gate.ts";
 
 /** Flux honours no-retain (verified live 2026-10-03: `x-flux-no-retain: applied` on flux-pinned-claude-haiku). Every Flux check call
  * requires that echo; a reply without it fails closed and the step is asked of the owner. If Flux were not live, the action check
@@ -61,7 +63,7 @@ export function pickCheckerInstance(instances: ProviderInstance[], botInstanceId
   return botInstanceId ? pool.find((i) => i.instanceId === botInstanceId) : pool[0];
 }
 
-/** Flux's model refusals (flux-router src/model_access_message.py). Both dialects answer 403:
+/** Flux's model refusals (the Flux router's model access refusal handler). Both dialects answer 403:
  * OpenAI `{"error":{"message","type":"auth_error","param":"model","code":"403"}}` (param is the reliable
  * signal, not type) and Anthropic `{"type":"error","error":{"type":"permission_error","message"}}`.
  * "is not on the Flux free plan" is the plan refusal; anything else of that shape is a key whose allowlist
@@ -69,7 +71,7 @@ export function pickCheckerInstance(instances: ProviderInstance[], botInstanceId
  * sentence is never shown to the owner (it sells a plan); the checker uses Murage's locale strings. */
 function modelRefusal(text: string): "CHECKER_MODEL_NOT_ALLOWED" | "CHECKER_MODEL_NOT_PERMITTED" | undefined {
   let body: unknown;
-  try { body = JSON.parse(text); } catch { return undefined; }
+  try { body = registerBusyloopPayloadSite("read", JSON.parse(text)); } catch { return undefined; }
   const error = body && typeof body === "object" ? (body as { error?: unknown }).error : undefined;
   if (!error || typeof error !== "object") return undefined;
   const { param, type, message } = error as { param?: unknown; type?: unknown; message?: unknown };
@@ -83,7 +85,8 @@ async function fluxCall(input: { apiKey: string; req: Parameters<CheckerTranspor
   if (!isPinnedFluxModel(req.model)) throw new Error("CHECKER_UNPINNED_MODEL");
   const url = new URL(`${FLUX_OPENAI_BASE.replace(/\/+$/, "")}/chat/completions`);
   if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) throw new Error("CHECKER_UNAVAILABLE");
-  const response = await fetch(url, {
+  await authorizeFluxDispatch(apiKey); // spend gate: a Flux call outside an admitted turn is a start
+  const response = await fetch(fluxRouteFor(url).requestUrl, {
     method: "POST", redirect: "error", signal: AbortSignal.any([req.signal, AbortSignal.timeout(60000)]),
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}`, [NO_RETAIN_HEADER]: "1", ...fluxCallHeaders("browser-checker", { usage: { botId: input.botId } }) },
     body: JSON.stringify({ model: req.model, messages: [{ role: "system", content: req.system }, { role: "user", content: req.user }], max_tokens: req.maxTokens, stream: false }),
@@ -107,7 +110,7 @@ async function fluxCall(input: { apiKey: string; req: Parameters<CheckerTranspor
     for (;;) { const c = await reader.read(); if (c.done) break; bytes += c.value.byteLength; if (bytes > FLUX_RESPONSE_LIMIT) { await reader.cancel(); throw new Error("CHECKER_RESPONSE_LIMIT"); } parts.push(c.value); }
   } finally { reader.releaseLock(); }
   let body: { choices?: Array<{ finish_reason?: string | null; message?: { content?: unknown; tool_calls?: unknown[] } }> };
-  try { body = JSON.parse(Buffer.concat(parts).toString("utf8")); } catch { throw new Error("CHECKER_INVALID_RESPONSE"); }
+  try { body = registerBusyloopPayloadSite("read", JSON.parse(Buffer.concat(parts).toString("utf8"))); } catch { throw new Error("CHECKER_INVALID_RESPONSE"); }
   const choice = body.choices?.length === 1 ? body.choices[0] : undefined;
   if (!choice || typeof choice.message?.content !== "string" || choice.message.tool_calls?.length) throw new Error("CHECKER_INVALID_RESPONSE");
   return choice.message.content;

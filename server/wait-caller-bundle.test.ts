@@ -1,3 +1,4 @@
+import { windowsHideBundlePlugin } from "../scripts/windows-hide-bundle-plugin.mjs";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The `[sqlite] busy ... at=<caller>` attribution in the PACKAGED shape (rc13 real-data boot: `at=index.js:19949<index.js:19963`, which is
 // waitCaller and witnessWait themselves). The packaged server is one esbuild bundle: no frame carries database.ts or io-budget.ts as its file,
@@ -74,13 +75,14 @@ process.exit(0);
   const outfile = join(OUT, "fixture.js");
   // the same options as scripts/bundle-server.mjs (one ESM file for node, Node built-ins through createRequire)
   await build({
+    plugins: [windowsHideBundlePlugin()],
     entryPoints: [entry], bundle: true, platform: "node", target: "node20", format: "esm", outfile, logLevel: "silent",
     banner: { js: 'import { createRequire as __harnessRequire } from "node:module"; const require = __harnessRequire(import.meta.url);' },
     external: ["@huggingface/transformers"], packages: "external",
   });
   const data = join(home, ".murage");
   mkdirSync(data, { recursive: true });
-  const run = spawnSync(process.execPath, [outfile], { cwd: ROOT, encoding: "utf8", timeout: 60_000, env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_DATA_DIR: data } });
+  const run = spawnSync(process.execPath, [outfile], { windowsHide: true, cwd: ROOT, encoding: "utf8", timeout: 60_000, env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_DATA_DIR: data } });
   const marker = /LINES(.*)\n/.exec(run.stdout ?? "");
   expect(marker, `${run.stdout}\n${run.stderr}`).not.toBeNull();
   const lines = JSON.parse(marker![1]!) as string[];

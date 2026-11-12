@@ -1,3 +1,4 @@
+import { secureDeleteFts } from './fts-delete.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -63,9 +64,9 @@ export function markFreshIndexAged(db: DatabaseSync): boolean {
 
 /** Makes the second word table and its keys (schema pages only). */
 export function ensureAgeTables(db: DatabaseSync): void {
-  if (ageTablesPresent(db) && hasTable(db, "lexical_age_keys")) return;
+  if (ageTablesPresent(db) && hasTable(db, "lexical_age_keys")) { secureDeleteFts(db, "lexical_age"); return; }
   db.exec("BEGIN IMMEDIATE");
-  try { db.exec(LEXICAL_AGE_SCHEMA); db.exec("COMMIT"); }
+  try { db.exec(LEXICAL_AGE_SCHEMA); secureDeleteFts(db, "lexical_age"); db.exec("COMMIT"); }
   catch (error) { try { db.exec("ROLLBACK"); } catch { /* rolled back */ } throw error; }
 }
 

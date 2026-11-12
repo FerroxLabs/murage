@@ -85,6 +85,7 @@ async function bootServer(port: number): Promise<{ child: ChildProcess; desktop:
   mkdirSync(trustFile("store-dir"));
   writeFileSync(trustFile("store-empty"), "  \n");
   const proc = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

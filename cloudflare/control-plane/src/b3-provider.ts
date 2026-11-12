@@ -19,6 +19,9 @@ export interface CreateVolumeInput {
   /** Round 11 (Astra MAILRETRY-15 P1-1): bounds the provider call to the resource ledger's expectation; aborted means unsettled. */
   signal?: AbortSignal;
 }
+/** Astra round 2 #1: the fencing token of one provisioning attempt (provision_attempts.lease_token). The warm-pool path re-checks it before every
+ *  pool-row write and every provider mutation; an attempt that no longer holds the lease aborts without fencing or quarantining anything. */
+export interface ProvisionFence { homeId: string; resourceGeneration: number; token: string }
 export interface CreateHomeInput {
   homeId: string; resourceGeneration: number; idempotencyKey: string; type: string; location: string;
   image: string; labels: { homeId: string; resourceGeneration: string; role: "home" };
@@ -31,6 +34,8 @@ export interface CreateHomeInput {
    *  fence and never re-read after it (a reopen deletes that key material in the batch that moves the generation on). An adapter with
    *  backups uses this value only and fails closed without it. */
   backup?: { resticPassword: string };
+  /** Astra round 2 #1: the attempt's lease token (see ProvisionFence). */
+  fence?: ProvisionFence;
 }
 /** A provider power call's identity: the provider's action id, which its terminal status is later confirmed by. */
 export interface PowerReceipt { actionId: string | null }
@@ -52,11 +57,14 @@ export interface ProviderAdapter {
   server_up?(id: string): Promise<boolean>;
   /** `signal`: the caller's bound (the cleanup claim's lease): an in-flight destroy is aborted before the claim could be taken over. */
   destroy(id: string, signal?: AbortSignal): Promise<void>;
+  /** Whether a server still exists, asked by its exact id (not by label): false only when the provider says it is gone (a 404 / destroyed).
+   *  Optional: without it a recovery that waits for a delete to be confirmed (b3-control recoverRejectedPoolHome) never proceeds. */
+  server_exists?(id: string): Promise<boolean>;
   /** Round 11 (Astra MAILRETRY-15 P1-2): true when create() needs CreateHomeInput.backup (backups configured). Optional: false. */
   wants_backup_password?(): boolean;
   create_volume(input: CreateVolumeInput): Promise<VolumeDescriptor>;
   volume(id: string): Promise<VolumeDescriptor>;
-  attach_volume(volumeId: string, serverId: string): Promise<VolumeDescriptor>;
+  attach_volume(volumeId: string, serverId: string, fence?: ProvisionFence): Promise<VolumeDescriptor>;
   detach_volume(volumeId: string, serverId: string): Promise<VolumeDescriptor>;
   /** Optional (live only). Called while a home is suspended; idempotent. Snapshots exist only for the retention window. */
   snapshot_home?(homeId: string, resourceGeneration: number): Promise<void>;
@@ -144,6 +152,10 @@ export function fakeProvider(db: D1Database): ProviderAdapter {
       await db.prepare("UPDATE cloud_fake_resources SET quarantined=1,quarantine_relay_ip=? WHERE id=?").bind(relayIP, resourceId).run();
     },
     power_off: (resourceId) => state(resourceId, "powered_off"), destroy: (resourceId) => state(resourceId, "destroyed"),
+    async server_exists(resourceId) {
+      const row = await db.prepare("SELECT state FROM cloud_fake_resources WHERE id=?").bind(resourceId).first<{ state: string }>();
+      return !!row && row.state !== "destroyed";
+    },
     reboot: (resourceId) => state(resourceId, "running"),
     // The fake executes power actions at once: each is confirmed done.
     async power_action_status() { return "success" as const; },

@@ -1,3 +1,8 @@
+import { fluxRouteFor } from "../../shared/flux-route.ts";
+vi.mock("../../shared/flux-route.ts", async (original) => {
+  const actual = await original<typeof import("../../shared/flux-route.ts")>();
+  return { ...actual, fluxRouteFor: vi.fn(actual.fluxRouteFor) };
+});
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // pi driver contract tests, run against the scripted fake `pi` CLI in
@@ -50,6 +55,7 @@ vi.mock("../local-server-probe.ts", async (original) => {
   };
 });
 import {
+  piRequestUrl,
   piGateAsk,
   applyPiLocalCatalog,
   buildMcpServers,
@@ -69,6 +75,25 @@ import * as procs from "../procs.ts";
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-pi-cli.ts");
 const MODELS_LINE =
   '{"type":"response","command":"get_available_models","success":true,"data":{"models":[{"provider":"ollama-cloud","id":"glm-5.2","name":"glm-5.2"},{"provider":"openai","id":"gpt-4o","name":"GPT-4o"}]}}';
+
+describe("Pi effective destination", () => {
+  it("uses configured URLs regardless of the provider label, including the default selection", () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-route-fixture-"));
+    const agent = join(home, ".pi", "agent");
+    mkdirSync(agent, { recursive: true });
+    try {
+      writeFileSync(join(agent, "models.json"), JSON.stringify({ providers: {
+        unrelated: { baseUrl: "https://api.fluxrouter.ai/v1", models: [{ id: "fixture" }] },
+        flux: { baseUrl: "https://other.invalid/v1", models: [{ id: "fixture" }] },
+      } }));
+      writeFileSync(join(agent, "settings.json"), JSON.stringify({ defaultProvider: "unrelated", defaultModel: "fixture" }));
+      expect(piRequestUrl("unrelated/fixture", { HOME: home })).toBe("https://api.fluxrouter.ai/v1");
+      expect(fluxRouteFor(piRequestUrl("unrelated/fixture", { HOME: home })).routed).toBe(true);
+      expect(fluxRouteFor(piRequestUrl("flux/fixture", { HOME: home })).routed).toBe(false);
+      expect(piRequestUrl(null, { HOME: home })).toBe("https://api.fluxrouter.ai/v1");
+    } finally { removeTempDirSync(home); }
+  });
+});
 
 describe("parsePiCatalog", () => {
   it("turns a get_available_models response into custom composite-id options", () => {
@@ -314,6 +339,32 @@ describe("PiDriver turns (fake CLI)", () => {
   afterEach(async () => {
     recorder?.stop();
     await instance?.dispose();
+  });
+
+  it("R3 reviewer witness: pi text hi reaches a URL decision before the engine prompt", async () => {
+    await create();
+    vi.mocked(fluxRouteFor).mockClear();
+    const observed: number[] = [];
+    const spawn = procs.spawnCli;
+    const spy = vi.spyOn(procs, "spawnCli").mockImplementation((...args) => {
+      const child = spawn(...args);
+      const write = child.stdin.write;
+      child.stdin.write = ((...params: unknown[]) => {
+        try {
+          const frame = JSON.parse(String(params[0]));
+          if (frame.type === "prompt") observed.push(vi.mocked(fluxRouteFor).mock.calls.length);
+        } catch { /* non-prompt control bytes */ }
+        return Reflect.apply(write, child.stdin, params);
+      }) as typeof write;
+      return child;
+    });
+    try {
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "r3-pi", text: "hi" });
+      expect(await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId)).toMatchObject({ ok: true });
+      expect(fluxRouteFor).toHaveBeenCalled();
+      expect(observed).toHaveLength(1);
+      expect(observed[0]).toBeGreaterThan(0);
+    } finally { spy.mockRestore(); }
   });
 
   // STOP-NONACP s6 (ruling A): gate.launch gives live back when the spawn throws synchronously, so the wrapper ends the turn.

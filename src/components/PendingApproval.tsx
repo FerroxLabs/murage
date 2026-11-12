@@ -1,3 +1,4 @@
+import { BotCallFields } from './BotCallFields';
 // Pending approval, ported from the upstream pattern: an approval does
 // not sit in the transcript waiting to be noticed — it takes over the
 // composer. The prompt is disabled, a strip above it says exactly what
@@ -20,6 +21,7 @@ import { t } from "@/lib/i18n";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
 import { ApprovalDetailBody } from "@/components/ApprovalDetailBody";
 import { CollapsibleText } from "@/components/CollapsibleText";
+import { HighLevelReviewValues, highlevelAllowDigest, highlevelReviewId, useHighLevelReview } from "@/components/HighLevelReviewValues";
 import { reviewedSkillSha256 } from "../../shared/skill-request";
 import { usePlainApprovalReady } from "@/lib/plain-approval";
 import { useDesktopSurface } from "@/lib/use-surface";
@@ -78,7 +80,8 @@ function useFoldRows(pending: Pending, threadId: string, bot: Bot | undefined) {
   const refused = useComputerOnlyRefusal(threadId, pending.requestId);
   const card = pending.message.card;
   const computerOnly = allowNeedsComputer(surface, card, refused);
-  const special = isSpecialApproval(pending);
+  // a HighLevel change is approved one exact review at a time: never a remembered or standing answer (HL-S2-WRITES (a)4)
+  const special = isSpecialApproval(pending) || highlevelReviewId(pending.requestId) !== undefined;
   // 1.2: the rows the server would save; the desktop app and the paired phone
   // app give them (a browser pairing writes no grant), and bot rows need the bot
   const owner = desktop === true || surface === "app";
@@ -138,6 +141,8 @@ export const PendingApprovalPanel = memo(function PendingApprovalPanel({
       )}
       {held && <CollapsibleText text={held} className="mt-1 text-[12.5px] text-warning" />}
       <OutsideEngineNote card={pending.message.card} bot={bot} />
+      {/* a HighLevel change: every value it would send, read live from the open review; Allow waits on it */}
+      {highlevelReviewId(pending.requestId) && <HighLevelReviewValues reviewId={highlevelReviewId(pending.requestId)!} />}
       {!held && needsRoutineReview(pending) && <p className="mt-2 text-[12px] text-warning">This older routine request needs a fresh review. Cancel it and ask the bot to propose it again.</p>}
       {!bar && (
         <>
@@ -246,6 +251,7 @@ export function ApprovalDetailsSheet({
         <BoxBody className="px-4 pb-2">
           {why && <p data-why-line className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{why}</p>}
           {pending.held && <p data-held-note className="mt-1 whitespace-pre-wrap break-words text-[12.5px] text-warning">{pending.held}</p>}
+          {highlevelReviewId(pending.requestId) && <HighLevelReviewValues reviewId={highlevelReviewId(pending.requestId)!} />}
           {ownWordsBody(pending) ?? (
             <ApprovalDetailBody
               tool={skill || routine ? undefined : pending.tool}
@@ -294,11 +300,18 @@ export function PendingApprovalActions({
     ? reviewedSkillSha256(card.skillRequest)
     : undefined;
   const offer = card?.grantRequest?.routine;
+  // HL-S2-WRITES (a)4: Allow waits until the values answered 200 and are on screen, and carries their digest; a surface
+  // refused the values (a phone, a browser) shows Deny only
+  const highlevelId = highlevelReviewId(pending.requestId);
+  const highlevelReview = useHighLevelReview(highlevelId);
+  const highlevelDigest = highlevelAllowDigest(highlevelReview);
+  const allowHidden = computerOnly || highlevelReview?.phase === "refused";
   const verb = special ? undefined : cardVerb(card);
   const verbLabel = verb ? verbWord(verb) : "";
   // Rule 81c: each recipient is its own choice, unticked until the owner ticks it
   const [stopKeys, setStopKeys] = useState<string[]>([]);
   const [foldOpen, setFoldOpen] = useState(false);
+  const caretRef = useRef<HTMLButtonElement>(null), foldLinkRef = useRef<HTMLButtonElement>(null);
   // APPROVAL-ONE-CARD: the phone's Details sheet; closing it hands focus back to Details
   const [sheetOpen, setSheetOpen] = useState(false);
   const detailsButton = useRef<HTMLButtonElement>(null);
@@ -346,7 +359,7 @@ export function PendingApprovalActions({
     const botGrant = row?.scope === "bot" && computer === true && bot
       ? { botId: bot.id, ...(row.id === "always-set" ? { keys: row.keys } : { key: row.keys[0] }), onSaved: (holders: GrantHolders) => note("bot", [], { holders }) }
       : undefined;
-    const forTask = behavior === "allow" && row?.scope === "task";
+    const forTask = behavior === "allow" && (row?.scope === "task" || !row && !!card?.taskAllowSuggested && rows.some(r => r.scope === "task"));
     dispatch({
       type: "decideRequest",
       threadId,
@@ -354,8 +367,10 @@ export function PendingApprovalActions({
       behavior,
       message: behavior === "deny" ? "Denied by the user." : undefined,
       card: pending.message.card,
+      ...(card?.botAuthority && !card.botAuthority.cut ? { seen: { renderer: 'bot-card@1', digest: card.botAuthority.specDigest } } : {}),
       botName: bot?.name,
       reviewedSha256: behavior === "allow" ? reviewedSha256 : undefined,
+      ...(behavior === "allow" && highlevelDigest ? { reviewDigest: highlevelDigest } : {}),
       alwaysAllow: botGrant,
       ...(routineGrant ? { alwaysAllowRoutine: routineGrant } : {}),
       // the allowance the server says this answer added (none when it was already held)
@@ -381,7 +396,7 @@ export function PendingApprovalActions({
     ? card?.skillRequest?.action === "update" ? "Update" : "Enable"
     : isRoutineRequest ? "Confirm" : hostConsent ? "Allow for this bot" : eventLimit ? "Allow" : verbLabel;
   const denyLabel = isRoutineRequest || isSkillRequest ? "Cancel" : hostConsent ? "Don't allow" : eventLimit ? "Not now" : dontWord(verb ?? "allow");
-  const primaryDisabled = (isSkillRequest && !reviewedSha256) || needsRoutineReview(pending);
+  const primaryDisabled = (isSkillRequest && !reviewedSha256) || needsRoutineReview(pending) || (highlevelId !== undefined && !highlevelDigest);
   const cancelTurn = !durableRequest && (
     <button onClick={onCancelTurn} className={cn(base, PRESSED, "text-ink-secondary hover:bg-control hover:text-ink", !bar && "mr-auto")}>
       Cancel turn
@@ -401,11 +416,11 @@ export function PendingApprovalActions({
       disabled={primaryDisabled}
       {...btn("allow", cn(base, "bg-accent font-medium text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40", caret && "rounded-r-none"))}
     >
-      <ApprovalBusyLabel busy={feedback.busy === "allow"}>{primaryLabel}</ApprovalBusyLabel>
+      <ApprovalBusyLabel busy={feedback.busy === "allow"}>{highlevelReview?.phase === "loaded" && highlevelReview.operation === "users.create" ? "Add user" : primaryLabel}</ApprovalBusyLabel>
     </button>
   );
   const foldChunk = (variant: "menu" | "sheet", onClose: () => void, autoFocus = true) => (
-    <LazyBoundary inline onRetry={GrantFoldChunk.retry} onDismiss={onClose}>
+    <LazyBoundary inline onRetry={GrantFoldChunk.retry} onDismiss={() => { onClose(); requestAnimationFrame(() => (caretRef.current ?? foldLinkRef.current)?.focus()); }}>
       <Suspense fallback={null}>
         <GrantFoldChunk.Component
           id={foldId}
@@ -433,6 +448,8 @@ export function PendingApprovalActions({
   );
   return (
     <div role="group" aria-label="Approval" data-approval-layout={bar ? "bar" : "panel"} className="flex shrink-0 flex-wrap items-center justify-end gap-2 px-4 pb-3 pt-1" aria-busy={feedback.busy !== null}>
+      {card?.taskAllowSuggested && <p className="w-full whitespace-pre-wrap break-words">You said: “{card.taskAllowSuggested.ownerWords}”<br />Allow for this task is selected.</p>}
+      {card?.botAuthority && <BotCallFields authority={card.botAuthority} />}
       {bar ? (
         <button ref={detailsButton} type="button" data-approval-details aria-haspopup="dialog" aria-expanded={sheetOpen} onClick={() => setSheetOpen(true)} className={cn(base, PRESSED, "mr-auto px-2 text-accent hover:bg-control")}>
           {t("ux.l1.card.details")}
@@ -449,11 +466,12 @@ export function PendingApprovalActions({
       <ApprovalConfirmLine prompting={feedback.prompting} className="w-full text-right text-[13px] text-ink-secondary" />
       {failed && <div role="alert" className="w-full text-right text-[13px] text-danger">{failed}</div>}
       {denyButton()}
-      {!computerOnly && (
+      {!allowHidden && (
         <span className="inline-flex items-stretch" data-approval-primary>
           {runButton(undefined, hasFold && !phoneSheet && !bar)}
           {hasFold && !phoneSheet && !bar && (
             <button
+              ref={caretRef}
               type="button"
               data-fold-caret
               aria-haspopup="true"
@@ -469,7 +487,7 @@ export function PendingApprovalActions({
         </span>
       )}
       {hasFold && phoneSheet && !bar && (
-        <button type="button" data-fold-link onClick={() => setFoldOpen(true)} className={cn(base, "w-full justify-end rounded-md px-1 text-[13px] text-accent underline-offset-2 hover:underline")}>
+        <button ref={foldLinkRef} type="button" data-fold-link onClick={() => setFoldOpen(true)} className={cn(base, "w-full justify-end rounded-md px-1 text-[13px] text-accent underline-offset-2 hover:underline")}>
           {t("ux.l1.card.foldLink", { verb: verbLabel })}
         </button>
       )}
@@ -484,7 +502,7 @@ export function PendingApprovalActions({
             <>
               {cancelTurn && <span className="mr-auto">{cancelTurn}</span>}
               {denyButton(closeSheet)}
-              {!computerOnly && runButton(closeSheet)}
+              {!allowHidden && runButton(closeSheet)}
             </>
           }
         />

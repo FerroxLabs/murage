@@ -81,7 +81,7 @@ export function SearchSettings() {
     {where === "provider" && notice && <p role="status" className="mt-3 text-[12px] text-success">{notice}</p>}
     {where === "provider" && error && <p role="alert" className="mt-3 text-[12px] text-danger">{error}</p>}
   </section>
-  <InAdvanced><section id="search-keys-heading" tabIndex={-1} aria-label={t("settings.l4.searchKeys.title")} className="rounded-xl bg-card p-4 outline-none">
+  <InAdvanced part="webSearch.provider-keys"><section tabIndex={-1} aria-label={t("settings.l4.searchKeys.title")} className="rounded-xl bg-card p-4 outline-none">
     <h3 className="text-[15px] font-medium text-ink">{t("settings.l4.searchKeys.title")}</h3>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("settings.l4.searchKeys.note")}</p>
     <div className="mt-4 space-y-4">

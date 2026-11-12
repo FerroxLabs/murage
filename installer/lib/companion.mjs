@@ -1,3 +1,4 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 /**
  * @license
  * Copyright 2026 Ferrox Labs
@@ -220,11 +221,11 @@ export async function waitForDoor(opts) {
  */
 export function spawnCompanion(opts) {
   const run = opts.spawnImpl ?? spawn;
-  const child = run(process.execPath, [...opts.resolved.execArgv, opts.resolved.entry], {
+  const child = run(process.execPath, [...opts.resolved.execArgv, opts.resolved.entry], withHideInherit({
     env: opts.env,
     stdio: opts.stdio ?? "inherit",
     ...(opts.as ? { uid: opts.as.uid, gid: opts.as.gid } : {}),
-  });
+  }));
   return ownChild(child);
 }
 
@@ -266,7 +267,7 @@ export function ownChild(child, { graceMs = 5_000, killWaitMs = 1_000 } = {}) {
  * output pipes: a slow Tailscale status must not block signal processing. */
 export async function startupProbe(command, args, { env, signal, timeoutMs = 3_000 } = {}) {
   if (signal?.aborted) return null;
-  const owned = ownChild(spawn(command, args, { env, stdio: ["ignore", "pipe", "pipe"] }), { graceMs: 250 });
+  const owned = ownChild(spawn(command, [...args], withHideInherit({ env, stdio: ["ignore", "pipe", "pipe"] })), { graceMs: 250 });
   const { child } = owned;
   return new Promise((resolve, reject) => {
     let output = "";

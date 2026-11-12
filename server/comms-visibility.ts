@@ -1,3 +1,4 @@
+import { type HeldPeerAuthority } from './held-peer-authority.ts';
 import { teamLabel } from "./team-identities.ts";
 import { MurageStatus, outboundCopy, outboundWords, status, statusRecordOf, type Outbound } from "./murage-status.ts";
 import { ReleasedText } from "./released-text.ts";
@@ -21,7 +22,7 @@ export interface CommsBus {
   turnOf?: (threadId: string) => string | undefined;
   /** The durable ask:delegation record of a handoff when a room turn made it (a room request, or shared work), made in the transaction that queues
    * it. Returns who owns the request side: `room`, `shared`, or `owner` (an owner-conversation handoff has no record: its queue row is all there is). */
-  prepareDelegation?(fromBotId: string, toBotId: string, sourceThreadId: string, message: string, requestId: string): "owner" | "room" | "shared" | void;
+  prepareDelegation?(fromBotId: string, toBotId: string, sourceThreadId: string, message: string, requestId: string, held?: HeldPeerAuthority): "owner" | "room" | "shared" | void;
   /** Admission capacity, independent of how many handoffs are queued. */
   canDispatch?: () => boolean;
   /** Could a handoff from `sourceThreadId` start on this bot RIGHT NOW?

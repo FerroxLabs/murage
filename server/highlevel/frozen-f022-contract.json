@@ -1,0 +1,16 @@
+{
+  "server/highlevel/rpc-approval-replay.ts": [
+    "export interface RpcApprovalBinding {\n    readonly rpcId: string;\n    readonly rpcDigest: string;\n    readonly approvalId: string;\n    readonly requestDigest: string;\n    readonly actionId: string;\n    readonly authorityDigest: string;\n    readonly operation: OperationId;\n    readonly readTargets: readonly {\n        readonly operation: OperationId;\n        readonly path: string;\n    }[];\n    readonly effectDigest: string;\n}",
+    "export interface RpcApprovalJournal extends ApprovalJournal {\n    getRpc(rpcId: string): RpcApprovalBinding | undefined;\n    bindRpc(binding: RpcApprovalBinding): boolean;\n}",
+    "class FileRpcApprovalJournal   extends FileApprovalJournal  implements RpcApprovalJournal {\ngetRpc(rpcId: string): RpcApprovalBinding | undefined;\nbindRpc(binding: RpcApprovalBinding): boolean;\n}",
+    "export interface RpcApprovedWriteCallbacks {\n    prepare(): Promise<RpcApprovalBinding>;\n    authorize(binding: RpcApprovalBinding): Promise<boolean>;\n    dispatch(binding: RpcApprovalBinding): Promise<ApprovalOutcome>;\n    reconcile(binding: RpcApprovalBinding): Promise<ApprovalOutcome>;\n}",
+    "export function runRpcApprovedWrite(journal: RpcApprovalJournal, rpcId: string, rpcDigest: string, callbacks: RpcApprovedWriteCallbacks): Promise<ApprovalOutcome>;"
+  ],
+  "server/highlevel/returned-confirmation.ts": [
+    "export function prepareTagReturnedIdentitySchema(held: HeldRequest, locationId: string, beforeTags: readonly string[]): BoundReturnedIdentitySchema;"
+  ],
+  "server/highlevel/operations/returned-confirmation-schemas.ts": [
+    "export type ReturnedConfirmationSchema = Readonly<{\n    kind: \"identity_or_success\";\n}> | Readonly<{\n    kind: \"tag_post_state\";\n    field: \"tags\";\n    action: \"add\" | \"remove\";\n}>;",
+    "export const HIGHLEVEL_RETURNED_CONFIRMATION_SCHEMAS: Readonly<Record<OperationId, ReturnedConfirmationSchema>> = Object.freeze(Object.fromEntries(HIGHLEVEL_OPERATION_MANIFEST.map(row => [row.id, Object.freeze(row.id === \"contacts.tags.add\"\n        ? { kind: \"tag_post_state\", field: \"tags\", action: \"add\" }\n        : row.id === \"contacts.tags.remove\" ? { kind: \"tag_post_state\", field: \"tags\", action: \"remove\" }\n            : { kind: \"identity_or_success\" })])));"
+  ]
+}

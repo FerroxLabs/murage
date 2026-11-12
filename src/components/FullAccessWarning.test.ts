@@ -45,10 +45,10 @@ describe("FullAccessWarning", () => {
     const markup = renderToStaticMarkup(createElement(FullAccessWarning, { open: true, botName: "Vega", level: "unlimited", onThisComputer: false, onCancel: () => {}, onConfirm: () => {} }));
     expect(markup).toContain("Give @Vega no limits?");
     // NOLIMITS v1 copy W and O-win (designs/NOLIMITS-MEANS-IT.md section 11)
-    expect(markup).toContain("No limits runs what you ask without stopping to ask you, even a command Murage cannot read in full.");
-    expect(markup).toContain("Murage asks before each command that can run code for the rest of that chat.");
-    expect(markup).toContain("Commands that only read and print keep running.");
-    expect(markup).toContain("on Windows, Murage keeps asking before PowerShell and cmd commands as it does today.");
+    expect(markup).toContain("No limits runs commands, changes protected files, reads keys and passwords, uses outside content,");
+    expect(markup).toContain("Only a visible wipe or catastrophe can stop it.");
+    expect(markup).toContain("Guests stay at Ask.");
+    expect(markup).toContain("The same No limits rule applies to bash, zsh, PowerShell and cmd: only a visible wipe or catastrophe asks.");
     expect(markup).not.toContain("This bot runs on OpenClaw");
     expect(markup).toContain("Turn on no limits");
     expect(markup).not.toContain("still asks before deleting anything outside its folder");
@@ -57,7 +57,7 @@ describe("FullAccessWarning", () => {
 
   it("names the OpenClaw exception (copy O) when the bot runs on OpenClaw", () => {
     const markup = renderToStaticMarkup(createElement(FullAccessWarning, { open: true, botName: "Vega", level: "unlimited", openClaw: true, onThisComputer: false, onCancel: () => {}, onConfirm: () => {} }));
-    expect(markup).toContain("This bot runs on OpenClaw, which runs commands without asking Murage first.");
+    expect(markup).toContain("OpenClaw runs commands at No limits. Murage checks the command requests it receives for wipes;");
   });
 
   it("says whether it covers this conversation, the bot or one routine", () => {

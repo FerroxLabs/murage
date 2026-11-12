@@ -1,3 +1,4 @@
+import { routineServiceFixture } from './testing/service-queue-fixture.ts';
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   RoutineRequestError,
-  RoutineRequestService,
   routineRequestFingerprint,
   type RoutineProposalInput,
   type RoutineRequestMessage,
@@ -73,7 +73,7 @@ function harness(
     startTurn: async () => {},
   });
   const store = new MemoryStore();
-  const service = new RoutineRequestService({
+  const service = routineServiceFixture({
     store,
     routines,
     now: () => clock.now,
@@ -1311,7 +1311,7 @@ describe("cross-bot routine targeting", () => {
       startTurn: async () => {},
     });
     const store = new MemoryStore();
-    const service = new RoutineRequestService({
+    const service = routineServiceFixture({
       store,
       routines,
       now: () => clock.now,
@@ -1405,4 +1405,17 @@ describe("SL-M: a confirmed chat proposal for a repeating routine starts each ru
     expect(once.routine.carryLastReport).toBeUndefined();
     expect(once.detail).not.toContain("last run's report");
   });
+});
+
+it('bot-create: confirmation is held without enabling a routine until its staged target activates', async () => {
+  const {store, routines, clock} = harness();
+  let staged = true; const held: unknown[] = [];
+  const service = routineServiceFixture({store, routines, now:()=>clock.now, holdTarget: (target, payload) => { if (!staged) return false; held.push({target,payload}); return true; }});
+  const proposed = await service.propose({botId:'bot-a', threadId:'thread-a', proposal:{...createProposal(),forBot:{botId:'bot-b',name:'Ops'}}});
+  const answer = {botId:'bot-a',threadId:'thread-a',requestId:proposed.requestId,behavior:'allow'};
+  expect(service.resolve(answer)).toMatchObject({claimed:true,state:'held'});
+  expect(routines.listRoutines()).toHaveLength(0); expect(held).toHaveLength(1);
+  staged=false;
+  expect(service.resolve(answer)).toMatchObject({claimed:true,state:'applied'});
+  expect(routines.listRoutines()).toHaveLength(1);
 });

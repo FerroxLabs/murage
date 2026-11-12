@@ -10,6 +10,7 @@ async function rpc(role: string, method = "tools/list", params = {}, fetchStub =
   const proxy = new URL("./agents-proxy.ts", import.meta.url).href;
   const script = `${fetchStub} await import(${JSON.stringify(proxy)});`;
   const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", script], {
+    windowsHide: true,
     env: { PATH: process.env.PATH, MURAGE_PROJECT_ROLE: role, MURAGE_VENUE_READ: venueRead ? "1" : "0", MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_BOT_ID: "fixture", MURAGE_THREAD_ID: "desk" }, stdio: ["pipe", "pipe", "pipe"],
   });
   let output = "", error = "";

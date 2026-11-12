@@ -94,7 +94,7 @@ except ValueError: pass
 assert len(f.calls)==before
 print("network fake passed")
 `;
- const result = spawnSync("python3", ["-c", script, helper, policy], { encoding: "utf8", timeout: 5000 });
+ const result = spawnSync("python3", ["-c", script, helper, policy], { windowsHide: true, encoding: "utf8", timeout: 5000 });
  expect(result.stderr).toBe(""); expect(result.status).toBe(0); expect(result.stdout).toBe("network fake passed\n");
 });
 it("denies host, cross-bot, spoofed, private, IPv6 and nonresolver DNS before established", () => {

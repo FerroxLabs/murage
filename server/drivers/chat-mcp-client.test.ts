@@ -8,8 +8,9 @@ import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+import * as processes from "../procs.ts";
 import type { ChildTeardown } from "./child-teardown.ts";
 import {
   CHAT_MCP_FAILED_MESSAGE, ChatMcpError, chatMcpChildEnv, mountSecrets, openChatMcpServers, type ChatMcpSession,
@@ -170,6 +171,21 @@ describe("mountSecrets", () => {
 });
 
 describe("openChatMcpServers", () => {
+  it("hides the default MCP child while retaining all three protocol pipes", async () => {
+    const launched = vi.spyOn(processes, "spawnCli");
+    try {
+      const { sessions, failed } = await open({ fake: entry() });
+      expect(failed).toEqual([]);
+      expect(sessions).toHaveLength(1);
+      expect(launched).toHaveBeenCalled();
+      const [command, args, options] = launched.mock.calls[0]!;
+      expect(command).toBe(process.execPath);
+      expect(args).toContain(script);
+      expect(options).toMatchObject({
+        windowsHide: true, stdio: ["pipe", "pipe", "pipe"], env: expect.any(Object),
+      });
+    } finally { launched.mockRestore(); }
+  });
   it("a real child gets only the allowlisted env plus its own token, and stderr never surfaces", async () => {
     const { sessions, failed } = await open({ fake: entry() });
     expect(failed).toEqual([]);

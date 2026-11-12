@@ -21,6 +21,7 @@ import type { BlockingHeartbeat } from "./memory/blocking-heartbeat.ts";
  *    found it submitted with no sign it ran, so it does not run again; the owner reads a receipt and may send it again as a new hand-off.
  * `origin` says who owns the request side: `owner` (queued from the owner's conversation: this row is all there is), `room` (a room request of
  * the same id mirrors it), `shared` (shared work of the same id runs it) or `legacy` (imported from delegations.json).
+ * `owner_rooted` records authenticated owner input at enqueue, independently of the engine-controlled item and optional context pack.
  * `evidence_at` is when the engine's reply to the hand-off's prompt was stored (server/handoff-evidence.ts): set in the same transaction as that reply, never inferred later.
  * `held_notice_lines` lists the owner-facing line of every held hand-off (message id, hand-off id, conversation): written in the transaction that creates the line and
  * deleted in the one that releases it, so a line whose hand-off is gone is found by walking this table and nothing else.
@@ -39,7 +40,8 @@ const PENDING_COLUMNS = `id TEXT PRIMARY KEY NOT NULL,
   accepted_turn_id TEXT,
   start_attempts INTEGER,
   submitted_at INTEGER,
-  evidence_at INTEGER`;
+  evidence_at INTEGER,
+  owner_rooted INTEGER NOT NULL DEFAULT 0`;
 const PENDING_INDEXES = `CREATE INDEX IF NOT EXISTS pd_thread ON pending_delegations(source_thread_id);
 CREATE INDEX IF NOT EXISTS pd_due ON pending_delegations(retry_at, id) WHERE retry_at IS NOT NULL;
 CREATE INDEX IF NOT EXISTS pd_phase ON pending_delegations(phase, source_thread_id);
@@ -94,6 +96,9 @@ export function initializePendingDelegations(db: DatabaseSync): void {
       db.exec("DROP TABLE pending_delegations_old");
       db.exec(nested ? "RELEASE pd_rebuild" : "COMMIT");
     } catch (error) { try { db.exec(nested ? "ROLLBACK TO pd_rebuild; RELEASE pd_rebuild" : "ROLLBACK"); } catch { /* already closed out */ } throw error; }
+  } else if (existing && !present.includes("owner_rooted")) {
+    // Earlier rows have no authenticated input proof; item JSON cannot supply it during migration.
+    db.exec("ALTER TABLE pending_delegations ADD COLUMN owner_rooted INTEGER NOT NULL DEFAULT 0");
   }
   db.exec(`CREATE TABLE IF NOT EXISTS pending_delegations (${PENDING_COLUMNS});
 ${PENDING_INDEXES}

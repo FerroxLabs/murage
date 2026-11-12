@@ -34,7 +34,7 @@ it.skipIf(process.platform === "win32")("keeps non-ASCII text intact when a read
     server.listen(sock);
   });
   await wait(100);
-  const child = spawn(process.execPath, [proxy, sock], { stdio: ["pipe", "pipe", "ignore"] });
+  const child = spawn(process.execPath, [proxy, sock], { windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
   try {
     const request = Buffer.from(JSON.stringify({
       jsonrpc: "2.0", id: 1, method: "tools/call",

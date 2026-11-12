@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
-import { Card, InAdvanced, Switch } from "./SettingsPrimitives";
+import { Card, InAdvanced, Part, Switch } from "./SettingsPrimitives";
 import { fluxDesktopSigninEnabled } from "@/lib/feature-flags";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { configAfterFluxKeyChange } from "@/lib/spend-meter";
@@ -165,7 +165,8 @@ export function ModelsSettings() {
   const search = query.trim().toLowerCase();
   const fluxConnection = snapshot?.connections.find(connection => connection.id === "legacy-flux");
   const fluxModels = fluxConnection ? chatModels(fluxConnection).filter(model => !search || `${model.label} ${model.id} Flux Router`.toLowerCase().includes(search)) : [];
-  return <div className="min-w-0 space-y-5">
+  return <div className="min-w-0 space-y-5 empty:hidden">
+    <Part id="models.providers">
     <FluxRouterConnection configured={flux?.configured ?? null} conflict={flux?.conflict} choices={flux?.choices} saveBlocked={flux?.saveBlocked}
       onSave={async key => { if (!flux) throw new Error("Flux status is unavailable"); await fluxChanged({ action: flux.configured ? "replace" : "connect", revision: flux.revision, key }); }}
       onSignin={fluxDesktopSigninEnabled(state.config) && window.muragebox?.fluxSignin ? async () => {
@@ -182,11 +183,11 @@ export function ModelsSettings() {
       onDisconnect={async () => { if (!flux) throw new Error("Flux status is unavailable"); await fluxChanged({ action: "disconnect", revision: flux.revision }); }}>
       <FluxRestartNotice required={Boolean(flux?.restartRequired)} configured={Boolean(flux?.configured)} onRestart={window.muragebox?.restartForFluxKey ? () => window.muragebox!.restartForFluxKey!() : undefined} />
       {fluxError && <p role="alert" className="mt-2 text-[12px] leading-relaxed text-danger">{fluxError}</p>}
-      {flux?.configured && !flux.conflict && fluxConnection && <InAdvanced><section aria-label="Flux Router models" className="rounded-xl bg-card p-4"><h4 className="text-[14px] font-medium text-ink">{fluxModels.length} matching Flux chat models</h4><div className="mt-2 max-h-80 overflow-y-auto">{fluxModels.map(model => <div key={model.id} className="border-t border-hairline/30 py-3"><p className="break-words text-[13px]">{model.label}</p><p className="break-all text-[11px] text-ink-secondary">{model.id}</p></div>)}</div>{fluxConnection.catalog.error && <p className="mt-2 text-[12px] text-danger">{fluxConnection.catalog.error.message}</p>}{fluxConnection.catalog.stale && <p className="mt-2 text-[12px] text-ink-secondary">Showing the last saved catalog. Test connection to check for updates.</p>}</section></InAdvanced>}
+      {flux?.configured && !flux.conflict && fluxConnection && <InAdvanced part="models.catalogs"><section aria-label="Flux Router models" className="rounded-xl bg-card p-4"><h4 className="text-[14px] font-medium text-ink">{fluxModels.length} matching Flux chat models</h4><div className="mt-2 max-h-80 overflow-y-auto">{fluxModels.map(model => <div key={model.id} className="border-t border-hairline/30 py-3"><p className="break-words text-[13px]">{model.label}</p><p className="break-all text-[11px] text-ink-secondary">{model.id}</p></div>)}</div>{fluxConnection.catalog.error && <p className="mt-2 text-[12px] text-danger">{fluxConnection.catalog.error.message}</p>}{fluxConnection.catalog.stale && <p className="mt-2 text-[12px] text-ink-secondary">Showing the last saved catalog. Test connection to check for updates.</p>}</section></InAdvanced>}
     </FluxRouterConnection>
     <Suspense fallback={null}><SubscriptionSignIn connections={snapshot?.connections ?? []} onChanged={() => { notifyConnectionsChanged(); void reload(); }} /></Suspense>
-    <section aria-labelledby="models-heading" className="rounded-xl border border-hairline/40 p-4">
-      <h3 id="models-heading" className="text-[15px] font-medium text-ink">Model connections</h3>
+    <section aria-labelledby="models-title" className="rounded-xl border border-hairline/40 p-4">
+      <h3 id="models-title" className="text-[15px] font-medium text-ink">Model connections</h3>
       <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Paste one model API key. Recognition happens on this computer; unclear keys need a provider choice.</p>
       <p className="mt-2 text-[12px] leading-relaxed text-ink-secondary">API usage goes through that provider account, separately from engine subscriptions.</p>
       <form className="mt-4 space-y-3" onSubmit={event => { event.preventDefault(); void add(); }}>
@@ -198,11 +199,16 @@ export function ModelsSettings() {
       </form>
       <p className="mt-3 text-[11px] leading-relaxed text-ink-secondary">{snapshot?.storage === "encrypted" ? "New connections are encrypted by your operating system. Saved keys are never shown." : snapshot ? "Development mode uses local configuration storage, not OS encryption." : "Loading connection storage…"}</p>
     </section>
-    <InAdvanced><div id="model-catalogs-heading" tabIndex={-1} className="outline-none"><Card title="Model catalogs" subtitle="The chat models each connection lists. Search them here, or refresh a connection to fetch its newest list."><label className="block min-w-0"><span className="sr-only">Search chat models</span><input value={query} onChange={event => setQuery(event.target.value)} data-setting-control="model-catalogs-heading" aria-label="Search chat models" placeholder="Search chat models or accounts" className={input} /></label></Card></div></InAdvanced>
+    </Part>
+    <InAdvanced part="models.catalogs"><div tabIndex={-1} className="outline-none"><Card title="Model catalogs" subtitle="The chat models each connection lists. Search them here, or refresh a connection to fetch its newest list."><label className="block min-w-0"><span className="sr-only">Search chat models</span><input value={query} onChange={event => setQuery(event.target.value)} data-setting-control="model-catalogs-heading" aria-label="Search chat models" placeholder="Search chat models or accounts" className={input} /></label></Card></div></InAdvanced>
+    <Part id="models.catalogs">
     <div className="flex flex-wrap gap-2"><button type="button" disabled={Boolean(busy)} onClick={() => void reload()} className={button}>Refresh connections</button></div>
     {notice && <p role="status" className="text-[12px] text-success">{notice}</p>}{error && <p role="alert" className="text-[12px] text-danger">{error}</p>}
     {snapshot?.connections.length === 0 && <p className="text-[13px] text-ink-secondary">No additional model connections yet. Existing default keys are managed below.</p>}
     {!flux && snapshot?.connections.filter(connection => connection.preset === "flux").map(connection => <p key={connection.id} className="text-[12px] text-ink-secondary">Saved Flux connection: {connection.label}. Refresh connections to manage it in the Flux Router card.</p>)}
+    </Part>
+    <Part id="models.providers">
+    {notice && <p className="text-[12px] text-success">{notice}</p>}{error && <p className="text-[12px] text-danger">{error}</p>}
     {snapshot?.connections.filter(connection => connection.preset !== "flux").map(connection => {
       const models = chatModels(connection), matching = models.filter(model => !search || `${model.label} ${model.id} ${connection.label} ${labels[connection.preset]}`.toLowerCase().includes(search));
       return <section key={connection.id} aria-label={`${connection.label} connection`} className="min-w-0 rounded-xl border border-hairline/40 p-4">
@@ -213,16 +219,19 @@ export function ModelsSettings() {
         <div className="mt-3 flex flex-wrap gap-2"><button type="button" className={button} disabled={Boolean(busy)} onClick={() => void refresh(connection.id)}>Refresh models for {connection.label}</button>{connection.legacy ? <a href="#existing-model-keys" className={`flex min-h-11 items-center rounded-lg px-3 text-[12px] text-accent ${focus}`}>Manage existing key below</a> : connection.signIn ? <a href="#signin-heading" className={`flex min-h-11 items-center rounded-lg px-3 text-[12px] text-accent ${focus}`}>{t("modelSignIn.rowManage")}</a> : <><button type="button" className={button} disabled={Boolean(busy)} onClick={() => setEditing(connection.id)}>Rename {connection.label}</button><button type="button" className={button} disabled={Boolean(busy)} onClick={() => setRemoving({ id: connection.id, label: connection.label, revision: connection.revision })}>Remove {connection.label}</button></>}</div>
         {editing === connection.id && <form className="mt-3 flex flex-wrap gap-2" onSubmit={event => { event.preventDefault(); const value = rename.current?.value.trim(); if (value) void changeConnection({ action: "update", id: connection.id, revision: connection.revision, label: value }); }}><input ref={rename} aria-label={`New name for ${connection.label}`} defaultValue={connection.label} maxLength={80} className={`${input} flex-1`} disabled={Boolean(busy)} /><button className={button} disabled={Boolean(busy)}>Save name</button><button type="button" className={button} onClick={() => setEditing(null)}>Cancel rename</button></form>}
         {removing?.id === connection.id && <div className="mt-3 rounded-lg bg-card p-3 text-[12px]"><p>Remove {removing.label}? Its saved key will be removed. Bots using it will need another connection.</p><div className="mt-2 flex flex-wrap gap-2"><button type="button" className={button} disabled={Boolean(busy)} onClick={() => void changeConnection({ action: "remove", id: removing.id, revision: removing.revision })}>Remove saved connection</button><button type="button" className={button} onClick={() => setRemoving(null)}>Cancel removal</button></div></div>}
-        <InAdvanced><section aria-label={`${connection.label} models`} className="rounded-xl bg-card p-4"><h4 className="text-[14px] font-medium text-ink">{connection.label}: {matching.length} matching chat models</h4><div className="mt-2 max-h-80 overflow-y-auto">{matching.map(model => <div key={model.id} className="border-t border-hairline/30 py-3"><p className="break-words text-[13px]">{model.label}</p><p className="break-all text-[11px] text-ink-secondary">{model.id}</p><p className="mt-1 text-[11px] text-ink-secondary">{model.contextWindow ? `${model.contextWindow.toLocaleString()} context tokens` : "Context not listed"}{model.capabilities.tools ? " · Tools" : ""}{model.capabilities.vision ? " · Image input" : ""}</p></div>)}</div></section></InAdvanced>
+        <InAdvanced part="models.catalogs"><section aria-label={`${connection.label} models`} className="rounded-xl bg-card p-4"><h4 className="text-[14px] font-medium text-ink">{connection.label}: {matching.length} matching chat models</h4><div className="mt-2 max-h-80 overflow-y-auto">{matching.map(model => <div key={model.id} className="border-t border-hairline/30 py-3"><p className="break-words text-[13px]">{model.label}</p><p className="break-all text-[11px] text-ink-secondary">{model.id}</p><p className="mt-1 text-[11px] text-ink-secondary">{model.contextWindow ? `${model.contextWindow.toLocaleString()} context tokens` : "Context not listed"}{model.capabilities.tools ? " · Tools" : ""}{model.capabilities.vision ? " · Image input" : ""}</p></div>)}</div></section></InAdvanced>
         <p className="mt-2 text-[11px] leading-relaxed text-ink-secondary">Catalog information is not a successful model test. Image and video models are excluded from this chat list.</p>
       </section>;
     })}
+    </Part>
     {/* Spec V1: permanent, never conditional on anything having been detected. */}
-    <InAdvanced><LocalModelsSettings /></InAdvanced>
-    <section id="existing-model-keys" aria-labelledby="existing-keys-heading" className="rounded-xl border border-hairline/40 p-4">
-      <h3 id="existing-keys-heading" className="text-[14px] font-medium">Existing/default connections</h3><p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">These update the keys already used by existing setups. No keys are copied into new connections. Saving can reload engines and interrupt running tasks.</p>
+    <InAdvanced part="models.local-servers"><LocalModelsSettings /></InAdvanced>
+    <Part id="models.existing-keys">
+    <section id="existing-model-keys" aria-labelledby="existing-keys-title" className="rounded-xl border border-hairline/40 p-4">
+      <h3 id="existing-keys-title" className="text-[14px] font-medium">Existing/default connections</h3><p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">These update the keys already used by existing setups. No keys are copied into new connections. Saving can reload engines and interrupt running tasks.</p>
       <ExistingKey settingControl="existing-keys-heading" id="opencode" label="OpenCode provider" configured={state.config?.opencodeGo?.configured ?? false} onSaved={existingSaved} />
       {snapshot?.connections.filter(connection => connection.legacy && ["legacy-openai-image", "legacy-xai", "legacy-openai-compatible"].includes(connection.id)).map(connection => <ExistingKey key={connection.id} id={connection.id} label={connection.label} configured={connection.configured} onSaved={existingSaved} />)}
     </section>
+    </Part>
   </div>;
 }

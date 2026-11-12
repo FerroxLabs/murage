@@ -24,6 +24,8 @@
 // window lasts until the last mark is written. Writes and slices are serialised by the single writer, so inheritance at write
 // (revoke-commit.ts inheritMarks) and the walk never both miss an edge.
 import type { DatabaseSync, StatementSync } from "node:sqlite";
+import { optionalIndexReady } from "./optional-index.ts";
+import { SEEDING_FOLD_SQL, ACTIVE_FLOW_SQL } from "./settle-queries.ts";
 import { currentLsn } from "./lineage-write.ts";
 import { threadIdOf, threadNo } from "./thread-no.ts";
 import { FLIP_DRAIN_MAX, receiptStart } from "./receipt-outputs.ts";
@@ -836,7 +838,7 @@ function pruneFinished(db: DatabaseSync): void {
  * of its flow phase (its '*' rows already gone, its phase 'mark') so the next job's flow runs next. */
 /** `coverOnly` (DRAIN-104 2.6, the others' slice): only covered pops, point passes, hold waits and tidy pages run; a pop whose head is
  * uncovered ends the slice before its handler runs ("wait"), so no audience job walks the store a second time while the walker does. */
-function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild | null, flowOnly = false, coverOnly = false): Step {
+function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild | null, flowOnly = false, coverOnly = false, prune = true): Step {
   const audience = job.state === "active" && isAudience(db, job.revoke_id);
   const coverable = audience || (job.state === "active" && isDeletionJob(job));
   const ctx: CoverCtx | null = coverable && REVOKE_COVER.enabled ? { job: job.revoke_id, cap: walkCap(job), coverOnly, content: !audience, valid: new Map() } : null;
@@ -902,10 +904,10 @@ function advance(db: DatabaseSync, job: JobRow, budget: Budget, late: LateBuild 
           st(db, `DELETE FROM memory_revoke_reached WHERE revoke_id=${WALKER_REVOKE}`).run();
         }
         noteDeletionDone(db, job);
-        job.phase = "done"; job.state = "done"; c = {}; bumpDenyGeneration(db); save(); pruneFinished(db); return "progress";
+        job.phase = "done"; job.state = "done"; c = {}; bumpDenyGeneration(db); save(); if (prune) pruneFinished(db); return "progress";
       }
     } else if (job.phase === "undo") {
-      if (undoStep(db, job, budget)) { job.phase = "done"; job.state = "undone"; c = {}; bumpDenyGeneration(db); save(); pruneFinished(db); return "progress"; }
+      if (undoStep(db, job, budget)) { job.phase = "done"; job.state = "undone"; c = {}; bumpDenyGeneration(db); save(); if (prune) pruneFinished(db); return "progress"; }
     } else { job.state = job.state === "undoing" ? "undone" : "done"; save(); return "progress"; }
     progressed = true;
     } finally { if (countWork) noteUpgradeWork(db, job, Math.max(0, rowsBefore - budget.rows)); }
@@ -941,6 +943,10 @@ export function setFlipDrain(drain: (db: DatabaseSync, limit: number, fits: (cos
 export function headFlipCost(db: DatabaseSync): number {
   try { return hasWritetime(db) ? Math.max(headFlipCostOf ? headFlipCostOf(db) : 0, foldHooks ? foldHooks.need(db) : 0) : 0; } catch { return 0; }
 }
+/** Receipt flips alone: unrelated fold work must not size targeted settlement. */
+export function receiptFlipCost(db: DatabaseSync): number {
+  try { return hasWritetime(db) && headFlipCostOf ? headFlipCostOf(db) : 0; } catch { return 0; }
+}
 /** One fold slice's view of the marker's budget (revoke-fold.ts). */
 export type FoldBudget = { rows: () => number; spend: (n: number) => void; exhausted: () => boolean; fits: (cost: number, first: boolean) => boolean };
 /** The revoke fold (revoke-fold.ts, 1.0.3 REVOKE-FOLD-DESIGN): `slice` moves a seeding fold bulk or opens one (null: no fold work this
@@ -949,21 +955,37 @@ export type FoldHooks = { slice: (db: DatabaseSync, budget: FoldBudget) => boole
 // eslint-disable-next-line no-var
 var foldHooks: FoldHooks | undefined;
 export function setFoldHooks(hooks: FoldHooks): void { foldHooks = hooks; }
-const flipQueued = (db: DatabaseSync) => Boolean(st(db, "SELECT 1 FROM memory_receipt_flips LIMIT 1").get());
+// The full integer-key range makes even this LIMIT 1 lookup a seek.
+const flipQueued = (db: DatabaseSync) => Boolean(st(db, "SELECT 1 FROM memory_receipt_flips WHERE thread_no>=-9223372036854775808 LIMIT 1").get());
 /** Changes a write-capped slice may run past its cap: more than one marker step writes (a step reads at most MARKER_SLICE_ROWS / 4 rows).
  * revoke-budget.ts holds it back from every slice's cap, so the minute's writes stay inside the budget. The first flip of a drain may use
  * it too (its whole cost is then at most the minute's room; no flip costs more than a whole minute: revoke-commit.ts receiptHoldPlan). */
 export const MARKER_STEP_RESERVE = 512;
 /** Options of one capped slice. `only`: an owner's inline walk (revoke-commit.ts markInline) moves only its own revoke and never drains
  * the queued flips (unrelated backlog the runner carries). */
-export type MarkerSliceOptions = { only?: number };
+export type MarkerSliceOptions = { only?: number; flipsOnly?: true; flowsOnly?: true };
+export type BlockedCause = "flip-queued" | "flip-room" | "fold-seeding" | "fold-room";
+export type MarkerSliceOutcome =
+  | { outcome: "progress" | "idle" }
+  | { outcome: "blocked"; cause: BlockedCause };
 /** One marker slice. `maxChanges` (1.0.3 revoke storm, M3): the most rows the slice may change, every write counted (marks, frontier
  * enqueues, visits, pending, hold and job rows; SQLite's total_changes(), which counts trigger writes too). It is checked between steps, so a
  * slice ends within one step of it (revoke-budget.ts holds the per-minute budget this comes from). "blocked": a receipt flip waits and the
  * cap had no room to commit it, so nothing moved (no revoke advances while a flip waits: see runMarkerSlice). */
 export function markerSlice(db: DatabaseSync, rows: number = MARKER_SLICE_ROWS, ms: number = Number.POSITIVE_INFINITY, late: LateBuild | null = null, maxChanges: number = Number.POSITIVE_INFINITY, opts: MarkerSliceOptions = {}): boolean | "blocked" {
+  const result = detailedSlice(db, rows, ms, late, maxChanges, opts, true);
+  // The old inline API hid queued flips as idle, and its callers still depend on that return.
+  return result.outcome === "blocked" ? (opts.only !== undefined && result.cause === "flip-queued" ? false : "blocked") : result.outcome === "progress";
+}
+/** The marker's own outcome, independent of changed rows or any reader's clearance. */
+export function markerSliceDetailed(db: DatabaseSync, rows: number = MARKER_SLICE_ROWS, ms: number = Number.POSITIVE_INFINITY, late: LateBuild | null = null, maxChanges: number = Number.POSITIVE_INFINITY, opts: MarkerSliceOptions = {}): MarkerSliceOutcome {
+  return detailedSlice(db, rows, ms, late, maxChanges, opts, opts.only === undefined);
+}
+/** Targeted completion leaves finished-job pruning to the runner. The legacy wrapper keeps its existing cleanup. */
+function detailedSlice(db: DatabaseSync, rows: number, ms: number, late: LateBuild | null, maxChanges: number, opts: MarkerSliceOptions, prune: boolean): MarkerSliceOutcome {
+  if (Number(opts.only !== undefined) + Number(Boolean(opts.flipsOnly)) + Number(Boolean(opts.flowsOnly)) > 1) throw new Error("MEMORY_MARKER_TARGET_CONFLICT");
   const before = upgradeWork.get(db) ?? 0;
-  const moved = runMarkerSlice(db, rows, ms, late, maxChanges, opts);
+  const moved = runMarkerSlice(db, rows, ms, late, maxChanges, opts, prune);
   const worked = (upgradeWork.get(db) ?? 0) - before;
   // The count lives in the certificate's cursor JSON. A ready certificate's empty default cursor becomes '{...}' (the backfill no longer reads
   // it); an unstarted backfill's empty cursor is left alone, because the backfill reads any non-empty cursor as its own position.
@@ -971,8 +993,8 @@ export function markerSlice(db: DatabaseSync, rows: number = MARKER_SLICE_ROWS, 
     '$.markerWork',CASE WHEN json_valid(cursor) THEN coalesce(json_extract(cursor,'$.markerWork'),0) ELSE 0 END + ?) WHERE id=1 AND (json_valid(cursor) OR ready=1)`).run(worked);
   return moved;
 }
-function runMarkerSlice(db: DatabaseSync, rows: number, ms: number, late: LateBuild | null, maxChanges: number, opts: MarkerSliceOptions): boolean | "blocked" {
-  if (!hasWritetime(db)) return false;
+function runMarkerSlice(db: DatabaseSync, rows: number, ms: number, late: LateBuild | null, maxChanges: number, opts: MarkerSliceOptions, prune: boolean): MarkerSliceOutcome {
+  if (!hasWritetime(db)) return { outcome: "idle" };
   // the slice's deadline and write cap hold from its start, the flip drain included
   const capped = Number.isFinite(maxChanges), start = capped ? totalChanges(db) : 0;
   const over = capped ? () => totalChanges(db) - start >= maxChanges : undefined;
@@ -981,14 +1003,17 @@ function runMarkerSlice(db: DatabaseSync, rows: number, ms: number, late: LateBu
   // holdRevokedReceipt). Until then a content forget walking the items it cites would find neither, so NO revoke advances while a flip
   // waits: the flips are drained first, and a slice that cannot drain one moves nothing ("blocked"; the runner waits for room).
   if (flipQueued(db)) {
-    if (opts.only !== undefined || !drainFlips) return false; // an owner's inline walk never drains the backlog; the runner does
+    if (opts.only !== undefined || opts.flowsOnly) return { outcome: "blocked", cause: "flip-queued" };
+    if (!drainFlips) return opts.flipsOnly ? { outcome: "blocked", cause: "flip-room" } : { outcome: "idle" };
     // a flip is committed only when its whole cost fits the cap and the deadline; the first of a drain may use the step reserve
     const fits = (cost: number, first: boolean) => {
       if (!first && performance.now() >= budget.deadline) return false;
       return !capped || totalChanges(db) - start + cost <= maxChanges + (first ? MARKER_STEP_RESERVE : 0);
     };
-    return drainFlips(db, FLIP_DRAIN_MAX, fits) > 0 ? true : "blocked";
+    return drainFlips(db, FLIP_DRAIN_MAX, fits) > 0 ? { outcome: "progress" } : { outcome: "blocked", cause: "flip-room" };
   }
+  if (opts.flipsOnly) return { outcome: "idle" };
+  if (opts.flowsOnly && st(db, SEEDING_FOLD_SQL).get()) return { outcome: "blocked", cause: "fold-seeding" };
   // Every pending job's flow phase runs before any job marks (1.0.3 revoke drain, F3). A flow phase is the cheap narrowing of the job's own
   // windows: from a '*' pending row over every thread and scope to one row per thread or scope its root can reach (its end is where the
   // design drops the '*' rows: the module header, "the flow phase ends the '*' pending rows at once"). Only the order across jobs changes,
@@ -999,26 +1024,33 @@ function runMarkerSlice(db: DatabaseSync, rows: number, ms: number, late: LateBu
   // The revoke fold (1.0.3 REVOKE-FOLD-DESIGN F1.1): after the flips, before any job's flow or marks. A seeding fold bulk takes the marker's
   // turn (no slice advances a member while its rows are copied); at listen, and in the runner when two or more flow-phase bulks wait, the
   // cohorts are tested and one is folded per slice. An owner's inline walk never folds.
-  if (opts.only === undefined && foldHooks) {
+  if (opts.only === undefined && !opts.flowsOnly && foldHooks) {
     const folded = foldHooks.slice(db, {
       rows: () => budget.rows, spend: n => spend(budget, n), exhausted: () => exhausted(budget),
       // a step's whole cost must fit the cap; the slice's first step may use the step reserve (as the first flip of a drain does)
       fits: (cost, firstStep) => !capped || totalChanges(db) - start + cost <= maxChanges + (firstStep ? MARKER_STEP_RESERVE : 0),
     });
-    if (folded !== null) return folded;
+    if (folded !== null) return folded === "blocked" ? { outcome: "blocked", cause: "fold-room" } : { outcome: folded ? "progress" : "idle" };
+  }
+  // The settle caller must validate this oldest job in the same transaction (C12). A tick must return before selecting another job,
+  // whose eligibility has not been checked, even when there is room left after the selected flow phase finishes.
+  if (opts.flowsOnly) {
+    const id = st(db, ACTIVE_FLOW_SQL).get()?.revoke_id;
+    const flow = id === undefined ? undefined : st(db, ACTIVE_JOB_ONE).get(id) as JobRow | undefined;
+    return { outcome: flow && advance(db, { ...flow, revoke_id: Number(flow.revoke_id) }, budget, late, true) === "progress" ? "progress" : "idle" };
   }
   if (opts.only === undefined) {
     for (let flow = st(db, FLOW_JOB).get() as JobRow | undefined; flow; flow = st(db, FLOW_JOB).get() as JobRow | undefined) {
       advance(db, { ...flow, revoke_id: Number(flow.revoke_id) } as JobRow, budget, late, true);
-      if (exhausted(budget)) return true;
+      if (exhausted(budget)) return { outcome: "progress" };
     }
   }
-  if (opts.only === undefined && REVOKE_COVER.enabled) return walkerSlice(db, budget, late);
+  if (opts.only === undefined && REVOKE_COVER.enabled) return { outcome: walkerSlice(db, budget, late) ? "progress" : "idle" };
   for (const row of st(db, opts.only === undefined ? ACTIVE_JOBS : ACTIVE_JOB_ONE).all(...(opts.only === undefined ? [] : [opts.only])) as JobRow[]) {
     const job = { ...row, revoke_id: Number(row.revoke_id) } as JobRow;
-    if (advance(db, job, budget, late) === "progress") return true;
+    if (advance(db, job, budget, late, false, false, prune) === "progress") return { outcome: "progress" };
   }
-  return false;
+  return { outcome: "idle" };
 }
 
 // ---- the walker (DRAIN-104 2.6): after the flips, the fold and every flow phase. Undoing jobs first, oldest first; then content jobs in
@@ -1036,13 +1068,23 @@ const walkerRank = (db: DatabaseSync, job: JobRow): [number, number] => [isAudie
 const outranks = (a: [number, number], b: [number, number]) => a[0] > b[0] || (a[0] === b[0] && a[1] > b[1]);
 /** The walker: the persisted id when it names an active coverable job in phase mark, hold or tidy that no coverable job in mark outranks;
  * else the active coverable job in phase mark of the highest rank, persisted as the reserved reached row (WALKER_REVOKE, 'walker'). */
+const WALKER_CANDIDATES = 64;
 function walkerJob(db: DatabaseSync): JobRow | undefined {
   const held = st(db, `SELECT from_lsn AS j FROM memory_revoke_reached WHERE revoke_id=${WALKER_REVOKE} AND thread_id='walker'`).get()?.j;
   const heldRow = held !== undefined && held !== null ? st(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE revoke_id=? AND state='active' AND phase IN ('mark','hold','tidy') AND ${coverableIn()}`).get(Number(held)) : undefined;
+  // Missing index never triggers a foreground scan. walkerSlice permits an
+  // ordinary bounded walk when no held walker can provide cover.
+  if (!optionalIndexReady(db, "memory_revoke_jobs_mark_cap")) return heldRow ? asJob(heldRow) : undefined;
   let best: JobRow | undefined, bestRank: [number, number] = [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY];
-  for (const row of st(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE state='active' AND phase='mark' AND ${coverableIn()} ORDER BY revoke_id`).all()) {
-    const job = asJob(row), rank = walkerRank(db, job);
-    if (outranks(rank, bestRank)) { best = job; bestRank = rank; }
+  // LIMIT applies to raw jobs BEFORE eligibility filtering or audience probes.
+  // Overflow chooses the best seen: cover, never selection optimality, proves a skip.
+  const rows = st(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs INDEXED BY memory_revoke_jobs_mark_cap WHERE state='active' AND phase='mark' ORDER BY started_lsn DESC,revoke_id ASC LIMIT ${WALKER_CANDIDATES}`).all();
+  for (const row of rows) {
+    const job = asJob(row);
+    const audience = isAudience(db, job.revoke_id);
+    if (!audience && !isDeletionJob(job)) continue;
+    const rank: [number, number] = [audience ? 0 : 1, walkCap(job)];
+    if (outranks(rank, bestRank) || (rank[0] === bestRank[0] && rank[1] === bestRank[1] && job.revoke_id < best!.revoke_id)) { best = job; bestRank = rank; }
   }
   // sticky only while no coverable job in mark outranks it: a higher rank covers the held walker's work, so it walks instead (1.0.3 drain reopen)
   if (heldRow) { const job = asJob(heldRow); if (!best || !outranks(bestRank, walkerRank(db, job))) return job; }
@@ -1051,12 +1093,13 @@ function walkerJob(db: DatabaseSync): JobRow | undefined {
   return best;
 }
 /** Round robin over `sql`'s jobs (revoke_id order): the first with revoke_id > last, wrapping, that progresses. */
-function roundRobin(db: DatabaseSync, sql: string, args: unknown[], last: () => number, set: (id: number) => void, serve: (job: JobRow) => Step): boolean {
+function roundRobin(db: DatabaseSync, sql: string, args: unknown[], last: () => number, set: (id: number) => void, serve: (job: JobRow) => Step, eligible: (job: JobRow) => boolean = () => true): boolean {
   const after = st(db, `${sql} AND revoke_id>? ORDER BY revoke_id LIMIT 16`).all(...args as never[], last());
   const wrap = after.length < 16 ? st(db, `${sql} AND revoke_id<=? ORDER BY revoke_id LIMIT ?`).all(...args as never[], last(), 16 - after.length) : [];
   for (const row of [...after, ...wrap]) {
     const job = asJob(row);
-    set(job.revoke_id); // advanced before it is served
+    set(job.revoke_id); // advanced for every raw candidate, including the other class
+    if (!eligible(job)) continue;
     if (serve(job) === "progress") return true;
   }
   return false;
@@ -1073,18 +1116,28 @@ function walkerSlice(db: DatabaseSync, budget: Budget, late: LateBuild | null): 
   rot.audienceTurn = !rot.audienceTurn;
   if (audienceFirst) rot.parity = !rot.parity;
   const walker = walkerJob(db);
-  const content = () => roundRobin(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE state='active' AND NOT ${coverableIn()}`, [],
-    () => rot!.lastContent, id => { rot!.lastContent = id; }, job => { note(job, "content"); return advance(db, job, budget, late); });
+  if (!optionalIndexReady(db, "memory_revoke_jobs_mark_cap")) {
+    if (walker) { note(walker, "walker"); if (advance(db, walker, budget, late) === "progress") return true; }
+    // Ordinary round robin considers every active job: no audience/coverability
+    // predicate can scan an arbitrarily long ineligible active prefix first.
+    return roundRobin(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE state='active' AND revoke_id<>?`, [walker?.revoke_id ?? 0],
+      () => rot!.lastOther, id => { rot!.lastOther = id; }, job => {
+        note(job, isAudience(db, job.revoke_id) || isDeletionJob(job) ? "others" : "content");
+        return advance(db, job, budget, late);
+      });
+  }
+  const content = () => roundRobin(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE state='active'`, [],
+    () => rot!.lastContent, id => { rot!.lastContent = id; }, job => { note(job, "content"); return advance(db, job, budget, late); }, job => !isAudience(db, job.revoke_id) && !isDeletionJob(job));
   // a walker in hold returning "wait" is passed over for this slice and stays the walker
   const walk = () => { if (!walker) return false; note(walker, "walker"); return advance(db, walker, budget, late) === "progress"; };
-  const others = () => roundRobin(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE state='active' AND ${coverableIn()} AND revoke_id<>?`, [walker?.revoke_id ?? 0],
-    () => rot!.lastOther, id => { rot!.lastOther = id; }, job => { note(job, "others"); return advance(db, job, budget, late, false, true); });
+  const others = () => roundRobin(db, `SELECT ${JOB_COLS} FROM memory_revoke_jobs WHERE state='active' AND revoke_id<>?`, [walker?.revoke_id ?? 0],
+    () => rot!.lastOther, id => { rot!.lastOther = id; }, job => { note(job, "others"); return advance(db, job, budget, late, false, walker !== undefined); }, job => isAudience(db, job.revoke_id) || isDeletionJob(job));
   const audience = walkerFirst ? [walk, others] : [others, walk];
   for (const take of audienceFirst ? [...audience, content] : [content, ...audience]) if (take()) return true;
   return false;
 }
 /** Whether any revoke still has work (a start-up VACUUM and the idle wait both wait for it). */
 export function markerWorkPending(db: DatabaseSync): boolean {
-  try { return hasWritetime(db) && (Boolean(st(db, "SELECT 1 FROM memory_revoke_jobs WHERE state IN ('active','undoing') LIMIT 1").get()) || Boolean(st(db, "SELECT 1 FROM memory_receipt_flips LIMIT 1").get()) || Boolean(foldHooks?.pending(db))); }
+  try { return hasWritetime(db) && (Boolean(st(db, "SELECT 1 FROM memory_revoke_jobs WHERE state IN ('active','undoing') LIMIT 1").get()) || Boolean(st(db, "SELECT 1 FROM memory_receipt_flips WHERE thread_no>=-9223372036854775808 LIMIT 1").get()) || Boolean(foldHooks?.pending(db))); }
   catch { return false; }
 }

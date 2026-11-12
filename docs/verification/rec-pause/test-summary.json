@@ -1,0 +1,28 @@
+{
+  "numTotalTests": 348,
+  "numPassedTests": 343,
+  "numFailedTests": 5,
+  "numPendingTests": 0,
+  "failures": [
+    {
+      "file": "generate-locale.test.mjs",
+      "test": "locale draft validation accepts every shipped catalog"
+    },
+    {
+      "file": "generate-locale.test.mjs",
+      "test": "D24 catalog and hashes include the English fragment actually shipped to the renderer"
+    },
+    {
+      "file": "copy-final.test.ts",
+      "test": "copy final lint (blocking, all 8 languages, main and Help) section 2: every review record and ledger entry is valid (and complete once LEDGER_REQUIRED)"
+    },
+    {
+      "file": "copy-final.test.ts",
+      "test": "copy final lint (blocking, all 8 languages, main and Help) section 2: the records alone give a valid ledger, so a reviewed.json merge conflict can always be rebuilt"
+    },
+    {
+      "file": "copy-final.test.ts",
+      "test": "copy final lint (blocking, all 8 languages, main and Help) section 4: the ledger is required and pins every lint file"
+    }
+  ]
+}

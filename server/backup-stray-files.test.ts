@@ -17,7 +17,7 @@ import { withOfflineInstallation } from "./installation-database-snapshot.ts";
 import { stageInstallationStateWhileOwned } from "./installation-state-snapshot.ts";
 import { inventoryFidelity } from "./installation-fidelity-snapshot.ts";
 import { writeEncryptedInstallationBackup, restoreEncryptedInstallationNew } from "./installation-encrypted-backup.ts";
-import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
+import { backupFixture, testAgeKeys, optionalBackupAgeUnavailable } from "./testing/backup-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 import { backupSkippedLines } from "../shared/backup-skipped.mjs";
 
@@ -82,7 +82,7 @@ it("a name that is not an exact inventory row never reaches stored files, covera
   } finally { f.db.close(); removeTempDirSync(f.parent); }
 });
 
-it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("an encrypted backup with stray names completes, and its restore never writes one back", async () => {
+it.skipIf(optionalBackupAgeUnavailable())("an encrypted backup with stray names completes, and its restore never writes one back", async () => {
   const f = backupFixture(), keys = testAgeKeys();
   try {
     plant(f.data);

@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "int1019 base backlog round 2 (Sonnet fixes)",
+  "date": "2026-11-11",
+  "base": "9955459fc",
+  "scope": "int1019-base-backlog-r2-ja-zh",
+  "strings": {
+    "ja:gatewayBusy.repeated.title": {
+      "text": "{engine}がこのリクエストを繰り返し断っています。メッセージは保存されています。",
+      "en": "{engine} keeps rejecting this request. Your message is saved. Try again or use another AI.",
+      "verdict": "fail",
+      "note": "Missing the next step. Fix: {engine}がこのリクエストを繰り返し断っています。メッセージは保存されています。もう一度試すか、別のAIを使ってください。"
+    },
+    "ja:gatewayBusy.tryAgain": {
+      "text": "もう一度試す",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "ja:gatewayBusy.useAnotherAI": {
+      "text": "別のAIを使う",
+      "en": "Use another AI",
+      "verdict": "pass"
+    },
+    "ja:gatewayBusy.getHelp": {
+      "text": "ヘルプを見る",
+      "en": "Get help",
+      "verdict": "pass"
+    },
+    "ja:engine.toolLimit.notice": {
+      "text": "このリクエストでは一部のツールが省略されました。このAIが受け付けるツールは最大{limit}個です。",
+      "en": "Some tools were left out for this request: this AI accepts at most {limit} tools.",
+      "verdict": "pass"
+    },
+    "ja:engine.toolLimit.catalogUnknown": {
+      "text": "MurageはこのAIのツール一覧を確認できませんでした。使えるツール数を確認できなかったため、メッセージは送信されませんでした。",
+      "en": "Murage could not confirm this AI's tool list. Your message was not sent because Murage could not check how many tools this AI can accept. Choose another AI and try again.",
+      "verdict": "fail",
+      "note": "Missing the instruction to choose another AI and retry. Fix: MurageはこのAIのツール一覧を確認できませんでした。このAIが受け付けられるツール数をMurageが確認できなかったため、メッセージは送信されませんでした。別のAIを選んで、もう一度試してください。"
+    },
+    "ja:engine.toolLimit.catalogChanged": {
+      "text": "Murageがリクエストを準備している間にツール一覧が変更されました。MurageはこのAIのツール数の上限内に収めることができませんでした。別のAIを選んで、もう一度お試しください。",
+      "en": "The tool list changed while Murage was preparing your request. Murage could not fit the list within this AI's tool limit. Choose another AI and try again.",
+      "verdict": "pass"
+    },
+    "ja:engine.submission.afterSubmission": {
+      "text": "元のメッセージは送信されました。送信前の確認に通らなかったため、Murageは再送信できませんでした。自動的には再送信されていません。もう一度試す前に、会話を確認してください。",
+      "en": "Your original message was sent. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "pass"
+    },
+    "ja:engine.submission.afterSubmissionUncertain": {
+      "text": "Murageが前のメッセージの送信を始めた可能性があります。送信前の確認に通らなかったため、Murageは再送信できませんでした。自動的には再送信されていません。もう一度試す前に、会話を確認してください。",
+      "en": "Murage may have started sending your earlier message. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "pass"
+    },
+    "ja:acp.defaultThinking": {
+      "text": "AIの既定の設定",
+      "en": "AI's default setting",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.job.brief.sub": {
+      "text": "毎朝、まず対応が必要なことを1ページに短くまとめて渡します。カレンダーとメールは、接続したら使います。",
+      "en": "Each morning, I give you one short page of what needs your attention first. I use your calendar and email once you connect them.",
+      "verdict": "pass"
+    },
+    "ja:ux.cloud.firstRun.job.day.sub": {
+      "text": "今日やることを1行に1つずつ入力してください。どれが遅れるか、何から始めればよいかを伝えます。",
+      "en": "Type in today's tasks, one per line. I tell you which task will run late and what to do first.",
+      "verdict": "pass"
+    },
+    "zh:gatewayBusy.repeated.title": {
+      "text": "{engine} 一直拒绝这个请求。你的消息已保留。",
+      "en": "{engine} keeps rejecting this request. Your message is saved. Try again or use another AI.",
+      "verdict": "fail",
+      "note": "Missing the next step. Fix: {engine} 一直拒绝这个请求。你的消息已保留。请重试或换一个 AI。"
+    },
+    "zh:gatewayBusy.tryAgain": {
+      "text": "重试",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "zh:gatewayBusy.useAnotherAI": {
+      "text": "换一个 AI",
+      "en": "Use another AI",
+      "verdict": "pass"
+    },
+    "zh:gatewayBusy.getHelp": {
+      "text": "获取帮助",
+      "en": "Get help",
+      "verdict": "pass"
+    },
+    "zh:engine.toolLimit.notice": {
+      "text": "本次请求省略了部分工具：此 AI 最多接受 {limit} 个工具。",
+      "en": "Some tools were left out for this request: this AI accepts at most {limit} tools.",
+      "verdict": "pass"
+    },
+    "zh:engine.toolLimit.catalogUnknown": {
+      "text": "Murage 无法确认此 AI 的工具列表。由于无法检查此 AI 能接受多少个工具，你的消息没有发送。请换一个 AI 再试。",
+      "en": "Murage could not confirm this AI's tool list. Your message was not sent because Murage could not check how many tools this AI can accept. Choose another AI and try again.",
+      "verdict": "pass"
+    },
+    "zh:engine.toolLimit.catalogChanged": {
+      "text": "Murage 准备你的请求时，工具列表发生了变化。Murage 无法将列表控制在此 AI 的工具数量限制内。请换一个 AI 再试。",
+      "en": "The tool list changed while Murage was preparing your request. Murage could not fit the list within this AI's tool limit. Choose another AI and try again.",
+      "verdict": "pass"
+    },
+    "zh:engine.submission.afterSubmission": {
+      "text": "你的原始消息已发送。由于发送前的检查未通过，Murage 无法再次发送。该消息没有自动重发。再次尝试前，请先查看对话。",
+      "en": "Your original message was sent. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "pass"
+    },
+    "zh:engine.submission.afterSubmissionUncertain": {
+      "text": "Murage 可能已经开始发送你的上一条消息。由于发送前的检查未通过，Murage 无法再次发送。该消息没有自动重发。再次尝试前，请先查看对话。",
+      "en": "Murage may have started sending your earlier message. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "pass"
+    },
+    "zh:acp.defaultThinking": {
+      "text": "AI 默认设置",
+      "en": "AI's default setting",
+      "verdict": "pass"
+    },
+    "zh:ux.cloud.firstRun.bookmarkDoor": {
+      "text": "把这个页面加入书签，方便你回来。你随时都可以通过 {site}/home/cloud 回来。",
+      "en": "Bookmark this page so you can come back. You can always return at {site}/home/cloud.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

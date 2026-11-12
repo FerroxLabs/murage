@@ -1,3 +1,4 @@
+import { REVOKE_MARK_CAP } from "./schema.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -64,7 +65,7 @@ class Store {
   }
   head(next = 5000): this { this.db.prepare("UPDATE memory_lsn SET next=max(next,?) WHERE id=1").run(next); return this; }
 }
-const store = () => { const fx = new WritetimeFixture(); fx.cert(true); return new Store(fx); };
+const store = () => { const fx = new WritetimeFixture(); fx.db.exec(REVOKE_MARK_CAP.sql); fx.cert(true); return new Store(fx); };
 
 function mulberry(seed: number) { let a = seed >>> 0; return () => { a = (a + 0x6d2b79f5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 /** A store of chats sharing memory: every carry's last line is a generated line whose turn began before every cap (the deletions come after

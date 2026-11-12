@@ -1,0 +1,50 @@
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/faults.test.ts > A5 M38 protected match wins before stored-source failure; reads run (M28)
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/faults.test.ts (18 tests) 4927ms
+   ✓ A5 M51 non-owner unlimited faults use frozen BASE callback  309ms
+   ✓ R16 M21 deny revision is rechecked immediately before RUN delivery  304ms
+   ✓ M23 reader throws: owner clean runs, guest retains BASE fault behavior  302ms
+stdout | server/decision/engine-action.test.ts > BASE engine builder receives frozen authority/verdict and binds grant keys and options once
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/engine-action.test.ts (11 tests) 2825ms
+   ✓ BASE engine builder receives frozen authority/verdict and binds grant keys and options once  305ms
+stdout | server/decision/exec-mode.test.ts > R1 Python evidence reaches real decision and sink: import shutil as s; s.rmtree('/')
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/exec-mode.test.ts (29 tests) 1342ms
+   ✓ R1 Python evidence reaches real decision and sink: import shutil as s; s.rmtree('/')  336ms
+   ✓ R1 Python evidence reaches real decision and sink: from shutil import rmtree as r; r('/')  318ms
+   ✓ R1 Python evidence reaches real decision and sink: __import__('shutil').rmtree('/')  319ms
+   ✓ R1 Python evidence reaches real decision and sink: import subprocess; subprocess.run(['rm','-rf','/'])  322ms
+stdout | server/decision/settle-faults.test.ts > R9 retained fault grid actor / owner-clean
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ✓ server/decision/settle-faults.test.ts (28 tests) 7985ms
+   ✓ R9 retained fault grid actor / owner-clean  350ms
+   ✓ R9 retained fault grid deny / owner-wipe  308ms
+   ✓ R9 retained fault grid shell / owner-wipe  330ms
+   ✓ R9 retained fault grid shell / guest-full  328ms
+   ✓ R9 retained fault grid base / guest-full  307ms
+   ✓ R9 retained fault grid guard / owner-wipe  393ms
+   ✓ R9 retained fault grid guard / guest-full  363ms
+   ✓ R9 retained fault grid row / owner-clean  311ms
+   ✓ R9 retained fault grid answer / owner-clean  314ms
+
+ Test Files  4 passed (4)
+      Tests  86 passed (86)
+   Start at  08:19:58
+   Duration  24.30s (transform 3.66s, setup 6.34s, import 447ms, tests 17.08s, environment 0ms)
+

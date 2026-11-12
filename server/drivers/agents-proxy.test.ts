@@ -58,6 +58,7 @@ let routinesResponse: unknown = {
   ],
 };
 let lastRoutineRequestBody: any = null;
+let routineRequestResponse: Record<string, unknown> | null = null;
 let lastOutcomeProposalBody: any = null;
 let lastSkillQuery = "";
 let lastSkillStageBody: any = null;
@@ -210,7 +211,7 @@ beforeAll(async () => {
       req.on("end", () => {
         lastRoutineRequestBody = JSON.parse(data);
         res.writeHead(201, { "content-type": "application/json" });
-        res.end(JSON.stringify({ requestId: "routine-request-1", summary: "Weekdays at 09:00 (Asia/Kolkata)" }));
+        res.end(JSON.stringify(routineRequestResponse ?? { requestId: "routine-request-1", summary: "Weekdays at 09:00 (Asia/Kolkata)" }));
       });
       return;
     }
@@ -299,6 +300,7 @@ beforeAll(async () => {
   stubPort = (stub.address() as { port: number }).port;
 
   child = spawn(process.execPath, [PROXY], {
+    windowsHide: true,
     env: {
       ...process.env,
       MURAGE_HARNESS_URL: `http://127.0.0.1:${stubPort}`,
@@ -348,6 +350,7 @@ describe("agents-proxy MCP surface", () => {
       "get_prompt_block",
       "save_reference_pack",
       "list_reference_packs",
+      "web_read",
       "web_search",
       "tool_result_read",
       "allow_for_task",
@@ -1063,6 +1066,18 @@ describe("agents-proxy MCP surface", () => {
     expect(res.result.content[0].text).toContain("has not been applied");
     expect(res.result.content[0].text).toContain("do not claim");
     expect(res.result.isError).toBeFalsy();
+  });
+
+  it("reports an applied No limits routine and its id without asking for a card", async () => {
+    routineRequestResponse = { autoApproved: true, approvalSource: "no-limits", action: "create", resultId: "routine-applied-42", summary: "Routine applied" };
+    try {
+      const result = await callTool("propose_routine", { name: "Applied routine", instructions: "Report status", schedule: { type: "interval", every_minutes: 60 } });
+      const text = result.result.content[0].text;
+      expect(text).toContain("under No limits");
+      expect(text).toContain("routine-applied-42");
+      expect(text).not.toContain("confirmation card");
+      expect(text).not.toContain("has not been applied");
+    } finally { routineRequestResponse = null; }
   });
 
   it("forwards for_bot_id when the routine is for another bot", async () => {

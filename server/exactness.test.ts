@@ -13,7 +13,8 @@ import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import { closeDatabase, database } from "./database.ts";
-import { Store, type Message } from "./store.ts";
+import type { Message } from "./store.ts";
+import { ApprovalFixtureStore as Store } from "./testing/approval-card-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });

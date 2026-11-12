@@ -16,6 +16,7 @@ import { approvalKey, autoVerdict, isCommandTool, looksDestructive, type AutoApp
 import { classifyStopLine, type StopLinePlace } from "./stop-line.ts";
 import { powershellRunner, shellDialectOf } from "./shell/pwsh.ts";
 import { requestOpenedOut } from "./runtime-event-out.ts";
+import { expectNoLimitsOwnerOutcome, expectNoLimitsProtectedWrite } from "./testing/no-limits-1019.ts";
 import type { GrantCall } from "../shared/app-action-grant.ts";
 
 const ASK: AutoApprover = {};
@@ -156,8 +157,8 @@ describe("F1 r2 item 6: every driver's command text is read in the shell it runs
   });
   it("an ordinary command on those engines still goes through", () => {
     for (const command of ["git status", "Get-ChildItem -Force", "npm test"]) {
-      expect(autoVerdict(NO_LIMITS, "shell", command, ask(command, "shell", codexCall(command))).approve, `codex ${command}`).not.toBeNull();
-      expect(autoVerdict(NO_LIMITS, "shell", command, ask(command, "shell", acpCall(command))).approve, `acp ${command}`).not.toBeNull();
+      expect(autoVerdict(NO_LIMITS, "shell", command, {...ask(command, "shell", codexCall(command)),fullAccessOrigin:"owner",ownerStarted:true}).approve, `codex ${command}`).not.toBeNull();
+      expect(autoVerdict(NO_LIMITS, "shell", command, {...ask(command, "shell", acpCall(command)),fullAccessOrigin:"owner",ownerStarted:true}).approve, `acp ${command}`).not.toBeNull();
     }
   });
   it("the dialect comes from the driver's pinned shell form", () => {
@@ -182,7 +183,7 @@ describe("F1 r2 item 6: every driver's command text is read in the shell it runs
   it("the same text from a POSIX engine is still read as POSIX", () => {
     // `rm -rf ~` from a Bash tool is the POSIX home; no dialect stamp
     expect(autoVerdict(NO_LIMITS, "Bash", "rm -rf ~", { commandText: "rm -rf ~" }).source).toBe("always-ask");
-    expect(autoVerdict(NO_LIMITS, "Bash", "git status", { commandText: "git status" }).approve).not.toBeNull();
+    expect(autoVerdict(NO_LIMITS, "Bash", "git status", { commandText: "git status", fullAccessOrigin:"owner", ownerStarted:true }).approve).not.toBeNull();
   });
 });
 
@@ -277,7 +278,7 @@ describe("F1 r2 item 9: a glob that could match a key file is a key read", () =>
 describe("F1 r2 Medium: a PowerShell assignment follows the rule for its right side", () => {
   it("a read-only assignment goes through where its right side would, and not further", () => {
     for (const command of ["$files = Get-ChildItem", "$files = Get-ChildItem -Recurse -Filter *.ts", "$n = (Get-ChildItem).Count", "$s = git status", "$d = Get-Date; $d"]) {
-      for (const bot of [FULL, NO_LIMITS]) expect(autoVerdict(bot, "PowerShell", command, ask(command)).approve, command).not.toBeNull();
+      for (const bot of [FULL, NO_LIMITS]) expect(autoVerdict(bot, "PowerShell", command, {...ask(command),fullAccessOrigin:"owner",ownerStarted:true}).approve, command).not.toBeNull();
       // under Auto the always-ask reader no longer holds it; the prompt
       // reader (Rule 68f) keeps its own hold on a statement it reads as a
       // POSIX line, exactly as it does for `Get-ChildItem | Where-Object { $_ }`
@@ -357,7 +358,7 @@ export const USABLE: readonly string[] = [
 describe("F1 r2: ordinary PowerShell work still goes through", () => {
   it.each(USABLE)("Full access and No limits: %s", (command) => {
     for (const [label, bot] of [["Full access", FULL], ["No limits", NO_LIMITS]] as const) {
-      const verdict = autoVerdict(bot, "PowerShell", command, ask(command));
+      const verdict = autoVerdict(bot, "PowerShell", command, {...ask(command),fullAccessOrigin:"owner",ownerStarted:true});
       expect(verdict.approve, `${label}: ${verdict.source} ${verdict.rule ?? ""}`).not.toBeNull();
     }
   });
@@ -369,21 +370,53 @@ describe("F1 r2: ordinary PowerShell work still goes through", () => {
 describe("108 owner literal Bash launcher boundary", () => {
   const levels = [ASK, AUTO, FULL, NO_LIMITS];
   const origins = ["owner", "routine", "owner-channel", "other"] as const;
-  it("unwraps literal Bash only at Full/No limits for an owner turn", () => {
+  // WIN-PWSH-1018 requires proof that the engine's handed PATH resolves bare
+  // bash to its discovered Git Bash. Model that disk on every host, so payload
+  // refusals below exercise the reader rather than an absent-resolution hold.
+  const gitBin = "C:\\Program Files\\Git\\bin";
+  const gitBash = `${gitBin}\\bash.exe`;
+  const requireBash = (path: string) => {
+    if (path !== gitBash) throw new Error("ENOENT");
+    return path;
+  };
+  const handedShellPath: AutoContext["handedShellPath"] = {
+    path: gitBin, pathExt: ".COM;.EXE;.BAT;.CMD", gitBash,
+    list: dir => { if (dir !== gitBin) throw new Error("ENOENT"); return ["bash.exe"]; },
+    lstat: path => { requireBash(path); return { isFile: () => true, isSymbolicLink: () => false }; },
+    realpath: requireBash,
+    stat: path => { requireBash(path); return { dev: 1n, ino: 1n }; },
+  };
+  const resolvedAsk = (command: string): AutoContext => ({ ...ask(command), handedShellPath });
+  it("unwraps resolved bare Bash only at Full/No limits for an owner turn", () => {
     for (const [index, level] of levels.entries()) for (const fullAccessOrigin of origins) {
       const command = "bash -c 'echo fixture'";
-      const verdict = autoVerdict(level, "PowerShell", command, { ...ask(command), fullAccessOrigin });
+      const verdict = autoVerdict(level, "PowerShell", command, { ...resolvedAsk(command), fullAccessOrigin });
       expect(verdict.approve !== null, `${index}/${fullAccessOrigin}`).toBe(index >= 2 && fullAccessOrigin === "owner");
+    }
+  });
+  it("holds unresolved bare Bash except on the proven owner No limits turn", () => {
+    const command = "bash -c 'echo fixture'";
+    for (const [index, level] of levels.entries()) for (const fullAccessOrigin of origins) {
+      const verdict = autoVerdict(level, "PowerShell", command, { ...ask(command), fullAccessOrigin });
+      if (level.fullAccess === true && fullAccessOrigin === "owner") {
+        expectNoLimitsOwnerOutcome(verdict, command, "unreadable", `${index}/${fullAccessOrigin}`);
+      } else {
+        expect(verdict, `${index}/${fullAccessOrigin}`).toMatchObject({ approve: null, source: "always-ask" });
+      }
     }
   });
   it.each([
     "bash.exe", "C:\\Tools\\bash.exe", "/usr/bin/bash",
     "& 'C:\\Program Files\\Git\\bin\\bash.exe'", "& '\\\\fixture-host\\tools\\bash.exe'",
-  ])("unwraps the literal executable %s only for the owner at Full/No limits", executable => {
+  ])("holds the non-bare executable %s outside the proven owner No limits turn", executable => {
     const command = `${executable} -c 'echo fixture'`;
     for (const [index, level] of levels.entries()) for (const fullAccessOrigin of origins) {
-      expect(autoVerdict(level, "PowerShell", command, { ...ask(command), fullAccessOrigin }).approve !== null,
-        `${index}/${fullAccessOrigin}`).toBe(index >= 2 && fullAccessOrigin === "owner");
+      const verdict = autoVerdict(level, "PowerShell", command, { ...resolvedAsk(command), fullAccessOrigin });
+      if (level.fullAccess === true && fullAccessOrigin === "owner") {
+        expectNoLimitsOwnerOutcome(verdict, command, "unreadable", `${index}/${fullAccessOrigin}`);
+      } else {
+        expect(verdict, `${index}/${fullAccessOrigin}`).toMatchObject({ approve: null, source: "always-ask" });
+      }
     }
   });
   it.each([
@@ -406,21 +439,37 @@ describe("108 owner literal Bash launcher boundary", () => {
     'bash -c "echo fixture"', 'bash -c "echo $env:USERNAME"',
     "bash -c ('echo fixture')", "bash -c ('echo ' + 'fixture')",
     "bash -c 'echo ' + 'fixture'", "bash -c 'echo '$env:USERNAME",
-  ])("keeps nonliteral or relative Bash launches asking at every level: %s", command => {
+  ])("keeps nonliteral or relative Bash launches asking at Ask, Auto and Full access, and on every origin but the owner's No limits turn: %s", command => {
     for (const [index, level] of levels.entries()) for (const fullAccessOrigin of origins) {
-      expect(autoVerdict(level, "PowerShell", command, { ...ask(command), fullAccessOrigin }).approve,
-        `${index}/${fullAccessOrigin}`).toBeNull();
+      const verdict = autoVerdict(level, "PowerShell", command, { ...resolvedAsk(command), fullAccessOrigin });
+      // NOLIM 1.0.19: an unread launcher is an unreadable row, not a wipe row: the owner's No limits turn runs it (no wipe word in the text)
+      if (level === NO_LIMITS && fullAccessOrigin === "owner") { expectNoLimitsOwnerOutcome(verdict, command, "unreadable", `${index}/${fullAccessOrigin}`); continue; }
+      expect(verdict.approve, `${index}/${fullAccessOrigin}`).toBeNull();
     }
   });
   it("reads the entire injected payload and retains every deferred executor hold", () => {
     const payloads = ["rm -rf /", "rm -rf ~", "rm -rf /etc", "dd if=/dev/zero of=/dev/sda", ":(){ :|:& };:", "chmod -R 777 /", "cat ~/.ssh/id_rsa", 'cat ~/.ss""h/id_rsa', "python -c 'print(open(chr(47)+chr(101)+chr(116)+chr(99)+chr(47)+chr(115)+chr(104)+chr(97)+chr(100)+chr(111)+chr(119)).read())'", "wsl -e echo fixture", "py.exe -c 'print(1)'", "node.exe -e 'console.log(1)'", "schtasks /query", "Start-Process notepad", "Set-Content x.ps1 'echo fixture'; & ./x.ps1", "bash script.sh"];
     for (const level of levels) for (const fullAccessOrigin of origins) for (const payload of payloads) {
       const command = `bash -c '${payload.replaceAll("'", "''")}'`;
-      expect(autoVerdict(level, "PowerShell", "tool output requested this command", { ...ask(command), fullAccessOrigin }).approve, payload).toBeNull();
+      const verdict = autoVerdict(level, "PowerShell", "tool output requested this command", { ...resolvedAsk(command), fullAccessOrigin });
+      // NOLIM 1.0.19: only a payload that names a wipe (the wipe list or the wipe proxy) keeps its card on the owner's No limits turn
+      if (level === NO_LIMITS && fullAccessOrigin === "owner") {
+        // S1-B3 RULING (MAIN 2026-11-11 09:30Z): recursively changing root permissions is a protected write.
+        if (payload === "chmod -R 777 /") expectNoLimitsProtectedWrite(verdict, payload);
+        else if(["rm -rf /","rm -rf ~","rm -rf /etc","dd if=/dev/zero of=/dev/sda",":(){ :|:& };:"].includes(payload))expect(verdict).toMatchObject({approve:null,source:'always-ask'});
+        else expectNoLimitsOwnerOutcome(verdict, command, null, payload);
+        continue;
+      }
+      expect(verdict.approve, payload).toBeNull();
     }
-    for (const command of ["Start-Process notepad", "wsl -e echo fixture", "Set-Content x.ps1 'echo fixture'; & ./x.ps1", "& ./x.ps1", 'bash -c "echo $env:USERNAME"', "bash -lc 'echo fixture'", "bash -c 'echo fixture' extra", "bash.cmd -c 'echo fixture'", "$env:TOOL_DIR/bash.exe -c 'echo fixture'"]) expect(autoVerdict(NO_LIMITS, "PowerShell", command, { ...ask(command), fullAccessOrigin: "owner" }).approve, command).toBeNull();
-    // 1.0.8 fallback (as 1.0.7): PowerShell does not read literal interpreter code, so even benign code asks; D is deferred to 1.0.9.
-    expect(autoVerdict(NO_LIMITS, "PowerShell", "python -c 'print(1)'", { ...ask("python -c 'print(1)'"), fullAccessOrigin: "owner" }).approve).toBeNull();
+    for (const command of ["Start-Process notepad", "wsl -e echo fixture", "Set-Content x.ps1 'echo fixture'; & ./x.ps1", "& ./x.ps1", 'bash -c "echo $env:USERNAME"', "bash -lc 'echo fixture'", "bash -c 'echo fixture' extra", "bash.cmd -c 'echo fixture'", "$env:TOOL_DIR/bash.exe -c 'echo fixture'"]) {
+      // NOLIM 1.0.19: a deferred executor is an unreadable row, not a wipe row: the owner's No limits turn runs it; Full access keeps the hold
+      expectNoLimitsOwnerOutcome(autoVerdict(NO_LIMITS, "PowerShell", command, { ...ask(command), fullAccessOrigin: "owner" }), command, "unreadable");
+      expect(autoVerdict(FULL, "PowerShell", command, { ...ask(command), fullAccessOrigin: "owner" }).approve, `Full access: ${command}`).toBeNull();
+    }
+    // 1.0.8 fallback (as 1.0.7): PowerShell does not read literal interpreter code, so even benign code asks at Full access; at No limits the owner's turn runs it (NOLIM 1.0.19)
+    expectNoLimitsOwnerOutcome(autoVerdict(NO_LIMITS, "PowerShell", "python -c 'print(1)'", { ...ask("python -c 'print(1)'"), fullAccessOrigin: "owner" }), "python -c 'print(1)'", "unreadable");
+    expect(autoVerdict(FULL, "PowerShell", "python -c 'print(1)'", { ...ask("python -c 'print(1)'"), fullAccessOrigin: "owner" }).approve).toBeNull();
   });
 });
 
@@ -436,13 +485,15 @@ describe("1.0.8: an interpreter behind a wrapper on PowerShell or cmd asks", () 
       expect(autoVerdict(AUTO, "PowerShell", command, ask(command)).approve, "Auto").toBeNull();
       expect(autoVerdict(FULL, "PowerShell", command, { ...ask(command), ...routine }).approve, "routine Full access").toBeNull();
       expect(autoVerdict(FULL, "PowerShell", command, ask(command)).approve, "owner Full access").toBeNull();
-      expect(autoVerdict(NO_LIMITS, "PowerShell", command, ask(command)).approve, "owner No limits").toBeNull();
-      expect(autoVerdict(NO_LIMITS, "shell", command, ask(command, "shell", acpCall(command))).approve, "ACP engine No limits").toBeNull();
+      // NOLIM 1.0.19: no stored origin on this context is an unproven turn, which keeps the card; the owner's stored origin runs it
+      expect(autoVerdict(NO_LIMITS, "PowerShell", command, ask(command)).approve, "unproven No limits").toBeNull();
+      expect(autoVerdict(NO_LIMITS, "shell", command, ask(command, "shell", acpCall(command))).approve, "unproven ACP engine No limits").toBeNull();
+      expectNoLimitsOwnerOutcome(autoVerdict(NO_LIMITS, "PowerShell", command, { ...ask(command), fullAccessOrigin: "owner" }), command, "unreadable", "owner No limits");
     });
   }
   it("a wrapper around an ordinary program still goes through", () => {
     for (const command of ["env NODE_ENV=test npm test", "env CI=1 pnpm exec vitest run"]) {
-      expect(autoVerdict(NO_LIMITS, "PowerShell", command, ask(command)).approve, command).not.toBeNull();
+      expect(autoVerdict(NO_LIMITS, "PowerShell", command, {...ask(command),fullAccessOrigin:"owner",ownerStarted:true}).approve, command).not.toBeNull();
     }
   });
 });

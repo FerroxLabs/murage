@@ -1,0 +1,107 @@
+{
+ "status": 429,
+ "headers": {
+  "date": "<HTTP-date>",
+  "server": "uvicorn",
+  "x-flux-alias": "deepseek-v4-flash",
+  "content-type": "application/json",
+  "x-frame-options": "DENY",
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-content-type-options": "nosniff",
+  "connection": "close",
+  "content-length": "<n>"
+ },
+ "body": {
+  "error": {
+   "message": "Flux Router error: litellm.RateLimitError: RateLimitError: OpenAIException - Rate limit reached for requests. Please try again in 20s.",
+   "type": null,
+   "param": null,
+   "code": "429"
+  }
+ },
+ "endpoint": "/v1/chat/completions",
+ "per_endpoint": {
+  "/v1/messages": {
+   "status": 429,
+   "headers": {
+    "content-length": "199",
+    "content-type": "application/json"
+   },
+   "body": {
+    "type": "error",
+    "error": {
+     "type": "rate_limit_error",
+     "message": "Flux Router error: litellm.RateLimitError: RateLimitError: OpenAIException - Rate limit reached for requests. Please try again in 20s."
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  },
+  "/v1/responses": {
+   "status": 502,
+   "headers": {
+    "content-length": "224",
+    "content-type": "application/json"
+   },
+   "body": {
+    "error": {
+     "message": "upstream provider error: RateLimitError: litellm.RateLimitError: RateLimitError: OpenAIException - Rate limit reached for requests. Please try again in 20s.",
+     "type": "api_error",
+     "param": null,
+     "code": null
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  },
+  "free_key_variant": {
+   "/v1/chat/completions": {
+    "status": 402,
+    "gate_headers": {},
+    "body": {
+     "error": {
+      "message": "free_tier_exhausted",
+      "type": "None",
+      "param": "None",
+      "code": "402",
+      "provider_specific_fields": {
+       "error": "free_tier_exhausted",
+       "message": "Free tier monthly allowance exhausted. Upgrade to Builder ($29/mo) for $20 of included usage + BYOK.",
+       "upgrade_url": "https://fluxrouter.ai/home/billing"
+      }
+     }
+    }
+   },
+   "/v1/messages": {
+    "status": 402,
+    "headers": {
+     "content-length": "170",
+     "content-type": "application/json"
+    },
+    "body": {
+     "type": "error",
+     "error": {
+      "type": "invalid_request_error",
+      "message": "Free tier monthly allowance exhausted. Upgrade to Builder ($29/mo) for $20 of included usage + BYOK."
+     }
+    }
+   },
+   "/v1/responses": {
+    "status": 502,
+    "headers": {
+     "content-length": "212",
+     "content-type": "application/json"
+    },
+    "body": {
+     "error": {
+      "message": "upstream provider error: RateLimitError: litellm.RateLimitError: RateLimitError: OpenAIException - Rate limit exceeded. Please try again in 20s.",
+      "type": "api_error",
+      "param": null,
+      "code": null
+     }
+    }
+   }
+  }
+ },
+ "notes": "Upstream 429 after LiteLLM retries/fallbacks. Provider text varies; this sample uses an OpenAI-style message. Provider retry-after is DROPPED on every endpoint. /v1/responses turns it into a 502 api_error. FREE-tier keys: if the provider text contains 'exceeded' or 'budget', chat and /v1/messages turn it into 402 free_tier_exhausted: see per_endpoint['free_key_variant']."
+}

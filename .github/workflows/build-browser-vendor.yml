@@ -1,0 +1,197 @@
+name: Build browser vendor
+# Builds the bundled bot-browser engine (agent-browser) with the Murage control-token patch for every
+# target and creates DRAFT releases (never published here; publishing happens with the Murage publish approval).
+#   browser-engine-v0.36.0-omb.2: darwin-arm64, darwin-x64, linux-arm64, linux-musl-arm64, linux-musl-x64, linux-x64
+#   browser-engine-v0.36.0-omb.3: win32-x64 (adds the no-console patch)
+#   browser-engine-v0.38.1-omb.2: linux-x64, linux-arm64 (Cloud home)
+# Assets are unsigned; Murage packaging checks the pinned SHA-256, then signs and notarizes. No secrets here.
+# Trigger: a push to a ci/try-* branch. (workflow_dispatch only works for workflow files on the default branch.)
+# The gate job lets the build run only when the pushed tree carries the vendor lane marker
+# third_party/browser/VENDOR_BUILD and the control-token patch, so ordinary ci-try pushes of other lanes build nothing.
+on:
+  push:
+    branches: ["ci/try-*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-browser-vendor-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Vendor lane gate
+    runs-on: ubuntu-22.04
+    outputs:
+      go: ${{ steps.g.outputs.go }}
+      only: ${{ steps.g.outputs.only }}
+      matrix: ${{ steps.g.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: g
+        shell: bash
+        run: |
+          # A marker line "only: win32-x64" (the one supported single-asset target) rebuilds just that target and REPLACES its
+          # asset in the existing DRAFT release; an empty marker builds everything and creates both draft releases.
+          only=""
+          if [ -f third_party/browser/VENDOR_BUILD ]; then only=$(sed -n 's/^only:[[:space:]]*//p' third_party/browser/VENDOR_BUILD | head -1 | tr -d '[:space:]'); fi
+          case "$only" in ""|win32-x64) ;; *) echo "unknown only: target '$only'"; exit 1;; esac
+          echo "only=$only" >> "$GITHUB_OUTPUT"
+          # The matrix is computed here (the matrix context is not available to a job-level if): the full set, or the one target.
+          if [ -n "$only" ]; then
+            matrix='{"include":[{"set":"0.36.0","target":"win32-x64","runner":"ubuntu-22.04","smoke":false,"apt":"gcc-mingw-w64-x86-64"}]}'
+          else
+            matrix='{"include":[{"set":"0.36.0","target":"darwin-arm64","runner":"macos-15","smoke":true},{"set":"0.36.0","target":"darwin-x64","runner":"macos-15-intel","smoke":true},{"set":"0.36.0","target":"linux-x64","runner":"ubuntu-22.04","smoke":true},{"set":"0.36.0","target":"linux-arm64","runner":"ubuntu-22.04-arm","smoke":true},{"set":"0.36.0","target":"linux-musl-x64","runner":"ubuntu-22.04","smoke":true,"apt":"musl-tools"},{"set":"0.36.0","target":"linux-musl-arm64","runner":"ubuntu-22.04-arm","smoke":true,"apt":"musl-tools"},{"set":"0.36.0","target":"win32-x64","runner":"ubuntu-22.04","smoke":false,"apt":"gcc-mingw-w64-x86-64"},{"set":"0.38.1","target":"linux-x64","runner":"ubuntu-22.04","smoke":true},{"set":"0.38.1","target":"linux-arm64","runner":"ubuntu-22.04-arm","smoke":true}]}'
+          fi
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          if [ -f third_party/browser/VENDOR_BUILD ] && [ -f third_party/browser/patches/murage-control-token.fix1.patch ]; then echo "go=true" >> "$GITHUB_OUTPUT"; else echo "go=false" >> "$GITHUB_OUTPUT"; echo "no vendor lane marker in this tree: nothing to build"; fi
+
+  build:
+    name: ${{ matrix.set }} ${{ matrix.target }}
+    needs: gate
+    if: needs.gate.outputs.go == 'true'
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.gate.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Install system packages
+        if: matrix.apt
+        run: sudo apt-get update && sudo apt-get install -y ${{ matrix.apt }}
+      - name: Install pinned toolchain (Rust 1.97.1, pnpm 11.1.3)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/fetch-build-input.mjs D099 "$RUNNER_TEMP/pnpm-11.1.3.tgz"
+          npm install --global "$RUNNER_TEMP/pnpm-11.1.3.tgz" --offline --ignore-scripts --no-audit --no-fund
+          RUST_TARGET=$(node -e 'import("./scripts/build-browser-vendor.mjs").then(m=>console.log(m.VENDOR_TARGETS[process.argv[1]].rust))' "${{ matrix.target }}")
+          node scripts/install-browser-rust.mjs "$RUST_TARGET" "$RUNNER_TEMP/murage-rust"
+          echo "$RUNNER_TEMP/murage-rust/toolchain/bin" >> "$GITHUB_PATH"
+          echo "RUSTUP_TOOLCHAIN=$RUNNER_TEMP/murage-rust/toolchain" >> "$GITHUB_ENV"
+      - name: Build
+        shell: bash
+        run: node scripts/build-browser-vendor.mjs --set "${{ matrix.set }}" --target "${{ matrix.target }}" --output "$RUNNER_TEMP/out"
+      - name: Smoke (stream port 401/401/200, websocket 401/401/101, close)
+        if: matrix.smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x "$RUNNER_TEMP"/out/agent-browser-${{ matrix.target }}-*
+          bash scripts/smoke-browser-vendor.sh "$(ls "$RUNNER_TEMP"/out/agent-browser-${{ matrix.target }}-*[0-9])" "${{ matrix.set }}" "${{ matrix.target }}"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: vendor-${{ matrix.set }}-${{ matrix.target }}
+          path: ${{ runner.temp }}/out
+          if-no-files-found: error
+
+  smoke-windows:
+    name: Smoke win32-x64 (native Windows runner)
+    needs: [gate, build]
+    if: needs.gate.outputs.go == 'true' && (needs.gate.outputs.only == '' || needs.gate.outputs.only == 'win32-x64')
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: vendor-0.36.0-win32-x64
+          path: win-out
+      - name: Smoke (stream port 401/401/200, websocket 401/401/101, close)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/smoke-browser-vendor.sh "$(ls "$PWD"/win-out/agent-browser-win32-x64-*[0-9].exe)" 0.36.0 win32-x64
+      - name: No console window for the browser child (control opens one, the engine does not)
+        shell: bash
+        run: bash scripts/smoke-windows-no-console.sh "$(ls "$PWD"/win-out/agent-browser-win32-x64-*[0-9].exe)"
+
+  draft-release:
+    name: Draft releases
+    needs: [gate, build, smoke-windows]
+    if: needs.gate.outputs.go == 'true'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: vendor
+          pattern: vendor-*
+      - name: Create (or update) the DRAFT release for ONE asset (only when the marker says "only:")
+        if: needs.gate.outputs.only != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TARGET_SHA: ${{ github.sha }}
+          ONLY: ${{ needs.gate.outputs.only }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set_="0.36.0"; rev="omb.3"; tag="browser-engine-v${set_}-${rev}"
+          case "$ONLY" in win32-x64) ext=".exe";; *) echo "unsupported single-asset target $ONLY"; exit 1;; esac
+          bin="agent-browser-${ONLY}-${set_}-${rev}${ext}"; prov="${bin}.provenance.json"
+          src="vendor/vendor-${set_}-${ONLY}"
+          # download-artifact puts a single matching artifact straight into vendor/ (no per-artifact folder)
+          [ -d "$src" ] || src=vendor
+          [ "$(ls "$src"/agent-browser-*-"${set_}"-"${rev}"* | grep -c -v '\.provenance\.json$')" -eq 1 ] || { echo "expected exactly one binary in $src"; exit 1; }
+          [ -f "$src/$bin" ] && [ -f "$src/$prov" ] || { echo "missing $bin or $prov in $src"; exit 1; }
+          new=$(sha256sum "$src/$bin" | cut -d' ' -f1)
+          stage=stage-only; mkdir -p "$stage"
+          cp "$src/$bin" "$src/$prov" "$stage"/
+          cp -n "$src"/*.patch "$src"/agent-browser-LICENSE.txt "$src"/LICENSE-axe-core*.txt "$src"/README.md "$stage"/
+          (cd "$stage" && sha256sum "$bin" > SHA256SUMS)
+          cat "$stage/SHA256SUMS"
+          # The build is not reproducible, so the new bytes can only be pinned after this run: say loudly whether the tree already pins them.
+          if grep -q "$new" server/browser-engine-release.ts; then echo "built sha256 matches the pin in this tree"; else echo "::warning::built sha256 $new is NOT pinned in this tree yet: pin it (and re-check the draft asset) before merging"; fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            # An existing release is only ever a DRAFT; a published release is never touched. The sums file lists this one asset only.
+            [ "$(gh release view "$tag" --json isDraft -q .isDraft)" = "true" ] || { echo "release $tag exists and is not a DRAFT: refusing"; exit 1; }
+            gh release upload "$tag" "$stage"/* --clobber
+            echo "updated draft $tag: $bin sha256 $new"
+          else
+            gh release create "$tag" --draft --target "$TARGET_SHA" --title "Browser engine ${set_}-${rev} (draft, Windows only)" \
+              --notes "Murage vendor build of agent-browser ${set_} for Windows: omb.2 plus the no-console patch (no console window per message). Draft: published with the Murage publish approval." \
+              "$stage"/*
+            echo "created draft $tag: $bin sha256 $new ($(stat -c %s "$src/$bin") bytes)"
+          fi
+      - name: Create DRAFT releases (never published here)
+        if: needs.gate.outputs.only == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TARGET_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # (set, revision, binaries): Windows alone is omb.3; everything else of 0.36.0 stays omb.2.
+          for group in "0.36.0:omb.2:6" "0.36.0:omb.3:1" "0.38.1:omb.2:2"; do
+            IFS=: read -r set rev expect <<< "$group"
+            tag="browser-engine-v${set}-${rev}"
+            dir="stage-${set}-${rev}"; mkdir -p "$dir"
+            for d in vendor/vendor-${set}-*; do
+              found=0
+              for f in "$d"/agent-browser-*-"${set}"-"${rev}"*; do [ -e "$f" ] && { cp "$f" "$dir"/; found=1; }; done
+              [ "$found" = 1 ] && cp -n "$d"/*.patch "$d"/agent-browser-LICENSE.txt "$d"/LICENSE-axe-core*.txt "$d"/README.md "$dir"/
+            done
+            (cd "$dir" && sha256sum $(ls agent-browser-*-"${set}"-"${rev}" agent-browser-*-"${set}"-"${rev}".exe 2>/dev/null) > SHA256SUMS)
+            [ "$(wc -l < "$dir/SHA256SUMS")" -eq "$expect" ] || { echo "expected $expect binaries for $set $rev"; exit 1; }
+            cat "$dir/SHA256SUMS"
+            # every built binary must carry the pin this tree ships for it (size is in the same pin tables)
+            while read -r sum name; do
+              grep -q "$sum" server/browser-engine-release.ts server/cloud-home/browser-pins.ts || { echo "built $name sha256 $sum matches no pin in this tree"; exit 1; }
+            done < "$dir/SHA256SUMS"
+            if gh release view "$tag" >/dev/null 2>&1; then echo "release $tag already exists: refusing to overwrite"; exit 1; fi
+            gh release create "$tag" --draft --target "$TARGET_SHA" --title "Browser engine ${set}-${rev} (draft)" \
+              --notes "Murage vendor build of agent-browser ${set} (${rev}). Draft: published with the Murage publish approval." \
+              "$dir"/*
+          done

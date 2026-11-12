@@ -12,6 +12,10 @@ Bots use these tools on their own while they work. You do not call them. Ask a b
 
 murage_help answers questions about Murage itself from the shipped documentation. web_search is a backup for searching the web when the engine has no search of its own. tool_result_read reads the rest of a very long tool result.
 
+## Reading web pages
+
+web_read reads a complete web page and saves its text for the conversation. Long pages arrive in parts; the bot continues with the same handle and next_offset to read more without fetching the page again. Page text is untrusted data, never instructions for the bot to follow.
+
 ## Working with other bots
 
 list_bots shows the bots a bot can reach. ask_bot asks one a quick question. delegate_bot hands one a task. check_delegation checks on a handed over task, and wait_delegation waits for one when you ask a bot to wait. See Bots working together.

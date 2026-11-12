@@ -1,14 +1,4 @@
-# Opens the version-bump PR that starts a release. Merging that PR is what
-# actually kicks off Release (release.yml watches package.json on main), so
-# everything risky lives here rather than in a person's shell:
-#   - the next version is computed, not typed, and must be strictly newer
-#   - a version already sitting on murage-releases (draft OR published) is
-#     refused before a branch exists
-#   - inspect an existing release branch and reuse its open PR, or create
-#     the missing PR after confirming the branch carries the intended version
-#
-# This workflow only ever creates a branch and a PR. It never approves and
-# never merges: a human still clicks merge, and that click is the release.
+# Opens or reuses the version-bump PR and retains its reviewable patch.
 name: Prepare next release
 
 on:
@@ -29,9 +19,7 @@ on:
         type: string
 
 permissions:
-  actions: write
-  contents: write
-  pull-requests: write
+  contents: read
 
 concurrency:
   group: prepare-release
@@ -39,18 +27,28 @@ concurrency:
 
 jobs:
   prepare:
-    name: Open the version-bump PR
+    name: Prepare the version-bump patch
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.version.outputs.next }}
+      sha: ${{ steps.version.outputs.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: main
           fetch-depth: 0
-          # This job pushes the release branch, so the checkout credential is
-          # kept deliberately. Stated rather than inherited: every other
-          # workflow here sets persist-credentials: false.
-          persist-credentials: true
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Release check - require the reviewed Signal pin and all five post-G0 gates
+        env:
+          RELEASE: '1'
+        run: node scripts/signal-release-check.mjs
 
       # A release cannot build without the Murage for Chrome store identity
       # (release.yml checks it again). Refuse before the version bump lands on
@@ -64,68 +62,47 @@ jobs:
           BUMP: ${{ inputs.bump }}
           CUSTOM_VERSION: ${{ inputs.version }}
         run: |
+          echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           current=$(node scripts/release-guard.mjs version)
           next=$(node scripts/release-guard.mjs next-version "$current" "$BUMP" "$CUSTOM_VERSION")
           echo "current=$current" >> "$GITHUB_OUTPUT"
           echo "next=$next" >> "$GITHUB_OUTPUT"
 
-      # Releases live on FerroxLabs/murage-releases, not on this repo, so the
-      # existence check crosses repositories and needs RELEASES_PAT — the same
-      # secret release.yml uses. A DRAFT counts: assembly has already run for
-      # that version and rerunning it would overwrite assets under review.
-      - name: Refuse an existing release
-        env:
-          GH_TOKEN: ${{ secrets.RELEASES_PAT }}
-          VERSION: ${{ steps.version.outputs.next }}
-        run: |
-          node scripts/release-guard.mjs absent "$VERSION"
-
-      - name: Inspect the release branch and open PR
-        id: branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.next }}
-        run: node scripts/release-guard.mjs branch "$VERSION"
-
-      - name: Commit the version bump
-        if: steps.branch.outputs.branch_exists != 'true'
+      # Release API access belongs only to assemble. Keep a reviewable patch too.
+      - name: Prepare the version bump for review
         env:
           VERSION: ${{ steps.version.outputs.next }}
         run: |
           npm pkg set "version=$VERSION"
           test "$(node -p "require('./package.json').version")" = "$VERSION"
           git diff --check
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git switch -c "release/v$VERSION"
-          git add package.json
-          git commit -m "chore(release): bump version to $VERSION"
-          git push --set-upstream origin "release/v$VERSION"
+          git diff --binary -- package.json > release-version.patch
+          echo "The open-pr job opens or reuses the version-bump PR and dispatches CI. This patch is retained for review." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-version-patch
+          path: release-version.patch
+          if-no-files-found: error
 
-      - name: Open the release PR
-        id: pr
+  open-pr:
+    name: Open or reuse the release preparation PR
+    needs: [prepare]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: node scripts/release-preparation.mjs
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.next }}
-          EXISTING_PR: ${{ steps.branch.outputs.pr_url }}
-        run: |
-          url="$EXISTING_PR"
-          if [ -z "$url" ]; then
-            url=$(gh pr create \
-              --base main \
-              --head "release/v$VERSION" \
-              --title "chore(release): bump version to $VERSION" \
-              --body "Bumps Murage to \`$VERSION\`. Merging this PR automatically starts the Release workflow, which assembles a DRAFT release on FerroxLabs/murage-releases from the exact merge commit. Nothing goes live until a human publishes that draft.")
-          fi
-          echo "url=$url" >> "$GITHUB_OUTPUT"
-          echo "### Release PR" >> "$GITHUB_STEP_SUMMARY"
-          echo "$url" >> "$GITHUB_STEP_SUMMARY"
-
-      # GITHUB_TOKEN-created branches do not emit another push/pull_request
-      # workflow event. Dispatch CI explicitly so the normal required checks
-      # still gate the release PR.
-      - name: Start CI for the release PR
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.next }}
-        run: gh workflow run ci.yml --ref "release/v$VERSION"
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SHA: ${{ needs.prepare.outputs.sha }}

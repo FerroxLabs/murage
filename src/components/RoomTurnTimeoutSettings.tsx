@@ -50,7 +50,7 @@ export function RoomTurnTimeoutSettings() {
 
   return (
     <div className="flex flex-col gap-2">
-      <label htmlFor="room-turn-timeout" className="text-[13px] font-medium text-ink">
+      <label htmlFor="room-turn-timeout-input" className="text-[13px] font-medium text-ink">
         No activity limit
       </label>
       <div
@@ -59,7 +59,7 @@ export function RoomTurnTimeoutSettings() {
         }`}
       >
         <input
-          id="room-turn-timeout"
+          id="room-turn-timeout-input"
           data-setting-control="room-turn-timeout"
           type="number"
           min={MIN_ROOM_TURN_TIMEOUT_MINUTES}

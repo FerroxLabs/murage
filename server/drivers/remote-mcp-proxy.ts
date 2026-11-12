@@ -1,3 +1,6 @@
+import "../../shared/win-hide-child-process.mjs";
+import { createMcpCatalogWriter, guardHandle, type McpRequest } from "../mcp-listed.ts";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 //
@@ -9,6 +12,7 @@
 //
 // stdout is the MCP transport. Never log there.
 import readline from "node:readline";
+import {publishMcpWipeTools} from "../mcp-wipe-publisher.ts";
 
 import { turnSecret } from "../turn-credential.ts";
 import {
@@ -37,7 +41,8 @@ let sessionId = "";
 let protocolVersion = "";
 // The engine's own initialize, kept so a dead session can be reopened without it.
 let initializeFrame: JsonRpcMessage | null = null;
-const send = (message: JsonRpcMessage) => process.stdout.write(`${JSON.stringify(message)}\n`);
+const catalog = createMcpCatalogWriter();
+const send = (message: JsonRpcMessage) => NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", catalog.send(message));
 /** The engine announced elicitation in its initialize: a server's
  * elicitation/create is forwarded to it (MCP-ELICITATION-109). */
 let engineElicits = false;
@@ -80,7 +85,7 @@ function serverRequest(frame: JsonRpcMessage, onClosed: (id: string) => void, ca
     // the session the question came on (the call's own, frozen at its answer's
     // headers): the answer goes back on it, whatever another call reopened since
     forwarded.set(id, { upstreamId: frame.id as string | number, session: callSession, closed: () => onClosed(id) });
-    send({ jsonrpc: "2.0", id, method: "elicitation/create", params: elicitationParams(frame.params) });
+    void NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", send({ jsonrpc: "2.0", id, method: "elicitation/create", params: elicitationParams(frame.params) })).catch(() => { process.exitCode = 1; });
     return id;
   }
   void post(serverRequestReply(frame), 30_000, callSession).then((r) => r.body?.cancel().catch(() => undefined), () => undefined);
@@ -110,7 +115,7 @@ function withdraw(ids: Iterable<string>, reason: string): void {
     if (!entry) continue;
     forwarded.delete(id);
     entry.closed();
-    send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id, reason } });
+    void NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", send({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: id, reason } })).catch(() => { process.exitCode = 1; });
   }
 }
 
@@ -150,7 +155,7 @@ async function readBounded(response: Response): Promise<string> {
 }
 
 async function post(message: JsonRpcMessage, timeoutMs: number | CallDeadline, session: string = sessionId): Promise<Response> {
-  return fetch(`${HARNESS}/api/internal/mcp-remote/${encodeURIComponent(NAME)}`, {
+  return NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", fetch(`${HARNESS}/api/internal/mcp-remote/${encodeURIComponent(NAME)}`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -161,7 +166,7 @@ async function post(message: JsonRpcMessage, timeoutMs: number | CallDeadline, s
     },
     body: JSON.stringify(message),
     signal: typeof timeoutMs === "number" ? AbortSignal.timeout(timeoutMs) : timeoutMs.signal,
-  });
+  }));
 }
 
 /** The harness no longer knows our session (a reused process outlives the
@@ -189,7 +194,7 @@ function sessionLost(response: Response, body: unknown): boolean {
   return typeof body === "object" && body !== null && (body as { code?: unknown }).code === "session-gone";
 }
 
-async function handle(message: JsonRpcMessage, retried = false): Promise<void> {
+async function handle(message: JsonRpcMessage, req: McpRequest, retried = false): Promise<void> {
   const id = message.id;
   const method = typeof message.method === "string" ? message.method : "";
   // A reply from the engine: an answer to a forwarded elicitation, or to
@@ -211,7 +216,7 @@ async function handle(message: JsonRpcMessage, retried = false): Promise<void> {
   try {
     response = await post(outgoing, deadline);
   } catch {
-    if (id !== undefined) send(failureFrame(method, id, "The server did not answer in time. Try again in a moment."));
+    if (id !== undefined) await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond(failureFrame(method, id, "The server did not answer in time. Try again in a moment.")));
     return;
   }
   const nextSession = response.headers.get("mcp-session-id");
@@ -219,13 +224,13 @@ async function handle(message: JsonRpcMessage, retried = false): Promise<void> {
   // An SSE answer is read as it arrives: a server's elicitation must reach the
   // engine while the call it belongs to is still open.
   if (response.ok && /^text\/event-stream/i.test(response.headers.get("content-type") ?? "") && response.body) {
-    return streamAnswer(response, method, id, deadline, nextSession || sentSession);
+    return streamAnswer(response, method, id, deadline, nextSession || sentSession, req, !(message.params as any)?.cursor);
   }
   let text: string;
   try {
     text = await readBounded(response);
   } catch {
-    if (id !== undefined) send(failureFrame(method, id, "The server sent more than Murage will read."));
+    if (id !== undefined) await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond(failureFrame(method, id, "The server sent more than Murage will read.")));
     return;
   }
   if (!response.ok) {
@@ -238,16 +243,16 @@ async function handle(message: JsonRpcMessage, retried = false): Promise<void> {
     if (sentSession && !retried && method !== "initialize" && initializeFrame && sessionLost(response, body)) {
       // Forget the dead session, reopen once, retry once; never twice.
       await reopenSession();
-      return handle(message, true);
+      return handle(message, req, true);
     }
-    if (id !== undefined) send(failureFrame(method, id, failureText(body, "The server could not be reached.")));
+    if (id !== undefined) await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond(failureFrame(method, id, failureText(body, "The server could not be reached."))));
     return;
   }
   const frames = splitUpstreamFrames(text, response.headers.get("content-type") ?? "");
   let answered = false;
   for (const frame of frames) {
     const kind = classifyFrame(frame, id);
-    if (kind === "notification") send(frame);
+    if (kind === "notification") await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", send(frame));
     else if (kind === "server-request") {
       // Nobody on this side answers sampling or elicitation: say so to the server.
       void post(serverRequestReply(frame), 30_000, nextSession || sentSession).catch(() => undefined);
@@ -256,17 +261,18 @@ async function handle(message: JsonRpcMessage, retried = false): Promise<void> {
         const version = (frame.result as { protocolVersion?: unknown }).protocolVersion;
         if (typeof version === "string" && /^\d{4}-\d{2}-\d{2}$/.test(version)) protocolVersion = version;
       }
-      send(frame);
+      if(method==='tools/list'&&frame.result&&typeof frame.result==='object'&&Array.isArray((frame.result as any).tools))await publishMcpWipeTools(NAME,(frame.result as any).tools,!(message.params as any)?.cursor);
+      await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond(frame, id => failureFrame(method, id, "Murage could not record this server's tools. Try again in a moment.")));
       answered = true;
     }
   }
   // Every id is answered. An unreadable or empty answer to a request is an error
   // result, never silence (a hung tool call looks like the model thinking).
-  if (id !== undefined && !answered) send(failureFrame(method, id, "The server sent an answer Murage could not read."));
+  if (id !== undefined && !answered) await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond(failureFrame(method, id, "The server sent an answer Murage could not read.")));
 }
 
 /** One SSE answer, frame by frame. Every id is still answered exactly once. */
-async function streamAnswer(response: Response, method: string, id: unknown, deadline: CallDeadline, callSession: string): Promise<void> {
+async function streamAnswer(response: Response, method: string, id: unknown, deadline: CallDeadline, callSession: string, req: McpRequest, replaceMetadata: boolean): Promise<void> {
   const reader = response.body!.getReader();
   const decoder = new TextDecoder();
   const frames = new SseFrameReader();
@@ -278,10 +284,10 @@ async function streamAnswer(response: Response, method: string, id: unknown, dea
     opened.delete(forwardedId);
     if (opened.size === 0) deadline.resume();
   };
-  const take = (frame: JsonRpcMessage) => {
+  const take = async (frame: JsonRpcMessage) => {
     const kind = classifyFrame(frame, id);
     if (kind === "notification") {
-      if (!serverCancelled(frame, opened)) send(frame);
+      if (!serverCancelled(frame, opened)) await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", send(frame));
     } else if (kind === "server-request") {
       const forwardedId = serverRequest(frame, closed, callSession);
       if (forwardedId) {
@@ -289,7 +295,8 @@ async function streamAnswer(response: Response, method: string, id: unknown, dea
         deadline.pause();
       }
     } else if (kind === "answer" && !answered) {
-      send(frame);
+      if(method==='tools/list'&&frame.result&&typeof frame.result==='object'&&Array.isArray((frame.result as any).tools))await publishMcpWipeTools(NAME,(frame.result as any).tools,replaceMetadata);
+      await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond(frame, id => failureFrame(method, id, "Murage could not record this server's tools. Try again in a moment.")));
       answered = true;
     }
   };
@@ -300,21 +307,21 @@ async function streamAnswer(response: Response, method: string, id: unknown, dea
       size += value.byteLength;
       if (size > MAX_RESPONSE_BYTES) {
         await reader.cancel().catch(() => undefined);
-        if (id !== undefined && !answered) send(failureFrame(method, id, "The server sent more than Murage will read."));
+        if (id !== undefined && !answered) await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond(failureFrame(method, id, "The server sent more than Murage will read.")));
         answered = true;
         return;
       }
-      for (const frame of frames.push(decoder.decode(value, { stream: true }))) take(frame);
+      for (const frame of frames.push(decoder.decode(value, { stream: true }))) await take(frame);
     }
-    for (const frame of frames.push(decoder.decode())) take(frame);
-    for (const frame of frames.end()) take(frame);
+    for (const frame of frames.push(decoder.decode())) await take(frame);
+    for (const frame of frames.end()) await take(frame);
   } catch {
-    if (id !== undefined && !answered) send(failureFrame(method, id, "The server did not answer in time. Try again in a moment."));
+    if (id !== undefined && !answered) await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond(failureFrame(method, id, "The server did not answer in time. Try again in a moment.")));
     answered = true;
   } finally {
     withdraw([...opened], "The server's call ended before the answer.");
   }
-  if (id !== undefined && !answered) send(failureFrame(method, id, "The server sent an answer Murage could not read."));
+  if (id !== undefined && !answered) await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond(failureFrame(method, id, "The server sent an answer Murage could not read.")));
 }
 
 const input = readline.createInterface({ input: process.stdin, terminal: false });
@@ -329,9 +336,10 @@ input.on("line", (line) => {
   } catch {
     return;
   }
-  void handle(message).catch(() => {
+  const req = guardHandle(catalog.observeRequest(message), () => { process.exitCode = 1; process.stdin.destroy(); });
+  void req.published.then(() => handle(message, req)).catch(async () => {
     const method = typeof message.method === "string" ? message.method : "";
-    if (message.id !== undefined) send(failureFrame(method, message.id, "The server sent an answer Murage could not read."));
+    if (message.id !== undefined) await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond(failureFrame(method, message.id, "The server sent an answer Murage could not read.")));
   });
 });
 input.on("close", () => process.exit(0));

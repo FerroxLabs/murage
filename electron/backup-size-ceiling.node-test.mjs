@@ -47,7 +47,7 @@ test("a failed export leaves a non-restore source alone",{skip:POSIX_ONLY},t=>{
 });
 test("no backup code keeps its own size literal: everything uses MAX_BACKUP_BYTES",()=>{
   const root=path.resolve(import.meta.dirname,"..");
-  const files=execFileSync("git",["ls-files","electron","server","shared"],{cwd:root,encoding:"utf8"}).split("\n")
+  const files=execFileSync("git",["ls-files","electron","server","shared"],{ windowsHide: true,cwd:root,encoding:"utf8"}).split("\n")
     .filter(f=>/backup|installation-(archive|activation|fidelity|state|recovery)/i.test(f)&&/\.(mjs|ts|cjs)$/.test(f)&&!/test|\.d\.mts$/.test(f));
   assert.ok(files.length>20);
   // Platform/staging limits that are not the backup size ceiling.

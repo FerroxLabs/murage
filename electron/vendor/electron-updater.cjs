@@ -1,4 +1,6 @@
+// Murage vendor patch: electron/vendor/patches/electron-updater-no-shell-execute.patch
 "use strict";
+const { withHideInherit } = require("../../shared/win-hide-child-process.mjs");
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __commonJS = (cb, mod) => function __require() {
   try {
@@ -14701,15 +14703,23 @@ var require_BaseUpdater = __commonJS({
       quitAndInstall(isSilent = false, isForceRunAfter = false) {
         this._logger.info(`Install on explicit quitAndInstall`);
         const isInstalled = this.install(isSilent, isSilent ? isForceRunAfter : this.autoRunAppAfterInstall);
-        if (isInstalled) {
-          setImmediate(() => {
-            require("electron").autoUpdater.emit("before-quit-for-update");
-            this.app.murageShutdownCause = "automatic";
-            this.app.quit();
-          });
-        } else {
-          this.quitAndInstallCalled = false;
+        // NSIS resolves only after the hidden spawn succeeds. Other installers
+        // retain their synchronous result and quit timing.
+        const finish = (installed) => {
+          if (installed) {
+            setImmediate(() => {
+              require("electron").autoUpdater.emit("before-quit-for-update");
+              this.app.murageShutdownCause = "automatic";
+              this.app.quit();
+            });
+          } else {
+            this.quitAndInstallCalled = false;
+          }
+        };
+        if (isInstalled && typeof isInstalled.then === "function") {
+          return isInstalled.then(finish);
         }
+        finish(isInstalled);
       }
       executeDownload(taskOptions) {
         return super.executeDownload({
@@ -14784,11 +14794,11 @@ var require_BaseUpdater = __commonJS({
         var _a;
         this._logger.info(`Executing: ${cmd} with args: ${args}`);
         const mergedEnv = { ...process.env, ...env };
-        const response = (0, child_process_1.spawnSync)(cmd, args, {
+        const response = (0, child_process_1.spawnSync)(cmd, [...args], withHideInherit({
           env: { ...mergedEnv, PATH: this.sanitizeEnvPath((_a = mergedEnv.PATH) !== null && _a !== void 0 ? _a : "") },
           encoding: "utf-8",
           shell: true
-        });
+        }));
         const { error, status, stdout, stderr } = response;
         if (error != null) {
           this._logger.error(stderr);
@@ -14811,7 +14821,7 @@ var require_BaseUpdater = __commonJS({
         return new Promise((resolve, reject) => {
           try {
             const params = { stdio, env, detached: true };
-            const p = (0, child_process_1.spawn)(cmd, args, params);
+            const p = (0, child_process_1.spawn)(cmd, [...args], withHideInherit(params));
             p.on("error", (error) => {
               reject(error);
             });
@@ -14975,7 +14985,7 @@ var require_AppImageUpdater = __commonJS({
           this.spawnLog(destination, [], env);
         } else {
           env.APPIMAGE_EXIT_AFTER_INSTALL = "true";
-          (0, child_process_1.execFileSync)(destination, [], { env });
+          (0, child_process_1.execFileSync)(destination, [], withHideInherit({ env }));
         }
         return true;
       }
@@ -15673,7 +15683,7 @@ var require_NsisUpdater = __commonJS({
         }
         return await this._verifyUpdateCodeSignature(Array.isArray(publisherName) ? publisherName : [publisherName], tempUpdateFile);
       }
-      doInstall(options) {
+      async doInstall(options) {
         const installerPath = this.installerPath;
         if (installerPath == null) {
           this.dispatchError(new Error("No update filepath provided, can't quit and install"));
@@ -15693,26 +15703,22 @@ var require_NsisUpdater = __commonJS({
         if (packagePath != null) {
           args.push(`--package-file=${packagePath}`);
         }
-        const callUsingElevation = () => {
-          this.spawnLog(path2.join(process.resourcesPath, "elevate.exe"), [installerPath].concat(args)).catch((e) => this.dispatchError(e));
-        };
-        if (options.isAdminRightsRequired) {
-          this._logger.info("isAdminRightsRequired is set to true, run installer using elevate.exe");
-          callUsingElevation();
-          return true;
-        }
-        this.spawnLog(installerPath, args).catch((e) => {
-          const errorCode = e.code;
-          this._logger.info(`Cannot run installer: error code: ${errorCode}, error message: "${e.message}", will be executed again using elevate if EACCES, and will try to use electron.shell.openItem if ENOENT`);
-          if (errorCode === "UNKNOWN" || errorCode === "EACCES") {
-            callUsingElevation();
-          } else if (errorCode === "ENOENT") {
-            require("electron").shell.openPath(installerPath).catch((err) => this.dispatchError(err));
+        try {
+          if (options.isAdminRightsRequired) {
+            await this.spawnLog(path2.join(process.resourcesPath, "elevate.exe"), [installerPath].concat(args));
           } else {
-            this.dispatchError(e);
+            await this.spawnLog(installerPath, args);
           }
-        });
-        return true;
+          return true;
+        } catch (cause) {
+          // Never hand executables to ShellExecute or try another launch route.
+          // Keep the staged download and current install intact for a retry.
+          this.quitAndInstallCalled = false;
+          this.dispatchError(Object.assign(new Error("Couldn't start the update installer. Murage stays on the current version.", { cause }), {
+            code: "ERR_MURAGE_INSTALLER_START"
+          }));
+          return false;
+        }
       }
       async differentialDownloadWebPackage(downloadUpdateOptions, packageInfo, packagePath, provider) {
         if (packageInfo.blockMapSize == null) {

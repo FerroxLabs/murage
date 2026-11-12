@@ -39,14 +39,21 @@ export function threadExcluded(db: DatabaseSync, threadId: string): boolean {
 export function threadDenied(db: DatabaseSync, threadId: string): boolean {
   return Boolean(db.prepare("SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?").get(threadId));
 }
+/** A deleted conversation or the reader's deleted bot ends that reader's authority, even while its cached roster still exists.
+ * Share the foreground thread check's one statement; no per-record query is added to a long session's validation. */
+export function memoryReaderDenied(db: DatabaseSync, threadId: string, botId: string): boolean {
+  return Boolean(db.prepare(`SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?
+    UNION ALL SELECT 1 FROM memory_scopes s JOIN memory_deny d ON d.kind='scope' AND d.id=s.id
+    WHERE s.kind='bot' AND s.owner_key=? LIMIT 1`).get(threadId, botId));
+}
 /** Whether source `id` is denied by its place or its origins (its own state and tombstones are the caller's test). */
 export function sourceDenied(db: DatabaseSync, id: string): boolean {
   return Boolean(db.prepare(`SELECT 1 FROM memory_sources s WHERE s.id=? AND ${DENIED_SOURCE("s")}`).get(id));
 }
 
-/** Background work keeps a conservative publication fence across conversation deletions.
+/** Background work keeps a conservative publication fence across conversation and bot deletions.
  * This durable counter is deliberately separate from the foreground authority epoch.
- * One primary-key lookup, independent of the number of deleted conversations. */
+ * One primary-key lookup, independent of the number of deleted conversations or bots. */
 export function learningDeletionEpoch(db: DatabaseSync): number {
   return Number(db.prepare("SELECT deletion_epoch + COALESCE((SELECT revision FROM memory_scope_bindings WHERE id='thread-deletion-clock'),0) AS epoch FROM memory_meta WHERE id=1").get()!.epoch);
 }

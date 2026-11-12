@@ -1,0 +1,11 @@
+--- server/composio.ts
++++ server/composio.ts
+@@ -2360,7 +2360,7 @@
+   if (outcome === "upstreamAuth") {
+     noteNeedsReconnect(cfg, slug, `HTTP ${status}`, [account]); return "reconnect";
+   }
+-  if (outcome === "ok") { clearAccount(owner, slug, account.id); return "healthy"; }
++  if (outcome === "ok" || outcome === "toolError") { clearAccount(owner, slug, account.id); return "healthy"; }
+   return unknown();
+ }
+ 

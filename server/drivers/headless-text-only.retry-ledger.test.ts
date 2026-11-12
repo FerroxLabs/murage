@@ -354,25 +354,29 @@ it("A headless off-Flux 0/0 empty control through route selection still settles 
   expect(unseenExcessCalls(row())).toEqual({ inFlight: 0, settled: 0 });
 });
 
-it.each(["messages-cancelled", "responses-zero", "finished-missing", "off-flux-zero"] as const)("A Claude route: %s uses the same Flux usage predicate", async mode => {
+it.each((["messages-cancelled", "responses-zero", "finished-missing", "off-flux-zero"] as const)
+  .flatMap(mode => [false, true].map(mismatchedRoute => ({ mode, mismatchedRoute }))))("A Claude route: $mode uses the configured URL (mismatched route=$mismatchedRoute)", async ({ mode, mismatchedRoute }) => {
   const cancelling = mode === "messages-cancelled", flux = mode !== "off-flux-zero";
+  const baseUrl = flux ? "https://api.fluxrouter.ai" : "https://fixture.invalid";
+  const routeFlux = mismatchedRoute ? !flux : flux;
   stub([cancelling ? init + JSON.stringify(messageStart) + "\n"
     : init + result(mode === "finished-missing" ? undefined : { input_tokens: 0, output_tokens: 0 }, "")], { cancel: cancelling });
   const call = withRetryReservation(() => claudeTextOnlyTurn({
     cwd: DATA_DIR, system: fixedPrompt(system), text, model: "m", signal: controller.signal,
     outputSchema: schema, maxOutputBytes: 12000, maxOutputTokens: 3000,
     context: { botId: "fixture", runId: "claude", family: "lived", attempt: 1 },
-    providerRoute: { connectionId: "fixture", preset: flux ? "flux" : "openai", protocol: "anthropic",
-      baseUrl: flux ? "https://api.fluxrouter.ai" : "https://fixture.invalid", apiKey: "fixture", model: "m", revision: "r1" },
+    providerRoute: { connectionId: "fixture", preset: routeFlux ? "flux" : "openai", protocol: "anthropic",
+      baseUrl: routeFlux ? "https://api.fluxrouter.ai" : "https://fixture.invalid", apiKey: "fixture", model: "m", revision: "r1" },
     transport: { gate: learningGate("continuity", sampleLearningFence()), hooks: {
       onIntent: intent => { writeFileSync(join(intent.tempRoot, "debug.log"), ""); },
     } },
   }, {
-    cli: "fixture", tmpBase: join(DATA_DIR, "tmp"), env: {}, platform: "linux",
+    cli: "fixture", tmpBase: join(DATA_DIR, "tmp"), env: { ANTHROPIC_BASE_URL: baseUrl }, platform: "linux",
     preflight: { platform: "linux", home: DATA_DIR, etcRoot: join(DATA_DIR, "etc"), mdmDir: null, claudeManagedPath: join(DATA_DIR, "absent") },
   }));
   if (cancelling) await expect(call).rejects.toMatchObject({ name: "cancelled" }); else await call;
   expect(roots).toHaveLength(1);
+  expect(vi.mocked(spawnCli).mock.calls.at(-1)?.[2]?.env?.ANTHROPIC_BASE_URL).toBe(baseUrl);
   if (flux) assertUnknownFluxSettlement();
   else {
     expect(row()).toMatchObject({ input: 0, output: 0 });

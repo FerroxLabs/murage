@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "../shared/win-hide-child-process.mjs";
 // Model Context Protocol (MCP) Server for Murage
 // Standard JSON-RPC 2.0 stdio transport for external agent orchestration (Hermes, Claude Desktop, Cursor, etc.).
 import { homedir } from "node:os";

@@ -7,6 +7,8 @@ import { installTrustedTypes, sanitizerReady } from "./lib/trusted-html";
 import { StrictMode, Suspense, lazy, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
+import { browserPopoutBot, popoutBridge } from "./lib/use-browser-popout";
+const BrowserPopout = lazy(() => import("./components/BrowserPopout").then(module => ({ default: module.BrowserPopout })));
 import { homeMeta } from "./lib/cloud-home-meta";
 import { RootErrorBoundary } from "./components/RootErrorBoundary";
 import { browserChunkReloadDeps, installChunkReload } from "./lib/chunk-reload";
@@ -67,11 +69,12 @@ const CloudDoor = LazyDoor ? ({ children }: { children: ReactNode }) => <Suspens
 const LOCALE_WAIT_MS = 1500;
 // The markup sanitizer (src/lib/trusted-html.ts) loads alongside it, under the same cap, so the first paint can
 // already draw mascots and other sanitized markup.
+const popoutBot = browserPopoutBot(location.search, Boolean(window.muragebox) || Boolean(popoutBridge()));
 void Promise.race([Promise.all([bootLocaleReady, sanitizerReady()]), new Promise((done) => setTimeout(done, LOCALE_WAIT_MS))]).finally(() => {
   createRoot(document.getElementById("root")!).render(
     <StrictMode>
       <RootErrorBoundary>
-        {CloudDoor ? <CloudDoor><App /></CloudDoor> : <App />}
+        {popoutBot ? <Suspense fallback={null}><BrowserPopout botId={popoutBot} /></Suspense> : CloudDoor ? <CloudDoor><App /></CloudDoor> : <App />}
       </RootErrorBoundary>
     </StrictMode>,
   );

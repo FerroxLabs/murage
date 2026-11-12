@@ -1,3 +1,4 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -48,7 +49,7 @@ export const EXIT = Object.freeze({
 
 export interface ChildSpec { execPath: string; args: readonly string[]; env: Record<string, string> }
 export type SpawnChild = (spec: ChildSpec) => ChildProcess;
-export const defaultSpawn: SpawnChild = spec => spawn(spec.execPath, [...spec.args], { env: spec.env, stdio: "ignore", windowsHide: true, detached: false } satisfies SpawnOptions);
+export const defaultSpawn: SpawnChild = spec => spawn(spec.execPath, [...spec.args], withHideInherit({ env: spec.env, stdio: "ignore", windowsHide: true, detached: false } satisfies SpawnOptions));
 
 export interface ChildResult { code: number | null; signal: NodeJS.Signals | null; timedOut: boolean; spawnFailed: boolean }
 

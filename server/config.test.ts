@@ -1,4 +1,5 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { fixtureLink } from "./testing/platform-fixtures.ts";
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -197,12 +198,15 @@ describe("every config key saveConfig accepts reaches config.json", () => {
   // Values are typed as the patch saveConfig takes; `afterSecond` is what config.json holds after `second` when it differs.
   type Rows = { [K in keyof Required<AppConfig>]: { first: NonNullable<Patch[K]>; second: NonNullable<Patch[K]>; afterSecond?: unknown } };
   const rows: Rows = {
+    settingsDefaultMode: { first: "simple", second: "advanced" },
     automationsPaused: { first: true, second: false }, noLimitsTermsVersion: { first: 1, second: 2 },
     telegram: { first: { targetBotId: "bot-a" }, second: { targetBotId: "bot-b" } }, slack: { first: { targetBotId: "bot-a" }, second: { targetBotId: "bot-b" } },
     discord: { first: { targetBotId: "bot-a" }, second: { targetBotId: "bot-b" } }, whatsapp: { first: { readReceipts: true }, second: { readReceipts: false } },
     notifications: { first: { previewContent: false }, second: { previewContent: true } }, spend: { first: { monthlyLimitUsd: 25 }, second: { monthlyLimitUsd: 50 } },
     engineDiscovery: { first: "explicit", second: "automatic" }, hermesProfilesPinned: { first: true, second: false },
     newBots: { first: { effort: "high" }, second: { effort: null }, afterSecond: {} },
+    computer: { first: { defaultForNewBots: "off" }, second: { defaultForNewBots: "vm" } },
+    claudeCodeImport: { first: { enabled: true }, second: { enabled: false } },
     mcpServers: { first: { "guard-a": { command: "guard-a" } }, second: { "guard-b": { command: "guard-b" } }, afterSecond: { "guard-b": { command: "guard-b" } } },
     language: { first: "fr", second: "de" }, xai: { first: { url: "https://a.example.invalid" }, second: { url: "https://b.example.invalid" } },
     modelProviders: { first: { bank: "bank-a" }, second: { bank: "bank-b" } },
@@ -381,13 +385,14 @@ describe("saved configuration recovery", () => {
   it("creates config.json on a first save when the file is genuinely missing", () => {
     expect(existsSync(file)).toBe(false);
     saveConfig({ profile: { name: "Fixture owner" } });
-    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ profile: { name: "Fixture owner" } });
+    expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ settingsDefaultMode: "simple", profile: { name: "Fixture owner" } });
   });
 
   it("merges a save into a readable config and keeps every other saved setting", () => {
     writeFileSync(file, JSON.stringify({ profile: { name: "Fixture owner" }, customKey: { kept: true } }));
     saveConfig({ profile: { email: "owner@example.test" } });
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({
+      settingsDefaultMode: "advanced",
       profile: { name: "Fixture owner", email: "owner@example.test" },
       customKey: { kept: true },
     });
@@ -414,17 +419,17 @@ describe("saved configuration recovery", () => {
     expect(readFileSync(file, "utf8")).toBe(raw);
   });
 
-  it.skipIf(process.platform === "win32")("refuses to save through a dangling config link", () => {
+  it("refuses to save through a dangling config link", () => {
     const target = join(DATA_DIR, "absent-config-target");
-    symlinkSync(target, file);
+    fixtureLink(target, file, "file");
     expect(() => saveConfig({ profile: { name: "Replacement" } })).toThrowError(expect.objectContaining({ reason: "unreadable" }));
     expect(lstatSync(file).isSymbolicLink()).toBe(true);
     expect(existsSync(target)).toBe(false);
   });
 
-  it.skipIf(process.platform === "win32")("does not mistake a dangling config link for a first run", () => {
+  it("does not mistake a dangling config link for a first run", () => {
     const target = join(DATA_DIR, "absent-config-target");
-    symlinkSync(target, file);
+    fixtureLink(target, file, "file");
     expect(() => loadConfig()).toThrowError(expect.objectContaining({ reason: "unreadable" }));
     expect(lstatSync(file).isSymbolicLink()).toBe(true);
     expect(existsSync(target)).toBe(false);
@@ -1694,6 +1699,20 @@ describe("the All apps rollback switch (0.1.61 plan 8.1)", async () => {
 describe("newBots effort default (triage row 23)", () => {
   const file = join(DATA_DIR, "config.json");
   beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });
+
+  it("preserves new-bot permission when the effort row is saved or cleared", () => {
+    saveConfig(parseConfigPatch({ newBots: { permissionLevel: "auto" } }));
+    saveConfig(parseConfigPatch({ newBots: { effort: "high" } }));
+    expect(loadConfig().newBots).toEqual({ permissionLevel: "auto", effort: "high" });
+    saveConfig(parseConfigPatch({ newBots: { effort: null } }));
+    expect(loadConfig().newBots).toEqual({ permissionLevel: "auto" });
+    expect(JSON.parse(readFileSync(file, "utf8")).newBots).toEqual({ permissionLevel: "auto" });
+    saveConfig(parseConfigPatch({ newBots: { effort: "low" } }));
+    saveConfig(parseConfigPatch({ newBots: { permissionLevel: "ask" } }));
+    expect(loadConfig().newBots).toEqual({ permissionLevel: "ask", effort: "low" });
+    saveConfig(parseConfigPatch({ newBots: {} }));
+    expect(loadConfig().newBots).toEqual({ permissionLevel: "ask", effort: "low" });
+  });
 
   it("is patchable through the config route and null clears it", () => {
     saveConfig(parseConfigPatch({ newBots: { effort: "high" } }));

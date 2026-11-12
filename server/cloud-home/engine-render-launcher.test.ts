@@ -207,7 +207,7 @@ describe("MCP proxies (tests 4, 5, r3 M5, Low)", () => {
     const many = Object.fromEntries(Array.from({ length: 17 }, (_, i) => [`m${i}`, { proxy: "memory" }]));
     expect(refused(rig.request("codex", { render: { mcp: many } }))).toBe("Cloud turn render has too many MCP servers");
     const value = "v".repeat(4000);
-    const big = Object.fromEntries(CLOUD_MCP_PROXIES.agents.env.map(name => [name, value]));
+    const big = Object.fromEntries(CLOUD_MCP_PROXIES.agents.env.filter(name => !name.startsWith("MURAGE_MCP_LISTED_")).map(name => [name, value]));
     expect(refused(rig.request("claudeAgent", { render: { mcp: { a: { proxy: "agents", env: big }, b: { proxy: "agents", env: big } } } }))).toBe("Cloud turn MCP env exceeds its limit");
     expect(refused(rig.request("claudeAgent", { render: { systemPrompt: "x".repeat(600 * 1024) } }))).toBe("Cloud turn render exceeds its limit");
     expect(refused(rig.request("codex", { render: { route: { ...route, apiKey: "k".repeat(5000) } } }))).toBe("Cloud turn render route apiKey is not allowed");
@@ -311,13 +311,18 @@ describe("Fuigo (test 9, r2 R2/R3, r3 N2)", () => {
     for (const gate of gates) expect(plan.env[gate], gate).toBe("0");
     expect(plan.files[`${h}/.fuigo/config.toml`]).toContain("[claude_compat]\nimported = true\n");
   });
-  it("binds the root-owned system tiers read-only and the image ships them with the pins", () => {
-    expect(ok(rig.request("fuigoAgent")).roBind).toEqual(expect.arrayContaining(["/etc/fuigo/requirements.toml", "/etc/fuigo/managed_config.toml"]));
+  it("binds no /etc/fuigo tier (the turn's user namespace cannot trust it) and the image still ships it with the pins", () => {
+    // Fuigo >= 1.0.24 trusts an admin file only when host root shows as uid 0; inside the turn it never does.
+    expect(ok(rig.request("fuigoAgent")).roBind.filter(path => path.startsWith("/etc/fuigo"))).toEqual([]);
+    // The other engines keep their root-owned policy binds (these exist only where the file does, as in the image).
+    const managedPaths = JSON.parse(rig.py("print(json.dumps(m.MANAGED_POLICY_PATHS))")) as Record<string, string[]>;
+    expect(managedPaths).toEqual({ claudeAgent: ["/etc/claude-code/managed-settings.json"], codex: ["/etc/codex/requirements.toml"], grokAgent: ["/etc/grok/requirements.toml"] });
     const managed = readFileSync(new URL("../../deploy/cloud-home/managed/fuigo-requirements.toml", import.meta.url), "utf8");
     for (const pin of FUIGO_PINS) expect(managed).toContain(pin);
     const build = readFileSync(new URL("../../deploy/cloud-home/build-image.sh", import.meta.url), "utf8");
     expect(build).toContain("install -o root -g root -m 0644 deploy/cloud-home/managed/fuigo-requirements.toml /etc/fuigo/requirements.toml");
   });
+
 });
 
 describe("OpenCode auth content (r9 \"OpenCode\", supersedes r3 M1)", () => {
@@ -434,28 +439,32 @@ describe("server and launcher agree on the render contract (test 16)", () => {
     const node = process.execPath, flag = { ELECTRON_RUN_AS_NODE: "1" };
     const mcp = cloudRenderMcp({
       muragebox: { command: node, args: [SPAWNED_PROXIES.permission, socket], env: flag },
-      agents: { command: node, args: [SPAWNED_PROXIES.agents], env: { ...flag, MURAGE_HARNESS_URL: "http://127.0.0.1:8787", MURAGE_COMMS_TOKEN: "t", MURAGE_TURN_DEPTH: "0", MURAGE_CRED_FILE: "/tmp/x" } },
+      agents: { command: node, args: [SPAWNED_PROXIES.agents], env: { ...flag, MURAGE_HARNESS_URL: "http://127.0.0.1:8787", MURAGE_COMMS_TOKEN: "t", MURAGE_TURN_DEPTH: "0", MURAGE_NEEDS_OWNER_NOW: "1", MURAGE_EMAIL: "send", MURAGE_CRED_FILE: "/tmp/x" } },
       composio: { command: node, args: [SPAWNED_PROXIES.connectors], env: { ...flag, MURAGE_CONNECTORS_TOKEN: "c", MURAGE_CONNECTOR_UPSTREAM_HEADERS: '{"authorization":"Bearer c"}' } },
       browser: { command: node, args: [SPAWNED_PROXIES.unifiedBrowser], env: { ...flag, MURAGE_CONTROL_TOKEN: "b" } },
       github: { command: node, args: [SPAWNED_PROXIES.remoteMcp, "--server", "github"], env: { MURAGE_MCP_TOKEN: "m" } },
       own: { command: "npx", args: ["-y", "fixture-server"], env: {} },
     }, name => name === "github");
     expect(Object.keys(mcp)).toEqual(["muragebox", "agents", "composio", "browser", "github"]);
-    expect(mcp.agents.env).toEqual({ MURAGE_HARNESS_URL: "http://127.0.0.1:8787", MURAGE_COMMS_TOKEN: "t", MURAGE_TURN_DEPTH: "0" });
+    // the 1.0.9 tool switches (needs_owner_now, bot email) reach the sandboxed agents proxy
+    expect(mcp.agents.env).toEqual({ MURAGE_HARNESS_URL: "http://127.0.0.1:8787", MURAGE_COMMS_TOKEN: "t", MURAGE_TURN_DEPTH: "0", MURAGE_NEEDS_OWNER_NOW: "1", MURAGE_EMAIL: "send" });
     expect(mcp.github).toEqual({ proxy: "remote", server: "github", env: { MURAGE_MCP_TOKEN: "m" }, ask: true });
     for (const engine of ["claudeAgent", "codex"]) expect(rig.plan(rig.request(engine, { render: { mcp } })).error, engine).toBeUndefined();
   });
   it("sends the drivers' routes in a shape the launcher accepts", () => {
     vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
-    const providerRoute = { connectionId: "c1", preset: "openai" as const, protocol: "responses" as const, baseUrl: "http://localhost:4000/v1", apiKey: "route-key", model: "gpt-fixture", revision: "r1" };
+    const providerRoute = { connectionId: "c1", preset: "openai" as const, protocol: "responses" as const, baseUrl: "http://localhost:4999/v1", apiKey: "route-key", model: "gpt-fixture", revision: "r1" };
     const codexEnv: NodeJS.ProcessEnv = {};
     applyProviderRoute("codex", codexEnv, providerRoute);
     const codexRender = JSON.parse(codexEnv[TURN_RENDER]!);
-    expect(codexRender.route.baseUrl).toBe("http://127.0.0.1:4000/v1");
+    expect(codexRender.route.baseUrl).toBe("http://127.0.0.1:4999/v1");
     expect(rig.plan(rig.request("codex", { render: codexRender })).error).toBeUndefined();
     const fuigoEnv: NodeJS.ProcessEnv = {};
     applyProviderRoute("fuigoAgent", fuigoEnv, { ...providerRoute, protocol: "openai" }, { threadId: "t", memoryTools: true });
-    expect(rig.plan(rig.request("fuigoAgent", { render: JSON.parse(fuigoEnv[TURN_RENDER]!), scratch: JSON.parse(fuigoEnv[TURN_SCRATCH]!) })).error).toBeUndefined();
+    expect(fuigoEnv.FUIGO_API_BASE_URL).toBeDefined();
+    expect(fuigoEnv.FUIGO_MODELS_BASE_URL).toBeDefined();
+    const fuigoBases = { FUIGO_API_BASE_URL: fuigoEnv.FUIGO_API_BASE_URL!, FUIGO_MODELS_BASE_URL: fuigoEnv.FUIGO_MODELS_BASE_URL! };
+    expect(rig.plan(rig.request("fuigoAgent", { env: fuigoBases, render: JSON.parse(fuigoEnv[TURN_RENDER]!), scratch: JSON.parse(fuigoEnv[TURN_SCRATCH]!) })).error).toBeUndefined();
     const opencodeEnv = cloudTurnEnvironment("opencodeGo", {});
     stripForeignProviderKeys(opencodeEnv);
     const opencode = rig.plan(rig.request("opencodeGo", { render: JSON.parse(opencodeEnv[TURN_RENDER]!) })).ok!;
@@ -473,4 +482,12 @@ describe("server and launcher agree on the render contract (test 16)", () => {
     vi.stubEnv("MURAGE_CLOUD_ROLE", "");
     expect(kimiSpawnArgs("ollama::fixture-model")).toEqual(["-m", "ollama::fixture-model", "acp"]);
   });
+});
+
+it("c11-cloud-remote-catalog keeps marker identity paired with a bounded loopback publication endpoint", () => {
+  const env = { MURAGE_MCP_LISTED_FILE: "/server-private/generation.remote", MURAGE_MCP_LISTED_URL: "http://127.0.0.1:8799/api/internal/mcp-catalog/12345678-1234-1234-1234-123456789abc" };
+  const render = { mcp: { fixture: { proxy: "remote", server: "fixture", env } } };
+  expect(ok(rig.request("claudeAgent", { render })).files).toBeDefined();
+  expect(refused(rig.request("claudeAgent", { render: { mcp: { fixture: { proxy: "remote", server: "fixture", env: { MURAGE_MCP_LISTED_FILE: env.MURAGE_MCP_LISTED_FILE } } } } }))).toContain("registered endpoint");
+  expect(refused(rig.request("claudeAgent", { render: { mcp: { fixture: { proxy: "remote", server: "fixture", env: { ...env, MURAGE_MCP_LISTED_URL: "https://outside.invalid/catalog" } } } } }))).toContain("endpoint is not allowed");
 });

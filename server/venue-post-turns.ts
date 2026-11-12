@@ -8,6 +8,8 @@ import type { PostTo } from "./store.ts";
 export type VenuePostRecord = {
   botId: string; threadId: string; origin: "desktop" | "companion"; rootThreadId?: string;
   request: { messageId: string; textHash: string; postTo: PostTo };
+  /** A No limits destination is never a stored picker grant after the level changes. */
+  noLimits?: true;
   attempts: number;
 };
 /** Only recordVenuePostTurn writes it (from the mount in index.ts startTurnAdmitting). */

@@ -1,0 +1,12 @@
+# Run from the winbox-gate worktree; one container at a time.
+export IT_JOB=afix-winbox-gate
+export IT_W=/work/build/winbox-gate/wt
+export IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh
+export IT_CAP=2
+export IT_BOXES='murage-vt1 murage-vt2'
+export NETARG='--network none'
+while awk '{exit !($1>60)}' /proc/loadavg; do sleep 5; done
+# RED before source edits (requires expected exit 1):
+/work/fuigo-builds/tools/it-remote.sh 'set -eu; while awk '\''{exit !($1>60)}'\'' /proc/loadavg; do sleep 5; done; set +e; node --test --test-name-pattern="ROUND 3" scripts/windows/winbox-driver.node-test.mjs scripts/windows/winbox-proof-audit.node-test.mjs > .test-tmp/afix-winbox-gate-r3/red.log 2>&1; result=$?; cat .test-tmp/afix-winbox-gate-r3/red.log; test "$result" -eq 1'
+# After fixes; includes all tests, real mutants and syntax checks:
+/work/fuigo-builds/tools/it-remote.sh 'set -eu; while awk '\''{exit !($1>60)}'\'' /proc/loadavg; do sleep 5; done; node .test-tmp/afix-winbox-gate-r3/run-evidence.mjs'

@@ -9,6 +9,10 @@ import { closeSocketQuietly } from "./browser-socket-teardown.ts";
 import { protectedDocumentTargeted } from "./browser-floor-builtin.ts";
 import { SECRET_CLASSIFIER_SOURCE } from "../shared/browser-secret-classifier.ts";
 const WORLD = "murage-protected-document-v1";
+// The closed-shadow check reads the whole pierced DOM tree in one CDP message (browser-floor-builtin.ts). An ordinary long article (en.wikipedia.org/wiki/Hobart,
+// ~9.7k elements) is 3.7 MB of JSON, so a 2 MB cap closed the socket on it and the failed read locked the page as if it held a secret. The cap stays finite (a
+// page cannot make the guard buffer without bound); a tree past it still fails closed.
+export const GUARD_MAX_PAYLOAD = 64 * 1024 * 1024;
 export const BROWSER_DOCUMENT_GUARD_SOURCE = String.raw`(() => {
   if(globalThis.__murageGuard) return;
   const dom=(${NATIVE_DOM_SOURCE})();
@@ -109,12 +113,21 @@ export class BrowserDocumentGuard {
   /** `endpoint`: a fixed loopback CDP address to use instead of asking the engine (the owner's Chrome, through Murage's one connection). */
   /** `scope`: the only pages to check ("Use my Chrome": the bot's own tabs, the only ones its engine can see). Without it, every page. */
   private scope?: () => { targets: ReadonlySet<string>; closed: number };
+  /** BRLOCK19: out-of-process frames (a cross-site iframe is its own Chrome target). Page.getFrameTree never lists one, so the lock
+   * asks Chrome for the page's child targets instead: Target.setAutoAttach (flatten) on the page's session reports each one as
+   * Target.attachedToTarget. A page with any such frame is locked, and so is a page whose answer cannot be had in time (never
+   * clear on doubt). `frameOwner` maps a frame's session to the page session it hangs from, so a frame inside a frame counts for the page. */
+  private oopifTimeoutMs: number;
+  private autoAttached = new Set<string>();
+  private frameOwner = new Map<string, { page: string; target: string }>();
+  private frameCount = new Map<string, number>();
+  private frameUnsure = new Set<string>();
   /** How many bot tabs had closed when this check last looked. */
   private closedSeen = 0;
-  constructor(command: (args: string[]) => Promise<unknown>, options: { connectTimeoutMs?: number; connection?: () => Duplex; endpoint?: string; scope?: () => { targets: ReadonlySet<string>; closed: number } } = {}) { this.scope = options.scope; this.command = command; this.connection = options.connection; this.connectTimeoutMs = options.connectTimeoutMs ?? 5000; this.endpoint = options.endpoint; }
+  constructor(command: (args: string[]) => Promise<unknown>, options: { connectTimeoutMs?: number; connection?: () => Duplex; endpoint?: string; scope?: () => { targets: ReadonlySet<string>; closed: number }; oopifTimeoutMs?: number } = {}) { this.oopifTimeoutMs = options.oopifTimeoutMs ?? 2000; this.scope = options.scope; this.command = command; this.connection = options.connection; this.connectTimeoutMs = options.connectTimeoutMs ?? 5000; this.endpoint = options.endpoint; }
   private fail() {
     for(const p of this.pending.values()) {clearTimeout(p.timer);p.reject(new Error("Browser document guard disconnected"));}
-    this.pending.clear();this.sessions.clear();this.socket=undefined;this.opening=undefined;
+    this.pending.clear();this.sessions.clear();this.autoAttached.clear();this.frameOwner.clear();this.frameCount.clear();this.frameUnsure.clear();this.socket=undefined;this.opening=undefined;
   }
   private async open() {
     if(this.socket?.readyState===WebSocket.OPEN)return;
@@ -124,9 +137,11 @@ export class BrowserDocumentGuard {
       const endpoint=typeof value==="string"?value:value?.cdpUrl??value?.cdp_url??value?.url;
       const url=new URL(endpoint);
       if(url.protocol!=="ws:"||!["127.0.0.1","localhost","[::1]"].includes(url.hostname))throw new Error("Browser guard requires a local CDP endpoint");
-      const socket=new WebSocket(url,{maxPayload:2*1024*1024,handshakeTimeout:this.connectTimeoutMs,...(this.connection?{createConnection:this.connection as never}:{})});this.socket=socket;
+      const socket=new WebSocket(url,{maxPayload:GUARD_MAX_PAYLOAD,handshakeTimeout:this.connectTimeoutMs,...(this.connection?{createConnection:this.connection as never}:{})});this.socket=socket;
       socket.on("message",raw=>{
         try {const message=JSON.parse(raw.toString());
+          if(message.id===undefined&&message.method==="Target.attachedToTarget"){this.frameAttached(message.sessionId,message.params);return;}
+          if(message.id===undefined&&message.method==="Target.detachedFromTarget"){this.frameDetached(message.params?.sessionId);return;}
           if(message.id===undefined&&message.method==="Page.javascriptDialogOpening"&&typeof message.sessionId==="string"){this.answerDialog(message.params?.type,message.sessionId);return;}
           const p=this.pending.get(message.id);if(!p)return;this.pending.delete(message.id);clearTimeout(p.timer);if(message.error)p.reject(new Error("Browser document guard command refused"));else p.resolve(message.result);}
         catch{socket.terminate();}
@@ -149,13 +164,42 @@ export class BrowserDocumentGuard {
     // A second answerer (the engine's own, on systems where it works) makes this fail with "no dialog showing": nothing to report.
     void this.send("Page.handleJavaScriptDialog",{accept},sessionId).catch(()=>{});
   }
-  private send(method:string,params:Record<string,unknown>={},sessionId?:string):Promise<any>{
+  private send(method:string,params:Record<string,unknown>={},sessionId?:string,timeoutMs=5000):Promise<any>{
     if(this.socket?.readyState!==WebSocket.OPEN)return Promise.reject(new Error("Browser guard disconnected"));
     const id=++this.sequence;
     return new Promise((resolve,reject)=>{
-      const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error("Browser guard timed out"));},5000);
+      const timer=setTimeout(()=>{this.pending.delete(id);reject(new Error("Browser guard timed out"));},timeoutMs);
       this.pending.set(id,{resolve,reject,timer});this.socket!.send(JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})}));
     });
+  }
+  private frameAttached(parent:unknown,params:any){
+    const info=params?.targetInfo;
+    if(info?.type!=="iframe"||typeof params?.sessionId!=="string"||typeof parent!=="string")return;
+    const page=this.frameOwner.get(parent)?.page??parent;
+    const child=params.sessionId as string;
+    if(!this.frameOwner.has(child)){this.frameOwner.set(child,{page,target:String(info.targetId)});this.frameCount.set(page,(this.frameCount.get(page)??0)+1);}
+    // A frame inside this frame is reported on its own session, so ask there too; no answer means the page cannot be called clear.
+    this.send("Target.setAutoAttach",{autoAttach:true,waitForDebuggerOnStart:false,flatten:true},child,this.oopifTimeoutMs).catch(()=>{this.frameUnsure.add(page);});
+  }
+  private frameDetached(child:unknown){
+    if(typeof child!=="string")return;
+    const owner=this.frameOwner.get(child);if(!owner)return;
+    this.frameOwner.delete(child);
+    const left=(this.frameCount.get(owner.page)??1)-1;
+    if(left>0)this.frameCount.set(owner.page,left);else this.frameCount.delete(owner.page);
+  }
+  /** Is a frame of this page out of process, or unknowable? Locked either way. */
+  private async outOfProcessFrame(pageSession:string):Promise<boolean>{
+    if(!this.autoAttached.has(pageSession)){
+      try{await this.send("Target.setAutoAttach",{autoAttach:true,waitForDebuggerOnStart:false,flatten:true},pageSession,this.oopifTimeoutMs);this.autoAttached.add(pageSession);}
+      catch{return true;}
+    }
+    // Chrome reports the frames it already has before it answers; one more round trip makes sure those events are in.
+    try{await this.send("Target.getTargets",{},undefined,this.oopifTimeoutMs);}catch{return true;}
+    const frames=(this.frameCount.get(pageSession)??0)>0;
+    // Doubt is not sticky: a successful look that finds no frame left (the child whose own look failed is gone) clears it.
+    if(!frames)this.frameUnsure.delete(pageSession);
+    return frames||this.frameUnsure.has(pageSession);
   }
   async protected(armed=true):Promise<boolean>{
     await this.open();
@@ -182,9 +226,12 @@ export class BrowserDocumentGuard {
         await this.send("Page.addScriptToEvaluateOnNewDocument",{source:BROWSER_DOCUMENT_GUARD_SOURCE,worldName:WORLD,runImmediately:true},session);
         this.sessions.set(page.targetId,session!);
       }
+      if(await this.outOfProcessFrame(session!))protectedDocument=true;
       await this.send("DOM.enable",{},session);
       // L11a: a targeted question in the isolated world (closed shadow roots included), never a dump of the DOM.
       if(await protectedDocumentTargeted((method,params={})=>this.send(method,params,session),BROWSER_DOCUMENT_GUARD_SOURCE,WORLD,armed))protectedDocument=true;
+      // The look above awaits the browser: an iframe that attached meanwhile is in frameCount now, and the earlier answer is stale.
+      if((this.frameCount.get(session!)??0)>0||this.frameUnsure.has(session!))protectedDocument=true;
     }
     return protectedDocument;
   }

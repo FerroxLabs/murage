@@ -1,0 +1,43 @@
+COMMAND node_modules/.bin/vitest run server/decision/ingress.test.ts -t M49
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/ingress.test.ts > A2 M49 claims alone supply service identity; spec/options are frozen and reserved fields rejected
+[memory] index build before listen name=memory_records_pinned ms=2
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=57 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/ingress.test.ts (7 tests | 1 failed | 6 skipped) 655ms
+   ↓ A2 R16 M19 M22 M47 M48 first capture binds input, aliases and conflicts
+   × A2 M49 claims alone supply service identity; spec/options are frozen and reserved fields rejected 650ms
+   ↓ R16 actor substitution ignored and all authority objects frozen at registration
+   ↓ R12 decision never reads message history
+   ↓ service execution joins concurrent calls, retains frozen content and never uses caller mutations
+   ↓ ingress duplicate event envelope metadata does not change input identity
+   ↓ R16 service request keys are scoped to their verified conversation, never another owner handle
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 6 skipped (7)
+   Start at  07:41:35
+   Duration  9.32s (transform 6.87s, setup 8.09s, import 435ms, tests 655ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/ingress.test.ts > A2 M49 claims alone supply service identity; spec/options are frozen and reserved fields rejected
+AssertionError: expected 'refuse' to be 'run' // Object.is equality
+
+Expected: "run"
+Received: "refuse"
+
+ ❯ server/decision/ingress.test.ts:12:31
+     10|  const f=fixture(); const call=f.serviceCall({command:'echo x'}); cons…
+     11|  const h=d.openRequest({kind:'service',service:'email',claim:f.claim,c…
+     12|  expect(d.decide(h,spy).kind).toBe('run');expect(spy).not.toHaveBeenCa…
+       |                               ^
+     13|  expect(() => d.openRequest({kind:'service',service:'email',claim:{} a…
+     14|  expect(() => d.openRequest({kind:'service',service:'email',claim:f.cl…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

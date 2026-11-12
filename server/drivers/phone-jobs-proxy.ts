@@ -1,10 +1,13 @@
+import "../../shared/win-hide-child-process.mjs";
+import { createMcpCatalogWriter, guardHandle, type McpRequest } from "../mcp-listed.ts";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 // Only scoped harness authority crosses into the model's MCP process.
 // The phone-jobs MCP proxy (S13): lists exactly the phone tools the harness named in MURAGE_PHONE_TOOLS and forwards each call to
 // /api/internal/device/call with the turn's `device` capability token. It decides nothing: the harness re-checks authority on every call.
 import { request as httpRequest } from "node:http";
 import { pathToFileURL } from "node:url";
 import { z } from "zod";
-import { createLineSplitter, writeMcpLine } from "../mcp-bridge.ts";
+import { createLineSplitter } from "../mcp-bridge.ts";
 import { turnSecret, turnSecretWired } from "../turn-credential.ts";
 import { PHONE_ACTIONS, PHONE_TOOL_NAMES, actionArgsSchema, type PhoneToolName } from "../../shared/phone-jobs-contract.ts";
 
@@ -48,7 +51,7 @@ export function phoneToolDefinitions(names: readonly PhoneToolName[]): Array<{ n
 /** One loopback POST with no clock; `signal` withdraws it. At most 4 MB back. */
 function post(url: URL, token: string, body: string, signal: AbortSignal): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
-    const req = httpRequest(url, { method: "POST", signal, agent: false, headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
+    const req = NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", httpRequest(url, { method: "POST", signal, agent: false, headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "content-length": Buffer.byteLength(body) } }, (res) => {
       const chunks: Buffer[] = [];
       let size = 0;
       res.on("data", (chunk: Buffer) => {
@@ -58,15 +61,16 @@ function post(url: URL, token: string, body: string, signal: AbortSignal): Promi
       });
       res.on("end", () => resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString() }));
       res.on("error", reject);
-    });
+    }));
     req.on("error", reject);
-    req.end(body);
+    NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.end(body));
   });
 }
 
 const UNAVAILABLE = "That phone tool is not available in this conversation.";
 
 export async function runPhoneJobsProxy(env: NodeJS.ProcessEnv = process.env): Promise<void> {
+  const catalog = createMcpCatalogWriter(env);
   const base = new URL(env.MURAGE_CONTROL_URL!);
   if (base.protocol !== "http:" || !["127.0.0.1", "localhost", "[::1]"].includes(base.hostname) || !turnSecretWired("MURAGE_CONTROL_TOKEN", env)) throw new Error("Missing phone authority");
   const url = new URL("/api/internal/device/call", base);
@@ -75,8 +79,10 @@ export async function runPhoneJobsProxy(env: NodeJS.ProcessEnv = process.env): P
   const withdrawable = new Map<string, AbortController>();
   const key = (id: unknown) => JSON.stringify(id);
   const refusal = { isError: true, content: [{ type: "text", text: UNAVAILABLE }] };
-  const call = async (rpc: { id: number | string; method?: string; params?: Record<string, unknown> }, withdrawn: AbortController) => {
-    if (withdrawn.signal.aborted) return;
+  const call = async (rpc: { id: number | string; method?: string; params?: Record<string, unknown> }, withdrawn: AbortController, req: McpRequest) => {
+    // MCP: a request the client cancelled gets no response, and its catalog entry ends with it.
+    if (withdrawn.signal.aborted) { req.cancel(); return; }
+    await req.published;
     let result: unknown;
     try {
       if (rpc.method === "initialize") result = { protocolVersion: "2024-11-05", capabilities: { tools: {} }, serverInfo: { name: "murage-phone-jobs", version: "1" } };
@@ -93,13 +99,13 @@ export async function runPhoneJobsProxy(env: NodeJS.ProcessEnv = process.env): P
           else result = { ...(body.ok === true ? {} : { isError: true }), content: [{ type: "text", text: body.text }] };
         }
       } else {
-        await writeMcpLine(process.stdout, JSON.stringify({ jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "method not found" } }));
+        await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond({ jsonrpc: "2.0", id: rpc.id, error: { code: -32601, message: "method not found" } }));
         return;
       }
     } catch { result = refusal; }
     finally { if (withdrawable.get(key(rpc.id)) === withdrawn) withdrawable.delete(key(rpc.id)); }
-    if (withdrawn.signal.aborted) return;
-    await writeMcpLine(process.stdout, JSON.stringify({ jsonrpc: "2.0", id: rpc.id, result }));
+    if (withdrawn.signal.aborted) { req.cancel(); return; }
+    await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond({ jsonrpc: "2.0", id: rpc.id, result }));
   };
   let queue = Promise.resolve();
   const splitter = createLineSplitter((line) => {
@@ -111,8 +117,9 @@ export async function runPhoneJobsProxy(env: NodeJS.ProcessEnv = process.env): P
     }
     const withdrawn = new AbortController();
     withdrawable.set(key(rpc.id), withdrawn);
+    const req = guardHandle(catalog.observeRequest(rpc), (error) => { process.stderr.write(`phone-jobs proxy output failed: ${error instanceof Error ? error.message : String(error)}\n`); process.exitCode = 1; });
     const request = { ...rpc, id: rpc.id };
-    queue = queue.then(() => call(request, withdrawn));
+    queue = queue.then(() => call(request, withdrawn, req)).catch((error) => { process.stderr.write(`phone-jobs proxy output failed: ${error instanceof Error ? error.message : String(error)}\n`); process.exitCode = 1; });
   }, 64 * 1024);
   for await (const chunk of process.stdin) splitter.push(chunk);
   splitter.flush();

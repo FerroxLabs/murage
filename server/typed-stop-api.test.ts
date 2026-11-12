@@ -56,11 +56,12 @@ async function bootServer(homeDir: string, port: number): Promise<{ child: Child
   writeFileSync(join(homeDir, ".fuigo", "auth.json"), "{}");
   const instances = Object.fromEntries(Object.entries(INSTANCES).map(([name, driver]) => [name, {
     driver,
-    environment: { FAKE_ACP_RPC_LOG: join(homeDir, `${name}-rpc.log`), FAKE_ACP_INTERJECT: "fallback" },
+    environment: { FAKE_ACP_RPC_LOG: join(homeDir, `${name}-rpc.log`), FAKE_ACP_INTERJECT: "fallback", ...(driver === "customAcp" ? { FAKE_ACP_MODELS: "fake-acp-model" } : {}) },
     config: { cli: FAKE_ACP, fullAuto: false },
   }]));
   writeFileSync(join(homeDir, ".murage", "config.json"), JSON.stringify({ engineDiscovery: "explicit", instances }));
   const proc = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

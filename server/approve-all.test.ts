@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { APPROVE_ALL_THREAD, approvalBatchDigest, approvalBatchDigestInput, approvalDigestInput } from "../shared/approval-digest.ts";
-import { REASON_FOLD } from "../shared/fold-scopes.ts";
+import { REASON_FOLD, foldScopes } from "../shared/fold-scopes.ts";
 import { FreshAuthGate, approvalBatchDigestSync } from "./approval-fresh-auth.ts";
 import { APPROVE_ALL_BATCH_TTL_MS, APPROVE_ALL_CAP, ApproveAllBatches, BULK_REASON, BULK_SPECIAL_KINDS, CaptureResponse, bulkEligibility, bulkSpecialRefusal, type BulkSpecialKind, type BulkSpecialProbes } from "./approve-all.ts";
 import { AnsweredWhere } from "./mobile-push-hooks.ts";
@@ -25,6 +25,12 @@ const ordinary = (extra: Record<string, unknown> = {}, cls: Record<string, unkno
 });
 
 describe("bulkEligibility: a positive allowlist, fail closed", () => {
+  it("owner-switch refusals never offer standing or bulk approval",()=>{
+    expect(BULK_REASON['owner-switch']).toBe('held');expect(REASON_FOLD['owner-switch']).toBe('none');
+    expect(bulkEligibility(ordinary({}, {reason:'owner-switch'}),RID)).toEqual({ok:false,reasonKey:'held'});
+    expect(foldScopes({reason:'owner-switch',unattended:false,automated:false,origin:'owner',keys:['allowKey']},{allowKey:'Bash:git'})).toEqual([]);
+  });
+
   it("an ordinary card in the owner's own turn qualifies", () => {
     expect(bulkEligibility(ordinary(), RID)).toEqual({ ok: true });
   });
@@ -181,6 +187,7 @@ describe("source: one responder, refusals before every resolver", () => {
     const pairs: Array<[resolver: string, refusal: string]> = [
       ["answerLimitCard(", 'bulkSkip(res, "special-card:limit")'],
       ["answerEmailCard(", 'bulkSkip(res, "special-card:email")'],
+      ["answerHighLevelCard(", 'bulkSkip(res, "special-card:highlevel")'],
       ["answerAsSendReply(", 'bulkSkip(res, "special-card:question")'],
       ["questionReply(", 'bulkSkip(res, "special-card:question")'],
       ["resolveSkillRequest(", 'bulkSkip(res, "special-card:skill")'],
@@ -218,6 +225,7 @@ describe("source: one responder, refusals before every resolver", () => {
   it("each probe is the predicate its own branch tests, and every special reason in respondToCard is a listed kind", () => {
     const probes = between("const special: BulkSpecialProbes = {", "\n  };");
     const expected: Record<BulkSpecialKind, string> = {
+      highlevel: "requestId.startsWith(HIGHLEVEL_REQUEST_PREFIX)",
       limit: 'requestId.startsWith("limit-")',
       email: "isEmailRequestId(requestId)",
       question: "Boolean(cardByRequest(threadId, requestId, (message) => isQuestionCard(message.card)))",
@@ -300,8 +308,8 @@ describe("source: one responder, refusals before every resolver", () => {
 
 describe("bulkSpecialRefusal (probes only)", () => {
   const none = (): BulkSpecialProbes => Object.fromEntries(BULK_SPECIAL_KINDS.map((kind) => [kind, () => false])) as unknown as BulkSpecialProbes;
-  it("lists all eight kinds in branch order", () => {
-    expect([...BULK_SPECIAL_KINDS]).toEqual(["limit", "email", "question", "skill", "routine", "peer", "extension", "host-consent"]);
+  it("lists all nine kinds in branch order (HighLevel: 2c0e386d80)", () => {
+    expect([...BULK_SPECIAL_KINDS]).toEqual(["highlevel", "limit", "email", "question", "skill", "routine", "peer", "extension", "host-consent"]);
   });
   it("no kind set passes", () => {
     expect(bulkSpecialRefusal(none())).toBeNull();
@@ -313,7 +321,7 @@ describe("bulkSpecialRefusal (probes only)", () => {
     const asked: string[] = [];
     const probes = Object.fromEntries(BULK_SPECIAL_KINDS.map((kind) => [kind, () => { asked.push(kind); return kind === "question" || kind === "peer"; }])) as unknown as BulkSpecialProbes;
     expect(bulkSpecialRefusal(probes)).toBe("special-card:question");
-    expect(asked).toEqual(["limit", "email", "question"]);
+    expect(asked).toEqual(["highlevel", "limit", "email", "question"]);
   });
   it("a probe that throws propagates: nothing is decided as eligible", () => {
     expect(() => bulkSpecialRefusal({ ...none(), skill: () => { throw new Error("store gone"); } })).toThrow("store gone");

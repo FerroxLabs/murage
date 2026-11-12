@@ -21,7 +21,7 @@
   ],
   "chunkBytes": 1048576,
   "maxBytes": 26214400,
-  "origin": "https://mac.tailnet123.ts.net",
+  "origin": "https://mac.tail000000.ts.net",
   "requests": [
     {
       "body": {
@@ -217,7 +217,7 @@
     {
       "request": {
         "kind": "url",
-        "url": "https://mac.tailnet123.ts.net/api/threads/t1/export?format=md",
+        "url": "https://mac.tail000000.ts.net/api/threads/t1/export?format=md",
         "filename": "conversation.md"
       }
     },
@@ -240,7 +240,7 @@
     {
       "request": {
         "kind": "url",
-        "url": "http://mac.tailnet123.ts.net/x",
+        "url": "http://mac.tail000000.ts.net/x",
         "filename": "x.md"
       },
       "error": "foreign_url"
@@ -248,7 +248,7 @@
     {
       "request": {
         "kind": "url",
-        "url": "https://mac.tailnet123.ts.net:8444/x",
+        "url": "https://mac.tail000000.ts.net:8444/x",
         "filename": "x.md"
       },
       "error": "foreign_url"
@@ -256,7 +256,7 @@
     {
       "request": {
         "kind": "url",
-        "url": "https://mac.tailnet123.ts.net.evil.example/x",
+        "url": "https://mac.tail000000.ts.net.evil.example/x",
         "filename": "x.md"
       },
       "error": "foreign_url"
@@ -264,7 +264,7 @@
     {
       "request": {
         "kind": "url",
-        "url": "https://mac.tailnet123.ts.net./x",
+        "url": "https://mac.tail000000.ts.net./x",
         "filename": "x.md"
       },
       "error": "foreign_url"
@@ -272,7 +272,7 @@
     {
       "request": {
         "kind": "url",
-        "url": "https://mac.tailnet123.ts.net@evil.example/x",
+        "url": "https://mac.tail000000.ts.net@evil.example/x",
         "filename": "x.md"
       },
       "error": "foreign_url"
@@ -280,7 +280,7 @@
     {
       "request": {
         "kind": "url",
-        "url": "https://evil.example\\@mac.tailnet123.ts.net/x",
+        "url": "https://evil.example\\@mac.tail000000.ts.net/x",
         "filename": "x.md"
       },
       "error": "bad_args"
@@ -288,7 +288,7 @@
     {
       "request": {
         "kind": "url",
-        "url": "blob:https://mac.tailnet123.ts.net/0b8e5c2a-4f1d-4c3e-9a7b-2d6f1e8c9a01",
+        "url": "blob:https://mac.tail000000.ts.net/0b8e5c2a-4f1d-4c3e-9a7b-2d6f1e8c9a01",
         "filename": "x.md"
       },
       "error": "foreign_url"
@@ -496,7 +496,7 @@
       "accepted": false
     },
     {
-      "url": "blob:https://mac.tailnet123.ts.net/0b8e5c2a-4f1d-4c3e-9a7b-2d6f1e8c9a01",
+      "url": "blob:https://mac.tail000000.ts.net/0b8e5c2a-4f1d-4c3e-9a7b-2d6f1e8c9a01",
       "accepted": false
     },
     {

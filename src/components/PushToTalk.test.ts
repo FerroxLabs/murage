@@ -470,6 +470,20 @@ describe("dictation clean-up on the batch path", () => {
 
   const clip = () => new Blob([new Uint8Array(MIN_CLIP_BYTES)], { type: "audio/webm" });
 
+  it("starts the inline notice before posting a clip with clean-up, without a response or click", async () => {
+    const order: string[] = [];
+    const onCleanupStart = vi.fn(() => { order.push("notice"); });
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      order.push("post");
+      return new Response(JSON.stringify({ text: "Clean." }));
+    }));
+    await postClip(clip(), 1000, undefined, { botId: "bot_1" }, onCleanupStart);
+    expect(order).toEqual(["notice", "post"]);
+    await postClip(clip(), 1000, undefined, undefined, onCleanupStart);
+    expect(onCleanupStart).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(["notice", "post", "post"]);
+  });
+
   it("asks for clean-up, with the target, only when told to", async () => {
     const urls: string[] = [];
     vi.stubGlobal("fetch", async (url: string) => {

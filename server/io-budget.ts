@@ -18,6 +18,12 @@ import { NET_LINE_BYTES_PER_MINUTE, netMeter, netText, type NetMinute } from "./
 export const IO_BUDGET_INTERVAL_MS = 60_000;
 export const IO_BUDGET_BYTES_PER_MINUTE = 50 * 1024 * 1024;
 export const IO_BUDGET_IDLE_BYTES_PER_MINUTE = 1024 * 1024;
+/** Shared admission for periodic writers. Leave room for checkpoint copies and overlapping sample windows; the watchdog limits stay unchanged. */
+export const IO_BUDGET_BACKGROUND_BYTES_PER_MINUTE = IO_BUDGET_IDLE_BYTES_PER_MINUTE / 4;
+const PERIODIC_SOURCES: ReadonlySet<string> = new Set([
+  "memory-worker", "memory-idle", "memory-notebook", "memory-upgrade", "memory-continuity",
+  "search-index", "transcript-backfill", "record-keys-backfill",
+]);
 export const IO_BUDGET_CPU_FRACTION = 0.8;
 export const IO_BUDGET_CPU_MINUTES = 3;
 export const IO_BUDGET_MAX_SCALE = 8;
@@ -88,6 +94,9 @@ export class IoBudget {
   private written?: () => Iterable<[string, number]>;
   private deferredSource: string | null = null;
   private deferUntil = 0;
+  /** A leaky bucket's finish time: constant state, including an oversized slice's debt, independent of history or writer count. */
+  private backgroundDebtAt = 0;
+  private foregroundActivity = false;
   /** Bytes written in the last minute under a budget of their own (the revoke marker's, revoke-budget.ts): planned, capped there, and
    *  taken off the minute's writes before the verdict, so a walk at its allowance is not reported as a fault and punished with a slower poll
    *  rate for everything else (SELF-OVERLOAD-105 item 1b). */
@@ -128,7 +137,14 @@ export class IoBudget {
   noteBytes(source: string, bytes: number): void {
     if (!Number.isFinite(bytes) || bytes <= 0) return;
     this.bytes.set(source, (this.bytes.get(source) ?? 0) + bytes);
+    if (this.timer && PERIODIC_SOURCES.has(source)) {
+      this.backgroundDebtAt = Math.max(Date.now(), this.backgroundDebtAt)
+        + bytes / IO_BUDGET_BACKGROUND_BYTES_PER_MINUTE * IO_BUDGET_INTERVAL_MS;
+    }
   }
+
+  /** A turn's start and completion both mark the sampled interval, even if the engine is already idle at the minute tick. */
+  noteForegroundActivity(): void { this.foregroundActivity = true; }
 
   /** Bytes charged to `source` in the current minute so far (tests and diagnostics; the tick reads and clears them). */
   pendingBytes(source: string): number { return this.bytes.get(source) ?? 0; }
@@ -183,14 +199,15 @@ export class IoBudget {
   currentSource(): string | undefined { return this.syncSource ?? this.sourceContext.getStore(); }
 
   shouldDefer(source: string): boolean {
-    if (source !== this.deferredSource || this.scale === 1) return false;
-    try { return this.read().at < this.deferUntil; } catch { return false; }
+    return this.deferredForMs(source) > 0;
   }
 
   /** Milliseconds until `source`'s deferral window ends (0 when it is not deferred). */
   deferredForMs(source: string): number {
-    if (source !== this.deferredSource || this.scale === 1) return 0;
-    try { return Math.max(0, this.deferUntil - this.read().at); } catch { return 0; }
+    const shared = this.timer && PERIODIC_SOURCES.has(source)
+      ? Math.max(0, this.backgroundDebtAt - Date.now() - IO_BUDGET_INTERVAL_MS) : 0;
+    if (source !== this.deferredSource || this.scale === 1) return shared;
+    try { return Math.max(shared, this.deferUntil - this.read().at); } catch { return shared; }
   }
 
   /** 1 normally; doubles each time the budget is blown, up to 8. Pollers multiply their interval by this. */
@@ -237,7 +254,7 @@ export class IoBudget {
     const applicationBytes = this.sampleBytes();
     let net: NetMinute | null = null;
     try { net = this.netMinute?.() ?? null; } catch { /* traffic counts are diagnostics */ }
-    if (!previous) { this.bytes.clear(); return null; }
+    if (!previous) { this.bytes.clear(); this.foregroundActivity = false; return null; }
     if (reading.at <= previous.at) return null;
     const minutes = (reading.at - previous.at) / 60_000;
     // fail closed (IO-IDLE r3.6): a minute either end of which could not read the OS count is UNKNOWN, not 0: it is never calm (the poll
@@ -253,7 +270,8 @@ export class IoBudget {
     const systemHot = system?.overloaded === true;
     this.hotCpuMinutes = cpu > this.cpuFraction || systemHot ? this.hotCpuMinutes + 1 : 0;
     let idle = false;
-    try { idle = this.isIdle(); } catch { /* startup uses the active budget */ }
+    try { idle = this.isIdle() && !this.foregroundActivity; } catch { /* startup uses the active budget */ }
+    this.foregroundActivity = false;
     const budget = idle ? IO_BUDGET_IDLE_BYTES_PER_MINUTE : this.bytesPerMinute;
     const writing = writeBytesPerMinute > budget;
     const spinning = this.hotCpuMinutes >= this.cpuMinutes;
@@ -325,6 +343,8 @@ export class IoBudget {
 
   start(): void {
     if (this.timer) return;
+    this.backgroundDebtAt = 0;
+    this.foregroundActivity = false;
     this.last = null;
     this.tick();
     this.timer = setInterval(() => { try { this.tick(); } catch { /* a watchdog never throws into the app */ } }, IO_BUDGET_INTERVAL_MS);
@@ -338,6 +358,7 @@ export class IoBudget {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+    this.backgroundDebtAt = 0;
     if (this.traceTimer) clearInterval(this.traceTimer);
     this.traceTimer = null;
   }

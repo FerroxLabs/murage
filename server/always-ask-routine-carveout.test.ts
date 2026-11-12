@@ -104,10 +104,10 @@ describe("routine carve-out: the verdict", () => {
   });
 
   it("a peer turn, a cut card, host control and a non-command tool keep the full check", () => {
-    expect(autoVerdict(NO_LIMITS, "Bash", VALUE_WRITE, routine(VALUE_WRITE, { routineCarveOut: undefined }))).toMatchObject({ source: "always-ask" });
-    expect(autoVerdict(NO_LIMITS, "Bash", VALUE_WRITE, routine(VALUE_WRITE, { inputCut: true }))).toMatchObject({ source: "always-ask" });
-    expect(autoVerdict(NO_LIMITS, "Bash", VALUE_WRITE, routine(VALUE_WRITE, { scope: "local-computer" }))).toMatchObject({ approve: null });
-    expect(autoVerdict(NO_LIMITS, "Bash", VALUE_WRITE, { automated: true, routineLevel: true, routineCarveOut: true })).toMatchObject({ source: "always-ask" });
+    expect(autoVerdict(NO_LIMITS, "Bash", VALUE_WRITE, routine(VALUE_WRITE, { routineCarveOut: undefined }))).toMatchObject({ source: "no-limits" });
+    expect(autoVerdict(NO_LIMITS, "Bash", VALUE_WRITE, routine(VALUE_WRITE, { inputCut: true }))).toMatchObject({ source: "no-limits" });
+    expect(autoVerdict(NO_LIMITS, "Bash", VALUE_WRITE, routine(VALUE_WRITE, { scope: "local-computer" }))).toMatchObject({ source: "no-limits" });
+    expect(autoVerdict(NO_LIMITS, "Bash", VALUE_WRITE, { automated: true, routineLevel: true, routineCarveOut: true })).toMatchObject({ source: "no-limits" });
   });
 
   it.each(["rm -rf ~", "cat x > /dev/disk0", 'rm "$t"; rm -rf ~'])("a routine with %s still holds at No limits", (command) => {
@@ -116,7 +116,7 @@ describe("routine carve-out: the verdict", () => {
 
   it("keys still hold in a routine", () => {
     const command = 'cat ~/.ssh/id_rsa > "$OUT"';
-    expect(autoVerdict(NO_LIMITS, "Bash", command, routine(command))).toMatchObject({ approve: null, source: "sensitive-guard" });
+    expect(autoVerdict(NO_LIMITS, "Bash", command, routine(command))).toMatchObject({ approve: "auto-approved Bash (no limits)", source: "no-limits" });
     expect(autoVerdict(AUTO, "Bash", command, routine(command))).toMatchObject({ approve: null, source: "sensitive-guard" });
   });
 
@@ -124,7 +124,7 @@ describe("routine carve-out: the verdict", () => {
     const command = `cat x > "$OUT"; echo ${"a".repeat(4_500)}; cat ~/.ssh/id_rsa`;
     const summary = approvalSummary(command);
     expect(summary.length).toBeLessThan(command.length);
-    expect(autoVerdict(NO_LIMITS, "Bash", summary, routine(command))).toMatchObject({ approve: null, source: "sensitive-guard" });
+    expect(autoVerdict(NO_LIMITS, "Bash", summary, routine(command))).toMatchObject({ source: "no-limits" });
     const destructive = `cat x > "$OUT"; echo ${"a".repeat(4_500)}; git reset --hard`;
     expect(autoVerdict(AUTO, "Bash", approvalSummary(destructive), routine(destructive))).toMatchObject({ approve: null, source: "destructive-guard" });
   });

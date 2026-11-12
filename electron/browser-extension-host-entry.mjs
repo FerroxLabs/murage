@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Executable entry only. Libraries must import browser-extension-host.mjs.
 import { runNativeHost, readHostConfig, encodeFrame } from './browser-extension-host.mjs';

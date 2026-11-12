@@ -4,21 +4,26 @@
 import { aoeEnd, LEGACY_SESSION_CUTOFF_S } from "../src/checkout-moments";
 import { env } from "cloudflare:workers";
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseItem9HoldForTests } from "../src/held-until-item9-highs";
+// ITEM 9: these suites exercise auto top-up as offered; the launch hold (held-until-item9-highs.ts) is released here, and put back in force
+// by the TOPUP-OFFERS-LIVE cases at the end.
+beforeAll(() => releaseItem9HoldForTests(true));
+afterAll(() => releaseItem9HoldForTests(false));
 import { createWorker } from "../src/index";
 import { fakeProvider, type ProviderAdapter } from "../src/b3-provider";
 import type { Home } from "../src/b3-control";
 import { signStripePayload, type StripeFetch } from "../src/b5-stripe";
 import { sweepMonitoring } from "../src/ops-monitor";
-import { endingSql, sweepBilling, type BillingDependencies, type BillingNotifier, type FluxEntitlementHooks } from "../src/b5-billing";
+import { endingSql, isMissingCollectedCountryColumn, sweepBilling, type BillingDependencies, type BillingNotifier, type FluxEntitlementHooks } from "../src/b5-billing";
 import { LEGAL_DOCS } from "../src/legal-docs.generated";
-import { addMonthUtc, recordAcceptanceAtCompletion, buildDisclosure, buildTermsReminderEmail, isEuRegion, isoDate, retentionDaysText, MODEL_WITHDRAWAL_FORM, NO_EXPORT_HOLD_SQL, pinCurrentPayment, SCREEN_VERSION, TERMS_NONACCEPTANCE_WORDING, WORDING, type TaxQuoteRow } from "../src/legal-flows";
+import { addMonthUtc, recordAcceptanceAtCompletion, buildDisclosure, buildTermsReminderEmail, serverReadyData, SERVER_READY_SUBJECT, isEuRegion, isoDate, retentionDaysText, MODEL_WITHDRAWAL_FORM, NO_EXPORT_HOLD_SQL, pinCurrentPayment, SCREEN_VERSION, TERMS_NONACCEPTANCE_WORDING, WORDING, type TaxQuoteRow } from "../src/legal-flows";
 import { defaultNotifier, FluxHookRetry, stubFluxHooks, stubGrantMonthlyCredits } from "../src/b5-billing";
 import { EXPORT_REPEAT_WORDING } from "../src/legal-routes";
 import { acquireHomeLease, HomeBusy, releaseHomeLease } from "../src/billing-lease";
-import { advanceRefundOp, getRefundOp, refundOpInsert, reopenLegacyRefusal, reopenRefusedRequest } from "../src/legal-refunds";
+import { advanceRefundOp, getRefundOp, refundOpInsert, reopenLegacyRefusal, reopenRefusedRequest, sweepRefundOps } from "../src/legal-refunds";
 import { MANAGED_FORBIDDEN } from "../src/seller";
-import { STRIPE_PAGE_VERSION, submitText } from "../src/checkout-strings";
+import { renderDisclosure, STRIPE_PAGE_VERSION, submitText } from "../src/checkout-strings";
 import { renewalSha256 } from "../src/disclosure-token";
 import m0071 from "../migrations/0071_replacement_cutovers.sql?raw";
 import m0093 from "../migrations/0093_cancellation_feedback.sql?raw";
@@ -422,7 +427,7 @@ const get = (path: string) => send(path, { method: "GET" });
 /** Astra INTEGRATED-10: a dispute-credit operator call with Flux ON (the switch, its configuration and qualified hooks); off it is 503. */
 async function creditOp(path: string, body: unknown) {
   const saved = envOver;
-  envOver = { ...envOver, CLOUD_FLUX_ROUTES_ENABLED: "1", FLUX_CLOUD_SERVICE_TOKEN: "s".repeat(40), FLUX_API_BASE: "https://api.fluxrouter.ai" };
+  envOver = { ...envOver, CLOUD_FLUX_ROUTES_ENABLED: "1", FLUX_CLOUD_SERVICE_TOKEN: "s".repeat(40), FLUX_CLOUD_GRANTS_TOKEN: "g".repeat(40), FLUX_API_BASE: "https://api.fluxrouter.ai" };
   try {
     return await send(path, { body, headers: { authorization: `Bearer ${ADMIN}` } },
       { ...deps(), flux: { ...flux, stub: false, capabilities: { reversalTargets: true } } as unknown as FluxEntitlementHooks });
@@ -554,6 +559,37 @@ beforeEach(async () => {
 });
 afterEach(() => vi.restoreAllMocks());
 
+describe("the welcome (server ready) email", () => {
+  const withOrigin = (o: string | undefined) => ({ ...env, BILLING_RETURN_ORIGIN: o }) as unknown as Env;
+  it("links to this environment's own site, never to prod, and carries the subject", async () => {
+    const staging = await serverReadyData(withOrigin("https://murage-site-preview.vercel.app"), "home-x", NOW, NOW);
+    expect(staging.emailSubject).toBe(SERVER_READY_SUBJECT);
+    expect(SERVER_READY_SUBJECT).toBe("Welcome to Murage Cloud: your server is ready");
+    expect(staging.emailText).toContain("Open Murage: https://murage-site-preview.vercel.app/home/cloud");
+    // The desktop app step: same words as the site, and the public download page in every environment.
+    expect(staging.emailText).toContain("Want Murage on your computer too?");
+    expect(staging.emailText).toContain("Download the app: https://murage.ai/download");
+    expect(staging.emailText).toContain("press Cloud home, then Connect to your Cloud home");
+    expect(staging.emailHtml).toContain('<a href="https://murage.ai/download">');
+    expect(String(staging.emailHtml)).toContain('href="https://murage-site-preview.vercel.app/home/cloud"');
+    expect(String(staging.emailHtml)).not.toContain("murage.ai/home");
+    expect(String(staging.emailText)).not.toMatch(/refund|Not right for you/);
+    expect(String(staging.emailText)).not.toContain("murage.ai/home");
+    expect(String(staging.emailText)).toContain("Questions? Email support@murage.ai and we reply within 2 working days.");
+    const prod = await serverReadyData(withOrigin("https://murage.ai"), "home-x", NOW, NOW);
+    expect(prod.emailText).toContain("Open Murage: https://murage.ai/home/cloud\n\n");
+  });
+  it("leaves the link out when the origin is missing or not a bare https origin, rather than pointing at a default", async () => {
+    for (const o of [undefined, "", "http://murage.ai", "https://murage.ai/path"]) {
+      const d = await serverReadyData(withOrigin(o), "home-x", NOW, NOW);
+      expect(String(d.emailText)).not.toContain("Open Murage");
+      // The one link left is the public download page, which needs no origin.
+      expect([...String(d.emailHtml).matchAll(/href="([^"]*)"/g)].map((m) => m[1])).toEqual(["https://murage.ai/download"]);
+      expect(String(d.emailText)).toContain("Reference: home-x");
+    }
+  });
+});
+
 describe("checkout wording (CHECKOUT.md, verbatim)", () => {
   it("serves the renewal statement, the boxes and the dates from one source", async () => {
     const res = await get("/v1/legal/disclosure?plan=pro");
@@ -639,7 +675,7 @@ describe("start date and Stripe session", () => {
     expect(cs.form.get("subscription_data[trial_end]")).toBeNull();
     // the links go to the marketing site (murage.ai), never the cloud origin
     // 2026-10-14 (plan §3.2, option 1): the renewal sentence opens the submit message, then the acceptance links
-    expect(cs.form.get("custom_text[submit][message]")).toBe(`Renews each month at US$49 + tax until you cancel in your account. ${submitText("en", "full", { terms: "https://murage.ai/cloud-terms", tos: "https://murage.ai/terms-of-service", privacy: "https://murage.ai/privacy-policy" })}`);
+    expect(cs.form.get("custom_text[submit][message]")).toBe(`Renews each month at US$49 + tax until you cancel in your account. ${submitText("en", "full", { terms: "https://murage.ai/cloud-terms", tos: "https://murage.ai/terms-of-service", privacy: "https://murage.ai/privacy-policy", flux: "https://fluxrouter.ai/terms-of-service" })}`);
     expect(cs.form.get("locale")).toBe("en"); expect(cs.form.get("submit_type")).toBeNull();
     expect(cs.form.get("metadata[consent_id]")).toMatch(/^consent-/);
     expect(cs.form.get("subscription_data[metadata][consent_id]")).toBe(cs.form.get("metadata[consent_id]"));
@@ -1664,7 +1700,7 @@ describe("one 7-day refund per person or payment method (refund-identity.ts)", (
     // The customer accepted the current Cloud terms at checkout, before paying, through the real consent path (no SQL edit): the row
     // carries the generated id, which is the one listed in REFUND_LIMIT_V2_CLOUD_TERMS_IDS.
     expect(await env.DB.prepare("SELECT source,cloud_terms_version AS v FROM terms_acceptances WHERE user_id=?").bind(OWNER).all())
-      .toMatchObject({ results: [{ source: "checkout", v: "cloud-terms-964155e36e8b" }] });
+      .toMatchObject({ results: [{ source: "checkout", v: "cloud-terms-d5a2fc1a2a13" }] });
     envOver = { REFUND_LIMIT_TERMS_VERSIONS: "" };
     // Launch flag off (the default): the version does not bind; the offer applies.
     expect(await (await refund({ homeId: "home-1", dryRun: true })).json()).toMatchObject({ quote: { eligible: true, oncePerPerson: false } });
@@ -1769,7 +1805,7 @@ describe("one 7-day refund per person or payment method (refund-identity.ts)", (
       await sweep(); await sweep(); // the 30-day notice goes out first; only then can the customer re-accept
       signedIn = OWNER;
       const current = { cloudTerms: LEGAL_DOCS.cloudTerms.versionId, termsOfService: LEGAL_DOCS.termsOfService.versionId, privacyPolicy: LEGAL_DOCS.privacyPolicy.versionId };
-      expect((await send("/v1/account/terms/accept", { body: { termsAccepted: true, documentVersions: current, client: { ip: "198.51.100.8", userAgent: "ua-r" } } })).status).toBe(200);
+      expect((await send("/v1/account/terms/accept", { body: { termsAccepted: true, ageConfirmed: true, screenVersion: SCREEN_VERSION, documentVersions: current, client: { ip: "198.51.100.8", userAgent: "ua-r" } } })).status).toBe(200);
       const re = (await env.DB.prepare("SELECT accepted_at AS a FROM terms_acceptances WHERE source='reaccept' AND user_id=?").bind(OWNER).first<{ a: number }>())!.a;
       expect(re).toBeGreaterThan(r.paid);
       envOver = LIVE;
@@ -2106,7 +2142,7 @@ describe("one 7-day refund per person or payment method (refund-identity.ts)", (
       // An expired identity record from long ago, for the purge to remove.
       await env.DB.prepare(`INSERT INTO refund_identity_keys (kind,key_hash,user_id,home_id,invoice_id,paid_at,created_at,norm,key_version)
         VALUES ('card',?, 'old-user','home-old','in_old',?,?,0,1)`).bind("a".repeat(64), NOW - 800 * DAY, NOW - 800 * DAY).run();
-      envOver = { STRIPE_SECRET_KEY: "sk_live_fixturefixturefixture", STRIPE_ALLOW_LIVE: "1", REFUND_KEY_SECRET: undefined } as Partial<Env>; // secret-scan: fixture
+      envOver = { MURAGE_ENV: "live", CLOUD_KEK_V1: undefined, CLOUD_HOME_ZONE_ID: undefined, CLOUD_HOME_ACCOUNT_ID: undefined, CLOUD_HOME_HOST_SUFFIX: undefined, CLOUD_CP0_STAGING: undefined, STRIPE_SECRET_KEY: "sk_live_fixturefixturefixture", STRIPE_ALLOW_LIVE: "1", REFUND_KEY_SECRET: undefined } as Partial<Env>; // secret-scan: fixture
       // New sales are refused, in plain terms, and ops is told every sweep.
       const sale = await checkout("starter");
       expect(sale.status).toBe(503); expect(await sale.json()).toMatchObject({ error: "refund_key_missing" });
@@ -3774,6 +3810,167 @@ describe("Astra review of ca3f90bbd: one test per finding", () => {
     expect(fluxLog.filter((l) => l.hook === "stop")).toEqual([]);
   });
 
+  it("CH1 M4: a Flux Stop that failed (journaled, alert raised) and then succeeds resolves its flux.stop_pending alert, and nothing pages afterwards", async () => {
+    await euEarlyPaid(); at(NOW + 2 * DAY);
+    const res = await send("/v1/account/withdraw", { body: { confirm: true } }, { ...deps(), flux: stubFluxHooks });
+    expect(await res.json()).toMatchObject({ withdrawn: true });
+    const opId = (await env.DB.prepare("SELECT id FROM refund_ops").first<{ id: string }>())!.id;
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='flux.stop_pending' AND resolved_at IS NULL").first()).toEqual({ n: 1 });
+    // The Stop is retried with Flux on and succeeds (the operation is reopened for it).
+    await env.DB.prepare("UPDATE refund_ops SET done_at=NULL WHERE id=?").bind(opId).run();
+    const st = stripeClient({ secretKey: "sk_test_fixturefixturefixture", apiVersion: "2025-03-31.basil" } as never, stripeFetch);
+    await advanceRefundOp(baseEnv(envOver), { stripe: st, flux, deps: { ...deps(), flux }, now: NOW + 2 * DAY + 1000 }, opId);
+    expect(fluxLog.filter((l) => l.hook === "stop")).toHaveLength(1);
+    expect(await env.DB.prepare("SELECT credits_revoked_at IS NOT NULL AS revoked FROM refund_ops WHERE id=?").bind(opId).first()).toEqual({ revoked: 1 });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='flux.stop_pending' AND resolved_at IS NULL").first()).toEqual({ n: 0 });
+    // Well past the 60-minute and 4-hour marks: no page.
+    const sent: Record<string, unknown>[] = [];
+    const sender = (async (_u: string, init: RequestInit) => { sent.push(JSON.parse(init.body as string)); return new Response("ok"); }) as unknown as typeof fetch;
+    await sweepMonitoring({ ...baseEnv(envOver), ALERT_WEBHOOK_URL: "https://hooks.example.test/x" } as Env, NOW + 2 * DAY + 9 * 3600_000, sender);
+    expect(sent.filter((m) => String(m.kind).startsWith("page."))).toEqual([]);
+  });
+
+  it("CH1 M4: a stale flux.stop_pending alert whose operation no longer owes a Stop is resolved by the refund sweep; one still owed stays open", async () => {
+    await euEarlyPaid(); at(NOW + 2 * DAY);
+    await send("/v1/account/withdraw", { body: { confirm: true } }, { ...deps(), flux: stubFluxHooks });
+    const opId = (await env.DB.prepare("SELECT id FROM refund_ops").first<{ id: string }>())!.id;
+    const st = stripeClient({ secretKey: "sk_test_fixturefixturefixture", apiVersion: "2025-03-31.basil" } as never, stripeFetch);
+    const open = () => env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='flux.stop_pending' AND resolved_at IS NULL").first();
+    await sweepRefundOps(baseEnv(envOver), { stripe: st, flux: stubFluxHooks, deps: deps(), now: NOW + 3 * DAY });
+    expect(await open()).toEqual({ n: 1 });                         // Stop still owed
+    await env.DB.prepare("UPDATE refund_ops SET credits_revoked_at=? WHERE id=?").bind(NOW + 3 * DAY, opId).run();
+    await sweepRefundOps(baseEnv(envOver), { stripe: st, flux: stubFluxHooks, deps: deps(), now: NOW + 3 * DAY + 1 });
+    expect(await open()).toEqual({ n: 0 });
+  });
+
+  describe("CH1 N4 (Astra r1): a queued Flux Stop is not a completed one", () => {
+    const openAlerts = () => env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='flux.stop_pending' AND resolved_at IS NULL").first();
+    const revoked = (opId: string) => env.DB.prepare("SELECT credits_revoked_at IS NOT NULL AS revoked FROM refund_ops WHERE id=?").bind(opId).first();
+    /** Journals a Stop under the stub (alert open, credits_revoked_at NULL), reopens the operation, and advances it with a Flux whose Stop answers `answer`. */
+    async function advanceWith(answer: unknown) {
+      await euEarlyPaid(); at(NOW + 2 * DAY);
+      await send("/v1/account/withdraw", { body: { confirm: true } }, { ...deps(), flux: stubFluxHooks });
+      const opId = (await env.DB.prepare("SELECT id FROM refund_ops").first<{ id: string }>())!.id;
+      expect(await openAlerts()).toEqual({ n: 1 });
+      await env.DB.prepare("UPDATE refund_ops SET done_at=NULL WHERE id=?").bind(opId).run();
+      const answering = { ...flux, async stopForBilling(_e: Env, homeId: string, _d?: unknown, options?: object) { fluxLog.push({ hook: "stop", args: { homeId, ...options } }); return answer; } };
+      const st = stripeClient({ secretKey: "sk_test_fixturefixturefixture", apiVersion: "2025-03-31.basil" } as never, stripeFetch);
+      await advanceRefundOp(baseEnv(envOver), { stripe: st, flux: answering as typeof flux, deps: { ...deps(), flux: answering as typeof flux }, now: NOW + 2 * DAY + 1000 }, opId);
+      return opId;
+    }
+    it("queued ({state:'stopping'}): credits_revoked_at stays NULL, the Stop stays owed and the alert stays open (and the sweep keeps it open)", async () => {
+      const opId = await advanceWith({ state: "stopping" });
+      expect(fluxLog.filter((l) => l.hook === "stop")).toHaveLength(1);
+      expect(await revoked(opId)).toEqual({ revoked: 0 });
+      expect(await openAlerts()).toEqual({ n: 1 });
+      const st = stripeClient({ secretKey: "sk_test_fixturefixturefixture", apiVersion: "2025-03-31.basil" } as never, stripeFetch);
+      await sweepRefundOps(baseEnv(envOver), { stripe: st, flux, deps: deps(), now: NOW + 3 * DAY });
+      expect(await openAlerts()).toEqual({ n: 1 });
+    });
+    it("confirmed ({state:'stopped'}): the marker is stamped and the alert resolves", async () => {
+      const opId = await advanceWith({ state: "stopped" });
+      expect(await revoked(opId)).toEqual({ revoked: 1 });
+      expect(await openAlerts()).toEqual({ n: 0 });
+    });
+    it("superseded (b4-flux answers a superseded Stop as {state:'stopped'}): treated as settled, the alert resolves", async () => {
+      const opId = await advanceWith({ state: "stopped", superseded: true });
+      expect(await revoked(opId)).toEqual({ revoked: 1 });
+      expect(await openAlerts()).toEqual({ n: 0 });
+    });
+    describe("CH1 P2 (Astra r2): a queued Stop that finishes AFTER the refund completed", () => {
+      const STOP_OP = "flux-stop-op-1";
+      const stopCalls = () => fluxLog.filter((l) => l.hook === "stop").length;
+      const st = () => stripeClient({ secretKey: "sk_test_fixturefixturefixture", apiVersion: "2025-03-31.basil" } as never, stripeFetch);
+      const resweep = (t: number) => sweepRefundOps(baseEnv(envOver), { stripe: st(), flux, deps: deps(), now: t });
+      const fluxOp = (homeId: string, state: string) => env.DB.prepare(`INSERT OR REPLACE INTO flux_home_ops (op_id,home_id,seq,kind,payload,state,attempts,created_at,updated_at)
+        VALUES (?,?,1,'stop','{}',?,0,?,?)`).bind(STOP_OP, homeId, state, NOW, NOW).run();
+      const setFluxOp = (state: string) => env.DB.prepare("UPDATE flux_home_ops SET state=? WHERE op_id=?").bind(state, STOP_OP).run();
+      async function queuedAndCompleted() {
+        const queuedAnswer = { state: "stopping", opId: STOP_OP };
+        const opId = await advanceWith(queuedAnswer);
+        const row = (await env.DB.prepare("SELECT home_id,done_at,flux_stop_op_id FROM refund_ops WHERE id=?").bind(opId).first<{ home_id: string; done_at: number | null; flux_stop_op_id: string | null }>())!;
+        expect(row.flux_stop_op_id).toBe(STOP_OP);       // the Stop's own operation identity is stored with the refund
+        await fluxOp(row.home_id, "queued");
+        // The refund completes (money returned, customer told) while the Stop is still queued.
+        await env.DB.prepare("UPDATE refund_ops SET done_at=? WHERE id=? AND done_at IS NULL").bind(NOW + 2 * DAY + 2000, opId).run();
+        return { opId, homeId: row.home_id };
+      }
+      it("still pending: the marker stays NULL, the alert stays open, and no new Stop is issued", async () => {
+        const { opId } = await queuedAndCompleted();
+        const before = stopCalls();
+        await resweep(NOW + 3 * DAY); await resweep(NOW + 4 * DAY);
+        expect(await revoked(opId)).toEqual({ revoked: 0 });
+        expect(await openAlerts()).toEqual({ n: 1 });
+        expect(stopCalls()).toBe(before);
+      });
+      it("queued, then DONE: the sweep stamps credits_revoked_at, resolves the alert and a later sweep pages nothing more", async () => {
+        const { opId } = await queuedAndCompleted();
+        await setFluxOp("done");
+        const before = stopCalls();
+        await resweep(NOW + 3 * DAY);
+        expect(await revoked(opId)).toEqual({ revoked: 1 });
+        expect(await openAlerts()).toEqual({ n: 0 });
+        await resweep(NOW + 4 * DAY);
+        expect(await openAlerts()).toEqual({ n: 0 });
+        expect(stopCalls()).toBe(before);
+      });
+      it("queued, then SUPERSEDED (a later resume owns the home): the same end, the marker stamped and the alert resolved", async () => {
+        const { opId } = await queuedAndCompleted();
+        await setFluxOp("superseded");
+        await resweep(NOW + 3 * DAY);
+        expect(await revoked(opId)).toEqual({ revoked: 1 });
+        expect(await openAlerts()).toEqual({ n: 0 });
+      });
+      it("an unfinished refund with a queued Stop reads that Stop and does NOT issue another", async () => {
+        const opId = await advanceWith({ state: "stopping", opId: STOP_OP });
+        const homeId = (await env.DB.prepare("SELECT home_id FROM refund_ops WHERE id=?").bind(opId).first<{ home_id: string }>())!.home_id;
+        await fluxOp(homeId, "queued");
+        await env.DB.prepare("UPDATE refund_ops SET done_at=NULL WHERE id=?").bind(opId).run();
+        const before = stopCalls();
+        await advanceRefundOp(baseEnv(envOver), { stripe: st(), flux, deps: { ...deps(), flux }, now: NOW + 3 * DAY }, opId);
+        expect(stopCalls()).toBe(before);
+        expect(await revoked(opId)).toEqual({ revoked: 0 });
+        await setFluxOp("done");
+        await env.DB.prepare("UPDATE refund_ops SET done_at=NULL WHERE id=?").bind(opId).run();
+        await advanceRefundOp(baseEnv(envOver), { stripe: st(), flux, deps: { ...deps(), flux }, now: NOW + 3 * DAY + 5000 }, opId);
+        expect(stopCalls()).toBe(before);
+        expect(await revoked(opId)).toEqual({ revoked: 1 });
+        expect(await openAlerts()).toEqual({ n: 0 });
+      });
+      it("CH1-G (Grok Low 2): the lease is lost right after the queued-Stop batch; the Stop's op id is stored with its alert, and the next advance sends no second Stop", async () => {
+        await euEarlyPaid(); at(NOW + 2 * DAY);
+        await send("/v1/account/withdraw", { body: { confirm: true } }, { ...deps(), flux: stubFluxHooks });
+        const opId = (await env.DB.prepare("SELECT id FROM refund_ops").first<{ id: string }>())!.id;
+        const homeId = (await env.DB.prepare("SELECT home_id FROM refund_ops WHERE id=?").bind(opId).first<{ home_id: string }>())!.home_id;
+        await fluxOp(homeId, "queued");
+        await env.DB.prepare("UPDATE refund_ops SET done_at=NULL WHERE id=?").bind(opId).run();
+        // The journal alert is raised afresh by the queued-Stop batch, and the moment it is written the worker's lease is gone.
+        await env.DB.prepare("DELETE FROM cloud_alerts WHERE kind='flux.stop_pending'").run();
+        await env.DB.exec("CREATE TRIGGER g_lease_gone AFTER INSERT ON cloud_alerts WHEN NEW.kind='flux.stop_pending' BEGIN UPDATE billing_home_leases SET holder=NULL, lease_until=NULL; END");
+        const answering = { ...flux, async stopForBilling(_e: Env, h: string, _d?: unknown, options?: object) { fluxLog.push({ hook: "stop", args: { homeId: h, ...options } }); return { state: "stopping", opId: STOP_OP }; } };
+        const before = stopCalls();
+        await advanceRefundOp(baseEnv(envOver), { stripe: st(), flux: answering as typeof flux, deps: { ...deps(), flux: answering as typeof flux }, now: NOW + 2 * DAY + 1000 }, opId).catch(() => undefined);
+        await env.DB.exec("DROP TRIGGER g_lease_gone");
+        expect(stopCalls()).toBe(before + 1);
+        expect((await env.DB.prepare("SELECT flux_stop_op_id AS s FROM refund_ops WHERE id=?").bind(opId).first<{ s: string | null }>())!.s).toBe(STOP_OP);
+        await env.DB.prepare("UPDATE refund_ops SET done_at=NULL WHERE id=?").bind(opId).run();
+        await advanceRefundOp(baseEnv(envOver), { stripe: st(), flux: answering as typeof flux, deps: { ...deps(), flux: answering as typeof flux }, now: NOW + 3 * DAY }, opId);
+        expect(stopCalls()).toBe(before + 1);
+      });
+    });
+    it("inapplicable (the Stop is not owed: already recorded): no Stop is sent and the alert resolves", async () => {
+      await euEarlyPaid(); at(NOW + 2 * DAY);
+      await send("/v1/account/withdraw", { body: { confirm: true } }, { ...deps(), flux: stubFluxHooks });
+      const opId = (await env.DB.prepare("SELECT id FROM refund_ops").first<{ id: string }>())!.id;
+      await env.DB.prepare("UPDATE refund_ops SET credits_revoked_at=?,done_at=NULL WHERE id=?").bind(NOW + 2 * DAY, opId).run();
+      const before = fluxLog.filter((l) => l.hook === "stop").length;
+      const st = stripeClient({ secretKey: "sk_test_fixturefixturefixture", apiVersion: "2025-03-31.basil" } as never, stripeFetch);
+      await advanceRefundOp(baseEnv(envOver), { stripe: st, flux, deps: { ...deps(), flux }, now: NOW + 2 * DAY + 1000 }, opId);
+      expect(fluxLog.filter((l) => l.hook === "stop")).toHaveLength(before);
+      expect(await openAlerts()).toEqual({ n: 0 });
+    });
+  });
+
   it("#10 the total including tax is priced by Stripe Tax before consent, bound to the consent and in the confirmation", async () => {
     await reserve(); taxFails = false;
     const q = await quoteFor("starter", "DE", "10115", 20);
@@ -3847,12 +4044,22 @@ describe("Astra review of ca3f90bbd: one test per finding", () => {
     expect(await (await get("/v1/account/terms")).json()).toMatchObject({ reacceptRequired: true,
       changed: [{ title: "Murage Cloud terms", versionId: current.cloudTerms }], effectiveAt: NOW + 30 * DAY });
     expect(await (await get("/v1/account/cloud")).json()).toMatchObject({ terms: { reacceptRequired: true } });
-    const accept = (documentVersions: unknown) => send("/v1/account/terms/accept", { body: { termsAccepted: true, documentVersions, client: { ip: "198.51.100.8", userAgent: "ua-r" } } });
+    const accept = (documentVersions: unknown) => send("/v1/account/terms/accept", { body: { termsAccepted: true, ageConfirmed: true, screenVersion: SCREEN_VERSION, documentVersions, client: { ip: "198.51.100.8", userAgent: "ua-r" } } });
     expect((await accept(stale)).status).toBe(409);
+    // Browser owner (design section 11): the page says which screen it showed and that the age box was ticked, else nothing is stored.
+    const noAge = (extra: Record<string, unknown>) => send("/v1/account/terms/accept", { body: { termsAccepted: true, documentVersions: current, ...extra } });
+    expect((await noAge({ screenVersion: SCREEN_VERSION })).status).toBe(400);
+    expect((await noAge({ screenVersion: SCREEN_VERSION, ageConfirmed: false })).status).toBe(400);
+    expect((await noAge({ ageConfirmed: true })).status).toBe(400);
+    const wrongScreen = await noAge({ ageConfirmed: true, screenVersion: "checkout-clickwrap-2026-10-11.6" });
+    expect([wrongScreen.status, (await wrongScreen.json() as { error: string }).error]).toEqual([409, "disclosure_stale"]);
+    expect((await env.DB.prepare("SELECT COUNT(*) n FROM terms_acceptances WHERE source='reaccept'").first<{ n: number }>())!.n).toBe(0);
+    expect((await get("/v1/account/terms").then((r) => r.json())) as { screenVersion: string }).toMatchObject({ screenVersion: SCREEN_VERSION });
     expect((await accept(current)).status).toBe(200);
     expect(await (await get("/v1/account/terms")).json()).toMatchObject({ reacceptRequired: false });
     const row = (await env.DB.prepare("SELECT wording,client_meta FROM terms_acceptances WHERE source='reaccept'").first<{ wording: string; client_meta: string }>())!;
     expect(row.wording).toBe(WORDING.reaccept);
+    expect(row.wording).toContain("18 or older");
     expect(JSON.parse(row.client_meta)).toMatchObject({ claimed: { ip: "198.51.100.8", userAgent: "ua-r" }, observed: { ip: "203.0.113.10" } });
     // The re-acceptance writer stores the generated id, which the one-per-person limit matches once REFUND_LIMIT_V2_LIVE=1 (and only then);
     // the checkout row now carries an older id, so the re-acceptance row is the only one that can match.
@@ -3900,7 +4107,7 @@ describe("Astra review of ca3f90bbd: one test per finding", () => {
     await agedTermsCustomer();
     at(NOW + 40 * DAY);
     const current = { cloudTerms: LEGAL_DOCS.cloudTerms.versionId, termsOfService: LEGAL_DOCS.termsOfService.versionId, privacyPolicy: LEGAL_DOCS.privacyPolicy.versionId };
-    expect(await (await send("/v1/account/terms/accept", { body: { termsAccepted: true, documentVersions: current } })).json()).toMatchObject({ accepted: true, planContinues: true });
+    expect(await (await send("/v1/account/terms/accept", { body: { termsAccepted: true, ageConfirmed: true, screenVersion: SCREEN_VERSION, documentVersions: current } })).json()).toMatchObject({ accepted: true, planContinues: true });
     expect(stripeCalls.filter((c) => c.method === "POST" && c.path === "/v1/subscriptions/sub_test1").at(-1)!.form.get("cancel_at_period_end")).toBe("false");
     expect(await env.DB.prepare("SELECT cancel_at_period_end AS c FROM billing_subscriptions").first()).toEqual({ c: 0 });
     at(NOW + 52 * DAY); await sweep(); at(NOW + 59 * DAY); await sweep();
@@ -4134,7 +4341,7 @@ describe("Astra re-review of 0d3a289e0: one test per reproduction", () => {
     await paidUs(); signedIn = OWNER;
     await env.DB.prepare("UPDATE terms_acceptances SET cloud_terms_version='cloud-terms-0ld0ld0ld0ld'").run();
     const current = { cloudTerms: LEGAL_DOCS.cloudTerms.versionId, termsOfService: LEGAL_DOCS.termsOfService.versionId, privacyPolicy: LEGAL_DOCS.privacyPolicy.versionId };
-    const accept = () => send("/v1/account/terms/accept", { body: { termsAccepted: true, documentVersions: current } });
+    const accept = () => send("/v1/account/terms/accept", { body: { termsAccepted: true, ageConfirmed: true, screenVersion: SCREEN_VERSION, documentVersions: current } });
     expect(await (await get("/v1/account/terms")).json()).toMatchObject({ reacceptRequired: false, noticePending: true });
     const early = await accept(); expect(early.status).toBe(409); expect(await early.json()).toEqual({ error: "notice_pending" });
     await sweep();
@@ -4240,7 +4447,7 @@ describe("Astra review of 2939441b7: one test per reproduction", () => {
     expect(await env.DB.prepare("SELECT cancel_at_period_end AS c FROM billing_subscriptions").first()).toEqual({ c: 1 });
     expect(await (await send("/v1/account/cancel-plan", { body: {} })).json()).toMatchObject({ canceled: true });
     const current = { cloudTerms: LEGAL_DOCS.cloudTerms.versionId, termsOfService: LEGAL_DOCS.termsOfService.versionId, privacyPolicy: LEGAL_DOCS.privacyPolicy.versionId };
-    expect((await send("/v1/account/terms/accept", { body: { termsAccepted: true, documentVersions: current } })).status).toBe(200);
+    expect((await send("/v1/account/terms/accept", { body: { termsAccepted: true, ageConfirmed: true, screenVersion: SCREEN_VERSION, documentVersions: current } })).status).toBe(200);
     expect(stripeCalls.some((c) => c.form.get("cancel_at_period_end") === "false")).toBe(false);
     expect(await env.DB.prepare("SELECT cancel_at_period_end AS c, customer_cancel_at IS NOT NULL AS own FROM billing_subscriptions").first()).toEqual({ c: 1, own: 1 });
   });
@@ -4383,7 +4590,7 @@ describe("Astra review of 6bc5e037c: one per-home serializer; one test per repro
   it("R4-2 a customer's cancellation that races a re-acceptance always ends with renewal off, confirmed by Stripe", async () => {
     await nonRenewalSet();
     let release!: () => void; holdSubPost = new Promise<void>((r) => { release = r; });
-    const accepting = send("/v1/account/terms/accept", { body: { termsAccepted: true, documentVersions: current() } }); // its "renew" call hangs
+    const accepting = send("/v1/account/terms/accept", { body: { termsAccepted: true, ageConfirmed: true, screenVersion: SCREEN_VERSION, documentVersions: current() } }); // its "renew" call hangs
     await tick();
     // Astra TAXCOUNTRY-8 (coordinator a): the home is busy (the re-acceptance holds its lease), yet the cancellation intent is recorded
     // FIRST, bound to the subscription: the answer is "processing" (never home_busy), and the sweep confirms it.
@@ -4479,7 +4686,7 @@ describe("Astra review of ff8cf45be: one test per reproduction", () => {
     await sweep(); at(NOW + 30 * DAY); await sweep();
     expect(subState.sub_test1.cancel_at_period_end).toBe(true); // renewal off for non-acceptance
     let release!: () => void; holdSubPost = new Promise<void>((r) => { release = r; });
-    const accepting = send("/v1/account/terms/accept", { body: { termsAccepted: true, documentVersions: current() } }); // its "renew" POST hangs
+    const accepting = send("/v1/account/terms/accept", { body: { termsAccepted: true, ageConfirmed: true, screenVersion: SCREEN_VERSION, documentVersions: current() } }); // its "renew" POST hangs
     await tick();
     await expireLease(); // the lease expires while that request is in flight
     expect(await (await send("/v1/account/cancel-plan", { body: {} })).json()).toMatchObject({ canceled: true });
@@ -4638,6 +4845,10 @@ describe("Astra review of ff8cf45be: one test per reproduction", () => {
     expect(await env.DB.prepare("SELECT subscription_id AS s, status FROM billing_subscriptions").first()).toEqual({ s: "sub_new", status: "active" });
   });
 
+  // CLOUD-LEGAL-FLOWS-7-TIMEOUT (item 8, 11-03): this case runs 31 full sweepBilling passes, so it needs its own timeout. Timed isolated x5 on a
+  // ccx43 with --testTimeout=60000: release 6fb494e13 5602-6553 ms (median 6032), cdcaabb33 5512-6448 (6154), 3b290d38d 5643-6165 (5846),
+  // item 8 head 5934-7288 (6119), about 195 ms a pass at every commit: no sweep slowdown, but over the 5000 ms default even on release
+  // (inside the full suite: 5470-6241 ms on every tree). Test-only; 20 s leaves room for a loaded runner.
   it("#7 a required terms notice is never abandoned: after 20 failed sends and a restored mailbox it is delivered and acceptance is no longer notice_pending", async () => {
     await paidUs(); signedIn = OWNER;
     await env.DB.prepare("UPDATE terms_acceptances SET cloud_terms_version='cloud-terms-0ld0ld0ld0ld'").run();
@@ -4646,14 +4857,14 @@ describe("Astra review of ff8cf45be: one test per reproduction", () => {
     const ob = await env.DB.prepare("SELECT attempts AS a, delivered_at AS d, dead_at IS NOT NULL AS dead FROM terms_notice_obligations").first<{ a: number; d: number | null; dead: number }>();
     expect(ob!.a).toBeGreaterThanOrEqual(20); expect(ob!.d).toBeNull(); expect(ob!.dead).toBe(1);
     expect(await env.DB.prepare("SELECT kind FROM cloud_alerts WHERE kind='terms.notice_dead' LIMIT 1").first()).toEqual({ kind: "terms.notice_dead" });
-    expect((await send("/v1/account/terms/accept", { body: { termsAccepted: true, documentVersions: current() } })).status).toBe(409);
+    expect((await send("/v1/account/terms/accept", { body: { termsAccepted: true, ageConfirmed: true, screenVersion: SCREEN_VERSION, documentVersions: current() } })).status).toBe(409);
     notifierFails = false;
     at(NOW + 32 * 25 * 3_600_000); await sweep();
     expect(notices.filter((n) => n.kind === "terms_change")).toHaveLength(1);
     expect(await env.DB.prepare("SELECT delivered_at IS NOT NULL AS d FROM terms_notice_obligations").first()).toEqual({ d: 1 });
-    const res = await send("/v1/account/terms/accept", { body: { termsAccepted: true, documentVersions: current() } });
+    const res = await send("/v1/account/terms/accept", { body: { termsAccepted: true, ageConfirmed: true, screenVersion: SCREEN_VERSION, documentVersions: current() } });
     expect(res.status).toBe(200);
-  });
+  }, 20_000);
 
   it("P2 the email date is the recorded effective date: a retry re-renders the notice from the moment of its actual send", async () => {
     await paidUs(); signedIn = OWNER;
@@ -4695,7 +4906,7 @@ describe("Astra review of f693121ae: one test per reproduction", () => {
     await sweep(); at(NOW + 30 * DAY); await sweep();
     expect(subState.sub_test1.cancel_at_period_end).toBe(true);
     let release!: () => void; holdSubPost = new Promise<void>((r) => { release = r; });
-    const accepting = send("/v1/account/terms/accept", { body: { termsAccepted: true, documentVersions: current() } });
+    const accepting = send("/v1/account/terms/accept", { body: { termsAccepted: true, ageConfirmed: true, screenVersion: SCREEN_VERSION, documentVersions: current() } });
     await tick();
     await expireLease();
     expect((await send("/v1/account/cancel-plan", { body: {} })).status).toBe(200);
@@ -4716,7 +4927,7 @@ describe("Astra review of f693121ae: one test per reproduction", () => {
     await sweep(); at(NOW + 30 * DAY); await sweep();
     expect((await send("/v1/account/cancel-plan", { body: {} })).status).toBe(200);
     stripeCalls = [];
-    expect((await send("/v1/account/terms/accept", { body: { termsAccepted: true, documentVersions: current() } })).status).toBe(200);
+    expect((await send("/v1/account/terms/accept", { body: { termsAccepted: true, ageConfirmed: true, screenVersion: SCREEN_VERSION, documentVersions: current() } })).status).toBe(200);
     await sweep();
     expect(renewalPosts()).toHaveLength(0);
     expect(subState.sub_test1.cancel_at_period_end).toBe(true);
@@ -4772,7 +4983,7 @@ describe("Astra review of 8f43de44d: one test per reproduction", () => {
     await sweep(); at(NOW + 30 * DAY); await sweep();
     expect(subState.sub_test1.cancel_at_period_end).toBe(true);
     let release!: () => void; holdSubPost = new Promise<void>((r) => { release = r; });
-    const accepting = send("/v1/account/terms/accept", { body: { termsAccepted: true, documentVersions: current() } });
+    const accepting = send("/v1/account/terms/accept", { body: { termsAccepted: true, ageConfirmed: true, screenVersion: SCREEN_VERSION, documentVersions: current() } });
     await tick();
     await expireLease();
     expect((await send("/v1/account/cancel-plan", { body: {} })).status).toBe(200);
@@ -5805,6 +6016,94 @@ describe("Cloud checkout WP5: the three moments, the guard and the deadlines (pl
       expect(await inbox()).toBe(0);
       expect((await checkout("starter", { billingCountry: "AT", earlyStart: true })).status).toBe(200); // the retry is possible
     });
+    it("a refusal keeps Stripe's collected country on the consent, and a refusal without one keeps none", async () => {
+      await order("DE");
+      await hook(stripeEvent("checkout.session.completed", await sessionObj({ customer_details: { address: { country: "at" } } })));
+      expect(await consentRow()).toMatchObject({ rejected_reason: "mismatch", rejected_collected_country: "AT" });
+      await env.DB.prepare("DELETE FROM checkout_consents").run();
+    });
+    it("a refused order's home takes the retry at once: reserve hands the same home back with a renewed window, and checkout reuses it (no 409)", async () => {
+      await order("DE");
+      at(NOW + 25 * 60_000);
+      await hook(stripeEvent("checkout.session.completed", await sessionObj({ customer_details: { address: { country: "AT" } } })));
+      expect(await consentRow()).toMatchObject({ rejected_reason: "mismatch" });
+      const refusedAt = NOW + 25 * 60_000;
+      // the original 30 minute window had 5 minutes left; the refusal renews it for a full window, for the home and its capacity slot
+      const reservation = (await env.DB.prepare("SELECT reservation_expires_at AS r FROM cloud_homes WHERE id='home-1'").first<{ r: number }>())!.r;
+      expect(reservation).toBeGreaterThanOrEqual(refusedAt + 30 * 60_000);
+      signedIn = OWNER;
+      for (const minutes of [0, 20]) {
+        at(refusedAt + minutes * 60_000);
+        const res = await send("/v1/billing/reserve", { body: {} });
+        expect([res.status, await res.json()]).toEqual([200, expect.objectContaining({ homeId: "home-1", state: "payment_pending", existing: true })]);
+      }
+      expect((await checkout("starter", { billingCountry: "AT", earlyStart: true })).status).toBe(200);
+      expect(await count("SELECT COUNT(*) AS n FROM cloud_homes WHERE desired_state<>'deleted'")).toBe(1);
+      expect(await count("SELECT COUNT(*) AS n FROM checkout_consents WHERE rejected_at IS NULL")).toBe(1);
+      // the refusal is over for the member pages: the newest consent is the new attempt
+      expect(await (await get("/v1/account/cloud")).json()).toMatchObject({ refused: null });
+    });
+    it("the reservation renewal never revives an expired reservation and stops at the home's creation plus two windows", async () => {
+      await order("DE");
+      const win = 30 * 60_000;
+      const created = (await env.DB.prepare("SELECT created_at AS c FROM cloud_homes WHERE id='home-1'").first<{ c: number }>())!.c;
+      // expired: the reservation lapsed before the refusal, so it is left as it is
+      await env.DB.prepare("UPDATE cloud_homes SET reservation_expires_at=? WHERE id='home-1'").bind(NOW - 1000).run();
+      at(NOW + 1000);
+      await hook(stripeEvent("checkout.session.completed", await sessionObj({ customer_details: { address: { country: "AT" } } })));
+      expect(await consentRow()).toMatchObject({ rejected_reason: "mismatch" });
+      expect((await env.DB.prepare("SELECT reservation_expires_at AS r FROM cloud_homes WHERE id='home-1'").first<{ r: number }>())!.r).toBe(NOW - 1000);
+      // live and late in its life: the renewal is clamped at created_at + 2 windows
+      await env.DB.prepare("UPDATE checkout_consents SET rejected_at=NULL,rejected_reason=NULL").run();
+      await env.DB.prepare("UPDATE cloud_homes SET reservation_expires_at=? WHERE id='home-1'").bind(created + 2 * win - 60_000).run();
+      at(created + 2 * win - 120_000);
+      await hook(stripeEvent("checkout.session.completed", await sessionObj({ customer_details: { address: { country: "AT" } } })));
+      expect((await env.DB.prepare("SELECT reservation_expires_at AS r FROM cloud_homes WHERE id='home-1'").first<{ r: number }>())!.r).toBe(created + 2 * win);
+    });
+    it("a slot or reservation already past the cap is not extended by a refusal", async () => {
+      await order("DE");
+      const win = 30 * 60_000;
+      const created = (await env.DB.prepare("SELECT created_at AS c FROM cloud_homes WHERE id='home-1'").first<{ c: number }>())!.c;
+      await env.DB.prepare("UPDATE cloud_homes SET reservation_expires_at=? WHERE id='home-1'").bind(created + 5 * win).run();
+      await env.DB.prepare("UPDATE cloud_capacity SET expires_at=? WHERE home_id='home-1'").bind(created + 6 * win).run();
+      at(NOW + 1000);
+      await hook(stripeEvent("checkout.session.completed", await sessionObj({ customer_details: { address: { country: "AT" } } })));
+      expect(await consentRow()).toMatchObject({ rejected_reason: "mismatch" });
+      expect((await env.DB.prepare("SELECT reservation_expires_at AS r FROM cloud_homes WHERE id='home-1'").first<{ r: number }>())!.r).toBeLessThanOrEqual(created + 2 * win);
+      const slots = (await env.DB.prepare("SELECT expires_at AS e FROM cloud_capacity WHERE home_id='home-1'").all<{ e: number }>()).results;
+      expect(slots.length).toBeGreaterThan(0);
+      for (const sl of slots) expect(sl.e).toBeLessThanOrEqual(created + 2 * win);
+    });
+    it("a late refusal leaves the live capacity slot of an already accepted home alone", async () => {
+      await order("DE");
+      const slot = (await env.DB.prepare("SELECT expires_at AS e FROM cloud_capacity WHERE home_id='home-1'").first<{ e: number }>())!.e;
+      await env.DB.prepare("UPDATE cloud_homes SET entitlement='paid' WHERE id='home-1'").run();
+      at(NOW + 1000);
+      await hook(stripeEvent("checkout.session.completed", await sessionObj({ customer_details: { address: { country: "AT" } } })));
+      expect((await env.DB.prepare("SELECT expires_at AS e FROM cloud_capacity WHERE home_id='home-1'").first<{ e: number }>())!.e).toBe(slot);
+    });
+    it("the missing-column match is anchored on the column name", () => {
+      expect(isMissingCollectedCountryColumn(new Error("D1_ERROR: no such column: rejected_collected_country: SQLITE_ERROR"))).toBe(true);
+      expect(isMissingCollectedCountryColumn(new Error("table checkout_consents has no column named rejected_collected_country"))).toBe(true);
+      expect(isMissingCollectedCountryColumn(new Error("no such column: rejected_collected_country_extra"))).toBe(false);
+      expect(isMissingCollectedCountryColumn(new Error("boom disk"))).toBe(false);
+    });
+    it("only the missing-column error is swallowed on the collected country write: any other failure surfaces", async () => {
+      await env.DB.prepare("CREATE TRIGGER boom_collected BEFORE UPDATE OF rejected_collected_country ON checkout_consents BEGIN SELECT RAISE(ABORT,'boom disk'); END").run();
+      try {
+        await order("DE");
+        const res = await hook(stripeEvent("checkout.session.completed", await sessionObj({ customer_details: { address: { country: "AT" } } }))).catch(() => null);
+        expect(res === null || res.status >= 500).toBe(true);
+      } finally { await env.DB.prepare("DROP TRIGGER boom_collected").run(); }
+    });
+    it("a refusal still commits (refund, tombstone, rejection) when migration 0131 is not applied yet", async () => {
+      await env.DB.prepare("ALTER TABLE checkout_consents DROP COLUMN rejected_collected_country").run();
+      await order("DE");
+      expect((await hook(stripeEvent("checkout.session.completed", await sessionObj({ customer_details: { address: { country: "AT" } } })))).status).toBe(200);
+      expect(await consentRow()).toMatchObject({ rejected_reason: "mismatch" });
+      expect(await env.DB.prepare("SELECT kind FROM refund_ops").first()).toEqual({ kind: "mismatch" });
+      await env.DB.prepare("ALTER TABLE checkout_consents ADD COLUMN rejected_collected_country TEXT").run();
+    });
     it("a missing billing country, and a path that does not cover the billing country, are mismatches too", async () => {
       await order("FR");
       await hook(stripeEvent("checkout.session.completed", await sessionObj({ customer_details: { address: { country: null } } })));
@@ -5930,7 +6229,7 @@ describe("Cloud checkout WP5: the three moments, the guard and the deadlines (pl
         const fields = [...f.keys()].filter((k) => k.startsWith("custom_fields"));
         if (direct) {
           expect(fields).toEqual([]);
-          expect(f.get("custom_text[submit][message]")).toMatch(/^Renews each month at US\$49 \+ tax until you cancel in your account\. By submitting your order you agree to the \[Murage Cloud terms\]\(/);
+          expect(f.get("custom_text[submit][message]")).toMatch(/^Renews each month at US\$49 \+ tax until you cancel in your account\. By submitting your order you confirm you are 18 or older, and you agree to the \[Murage Cloud terms\]\(/);
           expect(JSON.parse(c.disclosure as string)).toMatchObject({ stripePage: { variant: "direct_text", version: STRIPE_PAGE_VERSION, renewalDropdown: false,
             submitMessage: expect.stringMatching(/^Renews each month at US\$49 \+ tax/), authorization: "clickwrap_consent_record" } });
         } else {
@@ -7628,7 +7927,7 @@ describe("Cloud checkout WP5: the three moments, the guard and the deadlines (pl
       expect(await count("SELECT COUNT(*) AS n FROM credit_reversals")).toBe(0);
       expect(revokes()).toHaveLength(0);
     });
-    it("r6-3 an order is added to the alert while the previous list is being sent: the alert stays due, and the next send carries both", async () => {
+    it("r6-3 an order is added to the open alert between sweeps: the alert's list carries both orders, is re-armed, and (a digest kind) is handled by the sweep and never posted one by one", async () => {
       const { id } = await parkedOrder();
       await addSecondParkedOrder(id);
       await provisionedEvidence("in_1");
@@ -7636,23 +7935,14 @@ describe("Cloud checkout WP5: the three moments, the guard and the deadlines (pl
       await replacementOwnsHome();
       at(NOW + 24 * HOUR); await sweep(); // the first order only
       const sent: string[] = [];
-      let appended = false;
-      const fetcher = (async (_u: string, init: RequestInit) => {
-        const body = JSON.parse(init.body as string) as { kind: string; text: string };
-        sent.push(body.text);
-        // while this send of the one-order list is outstanding, the second order is refunded and added to the alert
-        if (body.kind === "checkout.parked_order_released" && !appended) { appended = true; at(NOW + 25 * HOUR); await sweep(); }
-        return new Response("ok");
-      }) as unknown as typeof fetch;
+      const fetcher = (async (_u: string, init: RequestInit) => { sent.push((JSON.parse(init.body as string) as { kind: string }).kind); return new Response("ok"); }) as unknown as typeof fetch;
       await sweepMonitoring(opsEnv(), NOW + 25 * HOUR, fetcher);
-      expect(appended).toBe(true);
+      at(NOW + 25 * HOUR); await sweep(); // the second order is refunded and added to the alert
       const row = (await env.DB.prepare("SELECT detail,delivered_at AS dl FROM cloud_alerts WHERE kind='checkout.parked_order_released'").first<{ detail: string; dl: number | null }>())!;
       expect([...(JSON.parse(row.detail) as { consentIds: string[] }).consentIds].sort()).toEqual(["consent_two", id].sort());
-      expect(row.dl).toBeNull(); // still due: the send that finished carried the old list
-      // the old send does not use up the new list's retry budget (Astra WP5-7 P3)
-      expect((await env.DB.prepare("SELECT delivery_attempts AS n FROM cloud_alerts WHERE kind='checkout.parked_order_released'").first<{ n: number }>())!.n).toBe(0);
+      expect(row.dl).toBeNull(); // re-armed by the addition
       await sweepMonitoring(opsEnv(), NOW + 26 * HOUR, fetcher);
-      expect(sent.filter((t) => t.includes("checkout.parked_order_released")).at(-1)).toContain("consent_two");
+      expect(sent.filter((k) => k === "checkout.parked_order_released")).toEqual([]);
       expect(await env.DB.prepare("SELECT delivered_at AS dl FROM cloud_alerts WHERE kind='checkout.parked_order_released'").first()).toEqual({ dl: NOW + 26 * HOUR });
     });
     it("r6-4 Stripe cannot take the refund after the alert was written: the alert says the refund was requested, never that it was made", async () => {
@@ -7666,12 +7956,11 @@ describe("Cloud checkout WP5: the three moments, the guard and the deadlines (pl
       expect(d).not.toHaveProperty("refunded");
       expect(d.items[0]).not.toHaveProperty("refunded");
       expect(await env.DB.prepare("SELECT refunded_at AS r FROM refund_ops WHERE id='rejected_consent:in_1'").first()).toEqual({ r: null });
+      // Two-tier alerts: this is a digest kind, so the sweep never posts it; the stored detail above is what says "requested, never made".
       const sent: string[] = [];
-      const fetcher = (async (_u: string, init: RequestInit) => { sent.push((JSON.parse(init.body as string) as { text: string }).text); return new Response("ok"); }) as unknown as typeof fetch;
+      const fetcher = (async (_u: string, init: RequestInit) => { sent.push((JSON.parse(init.body as string) as { kind: string }).kind); return new Response("ok"); }) as unknown as typeof fetch;
       await sweepMonitoring(opsEnv(), NOW + 24 * HOUR, fetcher);
-      const text = sent.find((t) => t.includes("checkout.parked_order_released"))!;
-      expect(text).toContain("rejected_consent:in_1=requested");
-      expect(text).not.toContain("=refunded");
+      expect(sent.filter((k) => k === "checkout.parked_order_released")).toEqual([]);
     });
     it("r4-2 populated upgrade: a rejection written before 0073 whose cancellation failed is queued by the migration, and the sweep cancels it once", async () => {
       await order("DE");
@@ -12015,4 +12304,97 @@ describe("Astra INTEGRATED-13 (reachable with Flux off): cancelling is never gat
     expect(await count("SELECT COUNT(*) AS n FROM billing_subscriptions WHERE home_id='home-1' AND cancel_intent_rev>0")).toBe(1);
     noCreditTouched();
   });
+});
+
+describe("TOPUP-OFFERS-LIVE (MurageMain 11-03): auto top-up is not offered while held (held-until-item9-highs.ts)", () => {
+  // This file runs with the hold released (top of file); these cases put it back in force.
+  beforeEach(() => releaseItem9HoldForTests(false));
+  afterEach(() => releaseItem9HoldForTests(true));
+  const body = (enabled: boolean) => ({ body: { client: { ip: "198.51.100.9", userAgent: "ua" }, enabled, amountUsd: 30, thresholdUsd: 10, capUsd: 90 } });
+
+  it("GET /v1/account/topup (and the account summary) shows it unavailable and off, even with a saved switch-on", async () => {
+    await paidUs(); signedIn = OWNER;
+    releaseItem9HoldForTests(true);
+    expect((await send("/v1/account/topup", body(true))).status).toBe(200);
+    releaseItem9HoldForTests(false);
+    expect(await env.DB.prepare("SELECT enabled FROM topup_settings").first()).toEqual({ enabled: 1 });
+    for (const path of ["/v1/account/topup", "/v1/account/cloud"]) {
+      expect(((await (await get(path)).json()) as { topup: unknown }).topup).toMatchObject({ available: false, enabled: false });
+    }
+  });
+
+  it("GET /v1/legal/disclosure says topupAvailable false, with and without a declared country", async () => {
+    expect(await (await get("/v1/legal/disclosure?plan=starter")).json()).toMatchObject({ topupAvailable: false });
+    expect(await (await get("/v1/legal/disclosure?plan=starter&declaredCountry=US")).json()).toMatchObject({ topupAvailable: false });
+  });
+
+  it("POST /v1/account/topup refuses to switch it on with the plain message; switching it off or keeping it off still saves", async () => {
+    await paidUs(); signedIn = OWNER;
+    const on = await send("/v1/account/topup", body(true));
+    expect(on.status).toBe(409);
+    expect(await on.json()).toEqual({ error: "topup_not_available", message: "Auto top-up isn't available yet. Top up by hand in Billing for now." });
+    expect(await count("SELECT COUNT(*) AS n FROM topup_settings WHERE enabled=1")).toBe(0);
+    const off = await send("/v1/account/topup", body(false));
+    expect(off.status).toBe(200);
+    expect(await off.json()).toMatchObject({ enabled: false });
+  });
+
+  it("POST /v1/legal/quote for a US address says topupAvailable false while held", async () => {
+    await reserve();
+    const res = await send("/v1/legal/quote", { body: { plan: "starter", country: "US", postalCode: "94105", homeId: "home-1" }, headers: admin });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ seller: "ferrox", topupAvailable: false });
+  });
+
+  it("a direct checkout with topup.enabled true answers 409 topup_not_available and writes no topup_settings row", async () => {
+    await reserve();
+    const res = await checkout("starter", { topup: { enabled: true, amountUsd: 20, thresholdUsd: 5, capUsd: 100 } });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "topup_not_available" });
+    expect(await count("SELECT COUNT(*) AS n FROM topup_settings")).toBe(0);
+    // No consent was recorded with the top-up switched on, and a completion delivered for the home afterwards writes no top-up row either.
+    expect(await count("SELECT COUNT(*) AS n FROM checkout_consents WHERE topup_enabled=1")).toBe(0);
+    expect((await checkout("starter", { topup: { enabled: false, amountUsd: 20, thresholdUsd: 5, capUsd: 100 } })).status).toBe(200);
+    expect((await sessionCompleted()).status).toBe(200);
+    expect(await count("SELECT COUNT(*) AS n FROM checkout_consents WHERE home_id='home-1' AND completed_at IS NOT NULL")).toBe(1);
+    expect(await count("SELECT COUNT(*) AS n FROM topup_settings")).toBe(0);
+  });
+
+  it("a consent stored with top-up on before the hold completes while held: no enabled topup_settings row and no top-up applied", async () => {
+    await reserve();
+    releaseItem9HoldForTests(true); // the hold is released only while the consent is made
+    expect((await checkout("starter", { topup: { enabled: true, amountUsd: 20, thresholdUsd: 5, capUsd: 100 } })).status).toBe(200);
+    releaseItem9HoldForTests(false);
+    expect(await count("SELECT COUNT(*) AS n FROM checkout_consents WHERE home_id='home-1' AND topup_enabled=1")).toBe(1);
+    fluxLog = [];
+    expect((await sessionCompleted()).status).toBe(200);
+    expect(await count("SELECT COUNT(*) AS n FROM checkout_consents WHERE home_id='home-1' AND completed_at IS NOT NULL")).toBe(1);
+    expect(await count("SELECT COUNT(*) AS n FROM topup_settings WHERE enabled=1")).toBe(0);
+    expect(await count("SELECT COUNT(*) AS n FROM topup_settings")).toBe(0);
+    expect(fluxLog.filter((l) => /topup/i.test(JSON.stringify(l)))).toEqual([]);
+  });
+
+  it("a direct checkout with topup disabled still succeeds while held", async () => {
+    await reserve();
+    const res = await checkout("starter", { topup: { enabled: false, amountUsd: 20, thresholdUsd: 5, capUsd: 100 } });
+    expect(res.status).toBe(200);
+    expect(await count("SELECT COUNT(*) AS n FROM topup_settings WHERE enabled=1")).toBe(0);
+  });
+});
+
+describe("a US disclosure never carries the Link merchant-of-record line (regression guard)", () => {
+  const LINK_SENTENCE = "Link (by Stripe) takes your payment for us";
+  for (const mode of ["managed_payments", "direct"] as const) {
+    it(`declaredCountry US, CLOUD_NONUS_SELLER=${mode}: lines.mp is undefined, sellerLine is null, renewalText has no Link sentence`, async () => {
+      envOver = { CLOUD_NONUS_SELLER: mode } as Partial<Env>;
+      const res = await get("/v1/legal/disclosure?plan=starter&declaredCountry=US");
+      expect(res.status).toBe(200);
+      const d = await res.json() as { sellerLine: string | null; seller: string; disclosure: { path: string; lines: { mp?: string }; renewalText: string } };
+      expect(d.seller).toBe("ferrox"); expect(d.sellerLine).toBeNull(); expect(d.disclosure.path).toBe("direct");
+      expect(d.disclosure.lines.mp).toBeUndefined();
+      expect(d.disclosure.renewalText).not.toContain(LINK_SENTENCE);
+      const r = renderDisclosure("starter", "US", "en", "ferrox");
+      expect(r.lines.mp).toBeUndefined(); expect(r.renewalText).not.toContain(LINK_SENTENCE);
+    });
+  }
 });

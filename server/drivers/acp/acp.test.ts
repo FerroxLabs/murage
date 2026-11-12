@@ -19,11 +19,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import { scanFolderTrustSources } from "../../folder-trust.ts";
 import type { ProviderTurnRoute } from "../../provider-routing.ts";
-import type { ProviderInstance } from "../../contracts.ts";
+import type { ProviderInstance, SendTurnInput } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { buildRemoteMount } from "../../custom-mcp-mounts.ts";
-import { acpErrorDiagnostic, acpFailedPromptLine, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, splitAcpCacheReads, type AcpSupport } from "./core.ts";
+import { acpErrorDiagnostic, acpFailedPromptLine, acpIsFluxRefusal, acpEngineErrorText, acpEngineExitStderrText, acpEngineStderrCapture, acpPromptIdleTimeoutMs, acpRpcErrorDetails, acpRpcErrorMessage, createAcpDriver, LOCATORS, skipSubscriptionAuthForLocalInject, splitAcpCacheReads, type AcpSupport } from "./core.ts";
 import { redactSecretsInText } from "../../redact.ts";
 import { redactSecretsInText as redactSecretsInTextShipped } from "../../testing/redact-release-0.1.53.ts";
 import { ERROR_MESSAGE_MAX, ENGINE_ERROR_CATEGORIES } from "../../../shared/provider-error.ts";
@@ -776,7 +776,7 @@ describe("ACP turns (fake CLI)", () => {
     await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-pj-with");
     expect(JSON.parse(readFileSync(withDump, "utf8")).mcpServers).toContainEqual({
       name: "phoneJobs", command: process.execPath, args: ["/fake/phone-jobs-proxy.js"],
-      env: [{ name: "MURAGE_PHONE_TOOLS", value: "calendar_read" }, { name: "MURAGE_PJ_GEN", value: "g1" }],
+      env: [{ name: "MURAGE_PHONE_TOOLS", value: "calendar_read" }, { name: "MURAGE_PJ_GEN", value: "g1" }, { name: "MURAGE_MCP_LISTED_FILE", value: expect.stringMatching(/[\\/]murage-mcp-listed-[^\\/]+[\\/][a-f0-9-]{36}\.[a-f0-9]{32}$/) }],
     });
     const withoutDump = join(scratch, "pj-without.json");
     process.env.FAKE_ACP_DUMP = withoutDump;
@@ -809,7 +809,7 @@ describe("ACP turns (fake CLI)", () => {
       name: "computer",
       command: "/opt/cua driver/cua-driver",
       args: ["mcp", "--embedded", "--socket", "/run/user/1000/driver.sock"],
-      env: [{ name: "CUA_DRIVER_EMBEDDED", value: "1" }],
+      env: [{ name: "CUA_DRIVER_EMBEDDED", value: "1" }, { name: "MURAGE_MCP_LISTED_FILE", value: expect.stringMatching(/[\\/]murage-mcp-listed-[^\\/]+[\\/][a-f0-9-]{36}\.[a-f0-9]{32}$/) }],
     });
     expect(instance.adapter.capabilities.localComputerMcp).toBe(true);
   });
@@ -949,23 +949,49 @@ describe("ACP turns (fake CLI)", () => {
     }
   });
 
-  it("stamps a shell call whose only text is a title past the card's cap, and only that one", async () => {
+  it("keeps a full title-only command for safety checks beyond the display cap", async () => {
     const long = "x".repeat(5000);
-    for (const [id, toolCall, cut] of [
-      ["t-acp-title-cut", { toolCallId: "c1", kind: "execute", title: `${long} rm -rf ~` }, true],
-      ["t-acp-title-short", { toolCallId: "c2", kind: "execute", title: "Run it" }, false],
+    for (const [id, toolCall, wipe] of [
+      ["t-acp-title-wipe", { toolCallId: "c1", kind: "execute", title: `echo ${long}; rm -rf ~` }, true],
+      ["t-acp-label-wipe", { toolCallId: "c6", kind: "execute", title: `echo ${long}; rm -rf ~`, rawInput: { variant: "Bash" },
+        _meta: { "x.ai/tool": { version: 1, namespace: "grok_build", name: "run_terminal_command", kind: "execute", label: "Run Command", read_only: false } } }, true],
+      ["t-acp-title-long", { toolCallId: "c2", kind: "execute", title: `echo ${long}` }, false],
+      ["t-acp-title-short", { toolCallId: "c4", kind: "execute", title: "Run it" }, false],
+      ["t-acp-fetch-title", { toolCallId: "c5", kind: "fetch", title: long, rawInput: { url: "https://x.test/a" } }, false],
       ["t-acp-command-long", { toolCallId: "c3", kind: "execute", title: "Run it", rawInput: { command: `echo ${long}` } }, false],
-      ["t-acp-fetch-title", { toolCallId: "c4", kind: "fetch", title: long, rawInput: { url: "https://x.test/a" } }, false],
     ] as const) {
       process.env.FAKE_ACP_PERMISSION_TOOLCALL = JSON.stringify(toolCall);
       await create(GrokAgentDriver, "permission");
       await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: id, text: "go" } as any);
       const opened = (await recorder.until((e) => e.type === "request.opened")) as any;
-      expect(opened.toolInputTruncated === true, id).toBe(cut);
-      if (cut) {
-        const verdict = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null, inputCut: true, inputTruncated: true });
-        expect(verdict.approve).toBeNull();
-      }
+      // RULING-R3 R2: only the display is capped; the wipe suffix must reach every safety reader.
+      expect(opened.summary.length).toBeLessThan(5000);
+      expect(opened.toolInputTruncated).not.toBe(true);
+      if (toolCall.kind === "execute") {
+        const command = "rawInput" in toolCall && "command" in toolCall.rawInput ? toolCall.rawInput.command : toolCall.title;
+        expect(opened.toolCall.input.command).toBe(command);
+        const structured = "rawInput" in toolCall && "command" in toolCall.rawInput;
+        expect(opened.toolInputMissing).toBe(structured ? undefined : "command");
+        const call = { engine: "acp" as const, toolCall: opened.toolCall, inputMissing: opened.toolInputMissing };
+        // A retained title is safety text, never proof of a structured command at Full access.
+        if (!structured) expect(autoVerdict({ autoApprove: true, fullAccess: true }, opened.tool, opened.summary, { call }).approve).toBeNull();
+        const verdict = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, {
+          fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null,
+          commandText: opened.toolCall.input.command, inputCut: true,
+          call,
+        });
+        if (wipe) expect(verdict.approve).toBeNull();
+        else expect(verdict.approve).toContain("no limits");
+      } else expect(opened.toolCall.input).toEqual(toolCall.rawInput);
+      // Retain the explicit truncated-input policy checks as well as full safety text.
+      const cutContext = { fullAccessOrigin: "owner" as const, ownerStarted: true, stopLine: null, outsideRead: null, inputCut: true, inputTruncated: true, commandText: "echo safe" };
+      expect(autoVerdict({ autoApprove: true, fullAccess: true }, "shell", "echo safe", {
+        ...cutContext, call: { engine: "acp", inputMissing: "command", toolCall: { name: "shell", input: {} } },
+      }).approve).toBeNull();
+      const noLimits = { autoApprove: true, fullAccess: true, noLimits: true };
+      expect(autoVerdict(noLimits, "shell", "echo safe", cutContext).approve).toBe("auto-approved shell (no limits)");
+      expect(autoVerdict(noLimits, "shell", "rm -rf ~", cutContext).approve).toBeNull();
+      expect(autoVerdict(noLimits, "shell", "echo safe", { ...cutContext, commandText: undefined }).approve).toBeNull();
       await instance.adapter.respondToRequest(id, opened.requestId, { behavior: "deny" });
       await recorder.until((e) => e.type === "turn.completed");
     }
@@ -2547,7 +2573,7 @@ createInterface({ input: process.stdin }).on("line", line => {
   });
 
   for (const code of ["key_budget_reached", "premium_locked"]) for (const shape of ["flat", "nested"]) it(`ACP keeps typed Flux ${code} ${shape}`, async () => {
-    const driver = createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: "fuigoAgent", reachesFlux: () => true });
+    const driver = createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: "fuigoAgent", requestBaseUrl: () => "https://api.fluxrouter.ai/v1" });
     await create(driver, `flux-refusal:${code}:${shape}`);
     await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-flux-typed", text: "fixture only" });
     await recorder.until(event => event.type === "turn.completed");
@@ -2562,6 +2588,28 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(recorder.events.find(event => event.type === "runtime.error")).toMatchObject({ message: "Your AI service says the account is out of credit. Add credit with your AI service, then try again, or pick another AI.", providerError: { kind: "credits", httpStatus: 402, providerSaid: "Your credit balance is exhausted." }, details: expect.stringContaining("Provider response: HTTP 402") });
     // Every event in full, raw payloads included: the sentence is reworded, and unknown prose and the link never travel.
     expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|billing\.invalid|FIXTURE_PROVIDER_PROSE_CANARY|team's credit balance/);
+  });
+
+  // Finding 5: on a Cloud home the refusal is worded by us; the generic provider card (payment advice, no reset date) must not replace it.
+  it.each([
+    ["flux-budget", /You've used this month's credits\. They come back on March 5\./],
+    ["flux-hold", /This one is on our side, not something you did\. Please try again soon\./],
+  ])("Cloud home %s: the event carries our wording and no generic provider card", async (mode, wording) => {
+    // The home role is switched on only AFTER the fake CLI has started (a real home starts engines through its launcher): the fixture holds
+    // its refusal back for a moment, and the classification, which reads the role when the answer arrives, then runs as it does on a home.
+    try {
+      await create(GrokAgentDriver, mode);
+      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-${mode}`, text: "fixture only" });
+      await new Promise(resolve => setTimeout(resolve, 200));
+      vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+      expect(await recorder.until(event => event.type === "turn.completed")).toMatchObject({ ok: false, stopReason: "rpc_error" });
+      const errors = recorder.events.filter(event => event.type === "runtime.error");
+      expect(errors).toHaveLength(1);
+      expect(errors[0].message).toMatch(wording);
+      expect(errors[0].providerError).toBeUndefined();
+      if (mode === "flux-hold") expect(errors[0].message).not.toMatch(/credit/i);
+      expect(JSON.stringify(recorder.events)).not.toMatch(/fake-secret-canary|fluxrouter\.ai|fk_id_fake|Flux Router/);
+    } finally { vi.unstubAllEnvs(); }
   });
 
   it("retains only safe ACP diagnostic facts for customer error details", () => {
@@ -2584,7 +2632,8 @@ createInterface({ input: process.stdin }).on("line", line => {
   });
 
   it.each([...ENGINE_ERROR_CATEGORIES, "context_length"])("allows typed terminal failure category %s", (error_kind) => {
-    expect(acpRpcErrorDetails({ data: { error_kind } })).toBe(`Engine error kind: ${error_kind}`);
+    expect(acpRpcErrorDetails({ data: { error_kind } })).toBe(`${error_kind === "rate_limited" ? "Provider response: HTTP 429\n" : ""}Engine error kind: ${error_kind}`);
+    expect(acpErrorDiagnostic({ eventId: "ev-m00001-1", turnId: "11111111-1111-4111-8111-111111111111" }, "22222222-2222-4222-8222-222222222222", { data: { error_kind } })?.httpStatus).toBe(error_kind === "rate_limited" ? 429 : undefined);
     expect(acpErrorDiagnostic({ eventId: "ev-m00001-1", turnId: "11111111-1111-4111-8111-111111111111" }, "22222222-2222-4222-8222-222222222222", { data: { error_kind } })?.terminalKind).toBe(error_kind);
     expect(acpRpcErrorDetails({ data: { error_kind: `${error_kind}\nfake-secret-canary` } })).toBeUndefined();
   });
@@ -3356,6 +3405,18 @@ createInterface({ input: process.stdin }).on("line", line => {
     expect(JSON.stringify(recorder.events)).not.toContain("fake-secret-canary");
   });
 
+
+  it("a 402 from a Flux endpoint with no credit wording on a Cloud home reads as the plain try-again line; a customer's own provider keeps its wording", () => {
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    try {
+      const flux = { data: { http_status: 402, message: "Payment required. See https://fluxrouter.ai/account for details." } };
+      expect(acpRpcErrorMessage(flux)).toBe("Your Flux credit is still getting ready. Try again in a minute; if it keeps happening, we've been told and are on it.");
+      expect(acpIsFluxRefusal(flux)).toBe(true);
+      const own = { data: { http_status: 402, message: "unknown provider response at https://api.example.com/billing" } };
+      expect(acpRpcErrorMessage(own)).toBe("Your AI service said payment or account access is needed. Check billing and access with your AI service, then try again.");
+      expect(acpIsFluxRefusal(own)).toBe(false);
+    } finally { vi.unstubAllEnvs(); }
+  });
   it("does not expose unknown nested ACP error data or misclassify another HTTP status", () => {
     expect(acpRpcErrorMessage({ message: "Internal error", data: { http_status: 500, message: "credit balance is exhausted fake-secret-canary" } })).toBe("Internal error");
     expect(acpRpcErrorMessage({ data: { http_status: 402, message: "unknown provider response fake-secret-canary" } })).toBe("Your AI service said payment or account access is needed. Check billing and access with your AI service, then try again.");
@@ -3823,17 +3884,17 @@ describe("ACP snapshot", () => {
       const outside = join(scratch, "outside");
       mkdirSync(outside, { recursive: true });
       writeFileSync(join(outside, "kimi-code.json"), HELD);
-      execFileSync("ln", ["-s", join(outside, "kimi-code.json"), join(credDir(), "kimi-code.json")]);
+      execFileSync("ln", ["-s", join(outside, "kimi-code.json"), join(credDir(), "kimi-code.json")], { windowsHide: true });
       expect((await kimiSnap()).authenticated).toBe(false);
 
       const root2 = join(scratch, "root2");
       mkdirSync(root2, { recursive: true });
-      execFileSync("ln", ["-s", outside, join(root2, "credentials")]);
+      execFileSync("ln", ["-s", outside, join(root2, "credentials")], { windowsHide: true });
       expect((await kimiSnap({ KIMI_CODE_HOME: root2, HOME: join(scratch, "child") })).authenticated).toBe(false);
     });
 
     it.skipIf(process.platform === "win32")("a FIFO named kimi-code.json is signed out and does not block", async () => {
-      execFileSync("mkfifo", [join(credDir(), "kimi-code.json")]);
+      execFileSync("mkfifo", [join(credDir(), "kimi-code.json")], { windowsHide: true });
       const started = Date.now();
       expect((await kimiSnap()).authenticated).toBe(false);
       expect(Date.now() - started).toBeLessThan(1900);
@@ -3847,7 +3908,7 @@ describe("ACP snapshot", () => {
     it.skipIf(process.platform === "win32")("a hard-linked candidate (nlink > 1) is signed out", async () => {
       const outside = join(scratch, "outside-held.json");
       writeFileSync(outside, HELD);
-      execFileSync("ln", [outside, join(credDir(), "kimi-code.json")]);
+      execFileSync("ln", [outside, join(credDir(), "kimi-code.json")], { windowsHide: true });
       expect((await kimiSnap()).authenticated).toBe(false);
     });
 
@@ -3905,8 +3966,8 @@ describe("ACP snapshot", () => {
         pause: async () => {
           // Swap the folder right after it was pinned (second pause point).
           if (++calls === 2) {
-            execFileSync("mv", [dir, `${dir}-old`]);
-            execFileSync("mv", [other, dir]);
+            execFileSync("mv", [dir, `${dir}-old`], { windowsHide: true });
+            execFileSync("mv", [other, dir], { windowsHide: true });
           }
         },
       });
@@ -4711,7 +4772,7 @@ describe("ACP folder trust (fake CLI in folder-trust mode)", () => {
     const main = join(scratch, "main");
     mkdirSync(main, { recursive: true });
     const git = (cwd: string, ...args: string[]) =>
-      execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_CONFIG_NOSYSTEM: "1", HOME: scratch } });
+      execFileSync("git", args, { windowsHide: true, cwd, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_CONFIG_NOSYSTEM: "1", HOME: scratch } });
     git(main, "init", "-q", ".");
     git(main, "commit", "-q", "--allow-empty", "-m", "init");
     const lane = join(scratch, "lane");
@@ -5184,5 +5245,392 @@ describe("ACP engine text: nothing is cut before it is redacted", () => {
     for (let i = 0; i < 20_000; i++) shapes.push(randomLocator());
     for (const text of joinedAuthorities()) shapes.push(text);
     for (const text of shapes) expect(text.replace(locator, replacement), JSON.stringify(text)).toBe(text.replace(previous, "[link removed]"));
+  });
+});
+
+it("c11-version-route: OpenCode respects failed-probe backoff while production Droid and Grok force isolation probes", async () => {
+  const { createOpenCodeDriver } = await import("./opencode-go.ts");
+  const { cliSig, noteVersionProbe, resetIsolationCache } = await import("../isolation-cache.ts");
+  const { invalidateCliVersions } = await import("../../cli-version-cache.ts");
+  const root = mkdtempSync(join(tmpdir(), "c11-version-"));
+  chmodSync(FAKE_CLI, 0o755);
+  const make = async (driver: typeof GrokAgentDriver, log: string, fail: boolean) => driver.create({ instanceId: `c11-${driver.driverKind}`, displayName: "Fixture", enabled: true, config: { cli: FAKE_CLI, fullAuto: false }, environment: { HOME: root, OPENCODE_API_KEY: "fixture-only", FAKE_ACP_MODE: "cancel-ack", FAKE_ACP_VERSION_LOG: log, FAKE_ACP_VERSION_FAIL: fail ? "1" : "0", FAKE_ACP_VERSION: "1.0.62" } });
+  resetIsolationCache(); invalidateCliVersions();
+  const openLog = join(root, "open.log"), open = await make(createOpenCodeDriver(), openLog, true);
+  try {
+    await open.adapter.sendTurn({ threadId: "c11-version-a", text: "fixture", cwd: root });
+    await open.adapter.sendTurn({ threadId: "c11-version-b", text: "fixture", cwd: root });
+    expect(readFileSync(openLog, "utf8").trim().split("\n")).toHaveLength(1);
+  } finally { await open.dispose(); }
+  const { QwenAgentDriver } = await import("./qwen.ts");
+  mkdirSync(join(root, ".qwen")); writeFileSync(join(root, ".qwen/oauth_creds.json"), "{}");
+  for (const driver of [DroidAgentDriver, GrokAgentDriver, QwenAgentDriver]) {
+    for (const fail of [false, true]) {
+      resetIsolationCache(); invalidateCliVersions();
+      const log = join(root, `${driver.driverKind}-${fail}.log`);
+      noteVersionProbe(`${driver.driverKind}|${FAKE_CLI}`, cliSig(FAKE_CLI, process.env), false);
+      const instance = await make(driver, log, fail);
+      try {
+        const sent = instance.adapter.sendTurn({ threadId: `c11-${driver.driverKind}-${fail}`, text: "fixture", cwd: root });
+        if (fail) await expect(sent).rejects.toThrow(); else await sent;
+        expect(readFileSync(log, "utf8").trim().split("\n")).toHaveLength(1);
+      } finally { await instance.dispose(); }
+    }
+  }
+});
+
+describe("C11 bounded tool-budget recovery", () => {
+  const controls = ["murage_help", "tool_result_read", "allow_for_task", "ask_user", "show_widget", "update_widget", "request_credential", "list_bots", "ask_bot", "delegate_bot", "check_delegation", "wait_delegation", "get_permission_status", "propose_outcome", "get_bot"];
+  async function fixture(options: { native?: number; cached?: number; output?: object; replay?: boolean; loadNull?: boolean; limit?: number; refuseSecond?: boolean; hold?: "learn" | "margin"; failPersist?: "learn" | "margin"; ephemeral?: boolean; proposal?: boolean; renamed?: boolean; unknown?: boolean; growth?: "optional" | "agents" | "resources" | "shrink"; loadError?: object; stopAt?: "initialize" | "load" | "prompt"; holdCatalog?: boolean; optionalUnknown?: "browser" | "phoneJobs" | "localComputer" | "computer"; stopSecond?: boolean; crashReplacement?: boolean; nextTurn?: boolean; noStricter?: boolean; closeBarrier?: "stop" | "continue"; dirtyAfterOutput?: boolean; stopOnFailure?: boolean; proposalOnly?: boolean } = {}) {
+    const { createHash } = await import("node:crypto");
+    const { ToolLimitStore } = await import("./opencode-tool-budget.ts");
+    const { classifyOpenCodeError } = await import("./opencode-go.ts");
+    const root = mkdtempSync(join(tmpdir(), "c11-recovery-")), log = join(root, "rpc.jsonl");
+    const key = createHash("sha256").update(root).digest("hex");
+    const store = new ToolLimitStore(join(NATIVE_DIR, "opencode-tool-limits.json"));
+    if (options.cached) await store.learn(key, options.cached, "opencode/mock");
+    const agentsName = options.renamed ? "chief.proposal" : "agents";
+    const catalogs = { [agentsName]: options.unknown ? null : options.proposal ? ["project_propose"] : controls, "murage-memory": Array.from({ length: options.proposalOnly ? 0 : 8 }, (_, i) => `m${i}`), murage_connectors: Array.from({ length: options.proposalOnly ? 0 : 30 }, (_, i) => `c${String(i).padStart(2, "0")}`) };
+    const driver = createAcpDriver({ ...SELECT_MODEL_SUPPORT, driverKind: "c11BudgetFixture", mcpListedWait: true, classifyError: classifyOpenCodeError, models: { default: "opencode/mock", options: [] }, selectModel: undefined, toolBudget: { routeKey: () => options.ephemeral ? undefined : key }, transformEnv: env => { env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: { "*": "ask" } }); } });
+    const instance = await driver.create({ instanceId: key, displayName: "Fixture", enabled: true, config: { cli: FAKE_CLI, fullAuto: false }, environment: { HOME: root, FAKE_ACP_MODE: "c11-budget", FAKE_C11_LOG: log, FAKE_C11_SPEC: JSON.stringify({ catalogs, dirtyAfterOutput: options.dirtyAfterOutput, forceReject: options.noStricter, crashReplacement: options.crashReplacement, native: options.native ?? 11, limit: options.limit ?? 40, output: options.output, replay: options.replay, loadNull: options.loadNull, loadError: options.loadError, markerGate: options.holdCatalog ? join(root, "catalog-gate") : undefined, heldMount: agentsName, skipMarker: options.optionalUnknown === "localComputer" ? "computer" : options.optionalUnknown, recoveryGate: options.stopAt === "initialize" ? join(root, "handshake-gate") : undefined, loadGate: options.stopAt === "load" ? join(root, "handshake-gate") : undefined, promptGate: options.stopAt === "prompt" ? join(root, "handshake-gate") : undefined, ...(options.growth ? { catalogVariants: [catalogs, { ...catalogs, ...(options.growth === "shrink" ? { murage_connectors: [] } : options.growth === "optional" ? { murage_connectors: [...catalogs.murage_connectors, "unseen"] } : options.growth === "agents" ? { [agentsName]: [...controls, "unseen"] } : {}) }], resourceVariants: [false, options.growth === "resources"] } : {}) }) } });
+    const recorder = recordEvents(instance.adapter);
+    let fences = 0, writes = 0, withdrawals = 0;
+    let stopDuringFence: Promise<unknown> | undefined;
+    const noticesAtWrite: number[] = [];
+    const source = [{ id: "old", role: "user" as const, text: "owner text" }, { id: "current", role: "user" as const, text: "owner text" }];
+    const mount = { command: process.execPath, args: ["fixture-only"], env: {} };
+    const input: SendTurnInput = { threadId: key, text: "owner text", images: [{ mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=" }], cwd: root, ownerMessageId: "current", transcript: source, integrations: { agents: { ...mount, serverName: agentsName, env: options.proposal ? { MURAGE_PROJECT_ROLE: "proposal" } : {} }, memory: mount, composio: mount, ...(options.optionalUnknown ? { [options.optionalUnknown]: options.optionalUnknown === "computer" ? { boxId: "fixture-box", token: "fixture-only" } : mount } : {}) }, beforeSubmit: () => { fences++; if (fences === 2 && options.stopSecond) stopDuringFence = instance.adapter.interruptTurn(key); if (fences === 2 && options.refuseSecond) throw new Error("MEMORY_CONTEXT_REVOKED"); }, onEngineWrite: () => { writes++; noticesAtWrite.push(recorder.events.filter(e => e.type === "item.started" && e.itemId?.startsWith("tool-limit-")).length); }, notWritten: () => withdrawals++ };
+    let release!: () => void, reached!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; }), arrived = new Promise<void>(resolve => { reached = resolve; });
+    const method = options.hold === "margin" || options.failPersist === "margin" ? "increaseMargin" : "learn";
+    const original = ToolLimitStore.prototype[method];
+    const barrier = options.hold || options.failPersist ? vi.spyOn(ToolLimitStore.prototype, method).mockImplementation(async function(this: InstanceType<typeof ToolLimitStore>, ...args: any[]) {
+      if (options.failPersist) { if (options.stopOnFailure) stopDuringFence = instance.adapter.interruptTurn(key); throw new Error("fixture durable write failure"); }
+      reached(); await gate;
+      return (original as any).apply(this, args);
+    }) : undefined;
+    const { ChildTeardown } = await import("../child-teardown.ts");
+    const originalWait = ChildTeardown.prototype.wait; let closeHeld = false;
+    const closeSpy = options.closeBarrier ? vi.spyOn(ChildTeardown.prototype, "wait").mockImplementation(async function(this: InstanceType<typeof ChildTeardown>, budget) {
+      const closed = await originalWait.call(this, budget);
+      if (!closeHeld) { closeHeld = true; reached(); await gate; }
+      return closed;
+    }) : undefined;
+    try {
+      const started = await instance.adapter.sendTurn(input);
+      if (options.closeBarrier) {
+        await arrived;
+        expect((await store.get(key))?.limit).toBe(40);
+        expect(recorder.events.some(e => e.type === "turn.completed")).toBe(false);
+        const stopping = options.closeBarrier === "stop" ? instance.adapter.interruptTurn(key, started.turnId) : undefined;
+        release(); await stopping;
+      }
+      if (options.hold) {
+        await arrived;
+        expect(recorder.events.some(e => e.type === "turn.completed")).toBe(false);
+        const beforeRelease = readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line));
+        expect(beforeRelease.filter(r => r.event === "prompt")).toHaveLength(options.hold === "learn" || options.noStricter ? 1 : 2);
+        const stopping = instance.adapter.interruptTurn(key, started.turnId);
+        release(); await stopping;
+      }
+      if (options.holdCatalog) {
+        const catalogGate = join(root, "catalog-gate");
+        await expect.poll(() => existsSync(catalogGate + ".waiting"), { timeout: 10000 }).toBe(true);
+        expect(fences).toBe(0);
+        expect(recorder.events.some(e => e.type === "runtime.error" || e.type === "turn.completed")).toBe(false);
+        writeFileSync(catalogGate, "release");
+      }
+      if (options.stopAt) {
+        const handshake = join(root, "handshake-gate");
+        await expect.poll(() => existsSync(handshake + ".waiting"), { timeout: 10000 }).toBe(true);
+        const stopping = instance.adapter.interruptTurn(key, started.turnId);
+        writeFileSync(handshake, "release"); await stopping;
+      }
+      const terminal = await recorder.until(e => e.type === "turn.completed");
+      await stopDuringFence;
+      if (options.nextTurn) {
+        const next = await instance.adapter.sendTurn(input);
+        await recorder.until(e => e.type === "turn.completed" && e.turnId === next.turnId);
+      }
+      writeFileSync(join(root, "events.json"), JSON.stringify(recorder.events, null, 2));
+      const rows = readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line));
+      return { rows, terminal, events: recorder.events, record: await store.get(key), fences, writes, withdrawals, source, noticesAtWrite, lifecycle: readFileSync(join(NATIVE_DIR, `${key}.ndjson`), "utf8").trim().split("\n").map(line => JSON.parse(line)).filter(row => row.source === "murage.opencode-budget").map(row => row.msg) };
+    } finally { release(); closeSpy?.mockRestore(); barrier?.mockRestore(); recorder.stop(); await instance.dispose(); }
+  }
+  it("c11-review-4 retired generation markers disappear after process teardown", async () => {
+    const run = await fixture({ nextTurn: true });
+    const markers = run.rows.filter(r => r.event === "catalog").map(r => r.marker);
+    expect(markers.length).toBeGreaterThan(3);
+    expect(markers.filter(path => existsSync(path))).toEqual([]);
+  });
+  it.each([undefined, 40])("c11-review-8 shrinking catalog discloses only current omissions cached=%s", async cached => {
+    const run = await fixture({ cached, growth: "shrink" });
+    expect(run.terminal).toMatchObject({ ok: true });
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts).toHaveLength(cached ? 1 : 2);
+    expect(JSON.stringify(prompts.at(-1).prompt)).not.toContain("Murage left out some tools");
+    expect(JSON.stringify(prompts.at(-1).prompt).includes("Murage is sending the previous message again")).toBe(!cached);
+    expect(run.events.filter(e => e.type === "item.started" && e.itemId?.startsWith("tool-limit-"))).toHaveLength(0);
+  });
+  it("c11-known-route reuses the hint but verifies a fresh generation on the next turn", async () => {
+    const run = await fixture({ nextTurn: true });
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(3);
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts.map(r => r.count)).toEqual([64, 36, 36]);
+    expect(JSON.stringify(prompts[2].prompt)).toContain("Murage left out some tools");
+    expect(JSON.stringify(prompts[2].prompt)).not.toContain("Murage is sending the previous message again");
+    const markers = run.rows.filter(r => r.event === "catalog").map(r => r.marker);
+    expect(new Set(markers).size).toBe(markers.length);
+  });
+  it("c11-no-room-known refuses ordinary controls before a prompt", async () => {
+    const run = await fixture({ cached: 16 });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(0);
+    expect(run.record).toMatchObject({ limit: 16, margin: 4 });
+    expect(run.events.some(e => e.type === "runtime.error")).toBe(true);
+  });
+  it.each([false, true])("c11-no-stricter-reduction persists margin with Stop=%s", async stop => {
+    const run = await fixture({ cached: 40, noStricter: true, ...(stop ? { hold: "margin" as const } : {}) });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+    expect(run.record).toMatchObject({ limit: 40, margin: 12 });
+    if (stop) expect(run.terminal).toMatchObject({ stopReason: "cancelled" });
+    else expect(run.events.some(e => e.type === "runtime.error")).toBe(true);
+  });
+  it.each(["stop", "continue"] as const)("c11-close-is-not-stop at confirmed old close: %s", async closeBarrier => {
+    const run = await fixture({ closeBarrier });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(closeBarrier === "stop" ? 1 : 2);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(closeBarrier === "stop" ? 1 : 2);
+    expect(run.withdrawals).toBe(0);
+    expect(run.record?.limit).toBe(40);
+    expect(run.terminal).toMatchObject(closeBarrier === "stop" ? { stopReason: "cancelled" } : { ok: true });
+  });
+  it("c11-learn-before-fence persists after output and a real list_changed", async () => {
+    const run = await fixture({ dirtyAfterOutput: true, output: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Already answering" } } });
+    expect(run.record?.limit).toBe(40);
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(1);
+    expect(run.terminal).toMatchObject({ ok: false });
+    expect(run.events.filter(e => e.type === "item.started" && e.itemId?.startsWith("tool-limit-"))).toHaveLength(0);
+  });
+  it.each(["learn", "margin"] as const)("c11-stop has precedence over persistence failure in %s", async failPersist => {
+    const run = await fixture({ failPersist, stopOnFailure: true, native: failPersist === "margin" ? 20 : 11 });
+    expect(run.terminal).toMatchObject({ stopReason: "cancelled" });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(failPersist === "margin" ? 2 : 1);
+    if (failPersist === "margin") expect(run.record).toMatchObject({ limit: 40, margin: 4 });
+    else expect(run.record).toBeUndefined();
+  });
+  it.each([15, 16])("c11-proposal learns scripted limit %s with only its required control", async limit => {
+    const run = await fixture({ proposal: true, proposalOnly: true, renamed: true, limit, noStricter: true });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(1);
+    expect(run.record).toMatchObject({ limit, margin: limit === 15 ? 4 : 12 });
+    expect(run.rows.find(r => r.event === "prompt").visible).toEqual(["chief_proposal_project_propose"]);
+    expect(run.terminal).toMatchObject({ ok: false });
+  });
+  it("c11-crash-replacement retains learning and original write", async () => {
+    const run = await fixture({ crashReplacement: true });
+    expect(run.rows.filter(r => r.event === "replacement-crash")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(1);
+    expect(run.record?.limit).toBe(40);
+    expect(run.withdrawals).toBe(0);
+    expect(run.events.some(e => e.type === "runtime.error")).toBe(true);
+  });
+  it("c11-recovers-once", async () => {
+    const run = await fixture();
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts.map(r => r.count)).toEqual([64, 36]);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+    expect(prompts[1].prompt.filter((p: any) => p.type === "image")).toEqual(prompts[0].prompt.filter((p: any) => p.type === "image"));
+    expect(prompts[1].visible.filter((s: string) => s.startsWith("agents_"))).toHaveLength(15);
+    expect(prompts[1].visible.filter((s: string) => s.startsWith("murage-memory_"))).toHaveLength(8);
+    expect(JSON.stringify(prompts[1].prompt)).toContain("Murage is sending the previous message again");
+    expect(run.terminal).toMatchObject({ ok: true });
+    expect(run.writes).toBe(2);
+    expect(run.record).toMatchObject({ limit: 40, margin: 4 });
+  });
+  it("c11-known-route and c11-notice-order disclose before the only write", async () => {
+    const run = await fixture({ cached: 40 });
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts.map(r => r.count)).toEqual([36]);
+    expect(JSON.stringify(prompts[0].prompt)).toContain("Murage left out some tools");
+    expect(JSON.stringify(prompts[0].prompt)).not.toContain("sending the previous message again");
+    expect(run.events.filter(e => e.type === "item.started" && e.itemId?.startsWith("tool-limit-"))).toHaveLength(1);
+    expect(run.noticesAtWrite).toEqual([1]);
+  });
+  it("c11-session-lost filters only the current owner identity", async () => {
+    const run = await fixture({ loadNull: true });
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(run.rows.filter(r => r.event === "session/new")).toHaveLength(2);
+    const text = prompts[1].prompt.filter((p: any) => p.type === "text").map((p: any) => p.text).join("\n");
+    expect(text.match(/owner text/g)).toHaveLength(2);
+    expect(text.match(/Murage is sending the previous message again/g)).toHaveLength(1);
+    expect(prompts[1].prompt.filter((p: any) => p.type === "image")).toHaveLength(1);
+    expect(run.source).toEqual([{ id: "old", role: "user", text: "owner text" }, { id: "current", role: "user", text: "owner text" }]);
+  });
+  it("c11-replay-output does not fence recovery", async () => {
+    const run = await fixture({ replay: true, output: { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "old thought" } } });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(2);
+    expect(run.terminal).toMatchObject({ ok: true });
+  });
+  it.each(["learn", "margin"] as const)("c11-stop-learning and c11-stop-second-margin %s", async hold => {
+    const run = await fixture({ hold, native: hold === "margin" ? 20 : 11 });
+    expect(run.terminal).toMatchObject({ stopReason: "cancelled" });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(hold === "margin" ? 2 : 1);
+    expect(run.record).toMatchObject({ limit: 40, margin: hold === "margin" ? 12 : 4 });
+  });
+  it.each(["learn", "margin"] as const)("c11-crash-store rejects failed durable %s", async failPersist => {
+    const run = await fixture({ failPersist, native: 20 });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(failPersist === "learn" ? 1 : 2);
+    expect(run.terminal).toMatchObject({ ok: false });
+    if (failPersist === "learn") expect(run.record).toBeUndefined();
+    else expect(run.record).toMatchObject({ margin: 4 });
+  });
+  it("c11-ephemeral-version does not persist an unidentified route", async () => {
+    const run = await fixture({ ephemeral: true });
+    expect(run.rows.filter(r => r.event === "prompt").map(r => r.count)).toEqual([64, 36]);
+    expect(run.record).toBeUndefined();
+  });
+  it("c11-renamed-controls retain their actual prefix", async () => {
+    const run = await fixture({ renamed: true });
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts).toHaveLength(2);
+    for (const control of controls) expect(prompts[1].visible).toContain(`chief_proposal_${control}`);
+  });
+  it.each([15, 16])("c11-proposal budget at limit %s", async limit => {
+    const run = await fixture({ proposal: true, renamed: true, limit });
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts).toHaveLength(limit === 15 ? 1 : 2);
+    expect(run.record).toMatchObject({ limit });
+    if (limit === 16) { expect(prompts[1].visible).toEqual(["chief_proposal_project_propose"]); expect(run.terminal).toMatchObject({ ok: true }); }
+  });
+  it("c11-review-9 recovery unknown catalog logs no-room with its reason", async () => {
+    const run = await fixture({ unknown: true, noStricter: true });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(1);
+    expect(run.terminal).toMatchObject({ ok: false });
+    expect(run.lifecycle).toContainEqual(expect.objectContaining({ stage: "recovery", outcome: "no-room", reason: "unknown-catalog" }));
+    expect(run.lifecycle.some(row => row.outcome === "unknown-catalog")).toBe(false);
+  });
+  it("c11-unknown-catalog refuses required nameless catalogs before a learned prompt", async () => {
+    const run = await fixture({ cached: 40, unknown: true });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(0);
+    expect(run.terminal).toMatchObject({ ok: false });
+    expect(run.events).toContainEqual(expect.objectContaining({ type: "runtime.error", message: "Murage could not confirm this AI's tool list or the maximum number of tools it accepts. Your message was not sent." }));
+  });
+  it.each([undefined, 40])("c11-catalog-growth keeps unseen optional names hidden, cached=%s", async cached => {
+    const run = await fixture({ growth: "optional", cached });
+    expect(run.terminal).toMatchObject({ ok: true });
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts.at(-1).visible).not.toContain("murage_connectors_unseen");
+    expect(prompts.at(-1).count).toBe(36);
+  });
+  it.each(["agents", "resources"] as const)("c11-catalog-growth refuses a second unsafe %s change", async growth => {
+    const run = await fixture({ growth, cached: 40 });
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(0);
+    expect(run.events.some(e => e.type === "runtime.error" && e.message.includes("tool list changed"))).toBe(true);
+  });
+  it("c11-catalog-growth revalidates a recovery replacement", async () => {
+    const run = await fixture({ growth: "agents" });
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.terminal).toMatchObject({ ok: false });
+  });
+  it("c11-session-lost explicit missing identity starts fresh", async () => {
+    const run = await fixture({ loadError: { code: -32602, message: "Session not found", data: "c11-session" } });
+    expect(run.rows.filter(r => r.event === "session/new")).toHaveLength(2);
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(2);
+    expect(run.terminal).toMatchObject({ ok: true });
+  });
+  it("c11-session-lost auth refusal never falls back", async () => {
+    const run = await fixture({ loadError: { code: -32000, message: "Authentication required" } });
+    expect(run.rows.filter(r => r.event === "session/new")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.terminal).toMatchObject({ ok: false });
+  });
+  it.each([
+    { stopAt: "initialize" as const },
+    { stopAt: "load" as const },
+    { stopAt: "load" as const, loadNull: true },
+    { stopAt: "load" as const, loadError: { code: -32602, message: "Session not found", data: "c11-session" } },
+  ])("c11-stop-in-handshake %j", async options => {
+    const run = await fixture(options);
+    expect(run.terminal).toMatchObject({ stopReason: "cancelled" });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "session/new")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "session/load")).toHaveLength(0);
+    expect(run.withdrawals).toBe(0);
+    expect(run.record).toMatchObject({ limit: 40 });
+  });
+  it("c11-fresh-markers waits for the renamed required role", async () => {
+    const run = await fixture({ renamed: true, holdCatalog: true, cached: 40 });
+    expect(run.terminal).toMatchObject({ ok: true });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+  });
+  it.each(["browser", "phoneJobs", "localComputer", "computer"] as const)("c11-optional-unknown drops %s without waiting for its marker", async optionalUnknown => {
+    const run = await fixture({ optionalUnknown, cached: 40 });
+    expect(run.terminal).toMatchObject({ ok: true });
+    const prompts = run.rows.filter(r => r.event === "prompt");
+    expect(prompts).toHaveLength(1);
+    expect(JSON.stringify(prompts[0].prompt)).toContain("count unknown");
+    expect(run.rows.filter(r => r.event === "spawn").at(-1).overlay.permission[`${optionalUnknown === "localComputer" ? "computer" : optionalUnknown}_*`]).toBe("deny");
+  });
+  it("c11-stop-second-prompt after its actual write keeps one notice", async () => {
+    const run = await fixture({ stopAt: "prompt" });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(2);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+    expect(run.withdrawals).toBe(0);
+    expect(run.terminal).toMatchObject({ stopReason: "cancelled" });
+    expect(run.events.filter(e => e.type === "item.started" && e.itemId?.startsWith("tool-limit-"))).toHaveLength(1);
+    expect(run.events.filter(e => e.type === "turn.completed")).toHaveLength(1);
+    expect(run.events.filter(e => e.type === "content.delta")).toHaveLength(0);
+  });
+  it("c11-stop-second-prompt never withdraws the original write", async () => {
+    const run = await fixture({ stopSecond: true });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.withdrawals).toBe(0);
+    expect(run.terminal).toMatchObject({ stopReason: "cancelled" });
+    expect(run.events.filter(e => e.type === "item.started" && e.itemId?.startsWith("tool-limit-"))).toHaveLength(1);
+  });
+  it("c11-no-loop", async () => {
+    const run = await fixture({ native: 20 });
+    expect(run.rows.filter(r => r.event === "prompt").map(r => r.count)).toEqual([73, 45]);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+    expect(run.record).toMatchObject({ limit: 40, margin: 12 });
+    expect(run.terminal).toMatchObject({ ok: false });
+  });
+  it("c11-preprompt-then-reject", async () => {
+    const run = await fixture({ cached: 48, native: 14 });
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(3);
+    expect(run.rows.filter(r => r.event === "prompt").map(r => r.count)).toEqual([47, 39]);
+    expect(run.terminal).toMatchObject({ ok: true });
+  });
+  it.each([
+    { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "live" } },
+    { sessionUpdate: "agent_thought_chunk", content: { type: "text", text: "thinking" } },
+    { sessionUpdate: "plan", entries: [{ content: "step", priority: "high", status: "pending" }] },
+    { sessionUpdate: "agent_message_chunk", content: { type: "image", mimeType: "image/png", data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=" } },
+    { sessionUpdate: "tool_call", toolCallId: "fixture-call", title: "Fixture tool", kind: "read", status: "in_progress" },
+  ])("c11-learn-before-fence %j", async output => {
+    const run = await fixture({ output });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(1);
+    expect(run.record).toMatchObject({ limit: 40 });
+    expect(run.events.some(e => e.type === "item.started" && e.itemId?.startsWith("tool-limit-"))).toBe(false);
+  });
+  it("c11-no-room-learned", async () => {
+    const run = await fixture({ limit: 20 });
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.record).toMatchObject({ limit: 20 });
+    expect(run.terminal).toMatchObject({ ok: false });
+  });
+  it("c11-refused-resend preserves the first actual write", async () => {
+    const run = await fixture({ refuseSecond: true });
+    expect(run.rows.filter(r => r.event === "spawn")).toHaveLength(2);
+    expect(run.rows.filter(r => r.event === "prompt")).toHaveLength(1);
+    expect(run.withdrawals).toBe(0);
+    expect(run.terminal).toMatchObject({ stopReason: "submission_refused" });
   });
 });

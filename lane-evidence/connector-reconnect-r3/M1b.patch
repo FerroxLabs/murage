@@ -1,0 +1,11 @@
+--- server/composio.ts
++++ server/composio.ts
+@@ -2347,7 +2347,7 @@
+       : reading.errors.size || !reading.ok.has(slug) ? "toolError" : "ok";
+   } catch { /* Every probe outcome still requires the awaited refresh below. */ }
+   let read: InventoryRead | undefined;
+-  try { read = await postProbeInventory(cfg, owner); }
++  try { void postProbeInventory(cfg, owner).catch(() => {}); }
+   catch { /* Uncertainty preserves the incident and cannot restore healthy UI. */ }
+   if (inventoryOwner(cfg) !== owner) return "stale";
+   const unknown = () => { connectorHealthStore().setUnverified(owner, slug, account.id); return "unknown" as const; };

@@ -1,0 +1,8 @@
+{
+  "sourceSha": "52b44b60f9",
+  "schemaSource": "server/testing/nolim-replay/schema.json",
+  "schemaSha256": "acad7fb0f868accd94989c21855908550ccb1add9ece24d282fb8c95b4d905fd",
+  "exampleSource": "first fabricated record of server/testing/nolim-replay/fixtures/synthetic-v1.jsonl",
+  "exampleSha256": "801024e395e434d5e8afa8819163f84024922f0bf297b7c176e3f87284278aac",
+  "scope": "Structural seal/export tests only. Never a real-log replay corpus."
+}

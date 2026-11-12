@@ -1,0 +1,540 @@
+[
+  {
+    "fixture": {
+      "url": "http://127.0.0.1:22141",
+      "pid": 195,
+      "dataDir": "/tmp/murage-verify-data-kEhrrc",
+      "logPath": "/tmp/murage-verification-evidence/server-1794370779574-187.log"
+    }
+  },
+  {
+    "scheduledFailure": {
+      "id": "c8f22347-23c0-4253-a136-0b9d6629a107",
+      "routineId": "18779649-312f-4ce6-b6e3-8337f9790b52",
+      "routineName": "Check Gmail queue",
+      "prompt": "Check the Gmail queue without publishing anything.",
+      "instructionRevision": "504bb6935e447dd7c081d81ff36f28a3aec3ce2add95c16907762e8849a9041e",
+      "durationMinutes": 30,
+      "attachments": [],
+      "target": "bot",
+      "botId": "eaa5c663-43a0-44ac-b4e0-d9851444e7f8",
+      "runOn": "ember",
+      "scheduledFor": 1794370785249,
+      "dueAt": 1794370785249,
+      "status": "failed",
+      "manual": false,
+      "triggerSource": "schedule",
+      "createdAt": 1794370795839,
+      "delivery": {
+        "state": "sent",
+        "threadId": "a603809a-7e42-4287-b2f3-23a1dd1e8bcd"
+      },
+      "event": {
+        "version": 1,
+        "id": "c8f22347-23c0-4253-a136-0b9d6629a107",
+        "definitionId": "18779649-312f-4ce6-b6e3-8337f9790b52",
+        "receivedAt": 1794370795839,
+        "budgetId": "c8f22347-23c0-4253-a136-0b9d6629a107",
+        "source": "schedule",
+        "origin": {
+          "kind": "local-schedule"
+        }
+      },
+      "eventBudget": {
+        "version": 2,
+        "limits": {
+          "create": 4,
+          "handoff": 4
+        },
+        "admissions": [],
+        "closed": false
+      },
+      "threadId": "db41cc9f-dcba-499c-b72e-3ddbb4adf645",
+      "startedAt": 1794370795868,
+      "slotAt": 1794370785249,
+      "procedureBundleId": "2c2f259ad3d5b03976241b1afc862f265d603d665f329606e76725a594cc96df",
+      "error": "Gmail needs you to sign in again. Reconnect Gmail.",
+      "finishedAt": 1794370797165
+    },
+    "messages": {
+      "messages": [
+        {
+          "id": "3987220b-5c17-4622-a0c2-312ecbed0b60",
+          "at": 1794370795873,
+          "parentId": null,
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Scheduled run: Check Gmail queue",
+            "ok": true
+          },
+          "murageLine": true,
+          "seq": 1
+        },
+        {
+          "id": "0620a47b-358d-4d51-a014-cedcedb59657",
+          "at": 1794370795912,
+          "parentId": "3987220b-5c17-4622-a0c2-312ecbed0b60",
+          "role": "user",
+          "kind": "text",
+          "text": "Check the Gmail queue without publishing anything.",
+          "attachments": [],
+          "routineRunPrompt": {
+            "trigger": "schedule",
+            "routineName": "Check Gmail queue"
+          },
+          "automation": {
+            "kind": "schedule",
+            "routineId": "18779649-312f-4ce6-b6e3-8337f9790b52"
+          },
+          "dispatchedIn": "352a4a82-c64a-45dc-aed5-8dbe73fb6461",
+          "seq": 2
+        },
+        {
+          "id": "80c21d56-432a-42a2-9d12-56ece07349cd",
+          "at": 1794370797156,
+          "parentId": "0620a47b-358d-4d51-a014-cedcedb59657",
+          "role": "bot",
+          "kind": "text",
+          "text": "Gmail needs you to sign in again. Reconnect Gmail.",
+          "murageLine": true,
+          "seq": 3
+        },
+        {
+          "id": "ev-d4f4c16d2a4ff62d35c00658d3ef4e40",
+          "at": 1794370797201,
+          "parentId": "80c21d56-432a-42a2-9d12-56ece07349cd",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Connected app: Gmail fetch emails",
+            "action": {
+              "name": "mcp__murage_connectors__GMAIL_FETCH_EMAILS",
+              "classes": [],
+              "outcome": "failed"
+            },
+            "ok": false,
+            "spoken": "using a tool"
+          },
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "turnId": "352a4a82-c64a-45dc-aed5-8dbe73fb6461",
+          "provenance": "provider",
+          "speechGenerationId": "e891d0b6-9eee-4128-80d8-da9ce57f59f7",
+          "seq": 4
+        },
+        {
+          "id": "ev-40d88026818b1e049bca55ba3deb7c4d",
+          "at": 1794370797232,
+          "parentId": "ev-d4f4c16d2a4ff62d35c00658d3ef4e40",
+          "role": "bot",
+          "kind": "text",
+          "text": "custom tool failed: Gmail needs you to sign in again. Reconnect Gmail. Gmail needs reconnecting: its sign-in has stopped working, so calls to it fail until the owner reconnects it in Connected apps, where there is a Reconnect button. If the user asks for work in that app, say plainly that Gmail needs reconnecting and ask the owner to do it; do not say the service is briefly unreachable, and do not retry the call until it is reconnected. Other connected apps are unaffected.",
+          "turnId": "352a4a82-c64a-45dc-aed5-8dbe73fb6461",
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "provenance": "provider",
+          "speechGenerationId": "e891d0b6-9eee-4128-80d8-da9ce57f59f7",
+          "turnTerminal": true,
+          "seq": 5
+        }
+      ],
+      "hasMore": false,
+      "newestSeq": 5
+    },
+    "failedCalls": 0,
+    "completedCalls": 0
+  },
+  {
+    "signIn": {
+      "url": "https://backend.composio.dev/auth/fixture"
+    },
+    "finalRuns": [
+      {
+        "id": "7917d1f1-6138-41f5-9e9f-27993483da1f",
+        "routineId": "18779649-312f-4ce6-b6e3-8337f9790b52",
+        "routineName": "Check Gmail queue",
+        "prompt": "Check the Gmail queue without publishing anything.",
+        "instructionRevision": "504bb6935e447dd7c081d81ff36f28a3aec3ce2add95c16907762e8849a9041e",
+        "durationMinutes": 30,
+        "attachments": [],
+        "target": "bot",
+        "botId": "eaa5c663-43a0-44ac-b4e0-d9851444e7f8",
+        "runOn": "ember",
+        "scheduledFor": 1794370796399,
+        "dueAt": 1794370796399,
+        "status": "completed",
+        "manual": false,
+        "triggerSource": "schedule",
+        "createdAt": 1794370805839,
+        "delivery": {
+          "state": "sent",
+          "threadId": "a603809a-7e42-4287-b2f3-23a1dd1e8bcd"
+        },
+        "event": {
+          "version": 1,
+          "id": "7917d1f1-6138-41f5-9e9f-27993483da1f",
+          "definitionId": "18779649-312f-4ce6-b6e3-8337f9790b52",
+          "receivedAt": 1794370805839,
+          "budgetId": "7917d1f1-6138-41f5-9e9f-27993483da1f",
+          "source": "schedule",
+          "origin": {
+            "kind": "local-schedule"
+          }
+        },
+        "eventBudget": {
+          "version": 2,
+          "limits": {
+            "create": 4,
+            "handoff": 4
+          },
+          "admissions": [],
+          "closed": false
+        },
+        "threadId": "db41cc9f-dcba-499c-b72e-3ddbb4adf645",
+        "startedAt": 1794370825839,
+        "slotAt": 1794370822398,
+        "procedureBundleId": "2c2f259ad3d5b03976241b1afc862f265d603d665f329606e76725a594cc96df",
+        "output": "custom tool said: Gmail queue checked safely. No posts were published.",
+        "cost": 0,
+        "finishedAt": 1794370826766
+      },
+      {
+        "id": "c8f22347-23c0-4253-a136-0b9d6629a107",
+        "routineId": "18779649-312f-4ce6-b6e3-8337f9790b52",
+        "routineName": "Check Gmail queue",
+        "prompt": "Check the Gmail queue without publishing anything.",
+        "instructionRevision": "504bb6935e447dd7c081d81ff36f28a3aec3ce2add95c16907762e8849a9041e",
+        "durationMinutes": 30,
+        "attachments": [],
+        "target": "bot",
+        "botId": "eaa5c663-43a0-44ac-b4e0-d9851444e7f8",
+        "runOn": "ember",
+        "scheduledFor": 1794370785249,
+        "dueAt": 1794370785249,
+        "status": "failed",
+        "manual": false,
+        "triggerSource": "schedule",
+        "createdAt": 1794370795839,
+        "delivery": {
+          "state": "sent",
+          "threadId": "a603809a-7e42-4287-b2f3-23a1dd1e8bcd"
+        },
+        "event": {
+          "version": 1,
+          "id": "c8f22347-23c0-4253-a136-0b9d6629a107",
+          "definitionId": "18779649-312f-4ce6-b6e3-8337f9790b52",
+          "receivedAt": 1794370795839,
+          "budgetId": "c8f22347-23c0-4253-a136-0b9d6629a107",
+          "source": "schedule",
+          "origin": {
+            "kind": "local-schedule"
+          }
+        },
+        "eventBudget": {
+          "version": 2,
+          "limits": {
+            "create": 4,
+            "handoff": 4
+          },
+          "admissions": [],
+          "closed": false
+        },
+        "threadId": "db41cc9f-dcba-499c-b72e-3ddbb4adf645",
+        "startedAt": 1794370795868,
+        "slotAt": 1794370785249,
+        "procedureBundleId": "2c2f259ad3d5b03976241b1afc862f265d603d665f329606e76725a594cc96df",
+        "error": "Gmail needs you to sign in again. Reconnect Gmail.",
+        "finishedAt": 1794370797165
+      }
+    ],
+    "safeContinuation": {
+      "messages": [
+        {
+          "id": "3987220b-5c17-4622-a0c2-312ecbed0b60",
+          "at": 1794370795873,
+          "parentId": null,
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Scheduled run: Check Gmail queue",
+            "ok": true
+          },
+          "murageLine": true,
+          "seq": 1
+        },
+        {
+          "id": "0620a47b-358d-4d51-a014-cedcedb59657",
+          "at": 1794370795912,
+          "parentId": "3987220b-5c17-4622-a0c2-312ecbed0b60",
+          "role": "user",
+          "kind": "text",
+          "text": "Check the Gmail queue without publishing anything.",
+          "attachments": [],
+          "routineRunPrompt": {
+            "trigger": "schedule",
+            "routineName": "Check Gmail queue"
+          },
+          "automation": {
+            "kind": "schedule",
+            "routineId": "18779649-312f-4ce6-b6e3-8337f9790b52"
+          },
+          "dispatchedIn": "352a4a82-c64a-45dc-aed5-8dbe73fb6461",
+          "seq": 2
+        },
+        {
+          "id": "80c21d56-432a-42a2-9d12-56ece07349cd",
+          "at": 1794370797156,
+          "parentId": "0620a47b-358d-4d51-a014-cedcedb59657",
+          "role": "bot",
+          "kind": "text",
+          "text": "Gmail needs you to sign in again. Reconnect Gmail.",
+          "murageLine": true,
+          "seq": 3
+        },
+        {
+          "id": "ev-d4f4c16d2a4ff62d35c00658d3ef4e40",
+          "at": 1794370797201,
+          "parentId": "80c21d56-432a-42a2-9d12-56ece07349cd",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Connected app: Gmail fetch emails",
+            "action": {
+              "name": "mcp__murage_connectors__GMAIL_FETCH_EMAILS",
+              "classes": [],
+              "outcome": "failed"
+            },
+            "ok": false,
+            "spoken": "using a tool"
+          },
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "turnId": "352a4a82-c64a-45dc-aed5-8dbe73fb6461",
+          "provenance": "provider",
+          "speechGenerationId": "e891d0b6-9eee-4128-80d8-da9ce57f59f7",
+          "seq": 4
+        },
+        {
+          "id": "ev-40d88026818b1e049bca55ba3deb7c4d",
+          "at": 1794370797232,
+          "parentId": "ev-d4f4c16d2a4ff62d35c00658d3ef4e40",
+          "role": "bot",
+          "kind": "text",
+          "text": "custom tool failed: Gmail needs you to sign in again. Reconnect Gmail. Gmail needs reconnecting: its sign-in has stopped working, so calls to it fail until the owner reconnects it in Connected apps, where there is a Reconnect button. If the user asks for work in that app, say plainly that Gmail needs reconnecting and ask the owner to do it; do not say the service is briefly unreachable, and do not retry the call until it is reconnected. Other connected apps are unaffected.",
+          "turnId": "352a4a82-c64a-45dc-aed5-8dbe73fb6461",
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "provenance": "provider",
+          "speechGenerationId": "e891d0b6-9eee-4128-80d8-da9ce57f59f7",
+          "turnTerminal": true,
+          "seq": 5
+        },
+        {
+          "id": "027de0e1-7291-4003-8836-26cd103f5ad4",
+          "at": 1794370825854,
+          "parentId": "ev-40d88026818b1e049bca55ba3deb7c4d",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Scheduled run: Check Gmail queue",
+            "ok": true
+          },
+          "murageLine": true,
+          "seq": 6
+        },
+        {
+          "id": "5a863d00-49c1-4f3d-b648-ae7f04dac40a",
+          "at": 1794370825869,
+          "parentId": "027de0e1-7291-4003-8836-26cd103f5ad4",
+          "role": "user",
+          "kind": "text",
+          "text": "Check the Gmail queue without publishing anything.",
+          "attachments": [],
+          "routineRunPrompt": {
+            "trigger": "schedule",
+            "routineName": "Check Gmail queue"
+          },
+          "automation": {
+            "kind": "schedule",
+            "routineId": "18779649-312f-4ce6-b6e3-8337f9790b52"
+          },
+          "dispatchedIn": "db6b58cd-7d3a-4fe0-9ecc-1e76628ae925",
+          "seq": 7
+        },
+        {
+          "id": "ev-11c2770e67b04abd5042b30e7797c97a",
+          "at": 1794370826127,
+          "parentId": "5a863d00-49c1-4f3d-b648-ae7f04dac40a",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Waking up: starting a fresh engine after a quiet spell",
+            "action": {
+              "name": "Waking up: starting a fresh engine after a quiet spell",
+              "classes": [],
+              "outcome": "pending"
+            },
+            "ok": true,
+            "spoken": "using a tool"
+          },
+          "murageLine": true,
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "turnId": "db6b58cd-7d3a-4fe0-9ecc-1e76628ae925",
+          "seq": 8
+        },
+        {
+          "id": "ev-d9170e3e38459df6931834ab8ffe6ff3",
+          "at": 1794370826710,
+          "parentId": "ev-11c2770e67b04abd5042b30e7797c97a",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Connected app: Gmail fetch emails",
+            "action": {
+              "name": "mcp__murage_connectors__GMAIL_FETCH_EMAILS",
+              "classes": [],
+              "outcome": "pending"
+            },
+            "ok": true,
+            "spoken": "using a tool"
+          },
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "turnId": "db6b58cd-7d3a-4fe0-9ecc-1e76628ae925",
+          "provenance": "provider",
+          "speechGenerationId": "ccf404db-32dd-4b84-bef1-c34c3e300bec",
+          "seq": 9
+        },
+        {
+          "id": "ev-eb64971de8fc8642b1c8ca98b06919e3",
+          "at": 1794370826748,
+          "parentId": "ev-d9170e3e38459df6931834ab8ffe6ff3",
+          "role": "bot",
+          "kind": "text",
+          "text": "custom tool said: Gmail queue checked safely. No posts were published.",
+          "turnId": "db6b58cd-7d3a-4fe0-9ecc-1e76628ae925",
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "provenance": "provider",
+          "speechGenerationId": "ccf404db-32dd-4b84-bef1-c34c3e300bec",
+          "turnTerminal": true,
+          "actionCheck": {
+            "state": "unchecked",
+            "claims": []
+          },
+          "seq": 10
+        },
+        {
+          "id": "6bdeb0b7-0505-4889-96c4-3bc8ab2fc180",
+          "at": 1794370826769,
+          "parentId": "ev-eb64971de8fc8642b1c8ca98b06919e3",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Recovered: Check Gmail queue finished OK.",
+            "ok": true
+          },
+          "murageLine": true,
+          "seq": 11
+        }
+      ],
+      "hasMore": false,
+      "newestSeq": 11
+    },
+    "failedCalls": 0,
+    "completedCalls": 1,
+    "wait": {
+      "status": "settled",
+      "targetType": "bot",
+      "targetId": "eaa5c663-43a0-44ac-b4e0-d9851444e7f8",
+      "taskId": "a603809a-7e42-4287-b2f3-23a1dd1e8bcd",
+      "target": {
+        "id": "eaa5c663-43a0-44ac-b4e0-d9851444e7f8",
+        "name": "Gmail schedule fixture",
+        "title": "",
+        "description": "",
+        "section": null,
+        "chiefOfStaff": false,
+        "modelSelection": {
+          "instanceId": "verification",
+          "model": "claude-sonnet-5-5"
+        },
+        "busy": false,
+        "activity": "idle",
+        "unread": true,
+        "activeTaskId": "a603809a-7e42-4287-b2f3-23a1dd1e8bcd",
+        "task": {
+          "taskId": "a603809a-7e42-4287-b2f3-23a1dd1e8bcd",
+          "title": "New task",
+          "createdAt": 1794370786110,
+          "active": true
+        }
+      },
+      "messages": [
+        {
+          "id": "1bb85cfe-7afb-4949-830e-1a5b403c0b8b",
+          "at": 1794370786118,
+          "role": "bot",
+          "kind": "text",
+          "text": "Gmail schedule fixture. I'm new, so you'll have to fill in a few blanks."
+        },
+        {
+          "id": "bdb8922f-9720-4d0f-83c0-723f0e53e70c",
+          "at": 1794370786130,
+          "role": "bot",
+          "kind": "options",
+          "card": {
+            "title": "What do you actually want me for?",
+            "subtitle": "Plain words are fine. One line will do.",
+            "options": []
+          }
+        },
+        {
+          "id": "rrun-c8f22347-23c0-4253-a136-0b9d6629a107",
+          "at": 1794370797176,
+          "role": "bot",
+          "kind": "routine.run",
+          "text": "Routine “Check Gmail queue” failed"
+        },
+        {
+          "id": "rrun-7917d1f1-6138-41f5-9e9f-27993483da1f",
+          "at": 1794370826823,
+          "role": "bot",
+          "kind": "routine.run",
+          "text": "Routine “Check Gmail queue” completed"
+        }
+      ],
+      "hasMore": false
+    }
+  }
+]

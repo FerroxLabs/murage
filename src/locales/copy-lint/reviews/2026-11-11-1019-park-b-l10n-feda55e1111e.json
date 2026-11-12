@@ -1,0 +1,303 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "park-B-l10n builder (Claude Sonnet)",
+  "date": "2026-11-11",
+  "base": "5fe9c8905",
+  "scope": "emailPark.* restore park B strings",
+  "strings": {
+    "en:emailPark.title": {
+      "text": "Email addresses waiting for your choice",
+      "en": "Email addresses waiting for your choice",
+      "verdict": "pass",
+      "note": "English as signed off by MurageMain; unchanged from shared/email-copy.ts 5fe9c8905."
+    },
+    "en:emailPark.orphanLine": {
+      "text": "{address} came back with your restore, and its bot is gone. Keep it or remove it.",
+      "en": "{address} came back with your restore, and its bot is gone. Keep it or remove it.",
+      "verdict": "pass",
+      "note": "English as signed off by MurageMain; unchanged from shared/email-copy.ts 5fe9c8905."
+    },
+    "en:emailPark.keepingLine": {
+      "text": "Keeping {address}",
+      "en": "Keeping {address}",
+      "verdict": "pass",
+      "note": "English as signed off by MurageMain; unchanged from shared/email-copy.ts 5fe9c8905."
+    },
+    "en:emailPark.goneLine": {
+      "text": "{address} is already gone.",
+      "en": "{address} is already gone.",
+      "verdict": "pass",
+      "note": "English as signed off by MurageMain; unchanged from shared/email-copy.ts 5fe9c8905."
+    },
+    "en:emailPark.inboxGone": {
+      "text": "This address has already been removed.",
+      "en": "This address has already been removed.",
+      "verdict": "pass",
+      "note": "English as signed off by MurageMain; unchanged from shared/email-copy.ts 5fe9c8905."
+    },
+    "en:emailPark.keepPending": {
+      "text": "A Keep is still finishing. Try again in a moment.",
+      "en": "A Keep is still finishing. Try again in a moment.",
+      "verdict": "pass",
+      "note": "English as signed off by MurageMain; unchanged from shared/email-copy.ts 5fe9c8905."
+    },
+    "de:emailPark.title": {
+      "text": "E-Mail-Adressen, die auf deine Entscheidung warten",
+      "en": "Email addresses waiting for your choice",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "de:emailPark.orphanLine": {
+      "text": "{address} ist mit deiner Wiederherstellung zurückgekommen, und der zugehörige Bot ist nicht mehr da. Behalte die Adresse oder entferne sie.",
+      "en": "{address} came back with your restore, and its bot is gone. Keep it or remove it.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "de:emailPark.keepingLine": {
+      "text": "{address} wird behalten",
+      "en": "Keeping {address}",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "de:emailPark.goneLine": {
+      "text": "{address} ist bereits weg.",
+      "en": "{address} is already gone.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "de:emailPark.inboxGone": {
+      "text": "Diese Adresse wurde bereits entfernt.",
+      "en": "This address has already been removed.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "de:emailPark.keepPending": {
+      "text": "Ein Behalten wird noch abgeschlossen. Versuche es gleich noch einmal.",
+      "en": "A Keep is still finishing. Try again in a moment.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "es:emailPark.title": {
+      "text": "Direcciones de correo que esperan tu decisión",
+      "en": "Email addresses waiting for your choice",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "es:emailPark.orphanLine": {
+      "text": "{address} volvió con tu restauración y su bot ya no existe. Consérvala o elimínala.",
+      "en": "{address} came back with your restore, and its bot is gone. Keep it or remove it.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "es:emailPark.keepingLine": {
+      "text": "Conservando {address}",
+      "en": "Keeping {address}",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "es:emailPark.goneLine": {
+      "text": "{address} ya no existe.",
+      "en": "{address} is already gone.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "es:emailPark.inboxGone": {
+      "text": "Esta dirección ya se eliminó.",
+      "en": "This address has already been removed.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "es:emailPark.keepPending": {
+      "text": "Todavía se está completando una acción de Conservar. Inténtalo de nuevo en un momento.",
+      "en": "A Keep is still finishing. Try again in a moment.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "fr:emailPark.title": {
+      "text": "Adresses e-mail en attente de ton choix",
+      "en": "Email addresses waiting for your choice",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "fr:emailPark.orphanLine": {
+      "text": "{address} est revenue avec ta restauration, et son bot n'existe plus. Garde-la ou supprime-la.",
+      "en": "{address} came back with your restore, and its bot is gone. Keep it or remove it.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "fr:emailPark.keepingLine": {
+      "text": "{address} est en cours de conservation",
+      "en": "Keeping {address}",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "fr:emailPark.goneLine": {
+      "text": "{address} n'existe déjà plus.",
+      "en": "{address} is already gone.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "fr:emailPark.inboxGone": {
+      "text": "Cette adresse a déjà été supprimée.",
+      "en": "This address has already been removed.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "fr:emailPark.keepPending": {
+      "text": "Une action Garder est encore en cours. Réessaie dans un instant.",
+      "en": "A Keep is still finishing. Try again in a moment.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "hi:emailPark.title": {
+      "text": "ईमेल पते जो आपके चुनाव का इंतज़ार कर रहे हैं",
+      "en": "Email addresses waiting for your choice",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "hi:emailPark.orphanLine": {
+      "text": "{address} आपकी रिस्टोर के साथ वापस आ गया है, और उसका बॉट अब नहीं है। इसे रखें या हटा दें।",
+      "en": "{address} came back with your restore, and its bot is gone. Keep it or remove it.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "hi:emailPark.keepingLine": {
+      "text": "{address} को रखा जा रहा है",
+      "en": "Keeping {address}",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "hi:emailPark.goneLine": {
+      "text": "{address} पहले ही हट चुका है।",
+      "en": "{address} is already gone.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "hi:emailPark.inboxGone": {
+      "text": "यह पता पहले ही हटाया जा चुका है।",
+      "en": "This address has already been removed.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "hi:emailPark.keepPending": {
+      "text": "रखें की प्रक्रिया अभी पूरी हो रही है। थोड़ी देर बाद फिर कोशिश करें।",
+      "en": "A Keep is still finishing. Try again in a moment.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "ja:emailPark.title": {
+      "text": "選択を待っているメールアドレス",
+      "en": "Email addresses waiting for your choice",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "ja:emailPark.orphanLine": {
+      "text": "{address} は復元とともに戻ってきましたが、対応するボットはもうありません。残すか、削除してください。",
+      "en": "{address} came back with your restore, and its bot is gone. Keep it or remove it.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "ja:emailPark.keepingLine": {
+      "text": "{address} を残しています",
+      "en": "Keeping {address}",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "ja:emailPark.goneLine": {
+      "text": "{address} はすでに削除されています。",
+      "en": "{address} is already gone.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "ja:emailPark.inboxGone": {
+      "text": "このアドレスはすでに削除されています。",
+      "en": "This address has already been removed.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "ja:emailPark.keepPending": {
+      "text": "「残す」の処理がまだ完了していません。少し待ってからもう一度お試しください。",
+      "en": "A Keep is still finishing. Try again in a moment.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "pt-br:emailPark.title": {
+      "text": "Endereços de e-mail aguardando sua escolha",
+      "en": "Email addresses waiting for your choice",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "pt-br:emailPark.orphanLine": {
+      "text": "{address} voltou com a sua restauração e o bot dele não existe mais. Mantenha ou remova.",
+      "en": "{address} came back with your restore, and its bot is gone. Keep it or remove it.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "pt-br:emailPark.keepingLine": {
+      "text": "Mantendo {address}",
+      "en": "Keeping {address}",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "pt-br:emailPark.goneLine": {
+      "text": "{address} já não existe mais.",
+      "en": "{address} is already gone.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "pt-br:emailPark.inboxGone": {
+      "text": "Este endereço já foi removido.",
+      "en": "This address has already been removed.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "pt-br:emailPark.keepPending": {
+      "text": "Uma ação Manter ainda está sendo concluída. Tente novamente em instantes.",
+      "en": "A Keep is still finishing. Try again in a moment.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "zh:emailPark.title": {
+      "text": "等待你选择的邮箱地址",
+      "en": "Email addresses waiting for your choice",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "zh:emailPark.orphanLine": {
+      "text": "{address} 随你的恢复回来了，但它的机器人已不存在。请保留或移除它。",
+      "en": "{address} came back with your restore, and its bot is gone. Keep it or remove it.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "zh:emailPark.keepingLine": {
+      "text": "正在保留 {address}",
+      "en": "Keeping {address}",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "zh:emailPark.goneLine": {
+      "text": "{address} 已经不存在了。",
+      "en": "{address} is already gone.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "zh:emailPark.inboxGone": {
+      "text": "此地址已被移除。",
+      "en": "This address has already been removed.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    },
+    "zh:emailPark.keepPending": {
+      "text": "“保留”仍在完成中。请稍后再试。",
+      "en": "A Keep is still finishing. Try again in a moment.",
+      "verdict": "pass",
+      "note": "Plain, faithful, keeps {address}; Keep uses the product word for the Keep button; no dash or banned word."
+    }
+  },
+  "files": {}
+}

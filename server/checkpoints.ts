@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Per-turn workspace checkpoints: a shadow git repository per bot+folder.
 //
 // Before a turn's engine can touch files, the working folder is snapshotted
@@ -233,8 +234,8 @@ function runGit(args: string[], cwd: string, env: NodeJS.ProcessEnv): Promise<st
   return new Promise((resolvePromise, rejectPromise) => {
     execFile(
       "git",
-      args,
-      { cwd, env, windowsHide: true, encoding: "utf8", timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
+      [...args],
+      withHideInherit({ cwd, env, windowsHide: true, encoding: "utf8", timeout: 120_000, maxBuffer: 16 * 1024 * 1024 }),
       (err, stdout, stderr) => {
         if (err) rejectPromise(new Error(`git ${args[0]}: ${engineStderrRedacted(stderr || err.message, false).trim().slice(0, 400)}`));
         else resolvePromise(stdout);
@@ -252,7 +253,7 @@ function hasStagedChanges(cwd: string, env: NodeJS.ProcessEnv): Promise<boolean>
     execFile(
       "git",
       ["diff", "--cached", "--quiet", "--ignore-submodules=dirty"],
-      { cwd, env, windowsHide: true, encoding: "utf8", timeout: 120_000, maxBuffer: 16 * 1024 * 1024 },
+      withHideInherit({ cwd, env, windowsHide: true, encoding: "utf8", timeout: 120_000, maxBuffer: 16 * 1024 * 1024 }),
       (err, _stdout, stderr) => {
         if (err === null) resolvePromise(false);
         else if (err.code === 1) resolvePromise(true);

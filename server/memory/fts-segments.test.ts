@@ -59,9 +59,9 @@ describe("FTS segment growth", () => {
         if (r.done) break;
       }
     }
-    // Only the step that starts a merge is negative; negative steps repeated one after another each open a new segment.
-    expect(merges.length).toBeGreaterThan(0);
-    expect(merges.filter((n, at) => n < 0 && merges[at - 1] < 0)).toEqual([]);
+    // Secure-delete removes these rollovers in place. Segment counts stay bounded
+    // by normal FTS auto-merging, with no forced historical merge per cycle.
+    expect(merges).toEqual([]);
     expect(worst).toBeLessThan(64);
     expect(index.segmentCount()).toBeLessThan(64);
     index.close();

@@ -140,7 +140,10 @@ describe("what analytics can never send", () => {
   });
 
   it("is described in Settings as never carrying a name or email", () => {
-    const settings = readFileSync(fileURLToPath(new URL("../components/SettingsModal.tsx", import.meta.url)), "utf8");
+    const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.meta.url)), "utf8");
+    expect(read("../components/settings/page-registry.tsx")).toContain('general: () => import("./pages/GeneralPage")');
+    expect(read("../components/settings/pages/GeneralPage.tsx")).toContain('<AnalyticsRow />');
+    const settings = read("../components/settings/rows/GeneralRows.tsx");
     expect(settings).not.toContain("Your email is only attached");
     expect(settings).toContain("never your name or email");
   });

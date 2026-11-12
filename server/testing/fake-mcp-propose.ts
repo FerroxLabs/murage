@@ -19,7 +19,7 @@ export interface McpServerEntry { command: string; args?: string[]; env?: Record
 type Reply = { result?: { tools?: Array<{ name: string }>; content?: Array<{ text?: string }>; isError?: boolean }; error?: { message?: string } };
 
 function session(server: McpServerEntry) {
-  const child = spawn(server.command, server.args ?? [], { env: { ...process.env, ...server.env }, stdio: ["pipe", "pipe", "ignore"] });
+  const child = spawn(server.command, server.args ?? [], { windowsHide: true, env: { ...process.env, ...server.env }, stdio: ["pipe", "pipe", "ignore"] });
   const waiting = new Map<number, (reply: Reply) => void>();
   let buffered = "", next = 1;
   child.stdout.setEncoding("utf8");

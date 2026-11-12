@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 //
@@ -83,7 +84,7 @@ export class SseFrameReader {
     this.data = [];
     if (!joined || joined === "[DONE]") return;
     try {
-      const value: unknown = JSON.parse(joined);
+      const value: unknown = registerBusyloopPayloadSite("read", JSON.parse(joined));
       if (isRecord(value)) frames.push(value);
     } catch {
       // not JSON: skip it
@@ -97,7 +98,7 @@ export function splitUpstreamFrames(text: string, contentType: string): JsonRpcM
   if (!trimmed) return [];
   if (!/^text\/event-stream/i.test(contentType) && trimmed.startsWith("{")) {
     try {
-      const value: unknown = JSON.parse(trimmed);
+      const value: unknown = registerBusyloopPayloadSite("read", JSON.parse(trimmed));
       return isRecord(value) ? [value] : [];
     } catch {
       return [];
@@ -111,7 +112,7 @@ export function splitUpstreamFrames(text: string, contentType: string): JsonRpcM
     data = [];
     if (!joined || joined === "[DONE]") return;
     try {
-      const value: unknown = JSON.parse(joined);
+      const value: unknown = registerBusyloopPayloadSite("read", JSON.parse(joined));
       if (isRecord(value)) frames.push(value);
     } catch {
       // not JSON: skip it

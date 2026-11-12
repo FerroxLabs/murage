@@ -1,0 +1,10 @@
+{
+  "server/no-limits-r13.test.ts": {
+    "budgetMs": 3900000,
+    "reason": "The dynamic 34-row hostile-input matrix produced no JSON after a 600-second retry on the unchanged RC. Run it alone with progress IDs; a remaining timeout is a release finding owned by the No limits lane."
+  },
+  "server/phone-thread-mark-api.test.ts": {
+    "budgetMs": 3900000,
+    "reason": "The unchanged RC produced no JSON after a 600-second retry. Run this API file alone with progress IDs to distinguish a test failure from fixture cleanup or a process hang."
+  }
+}

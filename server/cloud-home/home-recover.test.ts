@@ -63,7 +63,7 @@ ${setup}
 m["cleanup_engine_signins"]({"mode": "engine-signin-cleanup"}, root, owners, os.getuid())
 assert not os.path.lexists(root + "/kimiAgent/.kimi-code/credentials")
 print("ok")
-`, launcher, root], { encoding: "utf8", timeout: 60_000 }).trim();
+`, launcher, root], { windowsHide: true, encoding: "utf8", timeout: 60_000 }).trim();
   } finally { removeTempDirSync(root); }
 }
 

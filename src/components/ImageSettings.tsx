@@ -185,6 +185,9 @@ export interface ImageSettingsViewProps {
 export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onRefresh, probing = false, onProbe, showLibrary = true }: ImageSettingsViewProps) {
   const [confirming, setConfirming] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const libraryOpener = useRef<HTMLButtonElement>(null), focusOpener = useRef(false);
+  // Close on a failed library load remounts the opener; focus goes back to it so a keyboard user is not left on nothing.
+  useEffect(() => { if (!libraryOpen && focusOpener.current) { focusOpener.current = false; libraryOpener.current?.focus(); } }, [libraryOpen]);
   const connectionId = snapshot?.selected?.connectionId ?? snapshot?.catalog?.connectionId ?? "";
   const connection = snapshot?.connections.find(item => item.id === connectionId);
   const catalog = snapshot?.catalog?.connectionId === connectionId ? snapshot.catalog : null;
@@ -193,8 +196,8 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
   const capability = model ? imageModelCapability(model) : null;
   const usable = Boolean(model?.generate && !model.disabledReason);
 
-  return <section aria-labelledby="image-settings-heading" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
-    <h3 id="image-settings-heading" className="text-[14px] font-medium text-ink">{t("imageSettings.heading")}</h3>
+  return <section aria-labelledby="image-settings-title" className="min-w-0 rounded-xl border border-hairline/40 bg-card p-4">
+    <h3 id="image-settings-title" className="text-[14px] font-medium text-ink">{t("imageSettings.heading")}</h3>
     <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.intro")}</p>
     <div className="mt-3 flex min-h-11 items-center justify-between gap-3 text-[13px] text-ink">
       <span id="image-settings-allow">{t("imageSettings.allow")}</span>
@@ -227,7 +230,7 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
           <button type="button" onClick={() => setConfirming(false)} className={`min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink ${focus}`}>{t("imageSettings.check.cancel")}</button>
         </div>
       </div> : <button type="button" disabled={probing || Boolean(busy)} onClick={() => setConfirming(true)} className={`mt-2 min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink disabled:opacity-50 ${focus}`}>{probing ? t("imageSettings.check.running") : t("imageSettings.check.now")}</button>)}
-      {snapshot && onProbe && <InAdvanced><div id="image-daily-check-heading" tabIndex={-1} className="rounded-xl bg-card p-4 outline-none"><div className="flex min-h-11 items-center justify-between gap-3 text-[13px] text-ink">
+      {snapshot && onProbe && <InAdvanced part="webSearch.daily-check"><div tabIndex={-1} className="rounded-xl bg-card p-4 outline-none"><div className="flex min-h-11 items-center justify-between gap-3 text-[13px] text-ink">
         <span id="image-settings-daily">{t("imageSettings.check.daily")}<span className="block text-[12px] text-ink-secondary">{t("imageSettings.check.dailyNote")}</span></span>
         <Switch data-setting-control="image-daily-check-heading" aria-labelledby="image-settings-daily" checked={snapshot.dailyProbe === true} disabled={Boolean(busy)} onClick={() => onChange({ dailyProbe: snapshot.dailyProbe !== true })} className={focus} />
       </div></div></InAdvanced>}
@@ -235,9 +238,9 @@ export function ImageSettingsView({ snapshot, busy, error, notice, onChange, onR
       {connection && <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.usesConnection", { label: connection.label })}</p>}
     </>}
     <p className="mt-3 text-[12px] leading-relaxed text-ink-secondary">{t("imageSettings.oneRequest")}</p>
-    {onProbe && showLibrary && (libraryOpen ? <LazyBoundary inline onRetry={Library.retry} onDismiss={() => setLibraryOpen(false)}>
+    {onProbe && showLibrary && (libraryOpen ? <LazyBoundary inline onRetry={Library.retry} onDismiss={() => { focusOpener.current = true; setLibraryOpen(false); }}>
       <Suspense fallback={<p role="status" className="mt-3 text-[12px] text-ink-secondary">{t("imageLibrary.busy")}</p>}><Library.Component /></Suspense>
-    </LazyBoundary> : <button type="button" onClick={() => setLibraryOpen(true)} className={`mt-3 block min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink ${focus}`}>{t("imageSettings.library.open")}</button>)}
+    </LazyBoundary> : <button ref={libraryOpener} type="button" onClick={() => setLibraryOpen(true)} className={`mt-3 block min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink ${focus}`}>{t("imageSettings.library.open")}</button>)}
     <button type="button" onClick={onRefresh} disabled={Boolean(busy)} className={`mt-3 min-h-11 rounded-lg bg-control px-3 text-[12px] text-ink disabled:opacity-50 ${focus}`}>{busy === "load" ? t("imageSettings.loading") : t("imageSettings.refresh")}</button>
     {busy === "save" && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{t("imageSettings.saving")}</p>}
     {notice && <p role="status" className="mt-2 text-[12px] text-success">{notice}</p>}

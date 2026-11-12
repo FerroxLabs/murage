@@ -59,7 +59,7 @@ function expectAuthorityLocked(path: string) {
     try { db.exec('BEGIN EXCLUSIVE; UPDATE memory_meta SET data_revision=data_revision+1; ROLLBACK'); process.stdout.write('acquired'); }
     catch (error) { if (!/busy|locked/i.test(error.message)) throw error; process.stdout.write('excluded'); }
     finally { db.close(); }
-  `, path], { encoding: "utf8", timeout: 5000 });
+  `, path], { windowsHide: true, encoding: "utf8", timeout: 5000 });
   expect(probe.error).toBeUndefined();
   expect(probe.status, probe.stderr).toBe(0);
   expect(probe.stdout).toBe("excluded");

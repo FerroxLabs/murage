@@ -25,7 +25,9 @@ describe("the two places a phone allows a card use it", () => {
     // and in the phone's Details sheet; every place Run goes sits behind the guard.
     expect(source).toContain('onClick={() => { decide("deny", "deny"); after?.(); }}');
     expect(source).toContain('onClick={() => { decide("allow", "allow"); after?.(); }}');
-    const guard = source.indexOf("{!computerOnly && (");
+    // de0e1d65ee adds the refused HighLevel review to the same deny-only guard.
+    expect(source).toContain('const allowHidden = computerOnly || highlevelReview?.phase === "refused";');
+    const guard = source.indexOf("{!allowHidden && (");
     expect(guard).toBeGreaterThan(-1);
     const deny = source.indexOf("{denyButton()}");
     expect(deny).toBeGreaterThan(-1);
@@ -34,8 +36,8 @@ describe("the two places a phone allows a card use it", () => {
     const used = [...source.matchAll(/runButton\(/g)].map((match) => match.index!);
     expect(used).toHaveLength(2);
     expect(source.slice(guard, used[0])).not.toContain("</span>");
-    expect(source).toContain("{!computerOnly && runButton(closeSheet)}");
-    expect(source.indexOf("{!computerOnly && runButton(closeSheet)}") + "{!computerOnly && ".length).toBe(used[1]);
+    expect(source).toContain("{!allowHidden && runButton(closeSheet)}");
+    expect(source.indexOf("{!allowHidden && runButton(closeSheet)}") + "{!allowHidden && ".length).toBe(used[1]);
   });
   it("InboxRequestAnswer does the same for an approval and still allows a question to be answered", () => {
     const source = read("./InboxRequest.tsx");

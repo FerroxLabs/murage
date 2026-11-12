@@ -86,7 +86,10 @@ describe("ISSUE-PERMS-1010 B: codex/apply_patch is read as an edit of its destin
       expect(resolveCall(call), label).toEqual({ kind: "unproven", why: STAMP_SPELLING_WHY });
       expect(classifyAsk({ ...call, tool: "Apply patch", summary: "Apply patch" }, PLACE), label).toMatchObject({ kind: "delete", what: "Murage could not tell which tool this runs, so it is waiting for you." });
       for (const [bot, context] of [[AUTO, {}], [FULL, ROUTINE], [FULL, { fullAccessOrigin: "owner" }], [NO_LIMITS, ROUTINE], [NO_LIMITS, { fullAccessOrigin: "owner" }]] as const) {
-        expect(autoVerdict(bot, "edit", "Apply patch", { call, ...context }), label).toMatchObject({ approve: null, source: "unread-call" });
+        // NOLIM 1.0.19 (N1): every level below No limits holds a tool Murage could not prove; the owner's No limits turn runs it
+        // (an unproven tool is an unread call, not a wipe)
+        if (bot === NO_LIMITS) expect(autoVerdict(bot, "edit", "Apply patch", { call, ...context }).approve, label).toBeTruthy();
+        else expect(autoVerdict(bot, "edit", "Apply patch", { call, ...context }), label).toMatchObject({ approve: null, source: "unread-call" });
       }
     }
     for (const name of ["apply_patch ", " apply_patch", "apply_patch\t", "apply\u200D_patch"]) {
@@ -112,7 +115,8 @@ describe("ISSUE-PERMS-1010 B: codex/apply_patch is read as an edit of its destin
     }
     // a hidden character in the same name holds
     const held: GrantCall = { engine: "acp", toolKind: "other", toolIdentity: { namespace: "mcp", name: "files__read\u200B" }, mcpMounts, toolCall: { name: "other", input: {} } };
-    expect(autoVerdict(NO_LIMITS, "files__read", "files__read", { call: held, ...ROUTINE })).toMatchObject({ approve: null, source: "unread-call" });
+    expect(autoVerdict(FULL, "files__read", "files__read", { call: held, ...ROUTINE })).toMatchObject({ approve: null, source: "unread-call" });
+    expect(autoVerdict(NO_LIMITS, "files__read", "files__read", { call: held, ...ROUTINE }).approve).toBeTruthy(); // NOLIM 1.0.19 (N1)
   });
 
   it("rev 4 (GrokBuild subset r2): a padded mcp stamp stays a computer action and an unscoped Always-allow does not run it at Ask", () => {
@@ -191,11 +195,12 @@ describe("ISSUE-PERMS-1010 on a fake ACP engine", () => {
     expect(verdict(AUTO, {}).source).not.toBe("unread-call");
   });
 
-  it("a patch that writes a key file still waits, at No limits too", async () => {
+  it("a patch that writes a key file still waits at Full access; the owner's No limits turn runs it", async () => {
     const opened = await asked("t-key", fuigoPatch(addFile(join(scratch, "home", ".ssh", "id_rsa"), "-----BEGIN OPENSSH PRIVATE KEY-----")));
     const verdict = judged(opened);
     expect(verdict(FULL).approve).toBeNull();
-    expect(verdict(NO_LIMITS).approve).toBeNull();
+    // S1-B3 RULING (MAIN 2026-11-11 09:30Z): the native patch writes a protected private-key path.
+    expect(verdict(NO_LIMITS)).toMatchObject({ approve: null, source: "sensitive-guard" });
   });
 
   it("a patch that deletes outside the project meets the stop line on a routine at Full access", async () => {
@@ -217,7 +222,8 @@ describe("ISSUE-PERMS-1010 on a fake ACP engine", () => {
     const opened = await asked("t-bad", fuigoPatch("rewrite everything"));
     expect(opened.toolInputMissing).toBe("patch");
     const verdict = judged(opened);
-    expect(verdict(NO_LIMITS)).toMatchObject({ approve: null, source: "unread-call" });
+    expect(verdict(FULL)).toMatchObject({ approve: null, source: "unread-call" });
+    expect(verdict(NO_LIMITS).approve).toBeTruthy(); // NOLIM 1.0.19 (N1): an unread call runs at the owner's No limits turn
   });
 
   // Rev 3 (#7(b)): one strict reader. Each patch runs on the Fuigo ACP path (the fake engine) and on the Codex hook path
@@ -253,10 +259,13 @@ describe("ISSUE-PERMS-1010 on a fake ACP engine", () => {
       expect(parseApplyPatch(patch)).toBeNull();
       const f = await fuigoRun(patch);
       expect(f.opened.toolInputMissing).toBe("patch");
-      expect(f.verdict(NO_LIMITS).approve).toBeNull();
+      // NOLIM 1.0.19 (N1): an unread patch holds at Full access and runs at the owner's No limits turn
+      expect(f.verdict(FULL).approve).toBeNull();
+      expect(f.verdict(NO_LIMITS).approve).toBeTruthy();
       const c = codexPatch(patch);
       expect(c.route).toMatchObject({ route: "ask", tool: "edit", toolInputMissing: "patch" });
-      expect(c.verdict(NO_LIMITS)?.approve).toBeNull();
+      expect(c.verdict(FULL)?.approve).toBeNull();
+      expect(c.verdict(NO_LIMITS)?.approve).toBeTruthy();
     };
     const hunks = (): Record<string, string[]> => ({
       delete: [`*** Delete File: ${outside()}`],
@@ -365,8 +374,10 @@ describe("ISSUE-PERMS-1010 on a fake ACP engine", () => {
       for (const input of [{ input: "" }, { input: "   \n" }, { input: "*** Begin Patch\n*** End Patch" }, {}, { input: 42 }]) {
         const c = codex("apply_patch", input);
         expect(c.route, JSON.stringify(input)).toMatchObject({ route: "ask", tool: "edit", toolInputMissing: "patch" });
-        expect(c.verdict(NO_LIMITS, { fullAccessOrigin: "owner" }), JSON.stringify(input)).toMatchObject({ approve: null, source: "unread-call" });
-        expect(c.verdict(NO_LIMITS), JSON.stringify(input)).toMatchObject({ approve: null, source: "unread-call" });
+        expect(c.verdict(FULL, { fullAccessOrigin: "owner" }), JSON.stringify(input)).toMatchObject({ approve: null, source: "unread-call" });
+        // NOLIM 1.0.19 (N1): the unread call is run at the owner's No limits turn, with or without the owner's own origin
+        expect(c.verdict(NO_LIMITS, { fullAccessOrigin: "owner" })?.approve, JSON.stringify(input)).toBeTruthy();
+        expect(c.verdict(NO_LIMITS)?.approve, JSON.stringify(input)).toBeTruthy();
       }
       expect(codex("apply_patch", null).route).toMatchObject({ route: "ask", toolInputMissing: "patch" });
       expect(codex("apply_patch", "").route).toMatchObject({ route: "ask", toolInputMissing: "patch" });
@@ -389,13 +400,13 @@ describe("ISSUE-PERMS-1010 on a fake ACP engine", () => {
         const f = await fuigo(astra(namespace, key));
         const label = JSON.stringify([namespace, key]);
         expect(f.verdict(FULL).approve, label).toBeNull();
-        expect(f.verdict(NO_LIMITS).approve, label).toBeNull();
+        expect(f.verdict(NO_LIMITS).approve, label).toBeTruthy(); // NOLIM 1.0.19 (N1): the unproven spelling is an unread call, run at No limits
         expect(f.verdict(FULL, { fullAccessOrigin: "owner" }).approve, label).toBeNull();
       }
       const padded = await fuigo(astra("codex "));
       expect(padded.opened.toolIdentity).toMatchObject({ namespace: "codex ", name: "apply_patch" });
       expect(padded.verdict(FULL)).toMatchObject({ approve: null, source: "unread-call", rule: `the tool this runs cannot be proven: ${STAMP_SPELLING_WHY}` });
-      expect(padded.verdict(NO_LIMITS)).toMatchObject({ approve: null, source: "unread-call" });
+      expect(padded.verdict(NO_LIMITS).approve).toBeTruthy();
       expect(padded.verdict(FULL, { fullAccessOrigin: "owner" })).toMatchObject({ approve: null, source: "unread-call" });
     }, 90_000);
 

@@ -14,7 +14,7 @@ const cleanup: string[] = [];
 const services: Awaited<ReturnType<typeof createBrowserExtensionService>>[] = [];
 afterEach(async () => { vi.restoreAllMocks(); for (const service of services.splice(0)) await service.close(); for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
 
-type RuntimeBinding = { generation: number; state: string; tabs: object[]; pausedReason?: string };
+type RuntimeBinding = { generation: number; state: string; tabs: { tabId: number; navigationEpoch: number; origin: string; url: string }[]; pausedReason?: string };
 async function world() {
   const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve(".c2-")); cleanup.push(directoryRoot);
   const bindings = new Map<string, RuntimeBinding>();
@@ -31,14 +31,16 @@ async function world() {
       let result: any = b;
       if (command.operation === "cdp") {
         const { method, params } = command.params as any; let value: any = {};
+        if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1, url: b.tabs[0].url }] };
         if (method === "Page.getFrameTree") value = { frameTree: { frame: { id: "frame", loaderId: "L" } } };
+        if (method === "Murage.getAllFrames") value = { frames: [{ frameId: 0, parentFrameId: -1 }] };
         if (method === "Page.createIsolatedWorld") value = { executionContextId: 7 };
         if (method === "DOM.getDocument") value = { root: { nodeType: 9, children: [] } };
         if (method === "DOM.describeNode") value = { node: { backendNodeId: 12 } };
         if (method === "DOM.resolveNode") value = { object: { objectId: "target" } };
         if (method === "Runtime.evaluate") value = { result: { value: String(params.expression).includes("__murageGuard()") ? guard : "page", objectId: "target" } };
         if (method === "Runtime.callFunctionOn") value = { result: { value: String(params.functionDeclaration).includes("elementFromPoint") ? true : JSON.stringify({ display: { tag: "BUTTON", text: "x", label: "x" }, bound: null }) } };
-        result = { result: value, ...(b.tabs[0] as object) };
+        result = { result: value, ...b.tabs[0] };
       }
       void uncertainBind;
       return { version: 1, type: "response", id: command.id, bindingId: command.bindingId, generation: command.generation, result: structuredClone(result) } as never;

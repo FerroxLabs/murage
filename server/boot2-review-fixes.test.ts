@@ -1,3 +1,5 @@
+import { DatabaseSync } from "node:sqlite";
+import { join } from "node:path";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // rc13-boot2, Astra's review (astra-boot2/REPORT.md): each test reproduces a High finding on d6cee1176.
 //  2a  the open-card walk after listen: a held lock in the middle of it leaves the walk's mark where it stood; the retry settles the card
@@ -12,7 +14,7 @@ import * as delegations from "./delegations.ts";
 import { _resetPending, findDelegationReceipt, onDelegationReceipt, queueDelegation, recordDelegationReceipt, reconcileStartedDelegations } from "./delegations.ts";
 import { dispatchHandoff } from "./handoff-dispatch.ts";
 import { staleHostConsentCardKind } from "./host-computer-consent.ts";
-import { insertMessage, messagesHighWater, readMessage, updateMessage } from "./message-db.ts";
+import { messagesHighWater, readMessage, updateMessage } from "./message-db.ts";
 import { settleStaleCardsFromMark, stalePeerCardKind, type ApprovalBus, type StaleCardMark } from "./peer-approval.ts";
 import { _resetOwnerMigration } from "./pending-delegations-schema.ts";
 import { completeRequest, roomRequest } from "./room-requests.ts";
@@ -33,7 +35,12 @@ afterEach(() => { onDelegationReceipt(undefined); _resetOwnerMigration(); _reset
 
 describe("2a. the open-card walk after listen", () => {
   it("a held lock while a page settles leaves the mark where the walk stood: the retry dismisses the dead card, and only then is the walk done", async () => {
-    insertMessage("owned", { id: "dead", at: 1, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "c", options: [], requestId: "gone", tool: "ask_bot" } } as never);
+    // A prior binary wrote this legacy card, without the 1.0.19 connection marker.
+    database();
+    const legacy = new DatabaseSync(join(DATA_DIR, "messages.db"));
+    const message = { id: "dead", at: 1, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "c", options: [], requestId: "gone", tool: "ask_bot" } };
+    try { legacy.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run("owned", message.id, 1, "bot", "options", "ask", JSON.stringify(message)); }
+    finally { legacy.close(); }
     const db = database();
     db.exec("DELETE FROM open_card; DELETE FROM transcript_index_state WHERE name='open_card'");
     ensureOpenCardIndex(db);

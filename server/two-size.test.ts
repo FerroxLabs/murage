@@ -23,7 +23,7 @@ import { branchActionEvidence, delegatedRows, ownerLine } from "./reply-action-e
 import { checkReplyActionsWith } from "./reply-action-guard.ts";
 import { GROUP_CONTEXT_MESSAGES } from "./room-context.ts";
 import { readRoomTurnRows } from "./room-turn-rows.ts";
-import { Store } from "./store.ts";
+import { ApprovalFixtureStore as Store } from "./testing/approval-card-fixture.ts";
 import { expectSameReads, measureReads } from "./testing/bounded-reads.ts";
 import * as messages from "./message-db.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -70,7 +70,7 @@ function build(threadId: string, count: number) {
   // rows through the writers: the option cards, filed in open_card and keyed_card as they are written
   store = new Store(selection); // the bot was created before the rows above were stored: a fresh cache reads the thread's own head
   const card = (extra: Record<string, unknown>, text = "card") => note(threadId, store.appendMessage(threadId, { role: "bot", kind: "options", text, card: { title: "Card", options: ["Yes"], ...extra } } as never).id);
-  card({ requestId: "req-open" }); card({ setup: { key: "step-1" } }); card({ intake: true }); card({ browserSetup: {} }); card({ skillRequest: { stagedId: "staged-1", gist: "g", warnings: [] } });
+  card({ requestId: "req-open" }); card({ setup: { key: "step-1" } }); card({ intake: true }); card({ browserSetup: {} }); card({ skillRequest: { stagedId: "staged-1", gist: "g", source: "fixture", preview: "", sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", warnings: [] } });
   card({ publish: { action: "connect", connect: { state: "needed" } } }); card({}, "suggestion");
   note(threadId, store.appendMessage(threadId, { role: "bot", kind: "text", text: "setup said this", setupEcho: "echo-1" } as never).id);
   const head = side.prepare("SELECT active_leaf_id AS id FROM thread_state WHERE thread_id=?").get(threadId) as { id: string };

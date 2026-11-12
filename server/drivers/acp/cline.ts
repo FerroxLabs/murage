@@ -1,3 +1,5 @@
+import { NotModelRequest } from "../../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -93,7 +95,7 @@ function selectedBlock(env: Record<string, string | undefined>, config: AcpConfi
     const path = clineSettingsPath(env, config);
     const stat = statSync(path);
     if (!stat.isFile() || stat.size > CLINE_MAX_SETTINGS_BYTES) return null;
-    const stored: unknown = JSON.parse(readFileSync(path, "utf8"));
+    const stored: unknown = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(path, "utf8")));
     if (!isRecord(stored) || stored.version !== 1 || !isRecord(stored.providers)) return null;
     const provider = env.CLINE_PROVIDER || stored.lastUsedProvider;
     if (typeof provider !== "string" || !PROVIDER_NAME.test(provider) || !Object.hasOwn(stored.providers, provider)) return null;
@@ -200,7 +202,7 @@ export const clineSupport: AcpSupport = {
     // pin the saved id after session/new, before the first prompt.
     const model = turn.model?.trim();
     if (model && model !== CLINE_DEFAULT_MODEL && model !== currentModelId) {
-      await request("session/set_model", { sessionId, modelId: model });
+      await NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", request("session/set_model", { sessionId, modelId: model }));
     }
   },
 };

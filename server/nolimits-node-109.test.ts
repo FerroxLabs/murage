@@ -74,6 +74,15 @@ const verdict = (level: Level, cmd: string, at: At = {}, proof: object = OWNER_T
   });
 };
 const read = (cmd: string, at: At = {}) => alwaysAskCommand(cmd, at.cwd ?? CWD, "command", undefined, undefined, at.home === null ? undefined : at.home ?? HOME, options(at));
+const { expectNoLimitsOwnerOutcome } = await import("./testing/no-limits-1019.ts");
+/** NOLIM 1.0.19 (Sean 2026-11-10): the owner's No limits turn (OWNER_TURN) runs what the reader names unless it is a wipe row (or the wipe
+ * proxy reads a delete word in the text); this cell asserts on the reader's own rule through the shared helper. Ask, Auto and Full
+ * access keep the card. */
+const heldAt = (level: Level, cmd: string, at: At, label: string) => {
+  const v = verdict(level, cmd, at);
+  if (level === "No limits") expectNoLimitsOwnerOutcome(v, cmd, read(cmd, at)?.rule, label); else expect(v.approve, label).toBeNull();
+};
+const noLimitsCell = (cmd: string, at: At = {}) => expectNoLimitsOwnerOutcome(verdict("No limits", cmd, at), cmd, read(cmd, at)?.rule, `No limits: ${cmd}`);
 /** Runs at Full access and No limits, asks at Ask and Auto. */
 function runs(cmd: string, at: At = {}): void {
   expect(read(cmd, at), cmd).toMatchObject({ rule: "unreadable", unseenScript: true });
@@ -102,7 +111,10 @@ function asks(cmd: string, why: string | undefined, at: At = {}): void {
   } else {
     expect(hit?.unseenWhy, cmd).toBe(why);
   }
-  for (const level of ALL) expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
+  for (const level of ALL) {
+    if (level === "No limits") { noLimitsCell(cmd, at); continue; }
+    expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
+  }
 }
 // MARKS r9 R2: probe (fix4, known cwd) of each command below -> still a card at all four levels, but the new reader's own
 // rule/doubt answers before the named unseen reason, so the old why (dot-dot, cd-form, windows-path, device, windows-link,
@@ -245,7 +257,10 @@ describe("section 6: the allow table for Bruce's command family (shape stub)", (
     const hit = read(cmd, at);
     expect(hit, cmd).not.toBeNull();
     expect(hit?.unseenScript, cmd).toBeUndefined();
-    for (const level of ALL) expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
+    for (const level of ALL) {
+      if (level === "No limits") { noLimitsCell(cmd, at); continue; }
+      expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
+    }
   });
 
   it.each([
@@ -258,17 +273,17 @@ describe("section 6: the allow table for Bruce's command family (shape stub)", (
   ])("never-list: `%s` holds as %s at every level", (cmd, rule) => {
     expect(read(cmd, at)).toMatchObject({ rule });
     expect(read(cmd, at)?.unseenScript).toBeUndefined();
-    for (const level of ALL) expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
+    for (const level of ALL) heldAt(level, cmd, at, `${level}: ${cmd}`);
   });
 
   it("each named reason puts its fix on the card", () => {
     const hit = read("node ./runner | head", at)!;
     expect(alwaysAskNote(hit)).toContain("node ./tool.mjs");
-    expect(verdict("No limits", "node ./runner | head", at).note).toContain("extension included");
+    expect(verdict("Ask", "node ./runner | head", at).note).toContain("extension included"); // NOLIM 1.0.19: the owner's No limits turn runs it, with no card to carry a note
   });
 
   it("a command relayed to the owner's own computer asks (R7)", () => {
-    for (const level of ALL) expect(verdict(level, SEAN, { ...at, scope: "local-computer" }).approve, level).toBeNull();
+    for (const level of ALL) heldAt(level, SEAN, { ...at, scope: "local-computer" }, level);
   });
 });
 
@@ -363,7 +378,7 @@ describe("Git Bash on Windows: only spellings no layer rewrites or looks up (sec
     for (const cwd of ["C:\\work.", "C:\\work ", "/c/work"]) {
       const hit = read("node ./tvcall.mjs", { ...at, cwd });
       expect(hit?.unseenScript, cwd).toBeUndefined();
-      for (const level of ALL) expect(verdict(level, "node ./tvcall.mjs", { ...at, cwd }).approve, `${level}: ${cwd}`).toBeNull();
+      for (const level of ALL) heldAt(level, "node ./tvcall.mjs", { ...at, cwd }, `${level}: ${cwd}`);
     }
   });
 
@@ -379,7 +394,8 @@ describe("Git Bash on Windows: only spellings no layer rewrites or looks up (sec
   });
 });
 
-describe.skipIf(process.platform === "win32")("on disk (section 9): the exact file and folder as they are now", () => {
+describe("on disk (section 9): the exact file and folder as they are now", () => {
+  const windows = process.platform === "win32";
   const root = mkdtempSync(join(tmpdir(), "nln109-"));
   afterAll(() => removeTempDirSync(root));
   const home = join(root, "home te ster");
@@ -390,39 +406,46 @@ describe.skipIf(process.platform === "win32")("on disk (section 9): the exact fi
   const inert = "// inert fixture, never run\n";
   for (const file of ["tool.mjs", "build.sh", "env.sh", "runner.mjs", "runner.js", "fd/0", "a/b/tool.mjs"]) writeFileSync(join(work, file), inert);
   writeFileSync(join(home, "y.mjs"), inert);
-  // an absolute folder of the allowed spelling (no space)
+  // Quote the native absolute folder, including a Windows user/temp path with spaces.
   const plain = join(root, "plain");
+  const quote = (value: string): string => `'${value.replace(/'/g, `'\\''`)}'`;
+
   mkdirSync(plain);
   writeFileSync(join(plain, "tool.mjs"), inert);
   symlinkSync(join(work, "tool.mjs"), join(work, "alias.mjs"));
-  symlinkSync("/dev/stdin", join(work, "stdin.mjs"));
-  symlinkSync("/proc/self/fd/0", join(work, "proc.mjs"));
+  if (!windows) symlinkSync("/dev/stdin", join(work, "stdin.mjs"));
+  if (!windows) symlinkSync("/proc/self/fd/0", join(work, "proc.mjs"));
   symlinkSync(join(work, "gone.mjs"), join(work, "dangling.mjs"));
-  symlinkSync("/dev", join(work, "devlink"));
+  if (!windows) symlinkSync("/dev", join(work, "devlink"));
   let fifo = false;
-  try { execFileSync("mkfifo", [join(work, "feed.mjs")]); symlinkSync(join(work, "feed.mjs"), join(work, "feedlink.mjs")); fifo = true; } catch { /* no mkfifo: those rows are skipped */ }
-  const at = { cwd: work, home };
+  if (!windows) try { execFileSync("mkfifo", [join(work, "feed.mjs")], { windowsHide: true }); symlinkSync(join(work, "feed.mjs"), join(work, "feedlink.mjs")); fifo = true; } catch { /* no mkfifo: those rows are skipped */ }
+  const at: At = { cwd: work, home, platform: windows ? "win32" : "posix" };
 
   it("an ordinary file, or a link to one, runs", () => {
     // MARKS r9 CODE-NEEDED: `node ./alias.mjs | head -c 3000` (a link to an ordinary file) ran at Full access on b18 (unseenScript) and
     // now cards at Full access (fix4: rule unreadable, no unseenScript). It is listed last so the other rows still run.
-    for (const cmd of ["node tool.mjs | head", "node runner.mjs", "bash ./build.sh", "source ./env.sh", `cd ${plain} && node tool.mjs`, "node ./alias.mjs | head -c 3000"]) runs(cmd, at);
+    for (const cmd of ["node tool.mjs | head", "node runner.mjs", "bash ./build.sh", "source ./env.sh", "node ./alias.mjs | head -c 3000"]) runs(cmd, at);
+    if (windows) asks(`cd ${quote(plain.replaceAll("\\", "/"))} && node tool.mjs`, "cd-form", at);
+    else runs(`cd ${quote(plain)} && node tool.mjs`, at);
   });
   it("a missing file, a folder, a dangling link, a link into /dev or /proc asks", () => {
     asks("node missing.mjs", "file-missing", at);
     asks("node dangling.mjs", "file-missing", at);
     asks("node dir.mjs", "not-regular", at);
+    // Windows has no POSIX /dev or /proc; those kernel paths are checked on POSIX only.
+    if (windows) return;
     // /dev/stdin itself may not resolve (a pipe): it asks either way
     for (const cmd of ["node stdin.mjs | head", "node proc.mjs"]) {
       // MARKS r9 R2: probe node stdin.mjs | head, node proc.mjs (known cwd) -> unreadable doubt value-path, no why (b18: why file-missing)
       const why = read(cmd, at)?.unseenWhy;
       if (why === undefined) expect(read(cmd, at), cmd).toMatchObject({ rule: "unreadable", doubt: "value-path" });
       else expect(["device", "file-missing", "not-regular"], cmd).toContain(why);
-      for (const level of ALL) expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
+      for (const level of ALL) heldAt(level, cmd, at, `${level}: ${cmd}`);
     }
   });
-  it("a FIFO, or a link to one, asks", () => {
-    if (!fifo) return;
+  // A POSIX FIFO has no filesystem counterpart on Windows (named pipes are not script files).
+  it.skipIf(windows)("a FIFO, or a link to one, asks", () => {
+    expect(fifo, "mkfifo must be available on the POSIX gate").toBe(true);
     asks("node feed.mjs | head", "not-regular", at);
     asks("node ./feedlink.mjs", "not-regular", at);
   });
@@ -433,7 +456,7 @@ describe.skipIf(process.platform === "win32")("on disk (section 9): the exact fi
   it("cd: present runs, absent asks, a link to /dev asks, bare and stack forms ask", () => {
     runs("cd ./a && cd ./b && node tool.mjs | head", at);
     asks("cd ./nope && node tool.mjs", "cd-missing", at);
-    asks("cd ./devlink && bash ./stdin", "device", at);
+    if (!windows) asks("cd ./devlink && bash ./stdin", "device", at);
     asks("cd a && cd ./b && node tool.mjs", "cd-form", at);
     asks("cd +0 && node tool.mjs", "cd-form", at);
     asks("cd ../work && node tool.mjs", "dot-dot", at);
@@ -448,21 +471,23 @@ describe.skipIf(process.platform === "win32")("on disk (section 9): the exact fi
   });
   it("HOME with a space works; HOME `/`, `/dev`, relative or absent asks", () => {
     runs("cd ~/work && node tool.mjs | head", at);
-    runs("node ~/y.mjs | tr -d '\\r'", at);
+    if (windows) asks("node ~/y.mjs | tr -d '\\r'", "windows-path", at);
+    else runs("node ~/y.mjs | tr -d '\\r'", at);
     for (const bad of ["/", "/dev", "relative/home", null] as const) asks("cd ~/work && node tool.mjs", "no-home", { ...at, home: bad });
     asks("bash ~\\/x.sh", "tilde-escape", at);
   });
   it("a relayed command asks at every level", () => {
-    for (const level of ALL) expect(verdict(level, "node tool.mjs", { ...at, scope: "local-computer" }).approve, level).toBeNull();
+    for (const level of ALL) heldAt(level, "node tool.mjs", { ...at, scope: "local-computer" }, level);
   });
-  it("a folder with a backslash in its name is checked as itself, never as `/` (Astra r7)", () => {
+  // Backslash is a separator on Windows, so it cannot be a literal filename character.
+  it.skipIf(windows)("a folder with a backslash in its name is checked as itself, never as `/` (Astra r7)", () => {
     // `a\b` is one folder name on POSIX; `a/b/run.sh` is an ordinary decoy
     const odd = join(work, "a\\b");
     mkdirSync(odd);
     writeFileSync(join(work, "a", "b", "run.sh"), inert);
     asks("bash ./run.sh", "file-missing", { ...at, cwd: odd });
     if (fifo) {
-      execFileSync("mkfifo", [join(odd, "run.sh")]);
+      execFileSync("mkfifo", [join(odd, "run.sh")], { windowsHide: true });
       asks("bash ./run.sh", "not-regular", { ...at, cwd: odd });
     }
     writeFileSync(join(odd, "tool.mjs"), inert);
@@ -523,7 +548,7 @@ describe("environment pins (R6)", async () => {
   });
   it("a text that names CDPATH or SHELLOPTS holds", () => {
     for (const cmd of ["CDPATH=/dev cd fd && bash ./0", "export CDPATH=/dev; cd ./fd && bash ./0", "export SHELLOPTS=physical; node x.mjs"]) {
-      for (const level of ALL) expect(verdict(level, cmd, { fs: STUB }).approve, `${level}: ${cmd}`).toBeNull();
+      for (const level of ALL) heldAt(level, cmd, { fs: STUB }, `${level}: ${cmd}`);
     }
   });
 });
@@ -555,8 +580,12 @@ describe("a verdict that fails asks, never drops the request", () => {
 describe("MARKS r13 owner-started proof (fail-closed)", () => {
   it("an unseen script runs at No limits on an owner-started turn and asks without the proof", () => {
     expect(verdict("No limits", "bash ./build.sh", { fs: STUB }).approve).toBeTruthy();
-    for (const missing of [{}, { fullAccessOrigin: "owner", ownerStarted: true }, { ownerStarted: false, fullAccessOrigin: "owner" }, { ownerStarted: true, fullAccessOrigin: "other" }]) {
+    // NOLIM 1.0.19: the finalizer reads the stored origin, not ownerStarted or outsideRead: only an unproven or another origin keeps the card
+    for (const missing of [{}]) {
       expect(verdict("No limits", "bash ./build.sh", { fs: STUB }, missing).approve).toBeNull();
+    }
+    for (const stored of [{ownerStarted:true,fullAccessOrigin:"other"}, { fullAccessOrigin: "owner", ownerStarted: true }, { ownerStarted: false, fullAccessOrigin: "owner" }]) {
+      expect(verdict("No limits", "bash ./build.sh", { fs: STUB }, stored).approve).toBeTruthy();
     }
   });
 });

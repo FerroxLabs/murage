@@ -31,14 +31,20 @@
 import { timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import type { ControlPlaneAuth } from "./auth";
-import { boundCustomer, stepUpOperationKey, stepUpProof } from "./customer-identity";
+import { boundCustomer } from "./customer-identity";
 import { commitStatement, heldFluxHolder, journalDispatch, pinnedHomeGeneration, pinnedLinkRevision, pinnedTargetHolds, reserveStatement } from "./step-up-op";
-import { machine } from "./b3-control";
-import { fluxRenewalStatus, renewalOpId, RENEWAL_WINDOW_MS } from "./b4-flux-renewal";
+import { LEASE_FRESH_MS, machine } from "./b3-control";
+import { alertStatement } from "./ops-monitor";
+import { firstKeyRetryDelayMs, fluxRenewalStatus, neverKeyed, paidLiveSql, readRenewalState, renewalHeldBack, renewalOpId, RENEWAL_WINDOW_MS, unacknowledged, unadopted } from "./b4-flux-renewal";
 import { ackRequest, renewalDueRequest, subkeyRequest } from "../../../shared/flux-renewal-wire";
 import {
   defaultCapUsd,
+  fluxCredentialsMissing,
+  fluxReadiness,
+  fluxResumeViaPoller,
+  fluxRevokeOnlyConfigured,
   fluxRoutesEnabled,
+  fluxServing,
   fluxSweepConfigured,
   microcentsToUsd,
   readFluxConfig,
@@ -51,11 +57,14 @@ import {
   homeScope, ledgerPage, listScope, operatorApplied, operatorClaim, REVOKE_AUTO, refreshStatements, syncAlertStatements, type DeliverResult,
   type RevokeResult, type Scope,
 } from "./b4-flux-ledger";
-import { homeOwnerOf as defaultOwnerOf, linkOf, linkRowOf, type LinkRow } from "./flux-link";
-import { addOneMonthUtc, ensureFluxAccount, ensureOwnerAccount, fencedMutation, FluxHookRetry, FluxNotDispatched, FluxRevisionMismatch, FluxStaleRevision,
+import { homeOwnerOf as defaultOwnerOf, linkFenceSql, linkOf, linkRowOf, type LinkRow } from "./flux-link";
+import { addOneMonthUtc, EMAIL_HOLD_MS, ensureFluxAccount, ensureOwnerAccount, fencedMutation, fluxCredentialsAlert, FluxHookRetry, FluxNotDispatched, FluxRevisionMismatch, FluxStaleRevision,
   GRANT_PATH, grantsReady, isoUtc, readGrantState } from "./flux-grants";
 import { reconcileFences, type RemoteGrantState } from "./flux-grant-fence";
 import { sha256 } from "./installations";
+import { fluxEmailProofOperatorRoute, OPERATOR_ROUTE as PROOF_OPERATOR_ROUTE } from "./flux-email-proof";
+import { accountDisputeOpen, accountDisputeOpenSql, capRaiseFence, homeDisputeOpen, homeDisputeOpenSql } from "./flux-dispute-fence";
+import type { TransactionalEmailSender } from "./email";
 import { fluxDispatchEnabled, stubFluxHooks, type FluxEntitlementHooks } from "./b5-billing";
 
 const LINK_AUDIENCE = "murage-cloud-link";
@@ -83,9 +92,8 @@ export interface FluxMint {
   capVersion: number;
   /** The router refuses "held". */
   billingState: "ok" | "held";
-  /** Optional Stripe customer id. Absent for a prepaid-only account; never required here. */
-  billingCustomerId?: string;
-  /** True only for the owner's explicit resume; machine renewal never resumes a stop. */
+  /** Sent as owner_resume. True only on the poller's resume mint (a lifecycle the owner's resume wrote, until one key at it is acked) and on the
+   *  test-only legacy owner mint; an ordinary renewal sends false. The router lifts a Stop only for a true one. */
   ownerResume: boolean;
   opId: string;
 }
@@ -157,7 +165,7 @@ export interface FluxClient {
   /** Lane H1 (fence F4): Flux's GET state of one grant (by its Flux grant id), or null when it cannot be read. */
   grantState?(wireGrantId: string): Promise<RemoteGrantState | null>;
   /** Lane H1, item 1: FluxMain's ensure-account (idempotent on the Murage account id). */
-  ensureAccount?(input: { murageAccountId: string; email: string }): Promise<{ fluxAccountId: string; created: boolean }>;
+  ensureAccount?(input: { murageAccountId: string; email: string; emailVerified: boolean }): Promise<{ fluxAccountId: string; created: boolean }>;
   /** INTEGRATED-12 (ledger R8c): Flux's OWN record of an operator's hand adjustment (by its issued reference): what the grant holds after it,
    *  or null when Flux has no such entry. Optional: the Flux read API is the Flux lane's; without it every receipt stays pending
    *  verification (never applied on an operator's word). Read only while Flux is on (through b4RouterClient, the one gate). */
@@ -166,7 +174,7 @@ export interface FluxClient {
 
 function httpsBase(value: string | undefined, fallback: string): string {
   const url = new URL(value?.trim() || fallback);
-  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash || url.pathname !== "/") {
+  if (url.protocol !== "https:" || url.username || url.password || url.port || url.search || url.hash || url.pathname !== "/") {
     throw new HTTPError(503, "flux_misconfigured");
   }
   return url.origin;
@@ -226,19 +234,21 @@ export function createFluxClient(env: Env, fetcher: typeof fetch = fetch): FluxC
   }
   return {
     async mint(input) {
+      // A link identity the router would refuse is never sent: link_id 1..128 characters, link_version an integer of at least 1.
+      if (input.linkId.length < 1 || input.linkId.length > 128 || !Number.isInteger(input.linkVersion) || input.linkVersion < 1) throw new FluxError(400, "invalid_link", "invalid_link");
       const result = await call(api, "POST", "/internal/cloud-home/subkeys", {
         account_id: input.accountId,
         home_id: input.homeId,
         generation: input.generation,
         bound_ips: input.boundIps,
-        cap_microcents: input.capMicrocents,
+        cap_microcents: Math.max(input.capMicrocents, ROUTER_MIN_CAP_MICROCENTS),
         ttl_seconds: input.ttlSeconds,
         lifecycle_version: input.lifecycleVersion,
         link_id: input.linkId,
         link_version: input.linkVersion,
         cap_version: input.capVersion,
         billing_state: input.billingState,
-        ...(input.billingCustomerId === undefined ? {} : { billing_customer_id: input.billingCustomerId }),
+        // billing_customer_id stays local bookkeeping: the mint body never carries it.
         owner_resume: input.ownerResume,
         op_id: input.opId,
       });
@@ -266,7 +276,7 @@ export function createFluxClient(env: Env, fetcher: typeof fetch = fetch): FluxC
       });
     },
     async setCap(homeId, capMicrocents, capVersion) {
-      await call(api, "POST", "/internal/cloud-home/cap", { home_id: homeId, cap_microcents: capMicrocents, cap_version: capVersion });
+      await call(api, "POST", "/internal/cloud-home/cap", { home_id: homeId, cap_microcents: Math.max(capMicrocents, ROUTER_MIN_CAP_MICROCENTS), cap_version: capVersion });
     },
     async status(homeId) {
       const r = await call(api, "GET", `/internal/cloud-home/homes/${encodeURIComponent(homeId)}/status`);
@@ -362,12 +372,12 @@ export async function fluxPendingCapabilityAlert(env: Env, homeId: string, now: 
       .bind(`alert:flux_pending_capability:${homeId}`, homeId, FLUX_PENDING_CAPABILITY_ALERT, "high", JSON.stringify({ reason: "pending_capability", ...detail }), now).run();
   } catch { /* the alert is advisory: the work itself stays journaled */ }
 }
-/** THE launch gate for B4, the same semantics as billing's fluxDispatchEnabled: the Flux switch (CLOUD_FLUX_ROUTES_ENABLED) AND real
+/** THE launch gate for B4, the same semantics as billing's fluxDispatchEnabled: the Flux switch (the Flux route switch) AND real
  *  (non-stub) billing hooks AND the advertised router capability. */
 export function b4DispatchEnabled(env: Env, deps: Pick<FluxDependencies, "billingFlux"> = {}): boolean {
   return fluxRoutesEnabled(env) && fluxDispatchEnabled(deps.billingFlux ?? stubFluxHooks);
 }
-/** THE FLUX-OFF GATE (Astra INTEGRATED-10). Flux is ON only when the switch is exactly "1" (CLOUD_FLUX_ROUTES_ENABLED), the service token
+/** THE FLUX-OFF GATE (Astra INTEGRATED-10). Flux is ON only when the switch is exactly "1" (the Flux route switch), the service token
  *  and an explicit https API base are configured (fluxSweepConfigured) AND the billing hooks are real and advertise the qualified router
  *  capability (b4DispatchEnabled). At launch it is OFF for every caller (the switch is unset on staging and production). OFF means:
  *  - no router call is ever made (grant, revoke, or anything else): no dispatch row is ever opened (sendGrant / sendRevoke return first);
@@ -378,28 +388,59 @@ export function b4DispatchEnabled(env: Env, deps: Pick<FluxDependencies, "billin
  *    dispute-credit /claim and /applied still answer 503 {error:"flux_off"} without reading or writing anything (one writer per grant while
  *    off: the B4 ledger). */
 export function fluxOn(env: Env, deps: Pick<FluxDependencies, "billingFlux"> = {}): boolean {
-  return fluxSweepConfigured(env) && b4DispatchEnabled(env, deps);
+  return fluxReadiness(env).issue && b4DispatchEnabled(env, deps); // PRODFLUX r3 (1'): every issuance reads readiness.issue
 }
+/** PRODFLUX (MurageMain): a Stop never depends on a token it does not use. Flux is not on (fluxOn) only because FLUX_CLOUD_GRANTS_TOKEN is
+ *  missing: the switch is on, the real billing hooks are selected (never the stub), FLUX_CLOUD_SERVICE_TOKEN and an explicit https API base
+ *  are set (fluxRevokeOnlyConfigured). Then the key REVOCATIONS go out (createFluxClient's stop and revokeKey send the service token only):
+ *  a home Stop (owner, billing or cancellation), an unlink's Stops and a mint's compensation (a crashed mint included). Nothing that issues is
+ *  sent (mint, cap push, status, grant, grant revoke, ensure-account) and every activation route stays as Flux off. With the service token
+ *  missing too, nothing at all is sent: the revocations stay journaled and go out once it is back. */
+export function fluxRevokeOnly(env: Env, deps: Pick<FluxDependencies, "billingFlux"> = {}): boolean {
+  // PRODFLUX r3 (1'): a revocation is SENT on readiness.revoke; this is the part of it where issuing is not ready.
+  const ready = fluxReadiness(env);
+  return !fluxOn(env, deps) && ready.revoke && !ready.issue && fluxSwitchedOnLive(env, deps);
+}
+/** PRODFLUX r4 C: switched on ("1") with the REAL billing hooks selected (never the stub), whatever the secrets. Then a Stop (owner, billing,
+ *  cap OFF) is always journaled and always needs the owner's step-up; it is sent when readiness.revoke allows, else once it does. */
+export function fluxSwitchedOnLive(env: Env, deps: Pick<FluxDependencies, "billingFlux"> = {}): boolean {
+  return fluxRoutesEnabled(env) && (deps.billingFlux ?? stubFluxHooks).stub !== true;
+}
+/** The clients b4RouterClient built for fluxRevokeOnly: runOps drains only their revocations (a held cap push never stands in front of one). */
+const REVOKE_ONLY_CLIENTS = new WeakSet<FluxClient>();
+/** The op kinds a revoke-only drain runs: Stops, compensations, and a crashed caller's mint (turned into the compensation of its generation,
+ *  no router call). */
+const REVOCATION_KINDS = "kind IN ('stop','compensate','mint')";
 /** Astra INTEGRATED-1 #7: THE shared B4 dispatch boundary. Every B4 route, hook and cron path gets its router client HERE and nowhere else
  *  (a source-scan test holds that). Gate closed: a client that sends NOTHING, raises the pending-capability alert for the home and throws
  *  FluxCapabilityPending, so every caller's journal (ops, grants, reversals) stays pending exactly as it was. */
-export function b4RouterClient(env: Env, deps: Pick<FluxDependencies, "fluxClient" | "billingFlux" | "now"> = {}): FluxClient {
+export function b4RouterClient(env: Env, deps: Pick<FluxDependencies, "fluxClient" | "billingFlux" | "now"> = {}, options: { stoppedStatus?: boolean } = {}): FluxClient {
   if (fluxOn(env, deps)) return (deps.fluxClient ?? createFluxClient)(env); // THE FLUX-OFF GATE: one predicate for every router call
+  // PRODFLUX (MurageMain): only the grants token missing: the revocations (service token only) go out, everything else is held below.
+  const revoker = fluxRevokeOnly(env, deps) ? (deps.fluxClient ?? createFluxClient)(env) : null;
   const now = () => (deps.now ?? Date.now)();
   const held = async (homeId: string | null, call: string): Promise<never> => {
     if (homeId) await fluxPendingCapabilityAlert(env, homeId, now(), { call });
     throw new FluxCapabilityPending();
   };
-  return {
+  const client: FluxClient = {
     mint: (input) => held(input.homeId, "mint"),
-    stop: (homeId) => held(homeId, "stop"),
-    revokeKey: (homeId) => held(homeId, "revokeKey"),
+    stop: revoker ? (homeId, lifecycleVersion, options) => revoker.stop(homeId, lifecycleVersion, options) : (homeId) => held(homeId, "stop"),
+    revokeKey: revoker ? (homeId, generation, lifecycleVersion, reason) => revoker.revokeKey(homeId, generation, lifecycleVersion, reason)
+      : (homeId) => held(homeId, "revokeKey"),
     setCap: (homeId) => held(homeId, "setCap"),
-    status: (homeId) => held(homeId, "status"),
+    // 8b fix r1 (Astra H2): `stoppedStatus` (sweepStoppedLive only) lets the revoke-only client make the ONE read the stopped-live repair needs: the
+    // status of a home whose row is stopped at the moment of the call, sent with the service token like a Stop. Any other status read stays held.
+    status: revoker && options.stoppedStatus === true ? async (homeId) => {
+      const row = await env.DB.prepare("SELECT state FROM flux_home_keys WHERE home_id=?").bind(homeId).first<{ state: string }>();
+      return row?.state === "stopped" ? revoker.status(homeId) : held(homeId, "status");
+    } : (homeId) => held(homeId, "status"),
     grant: (input) => held(input.homeId, "grant"),
     revokeGrant: async (grantId) => held((await env.DB.prepare("SELECT home_id FROM flux_grants WHERE grant_id=?").bind(grantId)
       .first<{ home_id: string }>().catch(() => null))?.home_id ?? null, "revokeGrant"),
   };
+  if (revoker) REVOKE_ONLY_CLIENTS.add(client);
+  return client;
 }
 
 export interface FluxDependencies {
@@ -413,6 +454,8 @@ export interface FluxDependencies {
   /** The fresh trusted second factor for this request (index.ts passes the worker's check). A raise of the monthly spend limit needs it;
    *  absent, nothing is stepped up (only a change that cannot raise spending goes through). */
   stepUp?: (request: Request) => Promise<boolean>;
+  /** Support's email-proof resend (flux-email-proof.ts): the mail sender. Default: the Worker's transactional sender. */
+  emailSender?: (env: Env) => TransactionalEmailSender;
 }
 
 // ── Small helpers ────────────────────────────────────────────────────────────
@@ -438,9 +481,11 @@ async function body<T>(request: Request, schema: z.ZodType<T>): Promise<T> {
   return parsed.data;
 }
 
-/** Journey A8 (Astra JOURNEY-A-2): the limit Flux enforces. Spending switched off (spending_off=1) is a limit of zero at the router; the
+/** Stage A: the limit Flux enforces, never below the router's $5 floor. Spending switched off (spending_off=1) is a home-scope revoke at the router (no cap is sent); the
  *  stored cap_microcents keeps the owner's last limit (the table requires it positive) for the status page only. */
-const EFFECTIVE_CAP = "CASE WHEN spending_off=1 THEN 0 ELSE cap_microcents END";
+/** The router refuses a cap below $5 (400) on mint and /cap: no call ever sends less. */
+const ROUTER_MIN_CAP_MICROCENTS = 5_000_000;
+const EFFECTIVE_CAP = "MAX(cap_microcents, 5000000)"; // Stage A: the router refuses a cap below $5; "off" is a home-scope revoke, never cap 0
 
 interface HomeRow {
   home_id: string; plan: string; generation: number; state: string;
@@ -449,11 +494,15 @@ interface HomeRow {
   cap_version: number; gen_floor: number; stop_version: number | null; stop_link_version: number | null;
   link_id: string | null; link_version: number | null; billing_customer_id: string | null;
   op_holder: string | null; op_lease_until: number | null;
+  /** 8b (migration 0150): see SPENDING-RESUME-VIA-POLLER 2.1. */
+  pending_lifecycle_version: number | null; acked_lifecycle_version: number | null; acked_generation: number | null;
+  resume_lv: number | null; resume_from_generation: number | null; resume_at: number | null; stop_checked_at: number | null;
 }
 
 async function ensureHomeRow(env: Env, config: FluxConfig, homeId: string, now: number): Promise<HomeRow> {
-  await env.DB.prepare(`INSERT OR IGNORE INTO flux_home_keys (home_id,plan,generation,state,cap_microcents,cap_custom,updated_at)
-    VALUES (?,?,0,'none',?,0,?)`)
+  // DISPUTE-FENCE-ACCOUNT: a row created while the owner's account has an open dispute starts held (proof_hold), decided in the INSERT itself.
+  await env.DB.prepare(`INSERT OR IGNORE INTO flux_home_keys (home_id,plan,generation,state,cap_microcents,cap_custom,updated_at,proof_hold)
+    SELECT ?1,?2,0,'none',?3,0,?4,CASE WHEN ${homeDisputeOpenSql("?1")} THEN 1 ELSE 0 END`)
     .bind(homeId, config.defaultPlan, usdToMicrocents(defaultCapUsd(config, config.defaultPlan)), now).run();
   const row = await env.DB.prepare("SELECT * FROM flux_home_keys WHERE home_id=?").bind(homeId).first<HomeRow>();
   if (!row) throw new HTTPError(500, "internal_error");
@@ -494,7 +543,15 @@ const proofPayload = z.object({
   jti: z.string().min(8).max(64),
 });
 
+/** Stage A: the browser redirect link flow is retired. An owner's link is made by ensureOwnerLinked (link_id = the Flux account id, version 1).
+ *  Nothing builds an authorize URL, so /v1/flux/link/start answers 404 and writes no challenge. linkComplete, verifyProof, the challenge
+ *  table and the FLUX_LINK_PUBLIC_KEY path are dead while this is false. */
+const LINK_REDIRECT_ENABLED = false;
+/** Tests only (design-pc2 "Second writer"): flips the retired flow on, to prove its INSERT keeps the email fence. Nothing in src/ sets it. */
+export const linkRedirectForTests = { enabled: LINK_REDIRECT_ENABLED };
+
 async function linkStart(env: Env, config: FluxConfig, ownerId: string, now: number): Promise<Response> {
+  if (!linkRedirectForTests.enabled) throw new HTTPError(404, "not_found");
   const state = b64url(crypto.getRandomValues(new Uint8Array(32)));
   await env.DB.batch([
     env.DB.prepare("DELETE FROM flux_link_challenges WHERE expires_at<?").bind(now),
@@ -532,6 +589,8 @@ async function verifyProof(env: Env, proof: string, state: string, now: number) 
 }
 
 async function linkComplete(request: Request, env: Env, ownerId: string, now: number): Promise<Response> {
+  // ITEM4-PROOF-CURRENT: retired with /start, on the same constant, before any read.
+  if (!linkRedirectForTests.enabled) throw new HTTPError(404, "not_found");
   const input = await body(request, completeSchema);
   const stateHash = await sha256(input.state);
   const payload = await verifyProof(env, input.proof, input.state, now);
@@ -560,11 +619,12 @@ async function linkComplete(request: Request, env: Env, ownerId: string, now: nu
         .bind(now, stateHash, ownerId, now),
       env.DB.prepare("INSERT OR IGNORE INTO flux_link_proofs (jti,used_at) SELECT ?,? WHERE changes()=1").bind(payload.jti, now),
       env.DB.prepare("INSERT INTO cloud_write_guards VALUES (?, changes())").bind(`${g}-proof`),
-      // A new link has a new identity and a version above every version this owner ever had.
+      // A new link has a new identity and a version above every version this owner ever had. (P-link): the same fence as ensureOwnerLinked
+      // (flux-link.ts linkFenceSql), on the identity's CURRENT address and revision, read in this statement: a TRUE stamp, no dispute, no link.
       env.DB.prepare(`INSERT OR IGNORE INTO flux_links (owner_user_id,flux_account_id,linked_at,link_id,link_version,fenced)
         SELECT ?,?,?,?,COALESCE((SELECT version FROM flux_link_floor WHERE owner_user_id=?),0)+1,0
-        WHERE NOT EXISTS (SELECT 1 FROM flux_links WHERE owner_user_id=?)${revision}`)
-        .bind(ownerId, account, now, linkId, ownerId, ownerId, ...revisionBinds),
+        WHERE ${linkFenceSql("?", "lower(trim(s.contact_email))", "s.email_revision")}${revision}`)
+        .bind(ownerId, account, now, linkId, ownerId, ownerId, ownerId, ownerId, ...revisionBinds),
       env.DB.prepare(`INSERT INTO cloud_write_guards VALUES (?, (${linked}))`).bind(`${g}-link`, ownerId, account, ...(pinned === undefined ? [] : [linkId, ...revisionBinds])),
       ...(commit ? [commit] : []),
       env.DB.prepare("DELETE FROM cloud_write_guards WHERE id IN (?,?)").bind(`${g}-proof`, `${g}-link`),
@@ -583,6 +643,10 @@ async function linkComplete(request: Request, env: Env, ownerId: string, now: nu
     }
     const taken = await env.DB.prepare("SELECT 1 AS x FROM flux_links WHERE lower(flux_account_id)=? AND owner_user_id<>?").bind(account, ownerId).first();
     if (taken) throw new HTTPError(409, "flux_account_in_use");
+    // The email fence refused it: the owner's address is not proven now, or a dispute is open.
+    const fenced = await env.DB.prepare(`SELECT 1 AS x WHERE ${linkFenceSql("?", "lower(trim(s.contact_email))", "s.email_revision")}`)
+      .bind(ownerId, ownerId, ownerId).first();
+    if (!fenced) throw new HTTPError(409, "flux_email_unverified");
     throw error;
   }
   return json({ linked: true, fluxAccountHint: payload.flux_account_id.slice(-4) });
@@ -645,13 +709,14 @@ function opStmt(
 
 /** A Stop intent. Its version is whatever lifecycle_version the batch has just written. An unlink
  *  Stop also carries the (just fenced) link's version and identity. */
-function stopOpStmt(env: Env, homeId: string, now: number, reason: string, unlink?: { ownerId: string; linkId: string | null }) {
+function stopOpStmt(env: Env, homeId: string, now: number, reason: string, unlink?: { ownerId: string; linkId: string | null },
+  where?: { sql: string; binds: unknown[] }) {
   return opStmt(env, homeId, "stop", now, {
     sql: `(SELECT json_object('version', h.lifecycle_version,
         'linkVersion', (SELECT link_version FROM flux_links WHERE owner_user_id = ?),
         'linkId', ?, 'ownerId', ?, 'reason', ?) FROM flux_home_keys h WHERE h.home_id = ?)`,
     binds: [unlink?.ownerId ?? null, unlink?.linkId ?? null, unlink?.ownerId ?? null, reason, homeId],
-  });
+  }, where ? { where } : {});
 }
 
 const STOPPING = "state=CASE WHEN state='stopped' THEN state ELSE 'stopping' END,lifecycle_version=lifecycle_version+1";
@@ -673,8 +738,9 @@ const holderFor = (env: Env, homeId: string) => {
 export function fluxClaimLeaseStatements(env: Env, homeId: string, holder: string, now: number, cond: { sql: string; binds: unknown[] }): D1PreparedStatement[] {
   const config = readFluxConfig(env);
   return [
-    env.DB.prepare(`INSERT OR IGNORE INTO flux_home_keys (home_id,plan,generation,state,cap_microcents,cap_custom,updated_at) SELECT ?,?,0,'none',?,0,? WHERE ${cond.sql}`)
-      .bind(homeId, config.defaultPlan, usdToMicrocents(defaultCapUsd(config, config.defaultPlan)), now, ...cond.binds),
+    env.DB.prepare(`INSERT OR IGNORE INTO flux_home_keys (home_id,plan,generation,state,cap_microcents,cap_custom,updated_at,proof_hold)
+      SELECT ?,?,0,'none',?,0,?,CASE WHEN ${homeDisputeOpenSql("?")} THEN 1 ELSE 0 END WHERE ${cond.sql}`)
+      .bind(homeId, config.defaultPlan, usdToMicrocents(defaultCapUsd(config, config.defaultPlan)), now, homeId, ...cond.binds),
     env.DB.prepare(`UPDATE flux_home_keys SET op_holder=?,op_lease_until=? WHERE home_id=? AND ${cond.sql}`).bind(holder, now + LEASE_MS, homeId, ...cond.binds),
   ];
 }
@@ -711,8 +777,9 @@ async function renewLease(env: Env, homeId: string, holder: string, now: number)
 async function releaseLease(env: Env, homeId: string, holder: string): Promise<void> {
   await env.DB.prepare("UPDATE flux_home_keys SET op_holder=NULL,op_lease_until=NULL WHERE home_id=? AND op_holder=?").bind(homeId, holder).run();
 }
-async function hasOpenOps(env: Env, homeId: string): Promise<boolean> {
-  return (await env.DB.prepare("SELECT 1 AS x FROM flux_home_ops WHERE home_id=? AND state IN ('queued','running') LIMIT 1").bind(homeId).first()) !== null;
+async function hasOpenOps(env: Env, homeId: string, revokeOnly = false): Promise<boolean> {
+  return (await env.DB.prepare(`SELECT 1 AS x FROM flux_home_ops WHERE home_id=? AND state IN ('queued','running')${revokeOnly ? ` AND ${REVOCATION_KINDS}` : ""} LIMIT 1`)
+    .bind(homeId).first()) !== null;
 }
 
 /** The holder still owns an unexpired lease (SQL fragment + binds, for conditional writes). */
@@ -724,9 +791,11 @@ const HOLDS = "EXISTS (SELECT 1 FROM flux_home_keys WHERE home_id=? AND op_holde
  *  "clean" when the queue ended empty; "failed" when an op failed (it stays queued); "lost" when the
  *  lease was lost (expired or taken over): nothing more is done, and no completion is recorded. */
 async function runOps(env: Env, flux: FluxClient, homeId: string, holder: string, clock: Clock): Promise<RunResult> {
+  // PRODFLUX (MurageMain): a revoke-only client (fluxRevokeOnly) runs the revocations only; a held cap push stays queued for later.
+  const revocationsOnly = REVOKE_ONLY_CLIENTS.has(flux) ? ` AND ${REVOCATION_KINDS}` : "";
   for (let guard = 0; guard < 200; guard++) {
     const op = await env.DB.prepare(`SELECT op_id,seq,kind,payload,attempts FROM flux_home_ops
-      WHERE home_id=? AND state IN ('queued','running')
+      WHERE home_id=? AND state IN ('queued','running')${revocationsOnly}
       ORDER BY CASE WHEN kind='stop' AND json_extract(payload,'$.reason')='billing_stop' THEN 0 WHEN kind='stop' THEN 1 ELSE 2 END, seq
       LIMIT 1`).bind(homeId).first<OpRow>();
     if (!op) return "clean";
@@ -737,12 +806,20 @@ async function runOps(env: Env, flux: FluxClient, homeId: string, holder: string
       result = await executeOp(env, flux, homeId, op, payload, clock(), holder);
     } catch (error) {
       if (error instanceof LeaseLost) return "lost";
+      // PRODFLUX r3 (4'): a HELD client (a Flux secret missing, so nothing was sent) is not an attempt: attempts stays as it is (0 for a fresh
+      // Stop, so the caller reads it as pending, not failed) and only the reason is written. It goes out once the client can send it.
+      if (error instanceof FluxCapabilityPending) {
+        await env.DB.prepare("UPDATE flux_home_ops SET last_error=? WHERE op_id=?").bind("flux_pending_capability", op.op_id).run();
+        return "failed";
+      }
       const code = error instanceof FluxError ? `flux_${error.status}` : "op_error";
       const at = clock();
       await env.DB.prepare("UPDATE flux_home_ops SET attempts=attempts+1,last_error=?,updated_at=? WHERE op_id=?").bind(code, at, op.op_id).run();
+      await pageStoppedLiveRepair(env, homeId, op, payload, `failed:${code}`, at);
       return "failed";
     }
     if (result === "again") continue;
+    if (result === "superseded") await pageStoppedLiveRepair(env, homeId, op, payload, "superseded", clock());
     const at = clock();
     if (op.kind === "stop" && payload.linkId && payload.ownerId) {
       // The last Stop of an unlink completes AND the link is finalized in one batch: a crash cannot
@@ -760,6 +837,16 @@ async function runOps(env: Env, flux: FluxClient, homeId: string, holder: string
     if (marked.meta.changes !== 1) return "lost"; // a later holder re-runs it (every op is idempotent)
   }
   return "failed";
+}
+
+/** 8b fix r1 (Grok Low): a stopped_live_repair Stop that ends failed or superseded pages flux.stopped_key_live WHEREVER it is drained (the repair's
+ *  own drain may have seen it pending, and the stopped-live selector skips a home while its Stop is open). One open incident per home: the insert
+ *  conflicts on cloud_alerts_open while one is open. Advisory: a failed insert never changes the op's outcome. */
+async function pageStoppedLiveRepair(env: Env, homeId: string, op: OpRow, payload: OpPayload, stop: string, at: number): Promise<void> {
+  if (op.kind !== "stop" || payload.reason !== "stopped_live_repair") return;
+  try {
+    await alertStatement(env.DB, { homeId, kind: STOPPED_KEY_LIVE_ALERT, severity: "high", detail: JSON.stringify({ stop, opId: op.op_id }) }, at).run();
+  } catch { /* the sweep re-sends the Stop; the next outcome pages again */ }
 }
 
 class LeaseLost extends Error {}
@@ -794,9 +881,13 @@ async function executeOp(
     // ALWAYS push the database's current cap and cap version (never what the request carried), so a
     // cap changed while a mint was in flight is republished after it. Nothing exists at the router for
     // a home that never held a key; the mint carries the cap then.
-    const row = await env.DB.prepare(`SELECT state,${EFFECTIVE_CAP} AS cap_microcents,cap_version FROM flux_home_keys WHERE home_id=?`)
-      .bind(homeId).first<{ state: string; cap_microcents: number; cap_version: number }>();
-    if (!row || row.state === "none") return "done";
+    const row = await env.DB.prepare(`SELECT state,${EFFECTIVE_CAP} AS cap_microcents,cap_version,
+        (resume_lv=lifecycle_version AND acked_lifecycle_version IS NOT lifecycle_version AND pending_lifecycle_version IS NOT lifecycle_version) AS resume_open
+      FROM flux_home_keys WHERE home_id=?`)
+      .bind(homeId).first<{ state: string; cap_microcents: number; cap_version: number; resume_open: number | null }>();
+    const off = await env.DB.prepare("SELECT spending_off AS o FROM flux_home_keys WHERE home_id=?").bind(homeId).first<{ o: number }>();
+    if (!row || row.state === "none" || row.state === "stopped" || row.state === "stopping" || off?.o === 1) return "done"; // a stopped home takes its cap from the next mint // an off home is revoked at home scope: no cap is sent for it
+    if (row.resume_open === 1) return "done"; // 8b (2.4): a resumed home is still stopped at the router until the poller's mint, which carries the newest cap
     try {
       await flux.setCap(homeId, row.cap_microcents, row.cap_version);
     } catch (error) {
@@ -813,8 +904,9 @@ async function executeOp(
     // operation 'compensating': the sweep retries it.
     await flux.revokeKey(homeId, payload.generation!, payload.lifecycleVersion!, "undelivered");
     const [held] = await env.DB.batch([
-      env.DB.prepare(`UPDATE flux_home_keys SET state=CASE WHEN generation=? AND state='active' THEN 'stopped' ELSE state END,
-          key_expires_at=CASE WHEN generation=? AND state='active' THEN NULL ELSE key_expires_at END, updated_at=?
+      // 8b (3): never on a generation a resume left behind (resume_from_generation), so a late compensation of a pre-deploy key never stops a resumed row.
+      env.DB.prepare(`UPDATE flux_home_keys SET state=CASE WHEN generation=? AND state='active' AND generation IS NOT resume_from_generation THEN 'stopped' ELSE state END,
+          key_expires_at=CASE WHEN generation=? AND state='active' AND generation IS NOT resume_from_generation THEN NULL ELSE key_expires_at END, updated_at=?
         WHERE home_id=? AND op_holder=? AND op_lease_until>=?`).bind(payload.generation, payload.generation, now, homeId, holder, now),
       env.DB.prepare(`UPDATE cloud_stepup_intents SET phase='compensated' WHERE id=? AND phase='compensating' AND ${HOLDS}`)
         .bind(payload.undelivered, homeId, holder, now),
@@ -842,7 +934,7 @@ async function drainHome(env: Env, flux: FluxClient, homeId: string, clock: Cloc
     const { holder, release } = holderFor(env, homeId);
     if (!(await acquireLease(env, homeId, holder, clock()))) return last;
     try { last = await runOps(env, flux, homeId, holder, clock); } finally { if (release) await releaseLease(env, homeId, holder); }
-    if (last !== "clean" || !(await hasOpenOps(env, homeId))) return last; // an op landed while we released: go round again
+    if (last !== "clean" || !(await hasOpenOps(env, homeId, REVOKE_ONLY_CLIENTS.has(flux)))) return last; // an op landed while we released: go round again
   }
   return last;
 }
@@ -900,7 +992,7 @@ function cancelPendingStmts(env: Env, homeId: string, ref: string, now: number, 
  *  to that same recipient once a link to it is in force again. A relink to a different account never moves it: it stays held
  *  (recipient_mismatch) for operator review. Only billing (refund, dispute, non-payment) cancels or reverses a grant. */
 const GRANT_HELD = "grant_held:";
-type GrantHoldReason = "recipient_unlinked" | "recipient_mismatch";
+type GrantHoldReason = "recipient_unlinked" | "recipient_mismatch" | "account_disputed";
 function holdPendingStmt(env: Env, homeId: string, reason: GrantHoldReason): D1PreparedStatement {
   return env.DB.prepare("UPDATE flux_grants SET last_error=? WHERE home_id=? AND status='pending'").bind(GRANT_HELD + reason, homeId);
 }
@@ -978,32 +1070,147 @@ async function machineNetwork(env: Env, homeId: string): Promise<{ boundIps: str
   return { boundIps: ips as string[], generation: row.generation };
 }
 
-/** owner.opKey: an emailed step-up approval's operation key (step-up-email.ts): a resumed operation mints under the same identity. */
-type MintMode = { kind: "owner"; opKey?: string | null; pinnedLifecycle?: number | null } | { kind: "renewal"; machineGeneration: number; opId?: string };
+type MintMode = { kind: "renewal"; machineGeneration: number; opId?: string; onFirstKey?: () => Promise<void> };
 
-/** Owner route: may issue, rotate or RESUME a stopped home (never under a billing hold).
- *  Machine route: RENEWAL only. The home must be active and its key due, and it can never
- *  undo an owner Stop or a billing hold. */
+/** The machine mint's own guards, in the SAME statements as the reservation and the commit (nothing between the request's first read and
+ *  the commit can be trusted): the machine is still the active one at the generation the request authenticated with (a delete or a re-key
+ *  fences it), the home is not deleted, and a FIRST key still sees a paid, live, owned home (a payment-failed webhook that landed during
+ *  ensure-account or the mint ends the claim). Owner mints carry none of these. */
+function machineGuard(homeId: string, machineGeneration: number | null, firstKey: boolean): { sql: string; binds: unknown[] } {
+  if (machineGeneration === null) return { sql: "", binds: [] };
+  return {
+    sql: ` AND EXISTS (SELECT 1 FROM cloud_machines WHERE id=? AND generation=? AND state='active')
+      AND NOT EXISTS (SELECT 1 FROM cloud_homes WHERE id=? AND desired_state='deleted')${firstKey ? ` AND ${paidLiveSql("?")} = 1` : ""}`,
+    binds: [homeId, machineGeneration, homeId, ...(firstKey ? [homeId] : [])],
+  };
+}
+
+/** Why a machine mint was refused by its guards, in the plain words the poller already knows; null when they all still hold. */
+async function machineRefusal(env: Env, homeId: string, machineGeneration: number | null, firstKey: boolean): Promise<HTTPError | null> {
+  if (machineGeneration === null) return null;
+  const m = await env.DB.prepare("SELECT generation,state FROM cloud_machines WHERE id=?").bind(homeId).first<{ generation: number; state: string }>();
+  if (!m || m.generation !== machineGeneration || m.state !== "active") return new HTTPError(401, "unauthorized");
+  const h = await env.DB.prepare("SELECT desired_state FROM cloud_homes WHERE id=?").bind(homeId).first<{ desired_state: string }>();
+  if (h?.desired_state === "deleted") return new HTTPError(409, "home_not_active");
+  if (firstKey && (await env.DB.prepare(`SELECT ${paidLiveSql("?")} AS paid`).bind(homeId).first<{ paid: number | null }>())?.paid !== 1) return new HTTPError(409, "home_not_active");
+  return null;
+}
+
+/** One more consecutive wait on the bound table: a failed first key, or a machine mint that has not been acked yet (cleared by the ack). */
+const retryBumpSql = (afterCommit: boolean): string => `INSERT INTO flux_first_key_retry (home_id,failures,next_at,updated_at)
+  ${afterCommit ? "SELECT" : "VALUES ("}?1,1,?2+${firstKeyRetryDelayMs(1)},?2${afterCommit ? " WHERE changes()=1" : ")"}
+  ON CONFLICT(home_id) DO UPDATE SET failures=failures+1,next_at=?2+MIN(600000,60000*(1<<MIN(failures,4))),updated_at=?2,hold=NULL`;
+
+/** FLUX-ENSURE-EMAIL-VERIFIED (design-ev3 section 4, Grok r3 High 1): the email_unverified HOLD on the bound table. failures 0 on a new row and
+ *  UNCHANGED on an existing one (migration 0142 allows 0 with a hold). M1 (astra-code1): next_at is the ACCOUNT's one hold deadline
+ *  (flux_email_hold, moved only by an actual 202, flux-grants.ts ensureOwnerAccount), never now + 15 min per home, so homes of one account can
+ *  never renew each other's hold; with no deadline row (an open dispute) it is now + 15 min. The poller asks at most 4 times an hour. On
+ *  conflict only next_at and hold move. The wake-up (flux-email-proof.ts) deletes hold rows once linked; a real failure clears the hold
+ *  (retryBumpSql above). ?1 home, ?2 now, ?3 account. */
+export const EMAIL_UNVERIFIED_HOLD_MS = EMAIL_HOLD_MS;
+/** M-a (design-pc2): ONE conditional statement. Written only while no link exists and the revision captured before the ensure (?4) is still
+ *  current, so a stale continuation after the wake linked (or after an address move) writes nothing. */
+const emailHoldSql = `INSERT INTO flux_first_key_retry (home_id,failures,next_at,updated_at,hold)
+    SELECT ?1,0,MAX(?2+60000,COALESCE((SELECT until_at FROM flux_email_hold WHERE account_id=?3),?2+${EMAIL_HOLD_MS})),?2,'email_unverified'
+    WHERE NOT EXISTS (SELECT 1 FROM flux_links WHERE owner_user_id=?3) AND EXISTS (SELECT 1 FROM supabase_identities WHERE user_id=?3 AND email_revision=?4)
+  ON CONFLICT(home_id) DO UPDATE SET next_at=excluded.next_at,hold=excluded.hold`;
+/** DISPUTE-FENCE-ACCOUNT: the same typed hold row for a first key refused by an open dispute (the account may be linked, so no link condition). */
+// Astra Low 4: written ONLY while the dispute is still open in the same statement, so a clear that committed after the read leaves no fresh wait behind.
+export const writeDisputeFirstKeyHold = (env: Env, homeId: string, now: number) =>
+  env.DB.prepare(`INSERT INTO flux_first_key_retry (home_id,failures,next_at,updated_at,hold)
+    SELECT ?1,0,?2+${EMAIL_HOLD_MS},?2,'email_unverified' WHERE ${homeDisputeOpenSql("?1")}
+    ON CONFLICT(home_id) DO UPDATE SET next_at=excluded.next_at,hold=excluded.hold`).bind(homeId, now).run();
+/** The first-key email_unverified hold row (M-a), exported for its test. */
+export const writeFirstKeyHold = (env: Env, homeId: string, ownerId: string, revision: number, now: number) =>
+  env.DB.prepare(emailHoldSql).bind(homeId, now, ownerId, revision).run();
+
+/** The machine route only (the owner mint is retired: POST /v1/homes/:id/flux/subkey answers 410). RENEWAL only. The home must be active and its key due, or (the FIRST key) never keyed and paid and live
+ *  (b4-flux-renewal.ts); it can never undo an owner Stop, a billing hold or spending off, and it never touches a stopped or stopping home. */
 async function issueKey(
-  env: Env, config: FluxConfig, flux: FluxClient, ownerId: string, homeId: string, clock: Clock, mode: MintMode = { kind: "owner" },
+  env: Env, config: FluxConfig, flux: FluxClient, ownerId: string, homeId: string, clock: Clock, mode: MintMode,
+): Promise<Response> {
+  const now = clock();
+  // The machine route's FIRST KEY (a home that never had one, paid and live: b4-flux-renewal.ts): decided from ONE read BEFORE anything is
+  // called, so an ineligible home never causes an ensure-account call. Every refusal is the plain reason; the retry bound is on D1.
+  let firstKey = false;
+  if (mode.kind === "renewal") {
+    const state = await readRenewalState(env, homeId);
+    if (state !== null && neverKeyed(state)) {
+      if (state.billing_hold === 1) throw new HTTPError(409, "billing_hold");
+      if (state.spending_off === 1) throw new HTTPError(409, "spending_off", { message: SPENDING_OFF_WORDS });
+      if (state.paid !== 1) throw new HTTPError(409, "home_not_active");
+      if (state.retry_at !== null && state.retry_at > now) throw new HTTPError(429, "first_key_retry_later");
+      firstKey = true;
+    } else if (state !== null && state.state !== "active") {
+      if (state.billing_hold === 1) throw new HTTPError(409, "billing_hold");
+      throw new HTTPError(409, "home_not_active", state.spending_off === 1 ? { message: SPENDING_OFF_WORDS } : undefined); // stopped, stopping: never resumed here
+    } else if (state !== null && renewalHeldBack(state.retry_at, state.key_expires_at, now)
+      && (state.key_expires_at === null || state.key_expires_at - now <= RENEWAL_WINDOW_MS || unadopted(state) || unacknowledged(state))) { // (a key that is not due is answered renewal_not_due below)
+      throw new HTTPError(429, "renewal_retry_later"); // a minted key not yet acked: the same 1, 2, 4, 8, 10 minute bound as the first key
+    }
+  }
+  try {
+    return await issueKeyChecked(env, config, flux, ownerId, homeId, clock, mode, firstKey);
+  } catch (error) {
+    // A failed first key (ensure unavailable or refused, not linked, router 5xx, a lost lease) is counted: the poller asks again, but
+    // never sooner than the bound allows. Recorded on D1, so it holds across Worker instances.
+    // Refusals decided without calling Flux (a replayed or foreign op, a lost state) are not counted: only attempts that reached ensure or mint.
+    // renewal_retry_later (a Stop of this home still open, G5) is a hold-back, not a failed attempt: the mint waits for the Stop, not the bound.
+    // flux_email_unverified: the typed hold, already written by issueKeyChecked (failures unchanged, next_at = now + 15 min): never a failure.
+    const uncounted = error instanceof HTTPError && ["renewal_replayed", "renewal_op_mismatch", "renewal_not_due", "home_not_active", "billing_hold",
+      "spending_off", "home_inactive", "unbound_machine", "not_found", "unauthorized", "flux_email_unverified", "flux_link_stale", "renewal_retry_later"].includes(error.code);
+    // 8b fix r1 (Astra M5): every failed machine attempt that reached ensure, the lease or the router is counted on the same bound table: the first
+    // key, a resume (NULL expiry), an ordinary renewal inside the window and a retry of an unadopted or unacked one outside it. The wait after the
+    // nth consecutive failure is 1, 2, 4, 8, then 10 minutes, so the cue never hands the poller a mint on every poll.
+    if (mode.kind === "renewal" && !uncounted) {
+      await env.DB.prepare(retryBumpSql(false)).bind(homeId, now).run();
+    }
+    throw error;
+  }
+}
+
+async function issueKeyChecked(
+  env: Env, config: FluxConfig, flux: FluxClient, ownerId: string, homeId: string, clock: Clock, mode: MintMode, firstKey: boolean,
 ): Promise<Response> {
   const now = clock();
   let link = await linkRowOf(env, ownerId);
   // Lane H1, item 1: before the FIRST mint of an owner with no link row, the owner's Flux account is ensured and the link written (link_id =
   // the Flux account id, version 1). Flux off: the gated client has no ensureAccount, nothing is called. A refusal is alerted.
   if (link === null && flux.ensureAccount) {
+    // M-a: the address revision the ensure is asked on, captured BEFORE it; the hold below is written only while it is still current.
+    const revision = (await env.DB.prepare("SELECT email_revision AS r FROM supabase_identities WHERE user_id=?").bind(ownerId).first<{ r: number }>())?.r ?? -1;
     const ensured = await ensureOwnerAccount(env, ownerId, homeId, (a) => flux.ensureAccount!(a), now);
     if (ensured === "unavailable") throw new HTTPError(502, "flux_unavailable");
+    if (ensured === "email_unverified") {
+      // No link was written (ensureOwnerAccount caught the hold before the insert). The machine first key records the typed hold row, then
+      // answers 409 flux_email_unverified, which the catch in issueKey does not count.
+      if (firstKey) await writeFirstKeyHold(env, homeId, ownerId, revision, now);
+      throw new HTTPError(409, "flux_email_unverified");
+    }
+    // H1: Flux answered on a state that moved in flight (the address, the proof, a dispute): nothing linked, not a failure, asked again.
+    if (ensured === "stale") throw new HTTPError(409, "flux_link_stale");
     link = await linkRowOf(env, ownerId);
   }
   if (link === null || link.fenced === 1) throw new HTTPError(409, "flux_not_linked");
+  // DISPUTE-FENCE-ACCOUNT: an open account-level dispute holds the key even for a LINKED account (the claim and the commit below re-check it
+  // inside their own statements). The first key records the typed 15-minute hold, so the poller does not ask every poll; never a failure.
+  if (await accountDisputeOpen(env, ownerId)) {
+    if (firstKey || mode.kind === "renewal") await writeDisputeFirstKeyHold(env, homeId, now); // a refused renewal is not asked again every poll
+    throw new HTTPError(409, "flux_email_unverified");
+  }
   const { boundIps } = await machineNetwork(env, homeId);
   const row = await ensureHomeRow(env, config, homeId, now);
   if (row.billing_hold === 1) throw new HTTPError(409, "billing_hold");
-  let opId = `owner:${homeId}:${mode.kind === "owner" && mode.opKey ? mode.opKey : crypto.randomUUID()}`;
+  let opId = "";
   if (mode.kind === "renewal") {
-    if (row.state !== "active") throw new HTTPError(409, "home_not_active");
-    if (row.key_expires_at !== null && row.key_expires_at - now > RENEWAL_WINDOW_MS) throw new HTTPError(409, "renewal_not_due");
+    // The row as it stands now: a first key needs it still never-keyed, un-held and spending on (a Stop or a hold that landed while
+    // ensure-account ran leaves it stopping, stopped or held, and is refused here as everywhere).
+    if (firstKey ? !(row.state === "none" && row.generation === 0) : row.state !== "active") {
+      throw new HTTPError(409, "home_not_active", row.spending_off === 1 ? { message: SPENDING_OFF_WORDS } : undefined);
+    }
+    if (firstKey && row.spending_off === 1) throw new HTTPError(409, "spending_off", { message: SPENDING_OFF_WORDS });
+    // 8b fix r1 (Astra H1): an adopted generation the home never acked keeps the renewal due, as in renewalDueOf.
+    if (row.key_expires_at !== null && row.key_expires_at - now > RENEWAL_WINDOW_MS && !unadopted(row) && !unacknowledged(row)) throw new HTTPError(409, "renewal_not_due");
     opId = renewalOpId(homeId, mode.machineGeneration, row.generation);
     // The poller names the attempt it was told about; a stale or foreign name is not this renewal.
     if (mode.opId !== undefined && mode.opId !== opId) throw new HTTPError(409, "renewal_op_mismatch");
@@ -1012,8 +1219,11 @@ async function issueKey(
     if (claimed.meta.changes !== 1) throw new HTTPError(409, "renewal_replayed");
   }
   try {
-    return await mintAndCommit(env, config, flux, ownerId, link, homeId, clock, boundIps, row, opId, mode.kind === "owner",
-      mode.kind === "owner" ? mode.pinnedLifecycle ?? null : null);
+    const response = await mintAndCommit(env, config, flux, ownerId, link, homeId, clock, boundIps, row, opId, firstKey, mode.kind === "renewal" ? mode.machineGeneration : null);
+    // The key landed: its commit recorded the next wait on the bound table (cleared by the ack). The plan grant goes out now, so a paid
+    // customer does not wait for the sweep; its failure never touches the key response (the sweep stays the backstop).
+    if (firstKey && mode.kind === "renewal" && mode.onFirstKey) { try { await mode.onFirstKey(); } catch { /* the sweep retries the grant */ } }
+    return response;
   } catch (error) {
     // A mint that did not land may be retried with the same operation identity.
     if (mode.kind === "renewal") await env.DB.prepare("DELETE FROM flux_mint_ops WHERE op_id=?").bind(opId).run();
@@ -1034,7 +1244,7 @@ function mayHavePublished(error: unknown): boolean {
  *  home can never overlap it at the router. Whatever those queued meanwhile runs right after. */
 async function mintAndCommit(
   env: Env, config: FluxConfig, flux: FluxClient, ownerId: string, link: LinkRow, homeId: string, clock: Clock,
-  boundIps: string[], row: HomeRow, opId: string, ownerResume: boolean, pinnedLifecycle: number | null,
+  boundIps: string[], row: HomeRow, opId: string, firstKey = false, machineGeneration: number | null = null,
 ): Promise<Response> {
   const { holder, release } = holderFor(env, homeId);
   if (!(await acquireLease(env, homeId, holder, clock()))) throw new HTTPError(409, "home_busy"); // retryable
@@ -1047,9 +1257,11 @@ async function mintAndCommit(
     // caller's successful mint, which the compensation then tombstoned).
     const before = await runOps(env, flux, homeId, holder, clock);
     if (before !== "clean") {
+      // 8b (2.3, G5): a Stop of this home that is queued, running or failed holds the poller's resume mint back; it asks again later.
+      if (before === "failed" && machineGeneration !== null && await stopOpOpen(env, homeId)) throw new HTTPError(429, "renewal_retry_later");
       throw before === "lost" ? new HTTPError(409, "home_busy") : new HTTPError(502, "flux_unavailable");
     }
-    try { outcome = { response: await mintLocked(env, config, flux, ownerId, link, homeId, clock, boundIps, row, opId, ownerResume, holder, pinnedLifecycle) }; }
+    try { outcome = { response: await mintLocked(env, config, flux, ownerId, link, homeId, clock, boundIps, row, opId, holder, firstKey, machineGeneration) }; }
     catch (error) { outcome = { error }; }
     after = await runOps(env, flux, homeId, holder, clock); // Stop / cap / compensation queued meanwhile
   } finally {
@@ -1060,12 +1272,20 @@ async function mintAndCommit(
   return outcome.response;
 }
 
+/** 8b (G5): one indexed point check (flux_home_ops_by_home): is a Stop of this home queued, running or failed (a failed one stays queued)? */
+const stopOpOpen = async (env: Env, homeId: string): Promise<boolean> =>
+  (await env.DB.prepare("SELECT 1 AS x FROM flux_home_ops WHERE home_id=? AND state IN ('queued','running') AND kind='stop' LIMIT 1").bind(homeId).first()) !== null;
+
 async function mintLocked(
   env: Env, config: FluxConfig, flux: FluxClient, ownerId: string, link: LinkRow, homeId: string, clock: Clock,
-  boundIps: string[], row: HomeRow, opId: string, ownerResume: boolean, holder: string, pinnedLifecycle: number | null,
+  boundIps: string[], row: HomeRow, opId: string, holder: string, firstKey = false, machineGeneration: number | null = null,
 ): Promise<Response> {
   const now = clock();
   const ttlSeconds = config.subkeyTtlDays * 86_400;
+  // 8b (2.4): the poller's mint at a lifecycle the owner's resume wrote, until one key at it is acked. The router reads it (PR 624) and lifts a Stop
+  // only for this mint; an ordinary renewal sends false. The claim keeps machine semantics (no state bypass, no lifecycle bump).
+  const routerResume = machineGeneration !== null && row.resume_lv !== null && row.resume_lv === row.lifecycle_version && row.acked_lifecycle_version !== row.lifecycle_version;
+  if (routerResume && await stopOpOpen(env, homeId)) throw new HTTPError(429, "renewal_retry_later");
   // 1. CLAIM, durably, before Flux is called: advance the monotonic versions (an owner resume
   //    advances the lifecycle version, so a delayed Stop retry is stale), take the next generation
   //    above every one ever attempted, and re-check billing and the link in the same statement.
@@ -1078,16 +1298,17 @@ async function mintLocked(
   // and state, the key, the cap, the link: step-up-email.ts targetSpec), in the same statement, before anything is reserved (Astra
   // STEPUP-EMAIL-7 #2): a change somebody else made after the approval is never absorbed into this operation's own reservation.
   const pinned = pinnedTargetHolds(env);
+  const guard = machineGuard(homeId, machineGeneration, firstKey);
   const [claimed] = await env.DB.batch<{ lifecycle_version: number; cap_version: number; gen_floor: number; cap_microcents: number; billing_customer_id: string | null }>([
-    env.DB.prepare(`UPDATE flux_home_keys SET lifecycle_version = lifecycle_version + ?, cap_version = cap_version + 1,
+    env.DB.prepare(`UPDATE flux_home_keys SET lifecycle_version = lifecycle_version + CASE WHEN ? = 1 AND state <> 'active' THEN 1 ELSE 0 END, cap_version = cap_version + 1,
       gen_floor = MAX(generation, gen_floor) + 1, updated_at = ?
-    WHERE home_id = ? AND billing_hold = 0 AND (? = 1 OR (lifecycle_version = ? AND state = 'active'))
-      AND (? IS NULL OR lifecycle_version = ?)
+    WHERE home_id = ? AND billing_hold = 0 AND (lifecycle_version = ? AND (state = 'active' OR (? = 1 AND state = 'none' AND generation = 0))) AND spending_off = 0
       AND op_holder = ? AND op_lease_until >= ?
-      AND EXISTS (SELECT 1 FROM flux_links WHERE owner_user_id = ? AND link_id = ? AND link_version = ? AND fenced = 0)${pinned ? ` AND ${pinned.sql}` : ""}
+      AND EXISTS (SELECT 1 FROM flux_links WHERE owner_user_id = ? AND link_id = ? AND link_version = ? AND fenced = 0)
+      AND NOT ${accountDisputeOpenSql("?")}${guard.sql}${pinned ? ` AND ${pinned.sql}` : ""}
     RETURNING lifecycle_version, cap_version, gen_floor, ${EFFECTIVE_CAP} AS cap_microcents, billing_customer_id`)
-      .bind(ownerResume ? 1 : 0, now, homeId, ownerResume ? 1 : 0, row.lifecycle_version, pinnedLifecycle, pinnedLifecycle, holder, clock(), ownerId, link.link_id, link.link_version,
-        ...(pinned?.binds ?? [])),
+      .bind(firstKey ? 1 : 0, now, homeId, row.lifecycle_version, firstKey ? 1 : 0, holder, clock(), ownerId, link.link_id, link.link_version, ownerId,
+        ...guard.binds, ...(pinned?.binds ?? [])),
     mintOp.stmt,
     // A step-up operation records the versions THIS reservation moved its frozen target to, in this same transaction (Astra
     // STEPUP-EMAIL-4 #4): resumed after an interruption, it recognises its own change instead of voiding itself; an intervening Stop
@@ -1096,6 +1317,9 @@ async function mintLocked(
   ]);
   const claim = claimed.results[0];
   if (!claim) {
+    // The machine's own guards first: a fenced machine, a deleted home or a first key that is no longer paid is refused plainly (nothing was minted).
+    const machineRefused = await machineRefusal(env, homeId, machineGeneration, firstKey);
+    if (machineRefused) throw machineRefused;
     // The approval's target moved (anything, the home generation included): the approval is void, a fresh intent is asked for.
     if (pinned && (await env.DB.prepare(`SELECT ${pinned.sql} AS holds`).bind(...pinned.binds).first<{ holds: number }>())?.holds !== 1) {
       throw new HTTPError(403, "step_up_required");
@@ -1123,17 +1347,18 @@ async function mintLocked(
     try {
       minted = await flux.mint({
         accountId: link.flux_account_id, homeId, generation, boundIps, capMicrocents: claim.cap_microcents, ttlSeconds,
-        lifecycleVersion: claim.lifecycle_version, ownerResume, opId,
+        lifecycleVersion: claim.lifecycle_version, ownerResume: routerResume, opId,
         linkId: link.link_id, linkVersion: link.link_version, capVersion: claim.cap_version, billingState: "ok",
-        ...(claim.billing_customer_id === null ? {} : { billingCustomerId: claim.billing_customer_id }),
       });
     } catch (error) {
       // Ambiguous: the key may exist. A compensation revokes this exact generation, retried by the sweep.
       if (mayHavePublished(error)) await enqueueCompensation(generation);
       // Flux already holds a newer generation than we recorded (a mint that landed but whose
       // answer we lost). Move past it once. Every other 409 is final.
-      const behind = error instanceof FluxError && error.status === 409 && /generation must be greater than/i.test(error.detail)
-        ? /(\d+)\s*$/.exec(error.detail)?.[1] : undefined;
+      // 8b (required test): a 409 stale_generation (by its code, or the router's words) says a key at that generation or higher already landed (a
+      // lost answer). It is treated as landed: moved past once, nothing compensated (it published nothing new), the retry mints above it.
+      const behind = error instanceof FluxError && error.status === 409 && (/generation must be greater than/i.test(error.detail) || error.code === "stale_generation")
+        ? /(\d+)\s*$/.exec(error.detail)?.[1] ?? String(generation) : undefined;
       if (attempt === 0 && behind !== undefined) {
         generation = Number(behind) + 1;
         await env.DB.prepare("UPDATE flux_home_keys SET gen_floor=MAX(gen_floor,?) WHERE home_id=?").bind(generation, homeId).run();
@@ -1178,21 +1403,23 @@ async function mintLocked(
   const newExpiry = Date.parse(minted.expiresAt) || now + ttlSeconds * 1000;
   const commitAt = clock();
   const [committed] = await env.DB.batch([
-    // Hole 11: an OWNER mint is delivered by its own response, so its expiry is recorded now. A machine RENEWAL
-    // is delivered through the poller: its expiry waits in pending_* until the poller's ack
-    // (ackSubkey), so an undelivered replacement never makes renewal look "not due".
+    // Hole 11: a machine RENEWAL is delivered through the poller: its expiry waits in pending_* until the poller's ack
+    // (ackSubkey, the only runtime writer of a non-NULL key_expires_at), so an undelivered replacement never makes renewal look "not due".
     env.DB.prepare(`UPDATE flux_home_keys SET generation=?,state='active',
-        key_expires_at=CASE WHEN ?=1 THEN ? ELSE key_expires_at END,
-        pending_op_id=?,pending_generation=?,pending_expires_at=?,
+        pending_op_id=?,pending_generation=?,pending_expires_at=?,pending_lifecycle_version=?,
         link_id=?,link_version=?,stop_version=NULL,stop_link_version=NULL,updated_at=?
       WHERE home_id=? AND op_holder=? AND op_lease_until>=? AND lifecycle_version=? AND billing_hold=0 AND generation<? AND cap_version=?
-        AND EXISTS (SELECT 1 FROM flux_links WHERE owner_user_id=? AND link_id=? AND link_version=? AND fenced=0)${homeGeneration
+        AND EXISTS (SELECT 1 FROM flux_links WHERE owner_user_id=? AND link_id=? AND link_version=? AND fenced=0)
+        AND NOT ${accountDisputeOpenSql("?")}${guard.sql}${homeGeneration
           ? " AND EXISTS (SELECT 1 FROM cloud_homes WHERE id=? AND generation=? AND desired_state<>'deleted')" : ""}`)
-      .bind(minted.generation, ownerResume ? 1 : 0, newExpiry,
-        ownerResume ? null : opId, ownerResume ? null : minted.generation, ownerResume ? null : newExpiry,
+      .bind(minted.generation,
+        opId, minted.generation, newExpiry, claim.lifecycle_version,
         link.link_id, link.link_version, now,
-        homeId, holder, commitAt, claim.lifecycle_version, minted.generation, enforced.capVersion, ownerId, link.link_id, link.link_version,
-        ...(homeGeneration ? [homeGeneration.homeId, homeGeneration.generation] : [])),
+        homeId, holder, commitAt, claim.lifecycle_version, minted.generation, enforced.capVersion, ownerId, link.link_id, link.link_version, ownerId,
+        ...guard.binds, ...(homeGeneration ? [homeGeneration.homeId, homeGeneration.generation] : [])),
+    // A machine mint is delivered through the poller: until its ack the next mint waits the bound (1, 2, 4, 8, then 10 minutes), so a key
+    // whose response or ack was lost is never re-minted every poll. Same transaction as the commit, only if the commit took.
+    ...(machineGeneration === null ? [] : [env.DB.prepare(retryBumpSql(true)).bind(homeId, commitAt)]),
     // A step-up operation's commitment, in the same transaction as the key it adopts (delivery is its finalization; an undelivered
     // committed key is compensated by the step-up sweep, by phase).
     ...[commitStatement(env, `flux:${homeId}:${minted.generation}`)].filter((x): x is D1PreparedStatement => x !== null),
@@ -1202,7 +1429,10 @@ async function mintLocked(
     }).stmt,
   ]);
   if (committed.meta.changes !== 1) {
-    // Never returned; compensation queued. A home generation that moved after the approval voids it (403, a fresh intent); a Stop that
+    // Never returned; compensation queued (the batch above revokes any generation the commit did not adopt: the existing revoke path).
+    const machineRefused = await machineRefusal(env, homeId, machineGeneration, firstKey);
+    if (machineRefused) throw machineRefused;
+    // A home generation that moved after the approval voids it (403, a fresh intent); a Stop that
     // landed during the provider call (the lifecycle moved, the generation did not) answers 409 stale_lifecycle (STEP-UP-EMAIL-OTP.md 1).
     if (homeGeneration && (await env.DB.prepare("SELECT 1 AS x FROM cloud_homes WHERE id=? AND generation=? AND desired_state<>'deleted'")
       .bind(homeGeneration.homeId, homeGeneration.generation).first()) === null) throw new HTTPError(403, "step_up_required");
@@ -1222,23 +1452,45 @@ async function mintLocked(
 async function mintRefusal(env: Env, ownerId: string, homeId: string, holder?: string, lifecycleVersion?: number): Promise<HTTPError> {
   const link = await linkRowOf(env, ownerId);
   if (link === null || link.fenced === 1) return new HTTPError(409, "flux_not_linked");
-  const row = await env.DB.prepare("SELECT billing_hold,op_holder,lifecycle_version FROM flux_home_keys WHERE home_id=?")
-    .bind(homeId).first<{ billing_hold: number; op_holder: string | null; lifecycle_version: number }>();
+  if (await accountDisputeOpen(env, ownerId)) return new HTTPError(409, "flux_email_unverified"); // DISPUTE-FENCE-ACCOUNT
+  const row = await env.DB.prepare("SELECT billing_hold,spending_off,op_holder,lifecycle_version FROM flux_home_keys WHERE home_id=?")
+    .bind(homeId).first<{ billing_hold: number; spending_off: number; op_holder: string | null; lifecycle_version: number }>();
   if (row?.billing_hold === 1) return new HTTPError(409, "billing_hold");
+  if (row?.spending_off === 1) return new HTTPError(409, "spending_off", { message: SPENDING_OFF_WORDS });
   if (holder !== undefined && row && row.op_holder !== holder) return new HTTPError(409, "home_busy"); // lease lost: retryable
   if (lifecycleVersion !== undefined && row?.lifecycle_version === lifecycleVersion) return new HTTPError(503, "cap_sync_pending"); // only the cap moved
   return new HTTPError(409, "stale_lifecycle");
+}
+
+/** The owner Stop's writes: the lifecycle bump with 'stopping', and the Stop intent carrying the version just written. Always committed
+ *  in ONE batch: ownerStop's own, cap OFF's (setCap, together with spending_off), or the sweep's repair (repairSpendingOffStop).
+ *  `onlyIfOffActive` (CAPOFF-REPAIR-RACE): both writes apply only while, at write time, spending is off, the key is active and no Stop is
+ *  open for the home; otherwise the bump changes no row and the Stop insert (conditioned on it, changes()=1) writes nothing. */
+function ownerStopStatements(env: Env, homeId: string, now: number, onlyIfOffActive = false): { stmts: D1PreparedStatement[]; opId: string } {
+  const stop = stopOpStmt(env, homeId, now, "stop", undefined, onlyIfOffActive ? { sql: "changes()=1", binds: [] } : undefined);
+  const when = onlyIfOffActive
+    ? " AND spending_off=1 AND state='active' AND NOT EXISTS (SELECT 1 FROM flux_home_ops WHERE home_id=? AND kind='stop' AND state IN ('queued','running'))" : "";
+  return {
+    stmts: [env.DB.prepare(`UPDATE flux_home_keys SET ${STOPPING},updated_at=? WHERE home_id=?${when}`).bind(now, homeId, ...(onlyIfOffActive ? [homeId] : [])), stop.stmt],
+    opId: stop.opId,
+  };
+}
+
+/** CAPOFF-REPAIR-RACE: the sweep's repair of an OFF home still active with no Stop open. ONE conditional batch (ownerStopStatements with
+ *  onlyIfOffActive): a cap ON or another sweep's repair landing after the eligibility read leaves it writing nothing. Returns the Stop's op
+ *  id when it was journaled, null when the condition no longer held. Throws when the batch fails (nothing committed). */
+async function repairSpendingOffStop(env: Env, homeId: string, now: number): Promise<string | null> {
+  const stop = ownerStopStatements(env, homeId, now, true);
+  const [bumped] = await env.DB.batch(stop.stmts);
+  return bumped.meta.changes === 1 ? stop.opId : null;
 }
 
 /** Owner Stop: ONE batch (lifecycle bump, 'stopping', the Stop intent), then the drain. */
 async function ownerStop(env: Env, config: FluxConfig, flux: FluxClient, homeId: string, clock: Clock): Promise<Response> {
   const now = clock();
   await ensureHomeRow(env, config, homeId, now);
-  const stop = stopOpStmt(env, homeId, now, "stop");
-  await env.DB.batch([
-    env.DB.prepare(`UPDATE flux_home_keys SET ${STOPPING},updated_at=? WHERE home_id=?`).bind(now, homeId),
-    stop.stmt,
-  ]);
+  const stop = ownerStopStatements(env, homeId, now);
+  await env.DB.batch(stop.stmts);
   await drainHome(env, flux, homeId, clock);
   switch (await opOutcome(env, stop.opId)) {
     case "done": return json({ state: "stopped" });
@@ -1255,19 +1507,34 @@ async function ownerStop(env: Env, config: FluxConfig, flux: FluxClient, homeId:
  *  in the same atomic write that makes it, so a concurrent lowering can never turn it into an unstepped raise); "refused" if it would.
  *  `pinned`: an emailed approval's frozen target (Astra STEPUP-EMAIL-6 #2). The cap UPDATE applies only while the home is still exactly
  *  that target (its cap_version among it), and a guard in the SAME transaction rolls the push back with it when it did not: a newer cap
- *  change (another writer) supersedes the approval, which is refused (403 step_up_required) with the cap and the push queue untouched. */
+ *  change (another writer) supersedes the approval, which is refused (403 step_up_required) with the cap and the push queue untouched.
+ *  `withStatements`: further writes committed in the SAME batch (cap OFF's owner Stop), so they land together with the cap change or not at all. */
 async function changeCap(
   env: Env, flux: FluxClient, row: HomeRow, next: { plan: string; capMicrocents: number; custom: number; off?: 0 | 1; planDerived?: boolean }, push: boolean, clock: Clock,
-  notRaising = false, pinned: { sql: string; binds: unknown[] } | null = null,
-): Promise<boolean | "refused"> {
+  notRaising = false, pinned: { sql: string; binds: unknown[] } | null = null, withStatements: D1PreparedStatement[] = [],
+  gate: { hold?: boolean; resume?: boolean } = {}, retried = false,
+): Promise<boolean | "refused" | "resume_won"> {
   const now = clock();
   const op = opStmt(env, row.home_id, "cap", now, { json: {} });
   const guard = `cap-${crypto.randomUUID()}`;
-  const guarded = notRaising || pinned !== null;
+  // 8b (2.3, 2.3a): `gate.resume` (a stopped home coming back on) and `gate.hold` (every other ON: an active or never-keyed row) make the cap UPDATE itself refuse a row
+  // under a billing hold or in the wrong state; the write guard then aborts the WHOLE batch (cap, cap_version, spending_off, the push, the resume).
+  // DISPUTE-FENCE-ACCOUNT, THE CHOKE POINT FOR CAPS (flux-dispute-fence.ts capRaiseFence): EVERY write through here carries the fence inside its
+  // UPDATE, so while the owner's account has an open dispute NO write can raise the effective limit (spending switched on, a higher limit, a
+  // plan's higher cap, the catch-up); lowering, switching off and re-sending the stored limit pass. A plan change keeps recording the plan: its
+  // derived cap is clamped to what is stored while the dispute stands.
+  const disputeCap = next.planDerived
+    ? { sql: `CASE WHEN cap_custom=1 THEN cap_microcents WHEN ${homeDisputeOpenSql("?")} THEN MIN(cap_microcents,?) ELSE ? END`,
+      binds: [row.home_id, next.capMicrocents, next.capMicrocents] }
+    : { sql: "?", binds: [next.capMicrocents] };
+  const fence = capRaiseFence(row.home_id, disputeCap, { sql: "COALESCE(?,spending_off)", binds: [next.off ?? null] });
+  // A plan-derived cap is clamped INSIDE the write (never refused by the fence), so it needs no guard: a key row that vanished (a home deleted in flight) is a
+  // no-op for a plan change, as before the dispute fence (Opus Low 3). Every other write is guarded so a refusal is detected and answered.
+  const guarded = !next.planDerived || notRaising || pinned !== null || gate.hold === true || gate.resume === true;
   // Astra JOURNEY-A-3 #9: a plan-derived cap (a plan change) is chosen IN the write, against the customization stored at that moment: a
   // limit the owner set (or kept while switching spending off) after the plan change read its row is never overwritten nor un-customized.
-  const capSql = next.planDerived ? "cap_microcents=CASE WHEN cap_custom=1 THEN cap_microcents ELSE ? END,cap_custom=cap_custom" : "cap_microcents=?,cap_custom=?";
-  const capBinds = next.planDerived ? [next.capMicrocents] : [next.capMicrocents, next.custom];
+  const capSql = next.planDerived ? `cap_microcents=${disputeCap.sql},cap_custom=cap_custom` : "cap_microcents=?,cap_custom=?";
+  const capBinds = next.planDerived ? disputeCap.binds : [next.capMicrocents, next.custom];
   try {
     await env.DB.batch([
       // (A sign-in-only write never switches spending back on: it requires spending to be on already, and a write that sets a limit while
@@ -1277,22 +1544,47 @@ async function changeCap(
       env.DB.prepare(`UPDATE flux_home_keys SET plan=?,${capSql},spending_off=COALESCE(?,spending_off),
         spending_off_at=CASE WHEN ?=1 THEN CASE WHEN spending_off=1 THEN COALESCE(spending_off_at,?) ELSE ? END WHEN ?=0 THEN NULL ELSE spending_off_at END,
         cap_version=cap_version+1,updated_at=?
-        WHERE home_id=?${notRaising ? " AND cap_microcents>=? AND spending_off=0" : ""}${pinned ? ` AND ${pinned.sql}` : ""}`)
+        WHERE home_id=?${notRaising ? " AND cap_microcents>=? AND spending_off=0 AND state NOT IN ('stopped','stopping')" : ""}${
+          gate.resume ? " AND billing_hold=0 AND state IN ('stopped','stopping')" : gate.hold ? " AND billing_hold=0 AND state IN ('none','active')" : ""}${pinned ? ` AND ${pinned.sql}` : ""} AND ${fence.sql}`)
         .bind(next.plan, ...capBinds, next.off ?? null, next.off ?? null, now, now, next.off ?? null, now, row.home_id,
-          ...(notRaising ? [next.capMicrocents] : []), ...(pinned?.binds ?? [])),
+          ...(notRaising ? [next.capMicrocents] : []), ...(pinned?.binds ?? []), ...fence.binds),
       ...(guarded ? [env.DB.prepare("INSERT INTO cloud_write_guards VALUES (?,changes())").bind(guard)] : []),
       ...(push ? [op.stmt] : []),
+      ...withStatements,
       ...(guarded ? [env.DB.prepare("DELETE FROM cloud_write_guards WHERE id=?").bind(guard)] : []),
     ]);
   } catch (error) {
     if (!guarded) throw error;
+    const fenced = gate.hold === true || gate.resume === true;
+    const after = fenced ? await env.DB.prepare("SELECT billing_hold,state,lifecycle_version,resume_lv FROM flux_home_keys WHERE home_id=?").bind(row.home_id)
+      .first<{ billing_hold: number; state: string; lifecycle_version: number; resume_lv: number | null }>() : null;
+    // A hold is tested first: it never becomes a stepped-up retry or a refusal.
+    if (after?.billing_hold === 1) throw new HTTPError(409, "billing_hold");
     // The approval's target moved first: the approval is superseded (never absorbed into a sign-in-only answer).
     if (pinned && (await env.DB.prepare(`SELECT ${pinned.sql} AS holds`).bind(...pinned.binds).first<{ holds: number }>())?.holds !== 1) {
       throw new HTTPError(403, "step_up_required");
     }
+    // A concurrent ON already resumed this home (active at the lifecycle its resume wrote): this press changes nothing.
+    if (gate.resume && after?.state === "active" && after.resume_lv === after.lifecycle_version) return "resume_won";
+    if (gate.hold && after && (after.state === "stopped" || after.state === "stopping")) return "refused"; // a Stop landed: the caller re-reads and takes the resume branch
+    // DISPUTE-FENCE-ACCOUNT (Opus Low 2): the 409 is only for a write the fence can have refused: the key row exists and the write RAISES the effective limit.
+    // Any other failure keeps its own error (never mislabelled as a dispute). A dispute that was cleared between the refusal and this read does not
+    // fail the owner (a 500) nor the sweep: the write is simply made again, once.
+    // Release 8b merge: only a write-guard failure (the CHECK on cloud_write_guards) is read as a refusal by the fence; any other failure (a worker that fell over
+    // mid-write) keeps its own error and is never retried or labelled a dispute.
+    const guardRefused = /CHECK constraint failed/i.test(error instanceof Error ? `${error.message} ${String((error as { cause?: unknown }).cause ?? "")}` : String(error));
+    if (!notRaising && guardRefused) {
+      const cur = await env.DB.prepare("SELECT cap_microcents AS c,spending_off AS off FROM flux_home_keys WHERE home_id=?").bind(row.home_id).first<{ c: number; off: number }>();
+      const raises = cur !== null && !next.planDerived && (next.off ?? cur.off) !== 1 && next.capMicrocents > (cur.off === 1 ? 0 : cur.c);
+      if (raises) {
+        if (await homeDisputeOpen(env, row.home_id)) throw new HTTPError(409, "flux_email_unverified"); // nothing written
+        if (!retried) return changeCap(env, flux, row, next, push, clock, notRaising, pinned, withStatements, gate, true);
+      }
+    }
     if (notRaising) {
-      const current = await env.DB.prepare("SELECT cap_microcents AS c,spending_off AS off FROM flux_home_keys WHERE home_id=?").bind(row.home_id).first<{ c: number; off: number }>();
-      if (current && (current.c < next.capMicrocents || current.off === 1)) return "refused";
+      const current = await env.DB.prepare("SELECT cap_microcents AS c,spending_off AS off,state FROM flux_home_keys WHERE home_id=?").bind(row.home_id).first<{ c: number; off: number; state: string }>();
+      // A Stop that committed after the row was read also fails the write (a stopped home is a resume, not a lowering): refused, not a 500.
+      if (current && (current.c < next.capMicrocents || current.off === 1 || current.state === "stopped" || current.state === "stopping")) return "refused";
     }
     throw error;
   }
@@ -1302,13 +1594,18 @@ async function changeCap(
   return outcome === "done" || outcome === "superseded";
 }
 
+/** The lowest monthly limit the router accepts, in dollars. */
+const MIN_CAP_USD = ROUTER_MIN_CAP_MICROCENTS / 1_000_000;
+
 /** Journey A8: true when this monthly spend limit cannot raise spending (no higher than the limit stored now), so it needs sign-in only.
  *  A home with no stored limit yet has nothing to compare with: not exempt. */
 export async function fluxCapLowers(env: Env, homeId: string, capUsd: number): Promise<boolean> {
-  const row = await env.DB.prepare("SELECT cap_microcents AS c,spending_off AS off FROM flux_home_keys WHERE home_id=?").bind(homeId).first<{ c: number; off: number }>();
+  const row = await env.DB.prepare("SELECT cap_microcents AS c,spending_off AS off,state FROM flux_home_keys WHERE home_id=?").bind(homeId).first<{ c: number; off: number; state: string }>();
   if (row === null || !Number.isFinite(capUsd)) return false;
   if (capUsd === 0) return true; // switching spending off never raises it
-  return row.off === 0 && usdToMicrocents(capUsd) <= row.c; // switching it back on (from off) is a raise
+  if (capUsd < MIN_CAP_USD) return false; // below the floor is refused by the write, never a quiet "lowering"
+  // switching it back on (from off) is a raise, and so is a write that would resume a stopped home (it mints a key: same step-up as /subkey)
+  return row.off === 0 && row.state !== "stopped" && row.state !== "stopping" && usdToMicrocents(capUsd) <= row.c;
 }
 /** The worker gate's question for POST /v1/homes/{id}/flux/cap and, while Flux is off, /flux/stop (index.ts), from the buffered body: is
  *  this change exempt from step-up? Only a limit no higher than today's, on the caller's own home; anything it cannot read or resolve is "no"
@@ -1318,7 +1615,12 @@ export async function fluxCapStepUpExempt(request: Request, env: Env, auth: Cont
     const path = new URL(request.url).pathname;
     const m = HOME_ROUTE.exec(path);
     if (!m) return false;
-    if (!fluxRoutesEnabled(env)) {
+    // PRODFLUX r4 C: switched on with the real hooks, the owner's Stop and cap OFF always journal a real Stop (sent now, or once the secrets
+    // are back), so neither is ever step-up exempt, serving or not.
+    if (fluxSwitchedOnLive(env, dependencies) && request.method === "POST" && (m[2] === "/stop" || (m[2] === "/cap" && await capOffBody(request)))) return false;
+    if (!fluxServing(env)) {
+      // PRODFLUX (MurageMain): only the grants token missing: the owner's Stop really revokes (fluxRevokeOnly), so it is stepped up as when on.
+      if (fluxRevokeOnlyConfigured(env) && fluxRevocationRoute(request.method, path)) return false;
       // Flux off (Astra JOURNEY-A-10 #4, JOURNEY-A-11 #1): both spending-Off routes (cap and stop) only say Flux is unavailable and change
       // nothing, so the owner's sign-in is enough. Not signed in, or not the owner: "no" (the gate's own refusal stands).
       if (!fluxOffStubRoute(request.method, path)) return false;
@@ -1336,48 +1638,136 @@ export async function fluxCapStepUpExempt(request: Request, env: Env, auth: Cont
   } catch { return false; }
 }
 
+/** PRODFLUX r4 C: the buffered body of POST /cap is a VALID switch-off ({enabled:false} or {capUsd:0}). Anything unreadable is "no". */
+export async function capOffBody(request: Request): Promise<boolean> {
+  try {
+    const parsed = capSchema.safeParse(await request.clone().json());
+    return parsed.success && capRequest(parsed.data) === "off";
+  } catch { return false; }
+}
+/** The step-up prompt for spending off (approved copy): shown with its step_up_required refusal, at the worker gate and at the write. */
+export const SPENDING_OFF_STEP_UP_WORDS = "To turn spending off, we'll email you a code. This also pauses your bots' Flux key until you turn spending back on.";
+
 /** The monthly spend limit. Lowering it (or leaving it) needs sign-in only; raising it needs the fresh second factor (journey A8). The rule
  *  is checked here, after the worker gate, against the limit stored at the moment of the write: a sign-in-only change is written only if it
  *  does not raise the stored limit (one atomic write), so a concurrent lowering can never make it an unstepped raise. */
-async function setCap(env: Env, config: FluxConfig, flux: FluxClient, homeId: string, request: CapBody, clock: Clock,
-  steppedUp: () => Promise<boolean>): Promise<Response> {
+async function setCap(env: Env, config: FluxConfig, flux: FluxClient, ownerId: string, homeId: string, request: CapBody, clock: Clock,
+  steppedUp: () => Promise<boolean>, live = false, siteCompat = false): Promise<Response> {
   const now = clock();
   const want = capRequest(request);
+  // PRODFLUX r4 C: switched on with the real hooks, OFF journals a real Stop: the step-up is checked again here, at the write.
+  if (want === "off" && live && !await steppedUp()) throw new HTTPError(403, "step_up_required", { message: SPENDING_OFF_STEP_UP_WORDS });
+  if (typeof want === "number" && want < Math.max(config.minCapUsd, MIN_CAP_USD) && want > 0) {
+    throw new HTTPError(400, "cap_too_low", { message: `The lowest monthly limit is $${MIN_CAP_USD}. Enter $${MIN_CAP_USD} or more, or switch spending off.` });
+  }
   if (typeof want === "number" && (!Number.isFinite(want) || want < config.minCapUsd || want > config.maxCapUsd)) throw new HTTPError(400, "invalid_cap");
   const row = await ensureHomeRow(env, config, homeId, now);
   // Under an emailed approval every write applies only to the exact target it was frozen at (pinnedTargetHolds; null otherwise).
   const pinned = pinnedTargetHolds(env);
   if (want === "off") {
-    // Off keeps the owner's limit stored (for switching back on) and makes Flux enforce zero. Never a raise: sign-in is enough.
-    const synced = await changeCap(env, flux, row, { plan: row.plan, capMicrocents: row.cap_microcents, custom: 1, off: 1 }, true, clock, false, pinned);
-    return json(synced ? { capUsd: 0, enabled: false } : { capUsd: 0, enabled: false, pending: true });
+    // Off keeps the owner's limit stored (for switching back on) and makes Flux enforce zero. It journals a real Stop of the key, so with
+    // Flux switched on live it needs the step-up (checked above, and at the worker gate). Cap 0 is never sent to the router.
+    // Astra r3 HIGH: spending_off, the lifecycle change ('stopping') and the owner's Stop intent commit in ONE batch (changeCap's, with its
+    // approval guard): a failed write throws (5xx) and nothing is committed, so an OFF is never recorded without its Stop.
+    const stop = ownerStopStatements(env, homeId, now);
+    await changeCap(env, flux, row, { plan: row.plan, capMicrocents: row.cap_microcents, custom: 1, off: 1 }, false, clock, false, pinned, stop.stmts);
+    // The Stop is journaled. Sending it now may still not finish (router down, home busy, a secret missing): that is pending, and the
+    // sweep (full or revoke-only) sends it. A failure here is logged, never answered as a failed OFF.
+    let outcome: "done" | "superseded" | "failed" | "pending" = "pending";
+    try {
+      await drainHome(env, flux, homeId, clock);
+      outcome = await opOutcome(env, stop.opId);
+    } catch (error) {
+      console.warn(JSON.stringify({ message: "flux cap off: Stop journaled, sending it is left to the sweep", error: error instanceof Error ? error.name : "unknown" }));
+    }
+    // runOps records a failed send on the op (attempts, last_error) without throwing: log it too, so a failed send is never silent.
+    if (outcome === "failed") console.error(JSON.stringify({ message: "flux cap off: sending the Stop failed, the sweep sends it", homeId }));
+    return json(outcome === "done" ? { capUsd: 0, enabled: false } : { capUsd: 0, enabled: false, pending: true });
   }
   const capUsd = want === "default" ? defaultCapUsd(config, row.plan) : want;
   // Anything above the stored limit, and switching spending back on from off, needs the step-up.
   const next = { plan: row.plan, capMicrocents: usdToMicrocents(capUsd), custom: 1, off: 0 as const };
-  let synced: boolean | "refused" = row.spending_off === 0 && next.capMicrocents <= row.cap_microcents ? await changeCap(env, flux, row, next, true, clock, true, pinned) : "refused";
-  if (synced === "refused") {
-    if (!await steppedUp()) throw new HTTPError(403, "step_up_required");
-    synced = await changeCap(env, flux, row, next, true, clock, false, pinned);
+  // 8b (SPENDING-RESUME-VIA-POLLER 2.3, 2.3a). ON never mints a key here (the owner mint is closed): a stopped home is resumed in ONE hold-guarded
+  // batch and the home's own poller takes its key; every other ON is hold-fenced. A second pass re-reads the row once (a Stop or a hold that landed).
+  for (let pass = 0; pass < 2; pass++) {
+    const current = pass === 0 ? row : await ensureHomeRow(env, config, homeId, clock());
+    if (current.billing_hold === 1) throw new HTTPError(409, "billing_hold");
+    if (current.state === "stopped" || current.state === "stopping") {
+      if (await accountDisputeOpen(env, ownerId)) throw new HTTPError(409, "flux_email_unverified"); // DISPUTE-FENCE-ACCOUNT: no step-up prompt for a refused raise
+      if (!await steppedUp()) throw new HTTPError(403, "step_up_required");
+      if (!(fluxResumeViaPoller(env) && siteCompat)) {
+        throw new HTTPError(410, "resume_unavailable", { message: "Spending cannot come back on just now. Please try again in a few minutes." });
+      }
+      const resumed = await changeCap(env, flux, current, next, false, clock, false, pinned, resumeStatements(env, homeId, clock()), { resume: true });
+      // "resume_won": a concurrent ON resumed this home first and nothing more was written. 8b fix r3 (Grok Low): the answer carries the cap
+      // stored by that resume, read after the batch, never this request's.
+      const stored = resumed === "resume_won"
+        ? await env.DB.prepare("SELECT cap_microcents AS c FROM flux_home_keys WHERE home_id=?").bind(homeId).first<{ c: number }>() : null;
+      return json({ capUsd: stored ? microcentsToUsd(stored.c) : capUsd, enabled: true, resume: "pending" });
+    }
+    // 8b fix r1 (Astra M4): EVERY ON write is hold-fenced, a never-keyed row (state none) included: a billing Stop landing after this read makes the
+    // cap UPDATE change 0 rows and the guard aborts the whole batch (cap, cap_version, the cap op), answered 409 billing_hold.
+    const fence = { hold: true };
+    let synced: boolean | "refused" | "resume_won" = current.spending_off === 0 && next.capMicrocents <= current.cap_microcents
+      ? await changeCap(env, flux, current, next, true, clock, true, pinned, [], fence) : "refused";
+    if (synced === "refused") {
+      if (await accountDisputeOpen(env, ownerId)) throw new HTTPError(409, "flux_email_unverified"); // DISPUTE-FENCE-ACCOUNT: no step-up prompt for a refused raise
+      if (!await steppedUp()) throw new HTTPError(403, "step_up_required");
+      // The stepped-up retry uses the row as it stands now, never the stale one.
+      const fresh = await ensureHomeRow(env, config, homeId, clock());
+      if (fresh.billing_hold === 1) throw new HTTPError(409, "billing_hold");
+      if (fresh.state === "stopped" || fresh.state === "stopping") {
+        if (pass === 0) continue; // a Stop landed meanwhile: take the resume branch once
+        throw new HTTPError(409, "stale_lifecycle");
+      }
+      synced = await changeCap(env, flux, fresh, next, true, clock, false, pinned, [], { hold: true });
+      if (synced === "refused") { if (pass === 0) continue; throw new HTTPError(409, "stale_lifecycle"); }
+    }
+    return json({ capUsd, enabled: true, ...(synced === true ? {} : { pending: true }) });
   }
-  return json(synced ? { capUsd, enabled: true } : { capUsd, enabled: true, pending: true });
+  throw new HTTPError(409, "stale_lifecycle");
+}
+
+/** 8b (2.3): the resume itself, appended to the cap UPDATE in the same batch. Everything is hold-guarded: a row changed by nothing (a hold landed, a
+ *  concurrent ON won) aborts the whole batch through the write guard. A queued Stop (`stopping`) stays in the journal and is sent first. */
+function resumeStatements(env: Env, homeId: string, now: number): D1PreparedStatement[] {
+  const g2 = `resume-${crypto.randomUUID()}`;
+  return [
+    env.DB.prepare(`UPDATE flux_home_keys SET state='active',lifecycle_version=lifecycle_version+1,key_expires_at=NULL,
+        pending_op_id=NULL,pending_generation=NULL,pending_expires_at=NULL,pending_lifecycle_version=NULL,
+        resume_lv=lifecycle_version+1,resume_from_generation=generation,resume_at=?,updated_at=?
+      WHERE home_id=? AND state IN ('stopped','stopping') AND billing_hold=0 AND spending_off=0`).bind(now, now, homeId),
+    env.DB.prepare("INSERT INTO cloud_write_guards VALUES (?,changes())").bind(g2),
+    env.DB.prepare("DELETE FROM flux_first_key_retry WHERE home_id=? AND hold IS NULL").bind(homeId), // typed holds stay
+    env.DB.prepare("DELETE FROM cloud_write_guards WHERE id=?").bind(g2),
+  ];
 }
 
 /** Astra JOURNEY-A-4 #6: a switch-off the router has not confirmed for this long is escalated: ops alert (sweepFlux) and a support action. */
 export const SPENDING_OFF_ESCALATE_MS = 60 * 60_000;
 export const SPENDING_OFF_ALERT = "flux.spending_off_unconfirmed";
 const SPENDING_OFF_SUPPORT_TEXT = "If you need Flux spending stopped right now, contact support and we will stop it for you.";
+/** The router's state words are not part of the answer: ok | capped | unfunded | paused | none | unavailable. */
+function publicFluxState(state: string | undefined): "ok" | "capped" | "unfunded" | "paused" | "none" {
+  if (state === undefined) return "none";
+  return state === "ok" || state === "capped" || state === "unfunded" ? state : "paused";
+}
+
+/** What a customer reads when spending is off: it is off, and how to turn it on. No key, router or error words. */
+export const SPENDING_OFF_WORDS = `Spending is switched off on this home. To turn it on, set a monthly limit of $${MIN_CAP_USD} or more.`;
+
 function describe(state: string, flux: FluxHomeStatus | null, capUsd: number, offPending = false, offOverdue = false): { paused: boolean; message: string | null } {
   const signIns = "Your Claude and ChatGPT sign-ins keep working.";
-  if (state === "none") return { paused: true, message: "Flux is not set up on this home yet. " + signIns };
-  if (state === "stopped" || state === "stopping") return { paused: true, message: `Flux use on this home is stopped. ${signIns}` };
-  // Astra JOURNEY-A-3 #8: requested, not yet confirmed by the router: never "switched off" while Flux still enforces a spending limit.
+  // Astra JOURNEY-A-3 #8: requested, not yet confirmed: never "switched off" while spending can still happen.
   if (offPending) {
     // Astra JOURNEY-A-4 #6: still unconfirmed after SPENDING_OFF_ESCALATE_MS: our team is alerted, and the customer is given a way to act now.
     const tail = offOverdue ? ` We have been trying to confirm this for over an hour and our team has been alerted. ${SPENDING_OFF_SUPPORT_TEXT}` : "";
-    return { paused: false, message: `Flux spending is switching off on this home (pending). Until Flux confirms it, the current $${capUsd.toFixed(2)} monthly limit still applies.${tail} ${signIns}` };
+    return { paused: false, message: `Spending is switching off on this home (pending). Until that is confirmed, the current $${capUsd.toFixed(2)} monthly limit still applies.${tail} ${signIns}` };
   }
-  if (capUsd === 0) return { paused: true, message: `Flux spending is switched off on this home. Switch it back on to use Flux models again. ${signIns}` };
+  if (capUsd === 0) return { paused: true, message: `${SPENDING_OFF_WORDS} ${signIns}` };
+  if (state === "none") return { paused: true, message: "Flux is not set up on this home yet. " + signIns };
+  if (state === "stopped" || state === "stopping") return { paused: true, message: `Flux use on this home is stopped. ${signIns}` };
+  if (flux?.state === "unfunded") return { paused: true, message: `Your credits are used up or not added yet. Add credits to keep going. ${signIns}` };
   if (flux === null) return { paused: false, message: null };
   if (flux.state === "capped") {
     return { paused: true, message: `This home has used its $${capUsd.toFixed(2)} monthly Flux limit. Flux models are paused until it resets or you raise the limit. ${signIns}` };
@@ -1385,7 +1775,7 @@ function describe(state: string, flux: FluxHomeStatus | null, capUsd: number, of
   // Every other refusal state the router reports (stopped, revoked, ip_refused, unavailable,
   // state_lost, invalid, unfunded, fenced, ...) pauses the home. Only "ok" does not.
   if (flux.state !== "ok") {
-    return { paused: true, message: `Flux models are paused on this home right now. They resume by themselves when the cause clears. ${signIns}` };
+    return { paused: true, message: `Spending is paused on this home right now. It resumes by itself when the cause clears. ${signIns}` };
   }
   if (flux.accountSpendableMicrocents !== null && flux.accountSpendableMicrocents !== undefined
     && flux.accountSpendableMicrocents <= 0 && flux.accountAutoTopUpEnabled === false) {
@@ -1399,11 +1789,11 @@ function describe(state: string, flux: FluxHomeStatus | null, capUsd: number, of
  *  queued or running. */
 async function recordSpendingDrift(env: Env, flux: FluxClient, homeId: string, row: HomeRow, observedCap: number, now: number): Promise<boolean> {
   const guard = crypto.randomUUID();
-  const op = opStmt(env, homeId, "cap", now, { json: {} });
+  const op = stopOpStmt(env, homeId, now, "stop");
   try {
     await env.DB.batch([
-      env.DB.prepare(`UPDATE flux_home_keys SET spending_off_at=?,cap_version=cap_version+1,updated_at=? WHERE home_id=? AND spending_off=1
-        AND spending_off_at IS ? AND NOT EXISTS (SELECT 1 FROM flux_home_ops o WHERE o.home_id=? AND o.kind='cap' AND o.state IN ('queued','running'))`)
+      env.DB.prepare(`UPDATE flux_home_keys SET spending_off_at=?,updated_at=? WHERE home_id=? AND spending_off=1
+        AND spending_off_at IS ? AND NOT EXISTS (SELECT 1 FROM flux_home_ops o WHERE o.home_id=? AND o.kind IN ('cap','stop') AND o.state IN ('queued','running'))`)
         .bind(now, now, homeId, row.spending_off_at, homeId),
       env.DB.prepare("INSERT INTO cloud_write_guards VALUES (?,changes())").bind(guard),
       op.stmt,
@@ -1429,16 +1819,17 @@ async function homeStatus(env: Env, config: FluxConfig, flux: FluxClient, homeId
   // then the status shows the live cap (or, Flux unreachable, the last limit Flux was given) and says the switch-off is pending.
   const off = row.spending_off === 1;
   const routerCap = live?.capMicrocents;
+  const routerLive = live?.state === "ok" || live?.state === "capped"; // Stage A: an off home must be revoked at the router, not at cap 0
   // Astra JOURNEY-A-5 #7: spending is off here but the router reports a POSITIVE limit and no switch-off is queued any more (it was
   // confirmed, or its op finished): enforcement drift. Zero is enforced again (a new cap op, at a new cap version so the router never
   // treats it as stale), the switch-off is pending again from now (spending_off_at, so the status says so and its escalation is measured
   // from the drift), and a NEW incident is raised at once (its id carries the new spending_off_at: a resolved earlier one is never in the
   // way), resolved by the sweep only once that op lands. All in one batch, guarded so two concurrent reads requeue once.
-  if (off && typeof routerCap === "number" && routerCap > 0) {
-    try { if (await recordSpendingDrift(env, flux, homeId, row, routerCap, now)) row = await ensureHomeRow(env, config, homeId, now); }
+  if (off && routerLive && row.state === "stopped") {
+    try { if (await recordSpendingDrift(env, flux, homeId, row, routerCap ?? 0, now)) row = await ensureHomeRow(env, config, homeId, now); }
     catch { /* the next status read (or the sweep's retries) tries again */ }
   }
-  const offConfirmed = off && routerCap === 0;
+  const offConfirmed = off && row.state === "stopped" && fluxReachable && !routerLive;
   const offPending = off && !offConfirmed;
   const capUsd = offConfirmed ? 0 : microcentsToUsd(routerCap ?? row.cap_microcents);
   // Astra JOURNEY-A-4 #6: how long the switch-off has waited for the router, and, past SPENDING_OFF_ESCALATE_MS, what the customer can do.
@@ -1446,9 +1837,17 @@ async function homeStatus(env: Env, config: FluxConfig, flux: FluxClient, homeId
   const pendingForMs = pendingSince === null ? null : Math.max(0, now - pendingSince);
   const offOverdue = pendingForMs !== null && pendingForMs >= SPENDING_OFF_ESCALATE_MS;
   const verdict = describe(row.state, live, capUsd, offPending, offOverdue);
+  // 8b (2.6): what the owner's screen may say about spending, from the row and the router status read above, plus ONE point read for the home's heartbeat.
+  const beat = await env.DB.prepare("SELECT heartbeat_at FROM cloud_homes WHERE id=?").bind(homeId).first<{ heartbeat_at: number | null }>();
+  const homeOnline = beat === null ? null : beat.heartbeat_at !== null && beat.heartbeat_at + 2 * LEASE_FRESH_MS > now;
+  const stopConfirmed = row.state === "stopped" && fluxReachable && !routerLive;
+  const isOn = row.state === "active" && row.acked_lifecycle_version === row.lifecycle_version && row.acked_generation === row.generation
+    && row.gen_floor === row.generation && row.key_expires_at !== null && row.key_expires_at > now;
+  const delivery = row.billing_hold === 1 ? "held" : off ? "off" : isOn ? "on"
+    : row.state === "stopped" || row.state === "stopping" ? (stopConfirmed ? "stopped" : "stopping") : "pending";
   return json({
     state: row.state,
-    flux: fluxReachable ? (live?.state ?? "none") : "unavailable",
+    flux: fluxReachable ? publicFluxState(live?.state) : "unavailable",
     plan: row.plan,
     includedCreditsUsd: config.plans[row.plan]?.creditsUsd ?? null,
     capUsd,
@@ -1460,6 +1859,8 @@ async function homeStatus(env: Env, config: FluxConfig, flux: FluxClient, homeId
     spentUsd: live?.spentMicrocents === undefined ? null : microcentsToUsd(live.spentMicrocents),
     resetsAt: live?.resetsAt ?? null,
     keyExpiresAt: row.key_expires_at,
+    spendingDelivery: { state: delivery, stopConfirmed, homeOnline,
+      pendingSince: delivery === "pending" ? (row.resume_lv !== null && row.resume_lv === row.lifecycle_version ? row.resume_at : row.updated_at) : null },
     accountSpendableUsd: live?.accountSpendableMicrocents == null ? null : microcentsToUsd(live.accountSpendableMicrocents),
     autoTopUpOn: live?.accountAutoTopUpEnabled ?? null,
     paused: fluxReachable ? verdict.paused : true,
@@ -1525,7 +1926,10 @@ async function sendGrant(env: Env, flux: FluxClient, grantId: string, clock: Clo
   if (row.status !== "pending") return row.status;
   // THE FLUX-OFF GATE (fluxOn): nothing is claimed and nothing is sent; the grant stays pending exactly as it is (journal only).
   if (!live) {
-    if (fluxRoutesEnabled(env)) await fluxPendingCapabilityAlert(env, row.home_id, now, { call: "grant" });
+    if (fluxRoutesEnabled(env)) {
+      try { await fluxCredentialsAlert(env, "sendGrant", now); } catch { /* advisory: the grant stays pending, nothing counted */ }
+      await fluxPendingCapabilityAlert(env, row.home_id, now, { call: "grant" });
+    }
     return "pending";
   }
   if (row.expires_at <= now) { // Undelivered past its original expiry: never delivered (its value is gone at Flux too: R6).
@@ -1569,12 +1973,30 @@ async function sendGrant(env: Env, flux: FluxClient, grantId: string, clock: Clo
     ]);
     return grantStatus(env, grantId);
   }
+  // DISPUTE-FENCE-ACCOUNT (Opus Low 1): an open dispute holds the grant, and says so, so ops does not chase a ghost. No attempt is burned. The
+  // claim below and the grant allocation re-check the dispute inside their own statements (this read only names the reason early).
+  if (owner !== null && await accountDisputeOpen(env, owner)) {
+    await env.DB.batch([
+      env.DB.prepare("UPDATE flux_grants SET last_error=?,last_attempt_at=? WHERE grant_id=? AND status='pending' AND claim_id IS NULL")
+        .bind(GRANT_HELD + "account_disputed", now, grantId),
+      ...heldAlertStmts(env, row.home_id, now),
+    ]);
+    return grantStatus(env, grantId);
+  }
+  // PRODFLUX (Astra HIGH 2): BEFORE the claim below (which counts an attempt): a missing grants credential holds the grant as it is, with
+  // ONE alert. Nothing is claimed, no attempt is consumed, and the obligation stays pending for the sweep once the secret is put.
+  if (fluxCredentialsMissing(env) !== null) {
+    try { await fluxCredentialsAlert(env, "sendGrant", now); } catch { /* advisory: the grant stays pending, nothing counted */ }
+    await fluxPendingCapabilityAlert(env, row.home_id, now, { call: "grant", reason: "credentials" });
+    return "pending";
+  }
   const wasHeld = (row.last_error ?? "").startsWith(GRANT_HELD);
   const eligible = `g.status='pending' AND g.recipient_flux_account_id=?
     AND (g.redeliver IS 'due' OR NOT EXISTS (SELECT 1 FROM flux_home_keys h WHERE h.home_id=g.home_id AND h.billing_hold=1))
     AND EXISTS (SELECT 1 FROM flux_links l WHERE l.owner_user_id=? AND l.flux_account_id=? AND l.fenced=0)
-    AND a.sized=1 AND a.desired_microcents=a.amount_microcents AND a.router_state IN ('none','maybe') AND NOT ${DISPUTE_OPEN_HOLD}`;
-  const claim = await claimDispatch(env.DB, { grantId, kind: "deliver", eligible, binds: [recipient, owner, recipient], now: clock(),
+    AND a.sized=1 AND a.desired_microcents=a.amount_microcents AND a.router_state IN ('none','maybe') AND NOT ${DISPUTE_OPEN_HOLD}
+    AND NOT ${accountDisputeOpenSql("?")}`; // DISPUTE-FENCE-ACCOUNT: an open account-level email-proof dispute holds delivery (the grant stays pending)
+  const claim = await claimDispatch(env.DB, { grantId, kind: "deliver", eligible, binds: [recipient, owner, recipient, owner], now: clock(),
     extra: (token) => [env.DB.prepare(`UPDATE flux_grants SET claim_id=?1,claimed_at=(SELECT claimed_at FROM flux_grant_dispatches WHERE dispatch_id=?1),
       attempts=attempts+1,last_attempt_at=?2 WHERE grant_id=?3 AND EXISTS (SELECT 1 FROM flux_grant_dispatches WHERE dispatch_id=?1 AND state='open')`)
       .bind(token, now, grantId)] });
@@ -1610,7 +2032,13 @@ async function sendGrant(env: Env, flux: FluxClient, grantId: string, clock: Clo
   }
   const owns = "EXISTS (SELECT 1 FROM flux_grant_dispatches WHERE dispatch_id=? AND state='open')";
   const done = clock();
-  const grantStmts = result.kind === "applied"
+  // DISPUTE-FENCE-ACCOUNT (Astra M1): a dispute that lands between the claim and the grant allocation refuses at the allocation with nothing sent. That is a HOLD,
+  // not a failed try: the attempt this claim counted is taken back, the grant stays pending, and it says why. The sweep delivers it after the clear.
+  const disputeHold = result.kind === "refused" && result.code === "not_dispatched:account_disputed";
+  const grantStmts = disputeHold
+    ? [env.DB.prepare(`UPDATE flux_grants SET claim_id=NULL,last_error=?,attempts=MAX(attempts-1,0) WHERE grant_id=? AND status='pending' AND ${owns}`)
+        .bind(GRANT_HELD + "account_disputed", grantId, claim.token)]
+    : result.kind === "applied"
     ? [env.DB.prepare(`UPDATE flux_grants SET claim_id=NULL,last_error=NULL,status=CASE WHEN status='pending' THEN 'done' ELSE status END,delivered_at=?,redeliver=NULL
         WHERE grant_id=? AND ${owns}`).bind(done, grantId, claim.token)]
     : result.kind === "tombstoned"
@@ -1622,14 +2050,36 @@ async function sendGrant(env: Env, flux: FluxClient, grantId: string, clock: Clo
           WHERE grant_id=? AND ${owns}`).bind(result.code, attempts >= GRANT_MAX_ATTEMPTS || result.kind === "superseded"
             || result.code === "flux_409_account_not_fresh" ? 1 : 0, grantId, claim.token)];
   await completeDelivery(env.DB, { grantId, token: claim.token, result, now: done, grantStmts });
+  if (disputeHold) {
+    await env.DB.batch(heldAlertStmts(env, row.home_id, done));
+    return grantStatus(env, grantId);
+  }
   if (result.kind === "refused" && result.code === "flux_409_account_not_fresh") {
     await env.DB.prepare(`INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at,subject) VALUES (?,?,'flux.account_not_fresh','high',?,?,?)
       ON CONFLICT DO NOTHING`).bind(`alert:flux_account_not_fresh:${grantId}`, row.home_id, JSON.stringify({ grantId,
         rule: "Flux refused the grant: the recipient account is not fresh. Held, never retried automatically; a person resolves it and re-queues the grant" }),
         done, grantId).run();
   }
+  // The 20th try failed and the grant is now 'failed': the customer has paid with no credit and nothing will retry it. ONE page per grant
+  // (credit.undelivered), its id fixed by the grant so a repeat never raises another. An account Flux called not fresh has its own alert.
+  if ((result.kind === "ambiguous" || result.kind === "refused") && result.code !== "flux_409_account_not_fresh" && attempts >= GRANT_MAX_ATTEMPTS
+    && (await grantStatus(env, grantId)) === "failed") {
+    await env.DB.prepare(`INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at,subject) VALUES (?,?,'credit.grant_exhausted','high',?,?,?)
+      ON CONFLICT DO NOTHING`).bind(`alert:grant_exhausted:${grantId}`, row.home_id, JSON.stringify({ grantId, attempts, lastError: result.code,
+        rule: "The grant's automatic delivery tries ran out: the customer has paid and has no credit. Deliver it by hand or refund the payment" }), done, grantId).run();
+  }
   if (wasHeld) await syncHeldAlert(env, row.home_id, done);
   return grantStatus(env, grantId);
+}
+
+/** After a home's FIRST key: its pending grants (the plan grant a paid customer is waiting for) are delivered now rather than at the next sweep.
+ *  Each is isolated: sendGrant's own refusals stay with the grant, and one grant failing never stops the next or reaches the caller. */
+async function grantPendingNow(env: Env, flux: FluxClient, homeId: string, clock: Clock, live: boolean): Promise<void> {
+  const pending = await env.DB.prepare("SELECT grant_id FROM flux_grants WHERE home_id=? AND status='pending' ORDER BY created_at LIMIT 5")
+    .bind(homeId).all<{ grant_id: string }>();
+  for (const { grant_id } of pending.results) {
+    try { await sendGrant(env, flux, grant_id, clock, live); } catch { /* the sweep retries it */ }
+  }
 }
 
 /** The ledger's REVOKE of one grant (b4-flux-ledger.ts L6): only when its payment was FULLY returned (D = 0, from the refunds and lost
@@ -1822,6 +2272,65 @@ export async function changePlan(
   return { plan: input.plan, capUsd: microcentsToUsd(stored?.c ?? capMicrocents) };
 }
 
+export type CapRaise = "raised" | "repaired" | "not_needed" | "skipped" | "owner_cap" | "raced" | "unknown";
+/** Cap catch-up: homes are re-read at most this often, 25 per sweep, so a flush of the router's cap store is repaired within about an hour. */
+export const CAP_CATCHUP_EVERY_MS = 30 * 60_000;
+export const CAP_CATCHUP_HOMES = 25;
+/**
+ * Credit a home can spend must not sit behind a cap that is lower than what its balance allows. Reads the router (status), then raises the
+ * stored cap to spent + spendable under a guard that holds only while the home is exactly as read (same cap_version and customization, spending
+ * on, no billing hold, active): an owner cap, an owner stop and spending off are never overridden, and a change in between is "raced" and left to
+ * the next pass. An owner-set cap is never raised (reported "owner_cap"), but when the router reports a lower cap than we store (a flush, a restore)
+ * the stored cap is pushed again at a higher cap_version, which is a repair and not an override. The balance read is not assumed fresh.
+ */
+export async function raiseCapToCover(env: Env, homeId: string, deps: Pick<FluxDependencies, "fluxClient" | "billingFlux" | "now"> = {}): Promise<CapRaise> {
+  const clock: Clock = deps.now ?? Date.now;
+  const row = await env.DB.prepare("SELECT * FROM flux_home_keys WHERE home_id=?").bind(homeId).first<HomeRow>();
+  if (!row || row.state !== "active" || row.spending_off === 1 || row.billing_hold === 1) return "skipped";
+  const client = b4RouterClient(env, deps);
+  let live: FluxHomeStatus;
+  try { live = await client.status(homeId); } catch { return "unknown"; }
+  const spendable = live.accountSpendableMicrocents;
+  if (typeof spendable !== "number" || typeof live.spentMicrocents !== "number") return "unknown";
+  const need = live.spentMicrocents + spendable;
+  const raising = need > row.cap_microcents;
+  if (raising && row.cap_custom === 1) {
+    const stale = typeof live.capMicrocents === "number" && live.capMicrocents < row.cap_microcents;
+    if (!stale) return "owner_cap";
+  }
+  const repair = !raising || row.cap_custom === 1;
+  if (repair && !(typeof live.capMicrocents === "number" && live.capMicrocents < row.cap_microcents)) return "not_needed";
+  const target = repair ? row.cap_microcents : need;
+  const pinned = {
+    sql: "(SELECT COUNT(*) FROM flux_home_keys f WHERE f.home_id=? AND f.cap_version=? AND f.cap_custom=? AND f.spending_off=0 AND f.billing_hold=0 AND f.state='active')=1",
+    binds: [homeId, row.cap_version, row.cap_custom],
+  };
+  try {
+    await changeCap(env, client, row, { plan: row.plan, capMicrocents: target, custom: row.cap_custom }, true, clock, false, pinned);
+  } catch (e) {
+    if (e instanceof HTTPError && e.status === 403) return "raced";
+    if (e instanceof HTTPError && e.status === 409 && e.code === "flux_email_unverified") return "skipped"; // DISPUTE-FENCE-ACCOUNT: no automatic raise while disputed
+    throw e;
+  }
+  return repair ? "repaired" : "raised";
+}
+/** One bounded pass of the cap catch-up over every home with an active key: least recently checked first, stamped before the router is asked. */
+export async function sweepCapCatchUp(env: Env, deps: Pick<FluxDependencies, "fluxClient" | "billingFlux" | "now"> = {}): Promise<number> {
+  const clock: Clock = deps.now ?? Date.now;
+  const now = clock();
+  const homes = await env.DB.prepare(`SELECT home_id FROM flux_home_keys WHERE state='active' AND spending_off=0 AND billing_hold=0
+    AND COALESCE(cap_checked_at,0)<=? ORDER BY COALESCE(cap_checked_at,0),home_id LIMIT ?`).bind(now - CAP_CATCHUP_EVERY_MS, CAP_CATCHUP_HOMES).all<{ home_id: string }>();
+  let changed = 0;
+  for (const h of homes.results) {
+    try {
+      await env.DB.prepare("UPDATE flux_home_keys SET cap_checked_at=? WHERE home_id=?").bind(now, h.home_id).run();
+      const r = await raiseCapToCover(env, h.home_id, deps);
+      if (r === "raised" || r === "repaired") changed++;
+    } catch { /* isolated: checked again on its next turn */ }
+  }
+  return changed;
+}
+
 /** A grant whose payment is disputed (row `flux_grants`): its own invoice has an OPEN or LOST dispute, or its invoice belongs (B5's grant
  *  claim, credit_grants) to a contract with an OPEN dispute. A pending grant cancelled while this holds is marked redeliver='held'. */
 const disputeHeldGrant = `EXISTS (SELECT 1 FROM payment_disputes pd WHERE pd.home_id=flux_grants.home_id AND (
@@ -1837,7 +2346,7 @@ export const DISPUTE_HELD_GRANT = disputeHeldGrant;
 export async function stopForBilling(
   env: Env, homeId: string, deps: Pick<FluxDependencies, "fluxClient" | "billingFlux" | "now"> = {},
   options: { invoiceId?: string; keepGrants?: boolean; line?: string | null } = {},
-): Promise<{ state: string }> {
+): Promise<{ state: string; opId: string }> {
   const config = readFluxConfig(env);
   const clock: Clock = deps.now ?? Date.now;
   const now = clock();
@@ -1872,8 +2381,9 @@ export async function stopForBilling(
   try { await sendHomeRevokes(env, flux, homeId, clock, fluxOn(env, deps)); } catch { /* the cron retries */ }
   const outcome = await opOutcome(env, stop.opId);
   if (outcome === "failed") throw new HTTPError(502, "flux_unavailable");
-  if (outcome === "pending") return { state: "stopping" }; // queued behind the op that holds the home; recorded, it finishes
-  return { state: "stopped" };
+  // CH1 P2: opId is this Stop's own operation identity, so a caller that is told "stopping" (queued) can read ITS terminal outcome later.
+  if (outcome === "pending") return { state: "stopping", opId: stop.opId }; // queued behind the op that holds the home; recorded, it finishes
+  return { state: "stopped", opId: stop.opId };
 }
 
 /** Cron: finish every home's open ops (Stops, cap pushes, key compensations), deliver held grants,
@@ -1881,11 +2391,22 @@ export async function stopForBilling(
 export async function sweepFlux(env: Env, deps: Pick<FluxDependencies, "fluxClient" | "billingFlux" | "now"> = {}): Promise<void> {
   const clock: Clock = deps.now ?? Date.now;
   const now = clock();
+  // PRODFLUX r4 D: both Flux secrets set again: the two token-absent pages end here (sweepMonitoring sends the resolve notice, once).
+  if (fluxCredentialsMissing(env) === null) {
+    try {
+      await env.DB.prepare("UPDATE cloud_alerts SET resolved_at=?,resolve_notice_due=1 WHERE id IN (?,?) AND resolved_at IS NULL")
+        .bind(now, "alert:credit.flux_service_token_absent", "alert:credit.grants_token_absent").run();
+    } catch { /* retried next sweep */ }
+  }
   // THE FLUX-OFF GATE (Astra INTEGRATED-10, fluxOn): off, the sweep keeps only the ledger's ACCOUNTING (causes, desired, debt and its alerts:
   // refunds, disputes and cancellations still change what is owed), bounded by the cursor. No claim, no attempt, no router call, no
   // delivery-state change, no op drained (Astra B4-PORT P2 / INTEGRATED-1 #7).
   if (!fluxOn(env, deps)) {
     try { await ledgerAccounting(env, now, false, []); } catch { /* retried next sweep */ }
+    // PRODFLUX (Astra HIGH 2): switched on with a Flux credential missing: nothing is claimed or sent, ONE alert names the secret.
+    try { await fluxCredentialsAlert(env, "sweepFlux", now); } catch { /* advisory */ }
+    // PRODFLUX (MurageMain): only the grants token missing: the revocations (Stops, compensations) are still drained, nothing else.
+    if (fluxRevokeOnly(env, deps)) { await sweepRevocations(env, deps, clock); return; }
     if (!fluxSweepConfigured(env)) return;
     // Astra INTEGRATED-1 #7: the launch gate closed (stub hooks or no capability): every open operation and pending grant stays as it is,
     // and each home holding such work is alerted (pending capability).
@@ -1910,29 +2431,9 @@ export async function sweepFlux(env: Env, deps: Pick<FluxDependencies, "fluxClie
   const otherTake = Math.min(otherHomes.length, Math.max(SWEEP_RESERVED, SWEEP_HOMES - billingHomes.length));
   const picked = [...billingHomes.slice(0, SWEEP_HOMES - otherTake), ...otherHomes.slice(0, otherTake)];
   const homes = { results: picked.map((home_id) => ({ home_id })) };
-  // Astra JOURNEY-A-6 #6: switched-off homes are polled for cap drift in turn, whether or not they have an operation open: the ones least
-  // recently checked (spending_off_checked_at, stamped BEFORE the router is asked, whatever it answers) first, each at most every
-  // SPENDING_OFF_POLL_MS. A positive router limit with no cap op queued is drift: zero enforcement is requeued at a new cap version and a new
-  // incident raised (recordSpendingDrift), as a status read would. Run before the drains, so a home whose zero is still queued is skipped.
-  try {
-    // The batch follows the size of the switched-off cohort (spendingOffPollBatch): every home is re-read within spendingOffMaxStalenessMs.
-    const cohort = (await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_keys WHERE spending_off=1 AND state<>'none'").first<{ n: number }>())?.n ?? 0;
-    const off = await env.DB.prepare(`SELECT k.home_id,k.spending_off_at FROM flux_home_keys k WHERE k.spending_off=1 AND k.state<>'none'
-        AND COALESCE(k.spending_off_checked_at,0)<=? AND (k.op_holder IS NULL OR k.op_lease_until<?)
-        AND NOT EXISTS (SELECT 1 FROM flux_home_ops o WHERE o.home_id=k.home_id AND o.kind='cap' AND o.state IN ('queued','running'))
-      ORDER BY COALESCE(k.spending_off_checked_at,0),k.home_id LIMIT ?`).bind(now - SPENDING_OFF_POLL_MS, now, spendingOffPollBatch(cohort))
-      .all<{ home_id: string; spending_off_at: number | null }>();
-    for (const h of off.results) {
-      try {
-        await env.DB.prepare("UPDATE flux_home_keys SET spending_off_checked_at=? WHERE home_id=?").bind(now, h.home_id).run();
-        const live = await flux.status(h.home_id);
-        if (typeof live?.capMicrocents === "number" && live.capMicrocents > 0) {
-          const row = await env.DB.prepare("SELECT * FROM flux_home_keys WHERE home_id=?").bind(h.home_id).first<HomeRow>();
-          if (row && row.spending_off === 1) await recordSpendingDrift(env, flux, h.home_id, row, live.capMicrocents, now);
-        }
-      } catch { /* isolated: polled again on its turn */ }
-    }
-  } catch { /* retried next sweep */ }
+  await sweepSpendingOff(env, config, flux, clock, now, false);
+  await sweepStoppedLive(env, flux, clock, now);
+  await sweepResumeUndelivered(env, now);
   for (const { home_id } of homes.results) {
     try { await drainHome(env, flux, home_id, clock); } catch { /* isolated: retried after its backoff */ }
   }
@@ -1943,14 +2444,14 @@ export async function sweepFlux(env: Env, deps: Pick<FluxDependencies, "fluxClie
       env.DB.prepare(`INSERT OR IGNORE INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at)
         SELECT 'alert:spending_off:'||k.home_id||':'||k.spending_off_at,k.home_id,'${SPENDING_OFF_ALERT}','high',
           json_object('requestedAt',k.spending_off_at,'pendingForMs',?1-k.spending_off_at,
-            'lastError',(SELECT o.last_error FROM flux_home_ops o WHERE o.home_id=k.home_id AND o.kind='cap' AND o.state IN ('queued','running') ORDER BY o.seq DESC LIMIT 1)),?1
+            'lastError',(SELECT o.last_error FROM flux_home_ops o WHERE o.home_id=k.home_id AND o.kind IN ('cap','stop') AND o.state IN ('queued','running') ORDER BY o.seq DESC LIMIT 1)),?1
         FROM flux_home_keys k WHERE k.spending_off=1 AND k.spending_off_at IS NOT NULL AND k.spending_off_at<=?2
-          AND EXISTS (SELECT 1 FROM flux_home_ops o WHERE o.home_id=k.home_id AND o.kind='cap' AND o.state IN ('queued','running'))
+          AND EXISTS (SELECT 1 FROM flux_home_ops o WHERE o.home_id=k.home_id AND o.kind IN ('cap','stop') AND o.state IN ('queued','running'))
         LIMIT 50`).bind(now, now - SPENDING_OFF_ESCALATE_MS),
       env.DB.prepare(`UPDATE cloud_alerts SET resolved_at=?1 WHERE kind='${SPENDING_OFF_ALERT}' AND resolved_at IS NULL
         AND NOT EXISTS (SELECT 1 FROM flux_home_keys k WHERE k.home_id=cloud_alerts.home_id AND k.spending_off=1
           AND 'alert:spending_off:'||k.home_id||':'||k.spending_off_at=cloud_alerts.id
-          AND EXISTS (SELECT 1 FROM flux_home_ops o WHERE o.home_id=k.home_id AND o.kind='cap' AND o.state IN ('queued','running')))`).bind(now),
+          AND EXISTS (SELECT 1 FROM flux_home_ops o WHERE o.home_id=k.home_id AND o.kind IN ('cap','stop') AND o.state IN ('queued','running')))`).bind(now),
     ]);
   } catch { /* retried next sweep */ }
   // A fenced link whose Stops are all done is finalized here too, whatever interrupted its last Stop.
@@ -1973,6 +2474,9 @@ export async function sweepFlux(env: Env, deps: Pick<FluxDependencies, "fluxClie
   }
   await env.DB.prepare("DELETE FROM flux_mint_ops WHERE created_at<?").bind(now - 60 * 86_400_000).run();
   try { await releaseDisputeHeld(env, now); } catch { /* retried next sweep */ }
+  // Cap catch-up: credit bought, here or at the router's own billing page (the route for buyers outside the auto top-up path), or granted must
+  // not sit behind a lower cap, and a cap lost in a flush is pushed again. Runs with the Flux routes, not with auto top-up charging.
+  if (fluxRoutesEnabled(env)) { try { await sweepCapCatchUp(env, deps); } catch { /* retried next sweep */ } }
   // Lane H1 (fence F4): grants whose last fenced request has an unknown, superseded or mismatched outcome are read back (GET state).
   try { await reconcileFences(env.DB, async (id) => (flux.grantState ? flux.grantState(id) : null)); } catch { /* retried next sweep */ }
   // Astra INTEGRATED-9/10: THE LEDGER. A bounded page of accounts re-derived from its payment's records (all causes together; the revoke
@@ -2013,6 +2517,125 @@ async function ledgerAccounting(env: Env, now: number, live: boolean, advanceNow
   return { ids: page.ids, advance: page.advance };
 }
 
+/** Astra JOURNEY-A-6 #6: switched-off homes are polled for cap drift in turn, whether or not they have an operation open: the ones least
+ *  recently checked (spending_off_checked_at, stamped BEFORE the router is asked, whatever it answers; for a repair, after its batch) first, each at most every
+ *  SPENDING_OFF_POLL_MS. A positive router limit with no cap op queued is drift: zero enforcement is requeued at a new cap version and a new
+ *  incident raised (recordSpendingDrift), as a status read would. Run before the drains, so a home whose zero is still queued is skipped.
+ *  Astra r3 HIGH: the same pass repairs a home whose OFF is recorded while its key is still active with no Stop open (the owner's Stop is
+ *  journaled and sent). `revokeOnly` (sweepRevocations): only that repair runs, over the active homes with no Stop open (a held cap push
+ *  never hides one), and no status read is made. */
+async function sweepSpendingOff(env: Env, config: FluxConfig, flux: FluxClient, clock: Clock, now: number, revokeOnly: boolean): Promise<void> {
+  try {
+    // The batch follows the size of the switched-off cohort (spendingOffPollBatch): every home is re-read within spendingOffMaxStalenessMs.
+    const cohort = (await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_keys WHERE spending_off=1 AND state<>'none'").first<{ n: number }>())?.n ?? 0;
+    const off = await env.DB.prepare(`SELECT k.home_id,k.spending_off_at FROM flux_home_keys k WHERE k.spending_off=1 AND k.state${revokeOnly ? "='active'" : "<>'none'"}
+        AND COALESCE(k.spending_off_checked_at,0)<=? AND (k.op_holder IS NULL OR k.op_lease_until<?)
+        AND NOT EXISTS (SELECT 1 FROM flux_home_ops o WHERE o.home_id=k.home_id AND o.kind IN (${revokeOnly ? "'stop'" : "'cap','stop'"}) AND o.state IN ('queued','running'))
+      ORDER BY COALESCE(k.spending_off_checked_at,0),k.home_id LIMIT ?`).bind(now - SPENDING_OFF_POLL_MS, now, spendingOffPollBatch(cohort))
+      .all<{ home_id: string; spending_off_at: number | null }>();
+    for (const h of off.results) {
+      try {
+        const stamp = () => env.DB.prepare("UPDATE flux_home_keys SET spending_off_checked_at=? WHERE home_id=?").bind(now, h.home_id).run();
+        // Off recorded but the revoke never started (a crash between the two writes, or a race): finish it. The stop is the revoke.
+        const current = await env.DB.prepare("SELECT spending_off AS o, state AS s FROM flux_home_keys WHERE home_id=?").bind(h.home_id).first<{ o: number; s: string }>();
+        if (current?.o === 1 && current.s === "active") {
+          // CAPOFF-REPAIR-RACE: the Stop is written only if the home is still OFF, active and without an open Stop at write time, and the
+          // home is stamped only AFTER that batch: a batch that throws is logged and left unstamped, so the next sweep (not this one) retries it.
+          let opId: string | null;
+          try {
+            opId = await repairSpendingOffStop(env, h.home_id, clock());
+          } catch (error) {
+            console.error(JSON.stringify({ message: "flux spending off repair: writing the Stop failed, the next sweep retries it", homeId: h.home_id,
+              error: error instanceof Error ? error.name : "unknown" }));
+            continue;
+          }
+          await stamp();
+          if (opId === null) continue; // a cap ON or another sweep landed first: nothing written
+          await drainHome(env, flux, h.home_id, clock);
+          if (await opOutcome(env, opId) === "failed") {
+            console.error(JSON.stringify({ message: "flux spending off repair: sending the Stop failed, the sweep sends it", homeId: h.home_id }));
+          }
+          continue;
+        }
+        await stamp();
+        if (revokeOnly) continue;
+        const live = await flux.status(h.home_id);
+        if (live?.state === "ok" || live?.state === "capped") {
+          const row = await env.DB.prepare("SELECT * FROM flux_home_keys WHERE home_id=?").bind(h.home_id).first<HomeRow>();
+          if (row && row.spending_off === 1 && row.state === "stopped") await recordSpendingDrift(env, flux, h.home_id, row, live.capMicrocents ?? 0, now);
+        }
+      } catch { /* isolated: polled again on its turn */ }
+    }
+  } catch { /* retried next sweep */ }
+}
+
+/** 8b (2.6a): a row with `state='stopped'` whose router status says LIVE means money can move while the screen says stopped. The sweep also selects
+ *  stopped rows (spending on or off, any hold) with no Stop open and no lease held, least recently `stop_checked_at` first, with its OWN cohort count
+ *  and batch (the spending-off class keeps its slots), stamps BEFORE asking, and when the router reports the key live journals a Stop (reason
+ *  stopped_live_repair) conditional on the row still being stopped with no Stop open, then drains it. A router 409 stale_lifecycle (it is ahead of the
+ *  CP) or a failed Stop leaves the row for the next pass and raises flux.stopped_key_live (PAGE): one open incident per home (cloud_alerts_open),
+ *  resolved only by an operator (POST /v1/internal/alerts/:id/resolve). Nothing here resolves it. */
+export const STOPPED_KEY_LIVE_ALERT = "flux.stopped_key_live";
+async function sweepStoppedLive(env: Env, flux: FluxClient, clock: Clock, now: number): Promise<void> {
+  try {
+    const cohort = (await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_keys WHERE state='stopped'").first<{ n: number }>())?.n ?? 0;
+    const due = await env.DB.prepare(`SELECT k.home_id FROM flux_home_keys k WHERE k.state='stopped'
+        AND COALESCE(k.stop_checked_at,0)<=? AND (k.op_holder IS NULL OR k.op_lease_until<?)
+        AND NOT EXISTS (SELECT 1 FROM flux_home_ops o WHERE o.home_id=k.home_id AND o.kind='stop' AND o.state IN ('queued','running'))
+      ORDER BY COALESCE(k.stop_checked_at,0),k.home_id LIMIT ?`).bind(now - SPENDING_OFF_POLL_MS, now, spendingOffPollBatch(cohort)).all<{ home_id: string }>();
+    for (const h of due.results) {
+      try {
+        await env.DB.prepare("UPDATE flux_home_keys SET stop_checked_at=? WHERE home_id=?").bind(now, h.home_id).run();
+        const live = await flux.status(h.home_id);
+        if (live?.state !== "ok" && live?.state !== "capped") continue;
+        // The CAPOFF-REPAIR-RACE shape: written only if, at write time, the row is still stopped and no Stop is open.
+        const stop = stopOpStmt(env, h.home_id, clock(), "stopped_live_repair", undefined, { sql: "changes()=1", binds: [] });
+        const [bumped] = await env.DB.batch([
+          env.DB.prepare(`UPDATE flux_home_keys SET ${STOPPING},updated_at=? WHERE home_id=? AND state='stopped'
+            AND NOT EXISTS (SELECT 1 FROM flux_home_ops WHERE home_id=? AND kind='stop' AND state IN ('queued','running'))`).bind(clock(), h.home_id, h.home_id),
+          stop.stmt,
+        ]);
+        if (bumped.meta.changes !== 1) continue; // a resume or another sweep landed first: nothing written
+        await drainHome(env, flux, h.home_id, clock);
+        const outcome = await opOutcome(env, stop.opId);
+        if (outcome === "failed" || outcome === "superseded") {
+          await alertStatement(env.DB, { homeId: h.home_id, kind: STOPPED_KEY_LIVE_ALERT, severity: "high",
+            detail: JSON.stringify({ routerState: live.state, stop: outcome }) }, clock()).run();
+        }
+      } catch { /* isolated: polled again on its turn */ }
+    }
+  } catch { /* retried next sweep */ }
+}
+
+/** 8b (2.7): a resume the home never took. Raise (rows with no incident yet, oldest first, 25 a pass) and resolve (only incidents resolvable now,
+ *  each against its OWN lifecycle, `subject`). Offline homes get no alert. Both read through partial indexes (migration 0150). */
+export const RESUME_UNDELIVERED_ALERT = "flux.resume_undelivered";
+async function sweepResumeUndelivered(env: Env, now: number): Promise<void> {
+  try {
+    const stuck = await env.DB.prepare(`SELECT k.home_id,k.resume_lv FROM flux_home_keys k JOIN cloud_homes h ON h.id=k.home_id
+      WHERE k.resume_lv IS NOT NULL AND k.acked_lifecycle_version IS NOT k.resume_lv AND k.resume_lv=k.lifecycle_version
+        AND k.state='active' AND k.billing_hold=0 AND k.spending_off=0 AND k.resume_at < ?
+        AND h.heartbeat_at > ?
+        AND NOT EXISTS (SELECT 1 FROM cloud_alerts a WHERE a.id='alert:resume:'||k.home_id||':'||k.resume_lv)
+      ORDER BY k.resume_at LIMIT 25`).bind(now - 3_600_000, now - 2 * LEASE_FRESH_MS).all<{ home_id: string; resume_lv: number }>();
+    if (stuck.results.length > 0) {
+      await env.DB.batch(stuck.results.map((r) => env.DB.prepare(`INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at,subject)
+        VALUES (?,?,'${RESUME_UNDELIVERED_ALERT}','high',?,?,?) ON CONFLICT DO NOTHING`)
+        .bind(`alert:resume:${r.home_id}:${r.resume_lv}`, r.home_id, JSON.stringify({ resumeLifecycle: r.resume_lv }), now, String(r.resume_lv))));
+    }
+  } catch { /* retried next sweep */ }
+  try {
+    const done = await env.DB.prepare(`SELECT a.id FROM cloud_alerts a LEFT JOIN flux_home_keys k ON k.home_id=a.home_id
+      WHERE a.kind='${RESUME_UNDELIVERED_ALERT}' AND a.resolved_at IS NULL
+        AND (k.home_id IS NULL OR k.acked_lifecycle_version >= CAST(a.subject AS INTEGER) OR k.lifecycle_version > CAST(a.subject AS INTEGER))
+      ORDER BY a.raised_at LIMIT 100`).all<{ id: string }>();
+    if (done.results.length > 0) {
+      await env.DB.prepare(`UPDATE cloud_alerts SET resolved_at=? WHERE id IN (${done.results.map(() => "?").join(",")}) AND resolved_at IS NULL`)
+        .bind(now, ...done.results.map((r) => r.id)).run();
+    }
+  } catch { /* retried next sweep */ }
+}
+
 /** Astra JOURNEY-A-6 #6 / A-7: drift polling of switched-off homes is BOUNDED. The sweep runs every SWEEP_INTERVAL_MS (wrangler cron
  *  "*\/5 * * * *"); one home is polled at most every SPENDING_OFF_POLL_MS; each sweep polls spendingOffPollBatch(N) of the N eligible homes,
  *  least recently checked first: ceil(N / 12) (one full round of the cohort per hour), at least SPENDING_OFF_POLLS_MIN, at most
@@ -2034,12 +2657,12 @@ const SWEEP_RESERVED = 5;
 
 /** Eligible homes of one priority class (billing = 1: has a billing Stop open), least recently
  *  attempted first: an open op, no live lease, and past its per-home backoff. */
-async function sweepCandidates(env: Env, now: number, billing: 0 | 1, limit: number): Promise<string[]> {
+async function sweepCandidates(env: Env, now: number, billing: 0 | 1, limit: number, revokeOnly = false): Promise<string[]> {
   const rows = await env.DB.prepare(`SELECT home_id FROM (SELECT o.home_id,
       MAX(CASE WHEN o.kind='stop' AND json_extract(o.payload,'$.reason')='billing_stop' THEN 1 ELSE 0 END) AS billing,
       MAX(o.attempts) AS attempts, MAX(o.updated_at) AS touched
     FROM flux_home_ops o LEFT JOIN flux_home_keys k ON k.home_id=o.home_id
-    WHERE o.state IN ('queued','running') AND (k.op_holder IS NULL OR k.op_lease_until<?)
+    WHERE o.state IN ('queued','running') AND (k.op_holder IS NULL OR k.op_lease_until<?)${revokeOnly ? ` AND o.${REVOCATION_KINDS}` : ""}
     GROUP BY o.home_id)
     WHERE billing=? AND (attempts=0 OR touched + (CASE WHEN billing=1
         THEN 60000 ELSE MIN(3600000, 300000 * (1 << MIN(attempts-1, 4))) END) <= ?)
@@ -2048,19 +2671,47 @@ async function sweepCandidates(env: Env, now: number, billing: 0 | 1, limit: num
   return rows.results.map((r) => r.home_id);
 }
 
+/** PRODFLUX (MurageMain): the revoke-only sweep (fluxRevokeOnly). The same fair, backed-off selection as the full sweep, over the homes
+ *  holding a revocation (Stop, compensation, crashed mint) only, each drained with the revoke-only client; failures isolated. Astra r3 HIGH:
+ *  first, as the full sweep, an OFF home whose key is still active with no Stop open gets its Stop (sweepSpendingOff), and (8b 2.6a) a stopped
+ *  row whose key is live gets its repair Stop and incident (sweepStoppedLive). */
+async function sweepRevocations(env: Env, deps: Pick<FluxDependencies, "fluxClient" | "billingFlux" | "now">, clock: Clock): Promise<void> {
+  const now = clock();
+  const flux = b4RouterClient(env, deps);
+  await sweepSpendingOff(env, readFluxConfig(env), flux, clock, now, true);
+  // 8b fix r1 (Astra H2): a stopped row whose key the router reports live gets its repair Stop here too (2.6a): the Stop needs only the service
+  // token, so it never waits for the grants token. Its client reads status only for a stopped row and drains only revocations.
+  await sweepStoppedLive(env, b4RouterClient(env, deps, { stoppedStatus: true }), clock, now);
+  const billingHomes = await sweepCandidates(env, now, 1, SWEEP_HOMES, true);
+  const otherHomes = await sweepCandidates(env, now, 0, SWEEP_HOMES, true);
+  const otherTake = Math.min(otherHomes.length, Math.max(SWEEP_RESERVED, SWEEP_HOMES - billingHomes.length));
+  for (const homeId of [...billingHomes.slice(0, SWEEP_HOMES - otherTake), ...otherHomes.slice(0, otherTake)]) {
+    try { await drainHome(env, flux, homeId, clock); } catch { /* isolated: retried after its backoff */ }
+  }
+}
+
 // ── Routes ───────────────────────────────────────────────────────────────────
 
 const LINK_ROUTE = /^\/v1\/flux\/link(\/start|\/complete)?$/;
 const HOME_ROUTE = /^\/v1\/homes\/([\w-]{1,128})\/flux(\/subkey|\/cap|\/stop)?$/;
-/** Astra JOURNEY-A-10 #4: Flux is OFF at launch (CLOUD_FLUX_ROUTES_ENABLED unset). The owner's spending Off (POST cap or stop) still gets a
+/** Astra JOURNEY-A-10 #4: Flux is OFF at launch (the Flux route switch unset). The owner's spending Off (POST cap or stop) still gets a
  *  plain answer instead of a 404: Flux is not available, nothing was changed. Flux is never contacted and nothing is written. */
 export const fluxOffStubRoute = (method: string, path: string): boolean => {
   const m = HOME_ROUTE.exec(path);
   return method === "POST" && !!m && (m[2] === "/cap" || m[2] === "/stop");
 };
+/** PRODFLUX (MurageMain): the routes that only revoke (the owner's Stop, the operator's billing Stop). Served while fluxRevokeOnly. */
+/** 8b (2.2): the owner's POST /flux/subkey, retired. index.ts lets it past the step-up gate so the answer is the 410, with no intent written. */
+export const fluxOwnerSubkeyRoute = (method: string, path: string): boolean => method === "POST" && HOME_ROUTE.exec(path)?.[2] === "/subkey";
+export const fluxRevocationRoute = (method: string, path: string): boolean =>
+  method === "POST" && (HOME_ROUTE.exec(path)?.[2] === "/stop" || ADMIN_ROUTE.exec(path)?.[1] === "stop");
 export const FLUX_OFF_MESSAGE = "Flux is not available yet. There is no Flux spending to turn off, and nothing was changed.";
 const MACHINE_ROUTE = /^\/v1\/machines\/([\w-]{1,128})\/flux\/(subkey\/ack|subkey|renewal-due)$/;
 const ADMIN_ROUTE = /^\/v1\/internal\/flux\/(grant|plan|stop)$/;
+/** 8b (2.6a iii): the operator's resolve of a flux.stopped_key_live incident. Admin credential only; no router call; works while Flux is off. */
+const ALERT_RESOLVE_ROUTE = /^\/v1\/internal\/alerts\/([^/]{1,200})\/resolve$/;
+export const FLUX_ALERT_RESOLVE_ROUTE = ALERT_RESOLVE_ROUTE;
+const alertResolveSchema = z.strictObject({ by: z.string().trim().min(1).max(80), reason: z.string().trim().min(1).max(500) });
 /** Astra INTEGRATED-9 (L6): the operator's claim on one grant's ledger account, and the receipt that completes it. */
 const LEDGER_ROUTE = /^\/v1\/internal\/flux\/grants\/(inv:[A-Za-z0-9_:-]{4,128})\/(claim|applied)$/;
 export const FLUX_LEDGER_ROUTE = LEDGER_ROUTE;
@@ -2086,7 +2737,8 @@ const ledgerAppliedSchema = z.strictObject({
 /** POST /v1/homes/{id}/flux/cap. `{capUsd}` sets the monthly spend limit (`{capUsd: 0}` switches spending off, the same as `{enabled: false}`);
  *  `{enabled: true}` switches it back on at the plan's default limit (or `{enabled: true, capUsd}` at that limit). Journey A8 (Astra
  *  JOURNEY-A-2): off is an explicit state, stored as a limit of zero (cap_custom, so a plan change never switches it back on), pushed to Flux
- *  like any limit (the router then refuses all spend). Lowering or off: sign-in only. Switching on or raising: the fresh second factor. */
+ *  like any limit (the router then refuses all spend). Lowering: sign-in only. Off: sign-in only while Flux is not switched on live; with
+ *  Flux switched on live it journals a real Stop, so it needs the fresh second factor, as switching on or raising does. */
 const capSchema = z.union([
   z.strictObject({ capUsd: z.number().finite() }),
   z.strictObject({ enabled: z.literal(false) }),
@@ -2121,7 +2773,21 @@ export async function fluxRoute(
   const machineMatch = MACHINE_ROUTE.exec(path);
   const adminMatch = ADMIN_ROUTE.exec(path);
   const ledgerMatch = LEDGER_ROUTE.exec(path);
-  if (!link && !homeMatch && !machineMatch && !adminMatch && !ledgerMatch) return null;
+  const proofMatch = PROOF_OPERATOR_ROUTE.exec(path);
+  const resolveMatch = ALERT_RESOLVE_ROUTE.exec(path);
+  if (!link && !homeMatch && !machineMatch && !adminMatch && !ledgerMatch && !proofMatch && !resolveMatch) return null;
+  if (resolveMatch) {
+    if (request.method !== "POST") throw new HTTPError(405, "method_not_allowed");
+    await adminOnly(request, env);
+    return resolveStoppedKeyLive(env, decodeURIComponent(resolveMatch[1]), await body(request, alertResolveSchema), (dependencies.now ?? Date.now)());
+  }
+  // FLUX-ENSURE-EMAIL-VERIFIED (grok-runbook.md CRITICAL): support's email-proof routes, admin credential only, Flux on or off. There is NO
+  // operator stamp: resend mails a normal challenge to the STORED address; dispute clears a proof and blocks stamp and wake (a linked account
+  // only pages); dispute-clear lifts the block. Only the challenge consume (flux-email-proof.ts verifyProof) ever records a proof.
+  if (proofMatch) {
+    await adminOnly(request, env);
+    return fluxEmailProofOperatorRoute(request, env, proofMatch[1], { emailSender: dependencies.emailSender, now: dependencies.now });
+  }
   // Astra INTEGRATED-11 (ledger R9): the operator's evidenced recovery makes NO router call (no client is even built): it works whether Flux
   // is on or off. Admin credential only.
   if (ledgerMatch) {
@@ -2157,7 +2823,14 @@ export async function fluxRoute(
   }
   // Defence in depth: the Worker already answered 404 before auth (index.ts). Off means not found, whoever asks, except the owner's spending
   // Off (Astra JOURNEY-A-10 #4): signed in and the home's owner, it is told plainly that Flux is unavailable. No Flux call, no write.
-  if (!fluxRoutesEnabled(env)) {
+  // PRODFLUX (Astra HIGH 2): switched on with a Flux credential missing serves exactly as off (fluxServing): nothing new is activated.
+  // PRODFLUX (MurageMain): with only the grants token missing (fluxRevokeOnly) a Stop is a revocation and is served; nothing else is.
+  // PRODFLUX r4 C: switched on with the real hooks (fluxSwitchedOnLive), the Stops (owner, operator billing Stop) and a VALID cap OFF are
+  // served in every readiness state: journaled (owner step-up already enforced by the gate, cap OFF again in setCap), sent now when
+  // readiness.revoke allows, else answered pending and sent once the secret is back. Cap enable or raise stays the unavailable answer.
+  const live = fluxSwitchedOnLive(env, dependencies);
+  const revocation = live && (fluxRevocationRoute(request.method, path) || (request.method === "POST" && homeMatch?.[2] === "/cap" && await capOffBody(request)));
+  if (!fluxServing(env) && !revocation) {
     if (!homeMatch || !fluxOffStubRoute(request.method, path)) throw new HTTPError(404, "not_found");
     const account = await (dependencies.currentAccount ?? defaultAccount)(request, auth);
     if (!account) throw new HTTPError(401, "unauthorized");
@@ -2176,7 +2849,7 @@ export async function fluxRoute(
     if (adminMatch[1] === "grant") return json(await grantMonthlyCredits(env, await body(request, grantSchema), dependencies));
     if (adminMatch[1] === "plan") return json(await changePlan(env, await body(request, planSchema), dependencies));
     const stop = await body(request, stopSchema);
-    return json(await stopForBilling(env, stop.homeId, dependencies, { invoiceId: stop.invoiceId }));
+    return json({ state: (await stopForBilling(env, stop.homeId, dependencies, { invoiceId: stop.invoiceId })).state });
   }
 
   if (machineMatch) {
@@ -2194,7 +2867,8 @@ export async function fluxRoute(
     const owner = await (dependencies.ownerOf ?? defaultOwnerOf)(env, homeId);
     if (owner === null) throw new HTTPError(404, "not_found");
     // Renewal only: it can never resume a stopped home or undo a billing hold.
-    return issueKey(env, config, flux, owner, homeId, clock, { kind: "renewal", machineGeneration: input.generation, opId: (input as z.infer<typeof subkeyRequest>).op_id });
+    return issueKey(env, config, flux, owner, homeId, clock, { kind: "renewal", machineGeneration: input.generation, opId: (input as z.infer<typeof subkeyRequest>).op_id,
+      onFirstKey: () => grantPendingNow(env, flux, homeId, clock, fluxOn(env, dependencies)) });
   }
 
   const account = await (dependencies.currentAccount ?? defaultAccount)(request, auth);
@@ -2217,6 +2891,11 @@ export async function fluxRoute(
 
   const homeId = homeMatch![1];
   const action = homeMatch![2];
+  // 8b (2.2): the owner mint is closed for every home, before any read or write (no lease, no op, no step-up intent). Every key a home holds came
+  // through its own poller. Not behind the flag: no deployed version from the first 8b deploy on can mint an owner key.
+  if (action === "/subkey" && request.method === "POST") {
+    throw new HTTPError(410, "owner_mint_retired", { message: "Your Cloud takes its own Flux key. Nothing to do here." });
+  }
   // Same answer for an unknown home and somebody else's.
   const owner = await (dependencies.ownerOf ?? defaultOwnerOf)(env, homeId);
   if (owner === null || owner !== account.id) throw new HTTPError(404, "not_found");
@@ -2225,15 +2904,33 @@ export async function fluxRoute(
     return homeStatus(env, config, flux, homeId, now);
   }
   if (request.method !== "POST") throw new HTTPError(405, "method_not_allowed");
-  // An emailed approval was frozen at one lifecycle version: an owner resume it authorizes is refused once another Stop (or anything
-  // else moving the lifecycle) landed after it (Astra STEPUP-EMAIL-3 #2).
-  if (action === "/subkey") return issueKey(env, config, flux, account.id, homeId, clock, { kind: "owner", opKey: stepUpOperationKey(request),
-    pinnedLifecycle: stepUpProof(request)?.fluxLifecycle ?? null });
   if (action === "/cap") {
     const stepUp = dependencies.stepUp;
-    return setCap(env, config, flux, homeId, await body(request, capSchema), clock, async () => stepUp ? stepUp(request) : false);
+    return setCap(env, config, flux, account.id, homeId, await body(request, capSchema), clock, async () => stepUp ? stepUp(request) : false,
+      fluxSwitchedOnLive(env, dependencies), request.headers.get("x-murage-site-compat") === "spending-2");
   }
   return ownerStop(env, config, flux, homeId, clock);
+}
+
+/** 8b (2.6a iii): ONE D1 batch; both statements bind the SAME `at` (resolved_at = the audit row's at), so the Monday page review counts the action. The
+ *  answer is decided by a read AFTER the batch: 404 no such alert, 409 wrong_kind, 409 already_resolved, 200 this batch resolved it. */
+async function resolveStoppedKeyLive(env: Env, alertId: string, input: { by: string; reason: string }, at: number): Promise<Response> {
+  const [resolved] = await env.DB.batch([
+    env.DB.prepare(`UPDATE cloud_alerts SET resolved_at=?,resolve_notice_due=1 WHERE id=? AND kind='${STOPPED_KEY_LIVE_ALERT}' AND resolved_at IS NULL`).bind(at, alertId),
+    env.DB.prepare(`INSERT INTO selfservice_audit (id,home_id,actor,action,outcome,detail,at)
+      SELECT ?,a.home_id,'operator','alert_resolve','resolved',json_object('alertId',a.id,'kind',a.kind,'by',?,'reason',?),? FROM cloud_alerts a
+      WHERE a.id=? AND a.kind='${STOPPED_KEY_LIVE_ALERT}' AND a.resolved_at=? AND changes() = 1`).bind(crypto.randomUUID(), input.by, input.reason, at, alertId, at),
+  ]);
+  const row = await env.DB.prepare("SELECT kind,resolved_at FROM cloud_alerts WHERE id=?").bind(alertId).first<{ kind: string; resolved_at: number | null }>();
+  if (row === null) throw new HTTPError(404, "not_found");
+  if (row.kind !== STOPPED_KEY_LIVE_ALERT) throw new HTTPError(409, "wrong_kind");
+  if (resolved.meta.changes === 1) {
+    const audit = await env.DB.prepare("SELECT 1 AS x FROM selfservice_audit WHERE action='alert_resolve' AND at=? AND json_extract(detail,'$.alertId')=?").bind(at, alertId).first();
+    if (audit !== null) return json({ resolved: true, alertId, resolvedAt: at });
+    console.error(JSON.stringify({ message: "alert resolve: the alert closed but its audit row is missing", alertId }));
+    throw new HTTPError(500, "internal_error");
+  }
+  throw new HTTPError(409, "already_resolved");
 }
 
 /**
@@ -2242,12 +2939,19 @@ export async function fluxRoute(
  * answers 200 again (a lost response); an ack for anything but the latest unacknowledged mint is refused.
  */
 async function ackSubkey(env: Env, homeId: string, input: z.infer<typeof ackRequest>): Promise<{ acked: true }> {
+  // 8b (2.5): the ack also records WHICH lifecycle and generation the home took (acked_*), the only delivery proof the "On" answer reads. A row
+  // minted before the migration has no pending_lifecycle_version (the NULL arm). SET reads the old row, so the pending_* clears do not race the copies.
   const applied = await env.DB.prepare(`UPDATE flux_home_keys SET key_expires_at=pending_expires_at, last_acked_op_id=pending_op_id,
-      pending_op_id=NULL, pending_generation=NULL, pending_expires_at=NULL
+      acked_lifecycle_version=COALESCE(pending_lifecycle_version,lifecycle_version), acked_generation=pending_generation,
+      pending_op_id=NULL, pending_generation=NULL, pending_expires_at=NULL, pending_lifecycle_version=NULL
     WHERE home_id=? AND pending_op_id=? AND state='active' AND billing_hold=0 AND pending_generation=generation
+      AND (pending_lifecycle_version IS NULL OR pending_lifecycle_version=lifecycle_version)
       AND (? IS NULL OR pending_generation=?)`)
     .bind(homeId, input.op_id, input.key_generation ?? null, input.key_generation ?? null).run();
-  if (applied.meta.changes === 1) return { acked: true };
+  if (applied.meta.changes === 1) {
+    await env.DB.prepare("DELETE FROM flux_first_key_retry WHERE home_id=?").bind(homeId).run(); // delivered: the next renewal is due by its own clock
+    return { acked: true };
+  }
   const prior = await env.DB.prepare("SELECT last_acked_op_id FROM flux_home_keys WHERE home_id=?").bind(homeId).first<{ last_acked_op_id: string | null }>();
   if (prior?.last_acked_op_id === input.op_id) return { acked: true };
   throw new HTTPError(409, "ack_unknown");

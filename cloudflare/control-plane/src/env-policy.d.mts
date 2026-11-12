@@ -1,0 +1,35 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+export const ENV_STAGING: "staging";
+export const ENV_LIVE: "live";
+export const ENVIRONMENTS: readonly ["staging", "live"];
+export const STAGING_WORKER: string;
+export const STAGING_ACCOUNT: string;
+export const PRODUCTION_WORKER: string;
+export const PRODUCTION_ACCOUNT: string;
+export const PRODUCTION_DB_ID: string;
+export const STAGING_DB_ID: string;
+export const SINK_DATABASE_NAME: string;
+export const SINK_DATABASE_ID: string;
+export const MURAGE_AI_ZONE_ID: string;
+export const MURAGE_AI_SUFFIX: string;
+export const LIVE_SENDLANE_LIST_ID: string;
+export const STAGING_KMS_ARN: string;
+export const LIVE_KMS_ARN: string;
+export type Environment = "staging" | "live";
+export const SIGNING_PINS: Readonly<Record<Environment, Readonly<{ kty: string; crv: string; x: string; y: string }>>>;
+export const APPROVED_HETZNER_IMAGE_IDS: Readonly<Record<Environment, readonly string[]>>;
+export const LEGACY_STAGING_EXCEPTIONS: Readonly<Record<string, string>>;
+export const LIVE_FORBIDDEN: readonly string[];
+export const STAGING_FORBIDDEN: readonly string[];
+export const FLUX_SWITCH_VAR: "CLOUD_FLUX_ROUTES_ENABLED";
+export const PRODUCTION_FLUX_SECRETS: readonly string[];
+export const PRODUCTION_FLUX_ORIGINS: Readonly<Record<"FLUX_API_BASE" | "FLUX_CLOUD_GRANTS_URL" | "FLUX_APP_BASE", string>>;
+export const FLUX_BASE_VARS: readonly ("FLUX_API_BASE" | "FLUX_CLOUD_GRANTS_URL" | "FLUX_APP_BASE")[];
+export function productionFluxOriginProblem(name: string, value: unknown): string | null;
+export function environmentOf(input: Record<string, unknown> | null | undefined): Environment | null;
+export function hetznerImageIds(provisioner: unknown): string[] | null;
+export function envPolicy(input: Record<string, unknown>, options?: { staticCheck?: boolean; approvedImages?: readonly string[] }): {
+  env: Environment | null; problems: string[]; warnings: string[]; unverified: string[];
+};
+export function jwkMatchesPin(jwk: unknown, env: Environment): boolean;
+export function isDenialEnvelope(status: number, body: unknown): boolean;

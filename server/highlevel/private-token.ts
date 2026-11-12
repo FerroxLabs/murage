@@ -47,6 +47,8 @@ export interface HighLevelOwnerConnection {
   locationName?: string;
   state: HighLevelConnectionView["state"];
   confirmedAt: string;
+  /** Evidence from the current connection source, never owner-entered scope claims. */
+  scopes?: readonly string[];
 }
 
 export interface HighLevelHeldCheck {
@@ -54,6 +56,7 @@ export interface HighLevelHeldCheck {
   locationId: string;
   locationName?: string;
   expiresAt: number;
+  scopes: readonly string[];
 }
 
 export function highlevelTokenFingerprint(token: string): string {
@@ -115,13 +118,13 @@ export class PrivateTokenLeaseSource implements HighLevelLeaseSource {
     return "connected";
   }
 
-  async connection(connectionId: string): Promise<HighLevelConnectionView | undefined> {
+  async connection(connectionId: string): Promise<(HighLevelConnectionView & { scopes: readonly string[] }) | undefined> {
     const record = this.record();
     if (!record || record.connectionId !== connectionId) return undefined;
     return {
       connectionId: record.connectionId, locationId: record.locationId, companyId: record.companyId,
       ...(record.locationName ? { locationName: record.locationName } : {}),
-      epoch: record.epoch, state: this.stateOf(record),
+      epoch: record.epoch, state: this.stateOf(record), scopes: this.verifiedScopes(record),
     };
   }
 
@@ -150,11 +153,18 @@ export class PrivateTokenLeaseSource implements HighLevelLeaseSource {
     return {
       connectionId: record.connectionId, locationId: record.locationId,
       ...(record.locationName ? { locationName: record.locationName } : {}),
-      state: this.stateOf(record), confirmedAt: record.confirmedAt,
+      state: this.stateOf(record), confirmedAt: record.confirmedAt, scopes: this.verifiedScopes(record),
     };
   }
 
   tokenSaved(): boolean { return this.currentToken() !== undefined; }
+
+  private verifiedScopes(record: HighLevelConnectionRecord): readonly string[] {
+    // The fixed location GET proves this permission alone. Its body, an opaque
+    // PIT, and stored owner claims cannot prove write permissions. Recompute
+    // after every token change; a pending connection has no scope evidence.
+    return this.stateOf(record) === "connected" ? ["locations.readonly"] : [];
+  }
 
   /** Step 1: read the location with the saved token. Nothing is stored until the owner confirms. */
   async check(locationIdInput: unknown): Promise<HighLevelHeldCheck> {
@@ -164,7 +174,7 @@ export class PrivateTokenLeaseSource implements HighLevelLeaseSource {
     const token = this.currentToken();
     if (!token) throw new HighLevelError("Save a HighLevel Private Integration token first.", { status: 409 });
     const path = `/locations/${encodeURIComponent(locationId)}`;
-    const endpoint = endpointFor("locations.get", "GET", path);
+    const endpoint = endpointFor("location.get", "GET", path);
     if (!endpoint) throw new HighLevelError("That location id cannot be checked.", { status: 400 });
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), CHECK_DEADLINE_MS);
@@ -192,9 +202,9 @@ export class PrivateTokenLeaseSource implements HighLevelLeaseSource {
     const locationName = typeof location.name === "string" ? location.name.slice(0, 200) : undefined;
     this.pruneChecks();
     const opId = randomUUID();
-    const held = { opId, locationId, ...(locationName ? { locationName } : {}), expiresAt: this.now() + HIGHLEVEL_CHECK_HOLD_MS, companyId, tokenFingerprint: highlevelTokenFingerprint(token) };
+    const held = { opId, locationId, ...(locationName ? { locationName } : {}), scopes: ["locations.readonly"], expiresAt: this.now() + HIGHLEVEL_CHECK_HOLD_MS, companyId, tokenFingerprint: highlevelTokenFingerprint(token) };
     this.checks.set(opId, held);
-    return { opId, locationId, ...(locationName ? { locationName } : {}), expiresAt: held.expiresAt };
+    return { opId, locationId, ...(locationName ? { locationName } : {}), scopes: [...held.scopes], expiresAt: held.expiresAt };
   }
 
   /** Step 2: the owner confirms that exact check. The token must still be the one that was checked. */

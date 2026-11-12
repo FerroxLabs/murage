@@ -60,6 +60,8 @@ it("routes in-memory contents through the same inert preparation, staging and at
     preparedImport = prepared;
     expect(prepared.bots[0]).toMatchObject({ name: "Scout 2", chiefOfStaff: false, computer: "off", autoApprove: false, browser: false });
     expect(prepared.routines[0]).toMatchObject({ enabled: false, nextRunAt: null });
+    expect(prepared.routines[0], "S9 imported routines inherit the owner level").not.toHaveProperty("permissionMode");
+    expect(prepared.routines[0]).not.toHaveProperty("permissionExplicit");
     expect(JSON.parse(readFileSync(join(stagingDirectory, "skill-state", prepared.bots[0].id, "skills.json"), "utf8")).research.enabled).toBe(false);
     expect(prepared.baseline).toBeTruthy();
   });

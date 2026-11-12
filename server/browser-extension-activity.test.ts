@@ -648,7 +648,7 @@ if (role.startsWith("compact")) {
   let tries = 0;
   while (!store.record({ id, botId: "bot1", bindingId: "bind1", taskId: "task1", site: "example.com", action: "click", target: role + i, level: 2, decision: "free" })) if (++tries > 50) process.exit(3);
 }`;
-        const child = spawn(process.execPath, ["--no-warnings", "--input-type=module", "-e", script], { stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, HOME: dir, USERPROFILE: dir } });
+        const child = spawn(process.execPath, ["--no-warnings", "--input-type=module", "-e", script], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, HOME: dir, USERPROFILE: dir } });
         let out = "";
         child.stdout.on("data", chunk => { out += String(chunk); });
         child.on("error", reject); child.on("close", code => resolve({ code, moves: Number(out) || 0 }));

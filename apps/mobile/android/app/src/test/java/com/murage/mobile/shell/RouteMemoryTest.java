@@ -13,8 +13,8 @@ public class RouteMemoryTest {
         @Override public void put(String key, String value) { if (value == null) values.remove(key); else values.put(key, value); }
     }
 
-    private final WorkspaceOrigin mac = WorkspaceOrigin.parse("https://mac.tailnet123.ts.net");
-    private final WorkspaceOrigin server = WorkspaceOrigin.parse("https://server.tailnet123.ts.net");
+    private final WorkspaceOrigin mac = WorkspaceOrigin.parse("https://mac.tail000000.ts.net");
+    private final WorkspaceOrigin server = WorkspaceOrigin.parse("https://server.tail000000.ts.net");
 
     @Test public void returnsToTheLastConversationPerComputer() {
         RouteMemory memory = new RouteMemory(new MemoryStore());
@@ -60,12 +60,12 @@ public class RouteMemoryTest {
     @Test public void neverStoresTheCredential() {
         MemoryStore store = new MemoryStore();
         RouteMemory memory = new RouteMemory(store);
-        WorkspaceOrigin paired = WorkspaceOrigin.parse("https://mac.tailnet123.ts.net/enter#murage_pair_secret&installId=abcdefghijklmnop");
+        WorkspaceOrigin paired = WorkspaceOrigin.parse("https://mac.tail000000.ts.net/enter#murage_pair_secret&installId=abcdefghijklmnop");
         memory.remember("t1", paired);
         memory.setPending(new PendingOpen(paired, "p1", "m1"));
         assertEquals(2, store.values.size());
         for (Map.Entry<String, String> entry : store.values.entrySet()) {
-            assertTrue(entry.getKey(), entry.getKey().equals(RouteMemory.PENDING_KEY) || entry.getKey().equals("murage.route.https://mac.tailnet123.ts.net"));
+            assertTrue(entry.getKey(), entry.getKey().equals(RouteMemory.PENDING_KEY) || entry.getKey().equals("murage.route.https://mac.tail000000.ts.net"));
             assertFalse(entry.getValue(), (entry.getKey() + entry.getValue()).contains("murage_pair"));
             assertFalse(entry.getValue(), (entry.getKey() + entry.getValue()).contains("enter"));
         }
@@ -75,16 +75,16 @@ public class RouteMemoryTest {
         MemoryStore store = new MemoryStore();
         RouteMemory memory = new RouteMemory(store);
         memory.remember("t1", mac);
-        for (String bad : new String[] {"garbage", "{}", "{\"origin\":5,\"threadId\":\"p1\"}", "{\"origin\":\"https://mac.tailnet123.ts.net\",\"threadId\":7}",
-                "{\"origin\":\"https://mac.tailnet123.ts.net\",\"threadId\":\"\"}"}) {
+        for (String bad : new String[] {"garbage", "{}", "{\"origin\":5,\"threadId\":\"p1\"}", "{\"origin\":\"https://mac.tail000000.ts.net\",\"threadId\":7}",
+                "{\"origin\":\"https://mac.tail000000.ts.net\",\"threadId\":\"\"}"}) {
             store.values.put(RouteMemory.PENDING_KEY, bad);
             assertNull(bad, memory.pending());
             assertEquals(bad, "/#open=t1", memory.startPath(mac));
         }
         // A wrongly typed messageId voids the record, as Swift's JSONDecoder does; a null one is just absent.
-        store.values.put(RouteMemory.PENDING_KEY, "{\"origin\":\"https://mac.tailnet123.ts.net\",\"threadId\":\"p1\",\"messageId\":5}");
+        store.values.put(RouteMemory.PENDING_KEY, "{\"origin\":\"https://mac.tail000000.ts.net\",\"threadId\":\"p1\",\"messageId\":5}");
         assertEquals("/#open=t1", memory.startPath(mac));
-        store.values.put(RouteMemory.PENDING_KEY, "{\"origin\":\"https://mac.tailnet123.ts.net\",\"threadId\":\"p1\",\"messageId\":null}");
+        store.values.put(RouteMemory.PENDING_KEY, "{\"origin\":\"https://mac.tail000000.ts.net\",\"threadId\":\"p1\",\"messageId\":null}");
         assertEquals("/#open=p1", memory.startPath(mac));
     }
 }

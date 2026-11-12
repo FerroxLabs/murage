@@ -58,15 +58,15 @@ describe("GitHub Copilot as a built-in engine", () => {
     expect(copilotSupport.install?.signInCommand).toBe("copilot login");
     expect(ENGINE_SIGNIN_TABLE.copilotAgent).toMatchObject({ kind: "terminal", args: ["login"] });
     expect(driverMountsPhoneJobs("copilotAgent")).toBe(true);
-    // The model stays Copilot's own choice: one passthrough id, nothing pinned over ACP.
-    expect(copilotSupport.models).toEqual({ default: COPILOT_DEFAULT_MODEL, options: [{ id: COPILOT_DEFAULT_MODEL, label: "Copilot default" }] });
-    expect(copilotSupport.selectModel).toBeUndefined();
+    // The startup catalog offers Auto; explicit refresh reads the account catalog.
+    expect(copilotSupport.models).toEqual({ default: COPILOT_DEFAULT_MODEL, options: [{ id: COPILOT_DEFAULT_MODEL, label: "Auto" }] });
+    expect(copilotSupport.selectModel).toMatchObject({ configId: "model", unsetIds: ["auto"] });
   });
 
   it("does not claim a sign-in it cannot see, and never starts Copilot to ask", async () => {
     expect(await copilotSupport.isAuthenticated({}, { cli: "copilot" } as never)).toBeUndefined();
     expect(copilotSupport.authUnknownIsUnverified).toBe(true);
-    expect(copilotSupport.resolveModels).toBeUndefined();
+    expect(copilotSupport.resolveModelsOnCreate).toBe(false);
   });
 
   it("reads only whole login refusals as a missing sign-in", () => {

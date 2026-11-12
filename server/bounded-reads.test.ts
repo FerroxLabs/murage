@@ -20,7 +20,7 @@ import { imageReferences } from "./image-operations.ts";
 import { __resetMediaAssetsForTests, mediaAssetsRoute, type MediaAssetsDeps } from "./media-assets.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
 import { RoutineManager } from "./routines.ts";
-import { Store } from "./store.ts";
+import { ApprovalFixtureStore as Store, askQueueFixture } from "./testing/approval-card-fixture.ts";
 import { scopeRow } from "./memory/scope-id.ts";
 import { database } from "./database.ts";
 import { expectSameReads, measureReads, refillThread } from "./testing/bounded-reads.ts";
@@ -189,11 +189,13 @@ const step = (name: string, run: () => Promise<void>) => { steps.push([name, run
       routines: new RoutineManager({ file: join(mkdtempSync(join(tmpdir(), "murage-bounded-routines-")), "routines.json"), now: () => Date.now(), botState: () => "ready", createTask: () => null, startTurn: async () => {} }),
       now: () => Date.now(), timeZone: () => "UTC", cloudReady: async () => ({ ready: true }), canPersist: () => ({ ok: true as const }),
     } as never);
+    const fixture = await askQueueFixture(store, service.approvalQueue(), [small, large]);
     const propose = async (owner: { threadId: string; botId: string }) => {
-      const proposed = await service.propose({ botId: owner.botId, threadId: owner.threadId, proposal: { action: "create", routine: { name: "Morning brief", instructions: "Summarize the queue.", schedule: { type: "weekly", time: "09:00", weekdays: ["monday"] } } } as never });
+      const proposed = await service.propose({ authority: fixture.authorityFor(owner.threadId), botId: owner.botId, threadId: owner.threadId, proposal: { action: "create", routine: { name: "Morning brief", instructions: "Summarize the queue.", schedule: { type: "weekly", time: "09:00", weekdays: ["monday"] } } } as never });
       rows(owner.threadId, 300);
       return proposed.requestId;
     };
+    try {
     const idA = await propose(small), idB = await propose(large);
     const resolve = (owner: { threadId: string; botId: string }, requestId: string) => measureReads(owner.threadId, messagesDb(), () => service.resolve({ botId: owner.botId, threadId: owner.threadId, requestId, behavior: "deny" }));
     const a = await resolve(small, idA), b = await resolve(large, idB);
@@ -201,6 +203,7 @@ const step = (name: string, run: () => Promise<void>) => { steps.push([name, run
     expectSameReads(a.reads, b.reads);
     expect(loaded(small.threadId)).toBe(false);
     expect(loaded(large.threadId)).toBe(false);
+    } finally { fixture.close(); }
   });
 
   step("forks an edit beside the row it replaces and answers branch membership by key", async () => {

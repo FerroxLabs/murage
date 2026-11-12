@@ -1,3 +1,6 @@
+import { windowsHideBundlePlugin } from './windows-hide-bundle-plugin.mjs';
+import { windowsHideImport } from "../shared/win-hide-child-process.mjs";
+import { stagePiWindowsHide } from "./stage-pi-windows-hide.mjs";
 // Bundle each harness-server entry point into a self-contained ESM file.
 //
 // Why this exists: the packaged app ships ZERO node_modules (see the files:
@@ -72,6 +75,7 @@ const ENTRY_POINTS = [
   "vps-container-mcp.ts",
   "cloud-home/vps-relay-mcp.ts",
   "permission-proxy.ts",
+  "mcp-wipe-proxy.ts",
   "job-launcher.ts",
   "connector-proxy.ts",
   "drivers/agents-proxy.ts",
@@ -111,11 +115,11 @@ const main = await build({
   outbase: server,
   outdir: join(root, "dist-server"),
   // Bundled CommonJS ZIP dependencies still require Node built-ins.
-  banner: { js: 'import { createRequire as __harnessRequire } from "node:module"; const require = __harnessRequire(import.meta.url);' },
+  banner: { js: windowsHideImport + 'import { createRequire as __harnessRequire } from "node:module"; const require = __harnessRequire(import.meta.url);' },
   // Written after tsc, replacing its output for these entry points.
   allowOverwrite: true,
   logLevel: "info",
-  plugins: [yamlEsmPlugin],
+  plugins: [yamlEsmPlugin, windowsHideBundlePlugin()],
   external: ["@huggingface/transformers"],
 });
 
@@ -150,7 +154,8 @@ if (WHATSAPP_ENTRY_POINTS.length > 0) {
     format: "esm",
     outbase: server,
     outdir: join(root, "dist-server"),
-    banner: { js: 'import { createRequire as __harnessRequire } from "node:module"; const require = __harnessRequire(import.meta.url);' },
+    banner: { js: windowsHideImport + 'import { createRequire as __harnessRequire } from "node:module"; const require = __harnessRequire(import.meta.url);' },
+    plugins: [windowsHideBundlePlugin()],
     allowOverwrite: true,
     logLevel: "info",
     external: ["baileys", "jimp"],
@@ -180,6 +185,8 @@ await build({
   target: "node20",
   format: "esm",
   outfile: join(root, "dist-server", "mcp-server.js"),
+  banner: { js: windowsHideImport },
+  plugins: [windowsHideBundlePlugin()],
   allowOverwrite: true,
   logLevel: "info",
 });
@@ -193,7 +200,8 @@ await build({
   target: "node24",
   format: "esm",
   outdir: join(root, "dist-server"),
-  banner: { js: 'import { createRequire as __recoveryRequire } from "node:module"; const require = __recoveryRequire(import.meta.url);' },
+  banner: { js: windowsHideImport + 'import { createRequire as __recoveryRequire } from "node:module"; const require = __recoveryRequire(import.meta.url);' },
+  plugins: [windowsHideBundlePlugin()],
   allowOverwrite: true,
   logLevel: "info",
 });
@@ -201,12 +209,6 @@ await build({
 // pi-mcp-extension.ts is NOT an Murage entry point: it is loaded by the
 // external `pi` process (pi's own jiti), which resolves its
 // @earendil-works/pi-coding-agent and typebox imports from pi's install. Ship
-// it verbatim as .ts so the packaged app has it too — never bundle it, or
+// it as .ts with only the installer path relocated — never bundle it, or
 // esbuild would inline pi's packages and the extension would stop loading.
-const piMcpExtSrc = join(server, "drivers", "pi-mcp-extension.ts");
-const piMcpExtDest = join(root, "dist-server", "drivers", "pi-mcp-extension.ts");
-mkdirSync(dirname(piMcpExtDest), { recursive: true });
-copyFileSync(piMcpExtSrc, piMcpExtDest);
-// pi-permission-gate.ts rides along the same way: pi loads it with `-e`.
-copyFileSync(join(server, "drivers", "pi-permission-gate.ts"), join(root, "dist-server", "drivers", "pi-permission-gate.ts"));
-
+stagePiWindowsHide(root);

@@ -26,6 +26,9 @@ credentials.json
 # <engine home>/signin and every bot's store <engine home>/bots/<bot>/signin, with all their generations (token, key, auth files,
 # records). One pattern for every engine, bot and generation; murage-backup refuses to run without it.
 /data/engine-homes/**/signin
+# The owner's own-server connection (private key, connection.json, confirmed host key) lives in the home's data dir. A restore
+# must never bring back an old key, connection or host key; murage-backup refuses to run without this pattern.
+/data/home/own-server
 # Browser profile secrets (a logged-in claude.ai session lives in the profile cookie jar and storage).
 # Anchored to the browser tree so customer folders with similar names are untouched.
 /data/browser/**/Cookies

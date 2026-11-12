@@ -135,6 +135,7 @@ function hits(files: string[], rules: Rule[], allow: Record<string, string> = {}
       const text = /^\s*<!doctype html>/i.test(raw) ? htmlText(raw).join(" ") : raw;
       if (PENDING.some(entry => entry.file === label && text === entry.text)) continue;
       if (MODEL_FACING_TEXT.some(entry => entry.file === label && text.startsWith(entry.starts))) continue;
+      if (!shown && INTERNAL_SCHEMA_DIAGNOSTICS.some(entry => entry.file === label && text === entry.text)) continue;
       for (const rule of rules) if ((shown && rule === SAFE ? SHOWN_SAFE : rule).pattern.test(text)) found.push(`${label}:${line}: ${rule.name}: ${text.trim().slice(0, 120)}`);
     }
   }
@@ -192,7 +193,18 @@ const MODEL_FACING: Record<string, string> = {
 
 // Single strings a model reads, in files that also hold copy.
 const MODEL_FACING_TEXT: Array<{ file: string; starts: string }> = [
+  // Literal rsync option matched by the shell parser, never user-facing copy.
+  { file: "server/no-limits-producers.ts", starts: "--safe-links" },
   { file: "server/drivers/acp/core.ts", starts: "The user denied this operation." },
+];
+
+// Frozen schema diagnostics, never displayed: HighLevelHost returns its fixed
+// argument-refusal sentence instead of Zod issues. grants-management.test.ts
+// pins that boundary; the exception is exact and never applies to JSX copy.
+const INTERNAL_SCHEMA_DIAGNOSTICS = [
+  { file: "server/highlevel/operations/opportunities.ts", text: "Unsafe record id" },
+  { file: "server/highlevel/operations/schemas/opportunities.ts", text: "Unsafe record id" },
+  { file: "server/highlevel/operations/schemas/common.ts", text: "HighLevel arguments contain an unsafe field or value" },
 ];
 
 // Desktop files whose strings never reach a person: a model reads them, or
@@ -266,6 +278,7 @@ const PRICE_KNOWN: Array<{ file: string; text: string; why: string }> = [
   { file: "src/components/BrowserActivityLog.tsx", text: "browserExt.decision.free", why: "the activity log's internal decision key `free` means no approval was needed; the owner sees \"no approval needed\", never a price" },
   { file: "src/components/today/MonthCard.tsx", text: "/api/spend", why: "the meter's route path, never shown" },
   { file: "src/components/today/MonthCard.tsx", text: "spend:", why: "the Needs you row id, never shown" },
+  { file: "src/lib/settings-search.ts", text: "spend", why: "a search synonym the ranker matches against what a person types (cost, spend, usage), never shown (SETTINGS-SEARCH-RANKER-1019 R2)" },
 ];
 // 1.0.12: providerError.payment.summary no longer names HTTP 402 (the code sits in the card's details fold).
 // VOICE-402-CALL rev 4.1 §6.3 explicitly requires this billing boundary.

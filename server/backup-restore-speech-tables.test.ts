@@ -29,6 +29,7 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 import { initializeReplySchema } from "./tts/reply-schema.ts";
 import { ReplyState, speechTransaction } from "./tts/reply-state.ts";
 import { stopWalMaintenance } from "./wal-maintenance.ts";
+import { stopSearchIndex } from "./message-search-index.ts";
 
 type Row = { type: string; name: string; tbl_name: string; sql: string | null };
 const selection = { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const;
@@ -102,8 +103,10 @@ describe("the real open path and the snapshot registry", () => {
     withSpeechRows(source);
     const before = rows(source);
     closeDatabase();
-    // closeDatabase() starts the WAL checkpointer's exit without waiting (database.ts closeDatabase, void stopWalMaintenance); that thread still touches -wal and -shm, and the backup refuses SOURCE_CHANGED if it does so while the snapshot reads them. Production waits for it (stopDataWriters), so the test does too.
+    // Both workers can still touch the source after closeDatabase() starts their shutdown.
+    // Production joins them before taking a snapshot; the fixture must join them too.
     await stopWalMaintenance();
+    expect(await stopSearchIndex()).toBe(true);
     asInstallation(DATA_DIR);
     const parent = mkdtempSync(join(tmpdir(), "murage-speech-backup-test-"));
     try {

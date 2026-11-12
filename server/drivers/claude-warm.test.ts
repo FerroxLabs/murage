@@ -895,7 +895,7 @@ describe("ClaudeDriver warm process (fake CLI)", () => {
   });
 
   it("the settings revision covers the repository root's and the main checkout's settings.local.json (subdirectory and worktree)", () => {
-    const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.email=t@example.invalid", "-c", "user.name=t", ...args], { cwd, stdio: "ignore" });
+    const git = (cwd: string, ...args: string[]) => execFileSync("git", ["-c", "user.email=t@example.invalid", "-c", "user.name=t", ...args], { windowsHide: true, cwd, stdio: "ignore" });
     mkdirSync(join(scratch, "rev-repo", "sub", "deeper"), { recursive: true });
     const repo = realpathSync.native(join(scratch, "rev-repo"));
     git(repo, "init", "-q");

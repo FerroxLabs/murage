@@ -12,6 +12,8 @@ const api = async (method:string,path:string,body?:unknown) => {
   const r=await fetch(fixture.info.url+path,{method,headers:{...headers,'content-type':'application/json'},body:body===undefined?undefined:JSON.stringify(body)});
   return {status:r.status,body:await r.json() as any};
 };
+// 2fe571bb91 widened the cited-scope query to include notebook ids and kinds.
+// Count that query with the same visit oracle; the SQL bounds below are unchanged.
 const instrumentation = `
 const fs=await import('node:fs'), path=await import('node:path');
 const {registerHooks}=await import('node:module');
@@ -26,9 +28,9 @@ registerHooks({load(url,context,next){const result=next(url,context);if(url.ends
  return {...result,source};}return result;}});
 const sqlite=await import('node:sqlite');const prepare=sqlite.DatabaseSync.prototype.prepare;const installed=new WeakSet();
 sqlite.DatabaseSync.prototype.prepare=function(sql,...rest){
- if(sql.startsWith('SELECT DISTINCT s.owner_key')){
+ if(sql.startsWith('SELECT DISTINCT s.id,s.kind,s.owner_key')){
   if(!installed.has(this)){this.function('eld_scope',(_id)=>{counts.scopes++;return 1;});installed.add(this);}
-  const measured=sql+' AND eld_scope(s.id)';const db=this;
+  const measured=sql+' WHERE eld_scope(s.id)';const db=this;
   const stmt=prepare.call(db,measured,...rest);const all=stmt.all.bind(stmt);
   stmt.all=(...args)=>{counts.queries++;counts.pairs+=JSON.parse(args[0]).length;if(counts.calls.length)counts.calls.at(-1).queries++;const plan=q=>prepare.call(db,'EXPLAIN QUERY PLAN '+q).all(...args).map(r=>r.detail);
     const original=plan(sql);if(JSON.stringify(original)!==JSON.stringify(plan(measured)))throw Error('measurement changed query plan');

@@ -1,0 +1,146 @@
+✖ P1-1 launcher wires write-ahead task intent and outer cleanup (3.859881ms)
+✔ P1-2 physical containment checks existing ancestors before writes (7.840314ms)
+✔ P1-3 full staged tree and embedded provenance are verified (13.922002ms)
+✔ P2-1 observation needs group controls, a final gap, and full coverage (2.306597ms)
+✔ P2-2 fixture environment is set before either helper compiles (0.377351ms)
+✔ P2-3 every tested scheduler completion requires a fresh publication (0.400611ms)
+✔ P2-4 includes Claude Node cmd and all OS shell rows (0.351072ms)
+✔ Windows entry points fail closed while P1-1 remains open (0.405762ms)
+✔ Windows package hook stamps provenance exactly once (0.412781ms)
+✔ ZIP extraction validates destination after deriving it and never references copy-loop source (0.32729ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 9
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 173.614695
+
+✖ failing tests:
+
+test at scripts/windows/safety.node-test.mjs:8:1
+✖ P1-1 launcher wires write-ahead task intent and outer cleanup (3.859881ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /finally\s*\{\s*try\s*\{\s*Complete-RunLedger/. Input:
+  
+  '# OpenSSH is not the desktop. Register /IT under an explicitly named logged-on\n' +
+    '# account; no password, SYSTEM account, service session or stored credential.\n' +
+    '[CmdletBinding()]\n' +
+    'param(\n' +
+    "  [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$Commit,\n" +
+    "  [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$PackageSha256,\n" +
+    '  [Parameter(Mandatory=$true)][string]$InteractiveUser,\n' +
+    '  [Parameter(Mandatory=$true)][string]$OutputDirectory,\n' +
+    "  [string]$Executable = 'C:\\murage-ci\\app\\Murage.exe',\n" +
+    "  [string]$ScenarioScript = 'C:\\murage-ci\\source\\scripts\\windows\\full-packaged-scenario.ps1',\n" +
+    "  [ValidateSet('Desktop','Handoff')][string]$Mode='Desktop',\n" +
+    '  [string]$HandoffReceipt,\n' +
+    "  [string]$Node='C:\\murage-ci\\node\\node.exe',\n" +
+    "  [string]$FeedDirectory='C:\\murage-ci\\feed',\n" +
+    '  [ValidateRange(60,3600)][int]$TimeoutSeconds = 1200\n' +
+    ')\n' +
+    "$ErrorActionPreference = 'Stop'\n" +
+    'Set-StrictMode -Version Latest\n' +
+    "if ($env:OS -ne 'Windows_NT') { throw 'Windows required' }\n" +
+    ". (Join-Path $PSScriptRoot 'gate-paths.ps1')\n" +
+    ". (Join-Path $PSScriptRoot 'run-ledger.ps1')\n" +
+    ". (Join-Path $PSScriptRoot 'gate-admission.ps1')\n" +
+    'Assert-GateAdmission\n' +
+    'foreach($path in @($PSScriptRoot,$Executable,$ScenarioScript,$OutputDirectory,$Node,$FeedDirectory,$HandoffReceipt) | Where-Object {$_}){[void](Assert-GatePath $path)}\n' +
+    '$identity=Assert-StagedPackage $PackageSha256\n' +
+    "if($Commit -ne $identity.commit){throw 'Caller commit differs from packaged build provenance'}\n" +
+    "# schtasks can otherwise ask for another account's password. This launcher\n" +
+    "# intentionally has no credential path: SSH as the desktop's logged-on user.\n" +
+    '$account = New-Object Security.Principal.NTAccount($InteractiveUser)\n' +
+    '$ownerSid = $account.Translate([Security.Principal.SecurityIdentifier]).Value\n' +
+    "if ($Mode -eq 'Handoff') {\n" +
+    "  if($env:COMPUTERNAME -ine 'gate-win-nogit'){throw 'Handoff is gate-win-nogit only'}\n" +
+    "  $marker=Get-Content -LiteralPath 'C:\\murage-ci\\gate-user.json' -Raw | ConvertFrom-Json\n" +
+    "  if($marker.sid -ne $ownerSid){throw 'Task must use provisioned gate user'}\n" +
+    "  $ScenarioScript='C:\\murage-ci\\source\\scripts\\windows\\updates-handoff.ps1'\n" +
+    "} elseif (-not $HandoffReceipt) {throw 'Desktop gate requires the handoff receipt and its artifacts'}\n" +
+    "if ($Mode -ne 'Handoff' -and $ownerSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { throw 'SSH/task registration must use the same account as the logged-on Desktop user; no credentials are accepted' }\n" +
+    "$root = 'C:\\murage-ci'\n" +
+    '$Executable = (Resolve-Path -LiteralPath $Executable).Path\n' +
+    '$ScenarioScript = (Resolve-Path -LiteralPath $ScenarioScript).Path\n' +
+    "$output = [IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\\')\n" +
+    'foreach ($file in @($Executable, $ScenarioScript, $output)) {\n' +
+    "  if (-not $file.StartsWith($root + '\\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Inputs and evidence must be under C:\\murage-ci' }\n" +
+    '}\n' +
+    "if (Test-Path -LiteralPath $output) { throw 'OutputDirectory must be new (prevents stale evidence)' }\n" +
+    'New-GateDirectory $output\n' +
+    "$prefix='MurageCI-'+[Guid]::NewGuid().ToString('N')+'-'\n" +
+    "$ledger=Join-Path $output 'launcher-ledger.jsonl'\n" +
+    "[IO.File]::WriteAllText($ledger,'')\n" +
+    "$request = Join-Path $output 'request.json'\n" +
+    '[ordered]@{ prefix=$prefix; ledger=$ledger; packageSha256=$PackageSha256; executable=$Executable; scenarioScript=$ScenarioScript; commit=$Commit; timeoutSeconds=$TimeoutSeconds; mode=$Mode; handoffReceipt=$HandoffReceipt; node=$Node; feedDirectory=$FeedDirectory } |\n' +
+    '  ConvertTo-Json | Set-Content -LiteralPath $request -Encoding UTF8\n' +
+    ". (Join-Path $PSScriptRoot 'owned-process.ps1')\n" +
+    "$task = $prefix+'wrapper'\n" +
+    "$scheduler = Join-Path $env:SystemRoot 'System32\\schtasks.exe'\n" +
+    "$powershell = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'\n" +
+    "$action = ((@($powershell, '-NoP', '-NonI', '-EP', 'Bypass', '-W', 'Hidden', '-File', (Join-Path $PSScriptRoot 'desktop-task.ps1'), '-Request', $request) | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' ')\n" +
+    "if ($action.Length -gt 260) { throw 'Task action exceeds schtasks /TR limit; use a shorter OutputDirectory' }\n" +
+    '# /SC ONCE is only a safety trigger; /Run starts the task immediately. A past\n' +
+    '# date prevents an accidental second run if the machine stays up overnight.\n' +
+    '$registered = $false\n' +
+    '$complete = $false\n' +
+    "$saved=Set-FixtureEnvironment (Join-Path $output 'launcher-env')\n" +
+    'try {\n' +
+    "  Add-RunLedger $ledger $prefix 'task' $task\n" +
+    "  $create = Invoke-WindowsNative $scheduler @('/Create', '/TN', $task, '/TR', $action, '/SC', 'ONCE', '/SD', '01/01/2000', '/ST', '00:00', '/RU', $InteractiveUser, '/IT', '/RL', 'LIMITED')\n" +
+    '  if ($create.ExitCode -ne 0) { throw "Interactive task registration failed: $($create.Stdout) $($create.Stderr)" }\n' +
+    '  $registered = $true\n' +
+    "  $xml = Invoke-WindowsNative $scheduler @('/Query', '/TN', $task, '/XML')\n" +
+    '  if ($xml.ExitCode -ne 0) { throw "Task XML readback failed: $($xml.Stderr)" }\n' +
+    "  $xml.Stdout | Set-Content -LiteralPath (Join-Path $output 'task.xml') -Encoding UTF8\n" +
+    '  [xml]$definition = $xml.Stdout\n' +
+    "  if ($definition.Task.Principals.Principal.LogonType -ne 'InteractiveToken') { throw 'Task is not InteractiveToken (/IT)' }\n" +
+    "  $started = Invoke-WindowsNative $scheduler @('/Run', '/TN', $task)\n" +
+    '  if ($started.ExitCode -ne 0) { throw "Task start failed: $($started.Stderr)" }\n' +
+    '  $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds + 90)\n' +
+    "  $statusFile = Join-Path $output 'task-status.json'\n" +
+    '  while (-not (Test-Path -LiteralPath $statusFile -PathType Leaf)) {\n' +
+    "    if ([DateTime]::UtcNow -gt $deadline) { throw 'Interactive task timed out; verify the named user is logged on to the Desktop' }\n" +
+    '    Start-Sleep -Milliseconds 500\n' +
+    '  }\n' +
+    '  $status = Get-Content -LiteralPath $statusFile -Raw | ConvertFrom-Json\n' +
+    '  # Wait for the task process itself to finish after committing its status.\n' +
+    "  $service = New-Object -ComObject 'Schedule.Service'\n" +
+    '  $service.Connect()\n' +
+    "  $registeredTask = $service.GetFolder('\\').GetTask($task)\n" +
+    '  while ($registeredTask.State -eq 4) {\n' +
+    "    if ([DateTime]::UtcNow -gt $deadline) { throw 'Task wrote status but did not exit' }\n" +
+    '    Start-Sleep -Milliseconds 500\n' +
+    '  }\n' +
+    "  [ordered]@{ name=$task; lastRunTime=$registeredTask.LastRunTime.ToString('O'); lastTaskResult=$registeredTask.LastTaskResult; state=$registeredTask.State } |\n" +
+    "    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'task-result.json') -Encoding UTF8\n" +
+    '  $complete = $true\n' +
+    "  if (Test-Path -LiteralPath (Join-Path $output 'result.txt')) { Get-Content -LiteralPath (Join-Path $output 'result.txt') }\n" +
+    '  if (-not $status.ok -or $registeredTask.LastTaskResult -ne 0) { throw "Desktop gate failed: $($status.error); evidence=$output" }\n' +
+    '} finally {\n' +
+    '  try {\n' +
+    '  & { param($Ledger,$Prefix,$Enumerate,$Delete) } -Ledger $ledger -Prefix $prefix -Enumerate {\n' +
+    "    $cleanupService=New-Object -ComObject 'Schedule.Service'\n" +
+    '    $cleanupService.Connect()\n' +
+    "    Get-RunTasks ($cleanupService.GetFolder('\\'))\n" +
+    '  } -Delete {\n' +
+    '    param($ownedTask)\n' +
+    "    $cleanupService=New-Object -ComObject 'Schedule.Service';$cleanupService.Connect()\n" +
+    '    Remove-RunTask $ownedTask $cleanupService\n' +
+    '  }\n' +
+    '  } finally { Restore-FixtureEnvironment $saved }\n' +
+    '}\n'
+  
+      at TestContext.<anonymous> (file:///work/scripts/windows/safety.node-test.mjs:9:47)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: `# OpenSSH is not the desktop. Register /IT under an explicitly named logged-on\n# account; no password, SYSTEM account, service session or stored credential.\n[CmdletBinding()]\nparam(\n  [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$Commit,\n  [Parameter(Mandatory=$true)][ValidatePattern('^[a-fA-F0-9]{64}$')][string]$PackageSha256,\n  [Parameter(Mandatory=$true)][string]$InteractiveUser,\n  [Parameter(Mandatory=$true)][string]$OutputDirectory,\n  [string]$Executable = 'C:\\murage-ci\\app\\Murage.exe',\n  [string]$ScenarioScript = 'C:\\murage-ci\\source\\scripts\\windows\\full-packaged-scenario.ps1',\n  [ValidateSet('Desktop','Handoff')][string]$Mode='Desktop',\n  [string]$HandoffReceipt,\n  [string]$Node='C:\\murage-ci\\node\\node.exe',\n  [string]$FeedDirectory='C:\\murage-ci\\feed',\n  [ValidateRange(60,3600)][int]$TimeoutSeconds = 1200\n)\n$ErrorActionPreference = 'Stop'\nSet-StrictMode -Version Latest\nif ($env:OS -ne 'Windows_NT') { throw 'Windows required' }\n. (Join-Path $PSScriptRoot 'gate-paths.ps1')\n. (Join-Path $PSScriptRoot 'run-ledger.ps1')\n. (Join-Path $PSScriptRoot 'gate-admission.ps1')\nAssert-GateAdmission\nforeach($path in @($PSScriptRoot,$Executable,$ScenarioScript,$OutputDirectory,$Node,$FeedDirectory,$HandoffReceipt) | Where-Object {$_}){[void](Assert-GatePath $path)}\n$identity=Assert-StagedPackage $PackageSha256\nif($Commit -ne $identity.commit){throw 'Caller commit differs from packaged build provenance'}\n# schtasks can otherwise ask for another account's password. This launcher\n# intentionally has no credential path: SSH as the desktop's logged-on user.\n$account = New-Object Security.Principal.NTAccount($InteractiveUser)\n$ownerSid = $account.Translate([Security.Principal.SecurityIdentifier]).Value\nif ($Mode -eq 'Handoff') {\n  if($env:COMPUTERNAME -ine 'gate-win-nogit'){throw 'Handoff is gate-win-nogit only'}\n  $marker=Get-Content -LiteralPath 'C:\\murage-ci\\gate-user.json' -Raw | ConvertFrom-Json\n  if($marker.sid -ne $ownerSid){throw 'Task must use provisioned gate user'}\n  $ScenarioScript='C:\\murage-ci\\source\\scripts\\windows\\updates-handoff.ps1'\n} elseif (-not $HandoffReceipt) {throw 'Desktop gate requires the handoff receipt and its artifacts'}\nif ($Mode -ne 'Handoff' -and $ownerSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { throw 'SSH/task registration must use the same account as the logged-on Desktop user; no credentials are accepted' }\n$root = 'C:\\murage-ci'\n$Executable = (Resolve-Path -LiteralPath $Executable).Path\n$ScenarioScript = (Resolve-Path -LiteralPath $ScenarioScript).Path\n$output = [IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\\')\nforeach ($file in @($Executable, $ScenarioScript, $output)) {\n  if (-not $file.StartsWith($root + '\\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Inputs and evidence must be under C:\\murage-ci' }\n}\nif (Test-Path -LiteralPath $output) { throw 'OutputDirectory must be new (prevents stale evidence)' }\nNew-GateDirectory $output\n$prefix='MurageCI-'+[Guid]::NewGuid().ToString('N')+'-'\n$ledger=Join-Path $output 'launcher-ledger.jsonl'\n[IO.File]::WriteAllText($ledger,'')\n$request = Join-Path $output 'request.json'\n[ordered]@{ prefix=$prefix; ledger=$ledger; packageSha256=$PackageSha256; executable=$Executable; scenarioScript=$ScenarioScript; commit=$Commit; timeoutSeconds=$TimeoutSeconds; mode=$Mode; handoffReceipt=$HandoffReceipt; node=$Node; feedDirectory=$FeedDirectory } |\n  ConvertTo-Json | Set-Content -LiteralPath $request -Encoding UTF8\n. (Join-Path $PSScriptRoot 'owned-process.ps1')\n$task = $prefix+'wrapper'\n$scheduler = Join-Path $env:SystemRoot 'System32\\schtasks.exe'\n$powershell = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'\n$action = ((@($powershell, '-NoP', '-NonI', '-EP', 'Bypass', '-W', 'Hidden', '-File', (Join-Path $PSScriptRoot 'desktop-task.ps1'), '-Request', $request) | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' ')\nif ($action.Length -gt 260) { throw 'Task action exceeds schtasks /TR limit; use a shorter OutputDirectory' }\n# /SC ONCE is only a safety trigger; /Run starts the task immediately. A past\n# date prevents an accidental second run if the machine stays up overnight.\n$registered = $false\n$complete = $false\n$saved=Set-FixtureEnvironment (Join-Path $output 'launcher-env')\ntry {\n  Add-RunLedger $ledger $prefix 'task' $task\n  $create = Invoke-WindowsNative $scheduler @('/Create', '/TN', $task, '/TR', $action, '/SC', 'ONCE', '/SD', '01/01/2000', '/ST', '00:00', '/RU', $InteractiveUser, '/IT', '/RL', 'LIMITED')\n  if ($create.ExitCode -ne 0) { throw "Interactive task registration failed: $($create.Stdout) $($create.Stderr)" }\n  $registered = $true\n  $xml = Invoke-WindowsNative $scheduler @('/Query', '/TN', $task, '/XML')\n  if ($xml.ExitCode -ne 0) { throw "Task XML readback failed: $($xml.Stderr)" }\n  $xml.Stdout | Set-Content -LiteralPath (Join-Path $output 'task.xml') -Encoding UTF8\n  [xml]$definition = $xml.Stdout\n  if ($definition.Task.Principals.Principal.LogonType -ne 'InteractiveToken') { throw 'Task is not InteractiveToken (/IT)' }\n  $started = Invoke-WindowsNative $scheduler @('/Run', '/TN', $task)\n  if ($started.ExitCode -ne 0) { throw "Task start failed: $($started.Stderr)" }\n  $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds + 90)\n  $statusFile = Join-Path $output 'task-status.json'\n  while (-not (Test-Path -LiteralPath $statusFile -PathType Leaf)) {\n    if ([DateTime]::UtcNow -gt $deadline) { throw 'Interactive task timed out; verify the named user is logged on to the Desktop' }\n    Start-Sleep -Milliseconds 500\n  }\n  $status = Get-Content -LiteralPath $statusFile -Raw | ConvertFrom-Json\n  # Wait for the task process itself to finish after committing its status.\n  $service = New-Object -ComObject 'Schedule.Service'\n  $service.Connect()\n  $registeredTask = $service.GetFolder('\\').GetTask($task)\n  while ($registeredTask.State -eq 4) {\n    if ([DateTime]::UtcNow -gt $deadline) { throw 'Task wrote status but did not exit' }\n    Start-Sleep -Milliseconds 500\n  }\n  [ordered]@{ name=$task; lastRunTime=$registeredTask.LastRunTime.ToString('O'); lastTaskResult=$registeredTask.LastTaskResult; state=$registeredTask.State } |\n    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'task-result.json') -Encoding UTF8\n  $complete = $true\n  if (Test-Path -LiteralPath (Join-Path $output 'result.txt')) { Get-Content -LiteralPath (Join-Path $output 'result.txt') }\n  if (-not $status.ok -or $registeredTask.LastTaskResult -ne 0) { throw "Desktop gate failed: $($status.error); evidence=$output" }\n} finally {\n  try {\n  & { param($Ledger,$Prefix,$Enumerate,$Delete) } -Ledger $ledger -Prefix $prefix -Enumerate {\n    $cleanupService=New-Object -ComObject 'Schedule.Service'\n    $cleanupService.Connect()\n    Get-RunTasks ($cleanupService.GetFolder('\\'))\n  } -Delete {\n    param($ownedTask)\n    $cleanupService=New-Object -ComObject 'Schedule.Service';$cleanupService.Connect()\n    Remove-RunTask $ownedTask $cleanupService\n  }\n  } finally { Restore-FixtureEnvironment $saved }\n}\n`,
+    expected: /finally\s*\{\s*try\s*\{\s*Complete-RunLedger/,
+    operator: 'match',
+    diff: 'simple'
+  }

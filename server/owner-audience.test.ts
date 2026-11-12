@@ -283,6 +283,13 @@ describe("every registered owner-only surface", () => {
     expect(writes[0]).toBeGreaterThan(limit);
     // and nothing from the busy refusal through admission can wait (an await would let another start in between)
     expect(body.slice(busy)).not.toMatch(/\bawait\b/);
+    // Cooperative replay starts after both the claim and the visible busy mark. A wait API must not settle a starting turn as idle.
+    const claimAt = whole.indexOf("directRuns.admit(");
+    const busyAt = whole.indexOf('store.setTaskActivity(bot.id, threadId, "working")');
+    const replayAt = whole.indexOf("const replayInputs = await");
+    expect(busyAt).toBeGreaterThan(claimAt);
+    expect(replayAt).toBeGreaterThan(busyAt);
+    expect(whole.slice(claimAt, busyAt)).not.toMatch(/\bawait\b/);
     // with that value false the standing context carries no About me
     saveAboutMe("ABOUT_ME_CANARY I run a candle shop");
     const bot = { id: "b1", name: "B" } as Parameters<typeof standingContextParts>[0];

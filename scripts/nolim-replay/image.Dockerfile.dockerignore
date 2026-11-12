@@ -1,0 +1,10 @@
+.git
+.nolim-evidence
+.murage-scratch
+.env
+.env.*
+**/local-only
+**/raw-diag
+**/corpus
+**/corpora
+**/runs

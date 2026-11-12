@@ -80,6 +80,7 @@ posix("headless text-only: stub binary (group 1)", () => {
       "--output-format", "streaming-messages-json", "--json-schema", JSON.stringify(SCHEMA), "--prompt-file", `${T}/prompt.txt`, "--debug-file", `${T}/debug.log`,
     ]);
     expect(envKeys(r.env)).toEqual(["FUIGO_API_BASE_URL", "FUIGO_HOME", "FUIGO_MODELS_BASE_URL", "HOME", "MURAGE_PROVIDER_API_KEY", "PATH", "USERPROFILE", ...Object.keys(FUIGO_OFF_SWITCHES), ...Object.keys(FUIGO_REFLECTION_COMPAT_OFF)].sort());
+    expect(r.env.FUIGO_ENVRC_TIMEOUT_SECS).toBe("0"); // a trusted folder's .envrc never runs in reflection
     expect(r.env.FUIGO_HOME).toBe(`${T}/home`);
     expect(r.env.HOME).toBe(r.env.FUIGO_HOME.replace(/\/home$/, ""));
     // a child's cwd is reported canonical (macOS /var is /private/var)
@@ -109,6 +110,7 @@ posix("headless text-only: stub binary (group 1)", () => {
     const [r] = records();
     expect(r.homeFiles).toEqual(["auth.json"]);
     expect(envKeys(r.env)).toEqual(["GROK_HOME", "HOME", "PATH", "USERPROFILE", ...Object.keys(GROK_OFF_SWITCHES), ...Object.keys(GROK_REFLECTION_COMPAT_OFF)].sort());
+    expect(r.env.GROK_ENVRC_TIMEOUT_SECS).toBe("0");
     rmSync(out); rmSync(join(parent, "auth.json"));
     const missing = await headlessTextOnlyTurn(input(), cfg("ok", { engine: "grok", parentGrokHome: parent }));
     expect(missing.verdict).toEqual({ state: "unsupported", reason: "auth" });
@@ -534,8 +536,8 @@ posix("audit finding 3: the reaper separates absent, present and unknown", () =>
   });
   it("the registered root exits while a same-group helper survives: the group is killed and verified before the root is removed", async () => {
     const root = rootAt("r-1-u003");
-    const script = "const {spawn}=require('node:child_process');const h=spawn(process.execPath,['-e','setTimeout(()=>{},60000)'],{stdio:'ignore'});process.stdout.write(String(h.pid));setTimeout(()=>process.exit(0),900)";
-    const rootChild = spawn(process.execPath, ["-e", script], { detached: true, stdio: ["ignore", "pipe", "ignore"] });
+    const script = "const {spawn}=require('node:child_process');const h=spawn(process.execPath,['-e','setTimeout(()=>{},60000)'],{windowsHide:true,stdio:'ignore'});process.stdout.write(String(h.pid));setTimeout(()=>process.exit(0),900)";
+    const rootChild = spawn(process.execPath, ["-e", script], { windowsHide: true, detached: true, stdio: ["ignore", "pipe", "ignore"] });
     let helperPid = 0;
     try {
       helperPid = await new Promise<number>((done) => rootChild.stdout.once("data", (d) => done(Number(String(d)))));
@@ -651,4 +653,10 @@ describe("Astra audit2 transport regressions", () => {
     expect(records()[0].argv).toContain("--verbatim");
     expect(records()[0].prompt).toBe("SYS\n\n" + text);
   }, WIN_SLOW ? 60_000 : undefined);
+});
+
+it("a terminal headless Flux result cannot become a schema retry", async () => {
+  const result = await headlessTextOnlyTurn(input(), cfg("flux-terminal-upstream"));
+  expect(result.fluxDecision).toEqual({reason:"keyRevoked",action:"STOP",wait:"-"});
+  expect(records()).toHaveLength(1);
 });

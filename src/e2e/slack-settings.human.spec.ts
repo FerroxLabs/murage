@@ -41,10 +41,10 @@ test("secure save, explicit pairing, lock, copy, retry and revoke are visible an
   await page.route("**/api/slack/revoke", route => { revokes++; state = { ...state, requiresRevoke: false, enabled: false, paired: false, state: "idle", error: null }; return route.fulfill({ json: {} }); });
   await page.route("**/api/slack/resume", route => { retries++; if (fail) return route.fulfill({ status: 503, json: { error: "private-secret-canary" } }); state = { ...state, state: "connected", paired: true, enabled: true }; return route.fulfill({ json: state }); });
   await page.setViewportSize({ width: 390, height: 844 }); await page.goto(`${origin}/__slack`); await page.waitForLoadState("networkidle");
-  await expect(page.getByText("Save your Slack credentials", { exact: true })).toBeVisible();
+  await expect(page.getByText("1. Save your app keys", { exact: true })).toBeVisible();
   await page.getByLabel("App-level token", { exact: true }).fill("fake-app-private"); await page.getByLabel("Bot token", { exact: true }).fill("fake-bot-private");
   state = { ...state, configured: true, appConfigured: true, botConfigured: true };
-  await page.getByRole("button", { name: "Save credentials", exact: true }).click(); await expect(page.getByText("Credentials saved. Pairing has not started.")).toBeVisible(); expect(pairs).toBe(0);
+  await page.getByRole("button", { name: "Save keys", exact: true }).click(); await expect(page.getByText("Keys saved. Pairing has not started.")).toBeVisible(); expect(pairs).toBe(0);
   await expect(page.getByLabel("App-level token (saved)", { exact: true })).toHaveValue(""); await expect(page.getByLabel("Bot token (saved)", { exact: true })).toHaveValue("");
   expect(await page.evaluate(() => (window as any).__credentialCalls)).toEqual([{ name: "slackAppToken" }, { name: "slackBotToken" }]);
   await page.getByLabel("Workspace ID", { exact: true }).fill("TEAM"); await page.getByLabel("App ID", { exact: true }).fill("APP"); await page.getByLabel("Owner member ID", { exact: true }).fill("UOWNER");
@@ -92,7 +92,7 @@ test("self-review gathers three widths, axe and keyboard focus on the isolated c
     { viewports: {}, axe: { bySeverity: {} }, focus: { missingVisibleFocus: [] } };
   for (const width of [390, 820, 1440]) {
     await page.setViewportSize({ width, height: 900 }); await page.goto(`${origin}/__slack`); await page.waitForLoadState("networkidle");
-    await expect(page.getByText("Save your Slack credentials", { exact: true })).toBeVisible();
+    await expect(page.getByText("1. Save your app keys", { exact: true })).toBeVisible();
     // The page root may clip (overflow: hidden), so a too-wide box is found by its own edges, not by page scroll.
     report.viewports[width] = { horizontalOverflow: await page.evaluate(() => document.documentElement.scrollWidth > document.documentElement.clientWidth
       || [...document.querySelectorAll("#root *")].some(el => { const box = el.getBoundingClientRect(); return box.width > 0 && (box.left < -1 || box.right > innerWidth + 1); })) };
@@ -124,8 +124,8 @@ test("expired challenges and missing secure storage have a visible next action",
   await page.route("**/api/slack/pair", route => { state = { ...state, state: "pairing", requiresRevoke: true, enabled: true }; return route.fulfill({ json: { code: "b".repeat(64), expiresAt: Date.now() + 1000 } }); });
   await page.goto(`${origin}/__slack`); await page.waitForLoadState("networkidle");
   await page.getByRole("button", { name: "Pair with Chief" }).click(); await expect(page.getByText("Pairing code expired", { exact: true })).toBeVisible();
-  await expect(page.getByText("/pair " + "b".repeat(64))).toHaveCount(0); await expect(page.getByText("The code expired.", { exact: false })).toBeVisible();
+  await expect(page.getByText("pair " + "b".repeat(64))).toHaveCount(0); await expect(page.getByText("The code expired.", { exact: false })).toBeVisible();
   state = { ...empty };
   await page.evaluate(() => { (window as any).muragebox = {}; }); await page.getByRole("button", { name: "Refresh status" }).click();
-  await expect(page.getByText("Secure storage is unavailable", { exact: false })).toBeVisible(); await expect(page.getByRole("button", { name: "Save credentials", exact: true })).toBeDisabled();
+  await expect(page.getByText("Saving keys needs the Murage desktop app.", { exact: false })).toBeVisible(); await expect(page.getByRole("button", { name: "Save keys", exact: true })).toBeDisabled();
 });

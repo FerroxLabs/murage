@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { spawn as nodeSpawn } from "node:child_process";
@@ -104,9 +105,9 @@ export function relaunchDesktop({ app, args, platform = process.platform, env = 
   // The helper must not keep the old mount busy, and the new copy should start
   // where the person started the first one.
   const start = relaunchDirectory(env, cwd, os.homedir);
-  const child = spawn("bash", ["-c", APPIMAGE_RELAUNCH_SCRIPT, "murage-relaunch", String(pid), file, ...args], {
+  const child = spawn("bash", ["-c", APPIMAGE_RELAUNCH_SCRIPT, "murage-relaunch", String(pid), file, ...args], withHideInherit({
     detached: true, stdio: "ignore", cwd: start, env: appImageRelaunchEnv(env, appDir),
-  });
+  }));
   // A failed spawn must still never crash the quitting app.
   child.on?.("error", () => {});
   child.unref?.();
@@ -155,9 +156,9 @@ export async function acknowledgedRelaunchHandoff({ app, args, platform = proces
   register, ackMs = 2500, stopMs = 2500 }) {
   const file = runningAppImage({ platform, env, execPath });
   if (!file) { app.relaunch({ args }); return true; }
-  const child = spawn("bash", ["-c", APPIMAGE_RELAUNCH_SCRIPT, "murage-relaunch", String(pid), file, ...args], {
+  const child = spawn("bash", ["-c", APPIMAGE_RELAUNCH_SCRIPT, "murage-relaunch", String(pid), file, ...args], withHideInherit({
     detached: true, stdio: "ignore", cwd: relaunchDirectory(env, cwd, homedir), env: appImageRelaunchEnv(env, env.APPDIR),
-  });
+  }));
   const owned = ownRelaunchHelper(child, { stopMs });
   register(owned);
   const accepted = await new Promise(resolve => {

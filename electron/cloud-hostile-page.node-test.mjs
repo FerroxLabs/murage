@@ -27,25 +27,24 @@ const electronDir = path.dirname(fileURLToPath(import.meta.url));
 const read = (name) => fs.readFileSync(path.join(electronDir, name), "utf8");
 const HOME = "h-abc";
 const ORIGIN = "http://127.0.0.1:8799";
-const flagOn = loadIpcInventory({ electronDir, env: { MURAGE_DESKTOP_CLOUD: "1" } });
 
 // ── 1. the bridge ───────────────────────────────────────────────────────────
 
 function runCloudPreload({ argv, location }) {
-  const sent = [], invoked = [], listened = [], invokedArgs = [];
+  const sent = [], invoked = [], listened = [], invokedArgs = [], sentArgs = [];
   let exposed = null;
   const electron = {
     contextBridge: { exposeInMainWorld: (key, value) => { exposed = { key, value }; } },
     ipcRenderer: {
-      send: (channel) => sent.push(channel),
+      send: (channel, ...args) => { sent.push(channel); sentArgs.push([channel, ...args]); },
       sendSync: (channel) => { sent.push(channel); return ""; },
       invoke: (channel, ...args) => { invoked.push(channel); invokedArgs.push([channel, ...args]); return Promise.resolve({ ok: true }); },
       on: (channel) => listened.push(channel),
       removeListener() {},
     },
   };
-  vm.runInNewContext(read("preload-cloud.cjs"), { require: () => electron, process: { platform: "darwin", argv }, globalThis: { location }, location, URL, queueMicrotask });
-  return { exposed, sent, invoked, listened, invokedArgs };
+  vm.runInNewContext(read("preload-cloud.cjs"), { require: () => electron, process: { platform: "darwin", argv }, globalThis: { location }, location, URL, URLSearchParams, queueMicrotask });
+  return { exposed, sent, invoked, listened, invokedArgs, sentArgs };
 }
 
 test("the Cloud bridge hands main the address unchanged, and adds nothing to it", async () => {
@@ -75,17 +74,23 @@ test("hostile page: the Cloud bridge appears only on its own home's document", (
 test("hostile page: whatever the page passes to the bridge, only cloud-safe / cloud-only channels are reached", async () => {
   const { exposed, sent, invoked, listened } = runCloudPreload({ argv: ["electron", `--murage-cloud-home=${HOME}`], location: { protocol: "murage-home:", hostname: HOME } });
   const bridge = exposed.value;
-  assert.deepEqual(Object.keys(bridge).sort(), ["approvalNotifications", "disconnectThisComputer", "homeId", "openExternal", "platform", "reachable", "setUnreadCount"]);
+  assert.deepEqual(Object.keys(bridge).sort(), ["approvalNotifications", "attention", "browserPopout", "disconnectThisComputer", "homeId", "openExternal", "platform", "reachable", "requestSignIn", "setUnreadCount"]);
+  assert.deepEqual(Object.keys(bridge.attention).sort(), ["freed", "gone", "hello", "offer", "onShow", "present", "visible"]);
   assert.equal(Object.hasOwn(bridge, "ipcRenderer") || Object.hasOwn(bridge, "invoke") || Object.hasOwn(bridge, "send"), false, "no raw IPC handle");
   const hostile = [undefined, null, "../../x", { channel: "credential:set" }, { toString() { throw new Error("boom"); } }, JSON.parse('{"__proto__":{"channel":"credential:set"}}'), "x".repeat(1_000_000), -1, NaN, [], () => {}];
   for (const arg of hostile) {
     for (const call of [
       () => bridge.setUnreadCount(arg),
       () => bridge.reachable(arg),
+      () => bridge.requestSignIn(arg),
       () => bridge.disconnectThisComputer(arg),
       () => bridge.openExternal(arg),
       () => bridge.approvalNotifications.show(arg),
       () => bridge.approvalNotifications.onOpen(arg),
+      () => bridge.attention.hello(arg),
+      () => bridge.attention.present(arg),
+      () => bridge.attention.gone(arg),
+      () => bridge.attention.freed(arg),
     ]) {
       try { await call(); } catch { /* a throwing page argument is its own problem; it still reached no other channel */ }
     }
@@ -93,8 +98,36 @@ test("hostile page: whatever the page passes to the bridge, only cloud-safe / cl
   // `listened` is main -> page (approval-notification:open): the page can only receive it, never send on it.
   assert.deepEqual([...new Set(listened)], ["approval-notification:open"]);
   const reached = new Set([...sent, ...invoked]);
-  assert.deepEqual([...reached].sort(), ["approval-notification:show", "cloud-home:disconnect-this", "cloud-home:reachable", "desktop:open-external", "desktop:unread-count"]);
+  assert.deepEqual([...reached].sort(), ["approval-notification:show", "cloud-home:disconnect-this", "cloud-home:reachable", "cloud-home:request-sign-in", "desktop:open-external", "desktop:unread-count"]);
   for (const channel of reached) assert.notEqual(channelClass(channel), CLASS_LOCAL_ONLY, channel);
+});
+
+test("hostile attention payloads stay in the preload; valid calls use classified Cloud channels", async () => {
+  const f = runCloudPreload({ argv: ["electron", `--murage-cloud-home=${HOME}`], location: { protocol: "murage-home:", hostname: HOME } });
+  const bridge = f.exposed.value.attention, session = "a".repeat(25);
+  const identity = { session, ref: "r1", gen: 1 };
+  const present = { ...identity, title: "Review", body: "Details", privatePreview: false, silent: false, botId: "bot", threadId: "thread", icon: "data:image/png;base64,AAAA" };
+  const cases = {
+    hello: [{}, { session: "short" }, { session: 42 }, { session: "A".repeat(25) }],
+    present: [{ ...present, title: "x".repeat(257) }, { ...present, body: "x".repeat(1025) }, { ...present, gen: -1 }, { ...present, gen: 1.5 }, { ...present, ref: "" }, { ...present, session: "short" }, { ...present, silent: "yes" }, { ...present, privatePreview: 1 }, { ...present, botId: {} }, { ...present, icon: "https://example.com/x.png" }, { ...present, icon: "data:image/png;base64," + "A".repeat(65536) }],
+    gone: [{ ...identity, gen: NaN }, { ...identity, ref: "x".repeat(65) }, { ...identity, session: "short" }],
+    freed: [{ session, refs: "r1" }, { session, refs: [null] }, { session, refs: [""] }, { session, refs: Array(289).fill("r") }, { session: "short", refs: ["r1"] }],
+  };
+  for (const [method, inputs] of Object.entries(cases)) for (const input of [null, undefined, [], "credential:set", ...inputs]) {
+    await bridge[method](input);
+    assert.equal(f.invoked.length, 0, `${method} malformed invoke`);
+    assert.equal(f.sent.length, 0, `${method} malformed send`);
+  }
+  const valid = { hello: { session }, present, gone: identity, freed: { session, refs: ["r1"] } };
+  for (const [method, input] of Object.entries(valid)) {
+    await bridge[method]({ ...input, channel: "credential:set", home: "h-other" });
+    const actual = (method === "freed" ? f.sentArgs : f.invokedArgs).at(-1);
+    assert.equal(actual[0], `cloud-attention:${method}`);
+    assert.deepEqual(JSON.parse(JSON.stringify(actual[1])), input, "only the validated shape crosses IPC");
+    assert.equal(channelClass(actual[0]), CLASS_CLOUD_SAFE);
+    assert.equal(channelClass(`attention:${method}`), CLASS_LOCAL_ONLY);
+  }
+  assert.equal(f.invoked.length, 3); assert.equal(f.sent.length, 1);
 });
 
 // ── 2. main's gate ──────────────────────────────────────────────────────────
@@ -106,6 +139,7 @@ function frameFixture(url, extra = {}) {
 }
 
 test("hostile page: every channel x every hostile sender is refused in main's log (or is cloud-safe from the genuine top frame)", async () => {
+  const flagOn = loadIpcInventory({ electronDir, env: { MURAGE_DESKTOP_CLOUD: "1" } });
   const main = frameFixture(`${ORIGIN}/`);
   const cloud = frameFixture(`murage-home://${HOME}/`);
   const raw = { handles: new Map(), listeners: new Map() };
@@ -237,4 +271,23 @@ test("hostile page: HTML a home returns from /api cannot run as the app; redirec
   assert.equal((await redirect.handler(req(`murage-home://${HOME}/api/x`))).status, 502);
   const { handler } = network();
   for (const method of ["POST", "PUT", "DELETE", "PATCH"]) assert.equal((await handler(req(`murage-home://${HOME}/index.html`, { method }))).status, 405, method);
+});
+
+test('A7 pop-out preload exposes only its two methods on the matching surface and home',async()=>{
+  const argv=['electron',`--murage-cloud-home=${HOME}`,'--murage-cloud-surface=browser-popout'];
+  const location={protocol:'murage-home:',hostname:HOME,search:'?surface=browser-popout&bot=ava'};
+  const f=runCloudPreload({argv,location});
+  assert.deepEqual(Object.keys(f.exposed.value).sort(),['browserPopout','homeId','platform']);
+  assert.deepEqual(Object.keys(f.exposed.value.browserPopout).sort(),['close','currentState']);
+  await f.exposed.value.browserPopout.close('ava');await f.exposed.value.browserPopout.currentState();
+  assert.deepEqual(f.invokedArgs,[['cloud-home:browser-popout:close','ava'],['cloud-home:browser-popout:state-now']]);
+  for(const doc of [{...location,hostname:'home-other'},{...location,protocol:'https:'},{...location,search:''},{...location,search:'?surface=other'}])assert.equal(runCloudPreload({argv,location:doc}).exposed,null);
+  for(const surface of ['','other'])assert.equal(runCloudPreload({argv:[argv[0],argv[1],`--murage-cloud-surface=${surface}`],location}).exposed,null);
+  const full=runCloudPreload({argv:argv.slice(0,2),location});
+  assert.deepEqual(Object.keys(full.exposed.value.browserPopout).sort(),['close','currentState','onState','open']);
+});
+
+for (const surface of ["other", ""]) test(`A7 unknown pop-out argument ${JSON.stringify(surface)} exposes nothing`,()=>{
+  const argv=['electron',`--murage-cloud-home=${HOME}`,`--murage-cloud-surface=${surface}`];
+  assert.equal(runCloudPreload({argv,location:{protocol:'murage-home:',hostname:HOME,search:'?surface=browser-popout&bot=ava'}}).exposed,null);
 });

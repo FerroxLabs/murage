@@ -1,0 +1,42 @@
+Fetching distribution.
+Downloading file:/job/gradle-distribution.zip
+..............10%..............20%...............30%..............40%...............50%..............60%...............70%..............80%...............90%..............100%
+
+Welcome to Gradle 9.8.2!
+
+Here are the highlights of this release:
+ - Java 27 support
+ - Maven mirror settings reuse
+ - Linked problem locations in build output
+
+For more details see https://docs.gradle.org/9.8.2/release-notes.html
+
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/9.8.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build
+> Task :buildSrc:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :buildSrc:pluginDescriptors
+> Task :buildSrc:processResources
+> Task :buildSrc:compileKotlin
+> Task :buildSrc:compileJava NO-SOURCE
+> Task :buildSrc:compileGroovy NO-SOURCE
+> Task :buildSrc:classes
+> Task :buildSrc:jar
+
+> Task :libsignal-cli:compileJava
+Note: Some input files use or override a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+
+> Task :libsignal-cli:processResources
+> Task :libsignal-cli:classes
+> Task :libsignal-cli:jar
+> Task :compileJava
+> Task :processResources
+> Task :classes
+> Task :jar
+> Task :startScripts
+> Task :installDist
+
+[Incubating] Problems report is available at: file:///job/strict-good/source/build/reports/problems/problems-report.html
+
+BUILD SUCCESSFUL in 54s
+12 actionable tasks: 12 executed

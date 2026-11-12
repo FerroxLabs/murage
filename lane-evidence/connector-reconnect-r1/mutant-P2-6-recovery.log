@@ -1,0 +1,45 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/connector-health-scheduled-workflow.test.ts (1 test | 1 failed) 54052ms
+   × P2-6 scheduled Buffer work fails visibly while lapsed and safely continues after reconnect 54049ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-health-scheduled-workflow.test.ts > P2-6 scheduled Buffer work fails visibly while lapsed and safely continues after reconnect
+AssertionError: expected [ { slug: 'buffer', …(3) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "accounts": [
++       {
++         "alias": "work",
++         "id": "buffer-a",
++       },
++     ],
++     "incidentId": "608539a6-1fa0-4469-9378-89f35afc2e69",
++     "label": "Buffer",
++     "slug": "buffer",
++   },
++ ]
+
+ ❯ server/connector-health-scheduled-workflow.test.ts:80:77
+     78|     lapsed = false; account = "buffer-c";
+     79|     await api("GET", "/api/connectors/connected?force=1");
+     80|     expect((await api("GET", "/api/connectors/needs-reconnect")).body.…
+       |                                                                             ^
+     81|     const next = await api("PATCH", `/api/routines/${routine.id}`, { e…
+     82|     expect(next.status).toBe(200);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  03:46:49
+   Duration  59.31s (transform 4.15s, setup 4.97s, import 166ms, tests 54.05s, environment 0ms)
+

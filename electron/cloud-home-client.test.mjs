@@ -570,6 +570,20 @@ describe("version and reachability", () => {
     healthVersion = "1.0.0"; const ctx = await setup({ appVersion: "1.9.9" }); await pairHome(ctx);
     expect((await ctx.client.fetch(HOME, "/api/bots")).status).toBe(200);
   });
+  it.each([401, 403, 404, 409, 429])("a health %s refusal is a hard failure, not a startup outage", async status => {
+    const ctx = await setup(); await pairHome(ctx);
+    const fresh = createCloudHomeClient({ store: ctx.store, fetch: ctx.net.fetchImpl, appVersion: "1.9.0", confirmStepUp: async () => true, cp: cpConfig });
+    answerOverride = { path: "/api/health", status, body: { error: "Fixture refusal" } };
+    await expect(fresh.status(HOME)).resolves.toMatchObject({ ok: false, code: "sign-in-refused", message: COPY.signInRefused });
+  });
+
+  it.each([502, 504, 521, 522, 523, 524, 530])("a startup/proxy %s remains eligible for reconnect grace", async status => {
+    const ctx = await setup(); await pairHome(ctx);
+    const fresh = createCloudHomeClient({ store: ctx.store, fetch: ctx.net.fetchImpl, appVersion: "1.9.0", confirmStepUp: async () => true, cp: cpConfig });
+    answerOverride = { path: "/api/health", status, body: {} };
+    await expect(fresh.status(HOME)).resolves.toMatchObject({ ok: false, code: "unreachable" });
+  });
+
   it("an unreachable home fails the write at once: one attempt, no queue, no retry", async () => {
     const ctx = await setup(); await pairHome(ctx);
     const fresh = createCloudHomeClient({ store: ctx.store, fetch: ctx.net.fetchImpl, appVersion: "1.9.0", confirmStepUp: ctx.confirmSpy, cp: cpConfig });
@@ -749,5 +763,57 @@ describe("door v2: the pending key's states", () => {
     await ctx.client.startConnect();
     await ctx.client.cancelConnect();
     expect((await ctx.client.connectStatus()).lastResult).toBeNull();
+  });
+});
+
+describe("NOTIFY-EVERYWHERE-1019 S4a: beforeSend and the session generation", () => {
+  it("runs before the first send, the 401 refresh retry and the step-up retry, and a throw stops each send", async () => {
+    const ctx = await setup(); await pairHome(ctx);
+    await ctx.client.getAccessToken(HOME);
+    // first send
+    const calls = [];
+    await ctx.client.fetch(HOME, "/api/bots", { beforeSend: () => { calls.push(ctx.net.homeCalls().length); } });
+    expect(calls).toHaveLength(1);
+    // 401 refresh retry: two sends, two hook calls, each before its own send
+    sessions.db.exec("DELETE FROM cloud_access");
+    const sendsBefore = ctx.net.homeCalls().filter((c) => c.path === "/api/bots").length; let seen = 0;
+    await ctx.client.fetch(HOME, "/api/bots", { beforeSend: () => { seen += 1; } });
+    expect(seen).toBe(2);
+    expect(ctx.net.homeCalls().filter((c) => c.path === "/api/bots").length - sendsBefore).toBe(2);
+    // step-up retry: first send answered 403 step-up required, the retry carries the assertion
+    answerOverride = { path: "/api/bots", status: 403, body: { error: "step-up required" } };
+    let hooks = 0;
+    await ctx.client.fetch(HOME, "/api/bots", { beforeSend: () => { hooks += 1; } }).catch(() => {});
+    expect(hooks).toBe(2);
+    // a throw before the retry stops the retry
+    let n = 0;
+    const stop = new Error("stopped");
+    await expect(ctx.client.fetch(HOME, "/api/bots", { beforeSend: () => { n += 1; if (n === 2) throw stop; } })).rejects.toBe(stop);
+  });
+
+  it("nothing yields between the guard passing and the request leaving (no await after beforeSend)", async () => {
+    const ctx = await setup(); await pairHome(ctx);
+    await ctx.client.getAccessToken(HOME);
+    let leftInSameTick = null;
+    await ctx.client.fetch(HOME, "/api/bots", { beforeSend: () => {
+      const before = ctx.net.calls.length;
+      queueMicrotask(() => { leftInSameTick = ctx.net.calls.length > before; });
+    } });
+    expect(leftInSameTick).toBe(true);
+  });
+
+  it("the session generation changes on refresh and disconnect but not on a per-request connect that reuses the session", async () => {
+    const ctx = await setup(); await pairHome(ctx);
+    await ctx.client.getAccessToken(HOME);
+    const g0 = ctx.client.sessionGeneration(HOME);
+    await ctx.client.fetch(HOME, "/api/bots");
+    await ctx.client.getAccessToken(HOME);
+    expect(ctx.client.sessionGeneration(HOME)).toBe(g0);
+    sessions.db.exec("DELETE FROM cloud_access");
+    await ctx.client.fetch(HOME, "/api/bots");
+    expect(ctx.client.sessionGeneration(HOME)).toBeGreaterThan(g0);
+    const g1 = ctx.client.sessionGeneration(HOME);
+    ctx.client.forgetTokens();
+    expect(ctx.client.sessionGeneration(HOME)).toBeGreaterThan(g1);
   });
 });

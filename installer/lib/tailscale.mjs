@@ -315,7 +315,7 @@ export function runTailscale(args, opts = {}) {
   // the terminal, and with a piped stdin that prompt would hang until the
   // timeout with nothing on screen. stdout/stderr stay piped because we parse
   // them.
-  const r = run(cmd, argv, {
+  const r = run(cmd, [...argv], {
     encoding: "utf8",
     timeout: opts.timeoutMs ?? 120_000,
     stdio: ["inherit", "pipe", "pipe"],

@@ -81,8 +81,8 @@ describe("Windows: started as administrator, the backup helper refuses and Murag
     const fixture = backupFixture(); roots.push(fixture.parent); fixture.db.close();
     const destination = join(fixture.parent, "backups"); mkdirSync(destination);
     const keygen = join(tools, "age-keygen.exe");
-    const identity = execFileSync(keygen, [], { encoding: "utf8", env: { PATH: "" }, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 4096 });
-    const recipient = execFileSync(keygen, ["-y"], { input: identity, encoding: "utf8", env: { PATH: "" }, stdio: ["pipe", "pipe", "pipe"], maxBuffer: 4096 }).trim();
+    const identity = execFileSync(keygen, [], { windowsHide: true, encoding: "utf8", env: { PATH: "" }, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 4096 });
+    const recipient = execFileSync(keygen, ["-y"], { windowsHide: true, input: identity, encoding: "utf8", env: { PATH: "" }, stdio: ["pipe", "pipe", "pipe"], maxBuffer: 4096 }).trim();
     const options = { ageExecutable: join(tools, "age.exe"), identity, recipient,
       selection: { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const };
     const refusal = await writeEncryptedInstallationBackup(fixture.data, join(destination, "backup.age"), options).then(() => null, (error: unknown) => error as { code?: unknown });

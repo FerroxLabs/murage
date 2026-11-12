@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import { execFile, spawn as spawnProcess } from "node:child_process";
 import fs from "node:fs";
 import net from "node:net";
@@ -214,12 +215,12 @@ export function createAndroidDeviceController(options = {}) {
     startingServer = (async () => {
       if (await probeServer(adbServerPort(options.env ?? process.env))) return;
       const { command, args } = adbServerLaunch(binary, { platform });
-      const child = spawn(command, args, {
+      const child = spawn(command, [...args], withHideInherit({
         stdio: "ignore",
         detached: platform !== "win32",
         windowsHide: true,
         env: { ...process.env, ADB_TRACE: "" },
-      });
+      }));
       ownsServer = true;
       remember();
       child.unref?.();
@@ -244,7 +245,7 @@ export function createAndroidDeviceController(options = {}) {
     const binary = resolveBinary();
     if (!binary) return { stopped: false };
     try {
-      await run(binary, ["kill-server"], { timeout: 4_000, env: { ...process.env, ADB_TRACE: "" } });
+      await run(binary, ["kill-server"], withHideInherit({ timeout: 4_000, env: { ...process.env, ADB_TRACE: "" } }));
       forget();
       return { stopped: true };
     } catch { return { stopped: false }; }
@@ -262,7 +263,7 @@ export function createAndroidDeviceController(options = {}) {
     const binary = resolveBinary();
     if (!binary) return { reclaimed: false };
     try {
-      await run(binary, ["kill-server"], { timeout: 4_000, env: { ...process.env, ADB_TRACE: "" } });
+      await run(binary, ["kill-server"], withHideInherit({ timeout: 4_000, env: { ...process.env, ADB_TRACE: "" } }));
       forget();
       cachedStatus = null;
       return { reclaimed: true };
@@ -271,12 +272,12 @@ export function createAndroidDeviceController(options = {}) {
 
   const invoke = async (binary, args, extra = {}) => {
     await ensureServer(binary);
-    const result = await run(binary, args, {
+    const result = await run(binary, [...args], withHideInherit({
       timeout: extra.timeout ?? 6_000,
       maxBuffer: extra.maxBuffer ?? 32 * 1024 * 1024,
       encoding: extra.encoding ?? "utf8",
       env: { ...process.env, ADB_TRACE: "" },
-    });
+    }));
     return result;
   };
 

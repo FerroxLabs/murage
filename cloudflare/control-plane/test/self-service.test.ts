@@ -13,7 +13,7 @@ import type { StorageBoxAdapter } from "../src/b5-backup";
 import { ageIdentity, allowedLogMessage, EXPORT_MIN_AVAILABLE_MS, EXPORT_STORAGE_BUDGET_BYTES, HEALTHY_HEARTBEAT_MS, JOB_GRACE_MS, JOB_PICKUP_MS, LIMITS,
   LOG_EVENTS, POWER_RELEASE_BEATS, POWER_UNCERTAIN_MS, settlePower, redact, RESET_UNDO_MS, RUN_MS, STEP_WAIT_MS, sweepSelfService, WATCHDOG_STALE_MS } from "../src/self-service";
 import { purgeBackup } from "../src/b5-backup";
-import { appOutcome, healthState, healthy, liveAt } from "../src/self-service";
+import { appOutcome, CAPACITY_LINE, healthState, healthy, liveAt } from "../src/self-service";
 import { recordHealth } from "../src/ops-monitor";
 import { HostError } from "../src/b5-provisioner";
 import contract from "../../../shared/self-service-contract.json";
@@ -183,6 +183,9 @@ beforeEach(async () => {
   const signer = await crypto.subtle.generateKey({ name: "ECDSA", namedCurve: "P-256" }, true, ["sign", "verify"]) as CryptoKeyPair;
   signingJwk = await crypto.subtle.exportKey("jwk", signer.privateKey);
   await readyHome();
+  // Sequence 5 is the fleet's promoted release (rollout controller): the only sequence the Update button installs.
+  await env.DB.prepare(`INSERT INTO cloud_releases (id,sequence,manifest_ref,state,wave,created_at,updated_at,promoted_at) VALUES ('rel-5',5,'rev-5','promoted',3,?,?,?)`)
+    .bind(NOW, NOW, NOW).run();
 });
 afterEach(() => vi.restoreAllMocks());
 
@@ -257,6 +260,29 @@ describe("restart, reboot, start, safe mode, update: signed-in is enough, each r
     expect((await admin("/v1/fake-b3/homes/home-1/action", { generation: h.generation, idempotencyKey: "operator-stop-key-1", action: "stop" })).status).toBe(202);
     expect(await errorOf(await call("/v1/account/home/start", t, {}))).toBe("home_inactive");
     expect(starts).toHaveLength(1);
+  });
+
+  it("audit High 1: a pool home in 'checking' with an unconsumed enrollment never gets Start or Reboot; once enrolled it does", async () => {
+    const t = await token();
+    const h = await getHome();
+    // The repro: bound to a warm-pool server, in checking, its enrollment never consumed (no credential, never a heartbeat), the image revoked since.
+    await env.DB.batch([
+      env.DB.prepare("UPDATE cloud_homes SET desired_state='checking',heartbeat_at=NULL WHERE id='home-1'"),
+      env.DB.prepare("UPDATE cloud_machines SET credential_hash=NULL WHERE id='home-1'"),
+      env.DB.prepare(`INSERT INTO warm_pool (id,env,class,provider,server_type,arch,location,image_id,image_digest,state,phase,server_id,create_call_id,monthly_cents,vcpus,created_at,home_id,resource_generation)
+        VALUES ('pool-x','staging','starter','hetzner','cpx32','x86','fsn1','img','dig','claimed',NULL,'pool-srv-1','call-x',500,4,?,'home-1',?)`).bind(NOW, h.resource_generation),
+    ]);
+    for (const path of ["/v1/account/home/start", "/v1/account/home/reboot"]) {
+      const r = await call(path, t, {});
+      expect([path, r.status]).toEqual([path, 409]);
+      expect(await r.json()).toMatchObject({ error: path.endsWith("start") ? "start_setting_up" : "reboot_setting_up", notice: CAPACITY_LINE });
+    }
+    expect(starts).toEqual([]); expect(reboots).toEqual([]);
+    // Enrollment consumed: the same home is an established one and Start and Reboot go through.
+    await env.DB.prepare("UPDATE cloud_machines SET credential_hash='established' WHERE id='home-1'").run();
+    expect((await call("/v1/account/home/start", t, {})).status).toBe(202);
+    expect((await call("/v1/account/home/reboot", t, {})).status).toBe(202);
+    expect(starts).toHaveLength(1); expect(reboots).toHaveLength(1);
   });
 
   it("commands are fenced by generation and acked once", async () => {
@@ -1411,11 +1437,75 @@ describe("SELFSERVICE2 P2 exports: the key once, the date honest, the archive ke
 
   it("the age identity is shown exactly once per archive, also across requests sharing it; downloads still work", async () => {
     const { ids } = await readyArchive(2);
-    const [first, again, other] = [await link(ids[0]), await link(ids[0]), await link(ids[1])];
+    const first = await link(ids[0]);
+    expect((await call("/v1/account/export/key-confirm", await token({ aal2: true }), { requestId: ids[0] })).status).toBe(200);
+    const [again, other] = [await link(ids[0]), await link(ids[1])];
     expect(first.key).toMatch(/^AGE-SECRET-KEY-1/u);
     expect([again.key, again.keyShownBefore, other.key, other.keyShownBefore]).toEqual([null, true, null, true]);
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_export_jobs WHERE wrapped_key IS NOT NULL").first<{ n: number }>()).toEqual({ n: 0 });
     expect(await (await call(again.url, null)).text()).toBe("age-encrypted-bytes");
+  });
+
+  it("a dropped response does not burn the key: a repeated link returns the same key until the client confirms it stored it", async () => {
+    const { ids } = await readyArchive(2);
+    const first = await link(ids[0]); // the response never reached the client
+    const retry = await link(ids[0]);
+    const sharing = await link(ids[1]);
+    expect(first.key).toMatch(/^AGE-SECRET-KEY-1/u);
+    expect([retry.key, sharing.key]).toEqual([first.key, first.key]);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_export_jobs WHERE wrapped_key IS NOT NULL").first<{ n: number }>()).toEqual({ n: 1 });
+    const stranger = await token({ sub: OTHER_SUB, email: "someone@example.test", aal2: true });
+    expect((await call("/v1/account/export/key-confirm", stranger, { requestId: ids[0] })).status).toBe(404);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_export_jobs WHERE wrapped_key IS NOT NULL").first<{ n: number }>()).toEqual({ n: 1 });
+    expect((await call("/v1/account/export/key-confirm", await token({ aal2: true }), { requestId: ids[0] })).status).toBe(200);
+    const after = await link(ids[0]);
+    expect([after.key, after.keyShownBefore]).toEqual([null, true]);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_export_jobs WHERE wrapped_key IS NOT NULL").first<{ n: number }>()).toEqual({ n: 0 });
+    expect((await call("/v1/account/export/key-confirm", await token({ aal2: true }), { requestId: ids[0] })).status).toBe(200); // repeating a confirm is harmless
+  });
+
+  it("key-confirm needs fresh aal2 (a signed-in session alone cannot clear the key) and is rate limited per home", async () => {
+    const { ids } = await readyArchive();
+    const first = await link(ids[0]);
+    const keys = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_export_jobs WHERE wrapped_key IS NOT NULL").first<{ n: number }>())!.n;
+    for (const t of [await token(), await token({ aal2: true, stale: true })]) {
+      const r = await call("/v1/account/export/key-confirm", t, { requestId: ids[0] });
+      expect(r.status).toBe(403);
+      expect(await errorOf(r)).toBe("step_up_required");
+    }
+    expect(await keys()).toBe(1);
+    expect((await link(ids[0])).key).toBe(first.key);
+    const fresh = await token({ aal2: true });
+    expect((await call("/v1/account/export/key-confirm", fresh, { requestId: ids[0] })).status).toBe(200);
+    expect(await keys()).toBe(0);
+    for (let i = 1; i < 20; i++) expect((await call("/v1/account/export/key-confirm", fresh, { requestId: ids[0] })).status).toBe(200);
+    const limited = await call("/v1/account/export/key-confirm", fresh, { requestId: ids[0] });
+    expect(limited.status).toBe(429);
+    expect(await errorOf(limited)).toBe("rate_limited");
+  });
+
+  it("a key nobody confirms is still deleted when the export expires", async () => {
+    const { ids, availableUntil } = await readyArchive(2);
+    expect((await link(ids[0])).key).toMatch(/^AGE-SECRET-KEY-1/u);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_export_jobs WHERE wrapped_key IS NOT NULL").first<{ n: number }>()).toEqual({ n: 1 });
+    at(availableUntil + 1); await sweep();
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_export_jobs WHERE wrapped_key IS NOT NULL").first<{ n: number }>()).toEqual({ n: 0 });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_export_jobs WHERE state='expired'").first<{ n: number }>()).toEqual({ n: 1 });
+  });
+
+  it("every unwrap is audited first: a failed audit write answers 503 and unwraps nothing", async () => {
+    const { ids } = await readyArchive();
+    await env.DB.exec("CREATE TRIGGER exp_no_audit BEFORE INSERT ON cloud_access_events BEGIN SELECT RAISE(ABORT, 'audit down'); END");
+    try {
+      const decrypt = vi.spyOn(crypto.subtle, "decrypt");
+      const res = await call("/v1/account/export/download", await token({ aal2: true }), { requestId: ids[0] });
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({ error: "audit_unavailable" });
+      expect(decrypt).not.toHaveBeenCalled();
+    } finally { await env.DB.exec("DROP TRIGGER IF EXISTS exp_no_audit"); }
+    expect((await link(ids[0])).key).toMatch(/^AGE-SECRET-KEY-1/u);
+    const uses = await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_access_events WHERE kind='export_key_use'").first<{ n: number }>();
+    expect(uses!.n).toBeGreaterThanOrEqual(1);
   });
 
   it("availableUntil is capped at a scheduled deletion (at least a day), and the status shows that date", async () => {
@@ -1485,5 +1575,87 @@ describe("SELFSERVICE2 P2 health and Fix-it on homes that cannot report or run c
     expect(r.fixIt.steps.map((x) => `${x.step}:${x.outcome}`)).toEqual(["check:unhealthy", "restart_service:unsupported", "reboot:issued"]);
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_home_commands").first<{ n: number }>()).toEqual({ n: 0 });
     expect(reboots).toHaveLength(1);
+  });
+});
+
+describe("the Update button installs only the fleet's promoted sequence, and the home reports its updater", () => {
+  const UPDATE = "/v1/account/home/update";
+  const report = (body: Record<string, unknown>) => call("/v1/machines/home-1/update-state", machineCredential, { generation, installedSequence: null, lastResult: null, stuck: null, ...body });
+  const queued = async () => (await env.DB.prepare("SELECT payload FROM cloud_home_commands WHERE kind='update_software' ORDER BY created_at").all<{ payload: string }>()).results.map((r) => JSON.parse(r.payload));
+
+  it("nothing promoted: refused in plain words, no command, no limit charged", async () => {
+    await env.DB.prepare("DELETE FROM cloud_releases").run();
+    const t = await token();
+    for (let i = 0; i < 6; i++) {
+      const res = await call(UPDATE, t, {});
+      expect(res.status).toBe(409);
+      expect(await res.json()).toMatchObject({ error: "up_to_date", message: "You're on the latest version." });
+    }
+    expect(await queued()).toEqual([]);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_home_jobs").first<{ n: number }>()).toEqual({ n: 0 });
+  });
+
+  it("a release that is only rolling, halted, draft or cancelled is never offered to a customer", async () => {
+    await env.DB.prepare("DELETE FROM cloud_releases").run();
+    for (const [i, state] of (["draft", "rolling", "cancelled"] as const).entries()) {
+      await env.DB.prepare("INSERT INTO cloud_releases (id,sequence,manifest_ref,state,wave,created_at,updated_at) VALUES (?,?,?,?,0,?,?)").bind(`r${i}`, 10 + i, "x", state, NOW, NOW).run();
+    }
+    expect(await errorOf(await call(UPDATE, await token(), {}))).toBe("up_to_date");
+    expect(await queued()).toEqual([]);
+  });
+
+  it("with a promoted sequence the command carries it, and a newer release still rolling is not what is sent", async () => {
+    await env.DB.prepare("INSERT INTO cloud_releases (id,sequence,manifest_ref,state,wave,created_at,updated_at) VALUES ('rel-9',9,'rev-9','rolling',1,?,?)").bind(NOW, NOW).run();
+    const res = await call(UPDATE, await token(), {});
+    expect(res.status).toBe(202);
+    expect(await queued()).toEqual([{ keep: ["files", "settings", "logins"], reason: "customer", sequence: 5 }]);
+    expect((await desiredCommands())[0].payload).toEqual({ keep: ["files", "settings", "logins"], reason: "customer", sequence: 5 });
+  });
+
+  it("a home that already reported the promoted sequence (or newer) is told it is on the latest version; an older report is offered it", async () => {
+    expect((await report({ installedSequence: 5 })).status).toBe(200);
+    expect(await errorOf(await call(UPDATE, await token(), {}))).toBe("up_to_date");
+    expect((await report({ installedSequence: 6 })).status).toBe(200);
+    expect(await errorOf(await call(UPDATE, await token(), {}))).toBe("up_to_date");
+    expect((await report({ installedSequence: 4 })).status).toBe(200);
+    expect((await call(UPDATE, await token(), {})).status).toBe(202);
+  });
+
+  it("an older home that never reports is still offered the promoted sequence", async () => {
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_home_update_reports").first<{ n: number }>()).toEqual({ n: 0 });
+    expect((await call(UPDATE, await token(), {})).status).toBe(202);
+  });
+
+  it("update-state: strict body, current generation, the machine credential; the row holds exactly what was reported", async () => {
+    const last = { commandId: "0b1c2d3e-aaaa-4bbb-8ccc-123456789abc", outcome: "done", reason: null };
+    expect((await report({ installedSequence: 3, lastResult: last })).status).toBe(200);
+    expect(await env.DB.prepare("SELECT installed_sequence,last_command_id,last_outcome,last_reason,stuck,generation FROM cloud_home_update_reports WHERE home_id='home-1'").first())
+      .toEqual({ installed_sequence: 3, last_command_id: last.commandId, last_outcome: "done", last_reason: null, stuck: null, generation });
+    expect(Object.keys({ generation, installedSequence: 1, lastResult: null, stuck: null }).sort()).toEqual([...contract.homeBodies["update-state"]].sort());
+    expect(Object.keys(last).sort()).toEqual([...contract.homeBodies.updateLastResult].sort());
+    expect((await report({ extra: 1 })).status).toBe(400);
+    expect((await report({ installedSequence: 0 })).status).toBe(400);
+    expect((await report({ stuck: "Free text with spaces" })).status).toBe(400);
+    expect((await report({ generation: generation + 1 })).status).toBe(409);
+    expect((await call("/v1/machines/home-1/update-state", null, { generation, installedSequence: 1, lastResult: null, stuck: null })).status).toBe(401);
+    expect((await call("/v1/machines/home-1/update-state", await token(), { generation, installedSequence: 1, lastResult: null, stuck: null })).status).toBe(401);
+    expect((await call("/v1/machines/home-1/update-state", machineCredential)).status).toBe(405);
+  });
+
+  it("a Stuck updater raises update.stuck once and clears it when the report clears; a rolled-back update raises update.rolled_back once per update", async () => {
+    const open = async (kind: string) => (await env.DB.prepare("SELECT severity,detail FROM cloud_alerts WHERE home_id='home-1' AND kind=? AND resolved_at IS NULL").bind(kind).all()).results;
+    await report({ installedSequence: 3, stuck: "rollback_stop" });
+    await report({ installedSequence: 3, stuck: "rollback_stop" });
+    expect(await open("update.stuck")).toHaveLength(1);
+    expect((await open("update.stuck"))[0]).toMatchObject({ detail: expect.stringContaining("rollback_stop") });
+    await report({ installedSequence: 3, stuck: null });
+    expect(await open("update.stuck")).toHaveLength(0);
+    const failed = { commandId: "0b1c2d3e-aaaa-4bbb-8ccc-123456789abd", outcome: "failed", reason: "unhealthy" };
+    await report({ installedSequence: 3, lastResult: failed });
+    await report({ installedSequence: 3, lastResult: failed });
+    expect(await open("update.rolled_back")).toHaveLength(1);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='update.rolled_back'").first<{ n: number }>()).toEqual({ n: 1 });
+    await report({ installedSequence: 5, lastResult: { commandId: "0b1c2d3e-aaaa-4bbb-8ccc-123456789abe", outcome: "done", reason: null } });
+    expect(await open("update.rolled_back")).toHaveLength(0);
   });
 });

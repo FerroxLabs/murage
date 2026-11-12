@@ -8,6 +8,7 @@ import { dirname, resolve, posix, win32 } from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { autoVerdict, type AutoApprover, type AutoContext, type AutoVerdict } from "./auto-approve.ts";
 import { classifyAsk, type StopLinePlace } from "./stop-line.ts";
+import { plainWipe } from "./outside-scan.ts";
 import type { GrantCall } from "../shared/app-action-grant.ts";
 
 import * as procs from "./procs.ts";
@@ -408,7 +409,7 @@ function report(status: string) {
       "The 1.0.7 Windows failure is forced at execCli; the production B1/B2 checker, cache and U20 verdict mapping run unchanged.",
       "Timeout -> cooldown -> recovery -> cached success uses the production environment cache with a controlled clock and probe transport.",
       "The stale conversation uses Store.projectBotForTask and A openRefreshPreview under the suite temporary home.",
-      "Wipe/secret controls ask at every level; pay/message controls follow existing No limits policy.",
+      "Wipe/secret controls ask at every level except No limits, which runs all but the wipe list (NOLIM 1.0.19); pay/message controls follow existing No limits policy.",
     ],
     summary: summarize(rows), ordinarySummary: summarize(ordinary),
     nativeOrdinarySummary: summarize(ordinary.filter(row => row.nativeSyntax)),
@@ -483,15 +484,20 @@ describe("1.0.8 owner Full access corpus (classification only)", () => {
     console.table(measured.fullAccessRemaining);
     if (output) expect(JSON.parse(readFileSync(output, "utf8")).evaluations).toBe(rows.length);
     const controls = rows.filter(row => row.scenario === "owner-checked" && row.control);
-    const violations = controls.filter(row => row.result === "allowed" && !(row.level === "No limits" && ["pay", "message-new-recipient"].includes(row.control!)));
+    // NOLIM 1.0.19 (Sean 2026-11-10): the owner's No limits turn runs what its bots decide; only the wipe list (the reader's wipe rules, a
+    // named catastrophe, or the plainWipe proxy over the text) stays a card, so a control that is not such a text is allowed there. Every
+    // other level still holds every wipe/secret control.
+    const violations = controls.filter(row => row.result === "allowed" && row.level !== "No limits");
     expect(violations).toEqual([]);
+    for (const row of controls.filter(row => row.level === "No limits" && row.result !== "allowed")) expect(plainWipe(row.command), `No limits cards only a wipe text: ${JSON.stringify(row)}`).toBe(true);
     for (const row of controls.filter(row => row.level === "No limits" && row.nativeSyntax && ["pay", "message-new-recipient"].includes(row.control!))) expect(row.result, JSON.stringify(row)).toBe("allowed");
     const ordinary = rows.filter(row => row.scenario === "owner-checked" && !row.control);
     for (const level of ["Full access", "No limits"]) {
       for (const dialect of dialects) {
         const selected = ordinary.filter(row => row.level === level && row.dialect === dialect.dialect && row.nativeSyntax);
         expect(selected.length).toBeGreaterThan(0);
-        expect(selected.filter(row => row.result === "asks-because-unreadable").length).toBeGreaterThan(0);
+        // Full access still cards what it cannot read; the owner's No limits turn runs it (NOLIM 1.0.19)
+        if (level === "Full access") expect(selected.filter(row => row.result === "asks-because-unreadable").length).toBeGreaterThan(0);
         expect(selected.filter(row => row.result !== "allowed").length).toBeLessThanOrEqual(NATIVE_ASK_CEILINGS[dialect.dialect]!);
       }
     }

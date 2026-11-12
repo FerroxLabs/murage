@@ -122,6 +122,8 @@ export type Candidate =
   | { kind: "fromFile"; path: string };
 
 export interface WalkContext {
+  /** No limits evidence only: a failed word expansion becomes unknown locally. */
+  unknownUnreadableWords?: true;
   sessionEdits?: ReadonlySet<string>;
   sessionFile?: (path: string) => { text: string } | "unavailable";
   /** Server-authorized literal Bash payloads from a Windows command. Shared across forks. */
@@ -243,6 +245,9 @@ export interface Visitor<H> {
    * Never offered elevated, nor for a file this text wrote or a value names. */
   unseenScript?(path: string, ctx: WalkContext): boolean;
   protectedCommand?(cmd: SimpleCommand, ctx: WalkContext): H | null;
+  /** Protected-write readers may skip an unread component and inspect its executable
+   * siblings. Ordinary policy readers still stop on the first unread command. */
+  continueOnUnreadable?: boolean;
 }
 
 /** 1.0.5: a literal script file on disk this text did not write. The visitor
@@ -274,6 +279,7 @@ export function newContext(cwd?: string, runtimePaths?: Readonly<Record<string, 
  * moves to does not leak back out unless `merge` is asked to. */
 export function fork(ctx: WalkContext, deeper = false): WalkContext {
   const next: WalkContext = {
+    unknownUnreadableWords: ctx.unknownUnreadableWords,
     sessionEdits: ctx.sessionEdits,
     sessionFile: ctx.sessionFile,
     windowsBash: ctx.windowsBash,
@@ -454,13 +460,19 @@ export function canonPath(raw: string, ctx: Pick<WalkContext, "cwd" | "cwdConfli
       if (!part || part === ".") continue;
       const next = normalizePath(`${path}/${part}`);
       if (ctx.links?.has(next)) uncertain(); // M-FIX2-pending-link
-      try { path = realpathSync.native(next).replaceAll("\\", "/"); }
+      try {
+        // Missing targets are common in command text. Probe without throwing before realpath:
+        // hundreds of absent operands must not allocate two filesystem errors per component.
+        // lstat still exposes dangling links, and every component is checked afresh (no path cache).
+        path = lstatSync(next, { throwIfNoEntry: false }) === undefined
+          ? next : realpathSync.native(next).replaceAll("\\", "/");
+      }
       catch (error) {
         // MARKS r11: a step below a regular file (ENOTDIR, `cp a ./file` read as `./file/a`) is as absent as a missing one;
         // the read must not depend on which files happen to exist on the host
         const absent = (code?: string) => code === "ENOENT" || code === "ENOTDIR";
         if (!absent((error as NodeJS.ErrnoException).code)) uncertain();
-        try { if (lstatSync(next).isSymbolicLink()) uncertain(); }
+        try { if (lstatSync(next, { throwIfNoEntry: false })?.isSymbolicLink()) uncertain(); }
         catch (missing) { if (!absent((missing as NodeJS.ErrnoException).code)) uncertain(); }
         path = next;
       }
@@ -1024,6 +1036,12 @@ const WRAPPERS: Record<string, WrapperSpec> = {
   ltrace: spec("-f -i -r -t -tt -ttt -T -S -C -w", "-e -o -p -s -u -A -n -x -l"),
 };
 
+/** Read-only option inventory for the opt-in owner syntax collector. Legacy
+ * unwrap/visitors never invoke owner collection or change their defaults. */
+export function ownerWrapperSpec(name: string): Readonly<WrapperSpec> | undefined {
+  return WRAPPERS[name];
+}
+
 const ELEVATORS = new Set(["sudo", "doas", "run0", "pkexec"]);
 /** Interpreters of languages the reader does not model: their inline code
  * (`INLINE_CODE`), a heredoc or literal stdin into them, or a file this text
@@ -1103,6 +1121,25 @@ export function resolveName(word: Word): string | undefined {
  * `{a,b}`. A name whose value differs by branch comes out marked, and the
  * rules ask where they would otherwise have trusted it. */
 export function expandWord(word: Word, ctx: WalkContext): Word[] {
+  return readWord(word, ctx, () => expandWordBody(word, ctx), unknown => [unknown]);
+}
+
+/** Keep the fixed path spelling when expansion fails; the existing unknown-path
+ * rule can still recognize a protected prefix. The synthetic name cannot be bound
+ * by shell text. This mode is set only by the No limits protected-write reader. */
+function readWord<T>(word: Word, ctx: WalkContext, read: () => T, recover: (unknown: Word) => T): T {
+  try { return read(); }
+  catch (error) {
+    if (!(error instanceof Unreadable) || !ctx.unknownUnreadableWords) throw error;
+    const unknown: Part = { kind: "var", name: "-unread-word", quote: "double" };
+    const parts = word.parts.map(part => part.kind === "lit" || part.kind === "tilde" || part.kind === "glob"
+      || part.kind === "var" && part.op === undefined && homeVar(part.name, ctx) ? part : unknown);
+    if (!parts.includes(unknown)) parts.push(unknown);
+    return recover({ parts });
+  }
+}
+
+function expandWordBody(word: Word, ctx: WalkContext): Word[] {
   let candidates: Part[][] = [[]];
   const multiply = (options: Part[][]) => {
     const next: Part[][] = [];
@@ -1158,6 +1195,10 @@ function mayBeEmpty(word: Word): boolean {
  * candidate a value; an unquoted value the shell would split or glob is a
  * value too. */
 export function candidatesOf(word: Word, ctx: WalkContext): Candidate[] {
+  return readWord(word, ctx, () => candidatesOfBody(word, ctx), unknown => [candidateOf(unknown, ctx)]);
+}
+
+function candidatesOfBody(word: Word, ctx: WalkContext): Candidate[] {
   const reshaped = word.parts.some((part) => part.kind === "var" && part.quote === "none" && (ctx.bound.get(part.name) ?? []).some((value) => value.parts.some((p) => p.kind === "glob" || (p.kind === "lit" && /[\s*?[]/.test(p.text)))));
   const out: Candidate[] = [];
   for (const expanded of expandWord(word, ctx)) {
@@ -1536,6 +1577,12 @@ function stdinProvenance(command: Command, before: Command[], ctx: WalkContext):
   if (own) return own;
   if (before.length) return outputOf(before[before.length - 1]!, before.slice(0, -1), ctx);
   return ctx.stdin;
+}
+
+/** Existing literal/heredoc/pipeline contract, exposed only for owner syntax
+ * discovery. No disk script or archive contents are opened by this helper. */
+export function ownerStdinProvenance(command: Command, before: Command[], ctx: WalkContext): Provenance | undefined {
+  return stdinProvenance(command, before, ctx);
 }
 
 /** What a command writes on stdout, computed and never assumed: an emitter
@@ -2170,6 +2217,12 @@ function interpreterProgram(key: string, args: Word[], ctx: WalkContext): Interp
     return interpreterFile(args[i]!, ctx);
   }
   return code.length ? inlineCode() : { kind: "stdin" };
+}
+
+/** Owner collection reuses the exact interpreter operand grammar. */
+export function ownerInterpreterProgram(name:string,args:Word[],ctx:WalkContext):InterpreterProgram|undefined {
+ const key=interpreterKey(name==='py'?'python':name);
+ return key==='python'||key==='node'?interpreterProgram(key,args,ctx):undefined;
 }
 
 /** The options of `deno run` and `bun run` before the script (1.0.4 U17 r2):
@@ -2814,7 +2867,7 @@ export function walkScript<H>(text: string, ctx: WalkContext, visitor: Visitor<H
   // interpreter or a shell run anywhere in the read, asks
   const loader = mentionsLoaderVariable(text, "posix");
   if (loader) markLoaderVariable(ctx.loaders, loader);
-  return walkList(parse(text), ctx, visitor);
+  return walkList(parse(text, ctx.unknownUnreadableWords), ctx, visitor);
 }
 
 /** `wsl` options that take a value, and those that manage WSL and run nothing. */
@@ -2921,38 +2974,49 @@ function walkPipeline<H>(pipeline: Pipeline, ctx: WalkContext, visitor: Visitor<
 
 function walkParts<H>(word: Word, ctx: WalkContext, visitor: Visitor<H>): H | null {
   for (const part of word.parts) {
-    let hit: H | null = null;
-    switch (part.kind) {
-      case "lit": case "tilde": case "glob": case "brace": break;
-      case "var": if (part.word) hit = walkParts(part.word, ctx, visitor); break;
-      case "subst": case "procsub": hit = walkNested(part.text, ctx, visitor); break;
-      // nothing in arithmetic runs except its substitutions; an assignment
-      // in it changes a name the reader does not follow
-      case "arith":
-        if (ASSIGNS_IN_ARITH.test(part.text)) applyEffects(OPAQUE_EFFECTS, ctx);
-        hit = walkParts({ parts: lexQuotedBody(part.text) }, ctx, visitor);
-        break;
-      default: unreachable(part);
-    }
+    const hit = readComponent(visitor, () => walkPart(part, ctx, visitor));
     if (hit) return hit;
   }
   return null;
 }
 
+function walkPart<H>(part: Part, ctx: WalkContext, visitor: Visitor<H>): H | null {
+  let hit: H | null = null;
+  switch (part.kind) {
+    case "lit": case "tilde": case "glob": case "brace": break;
+    case "var": if (part.word) hit = walkParts(part.word, ctx, visitor); break;
+    case "subst": case "procsub": hit = walkNested(part.text, ctx, visitor); break;
+    // nothing in arithmetic runs except its substitutions; an assignment
+    // in it changes a name the reader does not follow
+    case "arith":
+      if (ASSIGNS_IN_ARITH.test(part.text)) applyEffects(OPAQUE_EFFECTS, ctx);
+      hit = walkParts({ parts: lexQuotedBody(part.text) }, ctx, visitor);
+      break;
+    default: unreachable(part);
+  }
+  return hit;
+}
+
 function walkRedirects<H>(redirects: Redirect[], ctx: WalkContext, visitor: Visitor<H>): H | null {
   for (const redirect of redirects) {
-    if (redirect.target) {
-      const hit = walkParts(redirect.target, ctx, visitor);
-      if (hit) return hit;
-    }
-    if (redirect.heredoc && !redirect.heredoc.quoted) {
-      const hit = walkParts({ parts: lexQuotedBody(redirect.heredoc.body) }, ctx, visitor);
-      if (hit) return hit;
-    }
-    if (redirect.target) {
-      const hit = visitor.redirect(redirect, redirect.target, candidatesOf(redirect.target, ctx), ctx);
-      if (hit) return hit;
-    }
+    const hit = readComponent(visitor, () => walkRedirect(redirect, ctx, visitor));
+    if (hit) return hit;
+  }
+  return null;
+}
+
+function walkRedirect<H>(redirect: Redirect, ctx: WalkContext, visitor: Visitor<H>): H | null {
+  if (redirect.target) {
+    const hit = walkParts(redirect.target, ctx, visitor);
+    if (hit) return hit;
+  }
+  if (redirect.heredoc && !redirect.heredoc.quoted) {
+    const hit = walkParts({ parts: lexQuotedBody(redirect.heredoc.body) }, ctx, visitor);
+    if (hit) return hit;
+  }
+  if (redirect.target) {
+    const hit = visitor.redirect(redirect, redirect.target, candidatesOf(redirect.target, ctx), ctx);
+    if (hit) return hit;
   }
   return null;
 }
@@ -3013,7 +3077,21 @@ function substituteLead(words: Word[], ctx: WalkContext): { lists: Word[][]; der
   return { lists: [...byName.values()], derived: true };
 }
 
+/** Only the protected-write evidence visitor opts in. An opaque component is
+ * not evidence of a write and must not hide later executable components. */
+function readComponent<H>(visitor: Visitor<H>, read: () => H | null): H | null {
+  try { return read(); }
+  catch (error) {
+    if (!(error instanceof Unreadable) || !visitor.continueOnUnreadable) throw error;
+    return null;
+  }
+}
+
 function walkCommand<H>(command: Command, ctx: WalkContext, visitor: Visitor<H>, before: Command[]): H | null {
+  return readComponent(visitor, () => walkCommandBody(command, ctx, visitor, before));
+}
+
+function walkCommandBody<H>(command: Command, ctx: WalkContext, visitor: Visitor<H>, before: Command[]): H | null {
   if (command.kind === "simple") return walkSimple(command, ctx, visitor, before);
   // redirects first: a heredoc on a compound is what the commands inside read
   let hit = walkRedirects(command.redirects, ctx, visitor);
@@ -3945,7 +4023,9 @@ function visitUnwrapped<H>(unwrapped: Unwrapped, command: Extract<Command, { kin
       let j = i + 1;
       for (; j < args.length; j++) {
         const text = literalText(args[j]!);
-        if (text === ";" || text === "+") break;
+        // Owner inspection must retain ordinary '+' operands. Only '{} +'
+        // terminates a batched action; preserve the Full access baseline.
+        if (text === ";" || text === "+" && (!ownerDeny() || literalText(args[j - 1]!) === "{}")) break;
         action.push(args[j]!);
       }
       if (j >= args.length) throw new Unreadable("syntax", "find -exec without ;");

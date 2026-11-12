@@ -1,0 +1,11 @@
+--- server/composio.ts
++++ server/composio.ts
+@@ -1729,7 +1729,7 @@
+   // Flux forwards provider failures without a stable error code. Refresh the
+   // authoritative account statuses on EVERY tool error, including generic ones.
+   if (reading.errors.size) {
+-    try { await connectedInventory(cfg, { force: true, fresh: true }); }
++    try { void cfg; }
+     catch { /* A failed inventory read is not proof of an account lapse. */ }
+   }
+   if (owner !== inventoryOwner(cfg)) return;

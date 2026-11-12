@@ -13,7 +13,7 @@ import { closeDatabase, database } from "../database.ts";
 import { appendMessage } from "../message-db.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { buildMemoryBundle } from "./bundle.ts";
-import { MemoryDispatchReceipt, refusalCauseNote } from "./dispatch.ts";
+import { MemoryDispatchReceipt, refusalCauseNote, memoryRefusalCause } from "./dispatch.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
 import { catchUpRecentMemory } from "./recent.ts";
@@ -59,6 +59,7 @@ it("F15: a frame record checking at acceptance (a revoke still being walked) is 
   const refusal = refusalOf(() => receipt.accepted());
   expect(refusal.message).toBe("MEMORY_CONTEXT_REVOKED");
   expect(refusal.unproven).toBe("memory-frame-checking");
+  expect(memoryRefusalCause(refusal)).toBe("checking");
   expect((refusal.cause as Error).message).toBe("MEMORY_REPLAY_LIMIT");
   expect(refusalCauseNote(refusal)).toContain("memory-frame-checking");
   expect(refusalCauseNote(refusal)).toContain("not a revoke");
@@ -75,6 +76,7 @@ it("the deliver validation maps the limit error the same way (Astra A1), and lea
   const refusal = refusalOf(() => receipt.accepted());
   expect(refusal.message).toBe("MEMORY_CONTEXT_REVOKED");
   expect(refusal.unproven).toBe("memory-frame-checking");
+  expect(memoryRefusalCause(refusal)).toBe("checking");
   expect((refusal.cause as Error).message).toBe("MEMORY_REPLAY_LIMIT");
   expect(disclosureState()).toBe("prepared");
   expect(() => receipt.accepted()).not.toThrow();

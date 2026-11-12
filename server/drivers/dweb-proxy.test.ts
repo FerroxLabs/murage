@@ -61,6 +61,7 @@ beforeAll(async () => {
   stubPort = (stub.address() as { port: number }).port;
 
   child = spawn(process.execPath, [PROXY], {
+    windowsHide: true,
     env: { ...process.env, DWEB_URL: `http://127.0.0.1:${stubPort}` },
     stdio: ["pipe", "pipe", "inherit"],
   });

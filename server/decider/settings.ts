@@ -1,12 +1,9 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// The decision model's settings: the config.ts `decider` block, read with
-// With nothing saved the decision model follows the credential: ON when this
-// workspace has a Flux key (or its own key), OFF otherwise. A switch the owner
-// saved, either way, always wins. Nothing here holds the Flux key; it is
-// resolved at call time from flux-config.ts. `byoKey` is an advanced override
-// and write-only.
+// The decision model's config.ts settings. Nothing saved means OFF.
+// Only explicit owner switches enable a job. Credentials are resolved at call
+// time from flux-config.ts; `byoKey` is a write-only override.
 import type { DeciderJob } from "./types.ts";
 
 export interface DecisionModelSettings {
@@ -31,19 +28,15 @@ const text = (value: unknown): string | undefined => {
   return trimmed || undefined;
 };
 
-/** Merge a stored `decider` block over the defaults. An explicit `true` or
- * `false` is the owner's and wins; anything else follows `defaultOn` (a Flux
- * key or an own key is present). An unknown provider reads as off. Never throws. */
-export function readDecisionModelSettings(stored: Stored, context: { defaultOn?: boolean } = {}): DecisionModelSettings {
+/** Merge a stored `decider` block over the OFF defaults. Only the owner's
+ * explicit booleans enable the master switch and room routing. */
+export function readDecisionModelSettings(stored: Stored): DecisionModelSettings {
   const block = stored && typeof stored === "object" ? stored : {};
   const byoKey = text(block.byoKey);
   const baseUrl = text(block.baseUrl);
-  const defaultOn = context.defaultOn === true;
-  const explicitEnabled = typeof block.enabled === "boolean";
-  const explicitRouting = typeof block.jobs?.roomRouting === "boolean";
   const providerOk = block.provider === undefined || block.provider === "flux";
-  const enabled = providerOk && (explicitEnabled ? block.enabled === true : defaultOn);
-  const roomRouting = explicitRouting ? block.jobs?.roomRouting === true : defaultOn;
+  const enabled = providerOk && block.enabled === true;
+  const roomRouting = block.jobs?.roomRouting === true;
   return {
     enabled,
     provider: "flux",

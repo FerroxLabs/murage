@@ -1,0 +1,303 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "owner-card fix builder (Claude Sonnet)",
+  "date": "2026-11-11",
+  "base": "83bc0758b",
+  "scope": "restore status card strings",
+  "strings": {
+    "en:restoreJob.inProgress": {
+      "text": "A restore may still be in progress. Try again later.",
+      "en": "A restore may still be in progress. Try again later.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "en:restoreJob.abortedDesktop": {
+      "text": "The last restore did not finish. Your information has not changed. Select OK to clear this message, then you can start a restore again.",
+      "en": "The last restore did not finish. Your information has not changed. Select OK to clear this message, then you can start a restore again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "en:restoreJob.abortedPhone": {
+      "text": "The last restore did not finish. The app's data has not changed. The owner can select OK in Murage on their computer, or on their phone for a Cloud home, to clear this message and try again.",
+      "en": "The last restore did not finish. The app's data has not changed. The owner can select OK in Murage on their computer, or on their phone for a Cloud home, to clear this message and try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "en:restoreJob.failed": {
+      "text": "That restore did not finish. You can try again.",
+      "en": "That restore did not finish. You can try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "en:restoreJob.backupRunning": {
+      "text": "A backup is running. Try the restore again when it has finished.",
+      "en": "A backup is running. Try the restore again when it has finished.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "en:restoreJob.ownerOnly": {
+      "text": "Only the owner can restore a backup, using Murage on their computer or, for a Cloud home, on their phone.",
+      "en": "Only the owner can restore a backup, using Murage on their computer or, for a Cloud home, on their phone.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "de:restoreJob.inProgress": {
+      "text": "Eine Wiederherstellung läuft möglicherweise noch. Versuche es später noch einmal.",
+      "en": "A restore may still be in progress. Try again later.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "de:restoreJob.abortedDesktop": {
+      "text": "Die letzte Wiederherstellung wurde nicht abgeschlossen. Deine Daten haben sich nicht geändert. Wähle OK, um diese Meldung zu löschen. Danach kannst du eine Wiederherstellung neu starten.",
+      "en": "The last restore did not finish. Your information has not changed. Select OK to clear this message, then you can start a restore again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "de:restoreJob.abortedPhone": {
+      "text": "Die letzte Wiederherstellung wurde nicht abgeschlossen. Die Daten der App haben sich nicht geändert. Der Inhaber kann in Murage auf seinem Computer oder, bei einem Cloud-Home, auf seinem Telefon OK wählen, um diese Meldung zu löschen und es erneut zu versuchen.",
+      "en": "The last restore did not finish. The app's data has not changed. The owner can select OK in Murage on their computer, or on their phone for a Cloud home, to clear this message and try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): Faithful and natural; uses the established Cloud-Home term. No em or en dashes."
+    },
+    "de:restoreJob.failed": {
+      "text": "Diese Wiederherstellung wurde nicht abgeschlossen. Du kannst es erneut versuchen.",
+      "en": "That restore did not finish. You can try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "de:restoreJob.backupRunning": {
+      "text": "Ein Backup läuft gerade. Versuche die Wiederherstellung noch einmal, wenn es fertig ist.",
+      "en": "A backup is running. Try the restore again when it has finished.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "de:restoreJob.ownerOnly": {
+      "text": "Nur der Inhaber kann ein Backup wiederherstellen, mit Murage auf seinem Computer oder, bei einem Cloud-Home, auf seinem Telefon.",
+      "en": "Only the owner can restore a backup, using Murage on their computer or, for a Cloud home, on their phone.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): Faithful and natural; uses the established Cloud-Home term. No em or en dashes."
+    },
+    "es:restoreJob.inProgress": {
+      "text": "Puede que aún haya una restauración en curso. Inténtalo de nuevo más tarde.",
+      "en": "A restore may still be in progress. Try again later.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "es:restoreJob.abortedDesktop": {
+      "text": "La última restauración no terminó. Tu información no ha cambiado. Pulsa OK para borrar este mensaje y después podrás iniciar una restauración de nuevo.",
+      "en": "The last restore did not finish. Your information has not changed. Select OK to clear this message, then you can start a restore again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "es:restoreJob.abortedPhone": {
+      "text": "La última restauración no terminó. Los datos de la app no han cambiado. El propietario puede pulsar OK en Murage en su ordenador, o en su teléfono si es un hogar en Cloud, para borrar este mensaje e intentarlo de nuevo.",
+      "en": "The last restore did not finish. The app's data has not changed. The owner can select OK in Murage on their computer, or on their phone for a Cloud home, to clear this message and try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): Faithful and natural; uses the established hogar en Cloud term. No em or en dashes."
+    },
+    "es:restoreJob.failed": {
+      "text": "Esa restauración no terminó. Puedes intentarlo de nuevo.",
+      "en": "That restore did not finish. You can try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "es:restoreJob.backupRunning": {
+      "text": "Hay una copia de seguridad en curso. Vuelve a intentar la restauración cuando haya terminado.",
+      "en": "A backup is running. Try the restore again when it has finished.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "es:restoreJob.ownerOnly": {
+      "text": "Solo el propietario puede restaurar una copia de seguridad, con Murage en su ordenador o, si es un hogar en Cloud, en su teléfono.",
+      "en": "Only the owner can restore a backup, using Murage on their computer or, for a Cloud home, on their phone.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): Faithful and natural; uses the established hogar en Cloud term. No em or en dashes."
+    },
+    "fr:restoreJob.inProgress": {
+      "text": "Une restauration est peut-être encore en cours. Réessaie plus tard.",
+      "en": "A restore may still be in progress. Try again later.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "fr:restoreJob.abortedDesktop": {
+      "text": "La dernière restauration ne s'est pas terminée. Tes informations n'ont pas changé. Appuie sur OK pour effacer ce message, puis tu pourras relancer une restauration.",
+      "en": "The last restore did not finish. Your information has not changed. Select OK to clear this message, then you can start a restore again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "fr:restoreJob.abortedPhone": {
+      "text": "La dernière restauration ne s'est pas terminée. Les données de l'application n'ont pas changé. Le propriétaire peut appuyer sur OK dans Murage sur son ordinateur, ou sur son téléphone pour un foyer Cloud, afin d'effacer ce message et de réessayer.",
+      "en": "The last restore did not finish. The app's data has not changed. The owner can select OK in Murage on their computer, or on their phone for a Cloud home, to clear this message and try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): Faithful and natural; uses the established foyer Cloud term. No em or en dashes."
+    },
+    "fr:restoreJob.failed": {
+      "text": "Cette restauration ne s'est pas terminée. Tu peux réessayer.",
+      "en": "That restore did not finish. You can try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "fr:restoreJob.backupRunning": {
+      "text": "Une sauvegarde est en cours. Réessaie la restauration quand elle sera terminée.",
+      "en": "A backup is running. Try the restore again when it has finished.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "fr:restoreJob.ownerOnly": {
+      "text": "Seul le propriétaire peut restaurer une sauvegarde, avec Murage sur son ordinateur ou, pour un foyer Cloud, sur son téléphone.",
+      "en": "Only the owner can restore a backup, using Murage on their computer or, for a Cloud home, on their phone.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): Faithful and natural; uses the established foyer Cloud term. No em or en dashes."
+    },
+    "hi:restoreJob.inProgress": {
+      "text": "हो सकता है कोई रिस्टोर अभी भी चल रहा हो। कृपया बाद में फिर कोशिश करें।",
+      "en": "A restore may still be in progress. Try again later.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "hi:restoreJob.abortedDesktop": {
+      "text": "पिछला रिस्टोर पूरा नहीं हुआ। आपकी जानकारी में कोई बदलाव नहीं हुआ है। इस संदेश को हटाने के लिए OK दबाएँ, फिर आप दोबारा रिस्टोर शुरू कर सकते हैं।",
+      "en": "The last restore did not finish. Your information has not changed. Select OK to clear this message, then you can start a restore again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "hi:restoreJob.abortedPhone": {
+      "text": "पिछला रिस्टोर पूरा नहीं हुआ। ऐप के डेटा में कोई बदलाव नहीं हुआ है। मालिक अपने कंप्यूटर पर Murage में, या Cloud होम के लिए अपने फ़ोन पर, OK दबाकर यह संदेश हटा सकते हैं और दोबारा कोशिश कर सकते हैं।",
+      "en": "The last restore did not finish. The app's data has not changed. The owner can select OK in Murage on their computer, or on their phone for a Cloud home, to clear this message and try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): Faithful with natural app terminology and polite register; Cloud होम is correct. No em or en dashes."
+    },
+    "hi:restoreJob.failed": {
+      "text": "वह रिस्टोर पूरा नहीं हुआ। आप दोबारा कोशिश कर सकते हैं।",
+      "en": "That restore did not finish. You can try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "hi:restoreJob.backupRunning": {
+      "text": "एक बैकअप चल रहा है। उसके पूरा होने पर रिस्टोर फिर से आज़माएँ।",
+      "en": "A backup is running. Try the restore again when it has finished.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "hi:restoreJob.ownerOnly": {
+      "text": "बैकअप सिर्फ़ मालिक रिस्टोर कर सकते हैं, अपने कंप्यूटर पर Murage से, या Cloud होम के लिए अपने फ़ोन से।",
+      "en": "Only the owner can restore a backup, using Murage on their computer or, for a Cloud home, on their phone.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): Faithful with natural app terminology and polite register; Cloud होम is correct. No em or en dashes."
+    },
+    "ja:restoreJob.inProgress": {
+      "text": "復元がまだ進行中の可能性があります。しばらくしてからもう一度お試しください。",
+      "en": "A restore may still be in progress. Try again later.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "ja:restoreJob.abortedDesktop": {
+      "text": "前回の復元は完了しませんでした。お客様の情報は変わっていません。「OK」を押してこのメッセージを消すと、もう一度復元を始められます。",
+      "en": "The last restore did not finish. Your information has not changed. Select OK to clear this message, then you can start a restore again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "ja:restoreJob.abortedPhone": {
+      "text": "前回の復元は完了しませんでした。アプリのデータは変わっていません。オーナーがコンピューターの Murage で、Cloud ホームの場合はスマートフォンで「OK」を押すと、このメッセージが消え、もう一度お試しいただけます。",
+      "en": "The last restore did not finish. The app's data has not changed. The owner can select OK in Murage on their computer, or on their phone for a Cloud home, to clear this message and try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): Faithful and natural with appropriate polite register; Cloud ホーム is correct. No em or en dashes."
+    },
+    "ja:restoreJob.failed": {
+      "text": "その復元は完了しませんでした。もう一度お試しください。",
+      "en": "That restore did not finish. You can try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "ja:restoreJob.backupRunning": {
+      "text": "バックアップを実行中です。完了してから、もう一度復元をお試しください。",
+      "en": "A backup is running. Try the restore again when it has finished.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "ja:restoreJob.ownerOnly": {
+      "text": "バックアップを復元できるのはオーナーだけです。コンピューターの Murage で、Cloud ホームの場合はスマートフォンで操作してください。",
+      "en": "Only the owner can restore a backup, using Murage on their computer or, for a Cloud home, on their phone.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): Faithful and natural; splitting into two sentences works well. Cloud ホーム is correct. No em or en dashes."
+    },
+    "pt-br:restoreJob.inProgress": {
+      "text": "Uma restauração ainda pode estar em andamento. Tente novamente mais tarde.",
+      "en": "A restore may still be in progress. Try again later.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "pt-br:restoreJob.abortedDesktop": {
+      "text": "A última restauração não foi concluída. Suas informações não mudaram. Clique em OK para limpar esta mensagem e depois você poderá iniciar uma restauração de novo.",
+      "en": "The last restore did not finish. Your information has not changed. Select OK to clear this message, then you can start a restore again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "pt-br:restoreJob.abortedPhone": {
+      "text": "A última restauração não foi concluída. Os dados do app não mudaram. O proprietário pode clicar em OK no Murage no computador dele, ou no celular dele se for uma casa na Cloud, para limpar esta mensagem e tentar de novo.",
+      "en": "The last restore did not finish. The app's data has not changed. The owner can select OK in Murage on their computer, or on their phone for a Cloud home, to clear this message and try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): Faithful with a natural conversational register; casa na Cloud is correct. No em or en dashes."
+    },
+    "pt-br:restoreJob.failed": {
+      "text": "Essa restauração não foi concluída. Você pode tentar de novo.",
+      "en": "That restore did not finish. You can try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "pt-br:restoreJob.backupRunning": {
+      "text": "Um backup está em andamento. Tente a restauração de novo quando ele terminar.",
+      "en": "A backup is running. Try the restore again when it has finished.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "pt-br:restoreJob.ownerOnly": {
+      "text": "Só o proprietário pode restaurar um backup, usando o Murage no computador dele ou, se for uma casa na Cloud, no celular dele.",
+      "en": "Only the owner can restore a backup, using Murage on their computer or, for a Cloud home, on their phone.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): Faithful with a natural conversational register; casa na Cloud is correct. No em or en dashes."
+    },
+    "zh:restoreJob.inProgress": {
+      "text": "可能仍有恢复正在进行。请稍后再试。",
+      "en": "A restore may still be in progress. Try again later.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "zh:restoreJob.abortedDesktop": {
+      "text": "上一次恢复没有完成。你的信息没有改变。点按“OK”清除此消息，之后就可以重新开始恢复。",
+      "en": "The last restore did not finish. Your information has not changed. Select OK to clear this message, then you can start a restore again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "zh:restoreJob.abortedPhone": {
+      "text": "上一次恢复没有完成。应用的数据没有改变。所有者可以在电脑上的 Murage 中点按“OK”；如果是云端空间，所有者也可以在手机上点按“OK”，以清除此消息并重试。",
+      "en": "The last restore did not finish. The app's data has not changed. The owner can select OK in Murage on their computer, or on their phone for a Cloud home, to clear this message and try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): Sol: faithful, natural register, shipped term 云端空间, no dashes (second pass after wording fix)."
+    },
+    "zh:restoreJob.failed": {
+      "text": "那次恢复没有完成。你可以再试一次。",
+      "en": "That restore did not finish. You can try again.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "zh:restoreJob.backupRunning": {
+      "text": "备份正在运行。等它完成后，请再次尝试恢复。",
+      "en": "A backup is running. Try the restore again when it has finished.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): pass."
+    },
+    "zh:restoreJob.ownerOnly": {
+      "text": "只有所有者可以恢复备份，请在电脑上使用 Murage，云端空间则可在手机上操作。",
+      "en": "Only the owner can restore a backup, using Murage on their computer or, for a Cloud home, on their phone.",
+      "verdict": "pass",
+      "note": "Sol (gpt-6.1-sol): Sol: faithful, uses shipped term 云端空间, natural register, no dashes."
+    }
+  },
+  "files": {}
+}

@@ -79,7 +79,7 @@ describe("the confirm card's words (3.3)", () => {
 
   it("No limits: its own text, the level and bot as parameters", () => {
     const shown = text(renderCard({ target: "unlimited", keep: "full", bot: "Ember" }));
-    expect(shown).toContain("In conversations you start, No limits lets Ember run commands and tools without asking, including reading and sending your keys. It still asks before a wipe it can read, before it changes files Murage protects, and when a command is cut off or missing. After a chat reads outside content, it also asks before commands that can run code. A script file can still run unread. Routines and channel messages keep their own rules.");
+    expect(shown).toContain("No limits lets Ember run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask unless you explicitly set that bot's level. A setting carried over from 1.0.18 does not count.");
     expect(shown).toContain("Keep Full access");
     expect(shown).not.toContain("Nova");
   });

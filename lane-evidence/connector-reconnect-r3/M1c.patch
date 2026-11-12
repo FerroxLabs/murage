@@ -1,0 +1,11 @@
+--- server/composio.ts
++++ server/composio.ts
+@@ -2351,7 +2351,7 @@
+   catch { /* Uncertainty preserves the incident and cannot restore healthy UI. */ }
+   if (inventoryOwner(cfg) !== owner) return "stale";
+   const unknown = () => { connectorHealthStore().setUnverified(owner, slug, account.id); return "unknown" as const; };
+-  if (!read?.services || read.revalidating) return unknown();
++  if (!read?.services || read.revalidating) { clearAccount(owner, slug, account.id); return "healthy"; }
+   const current = read.services[slug]?.accounts.find(candidate => candidate.id === account.id);
+   if (!current || !/^active$/i.test(current.status)) {
+     noteNeedsReconnect(cfg, slug, current ? `status ${current.status}` : "account removed", [account]); return "reconnect";

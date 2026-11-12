@@ -3,7 +3,8 @@ import { fluxRefusalCode } from "../shared/flux-refusal.ts";
 // REST shapes verified against Tavily search, Exa's coding-agent guide, and Firecrawl v2 search.
 // Results are untrusted data; this adapter never follows their source URLs.
 import { fluxCallHeaders } from "./flux-memory-headers.ts";
-import { fluxKeyRefused, noteFluxKeyRefused } from "./flux-key-health.ts";
+import { beginFluxKeyEvidence, fluxKeyRefused, reportFluxKeyEvidence } from "./flux-key-health.ts";
+import { authorizeFluxDispatch } from "./flux-start-gate.ts";
 export type WebSearchProvider = "tavily" | "exa" | "firecrawl";
 export type SearchErrorCode = "missing-config" | "auth" | "plan" | "quota" | "rate-limit" | "unavailable" | "offline" | "timeout" | "cancel" | "invalid-response" | "invalid-request";
 const messages: Record<SearchErrorCode, string> = {
@@ -149,6 +150,9 @@ export async function searchFlux(input: { baseUrl?: string; apiKey?: string; que
   if (/[\r\n]/.test(input.apiKey)) throw new SearchError("auth");
   // Flux refused this exact key before (shared state, server/flux-key-health.ts): say so, do not ask again until the key changes or the owner presses Test.
   if (fluxKeyRefused(input.apiKey)) throw new SearchError("auth", 401);
+  await authorizeFluxDispatch(input.apiKey); // spend gate: web search from a non-Flux turn is a start
+  // The ticket is taken now, before the request: a recheck or a newer answer for this key while it runs outranks its refusal (flux-key-health.ts).
+  const ticket = beginFluxKeyEvidence(input.apiKey);
   const maxResults = input.maxResults ?? 5; const timeoutMs = options.timeoutMs ?? 40_000;
   // Flux takes a query of at most 2,000 characters
   if (typeof input.query !== "string" || !input.query.trim() || input.query.length > 2000 || !Number.isInteger(maxResults) || maxResults < 1 || maxResults > 10) throw new SearchError("invalid-request");
@@ -169,14 +173,14 @@ export async function searchFlux(input: { baseUrl?: string; apiKey?: string; que
     try { parsed = JSON.parse(await bodyText(response, controller.signal)); }
     catch (error) {
       if (error instanceof SearchError && error.code !== "invalid-response") throw error;
-      if (response.status === 401) noteFluxKeyRefused(input.apiKey);
+      if (response.status === 401) reportFluxKeyEvidence(ticket, input.apiKey, "refused");
       if (!response.ok) { checkFluxBudget(response.status, null, input.baseUrl!, input.apiKey!); throw new SearchError(fluxErrorCode(response.status, ""), response.status); }
       throw new SearchError("invalid-response");
     }
     if (!response.ok || response.redirected) {
       checkFluxBudget(response.status, parsed, input.baseUrl!, input.apiKey!);
       const code = fluxRefusalCode(parsed);
-      if (response.status === 401) noteFluxKeyRefused(input.apiKey);
+      if (response.status === 401) reportFluxKeyEvidence(ticket, input.apiKey, "refused");
       throw new SearchError(fluxErrorCode(response.status, code), response.status, code);
     }
     const answer = typeof parsed?.answer === "string" ? parsed.answer.trim() : "";
@@ -188,6 +192,7 @@ export async function searchFlux(input: { baseUrl?: string; apiKey?: string; que
       return [{ title: url.hostname.replace(/^www\./, ""), url: citation, snippet: "" }];
     }).slice(0, maxResults);
     if (controller.signal.aborted) throw aborted(controller.signal);
+    reportFluxKeyEvidence(ticket, input.apiKey, "accepted");
     return { provider: "flux", results, answer: answer.slice(0, 8000), untrusted: true,
       ...(typeof parsed.cost_usd === "string" ? { costUsd: parsed.cost_usd } : {}),
       ...(Number.isInteger(parsed.searches) ? { searches: parsed.searches } : {}),

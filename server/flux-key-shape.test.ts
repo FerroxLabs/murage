@@ -118,7 +118,7 @@ describe("the catalog backoff", () => {
   });
 
   it("stops at once for a refused key; only Flux accepting the key clears it", async () => {
-    const { catalogFetchAllowed, noteCatalogResult, noteFluxKeyAccepted, noteFluxKeyRefused, resetFluxKeyHealthForTests } = await import("./flux-key-health.ts");
+    const { beginFluxKeyEvidence, catalogFetchAllowed, noteCatalogResult, noteFluxKeyRefused, reportFluxKeyEvidence, resetFluxKeyHealthForTests } = await import("./flux-key-health.ts");
     resetFluxKeyHealthForTests();
     noteFluxKeyRefused(REAL);
     expect(catalogFetchAllowed(REAL, 10 * 365 * 86_400_000)).toBe(false);
@@ -128,7 +128,7 @@ describe("the catalog backoff", () => {
     // says nothing about the key.
     noteCatalogResult(REAL, "ok", 1);
     expect(fluxKeyState()).toBe("refused");
-    noteFluxKeyAccepted(REAL);
+    reportFluxKeyEvidence(beginFluxKeyEvidence(REAL), REAL, "accepted");
     expect(fluxKeyState()).toBe("ok");
     resetFluxKeyHealthForTests();
   });

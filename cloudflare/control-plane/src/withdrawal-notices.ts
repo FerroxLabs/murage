@@ -33,6 +33,7 @@ import { senderOrFail, type TransactionalEmailSender } from "./email";
 import { HTTPError, errorResponse, json, readBoundedJSON, type JSONValue } from "./http";
 import { consentIsEu, type ConsentRow } from "./legal-flows";
 import { advanceRefundOp, getRefundOp, refundOpInsert, type RefundContext, type RefundOpRow } from "./legal-refunds";
+import { isPageKind } from "./alert-tiers";
 import { deliver as deliverAlert, MAX_DELIVERY_ATTEMPTS, post as postAlert, raiseAlert, resolveAlert, resolveAlertUnless } from "./ops-monitor";
 import { currentPublicHandlers, registerPublicHandlers, type LookupDetails, type PublicRouteHandler } from "./public-routes";
 import { commitToken, lostCommitRefusal, readerOf, reserveMail, prepareToken, stillUnused, WHEN_CONSUMED, type IdentityReader, type TokenDeps, type Refusal, type TokenRow, type Verified } from "./public-tokens";
@@ -679,7 +680,8 @@ async function raiseMailKeyAlert(env: Env, d: NoticeDeps, now: number): Promise<
       .bind(detail, open.id, detail).run();
     due = refreshed.meta.changes > 0;
   }
-  if (due) await deliverAlert(env, open.id, detail, { kind: NOTICE_MAIL_KEY_ALERT, severity: "high", homeId: "billing",
+  // A digest kind (alert-tiers.ts) is never posted on its own: the sweep marks it handled and the daily digest lists it.
+  if (due && isPageKind(NOTICE_MAIL_KEY_ALERT)) await deliverAlert(env, open.id, detail, { kind: NOTICE_MAIL_KEY_ALERT, severity: "high", homeId: "billing",
     text: `[murage-cloud] ${NOTICE_MAIL_KEY_ALERT} home=billing: ${detail}`, at: now }, now, d.fetcher);
 }
 /** Sends every unsent mail (of one notice, or all of them). Each row is CLAIMED exclusively before work, under a fresh claim id; the rendered

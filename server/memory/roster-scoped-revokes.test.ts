@@ -1,5 +1,6 @@
-// Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { expect } from "../testing/search-index-oracle.ts";
+// Copyright 2026 Ferrox Labs
 //
 // SCOPED-REVOKES (1.0.4): a roster save or a notebook re-import ends only the receipts it withdraws. Creating a bot or a task, and
 // re-importing a notebook, used to revoke every receipt on the machine (policy.ts:151, import.ts:192 at d12c102b6), so every warm bot
@@ -8,7 +9,7 @@
 // everything under a new policy revision.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, it, vi } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -33,7 +34,23 @@ import { ensureWorkspace } from "../workspace.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { resetDataRootsForTest } from "../data-roots.ts";
 
-beforeEach(async () => { closeDatabase(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); resetDataRootsForTest(); thawRootSetWritesForTest(true); resetSessionHolds(); });
+// Observe real production Worker instances without changing their source,
+// messages, or lifecycle. Only search workers are retained for a real kill.
+const productionWorkers=vi.hoisted(()=>{vi.resetModules();return new Map<string,import("node:worker_threads").Worker>();});
+vi.mock("node:worker_threads",async importOriginal=>{
+  const original=await importOriginal<typeof import("node:worker_threads")>();
+  return {...original,Worker:class extends original.Worker{
+    constructor(source:string,options:import("node:worker_threads").WorkerOptions){
+      super(source,options);
+      if(options.workerData?.searchFile){
+        const token=String(options.workerData.token);productionWorkers.set(token,this);
+        this.once("exit",()=>productionWorkers.delete(token));
+      }
+    }
+  }};
+});
+
+beforeEach(async () => { closeDatabase(); await searchCompatibility.stopSearchIndex?.(); await stopWalMaintenance(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); resetDataRootsForTest(); thawRootSetWritesForTest(true); resetSessionHolds(); });
 afterEach(() => { thawRootSetWritesForTest(false); vi.restoreAllMocks(); });
 
 /** Every "memory receipts revoked" line the code under test logs. */
@@ -375,4 +392,184 @@ it("a first notebook import ends no receipt and moves no hold; a changed one sti
   commitMemoryImport(ticket, previewMemoryImport(ticket, [{ kind: "bot", botId: "a" }], roster).previewId, roster, true);
   expect(lines.filter(line => line.includes("scope=global cause=import"))).toHaveLength(1);
   expect(receiptState(unrelated)).toBe("revoked");
+});
+
+import { DatabaseSync } from "node:sqlite";
+import * as searchCompatibility from "../testing/search-index-compat.ts";
+import { searchCleanupPending, searchIndexTestHooks, stopSearchIndex, syncMessageSearchRow, dropThreadSearchRows, messageSearchIndexReady } from "../testing/search-index-compat.ts";
+it("T-WARM / T-WARM-LIFECYCLE: 60 real worker commits preserve hard, stamp and a session beyond the cold ceiling",{timeout:180000},async()=>{
+  const w=world();
+  const wait=async()=>{const until=Date.now()+20000;while(searchCleanupPending(database())){if(Date.now()>until)throw Error("search drain timeout");await new Promise(r=>setTimeout(r,10));}};
+  await wait();
+  for(let n=1;n<=3;n++)await w.turn(n);
+  for(let n=0;n<4;n++){w.fill(300);await w.turn(4+n);}
+  await wait();
+  expect(Number(database().prepare("SELECT COUNT(*) AS n FROM memory_disclosures WHERE native_session=?").get(w.session())!.n), "ORACLE:T-WARM ORACLE:T-WARM-LIFECYCLE").toBeGreaterThan(COLD_CHECK_ROWS);
+  let workerCommits=0;const previous=searchIndexTestHooks.event;
+  searchIndexTestHooks.event=event=>{previous?.(event);if(event.type==="stepped"&&event.worked)workerCommits++;};
+  const reads:number[]=[];
+  try{
+    for(let n=8;n<68;n++){
+      if(n===38){
+        const db=database();
+        // Warm each bounded cohort as a real session does; injecting 50k fresh
+        // unjudged receipts at once correctly trips the cold-check ceiling.
+        for(let batch=0;batch<100;batch++){
+          db.exec("BEGIN IMMEDIATE");
+          try{w.fill(500);db.exec("COMMIT");}catch(error){db.exec("ROLLBACK");throw error;}
+          await w.turn(1000+batch);
+        }
+        expect(w.resets, "ORACLE:T-WARM ORACLE:T-WARM-LIFECYCLE").toEqual([]);
+        expect(Number(db.prepare("SELECT COUNT(*) AS n FROM memory_disclosures WHERE native_session=?").get(w.session())!.n), "ORACLE:T-WARM ORACLE:T-WARM-LIFECYCLE").toBeGreaterThanOrEqual(50_000);
+        // A synthetic unrelated conversation has real indexed postings before
+        // the drop. Its complete merge/scrub then runs across the held interval.
+        db.exec("BEGIN IMMEDIATE");
+        const row=db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('fts-unrelated','fixture',1,'user','text','qzvxkjw warm drop','{}')").run();
+        syncMessageSearchRow(db,Number(row.lastInsertRowid),"qzvxkjw warm drop");db.exec("COMMIT");await wait();
+      }
+      searchIndexTestHooks.halted=true;await w.turn(n);
+      if(n===38){
+        const db=database();db.exec("BEGIN IMMEDIATE");dropThreadSearchRows(db,"fts-unrelated");db.exec("DELETE FROM messages WHERE thread_id='fts-unrelated';COMMIT");
+      }
+      // Warm the newest receipt before measuring a search-only interval.
+      expect(continuationMemoryRevoked(LineageAllowance.turn(),w.threadId,"claude",w.session(),w.access(),{}), "ORACLE:T-WARM ORACLE:T-WARM-LIFECYCLE").toBe(false);
+      const before=authorityParts();
+      searchIndexTestHooks.halted=false;await wait();
+      expect(authorityParts(), "ORACLE:T-WARM ORACLE:T-WARM-LIFECYCLE").toEqual(before);
+      const db=database(),prepare=db.prepare.bind(db);let receiptQueries=0;
+      db.prepare=(sql:string)=>{if(sql.includes("FROM memory_disclosures")&&sql.includes("native_session"))receiptQueries++;return prepare(sql);};
+      try{expect(continuationMemoryRevoked(LineageAllowance.turn(),w.threadId,"claude",w.session(),w.access(),{}), "ORACLE:T-WARM ORACLE:T-WARM-LIFECYCLE").toBe(false);}finally{db.prepare=prepare;}
+      reads.push(receiptQueries);
+    }
+    expect(workerCommits, "ORACLE:T-WARM ORACLE:T-WARM-LIFECYCLE").toBeGreaterThanOrEqual(30);expect(w.resets, "ORACLE:T-WARM ORACLE:T-WARM-LIFECYCLE").toEqual([]);
+    expect(reads.every(n=>n===0), "ORACLE:T-WARM ORACLE:T-WARM-LIFECYCLE").toBe(true);
+    const before=authorityParts();await stopSearchIndex();
+    expect(authorityParts(), "ORACLE:T-WARM ORACLE:T-WARM-LIFECYCLE").toEqual(before);
+    const foreign=new DatabaseSync(join(DATA_DIR,"messages.db"));
+    try{foreign.exec("INSERT INTO thread_state(thread_id) VALUES('foreign-fts-test')");}finally{foreign.close();}
+    expect(authorityParts()?.hard, "ORACLE:T-WARM ORACLE:T-WARM-LIFECYCLE").not.toBe(before?.hard);
+  }finally{searchIndexTestHooks.event=previous;searchIndexTestHooks.halted=false;}
+});
+
+it("T-WARM-RACE: an FTS commit between the first authority read and hold construction preserves the new hold",{timeout:30000},async()=>{
+  const shared=new Int32Array(new SharedArrayBuffer(4));
+  searchIndexTestHooks.barrier={name:"apply-before-progress",shared:shared.buffer};searchIndexTestHooks.halted=true;
+  const w=world();let reader:DatabaseSync|undefined;
+  try{
+    await w.turn(1);const db=database();
+    await vi.waitFor(()=>expect(messageSearchIndexReady(db), "ORACLE:T-WARM-RACE").toBe(true),{timeout:10000,interval:10});
+    const position=Number(db.prepare("SELECT MAX(rowid) AS n FROM messages").get()!.n);
+    syncMessageSearchRow(db,position,null);
+    expect(searchCompatibility.intentCount(db),"ORACLE:T-WARM-RACE" + " " + ("held-session maintenance uses durable references")).toBeGreaterThan(0);
+    const seq=Number(db.prepare("SELECT MAX(seq) AS n FROM search_intents").get()!.n);
+    searchIndexTestHooks.halted=false;
+    await vi.waitFor(()=>expect(Atomics.load(shared,0), "ORACLE:T-WARM-RACE").toBe(1),{timeout:10000,interval:10});
+    searchIndexTestHooks.halted=true;
+    reader=new DatabaseSync(join(DATA_DIR,"search.db"),{readOnly:true});
+    const prepare=db.prepare.bind(db);let raced=false,receiptQueries=0;
+    db.prepare=sql=>{
+      if(sql.includes("FROM memory_disclosures"))receiptQueries++;
+      const statement=prepare(sql);
+      if(!sql.includes("FROM temp.authority_epoch"))return statement;
+      return new Proxy(statement,{get(target,key){
+        const method=Reflect.get(target,key,target);if(typeof method!=="function")return method;
+        return(...args:unknown[])=>{
+          const result=Reflect.apply(method,target,args);
+          if(key==="get"&&!raced){
+            raced=true;Atomics.store(shared,0,0);Atomics.notify(shared,0);
+            const until=Date.now()+5000,sleeper=new Int32Array(new SharedArrayBuffer(4));
+            while(Number(reader!.prepare("SELECT v FROM search_state WHERE k='applied_seq'").get()!.v)<seq){
+              if(Date.now()>until)throw Error("FTS hold-construction race timed out");Atomics.wait(sleeper,0,0,1);
+            }
+          }
+          return result;
+        };
+      }});
+    };
+    try{
+      expect(continuationMemoryRevoked(LineageAllowance.turn(),w.threadId,"claude",w.session(),w.access(),{}), "ORACLE:T-WARM-RACE").toBe(false);
+      expect(raced, "ORACLE:T-WARM-RACE").toBe(true);receiptQueries=0;
+      expect(continuationMemoryRevoked(LineageAllowance.turn(),w.threadId,"claude",w.session(),w.access(),{}), "ORACLE:T-WARM-RACE").toBe(false);
+      expect(receiptQueries, "ORACLE:T-WARM-RACE").toBe(0);
+    }finally{db.prepare=prepare;}
+  }finally{
+    Atomics.store(shared,0,0);Atomics.notify(shared,0);reader?.close();searchIndexTestHooks.barrier=null;searchIndexTestHooks.halted=false;await stopSearchIndex();
+  }
+});
+
+
+it.each(["before-search-commit","after-search-commit"])("R6-BEHAVIORAL: production worker killed at %s automatically recovers the same held session",{timeout:60000},async phase=>{
+  const w=world();
+  const drain=async()=>{
+    await vi.waitFor(()=>{
+      expect(messageSearchIndexReady(database()),"automatic owner reader recovery").toBe(true);
+      expect(searchCleanupPending(database()),"automatic owner drain").toBe(false);
+    },{timeout:15000,interval:10});
+  };
+  for(let n=1;n<=3;n++)await w.turn(n);
+  for(let n=0;n<4;n++){w.fill(300);await w.turn(n+4);}
+  await drain();
+  const db=database(),session=w.session();
+  expect(Number(db.prepare("SELECT COUNT(*) AS n FROM memory_disclosures WHERE native_session=?").get(session)!.n)).toBeGreaterThan(COLD_CHECK_ROWS);
+  expect(continuationMemoryRevoked(LineageAllowance.turn(),w.threadId,"claude",session,w.access(),{})).toBe(false);
+  // The first unexpected kill lets the owner's replacement inherit the existing
+  // transaction barrier. Neither this setup crash nor the measured transaction
+  // crash below gets a stop message or an explicit start from the test.
+  const initial=[...productionWorkers.values()];expect(initial).toHaveLength(1);
+  searchIndexTestHooks.halted=true;
+  const shared=new Int32Array(new SharedArrayBuffer(4));
+  searchIndexTestHooks.barrier={name:phase,shared:shared.buffer};
+  const events:Array<{type:string;token:string;[key:string]:unknown}>=[];
+  const previous=searchIndexTestHooks.event;searchIndexTestHooks.event=event=>{previous?.(event);events.push(event);};
+  const prepare=db.prepare.bind(db);let receiptQueries=0;
+  const before=authorityParts();
+  try{
+    expect(await initial[0].terminate(),"initial unexpected production exit").toBe(1);
+    await vi.waitFor(()=>expect(messageSearchIndexReady(db)).toBe(true),{timeout:10000,interval:10});
+    db.exec("BEGIN IMMEDIATE");
+    const row=db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('crash-unrelated','fixture',1,'user','text','qzvxkjw crash recovery','{}')").run();
+    syncMessageSearchRow(db,Number(row.lastInsertRowid),"qzvxkjw crash recovery");db.exec("COMMIT");
+    expect(searchCompatibility.intentCount(db),"held-session maintenance uses durable references").toBeGreaterThan(0);
+    const seq=Number(db.prepare("SELECT MAX(seq) AS n FROM search_intents").get()!.n);
+    // Arm measurement after the unrelated owner write, so it covers only search
+    // crash/recovery, with an already held session beyond the cold-check limit.
+    expect(authorityParts()).toEqual(before);
+    db.prepare=(sql:string)=>{if(sql.includes("FROM memory_disclosures")&&sql.includes("native_session"))receiptQueries++;return prepare(sql);};
+    searchIndexTestHooks.halted=false;
+    await vi.waitFor(()=>expect(Atomics.load(shared,0)).toBe(1),{timeout:10000,interval:10});
+    const barrier=events.find(event=>event.type==="barrier"&&event.name===phase)!;
+    expect(barrier).toBeDefined();
+    const worker=productionWorkers.get(barrier.token)!;expect(worker).toBeDefined();
+    const applied=()=>{
+      const reader=new DatabaseSync(join(DATA_DIR,"search.db"),{readOnly:true});
+      try{return Number(reader.prepare("SELECT v FROM search_state WHERE k='applied_seq'").get()!.v);}finally{reader.close();}
+    };
+    // A separate connection proves which side of the real COMMIT we killed.
+    const appliedAtCrash=applied();
+    if(phase==="before-search-commit")expect(appliedAtCrash).toBeLessThan(seq);
+    else expect(appliedAtCrash).toBe(seq);
+    searchIndexTestHooks.barrier=null; // replacement must not inherit the latch
+    const exitCode=await worker.terminate();
+    expect(exitCode,"unexpected production worker exit code").toBe(1);
+    expect(messageSearchIndexReady(db),"owner observed unexpected exit").toBe(false);
+    expect(authorityParts()).toEqual(before);
+    expect(continuationMemoryRevoked(LineageAllowance.turn(),w.threadId,"claude",session,w.access(),{})).toBe(false);
+    await drain(); // owner exit handler alone must create and schedule its replacement
+    const ready=events.filter(event=>event.type==="ready"&&event.token!==barrier.token);
+    expect(ready,"automatic replacement has a new production token").toHaveLength(1);
+    expect(productionWorkers.has(ready[0].token)).toBe(true);
+    const recoveredApplied=applied();expect(recoveredApplied).toBeGreaterThanOrEqual(seq);
+    const reader=new DatabaseSync(join(DATA_DIR,"search.db"),{readOnly:true});
+    try{expect(reader.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?").all(searchCompatibility.trigramQuery("qzvxkjw")).map(row=>Number(row.rowid))).toContain(Number(row.lastInsertRowid));}finally{reader.close();}
+    expect(authorityParts()).toEqual(before);
+    expect(continuationMemoryRevoked(LineageAllowance.turn(),w.threadId,"claude",session,w.access(),{})).toBe(false);
+    expect(receiptQueries).toBe(0);
+    db.prepare=prepare;
+    await w.turn(8);expect(w.session()).toBe(session);expect(w.resets).toEqual([]);
+    mkdirSync(".fts-r3-evidence/review",{recursive:true});
+    writeFileSync(".fts-r3-evidence/review/production-crash-"+phase+".json",JSON.stringify({phase,session,seq,appliedAtCrash,recoveredApplied,exitCode,receiptQueries,events},null,2)+"\n");
+  }finally{
+    db.prepare=prepare;Atomics.store(shared,0,0);Atomics.notify(shared,0);
+    searchIndexTestHooks.barrier=null;searchIndexTestHooks.halted=false;searchIndexTestHooks.event=previous;await stopSearchIndex();
+  }
 });

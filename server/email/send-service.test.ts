@@ -1,3 +1,4 @@
+import { legacyEmailDecisionFixture } from "./testing/legacy-decision-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -21,7 +22,8 @@ let service: EmailSendService;
 let outcomes: EmailOutcomeEvent[];
 let refusals: string[];
 
-function setup(policy: "ask" | "auto" = "auto") {
+async function setup(policy: "ask" | "auto" = "auto") {
+  const authority = await legacyEmailDecisionFixture();
   clock = 1_800_000_000_000;
   fake = new FakeFlux();
   store = new EmailStore(new DatabaseSync(":memory:"));
@@ -31,7 +33,7 @@ function setup(policy: "ask" | "auto" = "auto") {
   const client = new FluxEmailClient({ fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test", credentials: emailCredentialProvider(secrets, () => null), timeoutMs: 100 });
   outcomes = []; refusals = [];
   let n = 0;
-  service = new EmailSendService({ store, client, installId: "inst", now: () => clock, newId: () => `send-${++n}`, onOutcome: event => outcomes.push(event), onRefusal: code => refusals.push(code) });
+  service = new EmailSendService({ store, client, authorityFor: () => authority, installId: "inst", now: () => clock, newId: () => `send-${++n}`, onOutcome: event => outcomes.push(event), onRefusal: code => refusals.push(code) });
   store.insertBinding({ botId: "b1", inboxId: INBOX, address: "juniper@murage.email", username: "juniper", displayName: "Juniper", emailKeyRef: "key_b1", fluxAccountId: null, state: "active", step: null, opId: null, opStartedAt: null, policy, failure: null, updatedAt: clock });
   store.addTrusted("b1", "jane@acme.test", "allow", "owner", clock);
   return { secrets, client };
@@ -45,7 +47,7 @@ const heldItem = (id: string, ref: string, patch: Record<string, unknown> = {}) 
 const approval = (items: unknown[], approvalId = "apr_1"): FakeReply => ({ status: 200, body: { id: approvalId, state: "pending", held_ids: (items as Array<{ id: string }>).map(item => item.id), held: items } });
 const row = (id: string): SendRow => store.getSend(id)!;
 
-beforeEach(() => { setup(); });
+beforeEach(async () => { await setup(); });
 
 describe("dispatch without the owner (auto, approved address)", () => {
   it("200: sent, with Idempotency-Key :1, client_reference = send_id and the key id of the attempt", async () => {
@@ -139,7 +141,7 @@ describe("Murage-held: the owner's Send (4.4)", () => {
   });
 
   it("ask holds even an approved address", async () => {
-    setup("ask");
+    await setup("ask");
     expect((await submit()).row).toMatchObject({ state: "awaiting_owner", why: "waiting_ask" });
   });
 
@@ -481,7 +483,7 @@ describe("every other ending (4.5, F9 to F11, M2, L1, L3)", () => {
   });
 
   it("F25: Remove with cards open: every open row withdrawn(inbox_removed)", async () => {
-    const { secrets, client } = { ...setup() };
+    const { secrets, client } = await setup();
     const bindings = new EmailBindingService({ store, client, secrets, installId: "inst", now: () => clock, withdrawSends: (botId, reason) => service.withdrawAllForBot(botId, reason) });
     store.addTrusted("b1", "new@x.test", "allow", "owner", clock);
     fake.on("POST", /\/messages$/, held("hld_1"));

@@ -4,7 +4,8 @@
 //
 // 1.0.18 DOWNGRADE-TO6 rehearsal 5: a data copy with 10,184 skill shortcuts pointing outside the data folder restored, but
 // its restore-review.json was 4.5 MB, over the 1 MiB its reader accepts, so every review refused RESTORE_REVIEW_REQUIRED.
-import { mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { fixtureLink } from "./testing/platform-fixtures.ts";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { assertRestoreReviewed } from "../electron/restore-review.mjs";
@@ -15,14 +16,14 @@ import { MAX_RESTORE_REVIEW_BYTES, REVIEW_NOTE_EXAMPLES, RESTORE_UNRECOGNISED, f
 import { backupFixture } from "./testing/backup-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
-it.skipIf(process.platform === "win32")("10,000 shortcuts leading out of the data folder fold into one counted line, and the copy reviews, activates and opens", async () => {
+it("10,000 shortcuts leading out of the data folder fold into one counted line, and the copy reviews, activates and opens", async () => {
   const f = backupFixture();
   const desk = join(f.data, "workspaces", "bot", "threads", "t", ".murage-procedures", "p", "skills");
   mkdirSync(join(desk, "lib"), { recursive: true }); writeFileSync(join(desk, "lib", "i.js"), "x");
-  symlinkSync("lib/i.js", join(desk, "inside"));
+  fixtureLink("lib/i.js", join(desk, "inside"), "file");
   // A long absolute target, as on the data copy, so ten thousand lines each would be about 4 MB.
-  const far = `/Users/someone/.murage/workspaces/${"a".repeat(36)}/threads/${"b".repeat(36)}/.murage-procedures/${"c".repeat(64)}/skills`;
-  for (let index = 0; index < 10_000; index++) symlinkSync(`${far}/skill-${index}`, join(desk, `skill-${index}`));
+  const far = join(f.parent, "outside", "workspaces", "a".repeat(36), "threads", "b".repeat(36), "skills");
+  for (let index = 0; index < 10_000; index++) fixtureLink(`${far}/skill-${index}`, join(desk, `skill-${index}`), "dir");
   try {
     const saved = await writeInstallationArchive(f.data, join(f.parent, "x.zip"));
     const target = join(f.parent, "restored");

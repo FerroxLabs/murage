@@ -1,0 +1,42 @@
+COMMAND node_modules/.bin/vitest run server/decision/faults.test.ts -t M28
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/faults.test.ts > A5 M38 protected match wins before stored-source failure; reads run (M28)
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/faults.test.ts (12 tests | 1 failed | 11 skipped) 413ms
+   × A5 M38 protected match wins before stored-source failure; reads run (M28) 409ms
+   ↓ A5 stored browser fault refuses without inventing a card
+   ↓ A5 M51 non-owner ask faults use frozen BASE callback
+   ↓ A5 M51 non-owner auto faults use frozen BASE callback
+   ↓ A5 M51 non-owner full faults use frozen BASE callback
+   ↓ A5 M51 non-owner unlimited faults use frozen BASE callback
+   ↓ R9 M23 M24 unproven owner does not mint BASE card; missing command runs
+   ↓ R16 M21 deny revision is rechecked immediately before RUN delivery
+   ↓ M23 reader throws: owner clean runs, guest retains BASE fault behavior
+   ↓ R9 record creation failure denies the engine without a second card
+   ↓ R9 provenance/level reader failures produce bounded refusal, never a waiting engine
+   ↓ R9 answer row failure delivers deny and bounded text without another card
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 11 skipped (12)
+   Start at  06:32:36
+   Duration  5.50s (transform 4.01s, setup 4.68s, import 269ms, tests 413ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/faults.test.ts > A5 M38 protected match wins before stored-source failure; reads run (M28)
+AssertionError: expected 'card' to be 'run' // Object.is equality
+
+Expected: "run"
+Received: "card"
+
+ ❯ server/decision/faults.test.ts:5:211
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

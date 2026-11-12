@@ -1,3 +1,5 @@
+import en from "../src/locales/en.json" with { type: "json" };
+import { channelReplyLanguage, channelReplyPacks } from "./channels/reply-text.ts";
 // Notifications — what is worth interrupting someone for.
 //
 // `BotRecord.notifications` has been a switch in the settings panel that
@@ -15,7 +17,7 @@
 // listening decides what to do with it — desktop and paired-phone local
 // notifications today, and closed-app APNs delivery once a relay exists.
 
-export type NotifyKind = "approval" | "question" | "done" | "routine-failed" | "turn-failed" | "takeover" | "backup-waiting" | "memories-waiting" | "email-digest" | "email-status";
+export type NotifyKind = "connector-reconnect" | "approval" | "question" | "done" | "routine-failed" | "turn-failed" | "takeover" | "backup-waiting" | "memories-waiting" | "email-digest" | "email-status";
 
 export interface Notification {
   kind: NotifyKind;
@@ -29,9 +31,14 @@ export interface Notification {
   avatarUrl?: string;
   /** Content and identifying artwork were removed by the privacy policy. */
   privatePreview?: true;
+  reconnect?: { slug: string; accountId?: string };
   requestId?: string;
   messageId?: string;
   requestTurnId?: string;
+  /** done frames: unique per delivery, so a surface shows one receipt per delivery. */
+  deliveryId?: string;
+  durationMs?: number;
+  receipt?: { engineLabel: string; filesTouched: number; sent: string | null };
 }
 
 /** One line, short enough for a lock screen, with the newlines and code
@@ -85,7 +92,7 @@ export function buildNotification(
   bot: NotifyBot,
   threadId: string,
   detail: string,
-  extra?: { avatarUrl?: string; requestId?: string; messageId?: string; requestTurnId?: string },
+  extra?: { reconnect?: Notification["reconnect"]; avatarUrl?: string; requestId?: string; messageId?: string; requestTurnId?: string; deliveryId?: string; durationMs?: number; receipt?: { engineLabel: string; filesTouched: number; sent: string | null } },
 ): Notification | null {
   // The toggle means what it says: off is off, including for approvals.
   // A bot whose notifications you turned off can still block waiting for
@@ -94,7 +101,9 @@ export function buildNotification(
 
   const body = summarize(detail);
   const title =
-    kind === "approval"
+    kind === "connector-reconnect"
+      ? (channelReplyPacks[channelReplyLanguage()]?.["connectorHealth.signIn"] || en["connectorHealth.signIn"]).replace("{connector}", detail)
+      : kind === "approval"
       ? `${bot.name} needs approval`
       : kind === "question"
         ? `${bot.name} has a question`

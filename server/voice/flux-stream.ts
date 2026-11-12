@@ -17,6 +17,7 @@ import {
   type StreamError,
 } from "../../shared/flux-stream-contract.ts";
 import type { TranscriptionFailure } from "./flux-voice.ts";
+import { authorizeFluxDispatch } from "../flux-start-gate.ts";
 
 /** Read per call, never at module load (see flux-voice.ts apiBase). */
 export function fluxStreamBase(env: NodeJS.ProcessEnv = process.env): string {
@@ -75,6 +76,10 @@ export async function openFluxStream(opts: { key: string; query: URLSearchParams
     throw new FluxStreamRefused(4502, fatal("capability_unavailable", "Flux streaming base must be wss://"), "the Flux streaming base must be wss:// (cleartext ws:// is allowed only to a loopback host)");
   }
   if (isBudgetReached({ via: "flux", label: "Flux", baseUrl: fluxStreamBase(opts.env), key: opts.key, model: "flux-voice-stream" })) throw new FluxStreamRefused(4402, fatal("key_budget_reached", "This Flux key has reached its budget"), "budget");
+  await authorizeFluxDispatch(opts.key); // spend gate
+  // Cancellation can arrive while the budget gate is checking this call.
+  // Observe it before opening a socket or installing the handshake listener.
+  if (opts.signal?.aborted) throw new FluxStreamRefused(4502, fatal("capability_unavailable", "the call ended"), "aborted");
   const ws = new WebSocket(url, [SUBPROTOCOL], {
     headers: withFluxCallHeaders("voice-stream", { authorization: `Bearer ${opts.key}` }),
     handshakeTimeout: opts.handshakeMs ?? HANDSHAKE_TIMEOUT_MS,

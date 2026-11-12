@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -21,37 +22,15 @@
 // advertised and no model is ever sent (`-m` conventions differ per CLI and
 // the bridge does not take one).
 //
-// Tools and approvals: an OpenClaw bot runs on OpenClaw's OWN tools. Verified
-// live against the bridge (OpenClaw 2026.10.5): it ignores `session/new`
-// `mcpServers` (a mounted probe tool was reported as absent), so `ownTools:
-// true` below: Murage hands the bridge NO mounts and declares no teammates,
-// memory, computer, browser or connected-apps capability. Its exec approvals
-// live on the Gateway, which runs the agent; the bridge relays a Gateway exec
-// approval to the client as `session/request_permission`, but the Gateway
-// asks only when its exec policy says so, and its default (permission mode
-// "full") never does, so a shell command ran with no ask at Ask. The
-// Gateway's policy is the owner's and shared (`openclaw exec-policy`,
-// `sessions.patch`), so Murage never edits it. OpenClaw's inline `/exec`
-// directive sets the exec policy "for this run only". At Auto and Full access
-// Murage sends NO directive, as in 1.0.2, so the owner's own OpenClaw exec
-// policy applies unchanged (Murage neither tightens nor loosens it).
-// (`/exec ask=always security=full` was tried and dropped: OpenClaw 2026.10.5
-// refuses with SYSTEM_RUN_DENIED any always-ask command it cannot bind to an
-// approval, such as one with a shell redirect or `&&`, so at Auto and Full
-// access those commands never ran. `ask=off` was also rejected: it would
-// override an owner who set OpenClaw to ask.) At Ask the directive is
-// `/exec security=deny` and no shell command runs at all (below). OpenClaw's own file-write tool has no ask in any permission
-// mode (only read-only blocks it), so a write cannot be asked: at Ask the turn
-// runs read-only instead (the Ask hard stop, ../ask-stop.ts). Before the prompt
-// the Gateway session's permission mode is set to "read-only" (`openclaw
-// gateway call sessions.patch`, OpenClaw 2026.8.1 and later: mutation tools are
-// left out and exec is denied) and the prompt's directive is
-// `/exec security=deny`. Releases before 2026.8.1 (2026.7.35 and earlier) have no permissionMode on sessions.patch
-// (the closed schema rejects it), so there an Ask turn is refused before anything runs (ASK_STOP_OPENCLAW_OLD_NOTE).
-// The Gateway's answer to the patch is the session entry it stored, and the turn runs only when that entry shows
-// "read-only". The mode it replaced is recorded under Murage's data
-// dir and put back by the next turn that is not at Ask, so Auto and Full
-// access run exactly as before. A mode that cannot be set refuses the turn.
+// Tools and approvals: OpenClaw runs on its own tools, with no Murage mounts.
+// Lower levels confirm read-only on the exact bridge session and deny managed exec.
+// The server's owner-only No limits flag opens that session for writes and exec. That alone cannot establish refused-read, skill-root,
+// plugin, native-harness or delegation coverage. Unknown coverage refuses
+// the turn. Shared Gateway defaults and legacy recovery records stay intact;
+// Every later lower-level turn restores the read-only mode on its conversation session.
+// Offline package witness: openclaw-package.test.ts executes the published
+// 2026.10.5 permission projection, directive parser and ACP exec-approval relay.
+// ask=always keeps each command at session/request_permission for Murage’s wipe check.
 //
 // Remote seam: a remote gateway is `openclaw acp --url <ws> --token-file <f>`.
 // It is deliberately NOT implemented. `openclawBridgeArgs` is the single place
@@ -59,13 +38,13 @@
 // (the token goes in a file, never in argv), and `decodeExtra` below is where
 // the new fields would be validated.
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, readFileSync } from "node:fs";
 import { writeFileAtomic } from "../../atomic.ts";
+import { join } from "node:path";
 import { DATA_DIR } from "../../config.ts";
 import type { ModelCatalog, SendTurnInput } from "../../contracts.ts";
 import { execCli } from "../../procs.ts";
-import { AskStopRefusal, ASK_STOP_OPENCLAW_OLD_NOTE } from "../ask-stop.ts";
+import { AskStopRefusal } from "../ask-stop.ts";
 import { createAcpDriver, type AcpConfig, type AcpSupport } from "./core.ts";
 import {
   DEFAULT_OPENCLAW_AGENT,
@@ -91,7 +70,7 @@ const generationsPath = (dataDir: string): string => join(dataDir, "native", "op
 
 function readGenerations(dataDir: string): Record<string, number> {
   try {
-    const parsed = JSON.parse(readFileSync(generationsPath(dataDir), "utf8")) as unknown;
+    const parsed = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(generationsPath(dataDir), "utf8"))) as unknown;
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     return Object.fromEntries(Object.entries(parsed as Record<string, unknown>).filter(([, value]) => Number.isSafeInteger(value) && (value as number) > 0)) as Record<string, number>;
   } catch {
@@ -138,18 +117,20 @@ export function openclawTurnSessionKey(config: OpenclawAgentConfig, turn: Pick<S
   });
 }
 
-/** OpenClaw's inline exec directive on an Ask turn, "for this run only": no shell command runs at all (it can only
- *  tighten the session's read-only mode, never loosen it). Only the leading line of a prompt that carries more text
- *  is read as a directive, so OpenClaw acts on it and sends no acknowledgement into the reply. At Auto and Full
- *  access no directive is sent, as in 1.0.2: the owner's own OpenClaw exec policy applies (see the header). */
+/** Tighten managed exec on every ordinary prompt, at every permission level. */
 export const OPENCLAW_ASK_STOP_DIRECTIVE = "/exec security=deny";
+// Full native access; every exec approval is relayed by OpenClaw's ACP bridge
+// to Murage, where No limits applies only the wipe/catastrophe check.
+export const OPENCLAW_NO_LIMITS_DIRECTIVE = "/exec security=full ask=always";
+export const OPENCLAW_READ_ONLY_NOTICE = "OpenClaw runs read-only here because it cannot enforce Murage’s protected-folder, refused-folder and wipe rules.";
+export const OPENCLAW_DENY_REFUSAL = "OpenClaw cannot run this turn with your folder restrictions.";
 
-export function openclawPromptText(turn: { system?: string; text: string; askLevel?: true }): string {
+export function openclawPromptText(turn: Pick<SendTurnInput, "system" | "text" | "askLevel" | "noLimits" | "permissionNow">): string {
   const body = turn.system ? `${turn.system}\n\n${turn.text}` : turn.text;
-  return turn.askLevel ? `${OPENCLAW_ASK_STOP_DIRECTIVE}\n${body}` : body;
+  return `${(turn.permissionNow?.() ?? turn).noLimits === true ? OPENCLAW_NO_LIMITS_DIRECTIVE : OPENCLAW_ASK_STOP_DIRECTIVE}\n${body}`;
 }
 
-/** The session permission mode an Ask turn runs under (OpenClaw "Session permission modes"). */
+/** The session permission mode every turn requires (OpenClaw "Session permission modes"). */
 export const OPENCLAW_READ_ONLY_MODE = "read-only";
 const GATEWAY_CALL_TIMEOUT_MS = 30_000;
 
@@ -180,7 +161,7 @@ export function openclawHasPermissionMode(versionText: string): boolean {
 /** The line setup and engine detection show beside an OpenClaw version below the floor (the same one a refused Ask
  *  turn shows); undefined at or above it. */
 export function openclawVersionNote(versionText: string): string | undefined {
-  return openclawHasPermissionMode(versionText) ? undefined : ASK_STOP_OPENCLAW_OLD_NOTE;
+  return openclawHasPermissionMode(versionText) ? undefined : OPENCLAW_DENY_REFUSAL;
 }
 
 /** Ask the installed binary for its version (`openclaw --version`). Throws on failure. */
@@ -201,83 +182,71 @@ export const openclawGatewayCall: OpenclawGatewayCall = (cli, method, params, en
       const text = String(stdout ?? "");
       const start = text.indexOf("{");
       try {
-        const parsed: unknown = JSON.parse(start >= 0 ? text.slice(start) : text);
+        const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(start >= 0 ? text.slice(start) : text));
         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return resolve(parsed as Record<string, unknown>);
       } catch { /* below */ }
       reject(new Error(`openclaw gateway call ${method} gave no JSON object`));
     });
 });
 
-/** Where the mode an Ask turn replaced is kept until a later turn puts it back: Murage's own data dir, one file per
- *  OpenClaw binary and session key. */
+/** Legacy recovery record location. Existing files are preserved without replaying their values. */
 export function openclawAskStopRecordPath(cli: string, sessionKey: string, dataDir = DATA_DIR): string {
   const id = createHash("sha256").update(`${cli}\0${sessionKey}`).digest("hex").slice(0, 24);
   return join(dataDir, "native", "openclaw-ask-stop", `${id}.json`);
 }
 
-type AskStopRecord = { key: string; previous: string | null };
-function readRecord(path: string): AskStopRecord | null {
+async function withinGatewayDeadline<T>(work: Promise<T>): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as Partial<AskStopRecord>;
-    if (typeof parsed?.key !== "string") return null;
-    return { key: parsed.key, previous: typeof parsed.previous === "string" ? parsed.previous : null };
-  } catch {
-    return null;
-  }
+    return await Promise.race([work, new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => reject(new AskStopRefusal(OPENCLAW_DENY_REFUSAL)), GATEWAY_CALL_TIMEOUT_MS);
+    })]);
+  } finally { clearTimeout(timer); }
 }
 
-/** The session row's permission mode (null when the session has none, or is not listed yet). */
-async function currentPermissionMode(call: OpenclawGatewayCall, cli: string, key: string, env: Record<string, string | undefined>): Promise<string | null> {
-  const listed = await call(cli, "sessions.list", { limit: 50, search: key }, env);
-  const rows = Array.isArray(listed.sessions) ? listed.sessions as Array<Record<string, unknown>> : [];
-  const row = rows.find((entry) => entry?.key === key);
-  return typeof row?.permissionMode === "string" ? row.permissionMode : null;
-}
+type OpenclawPromptContext = Parameters<NonNullable<AcpSupport["prePrompt"]>["apply"]>[0];
 
-/**
- * The Ask hard stop for OpenClaw (support.askStop.apply), called before every prompt. At Ask: record the session's
- * current permission mode (once, before anything is changed), set "read-only", and require the Gateway's answer to
- * show it set; any failure throws and the turn does not run. Not at Ask: when a record exists, put its mode back if
- * the session still shows "read-only" (an owner who changed it since keeps their choice), then drop the record. With
- * no record nothing is called, so Auto and Full access run as before.
- */
-export async function applyOpenclawAskStop(ctx: { env: Record<string, string | undefined>; config: AcpConfig; turn: Pick<SendTurnInput, "threadId" | "warmIdentity">; askLevel: boolean },
-  call: OpenclawGatewayCall = openclawGatewayCall, dataDir = DATA_DIR, probeVersion: OpenclawVersionProbe = openclawVersionProbe): Promise<void> {
+/** Apply the server-owned level to this conversation key before each submission. */
+export async function applyOpenclawAskStop(ctx: { env: Record<string, string | undefined>; config: AcpConfig; turn: Pick<SendTurnInput, "threadId" | "warmIdentity" | "noLimits" | "permissionNow">; askLevel: boolean },
+  call: OpenclawGatewayCall = openclawGatewayCall, _dataDir = DATA_DIR, probeVersion: OpenclawVersionProbe = openclawVersionProbe): Promise<void> {
   const cli = ctx.config.cli || "openclaw";
-  // the turn's own Gateway session (one per conversation and audience), the one its bridge runs on
   const key = openclawTurnSessionKey(ctx.config as OpenclawAgentConfig, ctx.turn);
-  const recordPath = openclawAskStopRecordPath(cli, key, dataDir);
-  const record = readRecord(recordPath);
-  if (ctx.askLevel) {
-    // A version without permissionMode on sessions.patch rejects the call, so refuse before anything is recorded or run.
-    let versionText = "";
-    try { versionText = await probeVersion(cli, ctx.env); } catch { /* unreadable: treated as below the floor */ }
-    if (!openclawHasPermissionMode(versionText)) throw new AskStopRefusal(ASK_STOP_OPENCLAW_OLD_NOTE);
-    if (!record) {
-      const previous = await currentPermissionMode(call, cli, key, ctx.env);
-      mkdirSync(join(dataDir, "native", "openclaw-ask-stop"), { recursive: true, mode: 0o700 });
-      writeFileAtomic(recordPath, `${JSON.stringify({ key, previous })}\n`, { mode: 0o600 });
-    }
-    // The answer's `entry` is the session row the Gateway stored after the patch (OpenClaw's projectSessionPatchResult),
-    // not our request echoed back: a Gateway that took the call but did not apply the mode shows no "read-only" here.
-    const patched = await call(cli, "sessions.patch", { key, permissionMode: OPENCLAW_READ_ONLY_MODE }, ctx.env);
-    const entry = patched.entry as Record<string, unknown> | undefined;
-    if (patched.ok !== true || entry?.permissionMode !== OPENCLAW_READ_ONLY_MODE) {
-      throw new Error(`the Gateway did not confirm ${OPENCLAW_READ_ONLY_MODE} for ${key}`);
-    }
-    return;
-  }
-  if (!record) return;
+  const mode = (ctx.turn.permissionNow?.() ?? ctx.turn).noLimits === true ? "full" : OPENCLAW_READ_ONLY_MODE;
   try {
-    const current = await currentPermissionMode(call, cli, key, ctx.env);
-    if (current === OPENCLAW_READ_ONLY_MODE && record.previous !== OPENCLAW_READ_ONLY_MODE) {
-      await call(cli, "sessions.patch", { key, permissionMode: record.previous }, ctx.env);
+    const versionText = await withinGatewayDeadline(probeVersion(cli, ctx.env));
+    if (!openclawHasPermissionMode(versionText)) throw new AskStopRefusal(OPENCLAW_DENY_REFUSAL);
+    const patched = await withinGatewayDeadline(call(cli, "sessions.patch", { key, permissionMode: mode }, ctx.env));
+    // `entry` is the stored session row, not our request echoed back.
+    const entry = patched?.entry as Record<string, unknown> | undefined;
+    if (patched?.ok !== true || patched.key !== key || entry?.permissionMode !== mode) {
+      throw new AskStopRefusal(OPENCLAW_DENY_REFUSAL);
     }
-    rmSync(recordPath, { force: true });
-  } catch (error) {
-    // Kept for the next turn to try again; this turn runs on whatever mode the session has.
-    console.warn(`OpenClaw ask stop: permission mode not put back for ${key} (${(error as Error)?.message ?? error})`);
-  }
+  } catch { throw new AskStopRefusal(OPENCLAW_DENY_REFUSAL); }
+}
+
+/** These independent boundaries require proof beyond permissionMode or a tool catalog.
+ * No installed-package verifier is available yet. Production therefore refuses by default.
+ * The injected verifier is an internal seam for isolated fixtures, never a user configuration flag
+ * or a claimed Gateway attestation endpoint. */
+export function createOpenclawPrePromptGuard(deps: {
+  call?: OpenclawGatewayCall;
+  dataDir?: string;
+  probeVersion?: OpenclawVersionProbe;
+  verifyCoverage?: (ctx: OpenclawPromptContext) => Promise<Partial<Record<"refusedReads" | "skillRoots" | "extraTools" | "nativeHarnesses" | "delegation" | "readBoundary", boolean>> | undefined>;
+} = {}): NonNullable<AcpSupport["prePrompt"]> {
+  return {
+    notice: (turn) => (turn.permissionNow?.() ?? turn).noLimits === true ? undefined : OPENCLAW_READ_ONLY_NOTICE,
+    refusal: OPENCLAW_DENY_REFUSAL,
+    async apply(ctx) {
+      await applyOpenclawAskStop(ctx, deps.call, deps.dataDir, deps.probeVersion);
+      if ((ctx.turn.permissionNow?.() ?? ctx.turn).noLimits === true) return; // exec approvals remain on: OPENCLAW_NO_LIMITS_DIRECTIVE
+      const coverage = await deps.verifyCoverage?.(ctx);
+      if (!coverage || coverage.refusedReads !== true || coverage.skillRoots !== true || coverage.extraTools !== true
+        || coverage.nativeHarnesses !== true || coverage.delegation !== true || coverage.readBoundary !== true) {
+        throw new AskStopRefusal(OPENCLAW_DENY_REFUSAL);
+      }
+    },
+  };
 }
 
 export const openclawSupport: AcpSupport = {
@@ -307,7 +276,8 @@ export const openclawSupport: AcpSupport = {
   authFailure: "continue",
   isAuthenticated: () => true,
   buildPromptText: openclawPromptText,
-  askStop: { apply: (ctx) => applyOpenclawAskStop(ctx) },
+  askStop: {},
+  prePrompt: createOpenclawPrePromptGuard(),
   versionNote: openclawVersionNote,
 };
 

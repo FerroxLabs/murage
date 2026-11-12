@@ -10,6 +10,8 @@ import { providerEngineProtocol } from "../shared/provider-engine.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { keepFuigoTurnLogs } from "./fuigo-turn-logs.ts";
 import { z } from "zod";
+import { looksLikeFlux } from "./cloud-home/engine-flux-guard.ts";
+import { fluxKeyPolicyError } from "./cloud-home/flux-key-policy.ts";
 /** Server-only, resolved from encrypted custody at admission. */
 export interface ProviderTurnRoute { connectionId: string; preset: ProviderPreset; protocol: ProviderProtocol; baseUrl: string; apiKey: string; model: string; revision: string }
 export interface ProviderRouteBinding { model: string; args: string[]; modelProvider?: string; identity?: string; cleanup: () => void;
@@ -106,6 +108,9 @@ export function routeEndpoint(driver: string, route: ProviderTurnRoute): string 
 }
 export function validateProviderTurnRoute(driver: string, route: ProviderTurnRoute): void {
   if (process.env.MURAGE_CLOUD_ROLE === "home" && driver === "claudeAgent") throw new Error(cloudHomeCopy.claudeFluxOnHome);
+  if (process.env.MURAGE_CLOUD_ROLE === "home" && driver === "codex" && (route.preset === "flux" || looksLikeFlux(route.baseUrl) || looksLikeFlux(route.apiKey))) throw new Error(cloudHomeCopy.signInEnginesNoFlux);
+  // Hole 7: on a home, a provider/Fuigo route never carries the owner's primary Flux key, and the home key goes only to Flux.
+  if (process.env.MURAGE_CLOUD_ROLE === "home") { const policy = fluxKeyPolicyError(route.apiKey, route.baseUrl); if (policy) throw new Error(policy); }
   if (!route.apiKey || !route.connectionId || !route.revision || !route.model || route.model.length > 512 || !/^[A-Za-z0-9][A-Za-z0-9_./:@+-]*$/.test(route.model)) throw new Error("Selected provider connection is incomplete");
   if (!providerEngineProtocol(driver, route.preset, route.protocol)) throw new Error("This engine does not support the selected provider protocol");
   const url = new URL(route.baseUrl);

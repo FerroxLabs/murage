@@ -3,7 +3,8 @@
 //
 // The set-up check through the real server and a stand-in Claude CLI: desktop only, a strict body, the exact answer shape, and one
 // fixed prompt on a one-shot that touches no thread.
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { removeTempDir } from "./testing/cleanup.ts";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -15,20 +16,22 @@ let headers: Record<string, string> = {};
 const scratch = mkdtempSync(join(tmpdir(), "setup-check-api-"));
 const seen = join(scratch, "stdin.txt");
 
-// The stand-in names cat by full path: a verification server starts with an empty PATH, and on Ubuntu the login shell keeps
-// it empty (its /etc/profile sets none), so the engine is handed the install folders alone and a bare `cat` is not found there.
+// The stand-in is a Node CLI on every OS. Its stdin is the exact prompt under test.
 const standIn = (name: string, result: string, isError: boolean) => {
-  const file = join(scratch, name);
+  const file = join(scratch, `${name}.cjs`);
   const frame = JSON.stringify({ type: "result", result, is_error: isError });
-  writeFileSync(file, `#!/bin/sh
-for arg in "$@"; do case "$arg" in --version) echo "2.1.316 (Claude Code)"; exit 0;; auth) echo '{"loggedIn":true}'; exit 0;; esac; done
-/bin/cat >> ${JSON.stringify(seen)}
-echo '{"type":"system","subtype":"init"}'
-echo ${JSON.stringify(frame).replace(/\$/g, "\\$")}
-exit ${isError ? 1 : 0}
-`);
-  chmodSync(file, 0o755);
-  return file;
+  writeFileSync(file, `#!/usr/bin/env node
+const fs = require('node:fs');
+if (process.argv.includes('--version')) { console.log('2.1.316 (Claude Code)'); process.exit(0); }
+if (process.argv[2] === 'auth') { console.log('{"loggedIn":true}'); process.exit(0); }
+process.stdin.on('data', bytes => fs.appendFileSync(${JSON.stringify(seen)}, bytes));
+process.stdin.on('end', () => {
+  console.log('{"type":"system","subtype":"init"}');
+  console.log(${JSON.stringify(frame)});
+  process.exitCode = ${isError ? 1 : 0};
+});
+`, { mode: 0o755 });
+  return `"${process.execPath}" "${file}"`;
 };
 const instances = {
   good: standIn("claude-good", "ready", false),
@@ -43,7 +46,7 @@ const post = async (body: unknown, proven = true, type = "application/json") => 
   return { status: response.status, body: (text ? JSON.parse(text) : {}) as Record<string, unknown> };
 };
 
-describe.skipIf(process.platform === "win32")("POST /api/engine-setup-check, real server", () => {
+describe("POST /api/engine-setup-check, real server", () => {
   beforeAll(async () => {
     fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
       const fs=await import('node:fs');const path=await import('node:path');
@@ -54,7 +57,7 @@ describe.skipIf(process.platform === "win32")("POST /api/engine-setup-check, rea
     const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string };
     headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
   });
-  afterAll(async () => { await fixture?.stop?.(); });
+  afterAll(async () => { await fixture?.close(); await removeTempDir(scratch); });
 
   it("answers the desktop alone, takes a strict body and JSON only", async () => {
     expect((await post({ instanceId: "good" }, false)).status).not.toBe(200);

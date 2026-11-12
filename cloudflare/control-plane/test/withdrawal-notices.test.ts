@@ -5,6 +5,7 @@ import { env } from "cloudflare:workers";
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { createWorker } from "../src/index";
+import { sweepMonitoring } from "../src/ops-monitor";
 import { clearPublicHandlers, setPublicRouteDeps } from "../src/public-routes";
 import { registerCancellation, setCancellationDeps } from "../src/public-cancellation";
 import { stubFluxHooks, type BillingNotifier } from "../src/b5-billing";
@@ -1564,40 +1565,29 @@ describe("P2: the mails kept for retries are sealed", () => {
     expect(d2[0]).toContain(new Date(first - 2 * DAY).toISOString());
     expect(d2[0]).toContain("Deadlines are not paused.");
   });
-  it("int3-1: a refreshed deadline whose first send fails (503) stays due; the next flush delivers the changed detail", async () => {
+  it("int3-1 (two-tier): a refreshed deadline changes the open alert's detail in place; a digest kind is handled by the sweep and is never posted", async () => {
     setNoticeDeps(deps());
-    // Alert delivery dates its claims by Date.now() itself (Astra AUTOCANARY-9 P2), so the real clock follows the virtual one here.
     const spy = vi.spyOn(Date, "now").mockImplementation(() => cur ?? NOW);
     onTestFinished(() => spy.mockRestore());
     mailFails = 1;
     const noKey = () => ({ ...testEnv(), NOTICE_MAIL_KEY: undefined }) as unknown as Env;
     const { id } = await intake();
-    const alertRow = () => env.DB.prepare("SELECT detail,delivered_at AS d,delivery_attempts AS a FROM cloud_alerts WHERE kind='withdrawal.mail_key_missing' AND resolved_at IS NULL")
-      .first<{ detail: string; d: number | null; a: number }>();
+    const alertRow = () => env.DB.prepare("SELECT detail,delivered_at AS d FROM cloud_alerts WHERE kind='withdrawal.mail_key_missing' AND resolved_at IS NULL")
+      .first<{ detail: string; d: number | null }>();
     hookOk = true;
+    hooks = [];
     setClock(NOW + 10 * 60_000);
     await flushMail(noKey(), deps({ now: () => cur }) as never);
     const first = (await row(id)).execute_by;
-    expect((await alertRow())!.d).not.toBeNull();                                // the first alert was delivered
+    expect((await alertRow())!.detail).toContain(new Date(first).toISOString());
     await env.DB.prepare("UPDATE withdrawal_notices SET execute_by=? WHERE id=?").bind(first - 2 * DAY, id).run();
-    hookOk = false;                                                              // the webhook answers 5xx
-    hooks = [];
     setClock(NOW + 20 * 60_000);
     await flushMail(noKey(), deps({ now: () => cur }) as never);
-    const failed = (await alertRow())!;
-    expect(failed.detail).toContain(new Date(first - 2 * DAY).toISOString());
-    expect(failed.d).toBeNull();                                                 // still due, not marked delivered
-    expect(failed.a).toBe(1);
-    expect(hooks).toHaveLength(1);
-    hookOk = true;                                                               // the webhook is back: the next flush delivers it
-    setClock(NOW + 30 * 60_000);
-    await flushMail(noKey(), deps({ now: () => cur }) as never);
-    expect((await alertRow())!.d).not.toBeNull();
-    expect(hooks).toHaveLength(2);
-    expect(hooks[1].body).toContain(new Date(first - 2 * DAY).toISOString());
-    setClock(NOW + 40 * 60_000);
-    await flushMail(noKey(), deps({ now: () => cur }) as never);
-    expect(hooks).toHaveLength(2);                                               // delivered once: nothing more is sent
+    const refreshed = (await alertRow())!;
+    expect(refreshed.detail).toContain(new Date(first - 2 * DAY).toISOString());
+    expect(hooks).toHaveLength(0);                                               // never posted on its own
+    await sweepMonitoring({ ...testEnv(), ALERT_WEBHOOK_URL: "https://hooks.example.test/x" } as Env, NOW + 30 * 60_000, (async () => new Response("ok")) as unknown as typeof fetch);
+    expect((await alertRow())!.d).not.toBeNull();                                // handled, so the backlog never counts it
   });
 });
 

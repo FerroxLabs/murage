@@ -6,7 +6,9 @@
 // touching its siblings.
 import { isDeepStrictEqual } from "node:util";
 import { forgetAllInstanceMarks, forgetInstanceMark, withInstanceMark } from "../key-rejections.ts";
-import { findCliCandidates } from "../env-path.ts";
+import { augmentedPath } from "../env-path.ts";
+import { findEngineCliCandidates } from "../procs.ts";
+import { probeFolder } from "../probe-folder.ts";
 import { withWslNote } from "./wsl-launch.ts";
 import { MODEL_CATALOG_REFRESH_MS } from "../model-catalog-refresh.ts";
 /** An empty catalogue is read again after this long, at most EMPTY_CATALOG_RETRIES times before the 24 h age applies. */
@@ -428,15 +430,15 @@ export class ProviderRegistry {
   }
 
   private async scan(dueOnly: boolean) {
-    // Multiple instances may share a driver. Scan each default binary once
-    // per response instead of repeating filesystem work for every row.
+    // Multiple instances may share a driver. Discovery shares the launch presence cache;
+    // only an explicit scan bypasses its ten-minute deadline.
     const candidatesByName = new Map<string, string[]>();
     const candidatesFor = (driver: AnyProviderDriver | undefined): string[] => {
       const name = cliDefaultOf(driver);
       if (!name) return [];
       const cached = candidatesByName.get(name);
       if (cached) return cached;
-      const found = findCliCandidates(name);
+      const found = findEngineCliCandidates(name, { PATH: augmentedPath() }, probeFolder(), !dueOnly);
       candidatesByName.set(name, found);
       return found;
     };
@@ -503,8 +505,7 @@ export class ProviderRegistry {
           cli,
           cliDefault: cliDefaultOf(driver),
           // every copy of the driver's default binary on the augmented PATH —
-          // the dropdown's "detected" entries. Snapshotted per describe() so a
-          // newly installed CLI shows up on the next refresh.
+          // the dropdown's "detected" entries. Explicit refreshes bypass the presence cache.
           cliCandidates: candidatesFor(driver),
         };
       }),

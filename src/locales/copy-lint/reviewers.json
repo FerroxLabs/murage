@@ -10,6 +10,11 @@
       "kind": "agent",
       "name": "claude-copyrev",
       "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+    },
+    {
+      "kind": "agent",
+      "name": "muragemain-copyrev",
+      "account": "claude opus 5.5, MurageMain copy review"
     }
   ]
 }

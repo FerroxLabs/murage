@@ -1,3 +1,4 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 import { bundledModelDirectory, resolveMemoryModelDirectory } from "./model-location.ts";
 import { setScrubRewriteFinisher } from "./scrub-pass.ts";
 import "./model-adoption.ts";
@@ -763,6 +764,9 @@ export class MemoryWorkerController {
     this.workerBytes+=Math.max(b===undefined?0:(b-this.workerBlocks)*BLOCK_BYTES,w===undefined?0:w-this.workerWalBytes);
     if(b!==undefined)this.workerBlocks=b;
     if(w!==undefined)this.workerWalBytes=w;
+    // IPC reports are transaction boundaries too: periodic writers share the
+    // allowance now, rather than discovering a helper's storm at the minute tick.
+    ioBudget.sampleByteSource("memory-worker");
   }
   private workerBlocksChild:unknown=null;
   private workerWalBytes=0;
@@ -771,11 +775,11 @@ export class MemoryWorkerController {
     this.initDeadline=Date.now()+MEMORY_WORKER_INIT_MS;this.idleExited=false;this.modelReady=false;this.wasmHelper=false;this.warmSent=false;
     // The helper may rebuild or rename a damaged index while it starts: the main process holds no handle until it says it is ready.
     blockMemoryIndexReader();
-    const child=fork(SPAWNED_PROXIES.memoryWorker,[],{execArgv:["--experimental-strip-types"],stdio:["ignore","ignore","pipe","ipc"],
+    const child=fork(SPAWNED_PROXIES.memoryWorker,[],withHideInherit({execArgv:["--experimental-strip-types"],stdio:["ignore","ignore","pipe","ipc"],
       env:{ELECTRON_RUN_AS_NODE:"1",
         // The helper loads the server's config, which reads the home directory as it loads: it gets the server's own data
         // directory and home, or an account with no home entry cannot start a helper at all (RED2C).
-        MURAGE_DATA_DIR:DATA_DIR,...(process.env.HOME?{HOME:process.env.HOME}:{}),...(process.env.USERPROFILE?{USERPROFILE:process.env.USERPROFILE}:{}),...(process.env.MURAGE_MEMORY_BACKEND==="wasm"?{MURAGE_MEMORY_BACKEND:"wasm"}:{}),...(process.env.SystemRoot?{SystemRoot:process.env.SystemRoot}:{}),...(process.env.TMPDIR?{TMPDIR:process.env.TMPDIR}:{})}});
+        MURAGE_DATA_DIR:DATA_DIR,...(process.env.HOME?{HOME:process.env.HOME}:{}),...(process.env.USERPROFILE?{USERPROFILE:process.env.USERPROFILE}:{}),...(process.env.MURAGE_MEMORY_BACKEND==="wasm"?{MURAGE_MEMORY_BACKEND:"wasm"}:{}),...(process.env.SystemRoot?{SystemRoot:process.env.SystemRoot}:{}),...(process.env.TMPDIR?{TMPDIR:process.env.TMPDIR}:{})}}));
     this.child=child;
     // The tick checks this deadline only when work is owed. With nothing owed (a warm at boot) a helper stuck starting would leave recall shut out for good.
     // One sweep later than the deadline, so when work is owed the tick still decides, on its own timing.

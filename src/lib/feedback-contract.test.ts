@@ -7,6 +7,7 @@
 // control plane word for word, and fits the relay's size limit.
 import { describe, expect, it } from "vitest";
 import fixed from "../../shared/feedback-fixed.json";
+import workerFixed from "../../cloudflare/control-plane/src/feedback-fixed.json";
 import { FEEDBACK_MAX_BODY_BYTES, feedbackRequestSchema, outboundBody, scrubbedRequest } from "../../server/feedback-relay.ts";
 import { buildFeedbackRequest, checkFeedbackRequest, FEEDBACK_CHOICE_WORDS, FEEDBACK_CHOICES, FEEDBACK_FIXED, feedbackEnvelopeForScreen, type FeedbackRequest, type FeedbackSurface } from "./screen-envelope";
 import { SCREENS } from "./screens-index";
@@ -32,13 +33,15 @@ function everyRequest(): FeedbackRequest[] {
 describe("the feedback form and the relay agree", () => {
   const requests = everyRequest();
 
-  // The relay cannot import the form's tables, so it reads this copy. A new screen or a changed label goes in both.
-  it("shared/feedback-fixed.json is the form's tables, value for value", () => {
-    expect(fixed.titles).toEqual(Object.fromEntries(FEEDBACK_FIXED.titles));
-    expect(new Set(fixed.pages)).toEqual(FEEDBACK_FIXED.pages);
-    expect(fixed.gates).toEqual(Object.fromEntries(FEEDBACK_FIXED.gates));
-    expect(fixed.controls).toEqual(Object.fromEntries(FEEDBACK_FIXED.controls));
-    expect(fixed.words).toEqual(Object.values(FEEDBACK_CHOICE_WORDS));
+  // The relay and Worker read fixed copies. Every new screen and label must reach both.
+  it("the relay and Worker fixed tables match the form, value for value", () => {
+    for (const [name, table] of [["relay", fixed], ["Worker", workerFixed]] as const) {
+      expect(table.titles, name).toEqual(Object.fromEntries(FEEDBACK_FIXED.titles));
+      expect(new Set(table.pages), name).toEqual(FEEDBACK_FIXED.pages);
+      expect(table.gates, name).toEqual(Object.fromEntries(FEEDBACK_FIXED.gates));
+      expect(table.controls, name).toEqual(Object.fromEntries(FEEDBACK_FIXED.controls));
+      expect(table.words, name).toEqual(Object.values(FEEDBACK_CHOICE_WORDS));
+    }
   });
 
   it("covers every screen; a key with no entry is named as the help page", () => {

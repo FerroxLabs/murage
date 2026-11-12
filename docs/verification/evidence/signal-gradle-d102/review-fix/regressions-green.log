@@ -1,0 +1,15 @@
+test_exact_limit_is_not_truncated (__main__.KeyRetrieval.test_exact_limit_is_not_truncated) ... ok
+test_export_failure_is_fatal (__main__.KeyRetrieval.test_export_failure_is_fatal) ... ok
+test_import_failure_is_fatal_and_diagnostic_is_retained (__main__.KeyRetrieval.test_import_failure_is_fatal_and_diagnostic_is_retained) ... ok
+test_local_process_failure_is_fatal (__main__.KeyRetrieval.test_local_process_failure_is_fatal) ... ok
+test_local_write_failure_is_fatal (__main__.KeyRetrieval.test_local_write_failure_is_fatal) ... ok
+test_network_fallback_retains_retrieval_diagnostics (__main__.KeyRetrieval.test_network_fallback_retains_retrieval_diagnostics) ... ok
+test_oversized_response_is_fatal_and_never_imported (__main__.KeyRetrieval.test_oversized_response_is_fatal_and_never_imported) ... ok
+test_unavailable_network_keeps_both_diagnostics (__main__.KeyRetrieval.test_unavailable_network_keeps_both_diagnostics) ... ok
+test_both_production_attempts_stage_exact_inputs_and_invoke_strict_gradle (__main__.ProductionWiring.test_both_production_attempts_stage_exact_inputs_and_invoke_strict_gradle) ... ok
+test_missing_reviewed_input_fails_before_gradle (__main__.ProductionWiring.test_missing_reviewed_input_fails_before_gradle) ... ok
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.902s
+
+OK

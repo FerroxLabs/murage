@@ -1,3 +1,4 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 // VPS MCP relay: on a Cloud home a turn cannot open SSH, so the own-server
 // computer's MCP stream is bridged through this server. The turn script
 // (vps-relay-mcp.ts) connects a WebSocket to /api/internal/vps-mcp/v1/stdio with
@@ -45,7 +46,7 @@ export type VpsMcpRelayDeps = {
 };
 
 function defaultSpawn(command: string, args: string[]): VpsMcpChild {
-  return spawn(command, args, { stdio: ["pipe", "pipe", "ignore"], env: ownServerChildEnv({ ...process.env, PATH: augmentedPath() }) });
+  return spawn(command, [...args], withHideInherit({ stdio: ["pipe", "pipe", "ignore"], env: ownServerChildEnv({ ...process.env, PATH: augmentedPath() }) }));
 }
 
 function reject(socket: Duplex, status: number, text: string): void {

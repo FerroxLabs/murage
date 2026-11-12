@@ -142,7 +142,7 @@ export const IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES = 64 * 1024 * 1024;
  *  - maxTotalBytes: 15 MB raw is 20 MB of base64, which leaves room for the
  *    prompt and history under Anthropic's 32 MB request cap (the smallest
  *    request limit on any route Murage drives, Flux Router's included:
- *    flux-router src/anthropic_image_size_preflight.py).
+ *    the Flux router's image size preflight).
  *  - maxReadBytes: how much Murage reads to shrink an over-ceiling image,
  *    only when it can shrink one at all. */
 export const TURN_IMAGE_LIMITS = {

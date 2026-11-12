@@ -29,12 +29,12 @@ vi.mock("./cloud-home/turn-process.ts", async (original) => {
 });
 
 import {
-  BWRAP_ARGS_FD, BWRAP_ENVIRONMENT, BWRAP_STATUS_FD, bwrapEngineStarted, HOST_POWER_CODE, HOST_POWER_MESSAGE, HOST_POWER_MESSAGE_LINUX_MAC, HOST_POWER_MESSAGE_WINDOWS, HOST_POWER_TEST_UNWRAPPED, POWER_FILTER_SHA256, SEATBELT_POWER_PROFILE,
+  BWRAP_ARGS_FD, BWRAP_ENVIRONMENT, BWRAP_STATUS_FD, bwrapEngineStarted, HOST_POWER_CODE, HOST_POWER_MESSAGE, HOST_POWER_MESSAGE_LINUX_MAC, HOST_POWER_MESSAGE_WINDOWS, HOST_POWER_TEST_UNWRAPPED, POWER_FILTER_SHA256, SEATBELT_POWER_PROFILE, NO_LIMITS_SEATBELT_POWER_PROFILE,
   bwrapOptions, bwrapEarlyExitMessage, closePowerFilter, HOST_POWER_MESSAGE_LONG_TMPDIR, hostPowerDeps, hostPowerStubBase, openPowerFilter, planHostPower, sessionBusPaths, startHostPowerStub, stopHostPowerStubForTests,
   HOST_POWER_GAP_NOTICE, HOST_POWER_UNWRAPPED_DRIVERS, hostPowerGap, hostPowerGapNoticeDue, hostPowerProbeDeps, markHostPowerGapNoticeShown, noteHostPowerGap, probeHostPowerEnvironment, probeOptions, reprobeHostPowerEnvironment, resetHostPowerGapForTests, usernsDenied, usernsGapCause,
 } from "./host-power.ts";
 import { DRAFT_ONLY_ENGINE_LINE, draftOnlyQualifies } from "./draft-only.ts";
-import { awaitCliTreeStopped, cliTreeConfirmedStopped, cliTreeStoppedSignal, dropServerShutdownPrivileges, engineJob, engineProcessPid, engineWrapsHostPower, forceCliTreeStopped, hostPowerKeyField, hostPowerMessage, hostPowerRefused, killCliTree, resetShutdownDropForTests, spawnCli } from "./procs.ts";
+import { awaitCliTreeStopped, cliTreeConfirmedStopped, cliTreeStoppedSignal, dropServerShutdownPrivileges, engineExecutableMissing, engineJob, engineProcessPid, engineWrapsHostPower, forceCliTreeStopped, hostPowerKeyField, hostPowerMessage, hostPowerRefused, killCliTree, resetShutdownDropForTests, spawnCli } from "./procs.ts";
 import { diffWarmKey, warmKey } from "./drivers/warm-key.ts";
 import { codexTurnPolicy } from "./drivers/codex-isolation.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -122,11 +122,12 @@ describe("where the block is applied (section 2)", () => {
     // STOP-NONACP 628bc2fab: the spawn now sits inside gate.launch(entry, () => spawnCli(...)); the job and thread arguments are unchanged
     expect(codex).toContain("}, engineJob({ posixHostPower: false }), undefined, threadId));");
     // ACP: Fuigo is not wrapped on Mac or Linux, every other ACP engine is.
-    expect(acp).toContain('const hostPowerOptions = { posixHostPower: support.driverKind !== "fuigoAgent" };');
+    expect(acp).toMatch(/const hostPowerOptions = \{ posixHostPower: support\.driverKind !== "fuigoAgent",\s+noLimits: .*powerSession \};/);
     expect(acp).toContain("}, engineJob(hostPowerOptions), undefined, threadId);"); // envfix c0f4afed4
     // Antigravity: the turn and the helper prompt pass engineJob() on every OS; Pi's turn too.
-    expect(antigravity.match(/engineJob\(\)/g)!.length).toBeGreaterThanOrEqual(2);
-    expect(pi).toContain("}, engineJob(), undefined, threadId);"); // envfix c0f4afed4
+    expect(antigravity).toContain("engineJob({ noLimits: noLimits(), powerSession })");
+    expect(antigravity.match(/engineJob\(/g)!.length).toBeGreaterThanOrEqual(2);
+    expect(pi).toContain("}, engineJob({ noLimits: (turn.permissionNow?.() ?? turn).noLimits === true, powerSession }), undefined, threadId);"); // envfix c0f4afed4
     // The block does not read the channel flag, and this phase does not edit auto-approve.ts.
     expect(source("host-power.ts")).not.toContain("fullAccessChannelMessages");
   });
@@ -336,6 +337,32 @@ describe("Linux plan (section 4)", () => {
 });
 
 describe("macOS plan (section 5)", () => {
+  it("E2 No limits falls back on a refused macOS profile once per session, lower levels stay wrapped", () => {
+    const sandboxExec = join(scratch(), "sandbox-exec");
+    writeFileSync(sandboxExec, "fixture");
+    Object.assign(hostPowerDeps, { platform: () => "darwin" as const, sandboxExec });
+    const probe = vi.spyOn(hostPowerProbeDeps, "runSync").mockReturnValue({ code: 65, stderr: "sandbox-exec: profile rejected" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const session = {};
+    for (let i = 0; i < 3; i++) expect(planHostPower("muse", ["serve"], {}, scratch(), session)).toMatchObject({ kind: "unwrapped" });
+    expect(probe).toHaveBeenCalledTimes(1);
+    expect(probe.mock.calls[0]?.[1]).toEqual(["-p", NO_LIMITS_SEATBELT_POWER_PROFILE, "/usr/bin/true"]);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(planHostPower("muse", ["serve"], {}, scratch())).toMatchObject({ kind: "seatbelt", args: ["-p", SEATBELT_POWER_PROFILE, "muse", "serve"] });
+    probe.mockReturnValue({ code: 0, stderr: "" });
+    expect(planHostPower("muse", ["serve"], {}, scratch(), {})).toMatchObject({ kind: "seatbelt", args: ["-p", NO_LIMITS_SEATBELT_POWER_PROFILE, "muse", "serve"] });
+    expect(NO_LIMITS_SEATBELT_POWER_PROFILE).not.toContain("appleevent-send");
+    expect(NO_LIMITS_SEATBELT_POWER_PROFILE).toContain("IOPMrootDomain");
+    expect(warn).toHaveBeenCalledTimes(1);
+    probe.mockRestore(); warn.mockRestore();
+  });
+
+  it("uses version-1 IOKit operations while retaining both power class filters", () => {
+    expect(SEATBELT_POWER_PROFILE).toContain('(version 1)');
+    expect(SEATBELT_POWER_PROFILE).not.toMatch(/iokit-open-(?:service|user-client)/);
+    expect(SEATBELT_POWER_PROFILE).toMatch(/\(deny iokit-open\s+\(iokit-registry-entry-class "IOPMrootDomain"\)\s+\(iokit-user-client-class "RootDomainUserClient"\)\)/);
+  });
+
   it("runs sandbox-exec -p with the fixed profile, the engine argv unchanged; a missing sandbox-exec is refused", () => {
     // A regular file the test makes stands in for /usr/bin/sandbox-exec, so the plan is checked on every OS the file runs on
     // (a fixed POSIX path like /bin/sh does not exist on Windows).
@@ -401,6 +428,54 @@ describe("spawnCli with the block (sections 2 and 8)", () => {
     child.stderr.on("data", (chunk) => { err += chunk; });
     child.on("close", (code) => end(code));
     try { child.stdin.end(); } catch { /* a refused launch's stand-in pipe */ }
+  });
+
+  it.skipIf(process.platform === "win32")("E2 native launch executes the fixture after a failed macOS power probe", async () => {
+    const wrapper = join(scratch(), "fake-seatbelt");
+    writeFileSync(wrapper, '#!/bin/sh\necho "sandbox-exec: profile rejected" >&2\nexit 65\n');
+    chmodSync(wrapper, 0o755);
+    Object.assign(hostPowerDeps, { platform: () => "darwin" as const, sandboxExec: wrapper });
+    vi.spyOn(hostPowerProbeDeps, "runSync").mockReturnValue({ code: 65, stderr: "profile rejected" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const cli = join(scratch(), "fake-muse");
+    writeFileSync(cli, '#!/bin/sh\necho fixture-ran\n'); chmodSync(cli, 0o755);
+    const session = {};
+    const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+    // engineJob's platform stays the host's; both POSIX platforms use the same marker.
+    for (let n = 0; n < 2; n++) {
+      const child = spawnCli(cli, [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, engineJob({ noLimits: true, powerSession: session }));
+      expect(await collect(child)).toMatchObject({ code: 0, out: "fixture-ran\n", errors: [] });
+      expect(hostPowerRefused(child)).toBe(false);
+      expect(await awaitCliTreeStopped(child)).toBe(true);
+    }
+    expect(warn.mock.calls.filter(([line]) => String(line).includes("No limits session"))).toHaveLength(1);
+    expect(Object.getOwnPropertyDescriptor(process, "platform")).toEqual(descriptor);
+    vi.restoreAllMocks();
+  });
+
+  it.skipIf(process.platform === "win32")("backs off repeated Seatbelt diagnostics to one warning until a successful launch", async () => {
+    // A shell stand-in only: never execute sandbox-exec on Linux.
+    const wrapper = join(scratch(), "fake-seatbelt");
+    const deny = () => { writeFileSync(wrapper, '#!/bin/sh\necho "sandbox-exec: invalid profile: unbound variable iokit-open-service sk-test-0123456789abcdefghijk" >&2\nexit 1\n'); chmodSync(wrapper, 0o755); };
+    deny();
+    Object.assign(hostPowerDeps, { platform: () => "darwin" as const, sandboxExec: wrapper });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const cli = join(scratch(), "muse-diagnostic-fixture");
+    writeFileSync(cli, "#!/bin/sh\nexit 0\n"); chmodSync(cli, 0o755);
+    const launch = async () => {
+      const child = spawnCli(cli, [], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"] }, { hostPower: true });
+      await collect(child); return child;
+    };
+    for (let n = 0; n < 4; n++) expect(hostPowerRefused(await launch())).toBe(true);
+    const refusals = () => warn.mock.calls.filter(([line]) => String(line).includes(`engine launch refused for ${cli}`));
+    expect(refusals()).toHaveLength(1);
+    expect(refusals()[0][0]).toContain("invalid profile");
+    expect(refusals()[0][0]).not.toContain("sk-test-0123456789abcdefghijk");
+    expect(String(refusals()[0][0]).length).toBeLessThan(1400);
+    writeFileSync(wrapper, '#!/bin/sh\nexit 0\n');
+    expect(hostPowerRefused(await launch())).toBe(false);
+    deny(); await launch();
+    expect(refusals()).toHaveLength(2);
   });
 
   it.skipIf(process.platform !== "linux")("a refused Linux launch has no pid, EPOWER and the sentence, and is not ECONTAIN", async () => {
@@ -1001,20 +1076,32 @@ describe("the real bwrap fixture (section 10)", () => {
     Object.assign(hostPowerDeps, { helperDir: () => realpathSync(cage), writable: () => false });
     const run = (command: string, args: string[]) => {
       const child = spawnCli(command, args, { cwd: scratch(), stdio: ["pipe", "pipe", "pipe"], env: { PATH: process.env.PATH } }, { hostPower: true });
-      return new Promise<{ child: typeof child; code: number | null; err: string }>((resolve) => {
+      return new Promise<{ child: typeof child; code: number | null; err: string; errors: string[] }>((resolve) => {
         let err = "";
-        child.on("error", () => {});
+        const errors: string[] = [];
+        child.on("error", (error: NodeJS.ErrnoException) => { errors.push(error.code ?? ""); });
         child.stdout.on("data", () => {}); child.stderr.on("data", (c) => { err += c; });
-        child.on("close", (code) => resolve({ child, code, err }));
+        child.on("close", (code) => resolve({ child, code, err, errors }));
         try { child.stdin.end(); } catch { /* closed */ }
       });
     };
     const ran = await run("/bin/sh", ["-c", "exit 3"]);
     if (!required && hostPowerRefused(ran.child) && USERNS_EPERM.test(ran.err)) { context.skip(); return; }
     expect({ code: ran.code, refused: hostPowerRefused(ran.child), err: ran.err }).toEqual({ code: 3, refused: false, err: "" });
+    // 4da61ffa45 resolves absent executables before planning the cage.
     const missing = await run("/nonexistent/murage-engine", []);
-    expect(missing.err).toMatch(/^bwrap: execvp \/nonexistent\/murage-engine/);
-    expect(hostPowerRefused(missing.child)).toBe(true);
+    expect({ pid: missing.child.pid, code: missing.code, err: missing.err, errors: missing.errors,
+      missing: engineExecutableMissing(missing.child), refused: hostPowerRefused(missing.child) })
+      .toEqual({ pid: undefined, code: -2, err: "", errors: ["ENOENT"], missing: true, refused: false });
+    // An executable can pass that presence check yet fail exec inside bwrap:
+    // its shebang interpreter does not exist. Keep the real negative-exec proof.
+    const broken = join(scratch(), "broken-engine");
+    writeFileSync(broken, "#!/nonexistent/murage-interpreter\n");
+    chmodSync(broken, 0o755);
+    const failed = await run(broken, []);
+    expect(failed.err.startsWith(`bwrap: execvp ${broken}:`)).toBe(true);
+    expect(engineExecutableMissing(failed.child)).toBe(false);
+    expect(hostPowerRefused(failed.child)).toBe(true);
   });
 });
 
@@ -1307,7 +1394,7 @@ describe("environment gap: the turn runs without the block (1.0.9)", () => {
     expect([...HOST_POWER_UNWRAPPED_DRIVERS].sort()).toEqual(["claudeAgent", "codex", "fuigoAgent"]);
     expect(source("drivers/claude.ts")).toContain("engineJob({ posixHostPower: false })");
     expect(source("drivers/codex.ts")).toContain("engineJob({ posixHostPower: false })");
-    expect(source("drivers/acp/core.ts")).toContain('{ posixHostPower: support.driverKind !== "fuigoAgent" }');
+    expect(source("drivers/acp/core.ts")).toContain('{ posixHostPower: support.driverKind !== "fuigoAgent",');
     expect(source("index.ts")).toContain("!HOST_POWER_UNWRAPPED_DRIVERS.has(instance.driverKind) && hostPowerGapNoticeDue(");
   });
 

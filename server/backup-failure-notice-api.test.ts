@@ -7,13 +7,14 @@
 // do until the review is cleared, and one notification goes out.
 //
 // HEADLESS ONLY: a throwaway temp HOME and a probed port, clear of 8799.
+import { fixturePlatformEnv, stopFixtureServer } from "./testing/platform-fixtures.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -25,18 +26,19 @@ const request = async (method: string, path: string, body?: unknown, headers = d
   return { status: res.status, body: await res.json().catch(() => null) };
 };
 
-describe.skipIf(process.platform === "win32")("a backup that stopped is announced in the Inbox (W-D7)", () => {
+describe("a backup that stopped is announced in the Inbox (W-D7)", () => {
   beforeAll(async () => {
     const port = await freePortBlock([0, 1], 18_999, 200);
     base = `http://127.0.0.1:${port}`;
     home = mkdtempSync(join(tmpdir(), "murage-backup-failure-notice-"));
     expect(home.startsWith(tmpdir())).toBe(true);
     mkdirSync(join(home, ".murage"), { recursive: true });
-    writeFileSync(join(home, ".murage", "config.json"), JSON.stringify({ instances: {} }));
+    writeFileSync(join(home, ".murage", "config.json"), JSON.stringify({ engineDiscovery: "explicit", instances: {} }));
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1" },
-      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...fixturePlatformEnv(), ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1" },
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     child.stderr!.on("data", (c) => (stderr += c));
     const deadline = Date.now() + 20_000;
@@ -50,7 +52,7 @@ describe.skipIf(process.platform === "win32")("a backup that stopped is announce
     desktopHeaders = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.body.secret };
   }, 40_000);
   afterAll(async () => {
-    await waitForExit(child, { signal: "SIGTERM" });
+    await stopFixtureServer(child);
     await removeTempDir(home);
   });
 

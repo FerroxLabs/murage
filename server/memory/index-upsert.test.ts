@@ -108,6 +108,9 @@ it("a batch with a forget writes its deletions only: the whole-index merge is ow
     const raw=(index as unknown as {db:{exec(sql:string):void;prepare(sql:string):{get():Record<string,unknown>|undefined}}}).db,exec=raw.exec.bind(raw);
     // compact first, as the owner's index is after its last merge, so the forget is measured against a merged index
     exec("INSERT INTO lexical(lexical) VALUES('optimize')");exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    // Legacy writer fixture: without FTS secure-delete these deletions leave
+    // tombstones and still owe the conservative scrub. Preserve that cost proof.
+    exec("INSERT INTO lexical(lexical,rank) VALUES('secure-delete',0)");
     const lexicalBytes=Number(raw.prepare("SELECT sum(length(block)) AS n FROM lexical_data").get()!.n);
     expect(lexicalBytes).toBeGreaterThan(1024*1024);
     const statements:string[]=[];

@@ -27,6 +27,9 @@ export const botDeletionKey = (botId: string): string => `bot:${botId}`;
  * the queue rows go (started ones too: their turn needs no second chance once its conversation is gone), in the same commit. A database
  * without the table has nothing to remove. */
 function dropHandoffsOfDeletedThread(db: DatabaseSync, threadId: string): void {
+  if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='delegation_packs'").get()) {
+    db.prepare("DELETE FROM delegation_packs WHERE source_thread_id=? OR destination_thread_id=?").run(threadId, threadId);
+  }
   if (db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='pending_delegations'").get()) {
     // The request of a hand-off that shared work or a room would run is executable on its own: it is cancelled in this same commit (whatever live state it is
     // in), so the row's going cannot leave work behind that dispatch would still start.

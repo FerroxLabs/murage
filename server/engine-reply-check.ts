@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -9,6 +10,8 @@ import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync } from "node
 import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
 import { DATA_DIR } from "./config.ts";
+import { environmentProbeProgram } from "./env-path.ts";
+import { execCliSync } from "./procs.ts";
 import { ENGINE_REPLY_PROMPT } from "./drivers/cli-memory-learning.ts";
 import { CLAUDE_MANAGED_MCP_CONFLICT } from "./drivers/claude-guards.ts";
 
@@ -90,12 +93,16 @@ export const engineCheckHost = {
     };
   })(),
   /** icacls on Windows only: arguments in, output out. */
-  icacls: (args: string[]): string => execFileSync("icacls", args, { encoding: "utf8", windowsHide: true, timeout: 15_000 }),
+  icacls: (args: string[]): string => execFileSync("icacls", [...args], { encoding: "utf8", windowsHide: true, timeout: 15_000 }),
   /** The owner SID of a folder on Windows (null when it cannot be read). The path travels in the environment, never in a command string. */
   owner: (folder: string): string | null => {
     try {
-      const out = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "(Get-Acl -LiteralPath $env:MURAGE_CHECK_PATH).GetOwner([System.Security.Principal.SecurityIdentifier]).Value"],
-        { encoding: "utf8", windowsHide: true, timeout: 20_000, env: { ...process.env, MURAGE_CHECK_PATH: folder } }).trim();
+      const executable = environmentProbeProgram("powershell.exe", "win32");
+      if (!executable) return null;
+      const result = execCliSync(executable, ["-NoProfile", "-NonInteractive", "-Command", "(Get-Acl -LiteralPath $env:MURAGE_CHECK_PATH).GetOwner([System.Security.Principal.SecurityIdentifier]).Value"],
+        withHideInherit({ windowsHide: true, timeout: 20_000, maxBuffer: 1024 * 1024, env: { ...process.env, MURAGE_CHECK_PATH: folder } }));
+      if (result.error || result.status !== 0) return null;
+      const out = result.stdout.toString("utf8").trim();
       return /^S-1-[0-9-]+$/.test(out) ? out : null;
     } catch { return null; }
   },

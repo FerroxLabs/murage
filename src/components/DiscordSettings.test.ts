@@ -9,7 +9,7 @@ it("rejects failed status payloads and strips undeclared secret fields", () => {
     expect(() => discordStatusFrom(bad)).toThrow();
 });
 it("distinguishes saved credentials, pairing, connectivity and errors", () => {
-  expect(discordHealth(discordStatusFrom(base))).toBe("Save your Discord credentials");
+  expect(discordHealth(discordStatusFrom(base))).toBe("Not set up");
   expect(discordHealth(discordStatusFrom({ ...base, configured: true }))).toContain("not paired");
   expect(discordHealth(discordStatusFrom({ ...base, state: "pairing", enabled: true, requiresRevoke: true }))).toContain("Waiting");
   expect(discordHealth(discordStatusFrom({ ...base, paired: true, enabled: false }))).toContain("offline");

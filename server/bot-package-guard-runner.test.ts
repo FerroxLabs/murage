@@ -1,6 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { mkdtempSync, writeFileSync } from "node:fs";
+import { Worker } from "node:worker_threads";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PerformanceObserver } from "node:perf_hooks";
@@ -91,19 +92,19 @@ describe("import guard in a worker", () => {
   it("blocks the import when the worker crashes, never lets it through", async () => {
     const crash = join(scratch, "crash.mjs");
     writeFileSync(crash, "throw new Error('boom');\n");
-    const result = await scanBotPackageForImportAsync(small(), { workerPath: crash });
+    const result = await scanBotPackageForImportAsync(small(), { createWorker: () => new Worker(crash) });
     expect(result).toMatchObject({ blocked: true, state: "unavailable" });
     expect(importGuardSummary(result)).toBe("The check could not finish, so nothing was imported. Please try again.");
     const quit = join(scratch, "quit.mjs");
     writeFileSync(quit, "process.exit(0);\n");
-    expect(await scanBotPackageForImportAsync(small(), { workerPath: quit })).toMatchObject({ blocked: true, state: "unavailable" });
+    expect(await scanBotPackageForImportAsync(small(), { createWorker: () => new Worker(quit) })).toMatchObject({ blocked: true, state: "unavailable" });
   });
 
   it("blocks the import when the check runs past its time limit", async () => {
     const hang = join(scratch, "hang.mjs");
     writeFileSync(hang, "import { parentPort } from 'node:worker_threads'; parentPort.on('message', () => {}); setInterval(() => {}, 1000);\n");
     const started = performance.now();
-    const result = await scanBotPackageForImportAsync(small(), { workerPath: hang, timeoutMs: 300 });
+    const result = await scanBotPackageForImportAsync(small(), { createWorker: () => new Worker(hang), timeoutMs: 300 });
     expect(result).toMatchObject({ blocked: true, state: "unavailable" });
     expect(performance.now() - started).toBeLessThan(5000);
   });

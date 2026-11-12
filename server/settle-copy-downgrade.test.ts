@@ -12,14 +12,24 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { downgradeInstallationMemorySchema, type DowngradeSearchPoint } from "./installation-memory-downgrade.ts";
-import { prepareMessageSearchBackfill, stepMessageSearchBackfill } from "./message-search-index.ts";
+import { stopSearchIndex } from "./message-search-index.ts";
+import { stopWalMaintenance } from "./wal-maintenance.ts";
 import { backfillMessageSearchIndex as resumeAs101 } from "./testing/message-search-index-1.0.1.ts";
 import { ftsSettled } from "./settle-copy.ts";
 import { DELETED_TEXT, deleteThreadRows, fileHolds, ftsBlocksHold, holdMerges, keptRows, seedMixed } from "./testing/fts-copy-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const open: DatabaseSync[] = [];
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(async () => {
+  closeDatabase();
+  expect(await stopSearchIndex()).toBe(true);
+  expect(await stopWalMaintenance()).toBe(true);
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
+  // These exercise offline legacy files. Serving search (5d5a791f19) must not run against the fixture.
+  database();
+  expect(await stopSearchIndex()).toBe(true);
+  expect(await stopWalMaintenance()).toBe(true);
+});
 afterEach(() => { for (const db of open.splice(0)) { try { db.close(); } catch { /* closed */ } } closeDatabase(); });
 const file = () => join(DATA_DIR, "messages.db");
 
@@ -99,7 +109,7 @@ it("T15: the TRUNCATE after the marker delete is checked: a held log fails the d
 }, 60_000);
 
 it("T15: no marker and no index rows to settle: the downgrade still runs its steps and writes the older defaults", () => {
-  database();
+  holdMerges(database());
   closeDatabase();
   expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
   const db = reopen();
@@ -109,11 +119,13 @@ it("T15: no marker and no index rows to settle: the downgrade still runs its ste
 
 it("T15: an unfinished search_fts fill on a to<=6 run: the trimmed entries' tombstones settle, and 1.0.1 resumes and searches", () => {
   const db = database();
-  db.exec("DELETE FROM messages_fts; DELETE FROM transcript_index_state WHERE name='search_fts'; DELETE FROM messages");
   holdMerges(db);
+  db.exec("DELETE FROM messages_fts; DELETE FROM transcript_index_state WHERE name='search_fts'; DELETE FROM messages");
   for (let r = 1; r <= 40; r++) db.prepare("INSERT INTO messages(rowid,thread_id,id,at,role,kind,text,json) VALUES(?, 'ts', ?, ?, 'user', 'text', ?, '{}')").run(r, `s${r}`, r, `searchable words ${r}`);
-  expect(prepareMessageSearchBackfill(db)).toBe(true);
-  expect(stepMessageSearchBackfill(db, 10).more).toBe(true); // rows 1-10 filled, cursor 10
+  // Frozen pre-worker interrupted fill: legacy entry points became inert in 5d5a791f19.
+  db.exec("INSERT INTO messages_fts(rowid,t) SELECT rowid,text FROM messages WHERE rowid<=10");
+  db.exec("INSERT INTO transcript_index_state(name,done,cursor,skipped) VALUES('search_fts',0,10,0)");
+  expect(db.prepare("SELECT id FROM messages_fts_docsize ORDER BY id").all().map(row => Number(row.id))).toEqual(Array.from({ length: 10 }, (_, i) => i + 1));
   // live writes of this run indexed rows above the cursor: kept rows and a thread the owner then deleted, in the same transactions
   db.exec("BEGIN");
   for (let r = 41; r <= 140; r++) {

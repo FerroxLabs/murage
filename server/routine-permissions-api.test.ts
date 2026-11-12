@@ -4,7 +4,7 @@
 // Routine approval levels, end to end over real HTTP with the fake ACP agent
 // asking to delete outside its folder mid-turn (the stop line):
 //
-//   - a routine pins its bot's level at creation and keeps the stop line;
+//   - a routine uses its bot's No limits level, with only a named wipe card;
 //   - every run works in the routine's one conversation, with a run marker;
 //   - a routine set to Auto stops at the stop line, and its card offers
 //     "Always allow for this routine", which covers the next run;
@@ -13,12 +13,13 @@
 //   - Full access or No limits for a routine needs the bot's one-time warning.
 //
 // HEADLESS ONLY: a throwaway temp HOME and a probed port, clear of 8799.
+import { fixturePlatformEnv, stopFixtureServer } from "./testing/platform-fixtures.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { makeTestHome, removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { makeTestHome, removeTempDir } from "./testing/cleanup.ts";
 import { assertSafeToWipe } from "./testing/safe-wipe.mjs";
 import { freePortBlock } from "./testing/ports.ts";
 import { raiseLevel } from "./testing/raise-level.ts";
@@ -87,7 +88,7 @@ const settled = (runId: string) => poll(async () => {
   return run && ["completed", "failed", "cancelled"].includes(run.status) ? run : null;
 }, 25_000);
 
-describe.skipIf(process.platform === "win32")("routine approval levels", () => {
+describe("routine approval levels", () => {
   beforeAll(async () => {
     const port = await freePortBlock([0, 1], 18_799, 200);
     base = `http://127.0.0.1:${port}`;
@@ -130,8 +131,9 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
       },
     }));
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: {
+      env: { ...fixturePlatformEnv(),
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home,
         USERPROFILE: home,
@@ -140,7 +142,7 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
         MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     child.stderr!.on("data", (c) => (stderr += c));
     const deadline = Date.now() + 20_000;
@@ -155,23 +157,18 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
   }, 40_000);
 
   afterAll(async () => {
-    await waitForExit(child, { signal: "SIGTERM" });
+    await stopFixtureServer(child);
     await removeTempDir(home);
   });
 
-  it("a routine pins No limits, keeps the stop line, and uses one conversation across runs", async () => {
+  it("a routine uses No limits, runs an ordinary delete without a card, and uses one conversation across runs", async () => {
     const bot = await makeBot("Dax");
     expect((await raiseLevel(desktopApi, bot.id, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
     const routine = await makeRoutine(bot.id);
     expect((await routineState(routine.id)).permissionMode).toBe("unlimited");
     const runId = await runOnce(routine.id);
     const threadId = await poll(async () => (await runState(runId))?.threadId ?? null, 20_000);
-    const card = await poll(() => liveCard(threadId!), 20_000);
-    expect(card, `no stop-line card at No limits. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
-    expect(card.card).toMatchObject({ routineId: routine.id });
-    expect(card.card.routineAllowKey).toMatch(/^stop:delete:\/.*\/Documents\/old$/);
-    expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { answer: true, allowKey: card.card.routineAllowKey, threadId, requestId: card.card.requestId })).status).toBe(200);
-    expect((await desktopApi("POST", `/api/threads/${threadId}/respond`, { requestId: card.card.requestId, behavior: "allow" })).body).toMatchObject({ ok: true });
+    expect(threadId).toBeTruthy();
     const first = await settled(runId);
     expect(first, `run never settled. stderr: ${stderr.slice(-1500)}`).toMatchObject({ status: "completed" });
     const second = await settled(await runOnce(routine.id));
@@ -180,7 +177,13 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     expect(second!.threadId).toBe(first!.threadId);
     expect((await routineState(routine.id)).threadId).toBe(first!.threadId);
     const messages = await threadMessages(first!.threadId);
-    expect(messages.filter((m) => m.kind === "options" && m.card?.requestId)).toHaveLength(1);
+    expect(messages.filter((m) => m.kind === "options" && m.card?.requestId)).toHaveLength(0);
+    const steps = messages.filter((m) => m.kind === "activity" && Array.isArray(m.tool?.steps));
+    expect(steps).toHaveLength(2);
+    for (const step of steps) {
+      expect(step.tool.name).toBe("Approved 1 step (No limits)");
+      expect(step.tool.steps).toEqual([expect.stringContaining(DELETE_OUTSIDE)]);
+    }
     expect(await liveCard(first!.threadId)).toBeNull();
     expect(messages.filter((m) => m.kind === "activity" && m.tool?.name === "Run now: RWA watch")).toHaveLength(2);
     // the engine is told this is a new run, and the earlier run's copy of the
@@ -195,14 +198,14 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
 
   it("a routine on Auto stops at the stop line, and Always allow for this routine covers its next run", async () => {
     const bot = await makeBot("Rae");
-    expect((await raiseLevel(desktopApi, bot.id, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true })).status).toBe(200);
     const routine = await makeRoutine(bot.id, { permissionMode: "auto" });
     const runId = await runOnce(routine.id);
     const threadId = await poll(async () => (await runState(runId))?.threadId ?? null, 20_000);
     const card = await poll(() => liveCard(threadId!), 20_000);
     expect(card, `no card on Auto. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
     expect(card.card).toMatchObject({ routineId: routine.id });
-    expect(card.card.routineAllowKey).toMatch(/^stop:delete:\/.*\/Documents\/old$/);
+    expect(card.card.routineAllowKey).toBe(`stop:delete:${join(home, "Documents", "old").replaceAll("\\", "/").replace(/^([a-z]:)/i, "/$1")}`);
     // a forged key is refused; the card's own is kept on the routine
     expect((await desktopApi("POST", `/api/routines/${routine.id}/always-allow`, { answer: true, allowKey: "stop:delete:/", threadId, requestId: card.card.requestId })).status).toBe(409);
     expect((await api("POST", `/api/routines/${routine.id}/always-allow`, { answer: true, allowKey: card.card.routineAllowKey, threadId, requestId: card.card.requestId })).status).toBe(404);
@@ -222,7 +225,7 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
 
   it("a routine's own dated temp file is deleted inside its folder, with no card on Auto", async () => {
     const bot = await makeBot("Tem", "tempfile");
-    expect((await raiseLevel(desktopApi, bot.id, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true })).status).toBe(200);
     const routine = await makeRoutine(bot.id, { permissionMode: "auto" });
     const run = await settled(await runOnce(routine.id));
     expect(run, `stderr: ${stderr.slice(-1500)}`).toMatchObject({ status: "completed" });
@@ -231,7 +234,7 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
 
   it("a delete it cannot place still asks, and its card offers this routine", async () => {
     const bot = await makeBot("Unp", "unplaced");
-    expect((await raiseLevel(desktopApi, bot.id, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true })).status).toBe(200);
     const routine = await makeRoutine(bot.id, { permissionMode: "auto" });
     const runId = await runOnce(routine.id);
     const threadId = await poll(async () => (await runState(runId))?.threadId ?? null, 20_000);
@@ -251,7 +254,7 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
 
   it("a routine's write to a target a value holds runs on Auto, and the run's history records it", async () => {
     const bot = await makeBot("Var", "vartarget");
-    expect((await raiseLevel(desktopApi, bot.id, { noLimits: true, acknowledgeNoLimits: true })).status).toBe(200);
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { autoApprove: true })).status).toBe(200);
     const routine = await makeRoutine(bot.id, { permissionMode: "auto" });
     const run = await settled(await runOnce(routine.id));
     expect(run, `stderr: ${stderr.slice(-1500)}`).toMatchObject({ status: "completed" });
@@ -281,14 +284,13 @@ describe.skipIf(process.platform === "win32")("routine approval levels", () => {
     const routine = await makeRoutine(bot.id);
     const runId = await runOnce(routine.id);
     const routineThread = await poll(async () => (await runState(runId))?.threadId ?? null, 20_000);
-    const routineCard = await poll(() => liveCard(routineThread!), 20_000);
-    expect(routineCard).not.toBeNull();
-    expect((await desktopApi("POST", `/api/threads/${routineThread}/respond`, { requestId: routineCard.card.requestId, behavior: "allow" })).body).toMatchObject({ ok: true });
+    expect(routineThread).toBeTruthy();
     const run = await settled(runId);
     expect(run).toMatchObject({ status: "completed" });
     const threadId = run!.threadId as string;
     // the conversation's own task copied No limits when it was made
     expect((await taskState(bot.id, threadId)).noLimits).toBe(true);
+    expect((await threadMessages(threadId)).filter((m) => m.kind === "options" && m.card?.requestId)).toHaveLength(0);
     expect((await desktopApi("PATCH", `/api/routines/${routine.id}`, { permissionMode: "auto" })).status).toBe(200);
     expect((await desktopApi("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "tidy my documents" })).status).toBe(202);
     const card = await poll(() => liveCard(threadId), 20_000);

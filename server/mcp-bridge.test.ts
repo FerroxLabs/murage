@@ -200,14 +200,15 @@ describe("near-side MCP ping", () => {
     const driver = `let input = ''; process.stdin.on('data', c => input += c);
       process.stdin.on('end', () => {
         const frames = input.trim().split('\\n').filter(Boolean).map(JSON.parse);
-        const output = JSON.stringify({jsonrpc:'2.0', id:9, result:{methods:frames.map(f=>f.method)}});
+        // Echo the id the bridge sent (a bridge id): a fixed id would be a forged answer to a live request.
+        const output = JSON.stringify({jsonrpc:'2.0', id:frames.at(-1)?.id ?? null, result:{methods:frames.map(f=>f.method)}});
         process.stdout.write(output.slice(0, 12));
         setTimeout(() => process.stdout.write(output.slice(12)), 10);
       });`;
     const script = `import {runMcpBridge} from './server/mcp-bridge.ts';
       runMcpBridge({command:process.execPath,args:['-e',${JSON.stringify(driver)}],label:'fixture'});`;
     const bridge = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script],
-      { stdio: ["pipe", "pipe", "pipe"] });
+      { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     let output = "";
     let errors = "";
     bridge.stdout.on("data", (chunk) => { output += chunk; });
@@ -251,7 +252,7 @@ describe("runMcpBridge tools/list schemas", () => {
     const script = `import {runMcpBridge} from './server/mcp-bridge.ts';
       runMcpBridge({command:process.execPath,args:['-e',${JSON.stringify(driver)}],label:'fixture'});`;
     const bridge = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script],
-      { stdio: ["pipe", "pipe", "pipe"] });
+      { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     let output = "";
     let errors = "";
     bridge.stdout.on("data", (chunk) => { output += chunk; });
@@ -481,7 +482,7 @@ describe("runMcpBridge held-control gate", () => {
       runMcpBridge({command:process.execPath,args:['-e',${JSON.stringify(driver)}],label:'fixture',
         gate:{url:${JSON.stringify(url)},token:'fixture-token'}});`;
     const bridge = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script],
-      { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, MURAGE_CONTROL_URL: "", MURAGE_CONTROL_TOKEN: "" } });
+      { windowsHide: true, stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, MURAGE_CONTROL_URL: "", MURAGE_CONTROL_TOKEN: "" } });
     let output = "";
     let errors = "";
     bridge.stdout.on("data", (chunk) => { output += chunk; });
@@ -548,5 +549,29 @@ describe("runMcpBridge held-control gate", () => {
     } finally {
       await new Promise((resolve) => held.server.close(resolve));
     }
+  });
+});
+
+describe("runMcpBridge one delivery per request (C11 v3.1)", () => {
+  it("a duplicate child response is never written; a reused id is answered once per request, in order", async () => {
+    // The child answers every x/echo TWICE (a duplicate).
+    const driver = `process.stdin.on('data', c => { for (const l of String(c).split('\\n').filter(Boolean)) { const m = JSON.parse(l); if (m.method !== 'x/echo') continue;
+        const r = JSON.stringify({jsonrpc:'2.0', id:m.id, result:{n:m.params.n}}) + '\\n'; process.stdout.write(r); process.stdout.write(r); } });`;
+    const script = `import {runMcpBridge} from './server/mcp-bridge.ts';
+      runMcpBridge({command:process.execPath,args:['-e',${JSON.stringify(driver)}],label:'fixture'});`;
+    const bridge = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script], { stdio: ["pipe", "pipe", "pipe"] });
+    let output = ""; bridge.stdout.on("data", (chunk) => { output += chunk; });
+    const frames = () => output.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+    const timer = setTimeout(() => bridge.kill("SIGKILL"), 15000);
+    try {
+      bridge.stdin.write('{"jsonrpc":"2.0","id":5,"method":"x/echo","params":{"n":1}}\n');
+      await expect.poll(() => frames().length, { timeout: 8000 }).toBeGreaterThanOrEqual(1);
+      await new Promise((r) => setTimeout(r, 400));
+      expect(frames()).toEqual([{ jsonrpc: "2.0", id: 5, result: { n: 1 } }]);
+      bridge.stdin.write('{"jsonrpc":"2.0","id":5,"method":"x/echo","params":{"n":2}}\n'); // the engine reuses id 5
+      await expect.poll(() => frames().length, { timeout: 8000 }).toBeGreaterThanOrEqual(2);
+      await new Promise((r) => setTimeout(r, 400));
+      expect(frames()).toEqual([{ jsonrpc: "2.0", id: 5, result: { n: 1 } }, { jsonrpc: "2.0", id: 5, result: { n: 2 } }]);
+    } finally { clearTimeout(timer); bridge.kill("SIGKILL"); }
   });
 });

@@ -1,3 +1,5 @@
+import "../../shared/win-hide-child-process.mjs";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 // dweb MCP proxy — spawned as an MCP server inside a bot's agent process.
 // Exposes dweb's HTTP API (the local Murage network daemon) as tools an
 // agent can call to inspect the network and run model requests:
@@ -59,18 +61,18 @@ const TOOLS = [
 ];
 
 type Json = Record<string, unknown>;
-const send = (msg: Json) => process.stdout.write(JSON.stringify(msg) + "\n");
-const ok = (id: unknown, result: unknown) => send({ jsonrpc: "2.0", id, result });
-const rpcErr = (id: unknown, code: number, message: string) => send({ jsonrpc: "2.0", id, error: { code, message } });
+const send = (msg: Json) => NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", process.stdout.write(JSON.stringify(msg) + "\n"));
+const ok = (id: unknown, result: unknown) => NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", send({ jsonrpc: "2.0", id, result }));
+const rpcErr = (id: unknown, code: number, message: string) => NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", send({ jsonrpc: "2.0", id, error: { code, message } }));
 const textResult = (id: unknown, text: string, isError = false) =>
   ok(id, { content: [{ type: "text", text }], isError });
 
 async function api(path: string, init?: RequestInit): Promise<Json> {
-  const res = await fetch(DWEB + path, {
+  const res = await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", fetch(DWEB + path, {
     signal: AbortSignal.timeout(30_000),
     ...init,
     headers: { "content-type": "application/json", ...init?.headers },
-  });
+  }));
   const body = (await res.json().catch(() => ({}))) as Json;
   if (!res.ok) throw new Error(String(body.error ?? `HTTP ${res.status}`));
   return body;

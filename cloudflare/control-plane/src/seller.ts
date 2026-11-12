@@ -78,7 +78,7 @@ export function sellerMismatch(settings: SellerSettings, seller: SellerKind, col
 
 type Form = Record<string, string | number | boolean | undefined | null>;
 /** Where each "[Label]" of the direct submit text links to (the site's pages; Stripe renders custom_text as Markdown). */
-export interface SubmitLinks { terms: string; tos: string; privacy: string }
+export interface SubmitLinks { terms: string; tos: string; privacy: string; flux: string }
 export interface SessionInput { customerId: string; homeId: string; plan: string; priceId: string; fpTid?: string; successUrl: string; cancelUrl: string;
   /** The journaled consent this session is for, and sha256 of its renewalText (disclosure-token.ts renewalSha256). Both are required: the
    *  webhook accepts the order only against this record (checkout-moments.ts consentAuthorizes). */

@@ -1,0 +1,80 @@
+{
+  "request": { "askId": "ask_0001_abcdefghij", "botId": "bot-lena", "text": "hello" },
+  "proof": { "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "signature": "AAAAAAAA" },
+  "record": {
+    "v": 1,
+    "deviceId": "phone-a",
+    "generation": 3,
+    "keyId": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+    "askId": "ask_0001_abcdefghij",
+    "digest": "2068334b1d0f3426462c7b39f5661bb4742d9915f186391f2e42e02d0fdc58b8",
+    "rawTextHash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    "storedTextHash": "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+    "verifiedAt": 1794268800000
+  },
+  "confirm": {
+    "state": "confirm",
+    "deviceId": "phone-a",
+    "threadId": "6c1e2f40-5b7d-4a93-8e16-0f2d9a7b3c58",
+    "challenge": {
+      "v": 1,
+      "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "digest": "2068334b1d0f3426462c7b39f5661bb4742d9915f186391f2e42e02d0fdc58b8",
+      "decision": "allow",
+      "expiresAt": 1794268860000
+    }
+  },
+  "confirmationCases": [
+    { "name": "confirm-device-match", "pairedDeviceId": "phone-a", "sign": true, "fallback": false },
+    { "name": "confirm-device-mismatch", "pairedDeviceId": "phone-b", "sign": false, "fallback": true }
+  ],
+  "answers": [
+    { "state": "plain" },
+    { "state": "proof_failed" },
+    { "state": "sent", "askId": "ask_0001_abcdefghij", "threadId": "6c1e2f40-5b7d-4a93-8e16-0f2d9a7b3c58", "id": "m-0002", "notify": true, "proven": true },
+    { "state": "sent", "askId": "ask_0001_abcdefghij", "threadId": "6c1e2f40-5b7d-4a93-8e16-0f2d9a7b3c58", "id": "m-0002", "notify": true, "proven": false }
+  ],
+  "invalidRequests": [
+    { "name": "unknown proof intent", "proof": "yes" },
+    { "name": "null proof", "proof": null },
+    { "name": "missing signature", "proof": { "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA" } },
+    { "name": "missing nonce", "proof": { "signature": "AAAAAAAA" } },
+    { "name": "short nonce", "proof": { "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "signature": "AAAAAAAA" } },
+    { "name": "short signature", "proof": { "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "signature": "AAAAAAA" } },
+    { "name": "extra proof key", "proof": { "nonce": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "signature": "AAAAAAAA", "deviceId": "phone-a" } }
+  ],
+  "invalidRecords": [
+    { "name": "version 2", "patch": { "v": 2 } },
+    { "name": "missing raw hash", "omit": "rawTextHash" },
+    { "name": "invalid device", "patch": { "deviceId": "phone/a" } },
+    { "name": "negative generation", "patch": { "generation": -1 } },
+    { "name": "fractional generation", "patch": { "generation": 0.5 } },
+    { "name": "unsafe generation", "patch": { "generation": 9007199254740992 } },
+    { "name": "string generation", "patch": { "generation": "3" } },
+    { "name": "short key id", "patch": { "keyId": "A" } },
+    { "name": "short ask id", "patch": { "askId": "A" } },
+    { "name": "invalid digest", "patch": { "digest": "A" } },
+    { "name": "invalid raw hash", "patch": { "rawTextHash": "A" } },
+    { "name": "invalid stored hash", "patch": { "storedTextHash": "A" } },
+    { "name": "negative timestamp", "patch": { "verifiedAt": -1 } },
+    { "name": "fractional timestamp", "patch": { "verifiedAt": 0.5 } },
+    { "name": "unsafe timestamp", "patch": { "verifiedAt": 9007199254740992 } },
+    { "name": "extra record key", "patch": { "owner": true } }
+  ],
+  "askLive": {
+    "body": { "answers": [ { "qid": "e37dc7e8-f445-4ccb-a68f-9376603b347e", "deviceId": "phone-a", "state": "live", "keyId": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "generation": 3 } ] },
+    "notLive": { "answers": [ { "qid": "e37dc7e8-f445-4ccb-a68f-9376603b347e", "deviceId": "phone-a", "state": "not-live" } ] },
+    "invalidEntries": [
+      { "name": "qid shape", "patch": { "qid": "not-a-uuid" } },
+      { "name": "device shape", "patch": { "deviceId": "phone/a" } },
+      { "name": "key id shape", "patch": { "keyId": "A" } },
+      { "name": "negative generation", "patch": { "generation": -1 } },
+      { "name": "fractional generation", "patch": { "generation": 0.5 } },
+      { "name": "unsafe generation", "patch": { "generation": 9007199254740992 } },
+      { "name": "unknown state", "patch": { "state": "unknown" } },
+      { "name": "extra key", "patch": { "proven": true } },
+      { "name": "missing generation", "omit": "generation" },
+      { "name": "missing key id", "omit": "keyId" }
+    ]
+  }
+}

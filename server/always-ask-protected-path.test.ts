@@ -111,6 +111,14 @@ const CARD: Row[] = [
   ["awk 'BEGIN{system(\"x\")}' ~", "protected-path"],
 ];
 
+// S1-B3 RULING (MAIN 2026-11-11 09:30Z): fixture-declared protected writes
+// supersede the inherited run assertion; read-only operands keep it.
+const PROTECTED_WRITES = new Set(CARD.map(([cmd]) => cmd).filter(cmd =>
+ /^(?:srm|shred|rm|made-up-tool --wipe|zorbwipe|wipe|sudo srm|timeout 5 zorbwipe|\.\/tools\/nuke|\/opt\/bin\/cleanse|cp |chmod |chown |mv |tar |truncate |sed -i)/.test(cmd)
+ || (/^(?:docker|podman) /.test(cmd) && !cmd.includes(':ro'))
+ || cmd.startsWith('flock ') || cmd.includes('zorbwipe ..') || cmd.includes('Copy-Item x') || cmd.includes('Invoke-Zap') || cmd.includes('zapit ')
+));
+
 /** find actions that delete, run or hide a value: some card asks, whichever rule reads it first. */
 const ANY_CARD: string[] = [
   "find ~ -delete",
@@ -208,7 +216,7 @@ const ORDINARY: Row[] = [
 describe("A+: a protected literal under a program off the allow list asks", () => {
   it.each(CARD)("%s -> %s", (cmd, rule) => {
     // MARKS r12 re-baseline (MurageMain 11-07 item 1): the doubt-free read names it; strict read and every level still card
-    if (rule === "protected-path") return expectProtectedPath(cmd);
+    if (rule === "protected-path") return expectProtectedPath(cmd, undefined, undefined, PROTECTED_WRITES.has(cmd));
     expect(alwaysAskCommand(cmd)?.rule ?? null).toBe(rule);
   });
   it("names the class in plain words", () => {
@@ -218,7 +226,7 @@ describe("A+: a protected literal under a program off the allow list asks", () =
     expect(doubtFree("zorbwipe /usr")?.what).toMatch(/needs to run/);
     expect(doubtFree("zorbwipe /Volumes/Scratch")?.what).toMatch(/whole disk or volume/);
     // MARKS r13 (Astra M4): and each keeps the shared check: strict read cards, every level cards, Full access names protected-path
-    for (const cmd of ["zorbwipe ~", "zorbwipe /", "zorbwipe /usr", "zorbwipe /Volumes/Scratch"]) expectProtectedPath(cmd);
+    for (const cmd of ["zorbwipe ~", "zorbwipe /", "zorbwipe /usr", "zorbwipe /Volumes/Scratch"]) expectProtectedPath(cmd, undefined, undefined, true);
   });
 });
 
@@ -261,7 +269,7 @@ describe("A+ only adds cards", () => {
     expect(alwaysAskCommand("rm -rf /")?.rule).toBe("delete-root");
     expect(alwaysAskCommand("rm -rf /usr")?.rule).toBe("delete-system-folder");
     expect(alwaysAskCommand("rsync -a --delete empty/ ~")?.rule).toBe("delete-home");
-    expectProtectedPath("zorbwipe $(cat x) ~"); // MARKS r12 re-baseline
+    expectProtectedPath("zorbwipe $(cat x) ~", undefined, undefined, true); // MARKS r12 re-baseline
     // a protected-path hit early in the text never hides a later rule's own verdict
     expect(alwaysAskCommand("cp ~ /tmp/x; rm -rf ~")?.rule).toBe("delete-home");
     expect(alwaysAskCommand("find / -name x | sort | xargs rm -rf")?.rule).toBe("delete-root");
@@ -273,7 +281,7 @@ describe("A+ only adds cards", () => {
   it("a fixed cwd resolves relative literals, and a project cwd stays ordinary", () => {
     expect(alwaysAskCommand("zorbwipe .", "/Users/tester/project")).toBeNull();
     expect(alwaysAskCommand("zorbwipe src", "/Users/tester/project")).toBeNull();
-    expectProtectedPath("zorbwipe ..", "/Users/tester/project"); // MARKS r12 re-baseline
+    expectProtectedPath("zorbwipe ..", "/Users/tester/project", undefined, true); // MARKS r12 re-baseline
     expect(alwaysAskCommand("ls ..", "/Users/tester/project")).toBeNull();
   });
 });

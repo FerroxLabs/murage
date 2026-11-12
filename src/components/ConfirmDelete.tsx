@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { AlertTriangle } from "lucide-react";
 
 import { deletionConsequenceLines } from "@/lib/deletion-notes";
+import { EMAIL_OWNER_COPY } from "../../shared/email-copy.ts";
 import { api } from "@/state/store";
 import { BOX_FRAME, BoxBody, BoxFoot, BoxHead } from "./ui/BoxShell";
 
@@ -41,12 +42,17 @@ export function ConfirmDelete({
    * (GET /api/deletion-preview). */
   preview?: { botId?: string; groupId?: string; threadId?: string };
   onCancel: () => void;
-  onConfirm: () => void;
+  /** `emailConfirm` is the server's token for the address line the owner was shown (restore park r3.1 section 6); it is sent as the
+   * DELETE body `{ emailConfirm }`. Absent when there is no parked address or the preview did not answer in time. */
+  onConfirm: (options?: { emailConfirm: string }) => void;
 }) {
   const [typed, setTyped] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const matches = typed.trim().toLowerCase() === name.trim().toLowerCase();
-  const counts = useDeletionCounts(preview);
+  const { counts, email, pending } = useDeletionPreview(preview);
+  const emailConfirm = email?.confirm ?? null;
+  const confirm = () => { if (emailConfirm) onConfirm({ emailConfirm }); else onConfirm(); };
+  const canConfirm = matches && !pending;
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const layer = useFocusTrap(dialogRef, true, { name: "confirm-delete", kind: "dialog", initialFocus: "input", onEscape: onCancel });
@@ -78,6 +84,7 @@ export function ConfirmDelete({
         </BoxHead>
         <BoxBody className="pl-14 pr-6">
             <p className="mt-1.5 text-[13px] leading-relaxed text-ink-secondary">{detail}</p>
+            {email && <p className="mt-1 text-[13px] leading-relaxed text-ink-secondary" data-testid="confirm-delete-email">{EMAIL_OWNER_COPY.deleteAlsoRemoves(email.address)}</p>}
             {preview && deletionConsequenceLines(counts?.savedFiles, counts?.messages, counts?.engines).map((line) => (
               <p key={line} className="mt-1 text-[13px] leading-relaxed text-ink-secondary">{line}</p>
             ))}
@@ -101,7 +108,7 @@ export function ConfirmDelete({
             ref={inputRef}
             value={typed}
             onChange={(e) => setTyped(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter" && matches) onConfirm(); }}
+            onKeyDown={(e) => { if (e.key === "Enter" && canConfirm) confirm(); }}
             className="mt-1.5 w-full rounded-lg border border-hairline/50 bg-app px-3 py-2 text-[13px] text-ink outline-none focus:border-accent"
             placeholder={name}
             autoComplete="off"
@@ -117,8 +124,8 @@ export function ConfirmDelete({
             Cancel
           </button>
           <button
-            onClick={onConfirm}
-            disabled={!matches}
+            onClick={confirm}
+            disabled={!canConfirm}
             className="rounded-lg bg-danger px-3.5 py-2 text-[13px] font-medium text-white disabled:cursor-not-allowed disabled:opacity-40"
           >
             Delete {kind}
@@ -129,17 +136,36 @@ export function ConfirmDelete({
     </div></LayerSurface>;
 }
 
-/** How many messages and saved files a Delete takes with it; null until known. */
-export function useDeletionCounts(preview: { botId?: string; groupId?: string; threadId?: string } | undefined): { savedFiles: number; messages: number | null; engines: string[] } | null {
-  const [counts, setCounts] = useState<{ savedFiles: number; messages: number | null; engines: string[] } | null>(null);
+type DeletionCounts = { savedFiles: number; messages: number | null; engines: string[] };
+/** The parked address a bot's delete would also remove, with the server's confirmation token when it issued one (a live address has none). */
+export type DeletionEmail = { address: string; confirm: string | null };
+/** Confirm waits for the preview this long (restore park r3.1 section 6.6); after it the delete goes ahead with no line and no token. */
+export const PREVIEW_WAIT_MS = 3000;
+
+/** GET /api/deletion-preview. For a bot, `pending` is true until the preview answers (or fails) or PREVIEW_WAIT_MS pass; an `email` that
+ *  arrives after the wait is dropped, so the owner never confirms a Remove they were not shown. */
+export function useDeletionPreview(preview: { botId?: string; groupId?: string; threadId?: string } | undefined): { counts: DeletionCounts | null; email: DeletionEmail | null; pending: boolean } {
+  const [counts, setCounts] = useState<DeletionCounts | null>(null);
+  const [email, setEmail] = useState<DeletionEmail | null>(null);
+  const [answered, setAnswered] = useState(false), [timedOut, setTimedOut] = useState(false);
   const query = preview ? new URLSearchParams(Object.entries(preview).filter((entry): entry is [string, string] => Boolean(entry[1]))).toString() : "";
+  const forBot = Boolean(preview?.botId);
   useEffect(() => {
     if (!query) return;
-    let live = true;
-    api(`/api/deletion-preview?${query}`).then((body: { savedFiles?: unknown; messages?: unknown; engines?: unknown }) => {
-      if (live && typeof body?.savedFiles === "number") setCounts({ savedFiles: body.savedFiles, messages: typeof body.messages === "number" ? body.messages : null, engines: Array.isArray(body.engines) ? body.engines.filter((item): item is string => typeof item === "string") : [] });
-    }).catch(() => {});
-    return () => { live = false; };
-  }, [query]);
-  return counts;
+    let live = true, late = false;
+    const timer = forBot ? setTimeout(() => { late = true; if (live) setTimedOut(true); }, PREVIEW_WAIT_MS) : undefined;
+    api(`/api/deletion-preview?${query}`).then((body: { savedFiles?: unknown; messages?: unknown; engines?: unknown; email?: { address?: unknown; confirm?: unknown } | null }) => {
+      if (!live) return;
+      if (typeof body?.savedFiles === "number") setCounts({ savedFiles: body.savedFiles, messages: typeof body.messages === "number" ? body.messages : null, engines: Array.isArray(body.engines) ? body.engines.filter((item): item is string => typeof item === "string") : [] });
+      const address = body?.email?.address;
+      if (forBot && !late && typeof address === "string" && address !== "") setEmail({ address, confirm: typeof body.email?.confirm === "string" && body.email.confirm !== "" ? body.email.confirm : null });
+    }).catch(() => {}).finally(() => { if (live) setAnswered(true); });
+    return () => { live = false; if (timer) clearTimeout(timer); };
+  }, [query, forBot]);
+  return { counts, email, pending: forBot && !answered && !timedOut };
+}
+
+/** How many messages and saved files a Delete takes with it; null until known. */
+export function useDeletionCounts(preview: { botId?: string; groupId?: string; threadId?: string } | undefined): DeletionCounts | null {
+  return useDeletionPreview(preview).counts;
 }

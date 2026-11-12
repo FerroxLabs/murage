@@ -1,3 +1,4 @@
+import { legacyEmailDecisionFixture } from "./testing/legacy-decision-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -55,7 +56,8 @@ let tools: EmailTools;
 let root: string;
 const record: EmailTurnRecord = { botId: "b1", threadId: "t1", mode: "send", kind: "direct", origin: "desktop" };
 
-function setup(policy: "ask" | "auto" = "auto") {
+async function setup(policy: "ask" | "auto" = "auto") {
+  const authority = await legacyEmailDecisionFixture();
   clock = 1_800_000_000_000;
   fake = new FakeFlux();
   store = new EmailStore(new DatabaseSync(":memory:"));
@@ -64,7 +66,7 @@ function setup(policy: "ask" | "auto" = "auto") {
   secrets.setBotKey("b1", { token: "bot-token", keyId: "key_b1" });
   const client = new FluxEmailClient({ fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test", credentials: emailCredentialProvider(secrets, () => null), timeoutMs: 100 });
   let n = 0;
-  send = new EmailSendService({ store, client, installId: "inst", now: () => clock, newId: () => `send-${++n}` });
+  send = new EmailSendService({ store, client, authorityFor: () => authority, installId: "inst", now: () => clock, newId: () => `send-${++n}` });
   root = mkdtempSync(join(tmpdir(), "email-ws-"));
   tools = new EmailTools({ store, send, client, workspaceRoot: () => root, bot: () => undefined, now: () => clock });
   store.insertBinding({ botId: "b1", inboxId: INBOX, address: "juniper@murage.email", username: "juniper", displayName: "Juniper", emailKeyRef: "key_b1", fluxAccountId: null, state: "active", step: null, opId: null, opStartedAt: null, policy, failure: null, updatedAt: clock });
@@ -433,9 +435,9 @@ describe("EmailRuntime: dark launch", () => {
     fake.always("GET", /\/v1\/email\/capabilities$/, { status: 200, body: { enabled: false } });
     const runtime = runtimeWith(db, "fx-account-key");
     await runtime.start();
-    expect(runtime.mount("gen-1", mountInput)).toEqual({ mounted: false, line: null });
+    expect(runtime.mount("gen-1", mountInput)).toEqual({ mounted: false, line: "Email is off. Turn it on in Settings > Bot email." });
     expect(emailTurns.size).toBe(0);
-    expect(await runtime.call("email_send", { botId: "b1", threadId: "t1", generation: "gen-1" }, { to: ["x@y.test"], subject: "s", text: "t" }, live)).toEqual({ status: 403, body: { error: EMAIL_UNAVAILABLE } });
+    expect(await runtime.call("email_send", { botId: "b1", threadId: "t1", generation: "gen-1" }, { to: ["x@y.test"], subject: "s", text: "t" }, live)).toEqual({ status: 200, body: { text: "Email is off. Turn it on in Settings > Bot email." } });
     expect(runtime.bindingState("b1")).toBeNull();
     expect(emailTables(db)).toEqual([]);
     expect(fake.requests.map(request => request.path)).toEqual(["/v1/email/capabilities"]);

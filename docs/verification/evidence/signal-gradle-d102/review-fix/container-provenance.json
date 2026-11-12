@@ -1,0 +1,13 @@
+{
+  "name": "afix-signal-gradle-verify-tests",
+  "image": "node:24-bookworm@sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4",
+  "imageId": "sha256:64af3819f9275802414d7cdc38c27e9d82bd564dec4d4da87d008255d36c63b4",
+  "network": "none",
+  "startedAt": "2026-11-11T09:03:25.929354533Z",
+  "finishedAt": "2026-11-11T09:08:06.498726242Z",
+  "status": "exited",
+  "testsExitCode": 0,
+  "regressionsExitCode": 0,
+  "cpus": 2.0,
+  "memoryBytes": 4294967296
+}

@@ -1,3 +1,5 @@
+import { Store as DecisionStore } from "../store.ts";
+import { legacyEmailDecisionFixture } from "./testing/legacy-decision-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -10,7 +12,7 @@ import { FluxEmailClient } from "./flux-email-client.ts";
 import { EmailSecretStore, emailCredentialProvider } from "./email-secrets.ts";
 import { EmailStore, type SendRow } from "./email-store.ts";
 import { EmailSendService, HOLD_LIFETIME_MS } from "./send-service.ts";
-import { EmailCards, EMAIL_DIGEST_AFTER_MS, emailRequestId, isEmailRequestId, type EmailCardFields, type EmailCardHost } from "./cards.ts";
+import { EmailCards, EMAIL_DIGEST_AFTER_MS, isEmailRequestId, type EmailCardFields, type EmailCardHost } from "./cards.ts";
 import type { EmailDraft } from "./canonical.ts";
 import { FakeFlux, type FakeReply } from "../testing/fake-flux-email.ts";
 import { approvalDigestInput } from "../../shared/approval-digest.ts";
@@ -21,6 +23,7 @@ const INBOX = "ibx_1";
 let clock = 0;
 let fake: FakeFlux;
 let store: EmailStore;
+let decisionStore: DecisionStore;
 let send: EmailSendService;
 let cards: EmailCards;
 type Kept = { threadId: string; card: EmailCardFields; dismissed?: boolean };
@@ -30,7 +33,9 @@ let activity: string[];
 let notices: Array<{ kind: string; body: string }>;
 let threads: Set<string>;
 
-beforeEach(() => {
+beforeEach(async () => {
+  decisionStore = new DecisionStore();
+  const authority = await legacyEmailDecisionFixture({ store: decisionStore });
   clock = 1_800_000_000_000;
   fake = new FakeFlux();
   store = new EmailStore(new DatabaseSync(":memory:"));
@@ -50,8 +55,18 @@ beforeEach(() => {
     activity: (_threadId, line) => activity.push(line),
     notify: (kind, _botId, _threadId, body) => notices.push({ kind, body }),
   };
+  // The real decision host emits the admitted card. The old EmailCardHost
+  // callbacks are now lifecycle/status adapters, not permission producers.
+  decisionStore.onChange(event => {
+    if (event.type !== "message" || !event.message.card?.emailSend) return;
+    const sendId = event.message.card.emailSend.sendId;
+    const current = store.getSend(sendId);
+    if (!current) return;
+    shown.set(event.message.id, { threadId: event.threadId, card: cards.view(current) });
+    notices.push({ kind: "approval", body: event.message.card.pushBody ?? "" });
+  });
   const ref: { cards: EmailCards | null } = { cards: null };
-  send = new EmailSendService({ store, client, installId: "inst", now: () => clock, newId: () => `send-${++n}`, onChange: row => ref.cards?.sync(row), onOutcome: event => ref.cards?.outcome(event) });
+  send = new EmailSendService({ store, client, authorityFor: () => authority, botName: () => "Juniper", installId: "inst", now: () => clock, newId: () => `send-${++n}`, onChange: row => ref.cards?.sync(row), onOutcome: event => ref.cards?.outcome(event) });
   cards = ref.cards = new EmailCards({ store, send, host, now: () => clock });
   store.insertBinding({ botId: "b1", inboxId: INBOX, address: "juniper@murage.email", username: "juniper", displayName: "Juniper", emailKeyRef: "key_b1", fluxAccountId: null, state: "active", step: null, opId: null, opStartedAt: null, policy: "auto", failure: null, updatedAt: clock });
   store.addTrusted("b1", "jane@acme.test", "allow", "owner", clock);
@@ -59,7 +74,11 @@ beforeEach(() => {
 
 const draft = (patch: Partial<EmailDraft> = {}): EmailDraft => ({ kind: "send", to: ["new@x.test"], cc: [], subject: "Thursday", text: "Hi there", attachments: [], replyTo: null, ...patch });
 const submit = async (patch: Partial<EmailDraft> = {}, generation = 1) => (await send.submit({ botId: "b1", generation, threadId: "t1", draft: draft(patch) })) as { status: string; row?: SendRow };
-const card = (sendId: string) => [...shown.values()].find(value => value.card.requestId === emailRequestId(sendId))?.card;
+const card = (sendId: string) => {
+  const admitted = decisionStore.messagesFor("t1").find(message => message.card?.emailSend?.sendId === sendId);
+  const current = store.getSend(sendId);
+  return admitted && current ? cards.view(current) : undefined;
+};
 const row = (id: string) => store.getSend(id)!;
 const sentOk = (id = "msg_1"): FakeReply => ({ status: 200, body: { status: "sent", message_id: id } });
 const held = (heldId: string, heldIds = [heldId]): FakeReply => ({ status: 202, body: { status: "pending_approval", held_id: heldId, approval: { id: "apr_1", held_ids: heldIds, state: "pending" } } });
@@ -70,7 +89,7 @@ describe("the card (4.1, 9.3)", () => {
   it("a held send gets one email-send card built from the frozen record: full text, New / Already allowed, three buttons, the manage link", async () => {
     await submit({ cc: ["jane@acme.test"], text: "Full text here\nline two" });
     const view = card("send-1")!;
-    expect(view).toMatchObject({ kind: "email-send", tool: "email_send", requestId: "email-send-1", options: ["Send", "Edit", "Don't send"] });
+    expect(view).toMatchObject({ kind: "email-send", tool: "email_send", requestId: "send-1", options: ["Send", "Edit", "Don't send"] });
     expect(view.title).toBe("New contact: Juniper wants to email new@x.test for the first time.");
     expect(view.subtitle).toContain("Full text here\nline two");
     expect(view.subtitle).toContain("New: new@x.test");
@@ -118,7 +137,7 @@ describe("the card (4.1, 9.3)", () => {
   it("Edit (M2): a new row and card with the edited text; the old card ends withdrawn(edited) without buttons", async () => {
     await submit();
     const answer = await cards.resolve("email-send-1", "edit", { revision: row("send-1").revision, draft: { text: "Edited words" } });
-    expect(answer.body.replacedBy).toBe("email-send-2");
+    expect(answer.body.replacedBy).toBe("send-2");
     expect(row("send-1")).toMatchObject({ state: "withdrawn", code: "edited" });
     expect(card("send-1")!.options).toEqual([]);
     expect(card("send-2")).toMatchObject({ options: ["Send", "Edit", "Don't send"] });
@@ -173,7 +192,7 @@ describe("the card (4.1, 9.3)", () => {
     fake.on("GET", /\/approvals\/apr_1$/, approval([heldItem("hld_1", "send-2", { text: "second" }), heldItem("hld_0", "send-1", { text: "first" })]));
     const answer = await cards.resolve("email-send-2", "send");
     expect(answer.body.outcome).toBe("waiting_sibling");
-    expect(answer.body.card!.emailSend).toMatchObject({ note: "Waiting for your answer on the other email Juniper wrote to new@x.test.", siblingRequestId: "email-send-1" });
+    expect(answer.body.card!.emailSend).toMatchObject({ note: "Waiting for your answer on the other email Juniper wrote to new@x.test.", siblingRequestId: "send-1" });
     expect(fake.calls("POST", /approve$/)).toHaveLength(0);
   });
 

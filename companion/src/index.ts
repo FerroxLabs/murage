@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import "../../shared/win-hide-child-process.mjs";
 // The sidecar, as one command.
 //
 //   node companion/src/index.ts

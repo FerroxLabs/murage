@@ -22,7 +22,10 @@
 // engine and plan setup; only that text moved. 1.0.17 (U24 S1): the static reply
 // habits block (REPLY_HABITS) follows House Rules in every system prompt; only that text moved. 1.0.18: every turn's allowed-tools
 // argv lists mcp__agents__venue_post (VENUE-POST-1017 b8b26791a), and the image guidance gained one sentence on showing a local
-// picture through register_artifact (LOCAL-IMAGE-CARD 3cd7f9991); only those two moved.
+// picture through register_artifact (LOCAL-IMAGE-CARD 3cd7f9991); then a03dc9c86 (scoped Markdown image display) replaced that sentence with the picture-folder guidance; only those moved.
+//
+// 1.0.19 EP B2 / S134 4.3: add only the per-turn unavailable-browser context.
+// Every other field remains the base capture; see CHANGED-EXPECTATIONS.md in the integration evidence.
 //
 // Regenerate on a base checkout with ENGINE_DISPATCH_WRITE=<file>.
 import { spawn, type ChildProcess } from "node:child_process";
@@ -123,6 +126,7 @@ posixOnly("what the engine is handed (lane E dispatch golden)", () => {
     let stderr = "";
     const start = async () => {
       child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+        windowsHide: true,
         cwd: join(SERVER_DIR, ".."),
         env: {
           ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

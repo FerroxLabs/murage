@@ -31,6 +31,8 @@ jobs:
     if: inputs.source_run_id == '' && inputs.expected_version == ''
     name: DEB + AppImage (Ubuntu 24.04 x64)
     runs-on: ubuntu-24.04
+    env:
+      NODE_OPTIONS: --max-old-space-size=12288
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -100,7 +102,7 @@ jobs:
           python3 -I native/gepa/build-linux.py "$RUNNER_TEMP/gepa-linux"
       - name: Package from the verified offline CUA stage
         env:
-          NODE_OPTIONS: --max-old-space-size=6144
+          NODE_OPTIONS: --max-old-space-size=12288
         run: |
           gepa_hash="$(node -e 'const fs=require("node:fs"); const m=JSON.parse(fs.readFileSync("qualification-evidence/gepa-package-metadata.json","utf8")); const h=m.extraMetadata.murageGepaManifests["linux-x64"]; if(!/^[a-f0-9]{64}$/.test(h))process.exit(1); process.stdout.write(h)')"
           pnpm package:linux:offline "--config.extraMetadata.murageGepaManifests.linux-x64=$gepa_hash"

@@ -414,7 +414,7 @@ describe("B2: the ended view (GET /v1/account/cloud) and Start again", () => {
     const r = await summary();
     expect(r.status).toBe(200);
     expect(await r.json()).toEqual({
-      homeId: null,
+      homeId: null, refused: null,
       home: { id: "home-1", state: "deleted", deletedAt: NOW + DAY },
       subscription: { plan: "pro", planName: "Pro", priceUsd: 99, status: "canceled", ended: true, endedAt: NOW - DAY, cancelAtPeriodEnd: true, activeUntil: NOW - DAY, endedReason: "cancelled", refundState: null,
         billing: { state: "ended", endsAt: NOW - DAY, confirmed: true, noFurtherCharge: true, sentence: expect.stringContaining("Your plan has ended. Renewals stopped on ") },
@@ -473,9 +473,11 @@ describe("B3: the refund clock runs from the later of the first payment and the 
     expect(n).toHaveLength(1);
     expect(n[0].created_at).toBe(READY);
     const payload = JSON.parse(n[0].payload) as { emailText: string; refundWindowEndsAt: number; emailSubject: string };
-    expect(payload.emailSubject).toBe("Murage Cloud: your server is ready");
+    expect(payload.emailSubject).toBe("Welcome to Murage Cloud: your server is ready");
     expect(payload.refundWindowEndsAt).toBe(aoeEnd(READY, 7));
-    expect(payload.emailText).toContain("7 days from the day your server is ready, and we refund your first month in full.");
+    // The welcome: the link is this environment's own origin. The email states no refund sentence; the deadline lives in the payload only.
+    expect(payload.emailText).toContain("Open Murage: https://cloud.murage.test/home/cloud");
+    expect(payload.emailText).not.toMatch(/refund|Not right for you/);
     // Astra JOURNEY-B-2 #6: the clock starts when the email is handed off, not when it is queued: until then the window stays open.
     expect((await (await summary()).json<{ subscription: Record<string, unknown> }>()).subscription).toMatchObject({ refundWindowEndsAt: null, refundWindowStartsWhenReady: true });
     await sweepBilling(testEnv(), { notifier, stripeFetch, flux: flux as FluxEntitlementHooks }).catch(() => undefined);
@@ -1121,7 +1123,7 @@ describe("Astra JOURNEY-B-3 #5: the ready email's refund deadline is generated a
     await sweepBilling(testEnv(), { notifier, stripeFetch, flux: flux as FluxEntitlementHooks }).catch(() => undefined);
     const ready = notices.find((n) => n.kind === "server_ready")!;
     expect(ready.data.refundWindowEndsAt).toBe(aoeEnd(day8, 7));
-    expect(String(ready.data.emailText)).toContain(`Ask by the end of ${aoeDate(aoeEnd(day8, 7))}`);
+    expect(String(ready.data.emailText)).not.toMatch(/refund|Ask by the end of/);
     expect((await (await summary()).json<{ subscription: Record<string, unknown> }>()).subscription).toMatchObject({ refundWindowEndsAt: aoeEnd(day8, 7) });
   });
   it("the default notifier generates it with the clock it records as sent_at", async () => {
@@ -1131,7 +1133,7 @@ describe("Astra JOURNEY-B-3 #5: the ready email's refund deadline is generated a
     await sweepBilling(e, { stripeFetch, flux: flux as FluxEntitlementHooks }).catch(() => undefined);
     expect(await env.DB.prepare("SELECT sent_at FROM billing_notices WHERE id='server_ready:home-1:first'").first()).toEqual({ sent_at: day8 });
     const text = sent.map((m) => m.text).find((t) => t.includes("server is ready"))!;
-    expect(text).toContain(`Ask by the end of ${aoeDate(aoeEnd(day8, 7))}`);
+    expect(text).not.toMatch(/refund|Ask by the end of/);
     expect((await quoteFirstMonthRefund(testEnv(), "home-1", day8)).window).toEqual({ deadline: aoeEnd(day8, 7), startsWhenReady: false });
   });
 });
@@ -1255,7 +1257,7 @@ describe("Astra JOURNEY-B-4 #7: the ready email's moment is its actual handoff",
     expect(aoeDate(aoeEnd(after, 7))).not.toBe(aoeDate(aoeEnd(before, 7)));
     expect(await env.DB.prepare("SELECT sent_at FROM billing_notices WHERE id='server_ready:home-1:first'").first()).toEqual({ sent_at: after });
     const text = sent.map((m) => m.text).find((t) => t.includes("server is ready"))!;
-    expect(text).toContain(`Ask by the end of ${aoeDate(aoeEnd(after, 7))}`);
+    expect(text).not.toMatch(/refund|Ask by the end of/);
     expect((await quoteFirstMonthRefund(testEnv(), "home-1", after)).window).toEqual({ deadline: aoeEnd(after, 7), startsWhenReady: false });
   });
 });

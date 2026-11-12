@@ -20,7 +20,7 @@ import { classifyDataDirEntryForBackup, DATA_DIR_RECORDS, classifyDataDirEntry }
 // name that list does not know).
 const JSON_COMPONENTS = new Set(DATA_DIR_RECORDS);
 const isProjectedRecord = (path: string) => JSON_COMPONENTS.has(path) || classifyDataDirEntry(path)?.backup === "record";
-const SAFE_CONFIG_FIELDS = ["profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications", "hermesProfilesPinned", "newBots"] as const;
+const SAFE_CONFIG_FIELDS = ["settingsDefaultMode", "profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications", "hermesProfilesPinned", "newBots"] as const;
 type JsonObject = Record<string, unknown>;
 function object(value: unknown): value is JsonObject { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function fail(code: string, path?: string): never { throw new InstallationSnapshotError(code, path ? { path } : undefined); }
@@ -127,6 +127,10 @@ function projectConfig(value: unknown, omit: (path: string, reason: string) => v
   if (value.hermesProfilesPinned !== undefined) {
     if (typeof value.hermesProfilesPinned !== "boolean") fail("INVALID_CONFIG_COMPONENT");
     projected.hermesProfilesPinned = value.hermesProfilesPinned;
+  }
+  if (value.settingsDefaultMode !== undefined) {
+    if (value.settingsDefaultMode !== "simple" && value.settingsDefaultMode !== "advanced") fail("INVALID_CONFIG_COMPONENT");
+    projected.settingsDefaultMode = value.settingsDefaultMode;
   }
   if (value.language !== undefined) {
     if (typeof value.language !== "string") fail("INVALID_CONFIG_COMPONENT");
@@ -416,7 +420,7 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       const rootNames = readdirSync(root).sort();
       // SQLite may create/remove these exact auxiliary files while taking its
       // own consistent backup. All other membership and file checks remain.
-      const rootMembership=(entries:string[])=>entries.filter(name=>name!=="messages.db-wal"&&name!=="messages.db-shm"&&name!=="connected-app-ledger.db-wal"&&name!=="connected-app-ledger.db-shm"&&name!=="phone-calls.db-wal"&&name!=="phone-calls.db-shm"&&name!=="phone-calls.db-journal");
+      const rootMembership=(entries:string[])=>entries.filter(name=>name!=="search.db"&&name!=="search.db-wal"&&name!=="search.db-shm"&&name!=="messages.db-wal"&&name!=="messages.db-shm"&&name!=="connected-app-ledger.db-wal"&&name!=="connected-app-ledger.db-shm"&&name!=="phone-calls.db-wal"&&name!=="phone-calls.db-shm"&&name!=="phone-calls.db-journal");
       if (rootNames.length > maxFiles) fail("SNAPSHOT_LIMIT_EXCEEDED");
       // One list decides every top-level name (data-dir-inventory.ts).
       const kinds = new Map<string, NonNullable<ReturnType<typeof classifyDataDirEntry>>>();

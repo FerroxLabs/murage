@@ -14,7 +14,7 @@ final class CallPushTests: XCTestCase {
     }
     private func memory(_ payload: PushPayload) -> PushExtensionTests.Memory {
         var l = PushLedger()
-        l.bind(payload.bindingId, origin: "https://mac.tailnet123.ts.net")
+        l.bind(payload.bindingId, origin: "https://mac.tail000000.ts.net")
         return PushExtensionTests.Memory(l)
     }
 
@@ -132,7 +132,7 @@ final class CallPushTests: XCTestCase {
         XCTAssertEqual(PushResponse.action("NOT_NOW"), .notNow)
         XCTAssertEqual(PushResponse.action("ANSWER"), .callAnswer)
         let p = try XCTUnwrap(PushPayload.parse(vector()))
-        let target = await CallAnswerRoute.target(payload: p, origin: WorkspaceOrigin(string: "https://mac.tailnet123.ts.net")!, userInfo: [:],
+        let target = await CallAnswerRoute.target(payload: p, origin: WorkspaceOrigin(string: "https://mac.tail000000.ts.net")!, userInfo: [:],
                                                   detailToken: { "murage_pd_" + String(repeating: "A", count: 43) }) { request in
             XCTAssertEqual(request.httpMethod, "GET")
             return (200, ["title": "Private", "body": "Private", "target": ["threadId": "the-call-thread", "messageId": "m1"]])

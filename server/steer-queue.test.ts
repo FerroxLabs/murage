@@ -394,7 +394,7 @@ describe("via rows drain alone", () => {
     const seen: Array<{ via: string | null; viaDevice: string | null }> = [];
     via("s1", "share");
     drainSteeredMessages(store, (_b, _t, _p, _m, _x, batch) => { seen.push(batch); });
-    expect(seen).toEqual([{ via: "share", viaDevice: "dev1" }]);
+    expect(seen).toEqual([{ via: "share", viaDevice: "dev1", viaProof: null }]);
     expect(store.messages[0]).toMatchObject({ via: "share", origin: "unproven" });
   });
 
@@ -578,6 +578,7 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
     // Without SystemRoot, winsock fails to initialize in the child.
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -793,6 +794,6 @@ describe("steer-queue: authoritative pending list and ordering", () => {
     const run = vi.fn();
     drainSteeredMessages(store, run);
     expect(store.messages).toHaveLength(1);
-    expect(run).toHaveBeenCalledWith("bot-q", "thread-q", "do the thing", already, [already.id], { via: null, viaDevice: null });
+    expect(run).toHaveBeenCalledWith("bot-q", "thread-q", "do the thing", already, [already.id], { via: null, viaDevice: null, viaProof: null });
   });
 });

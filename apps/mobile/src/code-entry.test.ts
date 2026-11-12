@@ -19,7 +19,7 @@ describe("displayName", () => {
   it("shortens only MagicDNS names, so two tailnets tell apart", () => {
     expect(displayName("desktop.tailAAAA.ts.net")).toBe("desktop (tailAAAA)");
     expect(displayName("desktop.tailBBBB.ts.net")).toBe("desktop (tailBBBB)");
-    expect(displayName("https://example-mac.tailnet123.ts.net:8443/x")).toBe("example-mac (tailnet123)");
+    expect(displayName("https://example-mac.tail000000.ts.net:8443/x")).toBe("example-mac (tail000000)");
   });
   it("shows any other hostname in full", () => {
     expect(displayName("desktop.office.example.com")).toBe("desktop.office.example.com");

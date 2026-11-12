@@ -84,3 +84,7 @@ server/testing/.git-ls-files.fixture
 
 # design scratch (handoffs, mockups) never enters the tree
 .design/
+/.v118-ref/
+
+# Pinned shipped 1.0.18 inspector for downgrade compatibility tests.
+/.vrel-ref/

@@ -24,6 +24,7 @@ function runBridge(bin: string, input: string) {
         vpsContainerName("bridge-test"),
       ],
       {
+        windowsHide: true,
         env: { ...process.env, MURAGE_EXTRA_PATH: bin, NODE_NO_WARNINGS: "1" },
         stdio: ["pipe", "pipe", "pipe"],
       },
@@ -40,7 +41,7 @@ function runBridge(bin: string, input: string) {
 }
 
 describe.skipIf(process.platform === "win32")("VPS Cua MCP bridge", () => {
-  it("passes MCP bytes unchanged to docker exec over the validated SSH target", async () => {
+  it("preserves MCP fields with an isolated request id to docker exec over the validated SSH target", async () => {
     const bin = await mkdtemp(join(tmpdir(), "murage-vps-mcp-"));
     temporary.push(bin);
     const fakeDocker = join(bin, "docker");
@@ -51,7 +52,10 @@ describe.skipIf(process.platform === "win32")("VPS Cua MCP bridge", () => {
     const result = await runBridge(bin, input);
 
     expect(result.code).toBe(0);
-    expect(result.stdout).toBe(input);
+    // C11 6.1 I1: the child sees a bridge id; every other byte remains the caller's.
+    const wireId = JSON.parse(result.stdout).id;
+    expect(wireId).toMatch(/^mb\.[0-9a-f]{12}\.1$/);
+    expect(result.stdout).toBe(input.replace('"id":1', `"id":${JSON.stringify(wireId)}`));
     expect(result.stderr).toContain(
       `ARGS:-H ssh://production-vps exec -i -u cua -e HOME=/home/cua -e DISPLAY=:1 ` +
         `-e CUA_DRIVER_INSTALL_CHANNEL=python_package -e CUA_DRIVER_RS_TELEMETRY_ENABLED=0 ${vpsContainerName("bridge-test")} ` +

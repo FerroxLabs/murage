@@ -95,3 +95,23 @@ describe("NOLIMITS-KEY-TEXT Part A rows", () => {
     expect(sensitiveNameRow("config.toml")).toBeNull();
   });
 });
+
+// Exercise an actual mkdtemp suffix and the config filename used by the launcher.
+it("holds generated Copilot launch credentials at the approval boundary", async () => {
+  const { CopilotMcpConfig } = await import("../server/drivers/acp/copilot-mcp-config.ts");
+  const files = await CopilotMcpConfig.create();
+  try {
+    const path = files.prepare("approval-fixture", []);
+    expect(sensitivePathRow(path, false)).toBe("murage-copilot-mcp");
+    expect(sensitiveNameRow(path)).toBe("murage-copilot-mcp");
+    for (const text of [path, `cat ${path}`, `printf x > ${path}`]) expect(looksSensitive(text)).toBe(true);
+  } finally { await files.dispose(); }
+});
+
+it('protects scoped Copilot launcher credentials across supported temporary roots', () => {
+  for (const path of ['/tmp/murage-copilot-mcp-Ab12Cd/012345.json', 'C:\\Temp\\murage-copilot-mcp-Ab12Cd\\012345.json']) {
+    expect(sensitivePathRow(path, false)).toBe('murage-copilot-mcp');
+    expect(sensitiveNameRow(path)).toBe('murage-copilot-mcp');
+    expect(looksSensitive(`cat ${path}`)).toBe(true);
+  }
+});

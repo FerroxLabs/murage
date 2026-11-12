@@ -339,8 +339,9 @@ describe("MARKS r12 mutation witnesses", () => {
     expect(alwaysAskCommand("dd if=/home/tester of=./x", "/w")).toBeNull();
   });
   it("M-R10-inline inline code the family scan reads is no doubt", () => expect(alwaysAskCommand(`python3 -c 'import os; os.system("ls")'`, "/w")).toBeNull());
-  it("M-R11-unseen-lane an unseen script on a marked lane keeps the reader's card", () =>
-    expect(verdict("bash ./build.sh", "/w", { outsideRead: ["interpreter"] } as Partial<AutoContext>)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" }));
+  // NOLIM 1.0.19 (N1): a marked turn is not read by the finalizer; the owner's No limits turn runs an unseen script
+  it("M-R11-unseen-lane an unseen script on a marked lane runs for the owner's No limits turn", () =>
+    expect(verdict("bash ./build.sh", "/w", { outsideRead: ["interpreter"] } as Partial<AutoContext>)).toMatchObject({ source: "no-limits", rule: "n1=unreadable" }));
   it("M-R1-program awk system() runs a program", () => expect(reason(`awk 'BEGIN{system("ls")}'`)).toBe("tokenizer"));
   it("M-R1-path touch out with no fixed folder doubts", () => expect(alwaysAskCommand("touch out")?.doubt).toBe("value-path"));
   it("M-R1-fold a drive root in capitals is a drive root", () => denied("touch C:/")); // FIX A migration (N3): was doubt value-path

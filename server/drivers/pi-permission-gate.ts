@@ -31,6 +31,14 @@ import { lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { posix, win32 } from "node:path";
 
+// @inline begin shared/flux-route.ts:registerBusyloopPayloadSite
+// Keep the source inventory's pure identity marker without a Murage import.
+function registerBusyloopPayloadSite<T>(kind: "read" | "classify", payload: T): T {
+  void kind;
+  return payload;
+}
+// @inline end shared/flux-route.ts:registerBusyloopPayloadSite
+
 // @inline begin shared/scan-limits.ts
 const GATE_MESSAGE_BYTES = 16 * 1024 * 1024;
 const WALK_CACHE_MS = 10_000;
@@ -49,6 +57,8 @@ interface SensitivePathRow {
   /** Claude `permissions.ask` Read rules for this row: in-project rows
    * relative, home rows as `~/`. */
   read: readonly string[];
+  /** Additional named leaves/roots for unknown-cwd writes; never a filesystem scan. */
+  cwdSuffixes?: readonly string[];
   /** Claude `permissions.ask` Bash text rules for the same names. */
   bash: readonly string[];
 }
@@ -62,6 +72,7 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   },
   {
     id: "ssh",
+    cwdSuffixes: ["*id_rsa*", "*id_ed25519*", "*authorized_keys*"],
     re: /\.ssh[\\/]|id_rsa|id_ed25519|authorized_keys/i,
     read: ["~/.ssh/**"],
     bash: ["*.ssh/*", "*id_rsa*", "*id_ed25519*", "*authorized_keys*"],
@@ -105,6 +116,7 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   // Rule 35: the Windows spellings, rows of their own.
   {
     id: "windows-credential-files",
+    cwdSuffixes: ["application_default_credentials.json"],
     // 1.0.10 fix round (Grok High): gcloud's POSIX folder too, and its application default credentials by name
     re: /(^|[\s\\/"'])_(netrc|npmrc)\b|\.azure[\\/]|appdata[\\/]roaming[\\/](?:gcloud|npm[\\/]etc)[\\/]|[\\/]npm[\\/]etc[\\/]npmrc\b|\.config[\\/]gcloud(?:[\\/]|$|["'\s])|application_default_credentials\.json|[\\/]login data\b/i,
     read: ["~/_netrc", "~/_npmrc", "~/.azure/**", "~/AppData/Roaming/gcloud/**", "~/.config/gcloud/**", "~/AppData/Roaming/npm/etc/**", "**/Login Data"],
@@ -159,11 +171,18 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     read: ["**/murage-exec*/**", "**/murage-exec*"],
     bash: ["*murage-exec*"],
   },
+  {
+    id: "murage-copilot-mcp",
+    re: /murage-copilot-mcp(-[0-9A-Za-z]+)?([\\/]|$|["'\s])/i,
+    read: ["**/murage-copilot-mcp*/**", "**/murage-copilot-mcp*"],
+    bash: ["*murage-copilot-mcp*"],
+  },
   // 1.0.3 (hook self-guard): the hook programs Murage writes for an engine and
   // the folders they live in (DATA_DIR/native/antigravity-relay, -ask, -scope
   // and codex-scope). The engine re-reads them on every call, so a write to one
   // would replace the guard that judges every later call.
   // 1.0.10: native/hermes-ask (the Hermes ask hook and its overlay config): a bot editing the overlay could remove Murage's ask hook.
+  // No limits: no card; hook-canon.ts checks and restores these files before every use.
   {
     id: "murage-engine-hooks",
     re: /(?<![\w.-])(?:(?:antigravity-(?:relay|ask|scope)|codex-scope|hermes-ask)[. ]*(?:[\\/:]|$|["'\s;|&)>`])|murage-agy-relay|murage-hook\.(?:mjs|cmd|env)\b|ask-hook-[\w.-]*\.cjs\b)/i,
@@ -184,6 +203,7 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   // `plugins::$DATA`): Win32 reads those as the folder (lanes/release103/SG-WIN-PATHTRICKS.md), so the row does too.
   {
     id: "agy-workspace-hooks",
+    cwdSuffixes: [".agents", ".agent", "_agents", "_agent"],
     re: /(?<![\w.-])[._]agents?[\\/](?:hooks\.json|plugins\.json|(?:plugins|agents)[. ]*(?:[\\/:]|$|["'\s;|&)>`]))|(?<=^|[\s"'=\\/])[._]agents?(?:\/|\\(?!["']))(?=$|["'\s;|&)>])|(?<=^|[\s=\\/])\.agents?(?=$|[\r\n"']|[ \t]*[;|&>)])|(?<=(?:^|[\s=])["'])\.agents?(?=["'](?:$|[\r\n]|[ \t]*(?:[;|>]|&&)))|(?<=\(["'])\.agents?(?=["']\))|(?<=[ \t=]["'])_agents?(?=["'](?:$|[\r\n]|[ \t]*(?:[;|>]|&&)))|(?<=^|[\s=\\/])_agents?(?=$|[\r\n"']|[ \t]*(?:[;|>]|&&))|(?<=["'])[._]agents?["'][ \t]*,[ \t]*["'](?:hooks\.json|plugins\.json|plugins|agents)["']/i,
     ancestor: /(?<![\w.-])[._]agents?[\\/](?:hooks\.json|plugins\.json|(?:plugins|agents)[. ]*(?:[\\/:]|$|["'\s;|&)>`]))/i,
     read: [".agents/hooks.json", ".agent/hooks.json", "_agents/hooks.json", "_agent/hooks.json", ".agents/plugins.json", ".agent/plugins.json", "_agents/plugins.json", "_agent/plugins.json", ".agents/plugins/**", ".agent/plugins/**", "_agents/plugins/**", "_agent/plugins/**", ".agents/agents/**", ".agent/agents/**", "_agents/agents/**", "_agent/agents/**"],
@@ -846,12 +866,9 @@ export const GATE_UNASKED: ReadonlyArray<readonly [string, readonly string[]]> =
     "phone_contacts_search", "phone_contacts_get", "phone_location_get",
     "phone_alarm_set", "phone_timer_set", "phone_text_compose", "phone_call_dial",
   ]],
-  // native HighLevel, read only (a test pins them to HIGHLEVEL_READ_TOOL_NAMES and HIGHLEVEL_HELPER_NAMES through OWN_UNASKED)
+  // Family calls always reach the HighLevel host for operation-level grant and approval checks.
   ["own:highlevel", [
-    "HIGHLEVEL_SEARCH_CONTACTS", "HIGHLEVEL_GET_CONTACT", "HIGHLEVEL_LIST_NOTES", "HIGHLEVEL_LIST_TASKS",
-    "HIGHLEVEL_LIST_PIPELINES", "HIGHLEVEL_SEARCH_OPPORTUNITIES", "HIGHLEVEL_GET_OPPORTUNITY", "HIGHLEVEL_SEARCH_CONVERSATIONS",
-    "HIGHLEVEL_READ_CONVERSATION", "HIGHLEVEL_LIST_CALENDARS", "HIGHLEVEL_LIST_EVENTS", "HIGHLEVEL_GET_LOCATION",
-    "HIGHLEVEL_LIST_CONNECTIONS", "HIGHLEVEL_ACTION_STATUS",
+    "HIGHLEVEL_CONTACTS", "HIGHLEVEL_OPPORTUNITIES", "HIGHLEVEL_CONVERSATIONS", "HIGHLEVEL_CALENDARS", "HIGHLEVEL_AUTOMATIONS", "HIGHLEVEL_LOCATION", "HIGHLEVEL_USERS", "HIGHLEVEL_FORMS", "HIGHLEVEL_PAYMENTS", "HIGHLEVEL_SOCIAL", "HIGHLEVEL_BLOGS", "HIGHLEVEL_MEDIA", "HIGHLEVEL_DOCUMENTS", "HIGHLEVEL_FUNNELS", "HIGHLEVEL_COURSES", "HIGHLEVEL_SAAS", "HIGHLEVEL_SNAPSHOTS", "HIGHLEVEL_LIST_CONNECTIONS", "HIGHLEVEL_ACTION_STATUS"
   ]],
 ];
 function unaskedPair(mountId: string | undefined, tool: string): boolean {
@@ -1055,24 +1072,107 @@ function allowedKeys(tool: string, original: Record<string, unknown> | undefined
  *  environment, never this. */
 const GATE_SLOT = Symbol.for("murage.piGate");
 
+// @inline begin shared/no-limits-visible-wipe.ts
+type VisibleWipeRule = 'delete-root'|'delete-home'|'delete-system-folder'|'disk-erase'|'fork-bomb';
+function visibleWipe(text:string, home:string, depth=0):VisibleWipeRule|null {
+ if(depth>8)return null;
+ const commands:string[][]=[];let words:string[]=[],word='',quote='',started=false;
+ const endWord=()=>{if(started){words.push(word);word='';started=false;}};
+ const endCommand=()=>{endWord();if(words.length)commands.push(words);words=[];};
+ for(let i=0;i<text.length;i++){
+  const c=text[i]!;
+  if(quote){
+   if(c===quote){quote='';continue;}
+   if(c==='\\'&&quote==='"'&&/[\\"$`]/.test(text[i+1]??'')){word+=text[++i]??'';continue;}
+   word+=c;continue;
+  }
+  if(c==='"'||c==="'"){quote=c;started=true;continue;}
+  if(c==='\\'){started=true;word+=text[++i]??'';continue;}
+  if(c==='#'&&!started){while(i<text.length&&text[i]!=='\n')i++;endCommand();continue;}
+  if(/[;\n|&]/.test(c)){endCommand();continue;}
+  if(/\s/.test(c)){endWord();continue;}
+  started=true;word+=c;
+ }
+ endCommand();
+ const normal=(path:string)=>{
+  path=path.replace(/^(?:~|\$HOME|\$\{HOME\})(?=\/|$)/,home).replaceAll('\\','/');
+  if(/[$*?`]/.test(path))return undefined;
+  if(!path.startsWith('/')&&!/^[A-Za-z]:\//.test(path))return undefined;
+  const parts:string[]=[];for(const p of path.split('/')){if(!p||p==='.')continue;if(p==='..')parts.pop();else parts.push(p);}
+  return (path.startsWith('/')?'/':'')+parts.join('/');
+ };
+ const system=/^(?:\/(?:etc|usr(?:\/local)?|bin|sbin|lib(?:32|64|exec)?|var|boot|System|Library|opt)|[A-Za-z]:\/(?:Windows(?:\/System32)?|Program Files(?: \(x86\))?))$/i;
+ for(let words of commands){
+  while(words.length&&/^(?:command|exec|sudo|doas|env)$/.test(words[0]!)){
+   const wrapper=words.shift()!;
+   while(words.length&&(words[0]!.startsWith('-')||wrapper==='env'&&/^\w+=/.test(words[0]!))){const option=words.shift()!;if(['-u','-g','-C','--user','--group','--chdir'].includes(option))words.shift();}
+  }
+  while(words.length&&/^\w+=/.test(words[0]!))words.shift();
+  const program=(words.shift()??'').split(/[\\/]/).at(-1)!.replace(/\.exe$/i,'').toLowerCase();
+  if(/^(?:bash|sh|dash|zsh|ksh|pwsh|powershell)$/.test(program)){
+   const at=words.findIndex(w=>/^-[^-]*c$|^-command$/i.test(w));
+   if(at>=0&&words[at+1]!==undefined){const hit=visibleWipe(words[at+1]!,home,depth+1);if(hit)return hit;}
+  }
+  if(/^(?:mkfs(?:\.[\w-]+)?|mke2fs|newfs|wipefs|clear-disk|format-volume)$/.test(program))return 'disk-erase';
+  if(program==='dd'&&words.some(w=>/^of=\/dev\/(?!null$|zero$|random$|urandom$|stdout$)/.test(w)))return 'disk-erase';
+  if(program==='diskutil'&&words.some(w=>/^erase(?:disk|volume)$/i.test(w)))return 'disk-erase';
+  if(/^(?:rm|rmdir|rimraf|remove-item|ri|rd|deltree)$/.test(program)){
+   const recursive=/^(?:rimraf|deltree)$/.test(program)||words.some(w=>/^-[^-]*r|^--recursive$|^-recurse$|^\/s$/i.test(w));
+   if(!recursive)continue;
+   for(const operand of words.filter(w=>w==='/'||!w.startsWith('-'))){
+    const path=normal(operand);if(path===undefined)continue;
+    if(path==='/'||/^[A-Za-z]:$/.test(path))return 'delete-root';
+    if(path===normal(home))return 'delete-home';
+    if(system.test(path))return 'delete-system-folder';
+   }
+  }
+  // Interpreter source is inspected only in an actual interpreter code slot.
+  if(/^(?:python[\d.]*|node|ruby|perl)$/.test(program)){
+   const at=words.findIndex(w=>/^-c$|^-e$|^--eval$/.test(w)),code=at>=0?words[at+1]:undefined;
+   if(code)for(const match of code.matchAll(/(?:rmtree|rmSync|removeAll|rmdirSync)\s*\(\s*(['"])([^'"\n]+)\1/g)){
+    const path=normal(match[2]!);if(path==='/')return 'delete-root';if(path===normal(home))return 'delete-home';if(path&&system.test(path))return 'delete-system-folder';
+   }
+  }
+ }
+ if(/^\s*:\s*\(\s*\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:\s*$/.test(text))return 'fork-bomb';
+ return null;
+}
+// @inline end shared/no-limits-visible-wipe.ts
+
 export default function piPermissionGate(pi: GateApi, options: GateOptions = {}): void {
   const hooks = options.hooks ?? DEFAULT_HOOKS;
   const now = options.now ?? Date.now;
   const slot = globalThis as Record<symbol, unknown>;
-  const kept = slot[GATE_SLOT] as { secret?: unknown; only?: unknown } | undefined;
+  const kept = slot[GATE_SLOT] as { secret?: unknown; only?: unknown; noLimits?: boolean } | undefined;
   const fromEnv = process.env.MURAGE_PI_GATE ?? "";
   const secret = fromEnv || (typeof kept?.secret === "string" ? kept.secret : "");
   const only = (fromEnv ? process.env.MURAGE_PI_GATE_ONLY : typeof kept?.only === "string" ? kept.only : undefined) || undefined;
+  const noLimits=process.env.MURAGE_PI_NO_LIMITS==='1'||(!fromEnv&&kept?.noLimits===true);
+  delete process.env.MURAGE_PI_NO_LIMITS;
   delete process.env.MURAGE_PI_GATE;
   delete process.env.MURAGE_PI_GATE_ONLY;
+  let fallbackNoted=false;
+  const localWipeOnly=(event:GateEvent,_ctx:GateContext):GateBlock|undefined=>{
+    if(!fallbackNoted){fallbackNoted=true;console.warn('[no-limits] Pi broker UI unavailable; continuing with the local wipe check');}
+    try{
+      const entry=mcpTable()?.get(event.toolName);
+      const tool=entry?entry.mcpTool:event.toolName;
+      const input=event.input as Record<string,unknown>|undefined;
+      const text=input?.command??input?.code??input?.script;
+      const hit=typeof text==='string'?visibleWipe(text,homedir()):null;
+      const deletePath=/^(?:delete|delete_file|remove_file)$/.test(tool)?input?.path:undefined;
+      if(hit||typeof deletePath==='string'&&visibleWipe('rm -rf '+JSON.stringify(deletePath),homedir()))return block('This action names a wipe target. Ask the owner before running it.');
+    }catch{ /* An unread action is not a named wipe. */ }
+    return undefined;
+  };
   // Murage loads the gate only on a turn that asks, so a gate with no secret
   // anywhere cannot ask the owner: it blocks every call instead of letting
   // pi run its tools unasked.
   if (!secret) {
-    pi.on("tool_call", async () => block(PI_GATE_UNCHECKED));
+    pi.on("tool_call", async (event,ctx) => noLimits?localWipeOnly(event,ctx):block(PI_GATE_UNCHECKED));
     return;
   }
-  slot[GATE_SLOT] = { secret, only };
+  slot[GATE_SLOT] = { secret, only, noLimits };
   const pending = new Map<string, number>();
   let filterTrusted = false;
   let staleNote: string | undefined;
@@ -1108,13 +1208,14 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
   }
 
   const ask = async (event: GateEvent, ctx: GateContext, entry?: McpToolEntry, held?: string): Promise<GateBlock | undefined> => {
-    if (!ctx.hasUI) return block(PI_GATE_NO_UI);
+    if ((!ctx.hasUI || typeof ctx.ui?.editor!=='function') && !noLimits) return block(PI_GATE_NO_UI);
+    if(noLimits&&typeof ctx.ui?.editor!=='function')return localWipeOnly(event,ctx);
     const tool = entry ? entry.piName : event.toolName;
     const note = staleNote;
     staleNote = undefined;
     const answer = await ctx.ui.editor(`${PI_GATE_TITLE_PREFIX}${secret}`, piGateMessage(tool, isObject(event.input) ? event.input : undefined, entry, note, held));
     if (typeof answer !== "string" || !answer.trim()) return block(PI_GATE_NOT_ALLOWED);
-    const parsed: unknown = JSON.parse(answer);
+    const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(answer));
     if (!isObject(parsed)) return block(PI_GATE_NOT_ALLOWED);
     if (parsed.deny === true) return block(typeof parsed.reason === "string" && parsed.reason ? parsed.reason.slice(0, 2_000) : PI_GATE_NOT_ALLOWED);
     // NOLIMITS-MEANS-IT 3.4: the server never saw this call whole, so there is nothing to echo. Allow means run what is
@@ -1196,6 +1297,7 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
 
   const decide = async (event: GateEvent, ctx: GateContext): Promise<GateBlock | undefined> => {
     sweep(false);
+    if(noLimits)return ask(event,ctx,mcpTable()?.get(event.toolName));
     const name = event.toolName;
     const own = typeof name === "string" && Object.hasOwn(OWN_ROWS, name);
     const entry = typeof name === "string" ? mcpTable()?.get(name) : undefined;
@@ -1216,7 +1318,7 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
     try {
       return await decide(event, ctx);
     } catch {
-      return block(PI_GATE_UNCHECKED);
+      return noLimits?localWipeOnly(event,ctx):block(PI_GATE_UNCHECKED);
     }
   });
 }

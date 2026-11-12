@@ -1,0 +1,83 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "int1019 base backlog round 2 (Sonnet fixes)",
+  "date": "2026-11-11",
+  "base": "9955459fc",
+  "scope": "int1019-base-backlog-r2-hi",
+  "strings": {
+    "hi:gatewayBusy.repeated.title": {
+      "text": "{engine} इस अनुरोध को बार-बार ठुकरा रहा है। आपका संदेश सहेजा गया है।",
+      "en": "{engine} keeps rejecting this request. Your message is saved. Try again or use another AI.",
+      "verdict": "fail",
+      "note": "Missing the next step. Fix: {engine} इस अनुरोध को बार-बार ठुकरा रहा है। आपका संदेश सहेजा गया है। फिर कोशिश करें या दूसरा AI इस्तेमाल करें।"
+    },
+    "hi:gatewayBusy.tryAgain": {
+      "text": "फिर कोशिश करें",
+      "en": "Try again",
+      "verdict": "pass"
+    },
+    "hi:gatewayBusy.useAnotherAI": {
+      "text": "दूसरा AI इस्तेमाल करें",
+      "en": "Use another AI",
+      "verdict": "pass"
+    },
+    "hi:gatewayBusy.getHelp": {
+      "text": "मदद लें",
+      "en": "Get help",
+      "verdict": "pass"
+    },
+    "hi:engine.toolLimit.notice": {
+      "text": "इस अनुरोध के लिए कुछ टूल छोड़ दिए गए: यह AI अधिकतम {limit} टूल स्वीकार करता है।",
+      "en": "Some tools were left out for this request: this AI accepts at most {limit} tools.",
+      "verdict": "pass"
+    },
+    "hi:engine.toolLimit.catalogUnknown": {
+      "text": "Murage इस AI की टूल सूची की पुष्टि नहीं कर सका। यह जाँचा नहीं जा सका कि यह AI कितने टूल स्वीकार करता है, इसलिए संदेश नहीं भेजा गया।",
+      "en": "Murage could not confirm this AI's tool list. Your message was not sent because Murage could not check how many tools this AI can accept. Choose another AI and try again.",
+      "verdict": "fail",
+      "note": "Missing the next step. Fix: Murage इस AI की टूल सूची की पुष्टि नहीं कर सका। यह जाँचा नहीं जा सका कि यह AI कितने टूल स्वीकार करता है, इसलिए संदेश नहीं भेजा गया। दूसरा AI चुनें और फिर कोशिश करें।"
+    },
+    "hi:engine.toolLimit.catalogChanged": {
+      "text": "Murage इस अनुरोध की तैयारी कर रहा था, तभी टूल सूची बदल गई। Murage टूल की संख्या को इस AI की सीमा के भीतर नहीं रख सका।",
+      "en": "The tool list changed while Murage was preparing your request. Murage could not fit the list within this AI's tool limit. Choose another AI and try again.",
+      "verdict": "fail",
+      "note": "Missing the next step. Fix: Murage इस अनुरोध की तैयारी कर रहा था, तभी टूल सूची बदल गई। Murage टूल की संख्या को इस AI की सीमा के भीतर नहीं रख सका। दूसरा AI चुनें और फिर कोशिश करें।"
+    },
+    "hi:engine.submission.afterSubmission": {
+      "text": "आपका मूल संदेश भेज दिया गया था। भेजने से पहले की जाँच पास नहीं हुई, इसलिए Murage इसे फिर नहीं भेज सका। इसे अपने आप दोबारा नहीं भेजा गया। दोबारा कोशिश करने से पहले बातचीत देख लें।",
+      "en": "Your original message was sent. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "pass"
+    },
+    "hi:engine.submission.afterSubmissionUncertain": {
+      "text": "हो सकता है Murage ने आपका पिछला संदेश भेजना शुरू कर दिया हो। भेजने से पहले की जाँच पास नहीं हुई, इसलिए Murage इसे फिर नहीं भेज सका। इसे अपने आप दोबारा नहीं भेजा गया। दोबारा कोशिश करने से पहले बातचीत देख लें।",
+      "en": "Murage may have started sending your earlier message. Murage could not send it again because the checks before sending did not pass. It was not sent again automatically. Check the conversation before trying again.",
+      "verdict": "pass"
+    },
+    "hi:acp.defaultThinking": {
+      "text": "AI की डिफ़ॉल्ट सेटिंग",
+      "en": "AI's default setting",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.job.brief.sub": {
+      "text": "मैं हर सुबह आपको एक छोटे पन्ने में बताता हूँ कि किन बातों पर पहले ध्यान देना है। आपके कैलेंडर और ईमेल कनेक्ट होने के बाद मैं उनका इस्तेमाल करता हूँ।",
+      "en": "Each morning, I give you one short page of what needs your attention first. I use your calendar and email once you connect them.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.job.notes.sub": {
+      "text": "अपने नोट्स पेस्ट करें। मैं अगले कदम चुनता हूँ और उन कदमों को पहले रखता हूँ जिनकी तारीख़ है या जिनका कोई इंतज़ार कर रहा है।",
+      "en": "Paste in your notes. I pick out the next steps and put those with a date or someone waiting for them first.",
+      "verdict": "pass"
+    },
+    "hi:ux.cloud.firstRun.bookmarkDoor": {
+      "text": "इस पेज को बुकमार्क करें ताकि आप वापस आ सकें। आप कभी भी {site}/home/cloud पर वापस आ सकते हैं।",
+      "en": "Bookmark this page so you can come back. You can always return at {site}/home/cloud.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

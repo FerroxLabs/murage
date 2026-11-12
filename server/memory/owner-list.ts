@@ -427,6 +427,9 @@ async function keyedSearch(db:DatabaseSync,input:OwnerListInput,scopes:string[]|
         const bound=await slice(handle,"index",rangeSql,[top]);
         const lo=Math.max(floor,bound.length?Number(bound[0]!.ak):0);
         let cur=top;
+        // A rowid bound does not seek in an FTS5 word query: a range holding no row still steps the word's whole list (65 ms at 300k
+        // rows). The content table answers "is any row here" by its key, so an empty range costs a lookup, never a pass over the list.
+        if(!(await slice(handle,"index",`SELECT 1 AS n FROM ${table}_content WHERE id>=? AND id<=? LIMIT 1`,[lo,cur])).length){examinedBelow=lo;if(lo<=floor)exhausted=true;else top=lo-1;continue walk;}
         for(;;){
           const rows=await slice(handle,"index",stepSql,[expression,lo,cur,...baseArgs]);
           steppedRows+=rows.length;

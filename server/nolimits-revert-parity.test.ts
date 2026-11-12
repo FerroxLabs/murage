@@ -13,7 +13,7 @@ vi.resetModules();
 const { autoVerdict } = await import("./auto-approve.ts");
 
 const NO_LIMITS = { id: "owned", autoApprove: true, fullAccess: true, noLimits: true };
-// 1.0.20 (NOLIMITS-MEANS-IT slice 2): today's No limits, the 1.0.20 lane off (its rows: nolimits-means-it-1020.test.ts)
+// Sean 2026-11-12: executable wipes card; literal quoted data runs.
 const OWNER = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, noPreRunSeamAtNoLimits: true } as const;
 const verdict = (cmd: string) => autoVerdict(NO_LIMITS, "Bash", cmd, { ...OWNER, commandText: cmd });
 
@@ -59,8 +59,6 @@ describe("PowerShell and cmd payloads keep their card (T5, T6, R1)", () => {
 });
 
 describe("heredoc bodies the reader took as ended keep their card (T9, R3)", () => {
-  it.each([
-    "cat <<EOF\nEOF\r\n# $(rm -rf /)\nEOF\n",
-    "cat <<'EOF'\n EOF\n$(rm -rf /)\nEOF\necho \"",
-  ])("%j", (cmd) => expect(verdict(cmd).approve).toBeNull());
+  it("unquoted heredoc expansion retains its executable wipe",()=>expect(verdict("cat <<EOF\nEOF\r\n# $(rm -rf /)\nEOF\n").approve).toBeNull());
+  it("an unterminated quoted heredoc remains literal data",()=>expect(verdict("cat <<'EOF'\n EOF\n$(rm -rf /)\nEOF\necho \"").approve).toBeTruthy());
 });

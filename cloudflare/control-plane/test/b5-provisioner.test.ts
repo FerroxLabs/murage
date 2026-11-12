@@ -2,18 +2,26 @@
 // B5 provisioner: build host and Vultr REST shapes against an in-memory fake cloud. No network, no credentials.
 import { env } from "cloudflare:workers";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { provisionerConfig, provisionerSchema, ladderFor, DEFAULT_LADDERS } from "../src/b5-config";
-import { chooseRung, createLiveProvider, hetznerAdapter, HostError, vultrAdapter, type HostFetch } from "../src/b5-provisioner";
+import { isStagingEnv, provisionerConfig, provisionerSchema, ladderFor, DEFAULT_LADDERS } from "../src/b5-config";
+import { CAPACITY_LINE } from "../src/self-service";
+import { chooseRung as chooseRungRaw, createLiveProvider as createLiveProviderRaw, hetznerAdapter, HostError, vultrAdapter, type HostFetch } from "../src/b5-provisioner";
+import { verifyImageForUse, type ImageTrust } from "../src/image-signature";
+import { CHECK_SHA, IMG_KINDS, MAIN_KEY, PUBKEY, SIG_DEPS, SIG_NOW, SIG_TRUST, createLiveProvider, signEntry, verifiedImage, withImages } from "./image-sig-fixture";
 import { providerAnswered } from "../src/b3-control";
 import { isNotSent } from "../src/dispatch-ledger";
+import { homeOnUnenrolledPoolServer, isUnenrolledPoolServer } from "../src/pool-handoff";
 
-const IMAGES = { hetzner: { x86: "111", arm: "222" }, vultr: { x86: "snap-vultr-1" } };
+const IMAGES = { hetzner: { x86: "452016490", arm: "451260442" }, vultr: { x86: "snap-vultr-1" } };
 const VULTR = { sshKeyIds: ["vk-1"], firewallGroupId: "fwg-home", quarantineFirewallGroupId: "fwg-quar" };
-const cfgJson = (extra: Record<string, unknown> = {}) => JSON.stringify({ images: IMAGES, quarantineFirewallId: 77, vultr: VULTR, ...extra });
-const e = (extra?: Record<string, unknown>): Env => ({ ...env, B5_PROVISIONER_CONFIG: cfgJson(extra), HCLOUD_TOKEN: "hz-test-token", VULTR_API_KEY: "vu-test-key" } as Env);
+const VERIFIED = { kind: "customer", verifiedBy: "hz-live-rescue", checkVersion: "1", verifiedAt: "20261020T101500Z" };
+const IMAGE_KINDS = { ...IMG_KINDS };
+/** chooseRung with a gate that accepts every image: these tests are about stock, locations and the ladder. The real gate has its own tests below. */
+const chooseRung = (c: Parameters<typeof chooseRungRaw>[0], plan: string, a: Parameters<typeof chooseRungRaw>[2], verify: Parameters<typeof chooseRungRaw>[3] = async () => ({})) => chooseRungRaw(c, plan, a, verify);
+const cfgJson = (extra: Record<string, unknown> = {}) => JSON.stringify({ images: IMAGES, imageKinds: IMAGE_KINDS, quarantineFirewallId: 77, vultr: { ...VULTR, sshKeyIds: [] }, ...extra });
+const e = (extra?: Record<string, unknown>): Env => ({ ...env, MURAGE_ENV: "staging", B5_PROVISIONER_CONFIG: cfgJson(extra), HCLOUD_TOKEN: "hz-test-token", VULTR_API_KEY: "vu-test-key", B5_IMAGE_VERIFY_PUBKEY: PUBKEY } as Env);
 
 /** A tiny in-memory build host + Vultr. `stock` lists "provider:type:location" combos that are in stock. */
-function fakeCloud(stock: string[]) {
+function fakeCloud(stock: string[], disks: { image?: Record<string, number>; type?: Record<string, number>; tooBigAtCreate?: string[] } = {}) {
   const calls: { method: string; url: string; body: any }[] = [];
   const servers = new Map<string, any>(); const volumes = new Map<string, any>(); const snaps = new Map<string, any>();
   let n = 100;
@@ -28,7 +36,7 @@ function fakeCloud(stock: string[]) {
       if (p === "/v1/server_types") {
         const name = u.searchParams.get("name")!;
         const all = ["fsn1", "nbg1", "hel1", "ash", "hil", "sin"];
-        return j({ server_types: [{ name, locations: all.map((l) => ({ name: l, available: stock.includes(`hetzner:${name}:${l}`) })) }] });
+        return j({ server_types: [{ name, ...(disks.type?.[name] !== undefined ? { disk: disks.type[name] } : {}), locations: all.map((l) => ({ name: l, available: stock.includes(`hetzner:${name}:${l}`) })) }] });
       }
       if (p === "/v1/volumes" && method === "POST") { const id = ++n; const v = { id, server: null, location: { name: body.location }, labels: body.labels, size: body.size }; volumes.set(String(id), v); return j({ volume: v }, 201); }
       if (p === "/v1/volumes") return j({ volumes: [...volumes.values()].filter((v) => match(v.labels)) });
@@ -39,6 +47,7 @@ function fakeCloud(stock: string[]) {
       if (m) { volumes.get(m[1]).server = m[2] === "attach" ? body.server : null; return j({ action: {} }); }
       if (p === "/v1/servers" && method === "POST") {
         const key = `hetzner:${body.server_type}:${body.location}`;
+        if (disks.tooBigAtCreate?.includes(body.server_type)) return j({ error: { code: "service_error", message: "image disk is bigger than server type disk" } }, 422);
         if (!stock.includes(key)) return j({ error: { code: "resource_unavailable" } }, 412);
         const id = ++n; const s = { id, status: "initializing", labels: body.labels, public_net: { ipv4: { ip: `203.0.113.${id % 250}` } } };
         servers.set(String(id), s); for (const v of body.volumes) volumes.get(String(v)).server = id; return j({ server: s }, 201);
@@ -48,9 +57,10 @@ function fakeCloud(stock: string[]) {
       if (m && method === "GET") return j({ server: servers.get(m[1]) });
       if (m && method === "DELETE") { servers.delete(m[1]); return j({}); }
       m = /^\/v1\/servers\/(\d+)\/actions\/create_image$/.exec(p);
-      if (m) { const id = ++n; snaps.set(String(id), { id, labels: body.labels }); return j({ image: { id } }); }
+      if (m) { const id = ++n; snaps.set(String(id), { id, labels: body.labels }); return j({ image: { id }, action: { id: 9000 + id } }); }
       if (p === "/v1/images") return j({ images: [...snaps.values()].filter((s) => match(s.labels)) });
       m = /^\/v1\/images\/(\d+)$/.exec(p);
+      if (m && method === "GET" && ["452016490", "451260442"].includes(m[1])) return j({ image: { id: Number(m[1]), type: "snapshot", status: "available", ...(disks.image?.[m[1]] !== undefined ? { disk_size: disks.image[m[1]] } : {}) } });
       if (m && method === "DELETE") { snaps.delete(m[1]); return j({}); }
       if (/^\/v1\/(servers\/\d+|firewalls\/\d+)\/actions\//.test(p)) return j({ action: {} });
     }
@@ -83,12 +93,18 @@ function fakeCloud(stock: string[]) {
 }
 const adapters = (f: HostFetch) => ({ hetzner: hetznerAdapter("t", { sshKeyIds: [], firewallIds: [] }, f), vultr: vultrAdapter("k", {}, f) });
 const cfg = (extra?: Record<string, unknown>) => provisionerSchema.parse(JSON.parse(cfgJson(extra)));
+/** Ladders with a Vultr last rung, and the flag that lets them be walked (default off: customer homes are build host only). */
+const vultrLadders = { allowVultrCustomerHomes: true, ladders: {
+  starter: [{ provider: "hetzner", serverType: "cx23", arch: "x86" }, { provider: "hetzner", serverType: "cax11", arch: "arm" }, { provider: "vultr", serverType: "vc2-2c-4gb", arch: "x86" }],
+  pro: [{ provider: "hetzner", serverType: "cax21", arch: "arm" }, { provider: "hetzner", serverType: "cx33", arch: "x86" }, { provider: "vultr", serverType: "vc2-4c-8gb", arch: "x86" }],
+  max: [{ provider: "hetzner", serverType: "cax21", arch: "arm" }, { provider: "hetzner", serverType: "cx33", arch: "x86" }, { provider: "vultr", serverType: "vc2-4c-8gb", arch: "x86" }],
+} };
 
 describe("ladder", () => {
   it("is exactly the approved order and never contains CPX", () => {
-    expect(DEFAULT_LADDERS.starter.map((r) => `${r.provider}:${r.serverType}`)).toEqual(["hetzner:cx23", "hetzner:cax11", "vultr:vc2-2c-4gb"]);
-    expect(DEFAULT_LADDERS.pro.map((r) => `${r.provider}:${r.serverType}`)).toEqual(["hetzner:cax21", "hetzner:cx33", "vultr:vc2-4c-8gb"]);
-    expect(DEFAULT_LADDERS.max.map((r) => `${r.provider}:${r.serverType}`)).toEqual(["hetzner:cax21", "hetzner:cx33", "vultr:vc2-4c-8gb"]);
+    expect(DEFAULT_LADDERS.starter.map((r) => `${r.provider}:${r.serverType}`)).toEqual(["hetzner:cx23", "hetzner:cax11"]);
+    expect(DEFAULT_LADDERS.pro.map((r) => `${r.provider}:${r.serverType}`)).toEqual(["hetzner:cax21", "hetzner:cx33"]);
+    expect(DEFAULT_LADDERS.max.map((r) => `${r.provider}:${r.serverType}`)).toEqual(["hetzner:cax21", "hetzner:cx33"]);
     for (const l of Object.values(DEFAULT_LADDERS)) for (const r of l) expect(r.serverType).not.toMatch(/^cpx/);
   });
   it("refuses a CPX type even when an operator configures one", () => {
@@ -98,16 +114,16 @@ describe("ladder", () => {
   it("Starter takes CX23 in the first stocked location, in location order", async () => {
     const cloud = fakeCloud(["hetzner:cx23:nbg1", "hetzner:cx23:hel1", "hetzner:cax11:fsn1"]);
     const { choice, tried } = await chooseRung(cfg(), "starter", adapters(cloud.fetcher));
-    expect(choice).toMatchObject({ provider: "hetzner", serverType: "cx23", location: "nbg1", arch: "x86", image: "111" });
+    expect(choice).toMatchObject({ provider: "hetzner", serverType: "cx23", location: "nbg1", arch: "x86", image: "452016490" });
     expect(tried).toEqual([{ provider: "hetzner", serverType: "cx23", arch: "x86", result: "chosen" }]);
   });
   it("Starter falls to CAX11 ARM when CX23 is sold out, then to Vultr, and records every rung tried", async () => {
     let cloud = fakeCloud(["hetzner:cax11:hel1"]);
     let r = await chooseRung(cfg(), "starter", adapters(cloud.fetcher));
-    expect(r.choice).toMatchObject({ serverType: "cax11", arch: "arm", location: "hel1", image: "222" });
+    expect(r.choice).toMatchObject({ serverType: "cax11", arch: "arm", location: "hel1", image: "451260442" });
     expect(r.tried.map((t) => t.result)).toEqual(["no_stock", "chosen"]);
     cloud = fakeCloud(["vultr:vc2-2c-4gb:ams", "vultr:vc2-2c-4gb:fra"]);
-    r = await chooseRung(cfg(), "starter", adapters(cloud.fetcher));
+    r = await chooseRung(cfg(vultrLadders), "starter", adapters(cloud.fetcher));
     expect(r.choice).toMatchObject({ provider: "vultr", serverType: "vc2-2c-4gb", location: "fra", image: "snap-vultr-1" });
     expect(r.tried.map((t) => t.result)).toEqual(["no_stock", "no_stock", "chosen"]);
   });
@@ -115,11 +131,11 @@ describe("ladder", () => {
     for (const plan of ["pro", "max"]) {
       expect((await chooseRung(cfg(), plan, adapters(fakeCloud(["hetzner:cax21:fsn1", "hetzner:cx33:fsn1"]).fetcher))).choice).toMatchObject({ serverType: "cax21", arch: "arm" });
       expect((await chooseRung(cfg(), plan, adapters(fakeCloud(["hetzner:cx33:nbg1"]).fetcher))).choice).toMatchObject({ serverType: "cx33", location: "nbg1" });
-      expect((await chooseRung(cfg(), plan, adapters(fakeCloud(["vultr:vc2-4c-8gb:cdg"]).fetcher))).choice).toMatchObject({ provider: "vultr", serverType: "vc2-4c-8gb", location: "cdg" });
+      expect((await chooseRung(cfg(vultrLadders), plan, adapters(fakeCloud(["vultr:vc2-4c-8gb:cdg"]).fetcher))).choice).toMatchObject({ provider: "vultr", serverType: "vc2-4c-8gb", location: "cdg" });
     }
   });
   it("skips an ARM rung while the ARM image id is not configured, and fails closed when nothing is in stock", async () => {
-    const noArm = provisionerSchema.parse({ images: { hetzner: { x86: "111" }, vultr: { x86: "s" } } });
+    const noArm = provisionerSchema.parse({ images: { hetzner: { x86: "452016490" }, vultr: { x86: "s" } }, imageKinds: { "452016490": VERIFIED, s: VERIFIED } });
     const r = await chooseRung(noArm, "pro", adapters(fakeCloud(["hetzner:cax21:fsn1", "hetzner:cx33:hel1"]).fetcher));
     expect(r.choice).toMatchObject({ serverType: "cx33" });
     expect(r.tried[0]).toMatchObject({ serverType: "cax21", result: "no_image" });
@@ -133,10 +149,61 @@ describe("ladder", () => {
     expect(cfg().vultrRegions).toEqual(["fra", "ams", "cdg", "sto", "waw", "mad"]);
     // build host reports ash/hil/sin in stock: they are never chosen.
     const cloud = fakeCloud(["hetzner:cx23:ash", "hetzner:cx23:hil", "hetzner:cx23:sin", "vultr:vc2-2c-4gb:ewr", "vultr:vc2-2c-4gb:mad"]);
-    const r = await chooseRung(cfg(), "starter", adapters(cloud.fetcher));
+    const r = await chooseRung(cfg(vultrLadders), "starter", adapters(cloud.fetcher));
     expect(r.choice).toMatchObject({ provider: "vultr", location: "mad" }); // ewr (New Jersey) is in stock but never considered
     expect(r.tried[0].result).toBe("no_stock");
     expect(cloud.calls.some((c) => /regions\/ewr\//.test(c.url))).toBe(false);
+  });
+  it("opsSshFrom is refused unless CLOUD_CP0_STAGING=1", () => {
+    const ops = { opsSshFrom: ["95.216.244.213/32"] };
+    expect(() => provisionerConfig({ ...env, CLOUD_CP0_STAGING: undefined, B5_PROVISIONER_CONFIG: cfgJson(ops) } as unknown as Env)).toThrow("ops_ssh_staging_only");
+    expect(() => provisionerConfig({ ...env, CLOUD_CP0_STAGING: "0", B5_PROVISIONER_CONFIG: cfgJson(ops) } as unknown as Env)).toThrow("ops_ssh_staging_only");
+    expect(provisionerConfig({ ...env, CLOUD_CP0_STAGING: "1", B5_PROVISIONER_CONFIG: cfgJson(ops) } as unknown as Env).opsSshFrom).toEqual(ops.opsSshFrom);
+    expect(provisionerConfig({ ...env, CLOUD_CP0_STAGING: undefined, B5_PROVISIONER_CONFIG: cfgJson() } as unknown as Env).opsSshFrom).toEqual([]);
+  });
+  it("the signed-image gate in the ladder: a refused rung is skipped and recorded, and nothing unverified is ever chosen", async () => {
+    const gate = (trust: ImageTrust = SIG_TRUST, over: Env = e()) => (r: { provider: "hetzner" | "vultr"; image: string; arch: "x86" | "arm" }) =>
+      verifyImageForUse(over, cfg(), r, SIG_NOW, { fetch: withImages(async () => new Response("{}", { status: 500 })), trust, buildEnv: "production" });
+    const cloud = () => fakeCloud(["hetzner:cx23:fsn1", "hetzner:cax11:fsn1"]);
+    const ok = await chooseRungRaw(cfg(), "starter", adapters(cloud().fetcher), gate());
+    expect(ok.choice).toMatchObject({ image: "452016490", serverType: "cx23" });
+    // the x86 image is revoked: that rung is skipped with its reason, and the ARM rung is chosen
+    const skip = await chooseRungRaw(cfg(), "starter", adapters(cloud().fetcher), gate({ ...SIG_TRUST, revoked: ["452016490"] }));
+    expect(skip.choice).toMatchObject({ image: "451260442", arch: "arm" });
+    expect(skip.tried.map((t) => t.result)).toEqual(["image_refused:image_revoked", "chosen"]);
+    // both revoked: no_capacity carrying the reasons, and no server type was even asked about
+    const all = cloud();
+    const err = await chooseRungRaw(cfg(), "starter", adapters(all.fetcher), gate({ ...SIG_TRUST, revoked: ["452016490", "451260442"] })).catch((x) => x);
+    expect(err.message).toBe("no_capacity");
+    expect(err.tried.map((t: { result: string }) => t.result)).toEqual(["image_refused:image_revoked", "image_refused:image_revoked"]);
+    expect(all.calls.filter((c) => c.url.includes("/server_types"))).toHaveLength(0);
+    // an unsigned or unknown image never passes, whatever the stock
+    await expect(chooseRungRaw(cfg({ imageKinds: {} }), "starter", adapters(cloud().fetcher), (r) => verifyImageForUse(e(), { imageKinds: {} } as never, r, SIG_NOW,
+      { fetch: withImages(async () => new Response("{}", { status: 500 })), trust: SIG_TRUST, buildEnv: "production" }))).rejects.toThrow("no_capacity");
+    // a staging-ops-ssh image is refused by a production bundle
+    const ops = { ...IMG_KINDS, "452016490": { kind: "staging-ops-ssh" } };
+    const opsEnv = e({ imageKinds: ops });
+    const r2 = await chooseRungRaw(provisionerConfig(opsEnv), "starter", adapters(cloud().fetcher), (r) => verifyImageForUse(opsEnv, provisionerConfig(opsEnv), r, SIG_NOW,
+      { fetch: withImages(async () => new Response("{}", { status: 500 })), trust: SIG_TRUST, buildEnv: "production" }));
+    expect(r2.tried[0].result).toBe("image_refused:image_staging_only");
+    // Vultr is never verifiable, even when the config allows the rung
+    const vult = await chooseRungRaw(cfg(vultrLadders), "starter", adapters(fakeCloud(["vultr:vc2-2c-4gb:fra"]).fetcher), gate()).catch((x) => x);
+    expect(vult.message).toBe("no_capacity");
+    expect(vult.tried.filter((t: { provider: string }) => t.provider === "vultr").map((t: { result: string }) => t.result)).toEqual(["image_refused:image_vultr_unverifiable"]);
+    expect(isStagingEnv({ CLOUD_CP0_STAGING: "1" })).toBe(true);
+    for (const v of [undefined, "0", "true", ""]) expect(isStagingEnv({ CLOUD_CP0_STAGING: v })).toBe(false);
+  });
+  it("a Vultr create is refused before anything is sent: no Vultr image can be verified (customer homes are build host only)", async () => {
+    const cloud = fakeCloud(["vultr:vc2-2c-4gb:fra"]);
+    const a = vultrAdapter("k", cfg({ vultr: { firewallGroupId: "fwg-home", quarantineFirewallGroupId: "fwg-quar" } }), cloud.fetcher);
+    const err = await a.createServer({ name: "h1", serverType: "vc2-2c-4gb", location: "fra", image: "snap-vultr-1", userData: "", volumeId: null, labels: { homeId: "h", generation: 1, role: "home" } } as never).catch((x: unknown) => x);
+    expect((err as Error).message).toBe("image_unverified_call");
+    expect(isNotSent(err)).toBe(true);
+    expect(cloud.calls.some((c) => c.method === "POST")).toBe(false);
+    // even a capability the gate minted for build host is refused by the Vultr adapter
+    const hzImage = await verifiedImage("452016490", "x86");
+    const err2 = await a.createServer({ name: "h1", serverType: "vc2-2c-4gb", location: "fra", image: hzImage, userData: "", volumeId: null, labels: { homeId: "h", generation: 1, role: "home" } } as never).catch((x: unknown) => x);
+    expect((err2 as Error).message).toBe("image_unverified_call");
   });
   it("opsSshFrom (staging only) accepts specific operator networks and refuses world-open or wide ranges", () => {
     expect(cfg().opsSshFrom).toEqual([]);
@@ -153,12 +220,71 @@ describe("ladder", () => {
     const bad = hetznerAdapter("t", { sshKeyIds: [], firewallIds: [], quarantineFirewallId: 9 }, async () => new Response(JSON.stringify({ error: { code: "locked" } }), { status: 423 }));
     await expect(bad.quarantine("5")).rejects.toThrow("locked");
   });
+  it("a build host stock-out gives no_capacity: the Vultr rung is never reached unless the config flag allows it", async () => {
+    const cloud = fakeCloud(["vultr:vc2-2c-4gb:fra"]);
+    await expect(chooseRung(cfg(), "starter", adapters(cloud.fetcher))).rejects.toThrow("no_capacity");
+    // Even an explicit Vultr rung in the configured ladder is skipped while the flag is off, and no Vultr call is made.
+    const explicit = cfg({ ladders: vultrLadders.ladders });
+    expect(explicit.allowVultrCustomerHomes).toBe(false);
+    await expect(chooseRung(explicit, "starter", adapters(cloud.fetcher))).rejects.toThrow("no_capacity");
+    expect(cloud.calls.some((c) => c.url.includes("api.vultr.com"))).toBe(false);
+    const on = await chooseRung(cfg(vultrLadders), "starter", adapters(cloud.fetcher));
+    expect(on.choice.provider).toBe("vultr");
+  });
+  it("a build host stock-out in the first locations and sizes falls through every other build host location and rung before no_capacity", async () => {
+    // Pro: the first rung (cax21) is out everywhere; the second (cx33) has stock only in the last location.
+    const last = cfg().hetznerLocations.at(-1)!;
+    const r = await chooseRung(cfg(), "pro", adapters(fakeCloud([`hetzner:cx33:${last}`]).fetcher));
+    expect(r.choice).toMatchObject({ provider: "hetzner", serverType: "cx33", location: last });
+    expect(r.tried.map((t) => t.result)).toEqual(["no_stock", "chosen"]);
+    // Nothing anywhere on the build host: every build host rung was tried, then no_capacity.
+    const cloud = fakeCloud([]);
+    await expect(chooseRung(cfg(), "pro", adapters(cloud.fetcher))).rejects.toThrow("no_capacity");
+    expect(cloud.calls.filter((c) => c.url.includes("/server_types")).length).toBe(2);
+  });
+  it("the customer-facing line for a home waiting on capacity is plain and follows the house rules", () => {
+    expect(CAPACITY_LINE).toBe("We are adding capacity. Your home will start as soon as it is ready.");
+    expect(CAPACITY_LINE).not.toMatch(/\u2014|\u2013/);
+    expect(CAPACITY_LINE).not.toMatch(/safe|safety/i);
+    expect(CAPACITY_LINE).not.toMatch(/no_capacity|error/i);
+  });
   it("a rung whose availability call errors is skipped, not fatal", async () => {
     const hz = hetznerAdapter("t", { sshKeyIds: [], firewallIds: [] }, async () => new Response("{}", { status: 500 }));
     const cloud = fakeCloud(["vultr:vc2-2c-4gb:fra"]);
-    const r = await chooseRung(cfg(), "starter", { hetzner: hz, vultr: vultrAdapter("k", {}, cloud.fetcher) });
+    const r = await chooseRung(cfg(vultrLadders), "starter", { hetzner: hz, vultr: vultrAdapter("k", {}, cloud.fetcher) });
     expect(r.choice.provider).toBe("vultr");
     expect(r.tried.map((t) => t.result)).toEqual(["error", "error", "chosen"]);
+  });
+});
+
+describe("image disk fit", () => {
+  const X86 = "452016490", ARM = "451260442";
+  const allStock = ["hetzner:cax21:fsn1", "hetzner:cx33:fsn1", "hetzner:cx23:fsn1", "hetzner:cax11:fsn1"];
+  it("a too-big image skips the smaller type and lands on the next fitting rung", async () => {
+    const cloud = fakeCloud(allStock, { image: { [ARM]: 80, [X86]: 40 }, type: { cax21: 40, cx33: 80 } });
+    const r = await chooseRung(cfg(), "pro", adapters(cloud.fetcher));
+    expect(r.tried.map((t) => t.result)).toEqual(["image_too_big", "chosen"]);
+    expect(r.choice).toMatchObject({ serverType: "cx33", arch: "x86", image: X86 });
+    expect(cloud.calls.some((c) => c.method === "POST")).toBe(false);
+  });
+  it("every rung too small: no_capacity, every rung recorded as image_too_big, nothing created", async () => {
+    const cloud = fakeCloud(allStock, { image: { [ARM]: 80, [X86]: 80 }, type: { cx23: 40, cax11: 40 } });
+    const err = await chooseRung(cfg(), "starter", adapters(cloud.fetcher)).catch((x: unknown) => x) as Error & { tried: { serverType: string; result: string }[] };
+    expect(err.message).toBe("no_capacity");
+    expect(err.tried.map((t) => `${t.serverType}:${t.result}`)).toEqual(["cx23:image_too_big", "cax11:image_too_big"]);
+    expect(cloud.calls.some((c) => c.method === "POST")).toBe(false);
+  });
+  it("an unknown size never blocks a rung", async () => {
+    const cloud = fakeCloud(allStock, { image: { [ARM]: 80 } }); // no type disk reported
+    const r = await chooseRung(cfg(), "pro", adapters(cloud.fetcher));
+    expect(r.choice.serverType).toBe("cax21");
+  });
+  it("the image gate runs first: a refused image is image_refused, its disk is never read", async () => {
+    const cloud = fakeCloud(allStock, { image: { [ARM]: 80, [X86]: 80 }, type: { cax21: 40, cx33: 40 } });
+    const { ImageRefused } = await import("../src/image-signature");
+    const r = await chooseRungRaw(cfg(), "pro", adapters(cloud.fetcher), async (x) => { if (x.arch === "arm") throw new ImageRefused("image_revoked"); return {}; }).catch((x: unknown) => x) as Error & { tried: { result: string }[] };
+    expect(r.tried.map((t) => t.result)).toEqual(["image_refused:image_revoked", "image_too_big"]);
+    expect(cloud.calls.filter((c) => c.url.includes(`/images/${ARM}`))).toHaveLength(0);
   });
 });
 
@@ -166,8 +292,8 @@ describe("live ProviderAdapter on the B3 interface", () => {
   beforeEach(async () => {
     await env.DB.prepare("INSERT INTO billing_subscriptions (home_id,customer_id,plan,created_at,updated_at) VALUES ('home-1','cus_1','pro',1,1)").run();
   });
-  async function create(cloud: ReturnType<typeof fakeCloud>) {
-    const p = createLiveProvider(e(), { fetch: cloud.fetcher, now: () => 5 });
+  async function create(cloud: ReturnType<typeof fakeCloud>, extra?: Record<string, unknown>) {
+    const p = createLiveProvider(e(extra), { fetch: cloud.fetcher, now: () => 5 });
     const v = await p.create_volume({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-volume-0000001", provider: "hetzner" });
     const s = await p.create({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-create-00000001", type: "ignored", location: "ignored",
       image: `sha256:${"a".repeat(64)}`, labels: { homeId: "home-1", resourceGeneration: "1", role: "home" }, volume: v,
@@ -179,14 +305,14 @@ describe("live ProviderAdapter on the B3 interface", () => {
     const cloud = fakeCloud(["hetzner:cax21:hel1"]);
     const { p, v, s } = await create(cloud);
     const choice = await env.DB.prepare("SELECT * FROM provision_choices").first<Record<string, string>>();
-    expect(choice).toMatchObject({ provider: "hetzner", server_type: "cax21", location: "hel1", arch: "arm", image: "222" });
+    expect(choice).toMatchObject({ provider: "hetzner", server_type: "cax21", location: "hel1", arch: "arm", image: "451260442" });
     expect(JSON.parse(choice!.tried)).toEqual([{ provider: "hetzner", serverType: "cax21", arch: "arm", result: "chosen" }]);
     const vol = [...cloud.volumes.values()][0]; expect(vol.location.name).toBe("hel1"); expect(vol.size).toBe(150);
     const serverCall = cloud.calls.find((c) => c.method === "POST" && c.url.endsWith("/v1/servers"))!.body;
-    expect(serverCall).toMatchObject({ server_type: "cax21", location: "hel1", image: 222, automount: false, start_after_create: true });
+    expect(serverCall).toMatchObject({ server_type: "cax21", location: "hel1", image: 451260442, automount: false, start_after_create: true });
     expect(serverCall.user_data).toContain("murage_enrollment_token: tok-secret");
     expect(serverCall.user_data).toContain("/etc/murage-home/volume.json");
-    expect(serverCall.labels).toEqual({ "murage/home": "home-1", "murage/generation": "1", "murage/role": "home", "murage/call": "k-create-00000001" });
+    expect(serverCall.labels).toEqual({ "murage/home": "home-1", "murage/generation": "1", "murage/role": "home", "murage/call": "k-create-00000001", "murage/dispatch": expect.stringMatching(/^[0-9a-f-]{36}$/) });
     expect(v.device).toBe(`/dev/disk/by-id/scsi-0HC_Volume_${v.id}`);
     expect(s.id).toMatch(/^hs-\d+$/);
     expect((await p.volume(v.id)).attachment).toMatchObject({ state: "attached", serverId: s.id });
@@ -199,29 +325,167 @@ describe("live ProviderAdapter on the B3 interface", () => {
         volume: { provider: v.provider, id: v.id, device: v.device, new: v.new, generation: 1, homeId: "home-1" } } });
     expect(again.id).toBe(s.id); expect(cloud.servers.size).toBe(1);
   });
-  it("Vultr fallback lands in an EU region, attaches the block after create and validates as a volume", async () => {
-    const cloud = fakeCloud(["vultr:vc2-4c-8gb:waw"]);
-    const { p, v, s } = await create(cloud);
-    expect(v.provider).toBe("vultr");
-    expect([...cloud.volumes.values()][0].region).toBe("waw");
-    expect(cloud.calls.find((c) => c.url.endsWith("/v2/instances") && c.method === "POST")!.body).toMatchObject({ region: "waw", plan: "vc2-4c-8gb", snapshot_id: "snap-vultr-1" });
-    expect((await p.attach_volume(v.id, s.id)).attachment.state).toBe("attached");
-    expect((await p.detach_volume(v.id, s.id)).attachment.state).toBe("detached");
+  const homeInput = (v: Awaited<ReturnType<ReturnType<typeof createLiveProvider>["create_volume"]>>) => ({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-create-00000001", type: "ignored", location: "ignored",
+    image: `sha256:${"a".repeat(64)}`, labels: { homeId: "home-1", resourceGeneration: "1", role: "home" as const }, volume: v,
+    userData: { machineId: "home-1", enrollmentToken: "tok-secret", controlPlaneOrigin: "https://accounts.murage.ai", generation: 1,
+      volume: { provider: v.provider, id: v.id, device: v.device, new: v.new, generation: 1, homeId: "home-1" } } });
+  it("a stock refusal on the pinned rung at create walks the remaining rungs and the next one succeeds", async () => {
+    const stock = ["hetzner:cax21:hel1", "hetzner:cx33:hel1"];
+    const cloud = fakeCloud(stock);
+    const p = createLiveProvider(e(), { fetch: cloud.fetcher, now: () => 5 });
+    const v = await p.create_volume({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-volume-0000001", provider: "hetzner" });
+    expect(await env.DB.prepare("SELECT server_type FROM provision_choices").first()).toEqual({ server_type: "cax21" });
+    stock.splice(stock.indexOf("hetzner:cax21:hel1"), 1); // sold out between the volume and the server
+    const s = await p.create(homeInput(v));
+    expect(s.id).toMatch(/^hs-\d+$/);
+    const posts = cloud.calls.filter((c) => c.method === "POST" && c.url.endsWith("/v1/servers")).map((c) => `${c.body.server_type}:${c.body.location}`);
+    expect(posts).toEqual(["cax21:hel1", "cx33:hel1"]);
+    const choice = await env.DB.prepare("SELECT server_type,arch,image,location FROM provision_choices").first();
+    expect(choice).toEqual({ server_type: "cx33", arch: "x86", image: "452016490", location: "hel1" });
   });
-  it("Vultr create carries the ssh key ids and the home firewall group", async () => {
+  it("rung 2 times out after creating the server: the server is adopted and the choice names rung 2, not rung 1", async () => {
+    const stock = ["hetzner:cax21:hel1", "hetzner:cx33:hel1"];
+    const cloud = fakeCloud(stock);
+    let posts = 0;
+    const f: HostFetch = async (u, init) => {
+      if (u.endsWith("/v1/servers") && init?.method === "POST") {
+        posts++;
+        if (posts === 2) { // the second rung's create reaches the provider but its answer is lost
+          const body = JSON.parse(String(init.body));
+          cloud.servers.set("900", { id: 900, status: "initializing", labels: body.labels, public_net: { ipv4: { ip: "203.0.113.9" } } });
+          return new Response("{}", { status: 502 });
+        }
+      }
+      return cloud.fetcher(u, init);
+    };
+    const p = createLiveProvider(e(), { fetch: f, now: () => 5 });
+    const v = await p.create_volume({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-volume-0000001", provider: "hetzner" });
+    stock.splice(stock.indexOf("hetzner:cax21:hel1"), 1);
+    const s = await p.create(homeInput(v));
+    expect(s.id).toBe("hs-900");
+    expect(await env.DB.prepare("SELECT server_type,arch,image FROM provision_choices").first()).toEqual({ server_type: "cx33", arch: "x86", image: "452016490" });
+  });
+  it("every rung too small for the image: the home waits (no_capacity), nothing is created and ONE high alert names the image and types", async () => {
+    await env.DB.prepare("DELETE FROM cloud_alerts WHERE kind='image.too_big_for_server_type'").run();
+    const cloud = fakeCloud(["hetzner:cax21:hel1", "hetzner:cx33:hel1"], { type: { cax21: 40, cx33: 40 } });
+    // The fixture answers the signed-image re-check itself, so this provider's image GET reports an 80 GB disk through the same wrapper.
+    const p = createLiveProviderRaw(e(), { fetch: withImages(cloud.fetcher, () => ({ disk_size: 80 })), verify: SIG_DEPS, now: () => 5 });
+    for (let k = 0; k < 2; k++) await expect(p.create_volume({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-volume-0000001", provider: "hetzner" })).rejects.toThrow("no_capacity");
+    expect(cloud.calls.some((c) => c.method === "POST")).toBe(false);
+    const alerts = await env.DB.prepare("SELECT home_id,kind,severity,detail FROM cloud_alerts WHERE kind='image.too_big_for_server_type'").all<{ home_id: string; severity: string; detail: string }>();
+    expect(alerts.results).toHaveLength(1);
+    expect(alerts.results[0]).toMatchObject({ home_id: "platform", severity: "high" });
+    // Each type is named with its own arch's image: the arm rung with the arm image, the x86 rung with the x86 image.
+    expect(alerts.results[0].detail).toContain("cax21 (image 451260442)");
+    expect(alerts.results[0].detail).toContain("cx33 (image 452016490)");
+  });
+  it("one rung too small, a later rung fits: the home lands on the later rung AND one high alert names the skipped type", async () => {
+    await env.DB.prepare("DELETE FROM cloud_alerts WHERE kind='image.too_big_for_server_type'").run();
+    const cloud = fakeCloud(["hetzner:cax21:hel1", "hetzner:cx33:hel1"], { type: { cax21: 40, cx33: 80 } });
+    const p = createLiveProviderRaw(e(), { fetch: withImages(cloud.fetcher, () => ({ disk_size: 80 })), verify: SIG_DEPS, now: () => 5 });
+    await p.create_volume({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-volume-0000001", provider: "hetzner" });
+    expect(await env.DB.prepare("SELECT server_type FROM provision_choices").first()).toEqual({ server_type: "cx33" });
+    const alerts = await env.DB.prepare("SELECT home_id,severity,detail FROM cloud_alerts WHERE kind='image.too_big_for_server_type'").all<{ home_id: string; severity: string; detail: string }>();
+    expect(alerts.results).toHaveLength(1);
+    expect(alerts.results[0]).toMatchObject({ home_id: "platform", severity: "high" });
+    expect(alerts.results[0].detail).toContain("cax21");
+    expect(alerts.results[0].detail).not.toContain("cx33");
+  });
+  it("build host's 422 image-too-big at create closes the rung and walks on, never retrying the same rung, with one alert", async () => {
+    await env.DB.prepare("DELETE FROM cloud_alerts WHERE kind='image.too_big_for_server_type'").run();
+    const cloud = fakeCloud(["hetzner:cax21:hel1", "hetzner:cx33:hel1"], { tooBigAtCreate: ["cax21"] });
+    const p = createLiveProvider(e(), { fetch: cloud.fetcher, now: () => 5 });
+    const v = await p.create_volume({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-volume-0000001", provider: "hetzner" });
+    expect(await env.DB.prepare("SELECT server_type FROM provision_choices").first()).toEqual({ server_type: "cax21" });
+    const s = await p.create(homeInput(v));
+    expect(s.id).toMatch(/^hs-\d+$/);
+    const posts = cloud.calls.filter((c) => c.method === "POST" && c.url.endsWith("/v1/servers")).map((c) => c.body.server_type);
+    expect(posts).toEqual(["cax21", "cx33"]);
+    expect(await env.DB.prepare("SELECT server_type FROM provision_choices").first()).toEqual({ server_type: "cx33" });
+    const n = await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='image.too_big_for_server_type' AND severity='high'").first<{ n: number }>();
+    expect(n!.n).toBe(1);
+  });
+  it("a 422 with any other message is still the provider's refusal, not a stock walk", async () => {
+    const cloud = fakeCloud(["hetzner:cax21:hel1", "hetzner:cx33:hel1"]);
+    const f: HostFetch = async (u, init) => (u.endsWith("/v1/servers") && init?.method === "POST")
+      ? new Response(JSON.stringify({ error: { code: "service_error", message: "something else" } }), { status: 422 }) : cloud.fetcher(u, init);
+    const p = createLiveProvider(e(), { fetch: f, now: () => 5 });
+    const v = await p.create_volume({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-volume-0000001", provider: "hetzner" });
+    await expect(p.create(homeInput(v))).rejects.toBeInstanceOf(HostError);
+  });
+  it("when every rung refuses for stock the home waits for capacity: no_capacity, never the raw provider code, and Vultr is not reached", async () => {
+    const stock = ["hetzner:cax21:hel1", "hetzner:cx33:hel1"];
+    const cloud = fakeCloud(stock);
+    const p = createLiveProvider(e(), { fetch: cloud.fetcher, now: () => 5 });
+    const v = await p.create_volume({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-volume-0000001", provider: "hetzner" });
+    stock.length = 0;
+    const err = await p.create(homeInput(v)).catch((x: unknown) => x);
+    expect(err).toBeInstanceOf(Error);
+    expect((err as Error).message).toBe("no_capacity");
+    expect(err).not.toBeInstanceOf(HostError);
+    expect(providerAnswered(err)).toBe(true);
+    expect(cloud.calls.some((c) => c.url.startsWith("https://api.vultr.com") && c.method === "POST" && c.url.endsWith("/v2/instances"))).toBe(false);
+    // The pinned choice is untouched, so a later retry tries the first rung again.
+    expect(await env.DB.prepare("SELECT server_type FROM provision_choices").first()).toEqual({ server_type: "cax21" });
+    const view = { last_error: (err as Error).message };
+    expect(view.last_error === "no_capacity" ? CAPACITY_LINE : view.last_error).toBe(CAPACITY_LINE);
+  });
+  it("the re-walk after a stock refusal at create is gated too: an unsigned or revoked image on the next rung is refused and nothing is sent for it", async () => {
+    for (const mode of ["unsigned", "revoked"] as const) {
+      await env.DB.prepare("DELETE FROM provision_choices").run();
+      const stock = ["hetzner:cax21:hel1", "hetzner:cx33:hel1"];
+      const cloud = fakeCloud(stock);
+      const only222 = { "451260442": IMG_KINDS["451260442"] };
+      const p = createLiveProvider(mode === "unsigned" ? e({ imageKinds: only222 }) : e(), { fetch: cloud.fetcher, now: () => 5,
+        verify: mode === "revoked" ? { trust: { ...SIG_TRUST, revoked: ["452016490"] } } : undefined });
+      const v = await p.create_volume({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-volume-0000001", provider: "hetzner" });
+      stock.splice(stock.indexOf("hetzner:cax21:hel1"), 1); // the pinned ARM rung sells out; the x86 rung (image 452016490) is next
+      const err = await p.create(homeInput(v)).catch((x: unknown) => x);
+      expect((err as Error).message, mode).toBe("no_capacity");
+      const posts = cloud.calls.filter((c) => c.method === "POST" && c.url.endsWith("/v1/servers")).map((c) => c.body.server_type);
+      expect(posts, mode).toEqual(["cax21"]); // the refused rung was never posted
+      expect(cloud.servers.size, mode).toBe(0);
+    }
+  });
+  it("a stored choice whose image is no longer valid is re-verified at create (row 22): repaired to the current image when that verifies, else not sent", async () => {
+    const cloud = fakeCloud(["hetzner:cax21:hel1", "hetzner:cx33:hel1"]);
+    const p = createLiveProvider(e(), { fetch: cloud.fetcher, now: () => 5 });
+    const v = await p.create_volume({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-volume-0000001", provider: "hetzner" });
+    await env.DB.prepare("UPDATE provision_choices SET image='999' WHERE home_id='home-1'").run(); // a stored choice from before: an id with no signed entry
+    const s = await p.create(homeInput(v));
+    expect(s.id).toMatch(/^hs-\d+$/);
+    expect(cloud.calls.filter((c) => c.method === "POST" && c.url.endsWith("/v1/servers"))[0].body.image).toBe(451260442);
+    expect((await env.DB.prepare("SELECT image FROM provision_choices").first<{ image: string }>())!.image).toBe("451260442");
+    // the current image is itself revoked: nothing is sent and the error is a not-sent refusal
+    await env.DB.prepare("DELETE FROM provision_choices").run();
+    const cloud2 = fakeCloud(["hetzner:cax21:hel1"]);
+    const p2 = createLiveProvider(e(), { fetch: cloud2.fetcher, now: () => 5, verify: { trust: { ...SIG_TRUST, revoked: ["451260442"] } } });
+    const v2 = await p2.create_volume({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-volume-0000002", provider: "hetzner" }).catch((x: unknown) => x);
+    expect(cloud2.calls.some((c) => c.method === "POST" && c.url.endsWith("/v1/servers"))).toBe(false);
+    expect(v2).toBeTruthy();
+  });
+  it("a refusal that is not about stock is not walked past", async () => {
+    const cloud = fakeCloud(["hetzner:cax21:hel1", "hetzner:cx33:hel1"]);
+    const p = createLiveProvider(e(), { fetch: async (url, init) => (String(url).endsWith("/v1/servers") && init?.method === "POST")
+      ? new Response(JSON.stringify({ error: { code: "invalid_input" } }), { status: 422 }) : cloud.fetcher(url, init), now: () => 5 });
+    const v = await p.create_volume({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-volume-0000001", provider: "hetzner" });
+    await expect(p.create(homeInput(v))).rejects.toMatchObject({ code: "invalid_input" });
+  });
+  it("Vultr is never a customer-home fallback (design 8-9, rows 17 and 32): with only Vultr stock the create waits for capacity and nothing is sent to Vultr", async () => {
     const cloud = fakeCloud(["vultr:vc2-4c-8gb:waw"]);
-    await create(cloud);
-    expect(cloud.calls.find((c) => c.url.endsWith("/v2/instances") && c.method === "POST")!.body).toMatchObject({ sshkey_id: ["vk-1"], firewall_group_id: "fwg-home" });
+    await expect(create(cloud, vultrLadders)).rejects.toThrow("no_capacity");
+    expect(cloud.calls.some((c) => c.method === "POST" && c.url.includes("api.vultr.com"))).toBe(false);
+    expect(cloud.volumes.size).toBe(0); expect(cloud.servers.size).toBe(0);
   });
   it("without the vultr config block the Vultr rung is skipped, never an unfirewalled home", async () => {
     const cloud = fakeCloud(["vultr:vc2-2c-4gb:fra"]);
-    await expect(chooseRung(cfg({ vultr: undefined }), "starter", adapters(cloud.fetcher))).rejects.toThrow("no_capacity");
+    await expect(chooseRung(cfg({ ...vultrLadders, vultr: undefined }), "starter", adapters(cloud.fetcher))).rejects.toThrow("no_capacity");
     expect(cloud.calls.some((c) => c.url.includes("api.vultr.com") && c.url.includes("availability"))).toBe(false);
     const hz = fakeCloud(["hetzner:cax11:fsn1"]);
-    const { tried } = await chooseRung(cfg({ vultr: undefined }), "starter", adapters(hz.fetcher));
+    const { tried } = await chooseRung(cfg({ ...vultrLadders, vultr: undefined }), "starter", adapters(hz.fetcher));
     expect(tried[0].result).not.toBe("chosen");
     const noBlock = vultrAdapter("k", {}, cloud.fetcher);
-    await expect(noBlock.createServer({ name: "n", serverType: "vc2-2c-4gb", location: "fra", image: "s", userData: "", labels: { homeId: "h", generation: 1, role: "home" } } as any)).rejects.toThrow("vultr_firewall_missing");
+    await expect(noBlock.createServer({ name: "n", serverType: "vc2-2c-4gb", location: "fra", image: "s", userData: "", labels: { homeId: "h", generation: 1, role: "home" } } as any)).rejects.toThrow("image_unverified_call");
     expect(cloud.calls.some((c) => c.method === "POST" && c.url.endsWith("/v2/instances"))).toBe(false);
   });
   it("Vultr quarantine moves a real instance into the vultr quarantine group; missing group throws unsent", async () => {
@@ -242,18 +506,20 @@ describe("live ProviderAdapter on the B3 interface", () => {
     await vultrAdapter("k", cfg({ vultr: undefined, quarantineFirewallGroupId: "fwg-legacy" }), cloud.fetcher).quarantine("inst-9");
     expect(cloud.servers.get("inst-9").firewall_group_id).toBe("fwg-legacy");
   });
-  it("vultr config rejects missing or empty ssh keys and the remove-firewall id 0 or blank", () => {
+  it("vultr config needs no ssh key and rejects a bad key id, the remove-firewall id 0 or blank", () => {
     const bad = (v: Record<string, unknown>) => expect(() => cfg({ vultr: { ...VULTR, ...v } })).toThrow();
-    bad({ sshKeyIds: [] }); bad({ sshKeyIds: undefined }); bad({ sshKeyIds: ["0"] });
+    expect(cfg({ vultr: { ...VULTR, sshKeyIds: [] } }).vultr!.sshKeyIds).toEqual([]);
+    expect(cfg({ vultr: { firewallGroupId: "fwg-home", quarantineFirewallGroupId: "fwg-quar" } }).vultr!.sshKeyIds).toEqual([]);
+    bad({ sshKeyIds: ["0"] });
     bad({ firewallGroupId: "0" }); bad({ firewallGroupId: " " }); bad({ firewallGroupId: "" });
     bad({ quarantineFirewallGroupId: "0" }); bad({ quarantineFirewallGroupId: "" });
     expect(() => cfg({ vultr: undefined, quarantineFirewallGroupId: "0" })).toThrow();
     expect(() => cfg({ vultr: undefined, quarantineFirewallGroupId: "" })).toThrow();
   });
-  it("the unfirewalled-create refusal is marked not sent", async () => {
+  it("the unverified-create refusal is marked not sent", async () => {
     const cloud = fakeCloud([]);
     const err = await vultrAdapter("k", {}, cloud.fetcher).createServer({ name: "n", serverType: "vc2-2c-4gb", location: "fra", image: "s", userData: "", volumeId: null, labels: { homeId: "h", generation: 1, role: "home" } } as any).catch((x: unknown) => x);
-    expect((err as Error).message).toBe("vultr_firewall_missing");
+    expect((err as Error).message).toBe("image_unverified_call");
     expect(isNotSent(err)).toBe(true);
   });
   it("stop, start, destroy go to the right provider; destroy of a missing resource is idempotent", async () => {
@@ -265,6 +531,37 @@ describe("live ProviderAdapter on the B3 interface", () => {
     expect(cloud.calls.some((c) => c.url.endsWith("/v1/firewalls/77/actions/apply_to_resources"))).toBe(true);
     await p.destroy(s.id); await p.destroy(s.id); await p.destroy(v.id);
     expect(cloud.servers.size).toBe(0); expect(cloud.volumes.size).toBe(0);
+  });
+  it("audit High 1: the provider's Start and Reboot refuse a warm-pool server whose enrollment was not consumed; Stop and power-off still work", async () => {
+    const cloud = fakeCloud(["hetzner:cax21:fsn1"]);
+    const { p, s } = await create(cloud);
+    const native = String([...cloud.servers.keys()][0]);
+    await env.DB.prepare(`INSERT INTO warm_pool (id,env,class,provider,server_type,arch,location,image_id,image_digest,state,phase,server_id,create_call_id,monthly_cents,vcpus,created_at,home_id,resource_generation)
+      VALUES ('pool-y','staging','starter','hetzner','cax21','arm','fsn1','img','dig','claimed',NULL,?,'call-y',500,4,1,'home-1',1)`).bind(native).run();
+    const before = cloud.calls.length;
+    await expect(p.start(s.id)).rejects.toThrow("pool_server_unenrolled");
+    await expect(p.reboot!(s.id)).rejects.toThrow("pool_server_unenrolled");
+    expect(cloud.calls.slice(before).filter((c) => /actions\/(poweron|reset)$/.test(c.url))).toEqual([]);
+    await p.stop(s.id); await p.power_off(s.id);
+    expect(cloud.calls.slice(before).filter((c) => /actions\/poweroff$/.test(c.url))).toHaveLength(2);
+    // A destroyed pool row no longer says anything about the server.
+    await env.DB.prepare("UPDATE warm_pool SET destroyed_at=2 WHERE id='pool-y'").run();
+    await p.start(s.id);
+    expect(cloud.calls.slice(before).filter((c) => /actions\/poweron$/.test(c.url))).toHaveLength(1);
+  });
+  it("pool handoff: established heartbeat must postdate the claim (a once-running home re-bound to an unconsumed pool server is not established)", async () => {
+    const home = (hb: number | null) => env.DB.prepare(`INSERT OR REPLACE INTO cloud_homes (id,installation_id,owner_id,desired_state,observed_state,heartbeat_at,image_digest,home_key,created_at,updated_at) VALUES ('hb-home','i','o','running','running',?,'d','k',1,1)`).bind(hb).run();
+    await env.DB.prepare(`INSERT INTO warm_pool (id,env,class,provider,server_type,arch,location,image_id,image_digest,state,phase,server_id,create_call_id,monthly_cents,vcpus,created_at,claimed_at,home_id,resource_generation)
+      VALUES ('pool-hb','staging','starter','hetzner','cax21','arm','fsn1','img','dig','claimed',NULL,'9001','call-hb',500,4,1,1000,'hb-home',1)`).run();
+    await home(500); // the home ran on its OLD server: this heartbeat is from before the claim
+    expect(await homeOnUnenrolledPoolServer(env.DB, "hb-home", 1)).toBe(true);
+    expect(await isUnenrolledPoolServer(env.DB, "hetzner", "9001")).toBe(true);
+    await home(1000); // at the claim instant is not after it
+    expect(await homeOnUnenrolledPoolServer(env.DB, "hb-home", 1)).toBe(true);
+    await home(1001); // the new server itself reported in
+    expect(await homeOnUnenrolledPoolServer(env.DB, "hb-home", 1)).toBe(false);
+    expect(await isUnenrolledPoolServer(env.DB, "hetzner", "9001")).toBe(false);
+    await env.DB.batch([env.DB.prepare("DELETE FROM warm_pool WHERE id='pool-hb'"), env.DB.prepare("DELETE FROM cloud_homes WHERE id='hb-home'")]);
   });
   it("snapshots at suspension are taken once and purged at deletion, leaving nothing behind", async () => {
     const cloud = fakeCloud(["hetzner:cx33:fsn1", "hetzner:cax21:fsn1"]);
@@ -442,7 +739,7 @@ describe("backups: Storage Box sub-account per home", () => {
   });
   it("is off without a storageBox config (no sub-account, no backup files)", async () => {
     const cloud = fakeCloud(["hetzner:cax21:fsn1"]); const box = fakeBox();
-    const p = createLiveProvider(e(), { fetch: cloud.fetcher, storageBox: box.adapter });
+    const p = createLiveProvider(e(), { fetch: cloud.fetcher, now: () => 5, storageBox: box.adapter });
     const v = await p.create_volume({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-volume-0000001", provider: "hetzner" });
     await p.create({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-create-00000001", type: "x", location: "y", image: `sha256:${"a".repeat(64)}`,
       labels: { homeId: "home-1", resourceGeneration: "1", role: "home" }, volume: v,
@@ -452,7 +749,7 @@ describe("backups: Storage Box sub-account per home", () => {
   });
   it("fails closed, creating no server, when the backup password source is not wired", async () => {
     const cloud = fakeCloud(["hetzner:cax21:fsn1"]); const box = fakeBox();
-    const p = createLiveProvider(e(withBox), { fetch: cloud.fetcher, storageBox: box.adapter });
+    const p = createLiveProvider(e(withBox), { fetch: cloud.fetcher, now: () => 5, storageBox: box.adapter });
     const v = await p.create_volume({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k-volume-0000001", provider: "hetzner" });
     await expect(p.create({ homeId: "home-1", resourceGeneration: 1, idempotencyKey: "k", type: "x", location: "y", image: `sha256:${"a".repeat(64)}`,
       labels: { homeId: "home-1", resourceGeneration: "1", role: "home" }, volume: v,

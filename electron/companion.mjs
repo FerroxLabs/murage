@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // The companion sidecar's lifecycle, as seen by the desktop app.
 //
 // The sidecar is a separate process on purpose — it is the only thing here
@@ -383,7 +384,7 @@ async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = n
   // The local network is a choice, never a default (audit C6).
   const lanBind = lanBindEnvironment(process.env, companionSettings().lanPairing);
   try {
-    child = utilityProcess.fork(resolved.entry, [], {
+    child = utilityProcess.fork(resolved.entry, [], withHideInherit({
       env: {
         ...childEnvironment,
         ...(lanBind ? { MURAGE_COMPANION_BIND: lanBind } : {}),
@@ -409,7 +410,7 @@ async function start({ resourcesPath, harnessPort, companionToken, hostedUrl = n
       // compiled entries
       execArgv: resolved.execArgv,
       stdio: ["ignore", "pipe", "pipe"],
-    });
+    }));
   } catch {
     cleanupOrigin();
     lastError = "the companion process could not be started";

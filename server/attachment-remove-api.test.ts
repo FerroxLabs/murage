@@ -1,3 +1,4 @@
+import { engineLimitLine } from "../shared/web-read-routing.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -14,6 +15,7 @@
 //  - a bot's picture is refused with "Change the bot's picture first".
 //
 // Same server-spawn pattern as turn-images-not-sent-api.test.ts.
+import { fixturePlatformEnv, stopFixtureServer } from "./testing/platform-fixtures.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,7 +23,7 @@ import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { IMAGES_NOT_SENT_PREFIX, imagesNotSentActivityName } from "../shared/turn-image-note.ts";
 
@@ -29,7 +31,7 @@ const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 const FAKE_PI = join(SERVER_DIR, "testing", "fake-pi-cli.ts");
 const BASE_PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64");
-const posixOnly = describe.skipIf(process.platform === "win32");
+
 
 let base: string, home: string, child: ChildProcess, stderr = "";
 let desktop: Record<string, string>;
@@ -73,7 +75,7 @@ async function makeBot(name: string, instanceId: string) {
   return bot;
 }
 
-posixOnly("Remove an attachment (SL-H) through the harness", () => {
+describe("Remove an attachment (SL-H) through the harness", () => {
   beforeAll(async () => {
     const port = await freePortBlock([0, 1]);
     base = `http://127.0.0.1:${port}`;
@@ -97,14 +99,17 @@ posixOnly("Remove an attachment (SL-H) through the harness", () => {
         pi: { driver: "piAgent", displayName: "pi fixture", environment: { FAKE_PI_DUMP: piDump }, config: { cli: FAKE_PI, fullAuto: true } },
       },
     }));
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, ["--import", "data:text/javascript,globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;", join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: {
+      // Existing S4 seam for fake engines in a disposable child.
+      env: { ...fixturePlatformEnv(),
+        NODE_ENV: "test",
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1", MURAGE_MODEL_PROVIDER_CONNECTIONS: "", MURAGE_MODEL_PROVIDER_COMMIT_TOKEN: "",
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", "pipe", "ipc"],
     });
     child.stderr!.on("data", c => (stderr += c));
     child.stdout!.on("data", c => (stderr += c));
@@ -119,7 +124,7 @@ posixOnly("Remove an attachment (SL-H) through the harness", () => {
   }, 40_000);
 
   afterAll(async () => {
-    await waitForExit(child, { signal: "SIGTERM" });
+    await stopFixtureServer(child);
     await removeTempDir(home);
   });
 
@@ -208,7 +213,9 @@ posixOnly("Remove an attachment (SL-H) through the harness", () => {
     expect(acpImages(customDump)).toEqual([kept.marker]);
     expect(acpText(customDump)).toContain(tag(unbound.path));
     expect(acpText(customDump)).not.toContain(gone.path);
-    expect(await failures(bot.threadId)).toEqual([]);
+    // 9e6f55e198: a custom engine carries its declared web-reader limitation.
+    // It is the only unsuccessful activity; the removed path still reaches no engine text.
+    expect((await failures(bot.threadId)).map(message => message.tool)).toEqual([{ name: engineLimitLine("customAcp"), ok: false }]);
   }, 90_000);
 
   it("path (pi): the removed image's path is never handed to the engine", async () => {

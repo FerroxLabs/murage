@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "base": "e04baa7044d47a71b4de17c9faf25655aca1ab27",
+  "author": "preB-locale-astra-builder",
+  "scope": "sol-pause-rr: re-review of the 10 corrected strings from 2026-11-11-1019-pause-95b6ea300928",
+  "strings": {
+    "en:ux.l2c.pause.fluxAlso": {
+      "text": "A limit in Flux Router has also been reached.",
+      "en": "A limit in Flux Router has also been reached.",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.fluxAlso": {
+      "text": "Ein Limit in Flux Router ist ebenfalls erreicht.",
+      "en": "A limit in Flux Router has also been reached.",
+      "verdict": "pass"
+    },
+    "de:ux.l2c.pause.capabilityOff.body": {
+      "text": "Flux Router liefert den Kontobetrag nicht mehr, den Murage braucht, um beim Erreichen deines Limits zu pausieren. Deine Bots arbeiten weiter, und die Anzeige warnt dich weiterhin bei 80% und 100%. Limits, die du in Flux Router festlegst, gelten weiterhin.",
+      "en": "Flux Router stopped sending the account figure Murage needs to pause at your limit. Your bots keep working and the meter still warns you at 80% and 100%. Limits you set inside Flux Router still apply.",
+      "verdict": "pass"
+    },
+    "es:ux.l2c.pause.fluxAlso": {
+      "text": "También se ha alcanzado un límite en Flux Router.",
+      "en": "A limit in Flux Router has also been reached.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.fluxAlso": {
+      "text": "Une limite de Flux Router est également atteinte.",
+      "en": "A limit in Flux Router has also been reached.",
+      "verdict": "pass"
+    },
+    "fr:ux.l2c.pause.capabilityOff.body": {
+      "text": "Flux Router n’envoie plus le montant du compte dont Murage a besoin pour mettre tes bots en pause lorsque ta limite est atteinte. Tes bots continuent de travailler et l’indicateur t’avertit toujours à 80% et à 100%. Les limites que tu définis dans Flux Router restent en vigueur.",
+      "en": "Flux Router stopped sending the account figure Murage needs to pause at your limit. Your bots keep working and the meter still warns you at 80% and 100%. Limits you set inside Flux Router still apply.",
+      "verdict": "pass"
+    },
+    "hi:ux.l2c.pause.fluxAlso": {
+      "text": "Flux Router में भी एक सीमा पूरी हो गई है।",
+      "en": "A limit in Flux Router has also been reached.",
+      "verdict": "pass"
+    },
+    "ja:ux.l2c.pause.fluxAlso": {
+      "text": "Flux Router側の上限にも達しています。",
+      "en": "A limit in Flux Router has also been reached.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l2c.pause.fluxAlso": {
+      "text": "Um limite no Flux Router também foi atingido.",
+      "en": "A limit in Flux Router has also been reached.",
+      "verdict": "pass"
+    },
+    "zh:ux.l2c.pause.fluxAlso": {
+      "text": "Flux Router 中的一项限额也已达到。",
+      "en": "A limit in Flux Router has also been reached.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

@@ -607,7 +607,7 @@ it("a build stopped part-way resumes from the persisted cursor on a new connecti
 it("a process killed in the middle of the build leaves a correct file; the next start resumes and finishes", async () => {
   const { db, dir, file } = openFile(1500);
   db.close(); dbs.splice(dbs.indexOf(db), 1);
-  const child = fork(join(import.meta.dirname, "testing", "index-build-child.ts"), [file], { execArgv: ["--experimental-strip-types", "--no-warnings"], stdio: ["ignore", "ignore", "pipe", "ipc"] });
+  const child = fork(join(import.meta.dirname, "testing", "index-build-child.ts"), [file], { windowsHide: true, execArgv: ["--experimental-strip-types", "--no-warnings"], stdio: ["ignore", "ignore", "pipe", "ipc"] });
   // the child's stderr is kept, so a child that dies (a load error under strip-types) fails with its own message, not a timeout
   let stderr = "";
   child.stderr!.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });

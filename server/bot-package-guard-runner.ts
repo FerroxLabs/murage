@@ -57,7 +57,7 @@ async function copyForWorker(files: readonly BotPackageScanFile[], stopped: () =
 
 export function scanBotPackageForImportAsync(
   files: readonly BotPackageScanFile[],
-  options: { signal?: AbortSignal; scanId?: string; timeoutMs?: number; workerPath?: string } = {},
+  options: { signal?: AbortSignal; scanId?: string; timeoutMs?: number; createWorker?: () => Worker } = {},
 ): Promise<BotPackageScanResult> {
   const sizeOf = (file: BotPackageScanFile) => (typeof file.content === "string" ? Buffer.byteLength(file.content, "utf8") : file.content.byteLength);
   const progress: ImportScanProgress = { state: "running", filesDone: 0, filesTotal: files.length, bytesDone: 0, bytesTotal: files.reduce((sum, file) => sum + sizeOf(file), 0) };
@@ -90,7 +90,7 @@ export function scanBotPackageForImportAsync(
     // copying a 50 MB package in one go held the server for 30 to 60 ms.
     void copyForWorker(files, () => settled).then(({ copied, transfer }) => {
       if (settled) return;
-      worker = new Worker(options.workerPath ?? SPAWNED_PROXIES.importGuardWorker, { resourceLimits: { maxOldGenerationSizeMb: WORKER_MEMORY_MB } });
+      worker = options.createWorker ? options.createWorker() : new Worker(SPAWNED_PROXIES.importGuardWorker, { resourceLimits: { maxOldGenerationSizeMb: WORKER_MEMORY_MB } });
       worker.on("message", (message: { type: string; fraction?: number; result?: BotPackageScanResult }) => {
         if (message.type === "progress" && typeof message.fraction === "number") {
           const fraction = Math.min(1, Math.max(0, message.fraction));

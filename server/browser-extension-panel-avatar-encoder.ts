@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";

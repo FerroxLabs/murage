@@ -8,6 +8,7 @@ type Result = { isError?: boolean; content?: Array<{ type: string; text?: string
 /** Test-only persistent stdio client. Never logs config, credentials or payloads. */
 export function persistentAgentsClient(env: Record<string, string>) {
   const child = spawn(process.execPath, [fileURLToPath(new URL("../drivers/agents-proxy.ts", import.meta.url))], {
+    windowsHide: true,
     env: { PATH: process.env.PATH, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), ...env },
     stdio: ["pipe", "pipe", "pipe"],
   });

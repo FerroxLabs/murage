@@ -17,6 +17,7 @@ import { imagesLeftOutActivityName, imagesLeftOutDisplayName } from "../shared/i
 import { sendNoticeDisplayName } from "../shared/send-notice.ts";
 import { imagesNotSentDisplayName } from "../shared/turn-image-note.ts";
 import { DATA_DIR } from "./config.ts";
+import { transaction } from "./database.ts";
 import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
 import { Store, type Message } from "./store.ts";
@@ -151,17 +152,25 @@ it("the paged export is byte for byte the one-shot route, across a forked branch
 
   // the branch grows across the reader's count pages (EXPORT_COUNT_PAGE_ROWS = 5,000): every row of the thread counts, the abandoned ones too
   let leaf = forked.at(-1)!.id, n = 0;
-  const growTo = (rows: number) => {
+  const growTo = async (rows: number) => {
     while (mdb.threadRowCount(t) < rows) {
-      n++;
-      const message = { id: `bulk-${n}`, role: n % 2 ? "user" : "bot", kind: "text", text: `bulk line ${n}\n"quoted" ${n % 7 ? "plain" : "東京 🚀"}`, at: 1_800_000_000_000 + n, parentId: leaf } as Message;
-      mdb.appendMessage(t, message);
-      leaf = message.id;
+      // This is export-reader setup, not a burst of independent owner writes.
+      // Bound each admitted transaction and let maintenance run between batches.
+      const until = Math.min(rows, mdb.threadRowCount(t) + 200);
+      transaction(() => {
+        while (mdb.threadRowCount(t) < until) {
+          n++;
+          const message = { id: `bulk-${n}`, role: n % 2 ? "user" : "bot", kind: "text", text: `bulk line ${n}\n"quoted" ${n % 7 ? "plain" : "東京 🚀"}`, at: 1_800_000_000_000 + n, parentId: leaf } as Message;
+          mdb.appendMessage(t, message);
+          leaf = message.id;
+        }
+      });
+      await new Promise<void>(resolve => setImmediate(resolve));
     }
     expect(mdb.threadRowCount(t)).toBe(rows);
   };
   for (const rows of [4_999, 5_000, 5_001, 10_001]) {
-    growTo(rows);
+    await growTo(rows);
     const { path, calls } = await check(`${rows} rows`, [200, undefined]);
     expect(path.at(-1)!.id).toBe(leaf);
     expect(path.length).toBe(forked.length + n);

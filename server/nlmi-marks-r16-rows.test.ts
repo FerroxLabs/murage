@@ -13,7 +13,10 @@ import { describe, expect, it } from "vitest";
 process.env.HOME = "/home/tester";
 process.env.USERPROFILE = "/home/tester";
 const { autoVerdict } = await import("./auto-approve.ts");
-const { outsideScanMarks } = await import("./outside-scan.ts");
+const { outsideScanMarks, plainWipe } = await import("./outside-scan.ts");
+const { alwaysAskCommand } = await import("./always-ask.ts");
+const { ownerMarks, withoutDoubts } = await import("./shell/marks.ts");
+const { expectNoLimitsOwnerOutcome, expectNoLimitsProtectedWrite, isWipeRule } = await import("./testing/no-limits-1019.ts");
 
 type Context = Parameters<typeof autoVerdict>[3];
 const NO_LIMITS = { id: "owned", autoApprove: true, fullAccess: true, noLimits: true };
@@ -38,26 +41,32 @@ function call(bot: object, cmd: string, cwd = "/w", files: Files = {}, marked = 
   } as unknown as Context;
   return autoVerdict(bot as never, "Bash", cmd, context);
 }
-import { appendFileSync } from "node:fs";
-const MONO_DENY = new Set(["delete-root", "delete-home", "delete-system-folder", "disk-erase", "fork-bomb", "protected-path"]);
 const MONO_FULL = { id: "owned", autoApprove: true, fullAccess: true };
-/** MurageMain 11-07 (levels are monotonic). No limits cards a row only when a deny rule or the wipe list names it, or Full access
- * cards it too. A row No limits now runs, while Full access runs it as well (or the clean-lane gate-file design records it), is a
- * flip DERIVED from that rule, never set by hand; each one is appended to FLIP_OUT when it is set. */
-const cards = (bot: object, cmd: string, cwd?: string, files?: Files) => {
+/** The row is held at Full access (and every non-owner bot); at the owner's No limits turn it runs unless the wipe list names it. */
+const cards = (bot: object, cmd: string, cwd?: string, files?: Files, protectedWrite = false) => {
   const verdict = call(bot, cmd, cwd, files);
   if (bot !== NO_LIMITS) { expect(verdict.approve, cmd).toBeNull(); return; }
-  const full = call(MONO_FULL, cmd, cwd, files);
-  if (verdict.approve === null) {
-    const named = (verdict.source === "always-ask" && MONO_DENY.has(String(verdict.rule))) || verdict.source === "sensitive-guard" || verdict.source === "outside-turn";
-    expect(full.approve === null || named ? "ok" : `No limits cards what Full access runs, and no deny rule names it: ${cmd} (${verdict.source}/${verdict.rule})`).toBe("ok");
-    return;
-  }
-  // the held=gate record and the two prompt guards (environment pin, unread call) are waived by No limits on the owner's turn by design
-  // FIX A / D4 (coordinator 11-08, NOLIMITS-MEANS-IT r3 2.1.1): a could-not-read the owner's clean No limits turn waives (held=waived) while Full access cards it is by design too
-  const byDesign = String(verdict.rule ?? "").startsWith("held=gate:") || verdict.rule === "held=waived" || ["unread-call", "prompt-guard"].includes(String(full.source));
-  expect(full.approve !== null || byDesign ? "ok" : `No limits runs what Full access cards: ${cmd} (${full.source}/${full.rule})`).toBe("ok");
-  if (process.env.FLIP_OUT) appendFileSync(process.env.FLIP_OUT, `${(expect.getState().currentTestName ?? "").replace(/\s+/g, " ")}\t${cmd.replace(/\n/g, "\\n")}\n`);
+  // S1-B3 RULING (MAIN 2026-11-11 09:30Z): only declared protected writes
+  // supersede the inherited run assertion; reader failures retain it.
+  // S1-B3 RULING (MAIN 2026-11-11 09:30Z): these fixtures explicitly write system/device targets.
+  const writesProtected = /^(?:touch (?:\/etc\/|~\/\.(?:bashrc|ssh\/))|echo x > (?:\/etc\/|~\/\.(?:bashrc|ssh\/))|cp blob \/(?:tmp\/\.\.\/proc|proc\/))/.test(cmd)
+    || (/\/(?:dev|etc|var\/spool)\b/.test(cmd) && /(?:\bwrite(?:FileSync)?\s*\(|\btofile\s*\(|\bsyscall\s*\()/.test(cmd))
+    || Object.values(files ?? {}).some(body => body !== 'unavailable' && /\/(?:dev|etc|var\/spool)\b/.test(body) && /(?:\bwrite(?:FileSync)?\s*\(|\btofile\s*\(|\bsyscall\s*\()/.test(body));
+  if (protectedWrite || writesProtected) { expectNoLimitsProtectedWrite(verdict, cmd); return; }
+  // NOLIM 1.0.19 (Sean 2026-11-10): the owner's No limits turn runs the row; Full access still cards it (the reader is unchanged). Only the
+  // wipe list (or the plainWipe proxy over the text) and the kept Murage self-integrity row still card at No limits.
+  expect(call(MONO_FULL, cmd, cwd, files).approve === null || verdict.approve !== null || isWipeRule(readerRule(cmd, cwd, files)) || plainWipe(cmd) ? "ok" : `No limits cards what Full access runs: ${cmd}`).toBe("ok");
+  expectNoLimitsOwnerOutcome(verdict, cmd, readerRule(cmd, cwd, files));
+};
+/** The reader's own rule for the text, in the owner's strict read (never the final verdict's rule). */
+const readerRule = (cmd: string, cwd = "/w", files: Files = {}) => {
+  const read = () => alwaysAskCommand(cmd, cwd, "command", undefined, undefined, "/home/tester", { fs: STUB, platform: "posix",
+    sessionEdits: new Set(Object.keys(files)), sessionFile: (path: string) => (path in files && files[path] !== "unavailable" ? { text: files[path]! } : "unavailable") });
+  // the finalizer looks for a wipe in both reader modes with the closed-list doubts off; a named catastrophe the reader could not place
+  // (a wipe it named in a text it could not follow whole) is a wipe row too
+  const hits = [ownerMarks(read), ownerMarks(() => withoutDoubts(read)), withoutDoubts(read)];
+  const wipe = hits.find((hit) => hit !== null && (isWipeRule(hit.rule) || hit.namedCatastrophe === true));
+  return wipe ? "disk-erase" : hits[0]?.rule;
 };
 const runs = (bot: object, cmd: string, cwd?: string, files?: Files) => expect(call(bot, cmd, cwd, files).approve, cmd).toBeTruthy();
 
@@ -70,13 +79,18 @@ describe("FIX3 raw writes and data", () => {
     "tar -C /w/../etc/../w/x -xf blob", "dd if=blob of=/w/../etc/../w/x",
     "rsync blob /tmp/../proc/../w/out", "unzip -d /tmp/../sys/../w/x blob",
     "zip /x/../dev/../w/y blob", "printf x > /tmp/../sys/../w/x",
-  ])("M-FIX3-raw %s", cmd => cards(NO_LIMITS, cmd));
+  ])("M-FIX3-raw %s", cmd => cards(NO_LIMITS, cmd, undefined, undefined, true));
   it.each(["/etc/" + "./".repeat(3000) + "passwd", "/w/" + "../".repeat(2000) + "etc/passwd",
-    "/w/" + "a".repeat(5000)])("M-FIX3-overlong %s", path => cards(NO_LIMITS, `cp blob ${path}`));
+    "/w/" + "a".repeat(5000)])("M-FIX3-overlong %s", path => cards(NO_LIMITS, `cp blob ${path}`, undefined, undefined, path.startsWith("/etc/") || path.endsWith("etc/passwd")));
   it.each([4097, 131072 - 10])("M-FIX3-data printf %i", size => runs(NO_LIMITS, `printf %s ${"a".repeat(size)}`));
   it("M-FIX3-data echo 70000", () => runs(NO_LIMITS, `echo ${"a".repeat(70000)}`));
-  it("M-FIX3-data protected redirect", () => cards(NO_LIMITS, `printf %s ${"a".repeat(4097)} > /etc/x`));
+  it("M-FIX3-data protected redirect", () => cards(NO_LIMITS, `printf %s ${"a".repeat(4097)} > /etc/x`, undefined, undefined, true));
 });
+
+// S1-B3 RULING (MAIN 2026-11-11 09:30Z): these known writers name protected
+// output targets. Execution-only and source-only rows retain their run assertions.
+const FIX2_PROTECTED_WRITES = (cmd: string) =>
+ /^(?:sed .*\/etc\/|awk .*print .*\/etc\/|python3 .*open\("\/var\/spool\/|touch .*\/etc\/|cp .*\/etc\/|mv .*\/etc\/|tee .*\/etc\/|install .*\/etc\/|ln .*\/etc\/|find .*-(?:fprint|fprintf|fls|delete)|tar -C .*\/etc\/|unzip -d .*\/etc\/|zip .*\/etc\/|rsync -a .*\/etc\/|docker run .*\/etc\/)/.test(cmd);
 
 describe("FIX2 default deny", () => {
   // Exact review commands are inert strings. Some were already closed at HEAD.
@@ -108,19 +122,19 @@ describe("FIX2 default deny", () => {
     "ssh -o ProxyCommand=id example.invalid", "scp -o ProxyCommand=id example.invalid:/tmp/a /tmp/b",
     "git -c alias.x='!id' x", "docker run --rm -v ../../../../../../etc/cron.d:/t alpine touch /t/pwn",
     'cat > ./s.rb <<\'EOF\'\nputs "#{`id`}"\nEOF\nruby ./s.rb',
-  ])("FIX2 attack %s", cmd => cards(NO_LIMITS, cmd));
+  ])("FIX2 attack %s", cmd => cards(NO_LIMITS, cmd, undefined, undefined, FIX2_PROTECTED_WRITES(cmd)));
   it.each([
     "tar -Iid", "rsync --rsh id a b", "ssh -oProxyCommand=id host", "git -cALIAS.x=!id x",
     "find /w -fprintf /etc/out %p", "find /w -fls /etc/out", "find /w -okdir awk 'system(1)' \\;",
     "xargs --arg-file=/w/L touch", "env PAGER=id less notes", "GIT_SSH=id git status",
     `python3 -c 'open("/tmp/out","w").write("x")'`,
-  ])("FIX2 attack sibling %s", cmd => cards(NO_LIMITS, cmd));
+  ])("FIX2 attack sibling %s", cmd => cards(NO_LIMITS, cmd, undefined, undefined, FIX2_PROTECTED_WRITES(cmd)));
   it.each(["/opt/custom-tool", "/w/wipe.sh", "/w/echo"])("G1 path command %s", cmd => cards(NO_LIMITS, cmd));
   it.each(["bash /etc/tool.sh", "python3 /proc/tool.py", "bash /dev/tool.sh", "bash /w/../tool.sh", "bash /w/F.sh; echo x"])("M-FIX2-waiver %s", cmd => cards(NO_LIMITS, cmd));
   it.each(["/w/./a.py", "/w//a.py", "/w/sub/../a.py"])("G2 stale session %s", path => {
     cards(NO_LIMITS, `cat > ${path} <<'PY'\nmystery()\nPY\npython3 /w/a.py`, "/w", { "/w/a.py": "print(1)" });
   });
-  it.each(["dd if=proj of=/./dev/sdb", "cp proj /tmp/../proc/self/fd/1", "tee /dev/../dev/sdc"])("G4 sibling %s", cmd => cards(NO_LIMITS, cmd));
+  it.each(["dd if=proj of=/./dev/sdb", "cp proj /tmp/../proc/self/fd/1", "tee /dev/../dev/sdc"])("G4 sibling %s", cmd => cards(NO_LIMITS, cmd, undefined, undefined, true));
   it.each(["ruby -e 'mystery()'", "node -e 'mystery()'", "lua -e 'mystery()'"])("G5 sibling %s", cmd => cards(NO_LIMITS, cmd));
   it("G4 project dd control", () => runs(NO_LIMITS, "dd if=proj of=proj"));
 });
@@ -147,16 +161,21 @@ describe("M-R11-unseen owner No limits turn runs an unseen script Full access ru
     ["M-R11-unseen-turn unattended", { unattended: true }],
     ["M-R11-unseen-turn automated", { automated: true }],
     ["M-R11-unseen-turn channel owner", { channelOwner: true }],
-    ["M-R11-unseen-turn routine level", { routineLevel: true }],
-    ["M-R11-unseen-lane marked lane", { outsideRead: ["interpreter"] }],
   ] as const)("%s keeps the card on bash ./build.sh", (_name, extra) => {
     const verdict = turn("bash ./build.sh", extra);
     expect(verdict.approve).toBeNull();
   });
-  it.each(["bash /etc/tool.sh", "bash /usr/share/tool.sh", "python3 /usr/lib/tool.py"])("M-R11-unseen-deny %s keeps the card", cmd => {
-    const verdict = turn(cmd, {});
-    expect(verdict.approve, cmd).toBeNull();
-    expect(verdict, cmd).toMatchObject({ source: "always-ask", rule: "protected-path" });
+  // NOLIM 1.0.19 (N1, N2.4): the finalizer reads the stored origin only, so a routine level flag or a marked lane on the owner's own
+  // work does not hold it
+  it.each([
+    ["M-R11-unseen-turn routine level", { routineLevel: true }],
+    ["M-R11-unseen-lane marked lane", { outsideRead: ["interpreter"] }],
+  ] as const)("%s runs bash ./build.sh for stored owner work", (_name, extra) => {
+    expect(turn("bash ./build.sh", extra).approve).toBeTruthy();
+  });
+  it.each(["bash /etc/tool.sh", "bash /usr/share/tool.sh", "python3 /usr/lib/tool.py"])("M-R11-unseen-deny %s: Full access keeps the card, No limits runs it", cmd => {
+    expect(call(FULL, cmd).approve, cmd).toBeNull();
+    expectNoLimitsOwnerOutcome(turn(cmd, {}), cmd, readerRule(cmd));
   });
   // the wipe list holds on every No limits turn, as for the could-not-read waiver (auto-approve.ts couldNotReadWaived)
   it.each(["bash ./build.sh /dev/sda", 'echo "rm -rf /" ; bash ./build.sh', "bash ./build.sh rm -rf /"])("M-R11-unseen-wipe %s keeps the card", cmd => {
@@ -168,7 +187,11 @@ describe("M-R11-unseen owner No limits turn runs an unseen script Full access ru
 describe("S1 controls with scanner marks in the verdict context", () => {
   it.each([`python3 -c 'print("{}".format(1))'`, `python3 -c 'open("/w/out.txt","w").write("x")'`])("marked interpreter %s", cmd => {
     expect(outsideScanMarks(cmd)).toContain("interpreter");
-    expect(call(NO_LIMITS, cmd, "/w", {}, true).approve).toBeNull();
+    // NOLIM 1.0.19: the scanner's marks are not read at No limits, and (B5) `format` is a disk-format verb only as a command word, so a
+    // string's .format(1) is no wipe word: both texts run, marked or not (M-format-method).
+    const verdict = call(NO_LIMITS, cmd, "/w", {}, true);
+    expect(plainWipe(cmd), cmd).toBe(false);
+    expect(verdict.approve, cmd).toBeTruthy();
     runs(FULL, cmd);
   });
 });
@@ -344,7 +367,8 @@ describe("strict same-text files and closed-grammar costs", () => {
   it("M-PR-6a: only the compiler response-file branch", () => cards(NO_LIMITS, "gcc @/w/L"));
   it("M-PR-6b: only the generic response-file branch", () => cards(NO_LIMITS, "git @/w/L"));
   // MARKS r9 X1: outsideScanMarks always runs in the product; with the marks the verdict cards (source outside-turn, rule outside-content) on No limits
-  it("unlisted command", () => expect(call(NO_LIMITS, "unknown_marks_command arg", "/w", {}, true).approve, "unknown_marks_command arg").toBeNull());
+  // NOLIM 1.0.19: the owner's No limits turn runs it with marks too (the marks are not read there)
+  it("unlisted command", () => expect(call(NO_LIMITS, "unknown_marks_command arg", "/w", {}, true).approve, "unknown_marks_command arg").toBeTruthy());
   // twin: probe unknown_marks_command arg without marks -> runs (the product always passes the marks)
   it("unlisted command (unmarked)", () => runs(NO_LIMITS, "unknown_marks_command arg"));
 });

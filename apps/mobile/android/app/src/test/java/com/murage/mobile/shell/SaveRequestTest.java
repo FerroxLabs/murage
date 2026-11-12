@@ -66,23 +66,23 @@ public class SaveRequestTest {
 
     @Test
     public void urlFilenamesAreMadeSafe() throws Exception {
-        WorkspaceOrigin origin = WorkspaceOrigin.parse("https://mac.tailnet123.ts.net");
-        SaveRequest request = SaveRequest.parse(new JSONObject("{\"kind\":\"url\",\"url\":\"https://mac.tailnet123.ts.net/x\",\"filename\":\"../../etc/passwd\"}"), origin);
+        WorkspaceOrigin origin = WorkspaceOrigin.parse("https://mac.tail000000.ts.net");
+        SaveRequest request = SaveRequest.parse(new JSONObject("{\"kind\":\"url\",\"url\":\"https://mac.tail000000.ts.net/x\",\"filename\":\"../../etc/passwd\"}"), origin);
         assertEquals("passwd", request.filename);
-        assertEquals("https://mac.tailnet123.ts.net/x", request.url);
+        assertEquals("https://mac.tail000000.ts.net/x", request.url);
     }
 
     /** A backslash, control or space anywhere is bad_args before any origin check. */
     @Test
     public void uncleanUrlsAreBadArgs() throws Exception {
-        WorkspaceOrigin origin = WorkspaceOrigin.parse("https://mac.tailnet123.ts.net");
+        WorkspaceOrigin origin = WorkspaceOrigin.parse("https://mac.tail000000.ts.net");
         String[] unclean = {
-            "https://mac.tailnet123.ts.net/a\\b",
-            "https://mac.tailnet123.ts.net/a\tb",
-            " https://mac.tailnet123.ts.net/x",
-            "https://mac.tailnet123.ts.net/x\n",
-            "https://mac.tailnet123.ts.net/a b",
-            "https://mac.tailnet123.ts.net/a\u2028b", // LINE SEPARATOR, escaped so it is visible here
+            "https://mac.tail000000.ts.net/a\\b",
+            "https://mac.tail000000.ts.net/a\tb",
+            " https://mac.tail000000.ts.net/x",
+            "https://mac.tail000000.ts.net/x\n",
+            "https://mac.tail000000.ts.net/a b",
+            "https://mac.tail000000.ts.net/a\u2028b", // LINE SEPARATOR, escaped so it is visible here
         };
         for (String url : unclean) {
             try {
@@ -119,7 +119,7 @@ public class SaveRequestTest {
     /** The base64 cap counts UTF-16 units, as the page and Swift do. */
     @Test
     public void chunkCapCountsUtf16Units() throws Exception {
-        WorkspaceOrigin origin = WorkspaceOrigin.parse("https://mac.tailnet123.ts.net");
+        WorkspaceOrigin origin = WorkspaceOrigin.parse("https://mac.tail000000.ts.net");
         String fits = "\u00E9".repeat(SaveRequest.MAX_BASE64);
         assertEquals(fits, SaveRequest.parse(new JSONObject().put("kind", "chunk").put("id", "a1").put("index", 0).put("base64", fits), origin).base64);
         try {

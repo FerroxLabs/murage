@@ -1411,17 +1411,16 @@ describe("browser surface manager", () => {
     await expect(manager.read("bot-a")).resolves.toMatchObject({ title: "Safe", text: "safe page" });
   });
 
-  it("cuts a long page at the read limit and says so in the text the model gets", async () => {
+  it("returns the complete document for Murage to save and refuses transport exhaustion", async () => {
     const { manager, views } = harness();
     await manager.navigate("bot-a", "https://example.com");
-    views[0].setPageText("x".repeat(30_000));
-
+    const text = "x".repeat(140_000) + "Guarantee Fine print Checkout";
+    views[0].setPageText(text);
     const read = await manager.read("bot-a");
-    expect(read.truncated).toBe(true);
-    // The marker has to ride in `text`: the proxy renders that string and
-    // drops every other field, so a flag alone never reaches the model.
-    expect(read.text.endsWith("\n…(truncated at 24000 characters)")).toBe(true);
-    expect(read.text.slice(0, 24_000)).toBe("x".repeat(24_000));
+    expect(read.truncated).toBe(false);
+    expect(read.text).toBe(text);
+    views[0].setPageText("x".repeat(2 * 1024 * 1024 + 1));
+    await expect(manager.read("bot-a")).rejects.toThrow("transport limit");
   });
 
   it("says how many interactive elements the accessibility fallback left out", async () => {

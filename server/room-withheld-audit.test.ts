@@ -54,7 +54,8 @@ const roster: MemoryRoster = {
     { id: "pair", threadId: "pair-chat", memberIds: ["finch", "dax"] },
   ],
 };
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+// These cases require active memory regardless of whether the fixture file already exists.
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); });
 
 function access(botId: string, thread: string, notOwnerAudience = false) {
   reconcileMemoryRoster(roster);

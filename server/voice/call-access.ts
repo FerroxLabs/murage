@@ -12,6 +12,7 @@ export type CallAccess = "allowed" | "forbidden" | "not-found";
 
 export function callAccess(store: InboxRosterStore, door: InboxDoor, botId: string): CallAccess {
   if (door === "unproven") return "forbidden";
+  if (store.bot(botId)?.staged) return "not-found";
   if (door === "desktop") return "allowed";
   return visibleToCompanion(store, { scope: "bot", botId }) ? "allowed" : "not-found";
 }
@@ -34,5 +35,5 @@ export function callSourceVisible(store: InboxRosterStore, session: { targetId: 
   if (callTargetAccess(store, door, session.targetId, session.threadId, session.desktop === true) !== "allowed") return false;
   const group = store.group(session.targetId);
   if (!group) return session.targetId === botId;
-  return "memberIds" in group && Array.isArray(group.memberIds) && group.memberIds.includes(botId) && Boolean(store.bot(botId) && !store.bot(botId)?.hidden);
+  return "memberIds" in group && Array.isArray(group.memberIds) && group.memberIds.includes(botId) && Boolean(store.bot(botId) && !store.bot(botId)?.hidden && !store.bot(botId)?.staged);
 }

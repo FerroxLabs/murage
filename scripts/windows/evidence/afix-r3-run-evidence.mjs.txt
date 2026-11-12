@@ -1,0 +1,58 @@
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync,mkdirSync,copyFileSync} from 'node:fs';
+import {join,resolve} from 'node:path';
+import {spawnSync} from 'node:child_process';
+const root=process.cwd(),raw=resolve('.test-tmp/afix-winbox-gate-r3'),report=resolve('scripts/windows/evidence');
+const read=p=>readFileSync(p,'utf8');
+const source=read('scripts/windows/winbox-driver.mjs'),ps=read('scripts/windows/winbox-gate.ps1');
+function run(name,cwd,args,status) {
+  const result=spawnSync(process.execPath,args,{cwd,encoding:'utf8'});
+  const output=result.stdout+result.stderr;
+  writeFileSync(join(raw,name+'.log'),output);
+  writeFileSync(join(report,'afix-r3-'+name+'.log'),output.replace(/[ \t]+$/gm,''));
+  assert.equal(result.status,status,output);
+  if(status===1) {
+    assert.match(output,/AssertionError \[ERR_ASSERTION\]/);
+    assert.doesNotMatch(output,/ERR_MODULE_NOT_FOUND|MODULE_NOT_FOUND/);
+  }
+  console.log(`${name}: expected exit ${status}`);
+}
+// Keep the precise baseline assertion failures captured before editing the driver.
+assert.match(read(join(raw,'red.log')),/AssertionError \[ERR_ASSERTION\]/);
+copyFileSync(join(raw,'red.log'),join(report,'afix-r3-red.log'));
+const inventory=JSON.parse(read('scripts/windows/winbox-strings.json'));
+inventory.files=inventory.files.map(({file})=>({file,strings:read('scripts/windows/'+file).split('\n').flatMap((line,index)=>{
+  if(/^\s*(\/\/|#)/.test(line))return [];
+  return [...line.matchAll(/(['"`])(?:\\.|(?!\1).)*?\1/g)].map(match=>({line:index+1,text:match[0]}));
+})}));
+writeFileSync('scripts/windows/winbox-strings.json',JSON.stringify(inventory,null,2)+'\n');
+run('green',root,['--test','scripts/windows/winbox-driver.node-test.mjs','scripts/windows/winbox-proof-audit.node-test.mjs'],0);
+function mutant(name,driver,gate,testFile) {
+  const dir=join(raw,'mutant-'+name),scripts=join(dir,'scripts/windows');mkdirSync(scripts,{recursive:true});
+  for(const file of ['winbox-driver.node-test.mjs','winbox-proof-audit.node-test.mjs'])copyFileSync('scripts/windows/'+file,join(scripts,file));
+  writeFileSync(join(scripts,'winbox-driver.mjs'),driver);writeFileSync(join(scripts,'winbox-gate.ps1'),gate);
+  run('mutant-'+name,dir,['--test','--test-name-pattern=ROUND 3',`scripts/windows/${testFile}`],1);
+}
+const guarded='Number.isFinite(s?.at) && Number.isFinite(sampleRows[i]?.at) ? s.at-sampleRows[i].at : Infinity';
+assert(source.includes(guarded));
+mutant('unguarded-at',source.replace(guarded,'s.at-sampleRows[i].at'),ps,'winbox-driver.node-test.mjs');
+mutant('empty-fallback',source,read(join(raw,'baseline-gate.ps1')),'winbox-proof-audit.node-test.mjs');
+// Retain the actual CLI JSON artifacts as well as test-runner assertion logs.
+const cli=join(raw,'cli-null');mkdirSync(cli,{recursive:true});
+const owner={pid:40,parent:0,birth:'40',imagePath:'C:\\test\\cmd.exe',commandLine:'cmd.exe /c start deliberate'};
+const rows=Array.from({length:6},(_,i)=>({at:1000+i*200,processes:[owner],windows:i===1?[{pid:40,birth:'40',hwnd:'4000',className:'ConsoleWindowClass',visible:true,title:'test'}]:[]}));
+rows[3]=null;
+const samplesFile=join(cli,'windows.jsonl'),request=join(cli,'verdict-input.json');
+writeFileSync(samplesFile,rows.map(row=>JSON.stringify(row)).join('\n'));
+writeFileSync(request,JSON.stringify({samplesFile,metadata:[owner],executable:'C:\\test\\Murage.exe',observer:{intervalMs:200,errors:[],desktopVerified:true,terminalDefault:true,windowsBuild:26100,finalGapMs:2},scenario:{ok:true,cleanup:{ok:true}},screenshot:'desktop-end.png',screenshotBytes:1024,selfTest:true},null,2));
+const cliResult=spawnSync(process.execPath,['scripts/windows/winbox-driver.mjs','--verdict',request],{encoding:'utf8'});
+writeFileSync(join(cli,'stdout.json'),cliResult.stdout);writeFileSync(join(cli,'stderr.log'),cliResult.stderr);
+assert.equal(cliResult.status,1,cliResult.stderr);
+const verdict=JSON.parse(read(join(cli,'verdict.json'))),offenders=JSON.parse(read(join(cli,'offending-windows.json')));
+assert.equal(verdict.verdict,'FAIL');assert.equal(verdict.malformedSamples,1);
+assert.deepEqual(offenders,verdict.offendingWindows);assert.equal(offenders[0].imagePath,owner.imagePath);assert.equal(offenders[0].commandLine,owner.commandLine);
+console.log('CLI null-row FAIL artifacts retained with owner metadata');
+for(const file of ['winbox-driver.mjs','winbox-driver.node-test.mjs','winbox-proof-audit.node-test.mjs']) {
+  const result=spawnSync(process.execPath,['--check','scripts/windows/'+file],{encoding:'utf8'});assert.equal(result.status,0,result.stderr);
+}
+console.log('syntax: 3 files passed; no PowerShell or Windows execution');

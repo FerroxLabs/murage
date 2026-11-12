@@ -724,3 +724,20 @@ describe("BoxAgentDriver turns (fake API)", () => {
 
 // Adapter turns in this suite use an isolated durable store.
 useOutsideStoreFixture();
+
+describe('B11 No limits Box transport (fake HTTP)',()=>{
+ useOutsideStoreFixture();
+ it('submits and finishes without any permission card or native approval mode',async()=>{
+  ensureDirs();_resetCloudComputerTurns();_cloudComputerTiming({pauseMs:0});
+  const restore=installFakeBox([{events:[{id:'nolim-reply',type:'response',text:'fixture complete'}],status:{promptRun:{status:'finished',result:'fixture complete'}}}]);
+  let instance:ProviderInstance|undefined;
+  try{
+   instance=await BoxAgentDriver.create({instanceId:'nolim-box',displayName:'Fixture',environment:{BOX_TOKEN:'fixture-token'},enabled:true,config:{pollMs:0}});
+   const recorder=recordEvents(instance.adapter);
+   const sent=await instance.adapter.sendTurn({threadId:'nolim-box-thread',text:'fixture',noLimits:true,integrations:{computer}});
+   await recorder.until(e=>e.type==='turn.completed'&&e.turnId===sent.turnId);
+   expect(recorder.events.filter(e=>e.type==='request.opened')).toHaveLength(0);
+   expect(recorder.events).toContainEqual(expect.objectContaining({type:'turn.completed',turnId:sent.turnId,ok:true}));recorder.stop();
+  }finally{await instance?.dispose();await _cloudComputerIdle();restore();}
+ });
+});

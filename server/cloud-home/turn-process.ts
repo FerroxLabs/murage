@@ -2,6 +2,7 @@ import { cloudHomeCopy } from "./copy.ts";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { noteEngineEnv } from "../outside-scan.ts";
+import { assertFinalLaunchFluxFree, renderAsFiles } from "./engine-flux-guard.ts";
 
 export const CLOUD_ENGINES = ["claudeAgent", "codex", "pi", "antigravity", "grokAgent", "geminiAgent", "kimiAgent", "droidAgent", "cursorAgent", "customAcp", "fuigoAgent", "hermesAgent", "opencodeGo", "qwenAgent"] as const;
 export const TURN_LAUNCHER = "/usr/local/libexec/murage-turn-launch";
@@ -66,6 +67,8 @@ function cloudTurnEnvironmentOf(engine: string, source: NodeJS.ProcessEnv, crede
     // No on-demand npm: external plugins off, no LSP installs (the launcher pins the same set).
     OPENCODE_PURE: "1", OPENCODE_DISABLE_LSP_DOWNLOAD: "1", OPENCODE_DISABLE_MODELS_FETCH: "1" });
   // KIMI_CODE_NO_AUTO_UPDATE is read by Kimi Code 2.2.0 (found in the shipped binary); the image pins the version.
+  // agy updates itself unless this is exactly "true" (measured on 1.4.4: "1" still calls the updater); the launcher pins the same value.
+  if (engine === "antigravity") env.AGY_CLI_DISABLE_AUTO_UPDATE = "true";
   if (engine === "kimiAgent") Object.assign(env, { KIMI_CODE_HOME: join(home, ".kimi-code"), KIMI_CODE_NO_AUTO_UPDATE: "1" });
   return env;
 }
@@ -78,7 +81,10 @@ export interface CloudTurnRoute { provider: string; baseUrl: string; model: stri
  * rollout file into the turn's home (its state allowlist) and no other session. */
 export interface CloudTurnRender { route?: CloudTurnRoute; mcp?: Record<string, CloudMcpStanza>; systemPrompt?: string; memoryTools?: boolean; resume?: string; codexPolicy?: CloudCodexPolicy;
   /** R4 on a Fuigo turn: the seeds for its tmpfs home, after the core's path-of-cwd and skipped-decline rules. */
-  fuigoTrustedFolders?: string[]; fuigoDeclinedFolders?: string[] }
+  fuigoTrustedFolders?: string[]; fuigoDeclinedFolders?: string[];
+  /** Antigravity: a named launcher-owned hook profile (never hook text). "relay" (Auto and Full access) carries only this
+  * turn's relay socket (in /data/broker) and token; the launcher owns the hook program and writes it read-only. */
+  hooks?: "ask" | { profile: "relay"; socket: string; token: string } }
 /** The approval policy and sandbox a resumed Codex thread must run under. The launcher renders
  * them as the effective policy (REQUIRED whenever `resume` is set), because a resumed thread
  * otherwise keeps whatever policy the stored rollout started with. */
@@ -125,6 +131,9 @@ export function cloudTurnLaunch(command: string, args: string[], env: NodeJS.Pro
   childEnv.USERPROFILE = home;
   const unit = newTurnUnit();
   const render = JSON.parse(env?.[TURN_RENDER] ?? "{}") as CloudTurnRender;
+  // The final boundary for Claude Code and Codex: after every MCP/integration was added, refuse any Flux key or address in the
+  // env, the argv or the typed render (the launcher renders every config file from it, so it is what a staged file used to be).
+  assertFinalLaunchFluxFree(engine, { env: childEnv, args, files: renderAsFiles(render) });
   return { command: "/usr/bin/sudo", args: ["-n", "-C", "4", "--", TURN_LAUNCHER], unit,
     request: JSON.stringify({ unit, engine, command, args, cwd: cwd === undefined ? home : String(cwd), env: childEnv,
       ...(env?.[TURN_BOT] ? { bot: env[TURN_BOT] } : {}),

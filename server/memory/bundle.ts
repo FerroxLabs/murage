@@ -3,7 +3,6 @@ import { ownerPinIndexPresent } from "./schema.ts";
 import { readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { database } from "../database.ts";
-import { drainMarkerForTurn } from "./send-fence.ts";
 import type { MemoryBundle, MemoryEvidenceHandle } from "../../shared/memory.ts";
 import { MEMORY_HANDLE_LIMIT, MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE, memoryHandle, memoryHandlePosition, memoryRequestPrefix } from "../../shared/memory.ts";
 import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, ownerReaderScopeSets, type MemoryAccess, type MemoryRoster } from "./policy.ts";
@@ -72,7 +71,10 @@ function noteBriefLeftOut(botId: string, stage: string, error: unknown): void {
 }
 /** A trusted bundle: what it was built for and from. `recall` holds the recall hits (re-proven at dispatch on recall's own proof budget, as at
  * build); a continuity brief is known by its kind. */
-const bundles = new WeakMap<MemoryBundle, {access: MemoryAccess; records: BundleRecord[]; recall: ReadonlySet<BundleRecord>; withheldMessage?: (threadId: string, messageId: string, allowance: LineageAllowance) => boolean}>();
+const bundles = new WeakMap<MemoryBundle, {access: MemoryAccess; records: BundleRecord[]; fenceOmissions?: number; recall: ReadonlySet<BundleRecord>; withheldMessage?: (threadId: string, messageId: string, allowance: LineageAllowance) => boolean}>();
+/** Counts omissions observed by this build's real recall/source gates. No ids or text escape. */
+export function bundleFenceOmissionCount(bundle: MemoryBundle | undefined): number { return bundle ? bundles.get(bundle)?.fenceOmissions ?? 0 : 0; }
+
 
 /** Hydrate authoritative bytes only; an approved projection does not expose its private parents. Every check is
  * readableMemoryRecord's (readable.ts), the one function memory_get, bundle hydration and search share. */
@@ -244,9 +246,18 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   const readingFor=(kind:string)=>kind==="continuity-brief"?briefReading:reading;
   const briefLeftOut=(error:unknown,stage:string)=>noteBriefLeftOut(access.botId,stage,error);
   let recallPartial=false;
+  const omittedMemoryLines = new Set<string>();
+  const omittedRecords = new Set<string>();
+  const noteRecordOmitted = (id: unknown, version: unknown) => { omittedRecords.add(String(id) + "\0" + String(version)); };
+  const inputWithheld = options.withheldMessage;
+  if (inputWithheld) options = { ...options, withheldMessage: (thread, id, reading) => {
+    const held = inputWithheld(thread, id, reading);
+    if (held) omittedMemoryLines.add(thread + "\0" + id);
+    return held;
+  } };
   assertMemoryAccess(access);
   options.signal?.throwIfAborted();
-  drainMarkerForTurn(database());
+
   const available = options.availableContextTokens ?? 20480;
   if (!Number.isSafeInteger(available) || available < 0) throw new Error("INVALID_MEMORY_CONTEXT_BUDGET");
   // Remembered words may take a tenth of the context, at most 2048, above the
@@ -352,7 +363,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
         add(record,identity,continuityCeiling);
         if (selected.length === before) continuityOpen = false; else placed.add(record);
       }
-      catch (error) { assertMemoryAccess(access); degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; if (isPipOwnerKind(String(row.kind))) continuityTotal++; if (row.kind === "continuity-brief") briefLeftOut(error,"read"); }
+      catch (error) { assertMemoryAccess(access); noteRecordOmitted(row.id,row.version); degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; if (isPipOwnerKind(String(row.kind))) continuityTotal++; if (row.kind === "continuity-brief") briefLeftOut(error,"read"); }
     }
   });
   /** Standing of an owner row for §2.2: disputed by the stored claim status, contested when counter occasions are open and not yet kept. */
@@ -377,7 +388,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
         if (record.kind === "continuity-brief") { brief.push(record); briefRecords.add(record); }
         else if (isPipOwnerKind(record.kind)) { continuityTotal++; const meta = {id:record.id,tier:record.pipTier ?? "attested",reinforcedAt:reinforcedAtOf(row.entities,Number(row.created_at)),...standingOf(record.id,row)}; ownerMeta.set(record,meta); owner.push({record,section:"self",...meta}); }
         else reveal.push(record);
-      } catch (error) { assertMemoryAccess(access); degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; if (isPipOwnerKind(String(row.kind))) continuityTotal++; if (row.kind === "continuity-brief") briefLeftOut(error,"read"); }
+      } catch (error) { assertMemoryAccess(access); noteRecordOmitted(row.id,row.version); degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; if (isPipOwnerKind(String(row.kind))) continuityTotal++; if (row.kind === "continuity-brief") briefLeftOut(error,"read"); }
     }
     const base = sz(selected), R = Math.max(0, budget - base), half = base + Math.floor(R / 2);
     // Render cache (§2.1): the same inputs replay the same selection. The key adds the budget and the pin base
@@ -505,7 +516,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
         if (options.withheldMessage && recordRestsOnWithheldMessage(allowance,record.id,record.version,options.withheldMessage)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
         if (tokens(render([...selected,record])) <= checkpointCeiling) add(record,checkpoint);
         else deferredCheckpoints.push(record);
-      } catch { assertMemoryAccess(access); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; }
+      } catch { assertMemoryAccess(access); noteRecordOmitted(row.id,row.version); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; }
     }
   });
   if (query.trim()) {
@@ -532,7 +543,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
             if (options.withheldMessage && recordRestsOnWithheldMessage(recallProof,record.id,record.version,options.withheldMessage)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
             if (!citesOnly(record,ownSources)) add(record,evidence);
           }
-          catch (error) { assertMemoryAccess(access); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; if (isLineageLimit(error) || recallProof.hit) recallPartial = true; }
+          catch (error) { assertMemoryAccess(access); noteRecordOmitted(hit.id,hit.version); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; if (isLineageLimit(error) || recallProof.hit) recallPartial = true; }
         }
       });
     } catch (error) {
@@ -546,9 +557,9 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
       for (const hit of episodeHits(db,access.botId,query)) {
         try {
           const record = hydrateMemoryRecord(hit.id,hit.version,access,recallReading);
-          if (options.withheldMessage && recordRestsOnWithheldMessage(recallProof,record.id,record.version,options.withheldMessage)) continue;
+          if (options.withheldMessage && recordRestsOnWithheldMessage(recallProof,record.id,record.version,options.withheldMessage)) { noteRecordOmitted(record.id,record.version); continue; }
           if (!citesOnly(record,ownSources)) add(record,evidence);
-        } catch (error) { assertMemoryAccess(access); if (isLineageLimit(error) || recallProof.hit) recallPartial = true; }
+        } catch (error) { assertMemoryAccess(access); noteRecordOmitted(hit.id,hit.version); if (isLineageLimit(error) || recallProof.hit) recallPartial = true; }
       }
     }
   }
@@ -602,6 +613,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
           withheldPins.push({id:record.id,version:record.version});
           pinned.splice(pinned.indexOf(record),1);
         }
+        noteRecordOmitted(record.id,record.version);
         selected.splice(selected.indexOf(record),1);
         for (const list of [identity,checkpoint,evidence]) { const index=list.indexOf(record); if (index>=0) list.splice(index,1); }
         if (!withheldPin) degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE";
@@ -623,7 +635,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   for (const row of bundle.sourceVersions) Object.freeze(row);
   Object.freeze(bundle.recordVersions); Object.freeze(bundle.sourceVersions);
   Object.freeze(pinned); Object.freeze(identity); Object.freeze(checkpoint); Object.freeze(evidence); Object.freeze(bundle);
-  bundles.set(bundle,{access,records:selected,recall:new Set(evidence),...options.withheldMessage?{withheldMessage:options.withheldMessage}:{}});
+  bundles.set(bundle,{access,records:selected,fenceOmissions:omittedMemoryLines.size + new Set([...omittedRecords,...withheldPins.map(pin=>pin.id + "\0" + pin.version)]).size + (degradedReason && !omittedRecords.size ? 1 : 0),recall:new Set(evidence),...options.withheldMessage?{withheldMessage:options.withheldMessage}:{}});
   // MURAGE_TURN_TRACE: one line per build, so a dispatch that builds twice shows it.
   turnTrace(access.threadId).mark("memory.bundle.built");
   return bundle;

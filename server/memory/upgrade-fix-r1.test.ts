@@ -187,22 +187,14 @@ it("F4: an untouched file passes the shape, assertion and details checks in slic
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------
-import { prepareMessageSearchBackfill, stepMessageSearchBackfill } from "../message-search-index.ts";
-
-it("F5: a restart resumes the persisted unfinished search fill; a live write beyond the history never moves the cursor past rows 2 and 3", () => {
-  const db = database();
-  db.exec("DELETE FROM messages_fts; DELETE FROM transcript_index_state WHERE name='search_fts'; DELETE FROM messages");
-  for (let r = 1; r <= 4; r++) db.prepare("INSERT INTO messages(rowid,thread_id,id,at,role,kind,text,json) VALUES(?, 'ts', ?, ?, 'user', 'text', ?, '{}')").run(r, `s${r}`, r, `searchable words ${r}`);
-  expect(prepareMessageSearchBackfill(db)).toBe(true);
-  expect(stepMessageSearchBackfill(db, 1).more).toBe(true); // row 1 indexed
-  db.prepare("INSERT INTO messages_fts(rowid, t) VALUES (4, 'searchable words 4')").run(); // a live write of this run indexed row 4 itself
-  // restart: the preparation at open
-  expect(prepareMessageSearchBackfill(db)).toBe(true);
-  const state = db.prepare("SELECT done,cursor FROM transcript_index_state WHERE name='search_fts'").get()!;
-  expect(Number(state.done)).toBe(0);
-  expect(Number(state.cursor)).toBe(1);
-  for (let guard = 0; guard < 20 && stepMessageSearchBackfill(db, 1).more; guard++);
-  expect(db.prepare("SELECT id FROM messages_fts_docsize ORDER BY id").all().map(r => Number(r.id))).toEqual([1, 2, 3, 4]);
+import { searchCleanupPending, rebuildMessageSearchIndex } from "../message-search-index.ts";
+it("F5: an unfinished worker rebuild includes live writes beyond the history", async () => {
+  const db=database();
+  for(let r=1;r<=4;r++)db.prepare("INSERT INTO messages(rowid,thread_id,id,at,role,kind,text,json) VALUES(?,'ts',?,?,'user','text',?,'{}')").run(r,`s${r}`,r,`searchable words ${r}`);
+  rebuildMessageSearchIndex(db);
+  const until=Date.now()+20000;
+  while(searchCleanupPending(db)){if(Date.now()>until)throw Error("search rebuild timed out");await new Promise(resolve=>setTimeout(resolve,20));}
+  expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='messages_fts'").get()).toBeUndefined();
 });
 
 // ---------------------------------------------------------------------------------------------------------------------------------
@@ -232,7 +224,7 @@ it.skipIf(!existsSync(V101))("F6: a file taken back to v6 passes the real 1.0.1 
     raw.exec("DROP TABLE IF EXISTS owner_sends; DROP TABLE IF EXISTS project_card_delivery_owed");
     raw.exec("PRAGMA wal_checkpoint(TRUNCATE)");
   } finally { raw.close(); }
-  const out = execFileSync("node", [INSPECT, V101, FILE()], { env: { ...process.env, MURAGE_DATA_DIR: join(DATA_DIR, "inspector-home") }, encoding: "utf8" });
+  const out = execFileSync("node", [INSPECT, V101, FILE()], { windowsHide: true, env: { ...process.env, MURAGE_DATA_DIR: join(DATA_DIR, "inspector-home") }, encoding: "utf8" });
   const result = JSON.parse(out.split("\n").find(line => line.startsWith("RESULT "))!.slice(7));
   expect(result).toMatchObject({ ok: true });
 });

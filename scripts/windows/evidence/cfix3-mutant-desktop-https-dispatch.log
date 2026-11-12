@@ -1,0 +1,37 @@
+✔ MAIN 1: suspended job has no breakaway and verifies empty after owner close (1.5259ms)
+✔ MAIN 2: full task snapshots and prefix-only new-task cleanup (1.72198ms)
+✖ MAIN 3: HTTPS dispatch is handoff only; Desktop keeps refusal rows (0.831285ms)
+✔ MAIN 4: registration diff is Handoff-only and guarded by machine (0.309717ms)
+✔ MAIN 5: only operator finalizes after cleanup; receipt needs cleanup proof (7.920261ms)
+✔ p11b 1: TimeoutSeconds 60, prelaunch CIM blocked beyond 150s still has operator-owned wrapper cleanup (1.001849ms)
+✔ p11b 2: schtasks beyond 30s uses suspended job creation, job timeout and empty proof (0.443651ms)
+✔ p11b 2: no Process.Kill or Stop-Process in Windows production scripts (2.183835ms)
+✔ p11b 3: all six MAIN mutants are installed (0.211982ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 8
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 76.423458
+
+✖ failing tests:
+
+test at scripts/windows/ownership.node-test.mjs:23:1
+✖ MAIN 3: HTTPS dispatch is handoff only; Desktop keeps refusal rows (0.831285ms)
+  AssertionError [ERR_ASSERTION]: Desktop dispatch forbidden
+      at TestContext.<anonymous> (file:///work/scripts/windows/ownership.node-test.mjs:26:2)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

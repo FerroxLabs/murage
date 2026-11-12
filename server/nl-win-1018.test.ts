@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { autoVerdict } from "./auto-approve.ts";
+import { expectNoLimitsOwnerOutcome } from "./testing/no-limits-1019.ts";
 import { beginOutsideTurn, forgetOutsideState, markTurnOutside, safeMarkSite, turnOutsideRead, wireOutsideStore } from "./email/external-marks.ts";
 import { fileOutsideStore } from "./outside-store.ts";
 import { ownSite, ownToolGate, ownToolOfRoute } from "./outside-own.ts";
@@ -111,31 +112,45 @@ describe("NL-WIN-1018 D4: Windows pwsh, the owner's own clean No limits turn", (
     "bash build.sh",
     "bash -c './build.sh'", "bash ./b.sh; Remove-Item -Recurse C:\\", "cmd /c build.bat", "powershell -c ./build.sh",
     "bash ./.ssh/run.sh", "/bin/bash ./build.sh", "bash './build.sh'", "bash ./build.sh extra", "bash ./b.sh\nRemove-Item x",
-  ])("still cards %s", (text) => {
-    const found = verdict(NO_LIMITS, text);
-    expect(found.approve, text).toBeNull();
-    expect(found.source, text).toBe("always-ask");
-    expect(found.rule, text).toBe("unreadable");
+  ])("holds below No limits, runs at No limits unless it names a wipe: %s", (text) => {
+    // NOLIM 1.0.19 (Sean 2026-11-10): the owner's No limits turn runs what the reader cannot follow; only the wipe list (and the plainWipe
+    // proxy, here the Remove-Item rows) stays a card. Full access still holds every spelling the D4 admission does not take.
+    expectNoLimitsOwnerOutcome(verdict(NO_LIMITS, text), text, undefined, text);
+    const held = verdict(FULL, text);
+    expect(held.approve, `${text} at Full access`).toBeNull();
+    expect(held.source, text).toBe("always-ask");
+    expect(held.rule, text).toBe("unreadable");
   });
   it("a script on a deny-ruled path keeps the deny card (a link under the folder to a system folder)", () => {
     symlinkSync("/etc", join(dir, "etc-link"));
     symlinkSync("/usr/bin", join(dir, "usrbin-link"));
     for (const text of ["bash ./etc-link/x.sh", "bash etc-link/x.sh", "bash ./usrbin-link/x.sh"]) {
-      expect(verdict(NO_LIMITS, text), text).toMatchObject({ approve: null, source: "always-ask", rule: "protected-path", classification: "deny" });
+      // NOLIM 1.0.19: the owner's No limits turn runs a protected-path row (only the wipe list still cards); Full access still holds it
+      expect(verdict(FULL, text).approve, text).toBeNull();
+      expectNoLimitsOwnerOutcome(verdict(NO_LIMITS, text), text, "protected-path", text);
     }
   });
   it("the same bash ./build.sh cards at Auto and Ask; at Full access it runs as the Claude Bash tool's own text does (WIN-PWSH-1018)", () => {
     for (const bot of [AUTO, ASK]) expect(verdict(bot, text0).approve, JSON.stringify(bot)).toBeNull();
     expect(verdict(FULL, text0).approve).not.toBeNull();
   });
+  // NOLIM 1.0.19 (N2.4): the finalizer reads the STORED origin only. Work that is not provably the owner's (another origin, no stored origin,
+  // unattended, automated, channel-owner facts that conflict with an owner origin) keeps the card.
   it.each<[string, object]>([
-    ["marked turn", { outsideRead: ["web page"] }], ["outsideRead absent", { outsideRead: undefined }], ["no proof", { ownerStarted: false, fullAccessOrigin: undefined }],
-    ["origin other", { fullAccessOrigin: "other" }], ["unattended", { unattended: true }], ["automated", { automated: true }], ["routineLevel", { routineLevel: true }],
-    ["scope set", { scope: "local-computer" }], ["channelOwner", { channelOwner: true }], ["inputCut", { inputCut: true }], ["inputTruncated", { inputTruncated: true }],
-    ["inputMissing", { call: { engine: "codex", commandShell: "pwsh", inputMissing: "command", toolCall: { name: "shell", input: {} } } }], ["commandCwdInvalid", { commandCwdInvalid: true }],
+    ["no proof", { ownerStarted: false, fullAccessOrigin: undefined }],
+    ["origin other", { fullAccessOrigin: "other" }], ["unattended", { unattended: true }], ["automated", { automated: true }],
+    ["channelOwner", { channelOwner: true }],
   ])("the same bash ./build.sh cards on a %s", (_name, extra) => {
     const found = verdict(NO_LIMITS, text0, extra);
     expect(found.approve).toBeNull();
+  });
+  // the marks and the cut or missing input are not read at No limits: the owner's work runs
+  it.each<[string, object]>([
+    ["marked turn", { outsideRead: ["web page"] }], ["outsideRead absent", { outsideRead: undefined }], ["routineLevel", { routineLevel: true }],
+    ["scope set", { scope: "local-computer" }], ["inputCut", { inputCut: true }], ["inputTruncated", { inputTruncated: true }],
+    ["inputMissing", { call: { engine: "codex", commandShell: "pwsh", inputMissing: "command", toolCall: { name: "shell", input: {} } } }], ["commandCwdInvalid", { commandCwdInvalid: true }],
+  ])("the same bash ./build.sh runs at No limits on a %s", (_name, extra) => {
+    expect(verdict(NO_LIMITS, text0, extra).approve).toBeTruthy();
   });
   it("on a Windows folder (drive cwd, stubbed disk): the same shape runs, a device name, a junction and an ADS card", () => {
     const winDir = "C:\\Users\\o\\bot";
@@ -148,28 +163,32 @@ describe("NL-WIN-1018 D4: Windows pwsh, the owner's own clean No limits turn", (
     const win = (text: string) => verdict(NO_LIMITS, text, { commandCwd: winDir, workFolder: winDir, unseen: { platform: "win32", fs } });
     expect(win("bash ./build.sh")).toMatchObject({ approve: "auto-approved Bash (no limits)", source: "no-limits" });
     expect(win("bash sub/b.sh")).toMatchObject({ source: "no-limits" });
+    // NOLIM 1.0.19: the D4 admission still does not take these spellings (Full access holds them); the owner's No limits turn runs them
     for (const text of ["bash ./NUL.sh", "bash ./con.txt.sh", "bash ./junction/x.sh", "bash ./b.sh:ads", "bash .\\build.sh", "bash C:\\tmp\\b.sh", "bash ./sub./b.sh"]) {
-      expect(win(text).approve, text).toBeNull();
+      expectNoLimitsOwnerOutcome(win(text), text, undefined, text);
     }
   });
   it("Astra 1: the D4 admission needs the whole clean gate even when the lane seam is off", () => {
     const seamOff = { noPreRunSeamAtNoLimits: true };
+    // NOLIM 1.0.19: the outside marks are not read at No limits, so the seam being off changes nothing there: the owner's work runs
     for (const extra of [{ outsideRead: ["web page"] }, { outsideRead: undefined }, { outsideRead: ["outside tool"] }]) {
-      expect(verdict(NO_LIMITS, text0, { ...seamOff, ...extra }).approve, JSON.stringify(extra)).toBeNull();
+      expect(verdict(NO_LIMITS, text0, { ...seamOff, ...extra }).approve, JSON.stringify(extra)).toBeTruthy();
     }
   });
   it("Astra 2: a script the session already knows still goes through the D4 checks and the owner waiver", () => {
     const known = (text: string, extra: object = {}) => verdict(NO_LIMITS, text, {
       sessionFile: () => ({ text: "echo hi\n" }), readOnlyHooks: { sessionEdits: new Set([join(dir, "build.sh"), join(dir, "junction", "x.sh")]) }, ...extra });
     // a clean session-known script has no unseen path, so D4 cannot place it: it keeps the PowerShell card (fail closed, never a bypass)
-    expect(known(text0).approve).toBeNull();
-    expect(known(text0, { inputCut: true }).approve).toBeNull();
-    expect(known(text0, { outsideRead: ["web page"] }).approve).toBeNull();
-    expect(known("bash ./junction/x.sh").approve).toBeNull();
+    // (NOLIM 1.0.19: the owner's No limits turn runs each of these)
+    for (const [text, extra] of [[text0, {}], [text0, { inputCut: true }], [text0, { outsideRead: ["web page"] }], ["bash ./junction/x.sh", {}]] as const) {
+      expect(known(text, extra).approve, text).toBeTruthy();
+    }
   });
-  it("a missing script, and no cwd, card", () => {
-    expect(verdict(NO_LIMITS, "bash ./nothere.sh").approve).toBeNull();
-    expect(verdict(NO_LIMITS, text0, { commandCwd: undefined, workFolder: undefined }).approve).toBeNull();
+  it("a missing script, and no cwd, card below No limits and run at the owner's No limits turn (an unreadable text is not a wipe)", () => {
+    expect(verdict(FULL, "bash ./nothere.sh").approve).toBeNull();
+    expect(verdict(FULL, text0, { commandCwd: undefined, workFolder: undefined }).approve).toBeNull();
+    expect(verdict(NO_LIMITS, "bash ./nothere.sh").approve).toBeTruthy();
+    expect(verdict(NO_LIMITS, text0, { commandCwd: undefined, workFolder: undefined }).approve).toBeTruthy();
   });
   it("the fail-closed boundary keeps its exact wipe card on POSIX and pwsh", () => {
     const posix = (text: string) => verdict(NO_LIMITS, text, { call: undefined });
@@ -198,7 +217,9 @@ describe("NL-WIN-1018 D5: a shell's -o <set-option name> is not an output file (
   });
   it("keeps today's reading for a name outside the list, a pair the -c reader does not accept, and fish", () => {
     for (const text of [`bash -o foo -c 'rm -f ${target}/x'`, `bash -oc errexit 'ls'`, `bash -xo errexit -c 'ls'`, `fish -o errexit -c 'ls'`]) {
-      expect(owner(text).approve, text).toBeNull();
+      // NOLIM 1.0.19: the reader's reading is unchanged (these are not the corpus rows that run via the -o fix); the owner's No limits turn
+      // runs them unless the text names a wipe (the `rm -f` row does, through the plainWipe proxy)
+      expectNoLimitsOwnerOutcome(owner(text), text, undefined, text);
     }
   });
 });

@@ -1,5 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { ownerEvent } from "./owner-events.ts";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
 import { cloudIdentity, isOwnerBrowser } from "../cloud-request-identity.ts";
@@ -83,6 +84,7 @@ export function createCloudModelSignInApi(options: Options) {
       if ((operation === "start" || operation === "attempt") && (!parsed.data || !("provider" in parsed.data) || parsed.data.provider !== provider || (operation === "attempt" && (!("attemptId" in parsed.data) || parsed.data.attemptId !== attemptId)))) throw new HomeSignInError("unavailable");
       if (operation === "remove") await options.removeConnection?.(provider!);
       if (!current() || res.destroyed) { invalidate(); throw new HomeSignInError("unauthorized"); }
+      if (operation === "signOut" || operation === "remove") ownerEvent(req, "engine_signed_out");
       reply(res, operation === "start" ? 202 : ["status", "attempt"].includes(operation) ? 200 : 204, ["status", "start", "attempt"].includes(operation) ? parsed.data : undefined);
     } catch (error) {
       const code = error instanceof HomeSignInError && Object.hasOwn(errorStatuses, error.code) ? error.code : "unavailable";

@@ -1,0 +1,133 @@
+
+ RUN  v4.1.12 /work
+
+stderr | server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message invalid_credentials becomes an attributed visible failure with no retry
+connected apps: gmail needs reconnecting: sign-in no longer accepted
+
+stderr | server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message Token has expired becomes an attributed visible failure with no retry
+connected apps: gmail needs reconnecting: sign-in no longer accepted
+
+stderr | server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message authentication failed becomes an attributed visible failure with no retry
+connected apps: gmail needs reconnecting: sign-in no longer accepted
+
+stderr | server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message invalid_auth becomes an attributed visible failure with no retry
+connected apps: gmail needs reconnecting: sign-in no longer accepted
+
+stderr | server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message token_revoked becomes an attributed visible failure with no retry
+connected apps: gmail needs reconnecting: sign-in no longer accepted
+
+stderr | server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message account is not active becomes an attributed visible failure with no retry
+connected apps: gmail needs reconnecting: sign-in no longer accepted
+
+stderr | server/connector-reconnect-r2.test.ts > R2 preflight catches an ACTIVE idle lapse and stops scheduled work
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: project-key HTTP 401 is an outage, never a user reconnect
+connected apps: unreachable (tool call): HTTP 401 token rejected
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: an in-band project-key error is not mistaken for upstream account auth
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: preflight upstream 401 with ACTIVE status raises reconnect
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ❯ server/connector-reconnect-r2.test.ts (23 tests | 5 failed) 264ms
+   ✓ R2 status INITIATED marks only the non-ACTIVE account 36ms
+   ✓ R2 status INITIALIZING marks only the non-ACTIVE account 8ms
+   ✓ R2 status FAILED marks only the non-ACTIVE account 10ms
+   ✓ R2 status INACTIVE marks only the non-ACTIVE account 11ms
+   ✓ R2 status EXPIRED marks only the non-ACTIVE account 11ms
+   ✓ R2 status UNKNOWN marks only the non-ACTIVE account 9ms
+   ✓ R2 broker JSON-RPC error message invalid_credentials becomes an attributed visible failure with no retry 21ms
+   ✓ R2 broker JSON-RPC error message Token has expired becomes an attributed visible failure with no retry 6ms
+   ✓ R2 broker JSON-RPC error message authentication failed becomes an attributed visible failure with no retry 9ms
+   ✓ R2 broker JSON-RPC error message invalid_auth becomes an attributed visible failure with no retry 11ms
+   ✓ R2 broker JSON-RPC error message token_revoked becomes an attributed visible failure with no retry 11ms
+   ✓ R2 broker JSON-RPC error message account is not active becomes an attributed visible failure with no retry 11ms
+   ✓ R2 successful content and permission refusals never impersonate an auth failure 7ms
+   ✓ R2 scheduled preflight uses one safe read per account, hourly, before work; never probes unknown toolkits 42ms
+   ✓ R2 preflight catches an ACTIVE idle lapse and stops scheduled work 6ms
+   ✓ R2 hourly probe budget survives reopening the ledger and renewal of the owner token 5ms
+   × Flux contract: tool error refreshes inventory and EXPIRED identifies only its account 7ms
+   × Flux contract: generic error with ACTIVE status is not a reconnect incident 5ms
+   ✓ Flux contract: project-key HTTP 401 is an outage, never a user reconnect 5ms
+   ✓ Flux contract: project-key HTTP 403 is an outage, never a user reconnect 4ms
+   × Flux contract: an in-band project-key error is not mistaken for upstream account auth 8ms
+   × Flux contract: preflight upstream 401 with ACTIVE status raises reconnect 6ms
+   × Flux contract: preflight upstream 403 with ACTIVE status raises reconnect 6ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > Flux contract: tool error refreshes inventory and EXPIRED identifies only its account
+AssertionError: expected 1 to be greater than 1
+ ❯ server/connector-reconnect-r2.test.ts:111:26
+    109|   const before = inventoryReads;
+    110|   const reply = await call();
+    111|   expect(inventoryReads).toBeGreaterThan(before);
+       |                          ^
+    112|   expect(appsNeedingReconnect(cfg)[0]?.accounts).toEqual([{ id: "a", a…
+    113|   expect(new TextDecoder().decode(reply.bytes)).toMatch(/Gmail.*Reconn…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > Flux contract: generic error with ACTIVE status is not a reconnect incident
+AssertionError: expected 1 to be greater than 1
+ ❯ server/connector-reconnect-r2.test.ts:119:26
+    117|   const before = inventoryReads;
+    118|   await call();
+    119|   expect(inventoryReads).toBeGreaterThan(before);
+       |                          ^
+    120|   expect(appsNeedingReconnect(cfg)).toEqual([]);
+    121| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > Flux contract: an in-band project-key error is not mistaken for upstream account auth
+AssertionError: expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "accounts": [
++       {
++         "alias": "work",
++         "id": "a",
++       },
++     ],
++     "label": "Gmail",
++     "slug": "gmail",
++   },
++ ]
+
+ ❯ server/connector-reconnect-r2.test.ts:131:37
+    129|   failure = { result: { isError: true, content: [{ type: "text", text:…
+    130|   await call();
+    131|   expect(appsNeedingReconnect(cfg)).toEqual([]);
+       |                                     ^
+    132| });
+    133| it.each([401, 403])("Flux contract: preflight upstream %s with ACTIVE …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > Flux contract: preflight upstream 401 with ACTIVE status raises reconnect
+ FAIL  server/connector-reconnect-r2.test.ts > Flux contract: preflight upstream 403 with ACTIVE status raises reconnect
+AssertionError: expected 1 to be greater than 1
+ ❯ server/connector-reconnect-r2.test.ts:137:26
+    135|   const before = inventoryReads;
+    136|   await call(undefined, undefined, { scheduled: true });
+    137|   expect(inventoryReads).toBeGreaterThan(before);
+       |                          ^
+    138|   expect(calls.every(c => String(c.id).startsWith("health-"))).toBe(tr…
+    139|   expect(appsNeedingReconnect(cfg)[0]?.accounts).toHaveLength(2);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 18 passed (23)
+   Start at  04:04:40
+   Duration  9.72s (transform 7.49s, setup 8.55s, import 785ms, tests 264ms, environment 0ms)
+

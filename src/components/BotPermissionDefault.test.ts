@@ -65,7 +65,7 @@ describe("Bot Settings approval default", () => {
     expect(option(markup, FULL_ACCESS_CHANNEL_OPTION)).not.toContain(' disabled=""');
     // connecting an app cannot be approved for the owner, and says why
     expect(markup).toContain("Connecting an app still asks");
-    expect(markup).toContain("On unless you turn it off. Group chats, other people and trigger links from other apps still ask. Routines use their own level.");
+    expect(markup.replace(/&#x27;/g, "'")).toContain("On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask unless you explicitly set that bot's level. Trigger links from other apps and routines use the bot's level.");
     const on = render({ autoApprove: true, fullAccess: true, fullAccessChannelMessages: true, fullAccessSetupRequests: true });
     expect(option(on, FULL_ACCESS_CHANNEL_OPTION)).toContain('aria-checked="true"');
     expect(option(on, FULL_ACCESS_SETUP_OPTION)).toContain('aria-checked="true"');

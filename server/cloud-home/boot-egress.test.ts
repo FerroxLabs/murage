@@ -11,7 +11,7 @@ const envelope = JSON.stringify({ version: 2, machineId: "home-test", dataKey: B
 // before 4.4 cannot do (`wait` answers 127, "not a child"). macOS ships bash 3.2 as /bin/bash, so
 // use a bash 4.4+ from the host (Homebrew's on the macOS runners) and say so when there is none.
 const modernBash = ["bash", "/opt/homebrew/bin/bash", "/usr/local/bin/bash"].find(candidate => {
-  const probe = spawnSync(candidate, ["-c", 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"'], { encoding: "utf8" });
+  const probe = spawnSync(candidate, ["-c", 'echo "${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"'], { windowsHide: true, encoding: "utf8" });
   const [major, minor] = (probe.stdout ?? "").trim().split(" ").map(Number);
   return probe.status === 0 && (major > 4 || (major === 4 && minor >= 4));
 });
@@ -25,8 +25,8 @@ function boot(output: string, status: number) {
     writeFileSync(helper, `#!/bin/bash\nif [[ \"\${1:-}\" == --envelope ]]; then\ncat <<'ENVELOPE'\n${output}\nENVELOPE\nexit ${status}\nfi\n`, { mode: 0o700 });
     writeFileSync(config, "MURAGE_CLOUD_MACHINE_ID=home-test\n");
     writeFileSync(node, `#!/usr/bin/python3\nimport os,json\nprint('supervisor entered',flush=True)\nv=json.load(os.fdopen(3))\nassert v['version']==2\nassert v['dataKey'] not in repr(dict(os.environ))\nassert v['bootstrapSecret'] not in repr(dict(os.environ))\nprint('supervisor started')\n`, { mode: 0o700 });
-    const script = source("start-home.sh").replaceAll("/usr/local/libexec/murage-enroll", helper).replaceAll("/etc/murage-home/home.env", config).replaceAll("/usr/local/bin/node", node);
-    return spawnSync(modernBash!, ["-c", script], { encoding: "utf8", timeout: 5000 });
+    const script = source("start-home.sh").replaceAll("/usr/local/libexec/murage-enroll", helper).replaceAll("/etc/murage-home/home.env", config).replaceAll("/usr/bin/python3 -I /usr/local/libexec/murage-home-launch", node);
+    return spawnSync(modernBash!, ["-c", script], { windowsHide: true, encoding: "utf8", timeout: 5000 });
   } finally { removeTempDirSync(root); }
 }
 runsBoot("launches with envelope only on FD3 (needs bash 4.4+)", () => { const result = boot(envelope, 0); expect(result.status).toBe(0); expect(result.stdout).toBe("supervisor entered\nsupervisor started\n"); expect(result.stderr).toBe(""); });

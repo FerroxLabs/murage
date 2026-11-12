@@ -448,7 +448,7 @@ describe("scoped homes reconcile what agy wrote; nothing is discarded", () => {
 
 /** A process that sleeps until killed; resolves once it is running. */
 async function sleeper(): Promise<ChildProcess> {
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: "ignore" });
   await new Promise<void>((resolve, reject) => { child.once("spawn", () => resolve()); child.once("error", reject); });
   return child;
 }

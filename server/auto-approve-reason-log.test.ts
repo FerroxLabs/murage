@@ -28,7 +28,7 @@ describe("approval ask reason logging", () => {
     for (const [id, command, patch] of rows) expect(autoVerdict({ ...full, id }, "shell", sentinel, context(command, patch)).approve).toBeNull();
     expect(log.mock.calls.map(([line]) => line)).toEqual([
       "approvals: asked bot=wipe tool=shell reason=always-ask:delete-root origin=owner unattended=0 cmd=shell level=full owner=0 suppressed=0",
-      "approvals: asked bot=unreadable tool=shell reason=unreadable origin=other unattended=0 cmd=shell reader=held level=full owner=0 held=unread suppressed=0 why=tokenizer", // MARKS r12: the strict read names its closed-list doubt
+      "approvals: asked bot=unreadable tool=shell reason=unreadable origin=other unattended=0 cmd=shell reader=held level=full owner=0 held=unread suppressed=0 why=tokenizer shape=other", // MARKS r12: the strict read names its closed-list doubt
       "approvals: asked bot=env tool=shell reason=unread-call:U20 origin=owner unattended=0 cmd=shell level=full owner=0 held=unread suppressed=0",
       "approvals: asked bot=pin tool=shell reason=unread-call:U19 origin=owner unattended=0 cmd=shell level=full owner=0 held=unread suppressed=0",
       "approvals: asked bot=stop tool=shell reason=stop-line:pay origin=owner unattended=0 cmd=shell level=full owner=0 suppressed=0",
@@ -65,16 +65,18 @@ describe("approval ask reason logging", () => {
       ["unread", `echo ${sentinel}`, { envUnread: path }],
     ];
     for (const [held, command, patch] of holds) {
-      expect(autoVerdict({ ...noLimits, id: `held-${held}` }, "shell", command, context(command, patch)).approve).toBeNull();
+      // NOLIM 1.0.19: the owner's turn runs these at No limits; the held classes are logged for another person's turn
+      expect(autoVerdict({ ...noLimits, id: `owner-${held}` }, "shell", command, context(command, patch)).approve).toBeTruthy();
+      expect(autoVerdict({ ...noLimits, id: `held-${held}` }, "shell", command, context(command, { ...patch, fullAccessOrigin: "other" })).approve).toBeNull();
       const line = String(log.mock.calls.at(-1)?.[0]);
       expect(line).toContain(`bot=held-${held} `);
-      expect(line).toMatch(new RegExp(` level=no-limits owner=0 held=${held} suppressed=0( row=[a-z-]+)?( why=[a-z-]+)?$`));
+      expect(line).toMatch(new RegExp(` level=no-limits owner=0 initiator=other held=${held} suppressed=0( row=[a-z-]+)?( why=[a-z-]+)?$`));
     }
     // the card's words are the same as before the classes had names
-    const rule = (patch: Partial<AutoContext>) => autoVerdict(noLimits, "shell", "ls", context("ls", patch)).rule;
+    const rule = (patch: Partial<AutoContext>) => autoVerdict(noLimits, "shell", "ls", context("ls", { ...patch, fullAccessOrigin: "other" })).rule;
     expect(rule({ localHold: "x" })).toBe("the engine's own check held this as a key file (x)");
     expect(rule({ realPathCannot: "x" })).toBe("a path this call names could not be followed to where it lands, so it is held as a key file (x)");
-    expect(autoVerdict(noLimits, "shell", "cat ~/.x/*", context("cat ~/.x/*")).rule).toBe("a glob in a path under the home folder could name a key file");
+    expect(autoVerdict(noLimits, "shell", "cat ~/.x/*", context("cat ~/.x/*", { fullAccessOrigin: "other" })).rule).toBe("a glob in a path under the home folder could name a key file");
     autoVerdict(noLimits, "shell", sentinel, context(`echo ${sentinel}`, { fullAccessOrigin: "other", stopLine: { kind: "pay", what: sentinel } }));
     expect(log.mock.calls.at(-1)?.[0]).not.toContain(" held=");
     const text = JSON.stringify(log.mock.calls);

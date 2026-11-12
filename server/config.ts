@@ -48,6 +48,10 @@ export const DEFAULT_ROOM_TURN_TIMEOUT_MINUTES = 20;
 export const MIN_ROOM_TURN_TIMEOUT_MINUTES = 20;
 export const MAX_ROOM_TURN_TIMEOUT_MINUTES = 1_440;
 const LEGACY_MIN_ROOM_TURN_TIMEOUT_MINUTES = 1;
+/** Where a new bot's computer starts (config computer.defaultForNewBots). "this" is this computer. */
+export const DEFAULT_COMPUTER_CHOICES = ["off", "this", "vm", "cloud"] as const;
+export type DefaultComputerChoice = (typeof DEFAULT_COMPUTER_CHOICES)[number];
+export const DEFAULT_COMPUTER_FOR_NEW_BOTS: DefaultComputerChoice = "this";
 export const DEFAULT_LOCAL_VM_MODE = "shared" as const;
 export const DEFAULT_LOCAL_VM_MAX_INSTANCES = 2;
 export const MIN_LOCAL_VM_MAX_INSTANCES = 1;
@@ -328,6 +332,18 @@ const appConfigSchema = z.object({
   spend: z.object({
     monthlyLimitUsd: z.number().finite().positive().max(1_000_000).nullable().optional(),
     headsUpLeft: z.string().max(80).regex(/^[0-9T:.+\-Z]{10,64}@(80|100)$/).nullable().optional(),
+    /** UX-L2C-PAUSE r4: Flux's own 402 refusals (server/spend-gate.ts), by scope then limit kind. Written only by the gate, never by the config route. */
+    refusals: z.record(z.string().max(200), z.record(z.string().max(40), z.object({
+      limit: z.enum(["monthly_spend", "bot_monthly_spend", "monthly_tokens"]), scope: z.string().max(200), asOf: z.string().max(40), resetsAt: z.string().max(40).nullable(),
+      month: z.string().max(7), budget: z.number().finite().nullable(), spent: z.number().finite().nullable(), manageUrl: z.string().max(500).nullable(), credId: z.string().max(40).nullable().optional(), keyId: z.string().max(200).nullable().optional(), botId: z.string().max(200).nullable().optional(), seq: z.number().int().nonnegative(),
+    }).strict())).optional(),
+    /** UX-L2C-PAUSE r6 1: the pause's identity. Fingerprints only, never a key. Written only by the gate. */
+    account: z.object({
+      accountId: z.string().max(200).nullable(), accountAsOf: z.string().max(40).nullable(),
+      capability: z.enum(["on", "off"]), capAsOf: z.string().max(40).nullable(), capCredId: z.string().max(40).nullable(),
+    }).strict().optional(),
+    /** UX-L2C-PAUSE r6 2: which Flux account each credential (by durable credId, never the key) belongs to. Written only by the gate. */
+    membership: z.record(z.string().max(40), z.object({ accountId: z.string().max(200), asOf: z.string().max(40) }).strict()).optional(),
   }).strict().optional(),
   xai: z.object({ key: optionalText, url: optionalText }).optional(),
   /** `model` seeds the default selection; `provider` pins an OpenRouter
@@ -377,6 +393,7 @@ const appConfigSchema = z.object({
    * owner's IANA zone (1.0.8, owner-time-zone.ts); empty or absent follows
    * this computer. Read leniently: a value that is not a zone follows the
    * computer instead of failing the whole config. */
+  settingsDefaultMode: z.enum(["simple", "advanced"]).optional(),
   profile: z.object({ name: optionalText, email: optionalText, timeZone: optionalText }).optional(),
   /** UI language override (BCP-47, lowercase). Empty/absent = follow the
    * system language. Unknown tags degrade to English in the renderer. */
@@ -393,7 +410,17 @@ const appConfigSchema = z.object({
   hermesProfilesPinned: z.boolean().optional(),
   /** Workspace defaults a new bot starts with (upstream #1728, triage row
    *  23). `effort: null` in a patch clears it; the section is written whole. */
-  newBots: z.object({ effort: z.enum(EFFORT_LEVELS).nullable().optional() }).strict().optional(),
+  newBots: z.object({ effort: z.enum(EFFORT_LEVELS).nullable().optional(), permissionLevel: z.enum(["ask", "auto", "full", "no-limits"]).optional() }).strict().optional(),
+  /** Which computer a NEW bot starts on (CONTRACTS-B 2). Read at creation only; a bot's own Access > Computer choice wins after. */
+  computer: z.object({ defaultForNewBots: z.enum(DEFAULT_COMPUTER_CHOICES).optional() }).strict().optional(),
+  /** Claude Code copy import (CONTRACTS-B 1). `enabled` is the owner's switch; the rest is a receipt written only by the import route. */
+  claudeCodeImport: z.object({
+    enabled: z.boolean().optional(),
+    lastImportedAt: z.number().int().nonnegative().nullable().optional(),
+    skills: z.number().int().nonnegative().max(100000).optional(),
+    servers: z.number().int().nonnegative().max(100000).optional(),
+    needsKey: z.number().int().nonnegative().max(100000).optional(),
+  }).strict().optional(),
   /** User-configured MCP servers, mounted into every capable engine. Kept
    * loosely typed HERE on purpose: parseStoredConfig throws away the whole
    * file on a schema error, and one bad server entry must degrade to a
@@ -413,10 +440,12 @@ const notificationPreferencesPatchSchema = notificationPreferencesSchema.extend(
   memories: notificationPreferencesSchema.shape.memories.removeDefault().optional(),
   previewContent: notificationPreferencesSchema.shape.previewContent.removeDefault().optional(),
 });
-const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, hermesProfilesPinned: true, noLimitsTermsVersion: true }).extend({ notifications: notificationPreferencesPatchSchema.optional() });
+// The Claude Code receipt (time and counts) is written only by the import route, so a patch may carry nothing but the switch.
+const appConfigPatchSchema = appConfigSchema.omit({ instances: true, mcpServers: true, settingsDefaultMode: true, hermesProfilesPinned: true, noLimitsTermsVersion: true }).extend({ notifications: notificationPreferencesPatchSchema.optional(), claudeCodeImport: z.object({ enabled: z.boolean() }).strict().optional() });
 const jsonObjectSchema = z.record(z.string(), z.json());
 
 export interface AppConfig {
+  settingsDefaultMode?: "simple" | "advanced";
   /** Pause scheduled/webhook admission; manual owner work remains available. */
   automationsPaused?: boolean;
   noLimitsTermsVersion?: number;
@@ -429,11 +458,13 @@ export interface AppConfig {
     readReceipts?: boolean; quoteReplies?: "off" | "groups" | "all";
   };
   notifications?: NotificationPreferences;
-  spend?: { monthlyLimitUsd?: number | null; headsUpLeft?: string | null };
+  spend?: { monthlyLimitUsd?: number | null; headsUpLeft?: string | null; refusals?: Record<string, Record<string, { limit: "monthly_spend" | "bot_monthly_spend" | "monthly_tokens"; scope: string; asOf: string; resetsAt: string | null; month: string; budget: number | null; spent: number | null; manageUrl: string | null; credId?: string | null; keyId?: string | null; botId?: string | null; seq: number }>>; account?: { accountId: string | null; accountAsOf: string | null; capability: "on" | "off"; capAsOf: string | null; capCredId: string | null }; membership?: Record<string, { accountId: string; asOf: string }> };
   engineDiscovery?: "automatic" | "explicit";
   hermesProfilesPinned?: boolean;
   /** Effort for a new bot whose selection names none; absent sends none. */
-  newBots?: { effort?: EffortLevel | null };
+  newBots?: { effort?: EffortLevel | null; permissionLevel?: "ask" | "auto" | "full" | "no-limits" };
+  computer?: { defaultForNewBots?: DefaultComputerChoice };
+  claudeCodeImport?: { enabled?: boolean; lastImportedAt?: number | null; skills?: number; servers?: number; needsKey?: number };
   mcpServers?: Record<string, unknown>;
   language?: string;
   xai?: { key?: string; url?: string };
@@ -631,6 +662,11 @@ export function skillRecorderEnabled(cfg: AppConfig, env: NodeJS.ProcessEnv = pr
   return isCloudHome(env) ? cfg.features?.skillRecorder === true : cfg.features?.skillRecorder !== false;
 }
 
+/** The computer a new bot starts on; "this" unless the owner chose otherwise. Read at creation only. */
+export function defaultComputerForNewBots(cfg: AppConfig): DefaultComputerChoice {
+  return cfg.computer?.defaultForNewBots ?? DEFAULT_COMPUTER_FOR_NEW_BOTS;
+}
+
 export function fluxDesktopSigninEnabled(cfg: AppConfig): boolean {
   return fluxDesktopSigninOn(cfg.features);
 }
@@ -698,6 +734,7 @@ function loadConfigWithoutOverlay(): AppConfig {
     try { cfg = parseStoredConfig(saved as JsonValue); }
     catch { throw new PersistedStateRecoveryError(file, "invalid-shape"); }
   }
+  cfg.settingsDefaultMode ??= saved === undefined ? "simple" : "advanced";
   if (process.env.MURAGE_CLOUD_ROLE === "home") {
     assertNoCloudPlaintext(cfg);
     // The saved Flux Memory switches apply on a cloud home too: without this a
@@ -1022,13 +1059,14 @@ function writeConfigPatch(patch: ConfigWritePatch): void {
     if (!parsed.success) throw new PersistedStateRecoveryError(p, "invalid-shape");
     disk = parsed.data;
   }
+  disk.settingsDefaultMode ??= saved === undefined ? "simple" : "advanced";
   const checkedPatch = appConfigSchema.partial().extend({ notifications: notificationPreferencesPatchSchema.optional() }).parse(patch);
   // A write is the durable migration point. Preserve every other raw key in
   // config.json, but never write #567's mixed-case or duplicate profile ids
   // back after we have successfully recognized the legacy list.
   const storedProfiles = storedBrowserProfilesSchema.safeParse(disk.browserProfiles);
   if (storedProfiles.success) disk.browserProfiles = storedProfiles.data;
-  for (const key of ["modelProviders", "xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "slack", "discord", "whatsapp", "webSearch", "highlevel", "notifications", "spend", "flux", "profile", "rooms", "localVm", "features", "decider"] as const) {
+  for (const key of ["modelProviders", "xai", "openaiCompat", "composio", "box", "opencodeGo", "tts", "imageGen", "telegram", "slack", "discord", "whatsapp", "webSearch", "highlevel", "notifications", "spend", "flux", "profile", "rooms", "localVm", "features", "decider", "computer", "claudeCodeImport"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
@@ -1046,13 +1084,20 @@ function writeConfigPatch(patch: ConfigWritePatch): void {
   }
   // scalar, not a section: the merge loop above only walks objects
   if (checkedPatch.language !== undefined) disk.language = checkedPatch.language;
+  if (checkedPatch.settingsDefaultMode !== undefined) disk.settingsDefaultMode = checkedPatch.settingsDefaultMode;
   // scalar, not a section: held only in memory it vanished at the next config reload (refreshCfg drops keys the file lacks)
   if (checkedPatch.automationsPaused !== undefined) disk.automationsPaused = checkedPatch.automationsPaused;
   // scalar too: the schema and patch validation accept it, but without this line a requested "explicit" was dropped and refreshCfg wiped the in-memory value
   if (checkedPatch.engineDiscovery !== undefined) disk.engineDiscovery = checkedPatch.engineDiscovery;
   if (checkedPatch.hermesProfilesPinned !== undefined) disk.hermesProfilesPinned = checkedPatch.hermesProfilesPinned;
   if (checkedPatch.noLimitsTermsVersion !== undefined) disk.noLimitsTermsVersion = checkedPatch.noLimitsTermsVersion;
-  if (checkedPatch.newBots !== undefined) disk.newBots = checkedPatch.newBots.effort ? { effort: checkedPatch.newBots.effort } : {};
+  if (checkedPatch.newBots !== undefined) {
+    const current = jsonObjectSchema.safeParse(disk.newBots);
+    const merged: JsonObject = { ...(current.success ? current.data : {}), ...checkedPatch.newBots };
+    // The effort row clears only its own default; sibling defaults survive every partial save.
+    if (merged.effort === null) delete merged.effort;
+    disk.newBots = merged;
+  }
   // the whole list is the unit of change: an add or a delete arrives as the
   // new list, never as a per-item merge
   if (checkedPatch.browserProfiles !== undefined) {

@@ -29,6 +29,7 @@
     "server/drivers/pi-mcp-extension.ts",
     "server/cloud-home/mining-event-path.test.ts",
     "server/cloud-home/app-health.test.ts",
-    "server/cloud-home/cp-add-device-disabled.test.ts"
+    "server/cloud-home/cp-add-device-disabled.test.ts",
+    "server/cloud-home/ui-canary-log-contract.test.ts"
   ]
 }

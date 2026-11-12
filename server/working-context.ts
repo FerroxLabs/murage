@@ -257,11 +257,14 @@ function newestAt(db: DatabaseSync, threadId: string): number | null {
 }
 
 /** The bot's newest files in threads that may be named: an indexed newest-first read (artifacts_bot_date). */
-function recentFiles(db: DatabaseSync, botId: string, eligible: Eligible, refs?: LineageRef[]): string[] {
+function recentFiles(db: DatabaseSync, botId: string, eligible: Eligible, omissions: WorkingContextOmissions, refs?: LineageRef[]): string[] {
   try {
     const rows = db.prepare("SELECT relative_path, thread_id FROM artifacts WHERE bot_id=? ORDER BY created_at DESC LIMIT 50").all(botId) as Array<{ relative_path: string; thread_id: string }>;
     const files: string[] = [];
-    const open = shownMemoryRefs(db, rows.map(row => fileRef(botId, String(row.relative_path))));
+    // Keep the lookup's original batch and privacy behavior. Only eligible
+    // candidates contribute omission evidence for this turn's block.
+    const counted = new Set(rows.filter(row => eligible(String(row.thread_id))).map(row => memoryRefKey(fileRef(botId, String(row.relative_path)))));
+    const open = shownMemoryRefs(db, rows.map(row => fileRef(botId, String(row.relative_path))), omissions, counted);
     for (const row of rows) {
       if (!eligible(String(row.thread_id))) continue;
       if (!open.has(memoryRefKey(fileRef(botId, String(row.relative_path))))) continue;
@@ -293,6 +296,14 @@ export function workingContext(allowance: LineageAllowance, input: WorkingContex
 /** The replies a block quotes: a reply built from the block rests on them
  *  (the dispatch notes their sources on its receipt, Astra r1 #6). */
 export type WorkingContextQuote = { threadId: string; messageId: string };
+/** Observed gate omissions only. No source identities or remembered words may
+ * cross this boundary into the durable notice or its recovery log. */
+export type WorkingContextOmissions = { checking: number; changed: number; unknown: number };
+const noOmissions = (): WorkingContextOmissions => ({ checking: 0, changed: 0, unknown: 0 });
+function countOmission(omissions: WorkingContextOmissions, verdict: LineageVerdict | undefined): void {
+  if (verdict?.state === "shown") return;
+  omissions[verdict?.state === "checking" ? "checking" : verdict?.state === "withheld" ? "changed" : "unknown"]++;
+}
 
 /** What was discovered for one bot and current thread. Nothing here decides what is shown. */
 type Kept = {
@@ -386,7 +397,7 @@ function recentThreads(input: WorkingContextInput, db: DatabaseSync, who: Subjec
  *  still the bot's, not withheld from bots, and the lineage judge lets bots see it. Its words are the ones it has now. The reader door
  *  judges the row it carries, with every other candidate of the build, in one operation (shownLines). */
 type QuoteCandidate = { threadId: string; line: string; messageId: string; row: Message };
-function candidateLine(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, kept: Kept, eligible: Eligible, excluded: ReadonlySet<string>, threadId: string, at: number): QuoteCandidate | null {
+function candidateLine(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, kept: Kept, eligible: Eligible, excluded: ReadonlySet<string>, threadId: string, at: number, omissions: WorkingContextOmissions): QuoteCandidate | null {
   const item = eligible(threadId);
   if (!item) return null;
   let messageId = kept.replies.get(threadId);
@@ -403,8 +414,9 @@ function candidateLine(allowance: LineageAllowance, input: WorkingContextInput, 
     reply = row ? ownReply(row, input.botId) : null;
     if (!reply) return null;
   }
-  if (reply.withheld) return null;
-  if (judgeReply(allowance, db, threadId, messageId!, reply.copy, input as unknown as MemoryRoster, excluded) !== "shown") return null;
+  if (reply.withheld) { omissions.changed++; return null; }
+  const verdict = judgeReply(allowance, db, threadId, messageId!, reply.copy, input as unknown as MemoryRoster, excluded);
+  if (verdict !== "shown") { omissions[verdict === "withheld" ? "changed" : "unknown"]++; return null; }
   let stored: unknown;
   try { stored = rowToMessage({ json: row!.json }); } catch { return null; }
   if (!stored || typeof stored !== "object" || Array.isArray(stored)) return null;
@@ -417,7 +429,7 @@ function candidateLine(allowance: LineageAllowance, input: WorkingContextInput, 
  *  door (LINEAGE-DESIGN-S6 rule 16) judges the rows they carry in one operation (bot-read.ts rowsShown: no row read again, the per-operation
  *  state read once). Only when the door leaves some out are the next threads' candidates gathered and judged, so the work follows the lines
  *  shown, never the history. */
-function shownLines(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, kept: Kept, eligible: Eligible, excluded: ReadonlySet<string>, room: number, reader?: LineageReader): QuoteCandidate[] {
+function shownLines(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, kept: Kept, eligible: Eligible, excluded: ReadonlySet<string>, room: number, omissions: WorkingContextOmissions, reader?: LineageReader): QuoteCandidate[] {
   const shown: QuoteCandidate[] = [];
   const viewer = botViewer(input.botId);
   let next = 0;
@@ -425,13 +437,19 @@ function shownLines(allowance: LineageAllowance, input: WorkingContextInput, db:
     const batch: QuoteCandidate[] = [];
     while (shown.length + batch.length < room && next < kept.recent.length) {
       const { threadId, at } = kept.recent[next++]!;
-      const candidate = candidateLine(allowance, input, db, kept, eligible, excluded, threadId, at);
+      const candidate = candidateLine(allowance, input, db, kept, eligible, excluded, threadId, at, omissions);
       if (candidate) batch.push(candidate);
     }
     if (!batch.length) break;
     const verdicts = rowsShown(db, viewer, batch);
     const fenced = readerShown(db, batch, reader);
-    batch.forEach((candidate, index) => { if (verdicts[index] && fenced[index]) shown.push(candidate); });
+    batch.forEach((candidate, index) => {
+      if (verdicts[index] && fenced[index]?.state === "shown") shown.push(candidate);
+      // Count a quote once even when both doors leave it out. Prefer the
+      // explicit fence cause; the content door exposes only a boolean.
+      else if (fenced[index]?.state !== "shown") countOmission(omissions, fenced[index]);
+      else omissions.unknown++;
+    });
   }
   return shown;
 }
@@ -442,8 +460,8 @@ function shownLines(allowance: LineageAllowance, input: WorkingContextInput, db:
  *  rebuilt the same block from this door three times and then sent the last-resort prompt, with no memory frame and so none of the
  *  owner's pinned records (1.0.3 room deny-line). A content reader, or no reader, adds nothing. Fail closed: a lookup that throws leaves
  *  the batch out. */
-function readerShown(db: DatabaseSync, batch: readonly QuoteCandidate[], reader: LineageReader | undefined): boolean[] {
-  if (!reader || reader.audience === null) return batch.map(() => true);
+function readerShown(db: DatabaseSync, batch: readonly QuoteCandidate[], reader: LineageReader | undefined): Array<LineageVerdict | undefined> {
+  if (!reader || reader.audience === null) return batch.map(() => ({ state: "shown" }));
   try {
     const byThread = new Map<string, string[]>();
     for (const candidate of batch) byThread.set(candidate.threadId, [...(byThread.get(candidate.threadId) ?? []), candidate.messageId]);
@@ -452,8 +470,8 @@ function readerShown(db: DatabaseSync, batch: readonly QuoteCandidate[], reader:
       const page = denyLookup(db, { threadId, lines: ids.map(messageId => ({ messageId, author: "generated" as const })) }, reader);
       for (const [messageId, verdict] of page) verdicts.set(`${threadId}\u0000${messageId}`, verdict);
     }
-    return batch.map(candidate => verdicts.get(`${candidate.threadId}\u0000${candidate.messageId}`)?.state === "shown");
-  } catch { return batch.map(() => false); }
+    return batch.map(candidate => verdicts.get(`${candidate.threadId}\u0000${candidate.messageId}`));
+  } catch { return batch.map(() => undefined); }
 }
 
 /** Whether a thread's human is the owner, kept per thread. Only asked of a thread that already has messages (its
@@ -475,19 +493,22 @@ function threadAllowed(db: DatabaseSync, threadId: string, excluded: ReadonlySet
 /** The refs among `refs` the write-time lookup shows a content reader: a card title or a file name is words a bot wrote in a turn, and a forget
  * that reached its writer's turn denies it (deny_memory) whatever its explicit sources say (Astra audit P1 4). A ref that reads "checking" or
  * withheld stays out of the block; a lookup that fails leaves all out (fail closed). */
-function shownMemoryRefs(db: DatabaseSync, refs: readonly MemoryRef[]): Set<string> {
+function shownMemoryRefs(db: DatabaseSync, refs: readonly MemoryRef[], omissions: WorkingContextOmissions, counted?: ReadonlySet<string>): Set<string> {
   if (!refs.length) return new Set();
+  const keys = [...new Set(refs.map(memoryRefKey))];
+  const observed = counted ? keys.filter(key => counted.has(key)) : keys;
   try {
     const verdicts = memoryLookup(db, refs, doorReader());
-    return new Set(refs.map(memoryRefKey).filter(key => verdicts.get(key)?.state === "shown"));
-  } catch { return new Set(); }
+    for (const key of observed) countOmission(omissions, verdicts.get(key));
+    return new Set(keys.filter(key => verdicts.get(key)?.state === "shown"));
+  } catch { omissions.unknown += observed.length; return new Set(); }
 }
 
 /** The bot's cards on a project's record: an indexed read of at most `limit` (project_work_items_assignee). */
-function projectCardLines(db: DatabaseSync, group: { id: string; name: string }, botId: string, limit: number, refs?: LineageRef[]): string[] {
+function projectCardLines(db: DatabaseSync, group: { id: string; name: string }, botId: string, limit: number, omissions: WorkingContextOmissions, refs?: LineageRef[]): string[] {
   const found = db.prepare("SELECT id, number, title, state, request_id FROM project_work_items WHERE group_id=? AND assignee_bot_id=? AND archived_at IS NULL AND stale=0 ORDER BY position, created_at, id LIMIT ?")
     .all(group.id, botId, limit) as Array<{ id: string; number: number; title: string; state: string; request_id: string | null }>;
-  const open = shownMemoryRefs(db, found.map(card => murageObjectRef("project-card", String(card.id))));
+  const open = shownMemoryRefs(db, found.map(card => murageObjectRef("project-card", String(card.id))), omissions);
   const rows = found.filter(card => open.has(memoryRefKey(murageObjectRef("project-card", String(card.id)))));
   // a card's title may be a lead's words: the line rests on the card (project-cards.ts records a card a bot writes in its turn)
   refs?.push(...memoryRefs(rows.map(card => murageObjectRef("project-card", String(card.id)))));
@@ -500,10 +521,11 @@ function projectCardLines(db: DatabaseSync, group: { id: string; name: string },
 }
 
 /** (thread bindings remembered for the build: human-principals.ts withBindingScope) */
-function buildWorkingContext(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, refs: LineageRef[] = [], reader?: LineageReader): { text: string; quoted: WorkingContextQuote[] } {
-  return withBindingScope(() => buildWorkingContextScoped(allowance, input, db, refs, reader));
+function buildWorkingContext(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, refs: LineageRef[] = [], reader?: LineageReader): { text: string; quoted: WorkingContextQuote[]; omissions: WorkingContextOmissions } {
+  const omissions = noOmissions();
+  return { ...withBindingScope(() => buildWorkingContextScoped(allowance, input, db, refs, omissions, reader)), omissions };
 }
-function buildWorkingContextScoped(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, refs: LineageRef[], reader?: LineageReader): { text: string; quoted: WorkingContextQuote[] } {
+function buildWorkingContextScoped(allowance: LineageAllowance, input: WorkingContextInput, db: DatabaseSync, refs: LineageRef[], omissions: WorkingContextOmissions, reader?: LineageReader): { text: string; quoted: WorkingContextQuote[] } {
   // a scheduled or webhook run is not a turn with the owner: no block, and no work for it
   if (input.trigger === "schedule" || input.trigger === "webhook") return { text: "", quoted: [] };
   // Do not retry a failed venue lookup or contradict its unavailable line with stale project labels.
@@ -519,16 +541,16 @@ function buildWorkingContextScoped(allowance: LineageAllowance, input: WorkingCo
       if (lines.length === MAX_THREADS) break;
       // a room's chat may have no message yet: its human is read afresh, not kept
       if (!eligible(group.threadId) || !isWorkspaceOwner(threadHumanPrincipal(group.threadId, db))) continue;
-      lines.push(...projectCardLines(db, group, input.botId, MAX_THREADS - lines.length, refs));
+      lines.push(...projectCardLines(db, group, input.botId, MAX_THREADS - lines.length, omissions, refs));
     }
   }
   const quoted: WorkingContextQuote[] = [];
   const kept = discovered(input, db, who, eligible, excluded);
-  for (const shown of shownLines(allowance, input, db, kept, eligible, excluded, MAX_THREADS - lines.length, reader)) {
+  for (const shown of shownLines(allowance, input, db, kept, eligible, excluded, MAX_THREADS - lines.length, omissions, reader)) {
     lines.push(shown.line);
     quoted.push({ threadId: shown.threadId, messageId: shown.messageId });
   }
-  const files = recentFiles(db, input.botId, eligible, refs);
+  const files = recentFiles(db, input.botId, eligible, omissions, refs);
   const routineList = typeof input.routines === "function" ? input.routines() : input.routines;
   const routines = (who.liveBot?.partitionedAt !== undefined && !isHomePartition(threadPartition(who.liveBot, input.currentThreadId)) ? [] : routineList).filter(routine => routine.botId === input.botId && routine.enabled).map(routine => name(routine.name).slice(0, 60)).filter(Boolean).slice(0, MAX_ROUTINES);
   if (!lines.length && !files.length && !routines.length) return { text: "", quoted: [] };
@@ -551,11 +573,12 @@ export function workingContextPrompt(allowance: LineageAllowance, ownerAudience:
 
 /** The surface with the replies it quotes, for the dispatch's receipt. */
 /** `reader`: the turn's send-fence reader (index.ts directFence, roomFence); the quoted lines are judged for it at the build (readerShown). */
-export function workingContextBlock(allowance: LineageAllowance, ownerAudience: boolean, input: WorkingContextInput, db: DatabaseSync = database(), reader?: LineageReader): { text: string; quoted: WorkingContextQuote[]; part: PromptPart } {
+export function workingContextBlock(allowance: LineageAllowance, ownerAudience: boolean, input: WorkingContextInput, db: DatabaseSync = database(), reader?: LineageReader): { text: string; quoted: WorkingContextQuote[]; part: PromptPart; omissions: WorkingContextOmissions } {
   let quoted: WorkingContextQuote[] = [];
+  let omissions = noOmissions();
   const refs: LineageRef[] = [];
-  const text = ownerOnly("working-context", ownerAudience, () => { const built = buildWorkingContext(allowance, input, db, refs, reader); quoted = built.quoted; return built.text; });
-  return { text, quoted: text ? quoted : [], part: workingContextPart(text, text ? quoted : [], text ? refs : []) };
+  const text = ownerOnly("working-context", ownerAudience, () => { const built = buildWorkingContext(allowance, input, db, refs, reader); quoted = built.quoted; omissions = built.omissions; return built.text; });
+  return { text, quoted: text ? quoted : [], part: workingContextPart(text, text ? quoted : [], text ? refs : []), omissions };
 }
 
 /** The block as a prompt part (DESIGN-WRITETIME 2.2, prompt-borne text): every reply it quotes is a point carry, every card and file it

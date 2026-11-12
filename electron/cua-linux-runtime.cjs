@@ -1,3 +1,4 @@
+const { withHideInherit } = require("../shared/win-hide-child-process.mjs");
 const { spawn } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
 const fs = require("node:fs");
@@ -727,12 +728,12 @@ function createLinuxCuaRuntime({
           "Cua Driver changed after validation. Check the installation and try again.",
         );
       }
-      const child = spawnProcess(inspected.path, args, {
+      const child = spawnProcess(inspected.path, [...args], withHideInherit({
         env: childEnv,
         shell: false,
         stdio: ["pipe", "ignore", "pipe"],
         windowsHide: true,
-      });
+      }));
       const owned = {
         child,
         generation,

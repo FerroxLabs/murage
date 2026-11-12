@@ -16,6 +16,7 @@
 // An uncertain outcome is never replayed by the caller: nothing proves that nothing went out (3.4, Astra R3).
 
 import { fluxUsageHeaders } from "../flux-usage-tags.ts";
+import { authorizeFluxDispatch } from "../flux-start-gate.ts";
 
 export type CredentialKind = "account" | "owner" | "bot";
 export interface FluxCredential { token: string; /** the Flux key id, recorded per attempt; never the secret */ keyId: string }
@@ -117,7 +118,7 @@ export interface EmailEvent { id: string; type: string; created?: string; inbox_
 export interface MessageSummary { id: string; direction?: string; client_reference?: string | null; thread_id?: string; [field: string]: unknown }
 export interface BotKeyBody { key: string; key_id: string; label?: string; [field: string]: unknown }
 
-/** POST/DELETE /api/desktop/bot-keys answer 404 with no body while Flux's FLUX_BOT_KEYS_ENABLED is off (r2.5): bot email is dark, which is
+/** POST/DELETE /api/desktop/bot-keys answer 404 with no body while Flux's server-side rollout flag is off (r2.5): bot email is dark, which is
  *  not a failure of this bot. A real missing key is a 404 with a body (key_not_found). */
 export function botKeysDark(outcome: { kind: string; status?: number; code?: string }): boolean {
   return outcome.kind === "refused" && outcome.status === 404 && outcome.code === "http_404";
@@ -161,6 +162,7 @@ export class FluxEmailClient {
     const timer = setTimeout(() => { timedOut = true; controller.abort(); }, init.timeoutMs ?? this.timeoutMs);
     (timer as { unref?: () => void }).unref?.();
     try {
+      await authorizeFluxDispatch(credential.token); // spend gate: an email send bills the bot key
       const response = await this.options.fetch(url.toString(), { method, headers, body: init.body === undefined ? undefined : JSON.stringify(init.body), signal: controller.signal, redirect: "error" });
       let text = "";
       try { text = await response.text(); } catch { return { kind: "uncertain", status: response.status, reason: timedOut ? "timeout" : "network", keyId: credential.keyId }; }
@@ -187,7 +189,8 @@ export class FluxEmailClient {
       body: { bot_id: input.botId, scopes: ["email:bot"], ...(input.botMonthlySpendLimitUsd !== undefined ? { bot_monthly_spend_limit_usd: input.botMonthlySpendLimitUsd } : {}) },
     });
   }
-  revokeBotKey(keyId: string) { return this.request<Record<string, unknown>>({ kind: "owner" }, "DELETE", `/api/desktop/bot-keys/${encodeURIComponent(keyId)}`, { host: "app" }); }
+  /** The confirming read of one bot key (GET bot-keys/<id>): 200 means the key exists, 404 key_not_found means it is gone. */
+  getBotKey(keyId: string) { return this.request<Record<string, unknown>>({ kind: "owner" }, "GET", `/api/desktop/bot-keys/${encodeURIComponent(keyId)}`, { host: "app" }); }
   // #3 to #7. #3 is owner-only in v1 (r2.5) and names the bot with bot_id (there is no bot_key_id): 404 bot_not_found, 409 inbox_exists
   // (carries inbox_id), and a bot key would get 403 owner_required, so only the owner token ever calls it.
   createInbox(input: { botId: string; username?: string; displayName?: string }, idempotencyKey: string) {
@@ -201,7 +204,6 @@ export class FluxEmailClient {
   /** #8: `acknowledge` must equal the pause reason exactly (the owner read why). */
   resumeInbox(inboxId: string, acknowledge: string) { return this.request<InboxBody>({ kind: "owner" }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/resume`, { body: { acknowledge } }); }
   /** #7 (r2.5): 202 state "closing" (closing_until): 30 days with no sends, restorable, then deleted and #5 answers 404. */
-  deleteInbox(inboxId: string) { return this.request<InboxBody>({ kind: "owner" }, "DELETE", `/v1/email/inboxes/${encodeURIComponent(inboxId)}`); }
   /** Activation #37 Keep address: a closing inbox comes back with the same address (`bot_id` must be its bound bot). */
   restoreInbox(inboxId: string, botId: string) { return this.request<InboxBody>({ kind: "owner" }, "POST", `/v1/email/inboxes/${encodeURIComponent(inboxId)}/restore`, { botId, body: { bot_id: botId } }); }
   // #9, #10: Idempotency-Key required, client_reference = send_id (ask 7)

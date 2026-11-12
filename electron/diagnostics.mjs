@@ -7,6 +7,7 @@
 // disk — so a future collector mistake still cannot leak a credential.
 //
 import fs from "node:fs";
+import { homedir } from "node:os";
 import { maskSecretLabelsToEnd } from "../shared/md-secret-label.mjs";
 
 // CREDENTIAL_ENV_NAMES mirrors WORKSPACE_CREDENTIAL_ENV (server/config.ts).
@@ -137,6 +138,85 @@ export function redactSecretsInLine(line) {
   );
   for (const format of CREDENTIAL_TOKEN_FORMATS) out = out.replace(format, (found) => mask(found));
   return out;
+}
+
+// Export logs as metadata, rather than trying to enumerate every way a
+// provider can echo a conversation. Unknown prose and continuation lines are
+// omitted. The local log is unchanged; support retains counts, ids and timing.
+const LOG_COUNTS = new Set([
+  "count", "messages", "bytes", "tokens", "inputTokens", "outputTokens", "durationMs", "elapsedMs",
+  "latencyMs", "duration", "elapsed", "pid", "port", "exitCode", "attempt", "retries", "pending",
+  "sampleAgeSec", "workingSetKb", "peakWorkingSetKb", "privateKb", "sysFreeMb",
+]);
+const LOG_IDS = new Set(["id", "botId", "threadId", "messageId", "turnId", "runId", "taskId", "requestId"]);
+const LOG_ENUMS = {
+  event: ["render-process-gone", "child-process-gone", "main-process-failure", "message_sent", "turn_started", "turn_completed"],
+  surface: ["main-window", "auxiliary"], reason: ["abnormal-exit", "clean-exit", "crashed", "integrity-failure", "killed", "launch-failed", "oom"],
+  mem: ["none", "sampled"], origin: ["uncaughtException", "unhandledRejection"],
+  state: ["idle", "running", "completed", "failed", "stopped"],
+};
+const LOG_PATHS = new Set(["path", "cwd", "workspace", "file"]);
+const REDACTION_LABELS = Object.freeze({
+  authorization: "Authorization", token: "token", apikey: "apiKey", api_key: "api_key",
+  password: "password", passwd: "passwd", secret: "secret", privatekey: "privateKey", private_key: "private_key",
+});
+const BODY_FIELD = /(?:^|[\s,{])["']?(?:text|message|messages|prompt|content|body|response|output|preview|error|stack|stdout|stderr)["']?\s*[:=]/i;
+
+function abbreviateHomePaths(text, homeDir) {
+  let out = text;
+  // Also cover paths from another machine or a subprocess with a different
+  // HOME. Component boundaries keep /home/ada2 from matching /home/ada.
+  if (homeDir && homeDir !== "/" && homeDir !== "\\") {
+    const escape = part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const windows = /^[A-Za-z]:[/\\]/.test(homeDir);
+    const escaped = windows ? homeDir.split(/[/\\]/).map(escape).join(String.raw`[/\\]`) : escape(homeDir);
+    out = out.replace(new RegExp(`${escaped}${String.raw`(?=[/\\\s"',:;)]|$)`}`, windows ? "gi" : "g"), "~");
+  }
+  return out.replace(/[A-Za-z]:[/\\]Users[/\\][^\\/"'\r\n]+/gi, "~")
+    .replace(/\/(?:Users|home)\/[^/"'\\\r\n]+/g, "~")
+    .replace(/\/root(?=[/\s"',;:)]|$)/g, "~");
+}
+
+function logMetadata(key, value) {
+  if (LOG_COUNTS.has(key) && /^-?\d+(?:\.\d+)?$/.test(String(value)) && Number.isFinite(Number(value))) return `${key}=${value}`;
+  if (LOG_IDS.has(key) && typeof value === "string" && /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(value)) return `${key}=${value}`;
+  if (Object.hasOwn(LOG_ENUMS, key) && LOG_ENUMS[key].includes(value)) return `${key}=${value}`;
+  if (LOG_PATHS.has(key) && typeof value === "string" && value.length <= 2048 && !/[\u0000-\u001f\u007f]/.test(value)
+    && /^(?:~[/\\]|\/|[A-Za-z]:[/\\])/.test(value)) return `${key}=${value}`;
+  return null;
+}
+
+function diagnosticsLogMetadata(text) {
+  // Mask whole PEM blocks before splitting lines, then project metadata only.
+  return redactSecretsInLine(text).split(/\r?\n/).map(line => {
+    if (!line.trim()) return "";
+    if (line === "server ready") return line;
+    const prefix = line.match(/^(\[\d{4}-\d\d-\d\dT[\d:.]+Z\](?: \[(?:out|err)\])?)/)?.[1];
+    const payload = prefix ? line.slice(prefix.length).trim() : line;
+    let fields = [];
+    // Structured logs have real boundaries; discard content fields, including
+    // nested message objects, instead of scanning their values for metadata.
+    if (payload.startsWith("{")) {
+      try {
+        const record = JSON.parse(payload);
+        fields = Object.entries(record).map(([key, value]) => logMetadata(key, value)).filter(Boolean);
+      } catch { /* malformed JSON is omitted, never scanned as prose */ }
+    } else {
+      const body = BODY_FIELD.exec(payload);
+      const metadata = body ? payload.slice(0, body.index) : payload;
+      for (const match of metadata.matchAll(/\b([A-Za-z][A-Za-z0-9]*)=("[^"\r\n]*"|'[^'\r\n]*'|[^\s]+)/g)) {
+        const field = logMetadata(match[1], unquote(match[2]));
+        if (field) fields.push(field);
+      }
+      // Keep only the scrubber's fixed markers, never their surrounding prose.
+      for (const marker of metadata.matchAll(/(?:(\b[A-Za-z_]+)[=:])?(«redacted(?: \d+ chars| private key| provider credentials)?»)/g)) {
+        const name = (marker[1] ?? "").toLowerCase();
+        const label = Object.hasOwn(REDACTION_LABELS, name) ? REDACTION_LABELS[name] : null;
+        fields.push(`${label ? `${label}=` : ""}${marker[2]}`);
+      }
+    }
+    return [prefix, ...(fields.length ? fields : ["«log text omitted»"])].filter(Boolean).join(" ");
+  }).join("\n");
 }
 
 /** Decode a bounded log buffer without exporting the partial first line that
@@ -445,6 +525,7 @@ export function buildDiagnosticsReport({
   desktopLogTail,
   logTail,
   now = new Date().toISOString(),
+  homeDir = homedir(),
 } = {}) {
   const lines = [];
   lines.push("Murage diagnostics");
@@ -484,19 +565,19 @@ export function buildDiagnosticsReport({
   lines.push("");
   lines.push("## Desktop crash events: no private details, event metadata only");
   if (desktopLogTail && desktopLogTail.trim()) {
-    for (const line of redactSecretsInLine(desktopLogTail).split(/\r?\n/)) lines.push(line);
+    for (const line of diagnosticsLogMetadata(desktopLogTail).split(/\r?\n/)) lines.push(line);
   } else {
     lines.push("(no desktop crash events available)");
   }
   lines.push("");
-  lines.push(logTail && logTail.trim() ? "## Server log tail: known credential patterns auto-masked" : "## Server log tail");
+  lines.push(logTail && logTail.trim() ? "## Server log tail: metadata only; message bodies omitted" : "## Server log tail");
   if (logTail && logTail.trim()) {
-    for (const line of redactSecretsInLine(logTail).split(/\r?\n/)) lines.push(line);
+    for (const line of diagnosticsLogMetadata(logTail).split(/\r?\n/)) lines.push(line);
   } else {
     lines.push("(server log unavailable)");
   }
   lines.push("");
-  return lines.join("\n");
+  return abbreviateHomePaths(lines.join("\n"), homeDir);
 }
 
 export function diagnosticsFileName(date = new Date()) {

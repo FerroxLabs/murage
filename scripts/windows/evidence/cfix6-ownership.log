@@ -1,0 +1,16 @@
+PASS new prefixed task cleaned; preexisting prefixed task preserved
+PASS unprefixed new task FAIL and never deleted
+PASS prefix substring is not ownership
+PASS existing action modification FAIL
+PASS existing task removal FAIL
+PASS no-op deletion FAIL on final enumeration
+PASS delete error FAIL
+PASS snapshot enumeration error FAIL
+PASS outer cleanup after child timeout
+PASS Desktop skips installer registrations
+PASS Desktop cleanup skips installer registrations
+PASS installer registry refuses nongate host
+PASS escaped process reported without a kill callback
+PASS Desktop never admits an external browser survivor
+PASS gate HTTPS browser survivor recorded
+PASS job membership checked before escape classification

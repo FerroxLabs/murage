@@ -1,0 +1,764 @@
+
+ RUN  v4.1.12 /work
+
+ ✓ server/connected-app-operations.test.ts > requests without a usable id are never forwarded > missing id: refused, nothing dispatched, twice 24ms
+ ✓ server/connected-app-operations.test.ts > requests without a usable id are never forwarded > null id: refused, nothing dispatched, twice 5ms
+ ✓ server/connected-app-operations.test.ts > requests without a usable id are never forwarded > object id: refused, nothing dispatched, twice 5ms
+ ✓ server/connected-app-operations.test.ts > requests without a usable id are never forwarded > empty string id: refused, nothing dispatched, twice 4ms
+ ✓ server/connected-app-operations.test.ts > requests without a usable id are never forwarded > inside a batch: refused, nothing dispatched, twice 5ms
+ ✓ server/connected-app-operations.test.ts > requests without a usable id are never forwarded > a notification-style lookup without an id still passes through 29ms
+ ✓ server/connected-app-operations.test.ts > connected-app operations > committed upstream, response delayed, retry attempted: the action is sent once 514ms
+ ✓ server/connected-app-operations.test.ts > connected-app operations > a retry made while the action runs waits for it and returns its answer 171ms
+ ✓ server/connected-app-operations.test.ts > connected-app operations > a long action finishes in the background and its result is collected by handle 218ms
+ ✓ server/connected-app-operations.test.ts > connected-app operations > an action whose answer never comes is held as unknown until the bot checks and clears it 240ms
+ ✓ server/connected-app-operations.test.ts > connected-app operations > an HTTP 400 with no pre-send evidence may have been sent: the same request is not repeated 14ms
+ ✓ server/connected-app-operations.test.ts > connected-app operations > different arguments or another bot are separate actions 32ms
+ ✓ server/connected-app-operations.test.ts > connected-app operations > a lookup never enters the ledger 8ms
+ ✓ server/connected-app-operations.test.ts > connected-app operation ledger bounds > normalizes argument order and drops undefined fields from an action's identity 7ms
+ ✓ server/connected-app-operations.test.ts > connected-app operation ledger bounds > joins a seen result only briefly; an unseen one keeps holding repeats after its bytes age out 7ms
+ ✓ server/connected-app-operations.test.ts > connected-app operation ledger bounds > keeps at most its result and byte budget, never dropping a running action or its record 26ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 2: replay protection holds through restart, eviction and ambiguous failures > records the intent durably before anything is dispatched 5ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 2: replay protection holds through restart, eviction and ambiguous failures > refuses to dispatch when the intent cannot be recorded 15ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 2: replay protection holds through restart, eviction and ambiguous failures > restart mid-send: the interrupted action is unknown and blocks a repeat until it is cleared 5ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 2: replay protection holds through restart, eviction and ambiguous failures > restart after an answer nobody collected: the answer is gone, the hold is not 3ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 2: replay protection holds through restart, eviction and ambiguous failures > restart through the relay: the same email is not sent again 36ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 2: replay protection holds through restart, eviction and ambiguous failures > 200 other results never release an unresolved action, running or unknown 13ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 2: replay protection holds through restart, eviction and ambiguous failures > 200 other results through the relay: the unknown email is still not sent again 1825ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 2: replay protection holds through restart, eviction and ambiguous failures > an HTTP 503 after dispatch is unknown, not not-sent: the same email is not resent 11ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 2: replay protection holds through restart, eviction and ambiguous failures > a 503 the broker marks as never dispatched may be repeated 17ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 2: replay protection holds through restart, eviction and ambiguous failures > the model's commentary does not change an action's identity 19ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 2: replay protection holds through restart, eviction and ambiguous failures > a stored answer is read back only through the stored requirements: the owner's current grants decide 289ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 2: replay protection holds through restart, eviction and ambiguous failures > admits at most OPERATION_MAX_PENDING running actions and refuses the next without dispatching 8ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 2: replay protection holds through restart, eviction and ambiguous failures > a refused request through the relay says nothing was sent 605ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 2: replay protection holds through restart, eviction and ambiguous failures > a request that reached nothing leaves no retained buffer 4ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 2: replay protection holds through restart, eviction and ambiguous failures > a stored event stream answers with the frame for its own request, not the last one 44ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: a verified read runs every time > the inbox read twice, 30 seconds apart, runs twice 8ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: a verified read runs every time > a read made again while the first is still running runs again and is not blocked 129ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: a verified read runs every time > a slow read still gets a handle, and CHECK returns it as a historical record 249ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: a verified read runs every time > GMAIL_SEND_EMAIL repeated is blocked 11ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: a verified read runs every time > GMAIL_PATCH_SEND_AS (a write the owner's sessions use) is protected 10ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: a verified read runs every time > every slug the owner's sessions read runs fresh 37ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: a verified read runs every time > a batch holding any write or unknown tool is protected 15ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: a verified read runs every time > an unknown tool is protected even when its name reads like a lookup 11ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: a verified read runs every time > workbench, remote bash and code tools are always protected 23ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: reads run fresh in the ledger itself > leaves no journal row and blocks nothing; protected calls still do 5ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: provenance > an unrecognised shape is not complete; a named batch is 6ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: provenance > is kept with the operation, through a restart 5ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: grants are rechecked after any wait, right before delivery > revocation during CHECK's wait gets no result 160ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: grants are rechecked after any wait, right before delivery > a joined repeat that outlasted the grant also gets nothing 132ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: restart keeps a delivered write's tombstone to its original deadline > restart +30 s still blocks; +61 s releases and deletes in one batch 4ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: restart keeps a delivered write's tombstone to its original deadline > recovery is one transaction and does not rewrite unchanged rows 4ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: journal faults retry and are never swallowed > a failed load refuses protected dispatch, retries with backoff, then recovers 5ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: journal faults retry and are never swallowed > a verified read still runs while the journal cannot be read 5ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: journal faults retry and are never swallowed > failed updates and deletes are counted, reported and retried until the journal takes them 5ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: journal faults retry and are never swallowed > clear() fails loudly and keeps the record when the journal refuses the delete 4ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: what Flux says about whether anything was sent > 503 with code apps_unavailable was never sent: the same email may go again 12ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: what Flux says about whether anything was sent > 503 with code composio_unavailable was never sent: the same email may go again 12ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: what Flux says about whether anything was sent > 503 with code capability_unavailable was never sent: the same email may go again 12ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: what Flux says about whether anything was sent > a code-less 503 "service unavailable" may have been sent: held 6ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: what Flux says about whether anything was sent > 503 with another code may have been sent: held 7ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: what Flux says about whether anything was sent > a pre-send code on another status is not trusted: held 7ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: what Flux says about whether anything was sent > top-level dispatched:false on a 5xx was never sent 12ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: what Flux says about whether anything was sent > an in-band -32000 SSE frame with error.data.dispatched:false was never sent 20ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: what Flux says about whether anything was sent > an in-band -32000 error without dispatched:false may have been sent: held 13ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: what Flux says about whether anything was sent > an in-band error that says dispatched:false but with another code is not trusted: held 10ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: pre-send evidence is explicit and belongs to this request > HTTP 400 without a dispatched flag may have been sent: held 7ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: pre-send evidence is explicit and belongs to this request > HTTP 402 without a dispatched flag may have been sent: held 6ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: pre-send evidence is explicit and belongs to this request > HTTP 403 without a dispatched flag may have been sent: held 7ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: pre-send evidence is explicit and belongs to this request > HTTP 404 without a dispatched flag may have been sent: held 9ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: pre-send evidence is explicit and belongs to this request > HTTP 409 without a dispatched flag may have been sent: held 9ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: pre-send evidence is explicit and belongs to this request > HTTP 413 without a dispatched flag may have been sent: held 6ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: pre-send evidence is explicit and belongs to this request > HTTP 422 without a dispatched flag may have been sent: held 7ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: pre-send evidence is explicit and belongs to this request > HTTP 429 without a dispatched flag may have been sent: held 8ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: pre-send evidence is explicit and belongs to this request > HTTP 400 that says dispatched:false was never sent 15ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: pre-send evidence is explicit and belongs to this request > a dispatched:false frame for another request id is ignored: held 6ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: pre-send evidence is explicit and belongs to this request > an id-less dispatched:false frame is ignored: held 6ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: pre-send evidence is explicit and belongs to this request > the same frame for this request id was never sent 12ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: pre-send evidence is explicit and belongs to this request > a session-gone 404 with no evidence is held too 7ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: classification follows the dispatched structure > a dummy read wrapper on an outer write batch is protected and journaled: the write is sent once 7ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: classification follows the dispatched structure > a read wrapper on the workbench is protected 6ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: classification follows the dispatched structure > a validated wrapper still classifies by what it wraps; extra or doubled fields do not 2ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: a failure before any request bytes could be written is the only network error that is not sent > a refused connection never carried the request: the same email may go again 10ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: a failure before any request bytes could be written is the only network error that is not sent > a connection dropped after the request was received may have been sent: held 31ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 4: the SQLite journal > round-trips provenance, applies a batch atomically, and upgrades a ledger written without the column 36ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: foreign, empty or malformed bodies are an unknown outcome > an event stream with only another request's refusal: still held 61 seconds later 9ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: foreign, empty or malformed bodies are an unknown outcome > an event stream with only another request's result: still held 61 seconds later 7ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: foreign, empty or malformed bodies are an unknown outcome > plain JSON for another id: still held 61 seconds later 6ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: foreign, empty or malformed bodies are an unknown outcome > a frame with no id: still held 61 seconds later 8ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: foreign, empty or malformed bodies are an unknown outcome > an empty body: still held 61 seconds later 6ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: foreign, empty or malformed bodies are an unknown outcome > a malformed body: still held 61 seconds later 6ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: foreign, empty or malformed bodies are an unknown outcome > a matching result answers: the repeat window ends it 17ms
+ ✓ server/connected-app-operations.test.ts > 1.0.2 round 5: foreign, empty or malformed bodies are an unknown outcome > a matching error frame answers too 18ms
+ ✓ src/components/PluginsPanel.test.ts > pending OAuth recovery > checks a pending authorization without a URL and continues only with its retained URL 5ms
+ ✓ src/components/PluginsPanel.test.ts > pending OAuth recovery > labels every new account before authorization, including the first, and keeps pending recovery 1ms
+ ✓ src/components/PluginsPanel.test.ts > pending OAuth recovery > authorizes a service only from the confirmed label form 3ms
+ ✓ src/components/PluginsPanel.test.ts > pending OAuth recovery > makes a confirmed label only from the label form 92ms
+ ✓ src/components/PluginsPanel.test.ts > pending OAuth recovery > the shared label form confirms only a non-empty label, and Escape closes only the form 7ms
+ ✓ src/components/PluginsPanel.test.ts > pending OAuth recovery > reconnects an account only through the confirmed label form 1ms
+ ✓ src/components/PluginsPanel.test.ts > pending OAuth recovery > words the first and an additional account label differently 0ms
+ ✓ src/components/PluginsPanel.test.ts > pending OAuth recovery > keeps the previous account inventory when its current status cannot be read 0ms
+ ✓ src/components/PluginsPanel.test.ts > the connectors panel names its account > says which service holds the apps 0ms
+ ✓ src/components/PluginsPanel.test.ts > the connectors panel names its account > stops calling a permanent packaging gate a temporary outage 0ms
+ ✓ src/components/PluginsPanel.test.ts > a key someone once pasted is never the one that gets used > never reads the own key when choosing a broker 1ms
+ ✓ src/components/PluginsPanel.test.ts > a key someone once pasted is never the one that gets used > leaves FluxRouter, then the Murage Worker, then nothing 0ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps caption before the catalog answers > says nothing about the broker until the catalog has said which one it is 0ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps call to action > leaves the no-key state to the lock rather than a notice line 0ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps call to action > does not offer a door this build does not have 0ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps call to action > says 'not reachable', not 'not set up', when FluxRouter is connected but down 0ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps call to action > offers Try again on the unreachable line, so nobody waits on a timer 0ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps call to action > asks again by itself when the network returns, the window wakes, and every 20 seconds 0ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps call to action > stays quiet while the panel is showing a remembered inventory 0ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps call to action > offers no own-key way out when this build has no Flux broker 1ms
+ ✓ src/components/PluginsPanel.test.ts > each FluxRouter key problem gets its own sentence > explains flux_key_budget_exhausted 0ms
+ ✓ src/components/PluginsPanel.test.ts > each FluxRouter key problem gets its own sentence > explains flux_key_expired 0ms
+ ✓ src/components/PluginsPanel.test.ts > each FluxRouter key problem gets its own sentence > explains flux_key_invalid 0ms
+ ✓ src/components/PluginsPanel.test.ts > each FluxRouter key problem gets its own sentence > explains flux_key_blocked 0ms
+ ✓ src/components/PluginsPanel.test.ts > each FluxRouter key problem gets its own sentence > says another device took over, with a Reconnect button, when this token was pushed out 0ms
+ ✓ src/components/PluginsPanel.test.ts > each FluxRouter key problem gets its own sentence > keeps the budget sentence but drops the billing button inside the phone app 0ms
+ ✓ src/components/PluginsPanel.test.ts > each FluxRouter key problem gets its own sentence > points the budget case at the billing page rather than at settings 0ms
+ ✓ src/components/PluginsPanel.test.ts > each FluxRouter key problem gets its own sentence > opens the billing page through openExternalPage, so desktop, Cloud and phone reach the system browser 0ms
+ ✓ src/components/PluginsPanel.test.ts > while the Murage Worker still holds the apps > names the deadline and the way to keep the apps past it 1ms
+ ✓ src/components/PluginsPanel.test.ts > while the Murage Worker still holds the apps > drops the deadline clause rather than printing a broken date 0ms
+ ✓ src/components/PluginsPanel.test.ts > while the Murage Worker still holds the apps > asks before moving a shared account, and says what sharing means 0ms
+ ✓ src/components/PluginsPanel.test.ts > while the Murage Worker still holds the apps > lets someone put the consent block away without moving anything 0ms
+ ✓ src/components/PluginsPanel.test.ts > while the Murage Worker still holds the apps > says a failed move is being retried rather than leaving it silent 0ms
+ ✓ src/components/PluginsPanel.test.ts > while the Murage Worker still holds the apps > explains the account_already_claimed conflict and what still works 0ms
+ ✓ src/components/PluginsPanel.test.ts > while the Murage Worker still holds the apps > explains the account_has_connections conflict and what still works 0ms
+ ✓ src/components/PluginsPanel.test.ts > while the Murage Worker still holds the apps > explains the install_already_claimed conflict and what still works 0ms
+ ✓ src/components/PluginsPanel.test.ts > while the Murage Worker still holds the apps > explains the claims_closed conflict and what still works 0ms
+ ✓ src/components/PluginsPanel.test.ts > while the Murage Worker still holds the apps > explains the undefined conflict and what still works 0ms
+ ✓ src/components/PluginsPanel.test.ts > while the Murage Worker still holds the apps > quotes the install id so support can find the row 0ms
+ ✓ src/components/PluginsPanel.test.ts > while the Murage Worker still holds the apps > tells the victim of a stolen install token where their apps went 0ms
+ ✓ src/components/PluginsPanel.test.ts > while the Murage Worker still holds the apps > keeps the deadline line plain in a build with no FluxRouter broker 0ms
+ ✓ src/components/PluginsPanel.test.ts > once FluxRouter holds the apps > names the account, and warns when other people can use it 0ms
+ ✓ src/components/PluginsPanel.test.ts > once FluxRouter holds the apps > shows what is left of the free daily allowance, and nothing when funded 0ms
+ ✓ src/components/PluginsPanel.test.ts > once FluxRouter holds the apps > confirms a completed move for a day and then stops mentioning it 0ms
+ ✓ src/components/PluginsPanel.test.ts > reading what the server sent > falls back to a safe shape for a response from an older harness 0ms
+ ✓ src/components/PluginsPanel.test.ts > reading what the server sent > paints the claim button's own answer without waiting for a refetch 0ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps lock > locks with no key, and opens for a Flux key 1ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps lock > does not guess before GET /api/config has answered 0ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps lock > stands down when the credential store could not be read, so a remembered inventory stays visible 0ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps lock > says exactly what unlocking buys, in English, under connectedApps.lock.* 14ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps lock > paints the offer over a dimmed, inert showcase when there is no key 13ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps lock > is the normal panel once a Flux key exists 3ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps lock > shows a person with an old own key the Flux flow and exactly one quiet line 4ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps lock > says nothing extra to anyone else; the line outlives a healthy broker until an app is connected 7ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps lock > waits, and fetches nothing, until the config answer exists 1ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps lock > never fetches the catalog or the inventory while locked 4ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps lock > lands the cursor in the key field the button names 0ms
+ ✓ src/components/PluginsPanel.test.ts > the connected-apps lock > focuses a field that already exists, and gives up quietly where there is no document 0ms
+ ✓ src/components/PluginsPanel.test.ts > when Murage's original connected-apps service has retired > tells a FluxRouter user to reconnect their apps here 0ms
+ ✓ src/components/PluginsPanel.test.ts > when Murage's original connected-apps service has retired > says the old service has ended, not only that FluxRouter is unreachable 0ms
+ ✓ src/components/PluginsPanel.test.ts > when Murage's original connected-apps service has retired > puts the retirement on the lock when there is no FluxRouter key yet 3ms
+ ✓ src/components/PluginsPanel.test.ts > when Murage's original connected-apps service has retired > keeps the ordinary offer on the lock for everyone else 3ms
+ ✓ src/components/PluginsPanel.test.ts > when Murage's original connected-apps service has retired > says it in one or two plain sentences that name Flux Router 0ms
+ ✓ src/components/PluginsPanel.test.ts > the Connected tab's count > counts the apps a bot can use, and says how many more are not ready 0ms
+ ✓ src/components/PluginsPanel.test.ts > the Connected tab's count > says nothing extra when every connection works 0ms
+ ✓ src/components/PluginsPanel.test.ts > the Connected tab's count > counts every connection in the inventory, loaded card or not 0ms
+ ✓ src/components/PluginsPanel.test.ts > an inventory read before the connection backend is ready > is not kept as the truth, so the next open asks again 1ms
+ ✓ src/components/PluginsPanel.test.ts > an inventory read before the connection backend is ready > keeps the panel checking, not empty, while it waits for the backend 0ms
+ ✓ src/components/PluginsPanel.test.ts > audit round 1, renderer > A2: a fallback page is never taken for the whole list, and All apps starts again after a Retry 0ms
+ ✓ src/components/PluginsPanel.test.ts > audit round 1, renderer > A3: a search over featured apps only, or a failed one, says so with Retry and runs again when the catalog changes 0ms
+ ✓ src/components/PluginsPanel.test.ts > audit round 1, renderer > A5: no catalog is carried across opens, and only the newest request paints 0ms
+ ✓ src/components/PluginsPanel.test.ts > audit round 1, renderer > A8: a width change measures every row again 0ms
+ ✓ src/components/PluginsPanel.test.ts > audit round 1, renderer > A10: the Browse all count is the count label, not a split claim 0ms
+ ✓ src/components/PluginsPanel.test.ts > a remembered inventory is usable at once > opens ready when only localStorage remembers the list (module cache empty) 0ms
+ ✓ src/components/PluginsPanel.test.ts > a remembered inventory is usable at once > opens ready when this window already fetched 0ms
+ ✓ src/components/PluginsPanel.test.ts > a remembered inventory is usable at once > still says checking on a first ever open, with nothing remembered 0ms
+ ✓ src/components/PluginsPanel.test.ts > a remembered inventory is usable at once > keeps remembered buttons enabled when the answer is not authoritative 0ms
+ ✓ src/components/PluginsPanel.test.ts > a remembered inventory is usable at once > shows a quiet refreshing state while the server revalidates 0ms
+ ✓ src/components/PluginsPanel.test.ts > a disconnected account never outlives the disconnect > drops the app when its last account goes 0ms
+ ✓ src/components/PluginsPanel.test.ts > a disconnected account never outlives the disconnect > keeps the app connected while another account remains 0ms
+ ✓ src/components/PluginsPanel.test.ts > a disconnected account never outlives the disconnect > rewrites the copy kept for the next launch 0ms
+ ✓ src/components/PluginsPanel.test.ts > the panel's sign-in wait ends in words, not a spinner > turns a pending app whose poll ran out into an expired link 0ms
+ ✓ src/components/PluginsPanel.test.ts > the panel's sign-in wait ends in words, not a spinner > leaves a connected app, and an app that is not pending, alone 0ms
+ ✓ src/components/PluginsPanel.test.ts > the panel's sign-in wait ends in words, not a spinner > polls for the link's whole life, then calls expirePendingSignIn 0ms
+stderr | server/composio-flux-broker.test.ts > which broker a data call uses > falls back to the Worker when FluxRouter is not reachable
+connected apps: unreachable (readiness probe): HTTP 503
+
+stderr | server/composio-flux-broker.test.ts > which broker a data call uses > has no broker left once the Worker cut-off has passed
+connected apps: unreachable (readiness probe): HTTP 503
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > keeps a FluxRouter 402 or 429 as itself, so the model and the panel see the real reason
+connected apps: managed inventory status check failed: HTTP 402 no
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > keeps a FluxRouter 402 or 429 as itself, so the model and the panel see the real reason
+connected apps: managed inventory status check failed: HTTP 429 no
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > keeps a FluxRouter 402 or 429 as itself, so the model and the panel see the real reason
+connected apps: managed inventory status check failed: HTTP 500 boom
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > stops trusting FluxRouter's readiness when it answers 404 or 503
+connected apps: unreachable (panel): HTTP 404
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > stops trusting FluxRouter's readiness when it answers 404 or 503
+connected apps: managed inventory status check failed: HTTP 404 not found
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > asks the desktop for a new token when FluxRouter revokes the one it has
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > asks the desktop for a new token when FluxRouter revokes the one it has
+connected apps: managed inventory status check failed: HTTP 401 gone
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > tells the desktop when another device's mint pushed this token out
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > tells the desktop when another device's mint pushed this token out
+connected apps: managed inventory status check failed: HTTP 401 gone
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > sends any other 401 (a code nobody has seen) to the desktop too, so apps never stay dead until expiry
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > sends any other 401 (a code nobody has seen) to the desktop too, so apps never stay dead until expiry
+connected apps: managed inventory status check failed: HTTP 401 gone
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > sends any other 401 (no code at all) to the desktop too, so apps never stay dead until expiry
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > sends any other 401 (no code at all) to the desktop too, so apps never stay dead until expiry
+connected apps: managed inventory status check failed: HTTP 401 unauthorized
+
+ ✓ server/composio-flux-broker.test.ts > which broker a data call uses > ignores an old saved own key: the managed broker still serves 22ms
+ ✓ server/composio-flux-broker.test.ts > which broker a data call uses > prefers FluxRouter once this install has no live Worker identity 5ms
+ ✓ server/composio-flux-broker.test.ts > which broker a data call uses > keeps the Worker while it is still the identity holding the connections 3ms
+ ✓ server/composio-flux-broker.test.ts > which broker a data call uses > falls back to the Worker when FluxRouter is not reachable 2ms
+ ✓ server/composio-flux-broker.test.ts > which broker a data call uses > has no broker left once the Worker cut-off has passed 2ms
+ ✓ server/composio-flux-broker.test.ts > which broker a data call uses > ignores a FluxRouter token that is not the same 64-hex shape as the Worker's 2ms
+ ✓ server/composio-flux-broker.test.ts > what a broker request carries > sends the broker token to the FluxRouter path, and never the Flux API key 9ms
+ ✓ server/composio-flux-broker.test.ts > what a broker request carries > names both ways out when nothing can serve connected apps 3ms
+ ✓ server/composio-flux-broker.test.ts > what a broker request carries > obeys the house copy rules, like every other sentence a person reads 3ms
+ ✓ server/composio-flux-broker.test.ts > what a broker request carries > tells the model the same thing it tells the user 1ms
+ ✓ server/composio-flux-broker.test.ts > what a broker request carries > keeps a FluxRouter 402 or 429 as itself, so the model and the panel see the real reason 17ms
+ ✓ server/composio-flux-broker.test.ts > what a broker request carries > stops trusting FluxRouter's readiness when it answers 404 or 503 7ms
+ ✓ server/composio-flux-broker.test.ts > what a broker request carries > asks the desktop for a new token when FluxRouter revokes the one it has 10ms
+ ✓ server/composio-flux-broker.test.ts > what a broker request carries > tells the desktop when another device's mint pushed this token out 6ms
+ ✓ server/composio-flux-broker.test.ts > what a broker request carries > sends any other 401 (a code nobody has seen) to the desktop too, so apps never stay dead until expiry 3ms
+ ✓ server/composio-flux-broker.test.ts > what a broker request carries > sends any other 401 (no code at all) to the desktop too, so apps never stay dead until expiry 2ms
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > sends any other 401 (a plain expiry) to the desktop too, so apps never stay dead until expiry
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > sends any other 401 (a plain expiry) to the desktop too, so apps never stay dead until expiry
+connected apps: managed inventory status check failed: HTTP 401 expired
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > recognises an install whose apps somebody else moved
+connected apps: managed inventory status check failed: HTTP 410 moved
+
+stderr | server/composio-flux-broker.test.ts > the FluxRouter readiness probe > a turn re-checks a broker that failed one probe, so connected apps come back without a restart
+connected apps: unreachable (readiness probe): HTTP 503
+
+stderr | server/composio-flux-broker.test.ts > the FluxRouter readiness probe > re-probes an unhealthy answer after twenty seconds, not five minutes
+connected apps: unreachable (readiness probe): HTTP 503
+
+stderr | server/composio-flux-broker.test.ts > the FluxRouter readiness probe > treats a 200 that does not say ready as not ready
+connected apps: unreachable (readiness probe): HTTP 200 health not ready
+
+ ✓ server/composio-flux-broker.test.ts > what a broker request carries > sends any other 401 (a plain expiry) to the desktop too, so apps never stay dead until expiry 2ms
+ ✓ server/composio-flux-broker.test.ts > what a broker request carries > recognises an install whose apps somebody else moved 2ms
+ ✓ server/composio-flux-broker.test.ts > the FluxRouter readiness probe > a turn re-checks a broker that failed one probe, so connected apps come back without a restart 3ms
+ ✓ server/composio-flux-broker.test.ts > the FluxRouter readiness probe > a turn does not wait on or repeat a probe while the answer is fresh 1ms
+ ✓ server/composio-flux-broker.test.ts > the FluxRouter readiness probe > probes once and then trusts a healthy answer for five minutes 2ms
+ ✓ server/composio-flux-broker.test.ts > the FluxRouter readiness probe > re-probes an unhealthy answer after twenty seconds, not five minutes 2ms
+ ✓ server/composio-flux-broker.test.ts > the FluxRouter readiness probe > treats a 200 that does not say ready as not ready 1ms
+ ✓ server/composio-flux-broker.test.ts > the FluxRouter readiness probe > never makes a turn wait on a probe that is already running 154ms
+ ✓ server/composio-flux-broker.test.ts > the FluxRouter readiness probe > a connector mount while another request's probe is running > joins the running probe and mounts Composio instead of returning unmounted 156ms
+ ✓ server/composio-flux-broker.test.ts > the FluxRouter readiness probe > a connector mount while another request's probe is running > hands the bridge a stable list identity (not the turn token), the access revision, and a private cache folder 18ms
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > mints from the stored Flux key, keeps the token owner-only on disk, and uses it for data calls
+[composio] FluxRouter connected-apps token ready
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-uses the stored token after a restart instead of minting again
+[composio] FluxRouter connected-apps token ready
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > has nothing to mint from without a stored key, and drops the token when the key goes
+[composio] FluxRouter connected-apps token ready
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-mints under a changed key and revokes the token the old key minted
+[composio] FluxRouter connected-apps token ready
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-mints under a changed key and revokes the token the old key minted
+[composio] FluxRouter connected-apps token ready
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > shows the panel why FluxRouter declined, and does not re-present a declined key on every route
+[composio] FluxRouter declined a connected-apps token (flux_key_budget_exhausted)
+
+ ✓ server/composio-flux-broker.test.ts > the FluxRouter readiness probe > a connector mount while another request's probe is running > is bounded by the cap when the probe never answers in time 1505ms
+ ✓ server/composio-flux-broker.test.ts > the FluxRouter readiness probe > forgets its answer on demand 4ms
+ ✓ server/composio-flux-broker.test.ts > the FluxRouter readiness probe > does not probe at all when this build has no FluxRouter broker 1ms
+ ✓ server/composio-flux-broker.test.ts > what the panel is told > reports the legacy stage and its deadline while the Worker still holds the apps 2ms
+ ✓ server/composio-flux-broker.test.ts > what the panel is told > carries the account kind and the conflict code the copy depends on 2ms
+ ✓ server/composio-flux-broker.test.ts > what the panel is told > surfaces a token error without the token or the key 2ms
+ ✓ server/composio-flux-broker.test.ts > what the panel is told > reports the move the same way whether or not an old own key is saved 1ms
+ ✓ server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > mints from the stored Flux key, keeps the token owner-only on disk, and uses it for data calls 32ms
+ ✓ server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-uses the stored token after a restart instead of minting again 15ms
+ ✓ server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > lets an env-pinned token win, and never mints inside the packaged app 8ms
+ ✓ server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > has nothing to mint from without a stored key, and drops the token when the key goes 11ms
+ ✓ server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-mints under a changed key and revokes the token the old key minted 18ms
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-mints once FluxRouter says the token it holds was revoked
+[composio] FluxRouter connected-apps token ready
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-mints once FluxRouter says the token it holds was revoked
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-mints once FluxRouter says the token it holds was revoked
+connected apps: managed inventory status check failed: HTTP 401 gone
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-mints once FluxRouter says the token it holds was revoked
+[composio] FluxRouter connected-apps token ready
+
+ ✓ server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > shows the panel why FluxRouter declined, and does not re-present a declined key on every route 8ms
+ ✓ server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-mints once FluxRouter says the token it holds was revoked 17ms
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > never makes a turn wait on a mint another request already started
+[composio] FluxRouter connected-apps token ready
+
+stderr | server/composio-flux-broker.test.ts > when the Murage Worker retires or hits its daily cap > learns the same retirement from a panel request
+connected apps: managed inventory status check failed: HTTP 410 service ended
+
+ ✓ server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > never makes a turn wait on a mint another request already started 158ms
+ ✓ server/composio-flux-broker.test.ts > when the Murage Worker retires or hits its daily cap > answers a retired Worker with one plain, actionable sentence when FluxRouter is not set up 9ms
+ ✓ server/composio-flux-broker.test.ts > when the Murage Worker retires or hits its daily cap > moves to a healthy FluxRouter the moment the Worker says it has retired 10ms
+ ✓ server/composio-flux-broker.test.ts > when the Murage Worker retires or hits its daily cap > learns the same retirement from a panel request 5ms
+ ✓ server/composio-flux-broker.test.ts > when the Murage Worker retires or hits its daily cap > reports the retirement once the desktop cut-off has passed, with no FluxRouter 1ms
+ ✓ server/composio-flux-broker.test.ts > when the Murage Worker retires or hits its daily cap > says nothing about retirement for an install whose apps already moved 3ms
+ ✓ server/composio-flux-broker.test.ts > when the Murage Worker retires or hits its daily cap > answers the Worker's daily cap plainly and keeps the Worker for tomorrow 5ms
+ ✓ server/composio-flux-broker.test.ts > when the Murage Worker retires or hits its daily cap > answers a non-tool request as a JSON-RPC error carrying the same sentence 5ms
+ ✓ server/composio-flux-broker.test.ts > when the Murage Worker retires or hits its daily cap > leaves every other broker answer untouched 3ms
+ ✓ server/composio-flux-broker.test.ts > permission is rechecked after the readiness wait, before anything is sent > sends no MCP request when access is revoked while readiness is pending 155ms
+ ✓ server/composio-flux-broker.test.ts > a turn that expects connected apps at launch > joins the readiness probe that is still running instead of reporting ready at once 155ms
+ ✓ server/composio-flux-broker.test.ts > a turn that expects connected apps at launch > is still bounded when the broker never answers in time 405ms
+ ✓ server/composio-flux-broker.test.ts > a turn that expects connected apps at launch > without the expectation keeps the old non-waiting behavior 155ms
+ ✓ server/composio-flux-broker.test.ts > a Flux key change > stops sending the previous account's token at once, before the next mint lands 4ms
+ ✓ server/connected-app-health.test.ts > one app's authorization failure > flips Gmail to needs-reconnect while Calendar stays active 40ms
+ ✓ server/connected-app-health.test.ts > one app's authorization failure > keeps the failed account when inventory says connected:false 9ms
+ ✓ server/connected-app-health.test.ts > one app's authorization failure > learns an expired account from inventory without a tool call 5ms
+ ✓ server/connected-app-health.test.ts > one app's authorization failure > a healthy second account or a newly added account cannot erase the expired account 6ms
+ ✓ server/connected-app-health.test.ts > one app's authorization failure > clears when a call to that app succeeds 9ms
+ ✓ server/connected-app-health.test.ts > one app's authorization failure > clears when the person signs in again (a new account) 9ms
+ ✓ server/connected-app-health.test.ts > one app's authorization failure > is not set by an ordinary tool error, a lookup, or a broker that is dark 14ms
+ ✓ server/connected-app-health.test.ts > one app's authorization failure > marks the one app that failed when a call touches two 7ms
+ ✓ server/connected-app-health.test.ts > signing in again > never removes the active account before the new sign-in is active, then retires exactly that one 116ms
+ ✓ server/connected-app-health.test.ts > signing in again > a mark made before any inventory was held still clears when a new account signs in 18ms
+ ✓ server/connected-app-health.test.ts > what the bot is told > names the app by its own curated label, letters, digits and spaces only, whatever the catalog says 20ms
+ ✓ server/connected-app-health.test.ts > what the bot is told > names the app that needs reconnecting, and differs from the unreachable line 13ms
+ ✓ server/connected-app-health.test.ts > what the bot is told > names several apps and follows the copy rules 3ms
+ ✓ server/connected-app-health.test.ts > reading an app's answer > reads a single-tool error answer and an event stream 3ms
+ ✓ server/connected-app-health.test.ts > reading an app's answer > reads success and ordinary errors as not an authorization failure 3ms
+ ✓ server/connected-app-health.test.ts > reading an app's answer > does not read a 403, forbidden or a missing scope as a sign-in failure: signing in again would not change it 3ms
+ ✓ server/connected-app-health.test.ts > reading an app's answer > reads a row only for an app the request named, at the answer's own level 3ms
+ ✓ server/connected-app-health.test.ts > reading an app's answer > reads the broker's structured signal, never free words in a message 3ms
+ ✓ server/connected-app-health.test.ts > reading an app's answer > ignores another request's frame 2ms
+ ✓ server/connected-app-health.test.ts > P1-1 ACTIVE inventory cannot hide a known expired grant 5ms
+ ✓ server/connected-app-health.test.ts > P1-2 verified same-owner proactive renewal keeps UUID and cooldown 8ms
+ ✓ server/connected-app-health.test.ts > P1-3 reconnecting A never implicates healthy B 10ms
+ ✓ server/connected-app-health.test.ts > P1-3 success clears only its account and preserves the other incident UUID 11ms
+ ✓ server/connected-app-health.test.ts > P2-5 one inventory check writes once at 10 and 1000 connectors; unchanged writes zero 97ms
+ ✓ server/connected-app-health.test.ts > P1-1 idle Buffer probe detects an ACTIVE revoked grant without an expiry field 8ms
+ ✓ server/connected-app-health.test.ts > P1-3 mixed results for two accounts of one app mark only the failed row 7ms
+ ✓ server/connected-app-health.test.ts > an account in cooldown cannot inherit another account's delivery receipt 14ms
+ ✓ server/connected-app-health.test.ts > R3 structured status contract > R3a status 500 with item 401 prose cannot impersonate auth 1ms
+ ✓ server/connected-app-health.test.ts > R3 structured status contract > R3b prose-only 401 with ACTIVE is clean, EXPIRED inventory creates incident 10ms
+ ✓ server/connected-app-health.test.ts > R3 structured status contract > R3c status_code 401 alone is a failed row even without a failure flag 1ms
+ ✓ server/connected-app-health.test.ts > R3 structured status contract > R3d nested error status 403 is exact and never accepts prose status 1ms
+ ✓ server/connected-app-health.test.ts > R3 structured status contract > R3e parsed kind auth suppresses account auth without the Flux sentence 1ms
+ ✓ server/connected-app-health.test.ts > R3 structured status contract > R3f brokerAuthOf handles error data and parsed envelopes; never scans app data 1ms
+ ✓ server/connected-app-health.test.ts > R3 structured status contract > R3g code 401 and deep data are not HTTP status; status parsing is strict 1ms
+stdout | server/bot-access.test.ts > queues a durable bundle without self-granting or enabling apps
+[memory] index build before listen name=memory_records_pinned ms=2
+[memory] index build before listen name=memory_source_lsn_created ms=2
+[sqlite] storage file=2 wal=2 freelist=0
+
+stdout | server/bot-access.test.ts > rejects spoofed grants and cross-team manager requests
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=61 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS app_trigger_bindings ( trigger_id TEXT PRIMARY  ms=68 source=exec:CREATE TABLE IF NOT EXISTS app_trigger_b
+
+ ✓ server/bot-access.test.ts > queues a durable bundle without self-granting or enabling apps 696ms
+ ✓ server/bot-access.test.ts > rejects spoofed grants and cross-team manager requests 778ms
+ ✓ server/bot-access.test.ts > rejects stale owner decisions and non-owned accounts 603ms
+ ✓ server/bot-access.test.ts > allows an explicitly owner-approved fake write only after the policy gate 655ms
+ ✓ server/bot-access.test.ts > applies write restrictions even with autoapproval enabled 614ms
+ ✓ server/bot-access.test.ts > rejects another account, missing account, alias and credential overrides 700ms
+ ✓ server/bot-access.test.ts > fails closed for unknown and dynamic execution, batch smuggling and workbench 510ms
+stderr | server/bot-access.test.ts > revokes grants on team moves and disabling apps
+memory receipts revoked scope=global cause=roster count=0
+memory receipts revoked scope=global cause=roster count=0
+
+ ✓ server/bot-access.test.ts > revokes grants durably on role change even when the original role returns 570ms
+ ✓ server/bot-access.test.ts > revokes grants on team moves and disabling apps 660ms
+ ✓ server/bot-access.test.ts > rejects pending approvals after manager role changes 653ms
+ ✓ server/bot-access.test.ts > owner revocation changes revision and immediately fences the next dispatch 605ms
+ ✓ server/bot-access.test.ts > manager status strips commands, secrets, IDs and approval rights 633ms
+ ✓ server/bot-access.test.ts > preserves unconfigured existing access and fails closed on corrupted policy 733ms
+ ✓ server/bot-access.test.ts > restricted tool listing exposes only approved concrete accounts and actions 692ms
+ ✓ server/bot-access.test.ts > does not revive a queued request when its manager returns to the old role 656ms
+ ✓ server/bot-access.test.ts > binds a server-chosen expiry and allows owner review only before its deadline 690ms
+ ✓ server/bot-access.test.ts > rejects expired requests after restart and reports only redacted expiry status 642ms
+ ✓ server/bot-access.test.ts > bounds legacy request expiry and rejects attempts to supply a longer review window 542ms
+ ✓ server/bot-access.test.ts > the list revision also moves when connected accounts were removed (disconnect or sign-out) 520ms
+ ✓ server/bot-access.test.ts > a restricted bot's description repeats no tool, so a policy listing the same tool many times stays small 525ms
+ ✓ server/bot-access.test.ts > replaces expired queue entries without reviving them or consuming the request limit 639ms
+ ✓ server/bot-access.test.ts > a stored connected-app result is handed back only while the bot's CURRENT grants still cover what the action used 625ms
+ ✓ server/bot-access.test.ts > a restricted bot is denied a stored result whose tools or accounts are unknown 665ms
+stdout | server/bot-access.test.ts > the bridge's list scope: a restricted bot's initial list holds only approved accounts, and the revision moves with access
+[sqlite] slow op=exec: ALTER TABLE push_decisions ADD COLUMN outcome TEXT ms=53 source=exec:ALTER TABLE push_decisions ADD COLUMN ou
+
+ ✓ server/bot-access.test.ts > a migrated legacy journal row is incomplete, so a restricted CHECK / run_again is denied 659ms
+ ✓ server/bot-access.test.ts > the bridge's list scope: a restricted bot's initial list holds only approved accounts, and the revision moves with access 774ms
+ ✓ server/bot-access.test.ts > the list revision follows EFFECTIVE access only: requests, denials, unchanged saves and grant ordering never move it 675ms
+ ✓ server/bot-access.test.ts > accepts the actual RMCP progress envelope for an owner-approved read without changing it 588ms
+ ✓ server/bot-access.test.ts > accepts protocol progress metadata {} 570ms
+ ✓ server/bot-access.test.ts > accepts protocol progress metadata {"progressToken":0} 558ms
+ ✓ server/bot-access.test.ts > accepts protocol progress metadata {"progressToken":-1} 469ms
+ ✓ server/bot-access.test.ts > accepts protocol progress metadata {"progressToken":"read-1"} 450ms
+ ✓ server/bot-access.test.ts > accepts protocol progress metadata {"progressToken":""} 573ms
+ ✓ server/bot-access.test.ts > rejects malformed or unreviewed protocol metadata null 486ms
+ ✓ server/bot-access.test.ts > rejects malformed or unreviewed protocol metadata undefined 644ms
+ ✓ server/bot-access.test.ts > rejects malformed or unreviewed protocol metadata "progress" 661ms
+ ✓ server/bot-access.test.ts > rejects malformed or unreviewed protocol metadata true 657ms
+ ✓ server/bot-access.test.ts > rejects malformed or unreviewed protocol metadata {"progressToken":null} 653ms
+ ✓ server/bot-access.test.ts > rejects malformed or unreviewed protocol metadata {"progressToken":true} 705ms
+ ✓ server/bot-access.test.ts > rejects malformed or unreviewed protocol metadata {"progressToken":[]} 697ms
+ ✓ server/bot-access.test.ts > rejects malformed or unreviewed protocol metadata {"progressToken":{}} 570ms
+ ✓ server/bot-access.test.ts > rejects malformed or unreviewed protocol metadata {"progressToken":1.5} 585ms
+ ✓ server/bot-access.test.ts > rejects malformed or unreviewed protocol metadata {"progressToken":null} 705ms
+ ✓ server/bot-access.test.ts > rejects malformed or unreviewed protocol metadata {"progressToken":9007199254740992} 575ms
+ ✓ server/bot-access.test.ts > rejects malformed or unreviewed protocol metadata {"progressToken":0,"account":"ca_other"} 593ms
+ ✓ server/bot-access.test.ts > rejects malformed or unreviewed protocol metadata {"authorization":"Bearer fixture"} 569ms
+ ✓ server/bot-access.test.ts > rejects malformed or unreviewed protocol metadata {"progressToken":0,"allowWrites":true} 675ms
+ ✓ server/bot-access.test.ts > rejects malformed or unreviewed protocol metadata {"progressToken":0,"extra":{}} 674ms
+ ✓ server/bot-access.test.ts > does not let valid RMCP metadata change account, tool or write authorization 700ms
+ ✓ server/bot-access.test.ts > rejects nested account auth overrides even with valid progress metadata 634ms
+ ✓ server/bot-access.test.ts > rejects nested account_id auth overrides even with valid progress metadata 683ms
+ ✓ server/bot-access.test.ts > rejects nested connected_account_id auth overrides even with valid progress metadata 642ms
+ ✓ server/bot-access.test.ts > rejects nested connectedAccountId auth overrides even with valid progress metadata 685ms
+ ✓ server/bot-access.test.ts > rejects nested custom_auth_params auth overrides even with valid progress metadata 654ms
+ ✓ server/bot-access.test.ts > rejects nested customAuthParams auth overrides even with valid progress metadata 554ms
+ ✓ server/bot-access.test.ts > rejects nested auth_config_id auth overrides even with valid progress metadata 546ms
+ ✓ server/bot-access.test.ts > rejects nested authentication auth overrides even with valid progress metadata 615ms
+ ✓ server/bot-access.test.ts > rejects nested authorization auth overrides even with valid progress metadata 655ms
+ ✓ server/bot-access.test.ts > rejects nested api_key auth overrides even with valid progress metadata 566ms
+ ✓ server/bot-access.test.ts > keeps unknown execution fields, offload and disabled-app checks with metadata 625ms
+ ✓ server/bot-access.test.ts > validates metadata before the existing stored-action status path 646ms
+ ✓ server/bot-access.test.ts > rejects metadata on other methods, a write tool and a foreign account with a valid progressToken 692ms
+ ✓ server/connected-app-receipts.test.ts > a real send through the connected-app relay on Fuigo (ACP) > records "I sent it" with no unmatched-action note 45ms
+ ✓ server/connected-app-receipts.test.ts > a real send through the connected-app relay on Fuigo (ACP) > a failed send still gets the note 17ms
+ ✓ server/connected-app-receipts.test.ts > a real send through the connected-app relay on Codex > records "I sent it" with no unmatched-action note 10ms
+ ✓ server/connected-app-receipts.test.ts > a real send through the connected-app relay on Codex > a failed send still gets the note 11ms
+ ✓ server/connected-app-receipts.test.ts > a real send through the connected-app relay on Claude > records "I sent it" with no unmatched-action note 9ms
+ ✓ server/connected-app-receipts.test.ts > a real send through the connected-app relay on Claude > a failed send still gets the note 11ms
+ ✓ server/connected-app-receipts.test.ts > a real send through the connected-app relay on title only > records "I sent it" with no unmatched-action note 9ms
+ ✓ server/connected-app-receipts.test.ts > a real send through the connected-app relay on title only > a failed send still gets the note 13ms
+ ✓ server/connected-app-receipts.test.ts > what is not a receipt > a claim with no tool call still gets the note, even when another turn sent mail 10ms
+ ✓ server/connected-app-receipts.test.ts > what is not a receipt > an error answer, a tool error and a refusal are not receipts 19ms
+ ✓ server/connected-app-receipts.test.ts > what is not a receipt > a lookup is not an action 4ms
+ ✓ server/connected-app-receipts.test.ts > a slow send collected with the status tool is a receipt once its outcome arrives 312ms
+ ✓ server/connected-app-receipts.test.ts > a workbench run leaves a send claim unverifiable, never flagged; a failed one proves nothing 5ms
+ ✓ server/connected-app-receipts.test.ts > the note's words follow the copy rules 5ms
+stderr | server/connected-app-receipts.test.ts > a store that cannot be written never stops the in-memory receipt
+connected app receipts could not be synced: disk full
+connected app receipts could not be synced: disk full
+
+ ✓ server/connected-app-receipts.test.ts > a send collected by a later turn's status check is credited to the turn that dispatched it (lane 5.6) 315ms
+ ✓ server/connected-app-receipts.test.ts > receiptForAnswer falls back to the collecting call when no origin is known 4ms
+ ✓ server/connected-app-receipts.test.ts > receipts survive a restart between the send and the end of the turn (lane 5.7) 47ms
+ ✓ server/connected-app-receipts.test.ts > a store that cannot be written never stops the in-memory receipt 10ms
+ ✓ server/connected-app-receipts.test.ts > lane 5 round 2: receipts keep who dispatched, when the app answered, and one row per operation > a later turn that collected the answer is never credited, before or after a restart (T1) 37ms
+stderr | server/connected-app-receipts.test.ts > lane 5 round 2: receipts keep who dispatched, when the app answered, and one row per operation > a learned turn whose write fails once is written on the next try and survives a restart
+connected app receipts could not be synced: locked
+
+ ✓ server/connected-app-receipts.test.ts > lane 5 round 2: receipts keep who dispatched, when the app answered, and one row per operation > a row written before receipts named their turn is never anyone's (T2) 31ms
+ ✓ server/connected-app-receipts.test.ts > lane 5 round 2: receipts keep who dispatched, when the app answered, and one row per operation > a receipt kept before its turn was bound is named once the turn is known, and keeps the name across a restart (T3) 39ms
+ ✓ server/connected-app-receipts.test.ts > lane 5 round 2: receipts keep who dispatched, when the app answered, and one row per operation > a learned turn whose write fails once is written on the next try and survives a restart 48ms
+ ✓ server/connected-app-receipts.test.ts > lane 5 round 2: receipts keep who dispatched, when the app answered, and one row per operation > a slow action that finishes after the bot's wait is kept without any status read, across a restart 201ms
+stderr | server/connected-app-receipts.test.ts > lane 5 round 2: receipts keep who dispatched, when the app answered, and one row per operation > a store that fails once keeps the receipt in memory and writes it on the next try
+connected app receipts could not be synced: locked
+connected app receipts could not be synced: locked
+connected app receipts could not be synced: locked
+connected app receipts could not be synced: locked
+
+ ✓ server/connected-app-receipts.test.ts > lane 5 round 2: receipts keep who dispatched, when the app answered, and one row per operation > a send answered, then collected by a status check and joined by a repeat, leaves one receipt in memory and one row in the store (104 P6) 156ms
+ ✓ server/connected-app-receipts.test.ts > lane 5 round 2: receipts keep who dispatched, when the app answered, and one row per operation > reading the same operation's answer again keeps one receipt 39ms
+ ✓ server/connected-app-receipts.test.ts > lane 5 round 2: receipts keep who dispatched, when the app answered, and one row per operation > a store that fails once keeps the receipt in memory and writes it on the next try 41ms
+ ✓ server/connected-app-receipts.test.ts > lane 5 round 2: receipts keep who dispatched, when the app answered, and one row per operation > old rows are pruned when a receipt is added, without a restart 44ms
+ ✓ server/connected-app-receipts.test.ts > lane 5 redesign: the reply check matches receipts by turn, never by time (T8) > server/index.ts asks for the turn's receipts by turn id and generation only 25ms
+ ✓ server/connected-app-receipts.test.ts > lane 5 redesign: the reply check matches receipts by turn, never by time (T8) > no receipt match compares a timestamp 5ms
+ ✓ server/composio-inventory-cache.test.ts > single-flight and freshness > answers a second call inside the freshness window from memory 15ms
+ ✓ server/composio-inventory-cache.test.ts > single-flight and freshness > joins five concurrent identical requests into one broker call 24ms
+ ✓ server/composio-inventory-cache.test.ts > single-flight and freshness > serves a stale list at once and refreshes it in the background 13ms
+ ✓ server/composio-inventory-cache.test.ts > single-flight and freshness > keeps the remembered list when a background refresh fails 12ms
+ ✓ server/composio-inventory-cache.test.ts > single-flight and freshness > answers a cold, slow broker within the wait budget with no list and revalidating 64ms
+ ✓ server/composio-inventory-cache.test.ts > a remembered inventory is usable before any broker call > makes zero broker calls before first paint after a restart 14ms
+ ✓ server/composio-inventory-cache.test.ts > a remembered inventory is usable before any broker call > persists only slugs, ids, aliases and statuses, never a token or key 6ms
+ ✓ server/composio-inventory-cache.test.ts > a remembered list is never shown after it stopped being true > drops the list when an account is disconnected here 8ms
+ ✓ server/composio-inventory-cache.test.ts > a remembered list is never shown after it stopped being true > purges the bridge's remembered tool lists and changes the access epoch when an account is disconnected 5ms
+ ✓ server/composio-inventory-cache.test.ts > a remembered list is never shown after it stopped being true > never stores a refresh that began before a disconnect 36ms
+ ✓ server/composio-inventory-cache.test.ts > a remembered list is never shown after it stopped being true > refetches after a connect starts 10ms
+ ✓ server/composio-inventory-cache.test.ts > a remembered list is never shown after it stopped being true > refetches once a status poll sees the sign-in finish 10ms
+ ✓ server/composio-inventory-cache.test.ts > a remembered list is never shown after it stopped being true > refetches when the panel asks with force 6ms
+ ✓ server/composio-inventory-cache.test.ts > one owner's list is never served to another > does not show owner A's list to owner B, and drops it when the token changes 10ms
+ ✓ server/composio-inventory-cache.test.ts > one owner's list is never served to another > does not load another owner's persisted list after a restart 25ms
+ ✓ server/composio-inventory-cache.test.ts > one owner's list is never served to another > forgets the list when the token is replaced mid-session 25ms
+ ✓ server/composio-inventory-cache.test.ts > tool search and schema cache > makes one upstream call for two identical searches and answers with the request's own id 6ms
+ ✓ server/composio-inventory-cache.test.ts > tool search and schema cache > does not share a search between different arguments 3ms
+ ✓ server/composio-inventory-cache.test.ts > tool search and schema cache > never caches executing a tool 4ms
+ ✓ server/composio-inventory-cache.test.ts > tool search and schema cache > never caches an error answer 3ms
+ ✓ server/composio-inventory-cache.test.ts > tool search and schema cache > caches tools/list 3ms
+ ✓ server/composio-inventory-cache.test.ts > tool search and schema cache > answers tools/list from what it remembers, and never serves it once the connected apps changed 7ms
+ ✓ server/composio-inventory-cache.test.ts > tool search and schema cache > drops cached searches when the inventory changes 5ms
+ ✓ server/composio-inventory-cache.test.ts > tool search and schema cache > expires a cached search after its short lifetime 2ms
+ ✓ server/composio-inventory-cache.test.ts > tool search and schema cache > does not serve one owner's search to another 1ms
+ ✓ server/composio-inventory-cache.test.ts > the panel route's inventory > answers a remembered list at once while the broker hangs, with no broker call before it 3ms
+ ✓ server/composio-inventory-cache.test.ts > the panel route's inventory > the bot access card: a remembered list is served at once, then the background refresh updates it 307ms
+ ✓ server/composio-inventory-cache.test.ts > the panel route's inventory > still answers with the remembered list while the broker is unreachable 5ms
+ ✓ server/composio-inventory-cache.test.ts > the panel route's inventory > waits for a Retry (force) but never longer than its budget 3007ms
+stderr | server/composio-inventory-cache.test.ts > review round 1: the cache's edges > F8: a Flux outage does not flip the owner to the Worker identity and lose the list
+connected apps: unreachable (readiness probe): HTTP 503
+
+ ✓ server/composio-inventory-cache.test.ts > the panel route's inventory > does not hold the catalog route for the allowance line 101ms
+ ✓ server/composio-inventory-cache.test.ts > review round 1: the cache's edges > F7: stores nothing when the owner changed while the fetch was in flight 65ms
+ ✓ server/composio-inventory-cache.test.ts > review round 1: the cache's edges > F8: a Flux outage does not flip the owner to the Worker identity and lose the list 8ms
+stderr | server/composio-inventory-cache.test.ts > review round 2 (N3): a 401 does not wipe what is remembered > keeps the last known list, marked stale, and its file, when the token is rejected
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-inventory-cache.test.ts > review round 2 (N3): a 401 does not wipe what is remembered > keeps the last known list, marked stale, and its file, when the token is rejected
+connected apps: managed inventory status check failed: HTTP 401
+
+stderr | server/composio-inventory-cache.test.ts > review round 2 (N3): a 401 does not wipe what is remembered > carries the list across the re-mint that follows a 401 (same install), still refetching
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-inventory-cache.test.ts > review round 2 (N3): a 401 does not wipe what is remembered > carries the list across the re-mint that follows a 401 (same install), still refetching
+connected apps: managed inventory status check failed: HTTP 401
+
+ ✓ server/composio-inventory-cache.test.ts > review round 1: the cache's edges > F13: a caller that joined a fetch begun before a disconnect is told it is revalidating 33ms
+ ✓ server/composio-inventory-cache.test.ts > review round 1: the cache's edges > F13: a fresh read that raced a disconnect fetches again instead of listing the removed account 35ms
+ ✓ server/composio-inventory-cache.test.ts > review round 2 (N3): a 401 does not wipe what is remembered > keeps the last known list, marked stale, and its file, when the token is rejected 8ms
+ ✓ server/composio-inventory-cache.test.ts > review round 2 (N3): a 401 does not wipe what is remembered > carries the list across the re-mint that follows a 401 (same install), still refetching 9ms
+ ✓ server/composio-inventory-cache.test.ts > review round 2 (N3): a 401 does not wipe what is remembered > still drops the list on a token change that did not follow a rejection 25ms
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1e success re-reads ACTIVE, clears only that account and its unverified state
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1f failed inventory retains incident and renders unverified copy
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1f failed inventory retains incident and renders unverified copy
+connected apps: managed inventory status check failed: HTTP 502 fixture unavailable
+
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1a failed probe still awaits EXPIRED inventory 19ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1b failed probe still awaits EXPIRED inventory 8ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1c ACTIVE uncertainty is unverified 5ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1d ACTIVE uncertainty is unverified 5ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1e success re-reads ACTIVE, clears only that account and its unverified state 19ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1f failed inventory retains incident and renders unverified copy 11ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1g Flux kind=auth is an outage and still re-reads inventory 5ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after transport 57ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after http 60ms
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after upstreamAuth
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after brokerAuth 59ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after upstreamAuth 60ms
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1 unknown keeps an existing incident; alias change preserves unverified
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1 removal between probe and refresh blocks that ID on scheduled dispatch
+connected apps: gmail needs reconnecting: account removed
+
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after toolError 60ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after ok 58ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1 unknown keeps an existing incident; alias change preserves unverified 17ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1 removal between probe and refresh blocks that ID on scheduled dispatch 17ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=false) cannot replace post-probe EXPIRED inventory 108ms
+stderr | server/connector-reconnect-r3-preflight.test.ts > R3d preflight response.error.status 403 with ACTIVE creates an incident
+connected apps: gmail needs reconnecting: HTTP 403
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1f late timed-out inventory cannot clear or create incidents
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=true) cannot replace post-probe EXPIRED inventory 110ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R3d preflight response.error.status 403 with ACTIVE creates an incident 9ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R3e row-level Flux auth never creates an incident 7ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1f late timed-out inventory cannot clear or create incidents 16ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1 durable unknown survives reopening and a status change clears it 13ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1e healthy recovery clears a durable unknown check 15ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope kind is an outage 8ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-kind is an outage 11ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope error-kind is an outage 7ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-error-kind is an outage 8ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R3 broker diagnostic in a failed row only suppresses reconnect 7ms
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4a three monitor ticks without routines only refresh inventory 76ms
+stderr | server/connector-reconnect-r3-schedule.test.ts > R4 bounded best effort: tick phase, restart budget, newly enabled and overdue runs
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4b disabled=false or outside lookahead=30 has no reads 28ms
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4b disabled=true or outside lookahead=61 has no reads 15ms
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4c learned gmail due in 30 minutes reads each gmail account once, never slack 32ms
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4d first scheduled dispatch preflights at runtime and learns toolkit 15ms
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4 retention unions real dispatches, reloads, scopes owner and revision, deletes stale learning 32ms
+stderr | server/connector-reconnect-r3-schedule.test.ts > R4 dispatch uses reactive failure when an earlier successful probe still consumes the budget
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4 bounded best effort: tick phase, restart budget, newly enabled and overdue runs 174ms
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4d control: dispatch preflights even without any learned routine 6ms
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4 dispatch uses reactive failure when an earlier successful probe still consumes the budget 9ms
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2a wrapped multi attributes A failure and B success separately
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2b direct provider preserves B account for attribution and guard
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order false
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order true
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2a wrapped multi attributes A failure and B success separately 36ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2b direct provider preserves B account for attribution and guard 10ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2c unknown account never creates or blocks an incident 8ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2d unknown account never creates or blocks an incident 8ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard 26ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order false 7ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order true 7ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch same creates no incident 8ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch mixed creates no incident 8ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch missing-index creates no incident 8ms
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch malformed creates no incident 11ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 status INITIATED marks only the non-ACTIVE account 32ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 status INITIALIZING marks only the non-ACTIVE account 7ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 status FAILED marks only the non-ACTIVE account 6ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 status INACTIVE marks only the non-ACTIVE account 6ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 status EXPIRED marks only the non-ACTIVE account 5ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 status UNKNOWN marks only the non-ACTIVE account 5ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message invalid_credentials becomes an attributed visible failure with no retry 20ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message Token has expired becomes an attributed visible failure with no retry 8ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message authentication failed becomes an attributed visible failure with no retry 7ms
+stderr | server/connector-reconnect-r2.test.ts > R2 preflight catches an ACTIVE idle lapse and stops scheduled work
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message invalid_auth becomes an attributed visible failure with no retry 7ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message token_revoked becomes an attributed visible failure with no retry 7ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message account is not active becomes an attributed visible failure with no retry 7ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 successful content and permission refusals never impersonate an auth failure 3ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 scheduled preflight uses one safe read per account, hourly, before work; never probes unknown toolkits 41ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 preflight catches an ACTIVE idle lapse and stops scheduled work 18ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 hourly probe budget survives reopening the ledger and renewal of the owner token 11ms
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: project-key HTTP 401 is an outage, never a user reconnect
+connected apps: unreachable (tool call): HTTP 401 token rejected
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: preflight upstream 401 with ACTIVE status raises reconnect
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: preflight upstream 403 with ACTIVE status raises reconnect
+connected apps: gmail needs reconnecting: HTTP 403
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: a JSON error inside MCP content is still an upstream preflight failure
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r2.test.ts > R2 reconnect guard blocks A but lets healthy B work without clearing A
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: tool error refreshes inventory and EXPIRED identifies only its account 14ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: generic error with ACTIVE status is not a reconnect incident 13ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: project-key HTTP 401 is an outage, never a user reconnect 10ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: project-key HTTP 403 is an outage, never a user reconnect 8ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: an in-band project-key error is not mistaken for upstream account auth 8ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: preflight upstream 401 with ACTIVE status raises reconnect 15ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: preflight upstream 403 with ACTIVE status raises reconnect 10ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: a JSON error inside MCP content is still an upstream preflight failure 10ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: an unattributed multi-app tool error still refreshes account statuses 7ms
+ ✓ server/connector-reconnect-r2.test.ts > R2 reconnect guard blocks A but lets healthy B work without clearing A 9ms
+ ✓ server/connector-reconnect-r2.test.ts > Flux contract: prose-only upstream failure with ACTIVE never establishes authentication 13ms
+ ✓ server/composio-retry-1010.test.ts > the readiness probe on a jittery link > ETIMEDOUT twice, then ready: records ready on the third answer 11ms
+ ✓ server/composio-retry-1010.test.ts > the readiness probe on a jittery link > the attempt's real AbortSignal timeout is retried; a failure that is not a network one is final (fix round) 12021ms
+ ✓ server/composio-retry-1010.test.ts > the readiness probe on a jittery link > a probe failure with no network code (a redirect refused, a bad answer) is not retried 3ms
+ ✓ server/composio-retry-1010.test.ts > the readiness probe on a jittery link > an HTTP 503 is an answer: not retried 2ms
+ ✓ server/composio-retry-1010.test.ts > the readiness probe on a jittery link > three timeout-length failures end in not ready within the 14 s deadline 4ms
+ ✓ server/composio-retry-1010.test.ts > the readiness probe on a jittery link > a mount keeps the last ready answer while a probe retries 4ms
+ ✓ server/composio-retry-1010.test.ts > the readiness probe on a jittery link > a mount with no ready answer joins the first probe past the old 5 s cap 5ms
+ ✓ server/composio-retry-1010.test.ts > a connector tool call on a jittery link > a call that was never sent is tried again, twice at most 11ms
+ ✓ server/composio-retry-1010.test.ts > a connector tool call on a jittery link > gives up after three tries, as not sent 4ms
+ ✓ server/composio-retry-1010.test.ts > a connector tool call on a jittery link > a redirect is never followed: possibly delivered, and never sent again (fix round, Astra High 6) 3ms
+ ✓ server/composio-retry-1010.test.ts > a connector tool call on a jittery link > a bare ETIMEDOUT (not on connect) is not a never-sent error: never repeated 3ms
+ ✓ server/composio-retry-1010.test.ts > a connector tool call on a jittery link > a call that may have reached the app is never sent again 2ms
+stderr | server/composio-recovery.test.ts > readiness heals itself > re-checks a not-ready answer after the negative TTL even when nothing primes
+connected apps: unreachable (readiness probe): TypeError
+
+stderr | server/composio-recovery.test.ts > readiness heals itself > does not re-probe inside the negative TTL
+connected apps: unreachable (readiness probe): TypeError
+
+stderr | server/composio-recovery.test.ts > one failed call does not poison the rest of a turn > answers the next tool call after one 503
+connected apps: unreachable (tool call): HTTP 503
+
+stderr | server/composio-recovery.test.ts > one failed call does not poison the rest of a turn > answers the next tool call after one 404 that carried no session
+connected apps: unreachable (tool call): HTTP 404
+
+stderr | server/composio-recovery.test.ts > one failed call does not poison the rest of a turn > says the apps are briefly unreachable, in plain words, after a 503
+connected apps: unreachable (tool call): HTTP 503
+
+stderr | server/composio-recovery.test.ts > the prompt and the error tell an outage from 'not set up' > says unreachable, never 'not set up', when a token exists and the broker is down
+connected apps: unreachable (readiness probe): TypeError
+
+stderr | server/composio-recovery.test.ts > the whole drop and recovery, with no restart and no user action > recovers connected apps by itself after the network drops and comes back
+connected apps: unreachable (readiness probe): TypeError
+
+ ✓ server/composio-recovery.test.ts > readiness heals itself > re-checks a not-ready answer after the negative TTL even when nothing primes 13ms
+ ✓ server/composio-recovery.test.ts > readiness heals itself > does not re-probe inside the negative TTL 6ms
+ ✓ server/composio-recovery.test.ts > one failed call does not poison the rest of a turn > answers the next tool call after one 503 5ms
+ ✓ server/composio-recovery.test.ts > one failed call does not poison the rest of a turn > answers the next tool call after one 404 that carried no session 2ms
+ ✓ server/composio-recovery.test.ts > one failed call does not poison the rest of a turn > says the apps are briefly unreachable, in plain words, after a 503 2ms
+ ✓ server/composio-recovery.test.ts > a dead MCP session is forgotten, not blamed on the broker > keeps the broker ready and stops forwarding the id when the session is gone 2ms
+ ✓ server/composio-recovery.test.ts > the prompt and the error tell an outage from 'not set up' > says unreachable, never 'not set up', when a token exists and the broker is down 1ms
+ ✓ server/composio-recovery.test.ts > the prompt and the error tell an outage from 'not set up' > still says 'unconfigured' when there is no token at all 1ms
+ ✓ server/composio-recovery.test.ts > the whole drop and recovery, with no restart and no user action > recovers connected apps by itself after the network drops and comes back 24ms
+ ✓ server/connector-health-store.test.ts > durable connector incident > retains identity, failed accounts and cooldown across process restarts 12ms
+ ✓ server/connector-health-store.test.ts > durable connector incident > ignores a terminal MCP failure delivered after a newer sign-in projection 2ms
+ ✓ server/connector-health-store.test.ts > durable connector incident > checks at boot and on a bounded schedule, without overlapping slow reads 3ms
+ ✓ server/connector-health-store.test.ts > P2-5 journal bytes for one changed account are constant at 10 and 1000 incidents 16ms
+ ✓ server/connector-health-store.test.ts > per-account incidents survive restart, recovery and account cooldowns independently 2ms
+ ✓ server/connector-health-store.test.ts > upgrading a legacy incident keeps its UUID and delivery mark 2ms
+ ✓ shared/connected-app-calls.test.ts > connected-app call bounds > bounds a lookup at 30 s and an action at 120 s, both inside the broker's 285 s 7ms
+ ✓ shared/connected-app-calls.test.ts > connected-app call bounds > names the app action a call runs, also inside an engine's tool wrapper 1ms
+ ✓ shared/connected-app-calls.test.ts > connected-app call bounds > tells the bot what stopped and what to do, in product words 2ms
+ ✓ shared/connected-app-calls.test.ts > connected-app call bounds > gives each action an identity, and words every operation answer in product terms 3ms
+ ✓ shared/connected-app-calls.test.ts > an action's identity (1.0.2 round 2) > leaves out the model's commentary and nothing that changes the effect 1ms
+ ✓ shared/connected-app-calls.test.ts > an action's identity (1.0.2 round 2) > names the tool and account each action needs 1ms
+ ✓ server/composio-identity.test.ts > transport ownership preserves known sessions but refuses unknown IDs 24ms
+ ✓ server/composio-identity.test.ts > managed token and URL changes invalidate transport and catalog ownership 67ms
+stderr | server/composio-identity.test.ts > late catalogue completion cannot replace newer backend inventory
+[connectors] app catalog: showing featured apps (identity) after 0 apps
+
+ ✓ server/composio-identity.test.ts > late catalogue completion cannot replace newer backend inventory 10ms
+ ✓ server/composio-identity.test.ts > a late MCP response is refused after the active managed identity changes 5ms
+ ✓ server/composio-identity.test.ts > bounded transport retention evicts the oldest session 30ms
+ ✓ shared/connected-app-readonly.test.ts > verified read-only catalog > every entry cites its doc page and is an upper-case slug of its toolkit 7ms
+ ✓ shared/connected-app-readonly.test.ts > verified read-only catalog > includes every non-writing entry of the restricted-mode catalog and none of its writes 0ms
+ ✓ shared/connected-app-readonly.test.ts > verified read-only catalog > covers the reads seen in the owner's sessions and none of the writes 0ms
+ ✓ shared/connected-app-readonly.test.ts > verified read-only catalog > covers the seven toolkits 0ms
+ ✓ shared/connected-app-readonly.test.ts > verified read-only catalog > names never authorize: a slug that merely reads like a lookup is protected 1ms
+ ✓ shared/connected-app-readonly.test.ts > verified read-only catalog > lint: every verified entry is lookup-shaped and none has a write verb 1ms
+ ✓ shared/connected-app-readonly.test.ts > classifyConnectedAppCall > a batch of verified reads is a read 0ms
+ ✓ shared/connected-app-readonly.test.ts > classifyConnectedAppCall > any write or unknown tool makes the batch protected 0ms
+ ✓ shared/connected-app-readonly.test.ts > classifyConnectedAppCall > workbench sync and non-execute tools are protected 0ms
+ ✓ shared/connected-app-readonly.test.ts > classifyConnectedAppCall > a wrapped call is classified by what it wraps 0ms
+ ✓ shared/connected-app-readonly.test.ts > classifyConnectedAppCall > engine-namespaced names classify the same 0ms
+
+ Test Files  17 passed (17)
+      Tests  510 passed (510)
+   Start at  05:03:41
+   Duration  94.74s (transform 9.52s, setup 21.32s, import 4.02s, tests 66.99s, environment 2ms)
+

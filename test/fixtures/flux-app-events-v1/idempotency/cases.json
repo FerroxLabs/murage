@@ -701,7 +701,7 @@
   ],
   "contractRevision": 1,
   "credentialRecoveryWindowSec": 900,
-  "description": "Idempotency-Key behaviour (D-10). Scope is (tenant, method, concrete path, key); the body digest is body_digest(body) from src/app_events/jcs.py. Only 2xx responses are recorded as receipts.",
+  "description": "Idempotency-Key behaviour (D-10). Scope is (tenant, method, concrete path, key); the body digest is body_digest(body) from the Flux router's canonical JSON helper. Only 2xx responses are recorded as receipts.",
   "grade": "FINAL",
   "receiptRetentionSec": 691200,
   "version": 1

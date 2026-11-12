@@ -1,0 +1,5 @@
+d863ebf14d1a7443d02c6ace92ed1daa9466ed42667926f69dc7daefcd18e0fa  scripts/windows/winbox-driver.mjs
+7a8904c1ddf94ecea81f79581ae5f4408a14b649669e9c0604cd87b8fee3bbe8  scripts/windows/winbox-driver.node-test.mjs
+d03679faf3f864db245b1971561e111517a8c60ac81e7c5f725e575a70d8fadb  scripts/windows/winbox-gate.ps1
+0df580d94b9ba3b9c549f087e5ce04317895455158972bd444bceb1a0a27f99e  scripts/windows/winbox-proof-audit.node-test.mjs
+e04b738cdeae0fd7b6b07a2b228aa3b16fffd3dd8cc40bdb4df463a6db2b2a9a  scripts/windows/winbox-strings.json

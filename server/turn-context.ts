@@ -139,9 +139,9 @@ export function runHeaders(transcript: readonly TranscriptEntry[], currentInstan
 
 /** The transcript as a driver that replays natively receives it: no engine
  * object, the run header riding on the first reply of its run. */
-export function transcriptForDriver(transcript: readonly TranscriptEntry[], currentInstanceId?: string): Array<{ role: "user" | "assistant"; text: string; header?: string }> {
+export function transcriptForDriver(transcript: readonly TranscriptEntry[], currentInstanceId?: string): Array<{ id?: string; role: "user" | "assistant"; text: string; header?: string }> {
   const headers = runHeaders(transcript, currentInstanceId);
-  return transcript.map((m, i) => ({ role: m.role, text: m.text, ...(headers[i] ? { header: headers[i] } : {}) }));
+  return transcript.map((m, i) => ({ ...(m.id ? { id: m.id } : {}), role: m.role, text: m.text, ...(headers[i] ? { header: headers[i] } : {}) }));
 }
 
 /** Shared by native messages, inline history and session recovery. */

@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// Flux #519/#520 alignment (flux-router master 42ee7973): the account counters from #1 settings, 403 email_scope_required naming its
+// Flux #519/#520 alignment (the reviewed Flux router contract): the account counters from #1 settings, 403 email_scope_required naming its
 // scope, the account switch and renewal_due on #28, a bot key never mounting on closing or failed inboxes, a 202 hold without a receipt
 // still making a card, and an owner resume that Flux keeps paused saying why instead of "resumed".
 import { DatabaseSync } from "node:sqlite";
@@ -123,7 +123,7 @@ describe("Email addresses from another setup (2.6, #4)", () => {
     ] } });
     const status = await call("GET", "/api/email/status");
     expect(status?.body.otherSetups).toEqual([{ inboxId: "ibx_9", address: "old@murage.email" }]);
-    expect((await call("POST", "/api/email/other-setups/ibx_9/remove", { confirm: true }, { surface: "phone" }))?.status).toBe(403);
+    expect((await call("POST", "/api/email/other-setups/ibx_9/remove", { confirm: true }, { surface: "phone" }))?.status).toBe(400);
     expect((await call("POST", "/api/email/other-setups/ibx_9/remove", {}))?.status).toBe(400);
     expect((await call("POST", "/api/email/other-setups/ibx_1/remove", { confirm: true }))?.status).toBe(404);
     fake.on("DELETE", /^\/v1\/email\/inboxes\/ibx_9$/, { status: 202, body: { id: "ibx_9", state: "closing" } });

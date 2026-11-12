@@ -5,6 +5,9 @@ export interface TransactionalEmailSender {
     subject: string;
     html: string;
     text: string;
+    /** Optional extra headers (updates consent, design v5.6.1 3.3: the RFC 8058 one-click pair from oneClickHeaders). The binding
+     *  forwards the whole message; the staging sink stores no headers and no HTML. Every existing caller compiles unchanged. */
+    headers?: Readonly<Record<string, string>>;
   }): Promise<void>;
 }
 

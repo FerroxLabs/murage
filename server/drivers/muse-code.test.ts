@@ -1,3 +1,4 @@
+import {driverOwnerDecisionFixture} from '../testing/driver-decision-fixture.ts';
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -57,7 +58,7 @@ describe("Muse Code driver: launch and level mapping", () => {
     expect(MuseCodeDriver.defaultConfig()).toEqual({ cli: "muse" });
   });
 
-  it("maps Ask, Auto, Full access and No limits to one asking mode, read-only at Ask, never trusting the folder or dropping the sandbox", () => {
+  it("maps Ask, Auto and Full access to one asking mode, read-only at Ask, never trusting the folder or dropping the sandbox", () => {
     expect(MUSE_APPROVAL_MODE).toBe("promptUnmatched");
     expect(musePosture({ askLevel: true, routeAsks: true })).toBe("ask");
     expect(musePosture({ routeAsks: true })).toBe("auto");
@@ -471,7 +472,7 @@ describe("Muse physical write admission", () => {
   it("all driver prompt methods use the admitted command helper", () => {
     const source = readFileSync(new URL("./muse-code.ts", import.meta.url), "utf8");
     const methods = [...source.matchAll(/musePromptCommand\(host.connection, host.admissions, "([^"]+)"/g)].map(m => m[1]);
-    expect(methods.sort()).toEqual([...MUSE_PROMPT_METHODS].sort());
+    expect(methods.sort()).toEqual([...MUSE_PROMPT_METHODS, "turn/interrupt"].sort());
     expect(source).not.toMatch(/connection\.(?:command|request)\("turn\/(?:start|steer)"/);
   });
 });
@@ -717,7 +718,7 @@ describe("Muse Code's process", () => {
     expect(requests("approval/decide").map((entry) => entry.params!.choiceId)).toEqual(["c-abort"]);
   }, 20_000);
 
-  it("keeps the sandbox and the asks on Full access and No limits, so Murage answers every ask", async () => {
+  it("keeps the sandbox and the asks on Full access, so Murage answers every ask", async () => {
     const { instance, events } = await start({ FAKE_MUSE_TURN: "approval" });
     await instance.adapter.sendTurn(turn({ stopLine: true }));
     await vi.waitFor(() => expect(opened(events)).toHaveLength(1));
@@ -729,6 +730,20 @@ describe("Muse Code's process", () => {
     expect(modes).toEqual(["promptUnmatched"]);
     expect(JSON.stringify(entries())).not.toContain("allowAll");
     expect(requests("approval/decide").map((entry) => entry.params!.choiceId)).toEqual(["c-once"]);
+  }, 20_000);
+
+  it("E2 No limits disables Muse sandbox and still sends tool calls to Murage", async () => {
+    const { instance, events } = await start({ FAKE_MUSE_TURN: "approval" });
+    const release=driverOwnerDecisionFixture(instance.adapter);
+    try {
+    await instance.adapter.sendTurn(turn({ stopLine: true, noLimits: true }));
+    await vi.waitFor(() => expect(opened(events)).toHaveLength(1));
+    expect(await instance.adapter.respondToRequest("t-1", "ap-1", { behavior: "allow" })).toBe("allowed-once");
+    expect(await completedOf(events)).toMatchObject({ ok: true });
+    expect(turnLaunches()[0]!.launch).toEqual(["serve", "--disable-sandbox", "--contributor-mode", "off"]);
+    expect(requests("session/start")[0]!.params!.approvalMode).toBe("promptUnmatched");
+    expect(musePosture({ stopLine: true, noLimits: true })).toBe("unlimited");
+    }finally{release();}
   }, 20_000);
 
   it("runs Ask read-only and refuses a shell ask with no card", async () => {
@@ -1164,6 +1179,7 @@ describe("L12 retirement and delivery", () => {
   const fixture = async (config: Record<string, unknown> = {},
     initialIntercept?: (child: any, frame: Frame, callback: (error?: Error | null) => void) => boolean,
     waitCatalog = true) => {
+    vi.spyOn(procs, "resolveEngineExecutable").mockReturnValue({ command: "/isolated-stream-fixture", args: [] });
     const children: Array<any> = [];
     const events: RuntimeEvent[] = [];
     let intercept = initialIntercept;
@@ -1231,6 +1247,63 @@ describe("L12 retirement and delivery", () => {
     };
   };
   afterEach(() => vi.restoreAllMocks());
+
+  it("per-turn work never scans executables or spawns", async () => {
+    const f = await fixture();
+    try {
+      const child = await f.started();
+      const lookups = vi.mocked(procs.resolveEngineExecutable).mock.calls.length;
+      const spawns = f.spawn.mock.calls.length;
+      child.send({ method: "session/tokenUsage", params: { sessionId: "s-1", usage: { inputTokens: 3 } } });
+      await f.instance.adapter.steer!("l12", "FAKE-STEER");
+      expect(vi.mocked(procs.resolveEngineExecutable)).toHaveBeenCalledTimes(lookups);
+      expect(f.spawn).toHaveBeenCalledTimes(spawns);
+    } finally { await f.instance.dispose(); }
+  });
+
+  it("backs off power-refused snapshots and catalog launches exponentially, caps retries, and recovers", async () => {
+    const f = await fixture();
+    f.version("empty");
+    const refused = vi.spyOn(procs, "hostPowerRefused").mockReturnValue(true);
+    vi.useFakeTimers();
+    try {
+      const first = await f.instance.snapshot();
+      expect(first).toMatchObject({ state: "unavailable", reason: expect.stringContaining("could not start") });
+      expect(first.reason).not.toContain("isn't installed");
+      let count = f.spawn.mock.calls.length;
+      for (const delay of [30_000, 60_000, 120_000, 240_000, 300_000, 300_000]) {
+        for (let elapsed = 5_000; elapsed < delay; elapsed += 5_000) {
+          await vi.advanceTimersByTimeAsync(5_000);
+          expect(await f.instance.snapshot()).toEqual(first);
+          await f.instance.refreshModels!();
+          expect(f.spawn).toHaveBeenCalledTimes(count);
+        }
+        await vi.advanceTimersByTimeAsync(5_000);
+        await Promise.all([f.instance.snapshot(), f.instance.snapshot()]);
+        expect(f.spawn).toHaveBeenCalledTimes(++count);
+      }
+      refused.mockReturnValue(false); f.version("normal");
+      await vi.advanceTimersByTimeAsync(300_000);
+      expect((await f.instance.snapshot()).reason).not.toBe(first.reason);
+      await f.instance.refreshModels!();
+      expect(f.instance.models.source).toBe("live");
+    } finally { await f.instance.dispose(); vi.useRealTimers(); }
+  });
+
+  it("backs off a refused catalog startup before any version poll", async () => {
+    vi.spyOn(procs, "hostPowerRefused").mockReturnValue(true);
+    const f = await fixture({}, (child, frame, callback) => {
+      if (frame.method !== "initialize") return false;
+      callback(); queueMicrotask(() => child.end()); return true;
+    }, false);
+    try {
+      await f.instance.refreshModels!();
+      const count = f.spawn.mock.calls.length;
+      expect(await f.instance.snapshot()).toMatchObject({ state: "unavailable", reason: expect.stringContaining("could not start") });
+      await f.instance.refreshModels!();
+      expect(f.spawn).toHaveBeenCalledTimes(count);
+    } finally { await f.instance.dispose(); }
+  });
 
   it("T08 root exit enters cleanup while descendant pipes remain open", async () => {
     const f = await fixture(); const child = await f.started(); const death = f.holdDeath();

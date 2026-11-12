@@ -33,9 +33,11 @@ describe("the Auto switch in Settings", () => {
     expect(deciderRoutesRooms({ decider: { enabled: true, jobs: { roomRouting: true } } })).toBe(true);
   });
   it("is mounted in Settings, under channel defaults", () => {
-    const settings = readFileSync(new URL("./SettingsModal.tsx", import.meta.url), "utf8");
-    expect(settings).toMatch(/section === "botDefaults"[\s\S]*?<BotsSettings/);
-    // The Bots page keeps it under its Advanced.
-    expect(readFileSync(new URL("./BotsSettings.tsx", import.meta.url), "utf8")).toMatch(/<AdvancedSection[\s\S]*?<RoomRoutingSettings \/>/);
+    const registry = readFileSync(new URL("./settings/page-registry.tsx", import.meta.url), "utf8");
+    expect(registry).toContain('botDefaults: () => import("./pages/BotDefaultsPage")');
+    const page = readFileSync(new URL("./settings/pages/BotDefaultsPage.tsx", import.meta.url), "utf8");
+    expect(page).toContain('simple: false, render: () => deviceGate(desktop, anchor, render)');
+    expect(page).toMatch(/card\("room-routing", "room-routing-label", \(\) => <Card[^>]*><RoomRoutingSettings \/><\/Card>\)/);
+    expect(page).toContain('<PageCards cards={botDefaultsCards({ desktop })} mode={mode} />');
   });
 });

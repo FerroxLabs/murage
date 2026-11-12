@@ -1,3 +1,5 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
+import { redactSecretsInText } from "./redact.ts";
 import { probeFolder } from "./probe-folder.ts";
 import { botFolderOrThrow } from "./bot-folder.ts";
 import { cloudTurnLaunch } from "./cloud-home/turn-process.ts";
@@ -27,22 +29,22 @@ import {
   type StdioOptions,
 } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
-import { isAbsolute, join, win32 as windowsPath } from "node:path";
+import { delimiter, isAbsolute, join, resolve as resolvePath, win32 as windowsPath } from "node:path";
 import { tmpdir } from "node:os";
-import { existsSync } from "node:fs";
+import { accessSync, constants as fsConstants, existsSync, statSync } from "node:fs";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 import { assignPipJob, closePipJob, createPipJob, PipJobRefusedError, stopWindowsJob } from "./memory/pip-job.ts";
 import { loadExclusionAddon, type NativeHandle } from "./engine-exclusion.ts";
 import {
-  closePowerFilter, HOST_POWER_CODE, HOST_POWER_MESSAGE, HOST_POWER_PROBE_RUN, hostPowerPlatform, hostPowerProbeDeps, hostPowerStubMessage, hostPowerTestUnwrapped, openPowerFilter, planHostPower,
-  reprobeHostPowerEnvironment, type ProbeResult, usernsDenied, wrapperRefusalText, bwrapEngineStarted, bwrapEarlyExitMessage, BWRAP_ARGS_FD, BWRAP_SECCOMP_FD, BWRAP_STATUS_FD,
+  closePowerFilter, HOST_POWER_CODE, HOST_POWER_MESSAGE, HOST_POWER_PROBE_RUN, hostPowerPlatform, hostPowerProbeDeps, hostPowerStubMessage, hostPowerTestUnwrapped, openPowerFilter, planHostPower, recordNoLimitsMacPowerRefusal,
+  reprobeHostPowerEnvironment, type ProbeResult, usernsDenied, wrapperRefusalText, wrapperEngineMissingText, bwrapEngineStarted, bwrapEarlyExitMessage, BWRAP_ARGS_FD, BWRAP_SECCOMP_FD, BWRAP_STATUS_FD,
 } from "./host-power.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
+import { findCliCandidates, resolveCliSpawn, type ResolvedSpawn } from "./env-path.ts";
 import { platformConfirmStopped, recordProcessHandle } from "./platform-process-hooks.ts";
-import { hostProcessGone, hostProcessIdentity, hostProcessIsChild, resolveBwrapProcesses, type HostProcessIdentity } from "./bwrap-process.ts";
+import { hostProcessExited, hostProcessGone, hostProcessIdentity, hostProcessIsChild, resolveBwrapProcesses, type HostProcessIdentity } from "./bwrap-process.ts";
 
 export function resolveCli(cli: string, args: string[] = [], searchPath?: string): ResolvedSpawn {
   return resolveCliSpawn(cli, args, searchPath);
@@ -54,6 +56,60 @@ export function envSearchPath(env: NodeJS.ProcessEnv | Record<string, string | u
   if (typeof env.PATH === "string") return env.PATH;
   const key = Object.keys(env).find((name) => name.toUpperCase() === "PATH");
   return key && typeof env[key] === "string" ? env[key] : undefined;
+}
+
+/** Presence checks never run the engine. Missing results are shared across routes for ten minutes;
+ * explicit picker/Settings refreshes may re-check sooner. Successful paths are pinned before wrapping. */
+export const ENGINE_PRESENCE_RECHECK_MS = 10 * 60_000;
+export const engineExecutableDeps = {
+  executable: (file: string): boolean => {
+    try { accessSync(file, process.platform === "win32" ? fsConstants.F_OK : fsConstants.X_OK); return statSync(file).isFile(); }
+    catch { return false; }
+  },
+};
+const engineExecutables = new Map<string, { at: number; resolved: ResolvedSpawn | null; candidates?: string[] }>();
+function engineSearchPath(env: NodeJS.ProcessEnv | undefined): string {
+  return envSearchPath(env) ?? ((!env || process.platform === "win32") ? process.env.PATH : undefined) ?? "/usr/bin:/bin";
+}
+function executableScope(cli: string, env: NodeJS.ProcessEnv | undefined): string {
+  return `${JSON.stringify([cli, engineSearchPath(env)])}:`;
+}
+function executableKey(cli: string, env: NodeJS.ProcessEnv | undefined, cwd: string): string {
+  return executableScope(cli, env) + JSON.stringify(cwd);
+}
+export function resolveEngineExecutable(cli: string, env: NodeJS.ProcessEnv | undefined, cwd: string, manual = false): ResolvedSpawn | null {
+  const key = executableKey(cli, env, cwd);
+  if (manual) {
+    // A user re-check must also release negative results left by session/catalog launches in other folders.
+    const scope = executableScope(cli, env);
+    for (const cachedKey of engineExecutables.keys()) if (cachedKey.startsWith(scope)) engineExecutables.delete(cachedKey);
+  }
+  const cached = engineExecutables.get(key);
+  if (!manual && cached && Date.now() - cached.at < ENGINE_PRESENCE_RECHECK_MS) return cached.resolved;
+  const searchPath = engineSearchPath(env);
+  const resolved = resolveCli(cli, [], searchPath);
+  const candidates = isAbsolute(resolved.command) || resolved.command.includes("/") || resolved.command.includes("\\")
+    ? [resolvePath(cwd, resolved.command)]
+    : searchPath.split(delimiter).map(dir => resolvePath(cwd, dir, resolved.command));
+  const command = candidates.find(file => engineExecutableDeps.executable(file));
+  const result = command ? { command, args: resolved.args } : null;
+  // Bound retained configuration/path keys even when engines are repeatedly edited.
+  if (engineExecutables.size >= 512) engineExecutables.delete(engineExecutables.keys().next().value!);
+  engineExecutables.set(key, { at: Date.now(), resolved: result });
+  return result;
+}
+/** Registry discovery shares admission's presence deadline. In particular, a missing engine never
+ * triggers a second PATH walk just to populate the detected-binary dropdown on a background read. */
+export function findEngineCliCandidates(cli: string, env: NodeJS.ProcessEnv, cwd: string, manual = false): string[] {
+  if (!resolveEngineExecutable(cli, env, cwd, manual)) return [];
+  const cached = engineExecutables.get(executableKey(cli, env, cwd))!;
+  return cached.candidates ??= findCliCandidates(cli);
+}
+export function noteEngineMissing(cli: string, env: NodeJS.ProcessEnv | undefined, cwd: string): void {
+  engineExecutables.set(executableKey(cli, env, cwd), { at: Date.now(), resolved: null });
+}
+export function engineExecutableMissing(child: ChildProcess): boolean {
+  return cliOwnership.get(child)?.engineMissing === true;
 }
 
 /** Leave headroom below CreateProcess' 32,767 UTF-16 code-unit limit for
@@ -131,6 +187,7 @@ interface CliOwnership {
   deliveredAt?: number;
   /** S4 power: the block could not be applied (the pid-less EPOWER child, or the wrapper refused before the engine ran). */
   hostPowerRefused?: boolean;
+  engineMissing?: boolean;
   /** Linux cage: retain host identities independently of wrapper close and its pipes. */
   bwrap?: { root?: HostProcessIdentity; childPid?: number; init?: HostProcessIdentity };
   lateConfirmationTimer?: ReturnType<typeof setTimeout>;
@@ -139,6 +196,8 @@ interface CliOwnership {
 // Evidence belongs to this exact spawn/handle, never a PID recovered after a
 // server restart. A retained live session is not stopped until requested.
 const cliOwnership = new WeakMap<ChildProcess, CliOwnership>();
+/** One diagnostic per failing Seatbelt executable until a successful launch; polling is not a new incident. */
+const seatbeltRefusalLogged = new Set<string>();
 
 /** The Windows job a CLI runs in (PIP: Local\\murage-pip-<id>; an engine turn: Local\\murage-pip-eng-<uuid>, the PIP naming the
  *  addon accepts). U24 design R2/R3: on Windows a turn with a job runs on the job route or not at all. The job is created first,
@@ -146,9 +205,9 @@ const cliOwnership = new WeakMap<ChildProcess, CliOwnership>();
  *  so the CLI and everything it ever starts are in the job before their first instruction. A launch that cannot be contained
  *  (no addon, no launcher file, the job could not be created, the launcher could not be assigned) is refused: PIP as before
  *  (PipJobRefusedError / cliJobRefused), an engine with a returned child whose `error` carries code ECONTAIN. */
-export interface CliJob { name: string; hostPower?: true }
+export interface CliJob { name: string; hostPower?: true; noLimitsSession?: object }
 /** S4 power (design section 2): a Mac or Linux engine spawn under the block carries this marker and no job. */
-export interface HostPowerMark { name?: undefined; hostPower: true }
+export interface HostPowerMark { name?: undefined; hostPower: true; noLimitsSession?: object }
 export type EngineSpawnJob = CliJob | HostPowerMark;
 
 /** The one sentence an engine gets when its launch could not be contained (the turn was not started). */
@@ -162,8 +221,8 @@ let containmentWarned = false;
  *  because the block does not nest with their own sandboxes there (section 2, revision 4.1). A Windows build that cannot contain
  *  engines (no usable addon, no launcher file) says so once in the app log; its launches are refused by spawnCli, never run
  *  uncontained. */
-export function engineJob(options: { posixHostPower?: boolean } = {}): EngineSpawnJob | undefined {
-  if (process.platform !== "win32") return engineWrapsHostPower(options) ? { hostPower: true } : undefined;
+export function engineJob(options: { posixHostPower?: boolean; noLimits?: boolean; powerSession?: object } = {}): EngineSpawnJob | undefined {
+  if (process.platform !== "win32") return engineWrapsHostPower(options) ? { hostPower: true, ...(options.noLimits && options.powerSession ? { noLimitsSession: options.powerSession } : {}) } : undefined;
   if (!containmentWarned && !containmentAvailable()) {
     containmentWarned = true;
     console.warn("[procs] engine turns on this Windows build cannot be contained (no usable engine-exclusion addon or job launcher) and will be refused");
@@ -270,8 +329,10 @@ function bwrapNamespaceGone(owned: CliOwnership): boolean {
   const cage = owned.bwrap;
   if (!cage) return true;
   if (cage.init) return hostProcessGone(cage.init);
-  // Only close drains the status pipe: no child-pid then means no namespace was created.
-  return owned.closed && cage.childPid === undefined;
+  // Only close drains the status pipe. A delayed child-pid record can arrive
+  // after init exited, leaving no live starttime to pin. Confirm its absence
+  // independently; an unreadable or live PID still retains ownership.
+  return owned.closed && (cage.childPid === undefined || hostProcessExited(cage.childPid));
 }
 /** How this CLI's tree is held for Stop: a Windows job (every process it creates is in it) or nothing beyond the root. */
 export function cliContainment(child: ChildProcess): "job" | "none" {
@@ -290,7 +351,7 @@ const hostPowerError = (message: string = HOST_POWER_MESSAGE): NodeJS.ErrnoExcep
 function emitLaunchError(child: ChildProcess, error: NodeJS.ErrnoException): void {
   process.nextTick(() => {
     if (child.listenerCount("error") > 0) child.emit("error", error);
-    else console.warn(`[procs] ${error.message}`);
+    else if (error.code !== "ENOENT" && error.code !== "EACCES") console.warn(`[procs] ${error.message}`);
   });
 }
 
@@ -304,8 +365,9 @@ function unstartedLaunch(command: string, args: string[], reason: string | NodeJ
   }) as unknown as ChildProcessByStdio<Writable, Readable, Readable>;
   stdin.on("error", () => {});
   // Owned like any refused launch (cliJobRefused, containment "none"); with no pid there is nothing to stop, so a stop confirms.
-  const power = typeof reason !== "string";
-  const ownership: CliOwnership = { pid: undefined, platform: process.platform, closed: false, stopped: false, jobRefused: true, observations: [], observers: new Set(), ...(power ? { hostPowerRefused: true } : {}) };
+  const power = typeof reason !== "string" && reason.code === HOST_POWER_CODE;
+  const missing = typeof reason !== "string" && (reason.code === "ENOENT" || reason.code === "EACCES");
+  const ownership: CliOwnership = { pid: undefined, platform: process.platform, closed: false, stopped: false, jobRefused: !missing, observations: [], observers: new Set(), ...(power ? { hostPowerRefused: true } : {}), ...(missing ? { engineMissing: true } : {}) };
   cliOwnership.set(child, ownership);
   emitLaunchError(child, typeof reason === "string" ? engineContainmentError(reason) : reason);
   process.nextTick(() => {
@@ -338,9 +400,17 @@ export function spawnCli(
   // Only a code-loading value turns the relief off (engineEnvLoadsCode); the Cloud docker server tool is not an engine.
   if (mode?.serverTool !== "docker") noteEngineEnv(opts.env ?? process.env);
   if (engineThread !== undefined && mode?.serverTool !== "docker") noteEnginePath(engineThread, enginePathFromEnv(opts.env ?? process.env));
-  const resolved = resolveCli(cli, args);
+  let resolved = resolveCli(cli, args, envSearchPath(opts.env));
   assertSafeCliArgv(resolved);
   const launch = mode?.serverTool === "docker" && cli === "docker" ? null : cloudTurnLaunch(resolved.command, resolved.args, opts.env, opts.cwd);
+  // A local wrapped engine must exist before even planning/probing the wrapper. Cloud commands
+  // belong to the remote host and are resolved there, never against this computer's PATH.
+  if (job?.hostPower === true && !launch && mode?.serverTool !== "docker") {
+    const pinned = resolveEngineExecutable(cli, opts.env, String(opts.cwd));
+    if (!pinned) return unstartedLaunch(resolved.command, resolved.args,
+      Object.assign(new Error(`spawn ${cli} ENOENT`), { code: "ENOENT", syscall: "spawn" }));
+    resolved = { command: pinned.command, args: [...pinned.args, ...args] };
+  }
   const command = launch?.command ?? resolved.command, launchArgs = launch?.args ?? resolved.args;
   // Windows, a job (PIP or engine): the job exists before anything does, the launcher is started and put in the job while it is
   // blocked on its stdin, and only then (the frame) does it start the CLI inside the job (U24 design R2). A launch that cannot
@@ -355,7 +425,7 @@ export function spawnCli(
     return unstartedLaunch(command, launchArgs, hostPowerError());
   }
   const planned = hostPower && process.platform !== "win32" && hostPowerPlatform() !== null && !hostPowerTestUnwrapped()
-    ? planHostPower(command, launchArgs, opts.env, typeof opts.cwd === "string" ? opts.cwd : opts.cwd?.toString())
+    ? planHostPower(command, launchArgs, opts.env, typeof opts.cwd === "string" ? opts.cwd : opts.cwd?.toString(), job?.noLimitsSession)
     : null;
   // An environment gap (host-power.ts hostPowerGap: root, or a verified bwrap this computer refuses a user namespace): the engine
   // runs as an ordinary spawn under the access level, the never-list and the command reader. The cause was logged once.
@@ -392,7 +462,7 @@ export function spawnCli(
   const rest: SpawnOptions = { ...opts };
   delete rest.detached;
   delete rest.windowsHide;
-  const start = () => spawn(command, launchArgs, {
+  const start = () => spawn(command, [...launchArgs], withHideInherit({
     ...rest,
     stdio,
     // Cloud home: the launcher itself gets a fixed PATH and cwd and four pipes;
@@ -406,15 +476,15 @@ export function spawnCli(
     // descendant of a console-less process would get a new visible console.
     // PIP and engine turns on Windows use a named job through the launcher; other Windows CLIs use taskkill /T.
     ...(process.platform === "win32" ? { windowsHide: true } : { detached: true }),
-  }) as ChildProcessByStdio<Writable, Readable, Readable>;
+  })) as ChildProcessByStdio<Writable, Readable, Readable>;
   // The launcher: the server's own Node (process.execPath run as Node) with a fixed environment, the CLI's argv after "--",
   // the turn's cwd and stdio, and a fourth pipe for its one-line report. It executes nothing of the turn's before the frame.
-  const startLauncher = () => spawn(process.execPath, [launcher!, "--", command, ...launchArgs], {
+  const startLauncher = () => spawn(process.execPath, [launcher!, "--", command, ...launchArgs], withHideInherit({
     cwd: opts.cwd,
     env: launcherEnvironment(),
     stdio: [...(stdio as Array<unknown>).slice(0, 3), "pipe"] as StdioOptions,
     windowsHide: true,
-  }) as ChildProcessByStdio<Writable, Readable, Readable>;
+  })) as ChildProcessByStdio<Writable, Readable, Readable>;
   // Linux: the shipped bwrap, its own fixed environment (PATH only), the turn's three pipes, the filter's fd, the --args pipe and
   // the status pipe (fd 5, --json-status-fd),
   // nothing else of the caller's options (design section 4). Every bwrap option, the turn environment's --setenv pairs among them,
@@ -422,13 +492,13 @@ export function spawnCli(
   // bwrap reads the pipe to its end and closes it before it starts the engine. macOS: sandbox-exec with the spawn's own stdio, cwd
   // and environment (section 5).
   const startWrapped = (): ChildProcessByStdio<Writable, Readable, Readable> => {
-    if (posixPower?.kind === "seatbelt") return spawn(posixPower.command, posixPower.args, { ...rest, stdio, detached: true }) as ChildProcessByStdio<Writable, Readable, Readable>;
+    if (posixPower?.kind === "seatbelt") return spawn(posixPower.command, [...posixPower.args], withHideInherit({ ...rest, stdio, detached: true })) as ChildProcessByStdio<Writable, Readable, Readable>;
     const plan = posixPower as Extract<NonNullable<typeof posixPower>, { kind: "bwrap" }>;
     const fd = powerFilterFd!;
     try {
       const pipes = (stdio as Array<unknown>).slice(0, 3);
       const wrappedStdio = [...pipes, ...Array(Math.max(0, BWRAP_SECCOMP_FD - pipes.length)).fill("ignore"), fd, ...Array(Math.max(0, BWRAP_ARGS_FD - BWRAP_SECCOMP_FD - 1)).fill("ignore"), "pipe", ...Array(Math.max(0, BWRAP_STATUS_FD - BWRAP_ARGS_FD - 1)).fill("ignore"), "pipe"] as StdioOptions;
-      const wrapped = spawn(plan.command, plan.args, { env: plan.env, cwd: opts.cwd, stdio: wrappedStdio, detached: true }) as ChildProcessByStdio<Writable, Readable, Readable>;
+      const wrapped = spawn(plan.command, [...plan.args], withHideInherit({ env: plan.env, cwd: opts.cwd, stdio: wrappedStdio, detached: true })) as ChildProcessByStdio<Writable, Readable, Readable>;
       const argsPipe = wrapped.stdio[BWRAP_ARGS_FD] as Writable | null;
       if (argsPipe) {
         // A bwrap that exits before reading it ends the pipe (EPIPE): that exit is the refusal read at close, not an error here.
@@ -554,15 +624,25 @@ export function spawnCli(
   } else if (posixPower && child.stderr) {
     let prefix = "";
     const take = (chunk: Buffer | string) => {
-      prefix += chunk.toString();
-      if (prefix.length >= 64) child.stderr.off("data", take);
+      prefix = (prefix + chunk.toString()).slice(0, 1024);
+      if (prefix.length >= 1024) child.stderr.off("data", take);
     };
     child.stderr.on("data", take);
     child.once("close", (code) => {
       child.stderr.off("data", take);
-      if (code !== 0 && wrapperRefusalText(prefix)) {
+      if (code === 0) seatbeltRefusalLogged.delete(cli);
+      if (code !== 0 && wrapperEngineMissingText(prefix)) {
+        ownership.engineMissing = true;
+        noteEngineMissing(cli, opts.env, String(opts.cwd));
+      } else if (code !== 0 && wrapperRefusalText(prefix)) {
         ownership.hostPowerRefused = true;
-        console.warn(`[procs] engine launch refused for ${cli}: sandbox-exec could not apply the power block`);
+        if (job?.noLimitsSession) {
+          recordNoLimitsMacPowerRefusal(job.noLimitsSession, `launch exit ${String(code)}: ${prefix}`);
+        } else if (!seatbeltRefusalLogged.has(cli)) {
+          seatbeltRefusalLogged.add(cli);
+          const detail = redactSecretsInText(prefix).replace(/[\r\n\x00-\x1f]+/g, " ").trim();
+          console.warn(`[procs] engine launch refused for ${cli}: sandbox-exec could not apply the power block: ${detail}`);
+        }
       }
     });
   }
@@ -682,13 +762,13 @@ export function execCli(
   const killSignal = opts.killSignal ?? "SIGTERM";
   let child: ChildProcess;
   try {
-    child = spawn(resolved.command, resolved.args, {
+    child = spawn(resolved.command, [...resolved.args], withHideInherit({
       cwd: opts.cwd,
       env: opts.env,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
       ...(win32 ? {} : { detached: true }),
-    });
+    }));
   } catch (error) {
     queueMicrotask(() => cb(error instanceof Error ? error : new Error(String(error)), "", ""));
     return;
@@ -781,10 +861,10 @@ export function execCliSync(
     const error = Object.assign(new Error("Probe executable is not absolute"), { code: "EUNPINNEDPROBE" });
     return { pid: 0, output: [], stdout: Buffer.alloc(0), stderr: Buffer.alloc(0), status: null, signal: null, error };
   }
-  return spawnSync(command, args, {
+  return spawnSync(command, [...args], withHideInherit({
     cwd: opts.cwd ?? probeFolder(), env: { ...opts.env }, timeout: opts.timeout, maxBuffer: opts.maxBuffer, input: "", stdio: ["pipe", "pipe", "pipe"],
     windowsHide: true, ...(process.platform === "win32" ? {} : { detached: true }),
-  });
+  }));
 }
 
 // S4 power (1.0.9 environment gap): the probe's one bwrap run goes through the shared launcher. host-power.ts imports no process
@@ -891,7 +971,7 @@ export interface KillCliTreeDeps {
 
 const REAL_KILL_DEPS: KillCliTreeDeps = {
   get platform() { return process.platform; },
-  execFile: (command, args, options, callback) => { execFile(command, args, options, (error) => callback(error)); },
+  execFile: (command, args, options, callback) => { execFile(command, [...args], withHideInherit(options), (error) => callback(error)); },
   killProcess: (pid, signal) => { process.kill(pid, signal); },
 };
 

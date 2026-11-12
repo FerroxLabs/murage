@@ -1,0 +1,4 @@
+RED enumeration-before-removal (assertion failure, exit 1)
+RED cleanup-without-deadline (assertion failure, exit 1)
+RED node-native-kill (assertion failure, exit 1)
+RED taskkill-in-test (assertion failure, exit 1)

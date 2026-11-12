@@ -1,18 +1,23 @@
 import { homeRememberedGrantWrite, secureHomeHtml } from "./cloud-home/b1b-policy.ts";
 import { cloudHomeCopy } from "./cloud-home/copy.ts";
+import { markOwnerProven } from "./browser-owner-gates.ts";
 import { preReadBodies } from "./read-body.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { CloudSessions, type PairingInput } from "./cloud-sessions.ts";
+import { CloudSessions, type CloudDevice, type PairingInput } from "./cloud-sessions.ts";
 import { isOwnerBrowser, ownerBrowserScope, setCloudIdentity } from "./cloud-request-identity.ts";
-import { SENTINEL_OWNER_ROUTE, cloudRouteDecision, cloudRouteNeedsBody, cloudSettingsRead, sentinelCloudDecision } from "./route-policy.ts";
+import { SENTINEL_OWNER_ROUTE, cloudRouteDecision, cloudRouteNeedsBody, cloudSettingsRead, sentinelCloudDecision, type CloudRouteContext } from "./route-policy.ts";
+import { browserOwnerTier, type OwnerCodeLabel } from "./browser-owner-policy.ts";
 import { trustedCloudSocket } from "./cloud-home/proxy-socket.ts";
 import { CloudResponseSessions, type CloudResponseBinding } from "./cloud-home/response-sessions.ts";
 import { doorTicketEnvelope, type DoorTicketClaims } from "./cloud-home/b1b-identity.ts";
 import { doorOutcomeOf, doorPageReport, doorRefusal, logDoorOutcome, logDoorPage, type DoorOutcome, type DoorRoute } from "./cloud-home/door-log.ts";
+import { ENGINE_LOGIN_PATH } from "./cloud-home/engine-login-engines.ts";
+import { ENGINE_TICKET_QUERY, ENGINE_TICKET_TTL_MS, checkEngineLoginTarget, createEngineLoginTickets, engineTicketPrincipal, markEngineTicketRedeemed } from "./cloud-home/engine-login-target.ts";
+import type { TicketStore } from "./single-use-ticket.ts";
 import { MEDIA_ASSET_ID_PATTERN, verifyMediaCapability } from "./media-assets.ts";
 import { MEDIA_CAPABILITY_QUERY_PARAM, MEDIA_ROUTES } from "../shared/media-assets.ts";
 
@@ -23,7 +28,22 @@ export function pairDeviceDigest(device:{scope:string;publicKey:string;assertion
 
 // One map with readBody (read-body.ts), so every route reads the body this gate verified.
 export const cloudBodies = preReadBodies;
-export interface CloudAuthOptions { sessions: CloudSessions; publicOrigin: string; trustedProxy?: string; bootstrapSecret: () => string | undefined; homeIdentity?: () => { homeKey: unknown };
+/** What the owner's browser sends to prove one request with an emailed code (server/cloud-home/owner-code.ts implements it). */
+export interface OwnerActTokenInput { deviceId: string; accessHash: string; act: string; label: OwnerCodeLabel; labelArg?: string }
+export interface CloudOwnerAct {
+  /** The stateless act token the 403 `email_code` answer carries (10 minutes, HMAC over the bootstrap secret). */
+  token(input: OwnerActTokenInput): string;
+  /** True when the request carries a valid, unspent `x-murage-owner-proof` for exactly this act and this device. It spends the proof. */
+  verifyProof(req: IncomingMessage, device: CloudDevice, act: string): boolean | Promise<boolean>;
+  /** True while the device's emailed door proof is within the fresh door window. */
+  doorFresh(deviceId: string): boolean;
+  /** The two code routes: send the emailed code, check it and hand back the proof. Each answers {status, body}. */
+  send?(device: CloudDevice, accessHash: string, input: unknown): Promise<{ status: number; body: Record<string, unknown> }>;
+  verify?(device: CloudDevice, accessHash: string, input: unknown): Promise<{ status: number; body: Record<string, unknown> }>;
+}
+export interface CloudAuthOptions { sessions: CloudSessions;
+  /** The fresh emailed code for the owner's browser. Absent: a code route answers 403 `email_code` with no token (the code service is unavailable). */
+  ownerAct?: CloudOwnerAct; publicOrigin: string; trustedProxy?: string; bootstrapSecret: () => string | undefined; homeIdentity?: () => { homeKey: unknown };
   executionOpen?: () => boolean;
   lifecycle?: (action: "stop" | "drain" | "revoke-sessions" | "resume") => Promise<void>;
   recoveryProof?: (proof: unknown) => {holdId:string;deviceKeyDigest?:string};
@@ -33,7 +53,11 @@ export interface CloudAuthOptions { sessions: CloudSessions; publicOrigin: strin
   doorTicket?: (ticket: import("./cloud-home/b1b-identity.ts").SignedHomeKey) => DoorTicketClaims;
   recoveryNotice?: (id: string, availableAt: number) => Promise<void>;
   recoveryCleanup?: (id: string, account: string) => Promise<void>;
-  beforeAccountRevoke?: (device: import("./cloud-sessions.ts").CloudDevice) => Promise<void> }
+  /** Called after a device is revoked or made chat-only, so what it held (a browser hold) is handed back at once. */
+  afterDeviceRevoke?: () => void;
+  beforeAccountRevoke?: (device: import("./cloud-sessions.ts").CloudDevice) => Promise<void>;
+  /** Engine sign-in tickets for an owner's browser (test seam; defaults to a store of its own). */
+  engineTickets?: TicketStore }
 const cookieName = "__Host-murage";
 const sessionCookie = (value: string, maxAge: number) => `${cookieName}=${value}; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=${maxAge}`;
 /** The coarse reason a refused ticket gives the door page; the fine outcome stays in the home's log. */
@@ -85,9 +109,14 @@ async function rawBody(req: IncomingMessage, maxBytes: number): Promise<Buffer> 
 export function stepPurpose(method: string, path: string, body: unknown): string {
   return `step:${method}:${path}:${createHash("sha256").update(JSON.stringify(body ?? {})).digest("hex")}`;
 }
+/** The act a route-level emailed code is bound to: sha256 hex of the step-up purpose string (method, path with its query, body). */
+export function routeActDigest(method: string, pathWithSearch: string, body: unknown): string {
+  return createHash("sha256").update(stepPurpose(method, pathWithSearch, body)).digest("hex");
+}
 export function createCloudRequestAuth(options: CloudAuthOptions) {
   const {sessions}=options;
   const responses = new CloudResponseSessions(sessions);
+  const engineTickets = options.engineTickets ?? createEngineLoginTickets();
   return async (req: IncomingMessage,res: ServerResponse,url: URL): Promise<boolean> => {
     secureHomeHtml(res);
     const path=url.pathname,method=req.method ?? "GET";
@@ -103,7 +132,7 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
       const bearer = /^Bearer ([A-Za-z0-9_-]+)$/.exec(req.headers.authorization ?? "")?.[1];
       const cookies=(req.headers.cookie ?? "").split(";").map(v=>v.trim()).filter(v=>v.startsWith(`${cookieName}=`));
       const access=bearer ?? (cookies.length===1 ? cookies[0]!.slice(cookieName.length+1) : "");
-      const device=sessions.resolve(access);
+      let device=sessions.resolve(access);
       if (device?.scope === "browser" && bearer) { early("bearer_refused"); reply(res,401,{error:cloudHomeCopy.browserSignInRequiresItsCookie}); return true; }
       // Unix is proxy provenance, never service authentication. The dedicated
       // main TCP listener accepts local capabilities only from actual loopback
@@ -112,7 +141,7 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
         && Boolean(req.socket.localAddress && req.socket.remoteAddress)
         && [req.socket.localAddress!, req.socket.remoteAddress!].every(address =>
           address === "::1" || address === "::ffff:127.0.0.1" || (isIP(address) === 4 && address.startsWith("127.")));
-      const scope = (device ? ownerBrowserScope(device) : undefined) ?? (localService ? "service" : "anonymous");
+      let scope: NonNullable<ReturnType<typeof ownerBrowserScope>> | "anonymous" = (device ? ownerBrowserScope(device) : undefined) ?? (localService ? "service" : "anonymous");
       const management = method === "POST" && ["/api/cloud/stop","/api/cloud/drain","/api/cloud/revoke-sessions","/api/cloud/account/resume","/api/cloud/recovery/hold","/api/cloud/devices/list","/api/cloud/devices/revoke"].includes(path);
       const doorRoute = doorPath !== undefined;
       // A paired device lists and forgets itself; anonymous callers reach the handler only to be refused there.
@@ -131,8 +160,14 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
       if (cloudRouteNeedsBody(method,path)) {
         raw=await rawBody(req,path.startsWith("/api/cloud/") ? 1_048_576 : 12*1024*1024); body=raw.length ? JSON.parse(raw.toString("utf8")) : {};
         cloudBodies.set(req,{body,bytes:raw.length});
-        // The device was resolved before the body arrived: it must still be signed in once the body is complete.
-        if (device && sessions.resolve(access)?.id !== device.id) { reply(res,403,{error:cloudHomeCopy.signInRequestRefused}); return true; }
+        // The device was resolved before the body arrived: it must still be signed in once the body is complete, and what it
+        // is now decides the request. "Make this browser chat-only" while the body was in flight drops it to chat-only here:
+        // the fresh answer replaces the device and its scope before the route decision, the identity and any proof is spent.
+        if (device) {
+          const current=sessions.resolve(access);
+          if (current?.id !== device.id) { reply(res,403,{error:cloudHomeCopy.signInRequestRefused}); return true; }
+          device=current; scope=ownerBrowserScope(current) ?? scope;
+        }
       }
       if(options.executionOpen && !options.executionOpen() && !["GET","HEAD","OPTIONS"].includes(method) && /^\/api\/(?:internal|model-gateway)(?:\/|$)/.test(path)) {reply(res,403,{error:cloudHomeCopy.homePaused});return true;}
       if (homeRememberedGrantWrite(method,path,body)) { reply(res,403,{error:cloudHomeCopy.alwaysAllowUnavailable}); return true; }
@@ -175,6 +210,7 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
           if (!sessions.knownDevice(id)) { reply(res,404,{error:cloudHomeCopy.homeControlOperationRefused}); return true; }
           // My Cloud's "Make chat-only" sends factorOnly:true: revoke just the remembered-owner factor, the device stays for chat.
           if (input.factorOnly === true) sessions.revokeOwnerFactor(id); else sessions.revoke(id);
+          try { options.afterDeviceRevoke?.(); } catch { /* the periodic sweep hands it back */ }
           reply(res,200,{revoked:true}); return true;
         }
         if (!options.lifecycle) throw new Error(cloudHomeCopy.homeLifecycleUnavailable);
@@ -247,6 +283,8 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
       }
       if (path === "/api/cloud/recovery/cancel" && method === "POST") {
         if (!device) throw new Error(cloudHomeCopy.pairedDeviceRequiredRefusal);
+        // A browser, of any factor, never cancels a recovery hold: it is the site's, and this handler answers ahead of the route decision.
+        if (device.scope === "browser") { reply(res,403,{error:cloudHomeCopy.pairedDeviceRequired}); return true; }
         sessions.cancelRecovery(String(body.recoveryId ?? "")); reply(res,200,{cancelled:true}); return true;
       }
       if (path === "/api/cloud/pairing" && method === "POST") {
@@ -311,9 +349,51 @@ export function createCloudRequestAuth(options: CloudAuthOptions) {
         return true;
       }
       if (path.startsWith("/api/") || path === "/api") {
-        let decision=cloudRouteDecision(method,path,scope,body);
-        if(decision === "step-up required" && device && assertion(device.id,stepPurpose(method,path+url.search,body))) decision=cloudRouteDecision(method,path,ownerBrowserScope(device) ?? device.scope,body,true);
+        // What the auth layer knows about this request for the owner's browser: whether its emailed door proof is fresh, and (below)
+        // whether it carries a valid proof bound to exactly this request.
+        const context: CloudRouteContext = {};
+        if (device && scope === "remembered-owner") context.doorFresh = options.ownerAct ? options.ownerAct.doorFresh(device.id) : sessions.doorFresh(device.id);
+        // An owner browser's engine sign-in terminal: a single-use ticket bound to this device, this sign-in token and this exact target.
+        // It is spent here whether or not it matches; a request with none, or a wrong one, is decided without it (and refused).
+        const engineMatch=method === "GET" && device && scope === "remembered-owner" && String(req.headers.upgrade).toLowerCase() === "websocket" ? ENGINE_LOGIN_PATH.exec(path) : null;
+        if (engineMatch && device) {
+          const tickets=url.searchParams.getAll(ENGINE_TICKET_QUERY), checked=checkEngineLoginTarget({engine:engineMatch[1],action:url.searchParams.get("action") ?? "login",bot:url.searchParams.get("bot") ?? undefined,provider:url.searchParams.get("provider") ?? undefined});
+          if (tickets.length === 1 && tickets[0] && tickets[0].length <= 128) {
+            if (checked.ok && engineTickets.redeem(tickets[0],engineTicketPrincipal({deviceId:device.id,accessToken:access},checked.target))) { context.engineTicket=true; markEngineTicketRedeemed(req.headers,checked.target); }
+            else engineTickets.redeem(tickets[0],"");
+          }
+        }
+        let decision=cloudRouteDecision(method,path,scope,body,false,context);
+        if(decision === "step-up required" && device && assertion(device.id,stepPurpose(method,path+url.search,body))) decision=cloudRouteDecision(method,path,ownerBrowserScope(device) ?? device.scope,body,true,context);
+        if(decision === "email-code required" && device) {
+          const act=routeActDigest(method,path+url.search,body);
+          if(options.ownerAct && req.headers["x-murage-owner-proof"] !== undefined && await options.ownerAct.verifyProof(req,device,act)) { markOwnerProven(req.headers,act); decision=cloudRouteDecision(method,path,scope,body,false,{...context,proof:"ok"}); }
+          if(decision === "email-code required") {
+            const answer=browserOwnerTier(method,path,body), label=answer.label ?? "other";
+            let actToken: string|undefined;
+            try { actToken=options.ownerAct?.token({deviceId:device.id,accessHash:createHash("sha256").update(access).digest("hex"),act,label,...(answer.labelArg ? {labelArg:answer.labelArg} : {})}); } catch { actToken=undefined; }
+            reply(res,403,actToken ? {error:cloudHomeCopy.ownerCodeNeeded,code:"email_code",actToken,label,...(answer.labelArg ? {labelArg:answer.labelArg} : {})} : {error:cloudHomeCopy.ownerCodeUnavailable,code:"email_code",label,...(answer.labelArg ? {labelArg:answer.labelArg} : {})}); return true;
+          }
+        }
         if(decision!=="allow") { reply(res,403,{error:decision === "deny" ? device?.scope === "owner-phone" ? cloudHomeCopy.phoneCredential : cloudHomeCopy.pairedDeviceRequired : cloudHomeCopy.stepUpRequired}); return true; }
+        // The fresh-code dialog's own routes: an owner browser only, its act token naming this device and this sign-in, a small body.
+        if((path === "/api/cloud/owner-code/send" || path === "/api/cloud/owner-code/verify") && method === "POST") {
+          const step=path.endsWith("/send") ? options.ownerAct?.send : options.ownerAct?.verify;
+          if(!device || scope !== "remembered-owner") { reply(res,403,{error:cloudHomeCopy.pairedDeviceRequired}); return true; }
+          if(!step || raw.length>4096) { reply(res,raw.length>4096?413:503,raw.length>4096?{error:cloudHomeCopy.bodyTooLarge}:{error:cloudHomeCopy.ownerCodeUnavailable,code:"code_unavailable"}); return true; }
+          const answer=await step.call(options.ownerAct,device,createHash("sha256").update(access).digest("hex"),body);
+          if(answer.status === 429 && typeof answer.body.retryIn === "number") res.setHeader("retry-after",String(Math.max(1,Math.ceil(answer.body.retryIn))));
+          reply(res,answer.status,answer.body); return true;
+        }
+        // The owner browser's engine sign-in ticket. Its tier (a fresh door proof or a fresh emailed code) was decided above; this only
+        // checks that the body names a sign-in the relay would run, and hands back one 30 second ticket bound to this device and target.
+        if(path === "/api/cloud/engine-login/ticket" && method === "POST") {
+          if(!device || scope !== "remembered-owner") { reply(res,403,{error:cloudHomeCopy.pairedDeviceRequired}); return true; }
+          const known=["engine","action","bot","provider"], keys=Object.keys(body);
+          const checked=keys.every(key=>known.includes(key)) ? checkEngineLoginTarget({engine:body.engine,action:body.action ?? "login",bot:body.bot,provider:body.provider}) : undefined;
+          if(!checked?.ok) { reply(res,400,{error:checked?.fault === "bot-required" ? cloudHomeCopy.engineLoginBotRequired : cloudHomeCopy.engineLoginUnknownAction}); return true; }
+          reply(res,200,{ticket:engineTickets.mint(engineTicketPrincipal({deviceId:device.id,accessToken:access},checked.target)),expiresIn:ENGINE_TICKET_TTL_MS/1000}); return true;
+        }
         if(path === "/api/cloud/account" && method === "DELETE") { if (device) await options.beforeAccountRevoke?.(device); sessions.revokeAccount(); reply(res,200,{revoked:true}); return true; }
         const revoke=/^\/api\/cloud\/devices\/([a-f0-9-]+)$/.exec(path);
         if(revoke && method === "DELETE") { sessions.revoke(revoke[1]!); reply(res,200,{revoked:true}); return true; }

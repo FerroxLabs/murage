@@ -1,0 +1,43 @@
+COMMAND node_modules/.bin/vitest run server/decision/base-parity.test.ts -t R10
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/base-parity.test.ts > R10 outside-marked owner request runs: ssh host 'echo fixture'
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=52 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/base-parity.test.ts (5 tests | 3 failed | 2 skipped) 2008ms
+   ↓ R13 405 frozen 1.0.18 verdicts remain byte equal on BASE
+   × R10 outside-marked owner request runs: ssh host 'echo fixture' 667ms
+   × R10 outside-marked owner request runs: cd d && ls 666ms
+   × R10 outside-marked owner request runs: git commit -am x && git push origin HEAD && rm -f /tmp/x.tmp 669ms
+   ↓ R3 data fields never become executable evidence
+
+ Test Files  1 failed (1)
+      Tests  3 failed | 2 skipped (5)
+   Start at  07:38:36
+   Duration  10.70s (transform 6.85s, setup 8.13s, import 419ms, tests 2.01s, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/base-parity.test.ts > R10 outside-marked owner request runs: ssh host 'echo fixture'
+ FAIL  server/decision/base-parity.test.ts > R10 outside-marked owner request runs: cd d && ls
+ FAIL  server/decision/base-parity.test.ts > R10 outside-marked owner request runs: git commit -am x && git push origin HEAD && rm -f /tmp/x.tmp
+AssertionError: expected 'card' to be 'run' // Object.is equality
+
+Expected: "run"
+Received: "card"
+
+ ❯ server/decision/base-parity.test.ts:11:126
+      9| });
+     10| it.each(['ssh host \'echo fixture\'','cd d && ls','git commit -am x &&…
+     11|  const f=fixture();const h=f.open('r',{command},{summary:'mkfs /dev/sd…
+       |                                                                                                                              ^
+     12| });
+     13| it('R3 data fields never become executable evidence',()=>{
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+

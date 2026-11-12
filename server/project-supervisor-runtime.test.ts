@@ -7,6 +7,8 @@ import { expect, it, vi } from "vitest";
 import { dispatchProjectUsageTurn } from "./project-usage-dispatch.ts";
 import { turnIsBackground } from "./message-automation.ts";
 import { createSharedOwnerUsage } from "./shared-owner-usage.ts";
+import { engineLimitLine, engineLimitText } from "./web-read-routing.ts";
+import { murageLine } from "./murage-line.ts";
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 function seam(name: string, deps: Record<string, unknown>) {
   const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
@@ -22,13 +24,13 @@ function usageFixture() {
   const settle = vi.fn(); const complete = vi.fn(); const insert = vi.fn((_db: unknown, _input: unknown) => ({ request }));
   // Local role: index.ts declares the home execution gate undefined.
   const deps = { homeExecutionGate: undefined, fluxFirstTokenProbe: { begin() {}, observe() {} }, internalTurnOwners: new Map([["thread", owner]]), turnRequestByGeneration: bindings, delegationWatch: new Map(), syncAskRequests: new Map(),
-    dispatchProjectUsageTurn,
+    dispatchProjectUsageTurn, engineLimitLine, engineLimitText, murageLine,
     // the fence is engine-input's own subject (engine-input tests); this seam is about accounting, so the built turn passes through unwrapped
     fencedTurnInput: (input: { prompt?: unknown }, _fence: unknown) => { const { prompt: _prompt, ...rest } = input; return { ...rest, text: "" }; },
     sharedOwnerUsageTurn: seam("sharedOwnerUsageTurn", { store: { bot: () => undefined } }),
     abandonSharedOwnerUsageTurn: seam("abandonSharedOwnerUsageTurn", { sharedOwnerUsage: createSharedOwnerUsage(vi.fn()) }),
     roomRequest: () => request, database: () => ({}), projectGroupForThread: () => ({ id: "g", channelProject: true }),
-    store: { messagesFor: () => [], newestMatching: () => undefined, group: () => ({ id: "g" }) }, insertRoomRequest: insert, activeRoomGoal: () => "goal",
+    store: { messagesFor: () => [], newestMatching: () => undefined, group: () => ({ id: "g" }), bot: () => undefined, appendMessage: vi.fn() }, insertRoomRequest: insert, activeRoomGoal: () => "goal",
     roomLineage: () => ({ notOwnerAudience: true }), projectUsagePending: pending, projectUsageTurns: turns,
     settleProjectUsage: settle, completeRequest: complete,
     // F3 (540bec1c0): a usage root's completion is handed to afterRoomCompletion (cancelled subtree, interrupts, wakes); its own subject is request-tree-f3.test.ts
@@ -55,6 +57,7 @@ it("F4 accounting lineage preserves a non-owner room audience", async () => {
   const f = usageFixture();
   await seam("sendProjectUsageTurn", f.deps)({ driverKind: "fake", adapter: { sendTurn: async () => ({ turnId: "turn" }) } }, { threadId: "thread" }, {});
   expect(f.insert.mock.calls[0]![1]).toMatchObject({ lineage: { notOwnerAudience: true } });
+  expect(f.deps.store.appendMessage).toHaveBeenCalledWith("thread", expect.objectContaining({ murageLine: true, tool: { name: engineLimitLine("fake"), ok: false } }));
 });
 it("F5 a send failure finishes the synthetic request without continuation", async () => {
   const f = usageFixture();
@@ -78,7 +81,8 @@ it("F7 revoking a generation settles and removes a dead usage run", () => {
   f.pending.set("thread", run); f.turns.set(JSON.stringify(["thread", "turn"]), run);
   // phone tools (1.0.9 union-server): a revoked generation also drops its phone dispatch facts, phone authority and phone jobs
   const phoneDispatchFacts = new Map([["gen", {}], ["other", {}]]), phoneAuthorities = { revokeGeneration: vi.fn() }, phoneJobs = { turnEnded: vi.fn() }, highlevelCalls = { turnEnded: vi.fn() };
-  const deps: Record<string, unknown> = { ...f.deps, replyState: { invalidateGeneration: vi.fn() }, callSpeech: { invalidate: vi.fn() }, hostComputerThreads: new Map(), projectTurnLeases: { abandon: vi.fn() }, internalCapabilities: { revokeGeneration: vi.fn() }, turnOutputRoots: new Map(), phoneDispatchFacts, phoneAuthorities, phoneJobs, highlevelCalls }; // lineage: a revoked generation drops its turn output roots
+  const botOutsideWrites = { release: vi.fn() }, botTurnOrigins = new Map([["gen", "owner"]]), taskAllowanceSuggestions = new Map([["gen", {}]]);
+  const deps: Record<string, unknown> = { ...f.deps, botOutsideWrites, botTurnOrigins, taskAllowanceSuggestions, replyState: { invalidateGeneration: vi.fn() }, callSpeech: { invalidate: vi.fn() }, hostComputerThreads: new Map(), projectTurnLeases: { abandon: vi.fn() }, internalCapabilities: { revokeGeneration: vi.fn() }, turnOutputRoots: new Map(), phoneDispatchFacts, phoneAuthorities, phoneJobs, highlevelCalls }; // lineage: a revoked generation drops its turn output roots
   // The cleanup seam is injected only if the implementation uses one.
   if (source.includes("function abandonProjectUsageTurn(")) deps.abandonProjectUsageTurn = seam("abandonProjectUsageTurn", deps);
   seam("revokeInternalGeneration", deps)("thread", "gen");
@@ -87,6 +91,8 @@ it("F7 revoking a generation settles and removes a dead usage run", () => {
   expect([...phoneDispatchFacts.keys()]).toEqual(["other"]); expect(phoneAuthorities.revokeGeneration).toHaveBeenCalledWith("gen"); expect(phoneJobs.turnEnded).toHaveBeenCalledWith("gen");
   // native HighLevel (GAP-HIGHLEVEL-109 H3): the same revocation ends that generation's waiting HighLevel calls
   expect(highlevelCalls.turnEnded).toHaveBeenCalledWith("gen");
+  expect(botOutsideWrites.release).toHaveBeenCalledWith("gen");
+  expect(botTurnOrigins.size).toBe(0); expect(taskAllowanceSuggestions.size).toBe(0);
 });
 it("shared-owner accounting holds asks and settles a failed send", async () => {
   const settleSharedOwner = vi.fn(), sharedOwnerUsage = createSharedOwnerUsage(settleSharedOwner);

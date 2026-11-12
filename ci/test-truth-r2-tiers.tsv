@@ -1,0 +1,32 @@
+path	tier	oses	reason
+scripts/no-limits-live/ruling-1019.node-test.mjs	gate	all	Release replay assertions enforce the binding No limits ruling
+server/decision/no-limits-merge-rulings.test.ts	gate	all	No limits final decisions preserve actor, owner deny and wipe policy
+server/decision/no-limits-truly.test.ts	gate	all	No limits final decisions preserve actor, owner deny and wipe policy
+server/drivers/acp/no-limits-power.test.ts	gate	all	Provider adapters preserve No limits and visible wipe checks
+server/drivers/acp/openclaw-no-limits.test.ts	gate	all	Provider adapters preserve No limits and visible wipe checks
+server/drivers/acp/openclaw-package.test.ts	gate	all	Provider adapters preserve No limits and visible wipe checks
+server/drivers/claude-bash-hook.test.ts	gate	all	Provider adapters preserve No limits and visible wipe checks
+server/drivers/claude-wipe-cover.test.ts	gate	all	Provider adapters preserve No limits and visible wipe checks
+server/drivers/no-limits-power-session.test.ts	gate	all	Provider adapters preserve No limits and visible wipe checks
+server/drivers/no-limits-state.test.ts	gate	all	Provider adapters preserve No limits and visible wipe checks
+server/email/queue-identity.test.ts	gate	all	Queued email keeps its original owner and execution authority
+server/mcp-wipe-proxy.test.ts	gate	all	MCP tools preserve No limits wipe evidence and provider dispatch
+server/no-limits-external-r3.test.ts	gate	all	No limits runs ordinary actions and cards only visible catastrophes
+server/no-limits-inheritance.test.ts	gate	all	No limits runs ordinary actions and cards only visible catastrophes
+server/no-limits-level-r3.test.ts	gate	all	No limits runs ordinary actions and cards only visible catastrophes
+server/no-limits-origin-r3.test.ts	gate	all	No limits runs ordinary actions and cards only visible catastrophes
+server/no-limits-outside-store-api.test.ts	gate	all	No limits runs ordinary actions and cards only visible catastrophes
+server/no-limits-truly.test.ts	gate	all	No limits runs ordinary actions and cards only visible catastrophes
+server/no-limits-upgrade-api.test.ts	gate	all	No limits runs ordinary actions and cards only visible catastrophes
+server/no-limits-wipe-cover.test.ts	gate	all	No limits runs ordinary actions and cards only visible catastrophes
+server/no-limits-wipe-git.test.ts	gate	all	No limits runs ordinary actions and cards only visible catastrophes
+server/no-limits-wipe-mcp.test.ts	gate	all	No limits runs ordinary actions and cards only visible catastrophes
+server/no-limits-wipe-r3.test.ts	gate	all	No limits runs ordinary actions and cards only visible catastrophes
+server/no-limits-wipe-scripts.test.ts	gate	all	No limits runs ordinary actions and cards only visible catastrophes
+server/no-limits-writer-floor-api.test.ts	gate	all	No limits runs ordinary actions and cards only visible catastrophes
+server/no-limits-writer-floor.test.ts	gate	all	No limits runs ordinary actions and cards only visible catastrophes
+server/service-no-limits-bots.test.ts	gate	all	Service and routine triggers use the bot permission level
+server/service-no-limits-routes-api.test.ts	gate	all	Service and routine triggers use the bot permission level
+server/service-no-limits.test.ts	gate	all	Service and routine triggers use the bot permission level
+src/components/NoLimitsFollowers.test.ts	gate	all	Permission controls preserve explicit choices and routine inheritance
+src/components/RoutineApprovals.test.ts	gate	all	Permission controls preserve explicit choices and routine inheritance

@@ -21,7 +21,7 @@ entries:
     engines: [all]
     anchors:
       - settings-card:usage/by-bot
-      - settings-card:memory/limit
+      - settings-card:usage/limit
       - file:src/locales/en.json#projects.work.budgetHint
     verified: 1.0.10
     internal: KB limits-41. No per-bot spend cap in server, shared or src/lib (searched 1.0.10).

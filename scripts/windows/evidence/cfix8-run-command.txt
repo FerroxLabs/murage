@@ -1,0 +1,6 @@
+#!/bin/bash
+set -eu
+export IT_BOXES=murage-vt1 IT_JOB=cfix8-winscen IT_W=/work/build/winscen/wt IT_ORIG=/work/fuigo-builds/tools/it-local-generic.sh
+awk '{print "Host load: "$0; if ($1>=85) exit 1}' /proc/loadavg
+ssh -o BatchMode=yes -o ConnectTimeout=10 murage-vt1 "awk '{print \"Runner load: \"\$0; if (\$1>=85) exit 1}' /proc/loadavg"
+/work/fuigo-builds/tools/it-remote.sh 'set -eu; export WINSCEN_PWSH=/work/.test-tmp/cfix8-winscen/pwsh/pwsh; awk '\''{print "Container host load: "$0; if ($1>=85) exit 1}'\'' /proc/loadavg; node --input-type=module < scripts/windows/evidence/cfix8-assertion-check.txt > scripts/windows/evidence/cfix8-assertion-check.log 2>&1; cat scripts/windows/evidence/cfix8-assertion-check.log; node --test scripts/windows/p11f.node-test.mjs scripts/windows/p11e.node-test.mjs scripts/windows/p11d.node-test.mjs scripts/windows/p11b.node-test.mjs scripts/windows/p11c.node-test.mjs > scripts/windows/evidence/cfix8-tests.log 2>&1; cat scripts/windows/evidence/cfix8-tests.log; node .test-tmp/cfix8-winscen/mutate-p11f.mjs > scripts/windows/evidence/cfix8-mutants.log 2>&1; cat scripts/windows/evidence/cfix8-mutants.log; sha256sum --check scripts/windows/evidence/cfix8-source.sha256 > scripts/windows/evidence/cfix8-source-restoration.log; cat scripts/windows/evidence/cfix8-source-restoration.log'

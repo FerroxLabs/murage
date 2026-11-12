@@ -1,10 +1,11 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // An isolated HTTP/SSE door. No production server, engine, home, or live data.
+import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { createServer, type ViteDevServer } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -125,6 +126,6 @@ export class PullbackFixture {
     for (const stream of this.streams) stream.end();
     for (const response of this.sendResponses) response.end();
     await this.vite?.close();
-    rmSync(this.dataDir, { recursive: true, force: true });
+    safeWipeSync(this.dataDir);
   }
 }
