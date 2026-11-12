@@ -11,9 +11,10 @@
 //      next step, and "command failed" is the next step for none of them.
 //   3. Funnel is never adopted and never reversed. It is the public internet,
 //      one word from the tailnet-only subcommand this module uses.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
+  findTailscale,
   classifyServeFailure,
   disableServe,
   enableServe,
@@ -22,6 +23,14 @@ import {
   serveState,
   TAILSCALE_DNS_ADMIN_URL,
 } from "./companion-remote-access.mjs";
+
+vi.mock("node:child_process", () => ({ execFile: vi.fn((file, args, options, callback) => callback(null, "fixture-version", "")) }));
+import { execFile } from "node:child_process";
+
+it("preserves the Tailscale subprocess options before the platform installer", async () => {
+  expect(await findTailscale({ candidates: ["fixture-tailscale"] })).toBe("fixture-tailscale");
+  expect(execFile).toHaveBeenCalledWith("fixture-tailscale", ["version"], expect.not.objectContaining({ windowsHide: expect.anything() }), expect.any(Function));
+});
 
 const NAME = "my-mac.tailexample.ts.net";
 const TARGET = "http://127.0.0.1:8813";

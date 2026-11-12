@@ -1,0 +1,70 @@
+{
+ "status": 429,
+ "headers": {
+  "date": "<HTTP-date>",
+  "server": "uvicorn",
+  "retry-after": "1",
+  "x-flux-error": "batch_rate_limited",
+  "x-flux-alias": "deepseek-v4-flash",
+  "content-type": "application/json",
+  "x-frame-options": "DENY",
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-content-type-options": "nosniff",
+  "connection": "close",
+  "content-length": "<n>"
+ },
+ "body": {
+  "error": {
+   "message": "This key is limited to 1 requests per second (batch traffic class). Retry after 1 second.",
+   "type": "rate_limit_exceeded",
+   "param": null,
+   "code": "429",
+   "provider_specific_fields": {
+    "error": {
+     "type": "rate_limit_exceeded",
+     "state": "batch_rate",
+     "message": "This key is limited to 1 requests per second (batch traffic class). Retry after 1 second.",
+     "retry_after": 1
+    }
+   }
+  }
+ },
+ "endpoint": "/v1/chat/completions",
+ "chat_branch": "flux-gate passthrough (:26090-26100)",
+ "per_endpoint": {
+  "/v1/responses": {
+   "status": 429,
+   "headers": {
+    "content-length": "179",
+    "content-type": "application/json"
+   },
+   "body": {
+    "error": {
+     "type": "rate_limit_exceeded",
+     "state": "batch_rate",
+     "message": "This key is limited to 1 requests per second (batch traffic class). Retry after 1 second.",
+     "retry_after": 1
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  },
+  "/v1/messages": {
+   "status": 429,
+   "headers": {
+    "content-length": "154",
+    "content-type": "application/json"
+   },
+   "body": {
+    "type": "error",
+    "error": {
+     "type": "rate_limit_error",
+     "message": "This key is limited to 1 requests per second (batch traffic class). Retry after 1 second."
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  }
+ },
+ "notes": "Sibling of 09 (batch_concurrency was live-captured). state=batch_rate, 1 rps. Exception from the real batch_caps.raise_throttled(AdmitResult(decision='throttled_rate', limit=1, retry_after=1)). Exempt from the free-tier rewrite (gateway.py:9217-9225 _is_batch_throttle), so chat keeps Retry-After: 1 and X-Flux-Error. Only keys with flux_batch_class=true."
+}

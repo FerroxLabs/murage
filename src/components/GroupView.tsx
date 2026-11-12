@@ -1,6 +1,9 @@
+import { EngineLimitRow } from "./EngineLimitRow";
+import { engineLimitNotice } from "../../shared/web-read-routing";
 import { useFocusTrap } from "@/lib/focus-trap";
 import { LayerSurface } from "@/components/LayerSurface";
 import { LazyOverlay } from "@/components/LazyOverlay";
+import { toolBudgetLabel } from "@/lib/tool-budget-copy";
 import { ProjectLifecycleBanner } from "./ProjectLifecycleBanner";
 import { DoneWhenLine } from "./DoneWhenLine";
 import { hasDoneWhenLine } from "@/lib/done-when-line";
@@ -197,6 +200,8 @@ export function RoomErrorRow({ message, member, roomThreadId, onRetry }: {
     <ErrorRow
       message={tool.name.slice(6).trim()}
       botName={member.name}
+      engineName={engine?.displayName}
+      signInAgain={engine?.driverKind ? { bot: { id: member.id, name: member.name }, engine: engine.driverKind } : undefined}
       onRetry={onRetry}
       retryLabel={onRetry ? t("room.sendAgainTo", { name: member.name }) : undefined}
       setupInstance={tool.setup ? engine : undefined}
@@ -222,7 +227,7 @@ function RoomToolChip({ message, botName }: { message: Message; botName?: string
   if (!tool) return null;
   // A raw provider response reads as one plain sentence naming the bot
   // (G11); the provider's own words stay on hover.
-  const plain = botName && tool.name.startsWith("error:") ? plainEngineError(tool.name.slice(6).trim(), botName, { details: false }) : undefined;
+  const plain = tool.name.startsWith("error:") ? (toolBudgetLabel(tool.name.slice(6).trim()) ?? (botName ? plainEngineError(tool.name.slice(6).trim(), botName, { details: false }) : undefined)) : undefined;
   if (plain) return (
     <div className="flex justify-start">
       <div data-testid="tool-chip" title={tool.name.slice(6).trim()} className={cn(CHIP, "text-danger")}>
@@ -240,7 +245,7 @@ function RoomToolChip({ message, botName }: { message: Message; botName?: string
         data-testid="tool-chip"
         className={cn(CHIP, tool.ok === false ? "text-danger" : "text-ink-secondary")}
       >
-        <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{tool.name.startsWith("error:") && inNativeShell() ? withoutProviderSentence(tool.name) : (loopNoticeLabel(tool.name) ?? tool.name)}</span>
+        <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{tool.name.startsWith("error:") && inNativeShell() ? withoutProviderSentence(tool.name) : (toolBudgetLabel(tool.name) ?? loopNoticeLabel(tool.name) ?? tool.name)}</span>
       </div>
       <DoneWhenLine text={tool.doneWhen} />
     </div>
@@ -269,7 +274,7 @@ function PinToggle({ group, message }: { group: Group; message: Message }) {
   );
 }
 
-const Transcript = memo(function Transcript({
+export const Transcript = memo(function Transcript({
   group,
   members,
   messages,
@@ -435,7 +440,9 @@ const Transcript = memo(function Transcript({
           // `tool` distinguishes a permission from a QUESTION — a question
           // only accepts an "answer", so routing it here would offer an
           // Allow the broker rejects
-          actor === "murage" || errorRow ? (
+          m.kind === "activity" && engineLimitNotice(m.tool?.name) ? (
+            <EngineLimitRow text={engineLimitNotice(m.tool?.name)!.text} botName={memberOf(m.from?.botId)?.name ?? m.from?.name ?? "This bot"} />
+          ) : actor === "murage" || errorRow ? (
             <MurageMessageRow message={m} group={group} members={members} disabledReason={group.channelProject ? projectWriteReason(project) : state.config?.features?.roomsQueue === true ? null : "Request controls are not available yet"} />
           ) : m.kind === "secret" && m.secret && m.from?.botId ? (
             <SecretRequestCard botId={m.from.botId} threadId={group.threadId} message={m} />
@@ -502,7 +509,7 @@ const Transcript = memo(function Transcript({
             ) : folderTrustNotice(m.tool.name) ? (
               <FolderTrustRow kind={folderTrustNotice(m.tool.name)!.kind} sources={folderTrustNotice(m.tool.name)!.sources} forgetKey={folderTrustNotice(m.tool.name)!.key} />
             ) : browserUnavailableReason(m.tool.name) ? (
-              <BrowserUnavailableRow reason={browserUnavailableReason(m.tool.name)!} botName={m.from?.name} />
+              <BrowserUnavailableRow reason={browserUnavailableReason(m.tool.name)!} botName={m.from?.name} botId={m.from?.botId} />
             ) : m.comm ? (
               // Same as a direct chat: the bot⇄bot chip is navigation, not
               // work, so it stays with tool calls off and opens the pair room.

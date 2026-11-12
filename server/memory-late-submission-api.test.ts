@@ -71,7 +71,7 @@ describe.skipIf(process.platform==="win32")("memory refusal at a late submission
     expect((await replies()).filter(message=>String(message.tool?.name??"").startsWith("error:")).map(message=>message.tool.name)).toEqual([]);
   },60000);
   // 1.0.3 engine-switch, then 1.0.2 Keep all P0 (F3): a revoke lands before every late write, the first dispatch and each rebuild. The
-  // first three are refused and rebuilt after the walk settles; the third rebuild is the last one, a fresh session with no memory frame
+  // first two are refused and rebuilt after the walk settles; the second rebuild is the last one, a fresh session with no memory frame
   // whose prompt rests only on lines judged shown as it was built, so it passes the fence and the reply runs, with one plain line saying it
   // ran without remembered context. Before: the second refusal returned early and the fold posted nothing, then a "Try again" card forever.
   for(const room of [false,true])it(`${room?"room":"direct"}: a refusal at every late write ends with a reply from the last rebuild, which says it ran without memory`,async()=>{
@@ -82,7 +82,7 @@ describe.skipIf(process.platform==="win32")("memory refusal at a late submission
     const threadId=group?.threadId??bot.threadId;
     await api("POST",room?`/api/groups/${group.id}/messages`:`/api/bots/${bot.id}/messages`,{threadId,text:"hello every time"});
     const seen=new Set<string>();
-    for(let attempt=1;attempt<=4;attempt++){
+    for(let attempt=1;attempt<=3;attempt++){
       // this attempt's id is back and its prompt not yet written: a revoke lands before every write
       await expect.poll(()=>{ try { const id=readFileSync(`${eachGate}.waiting`,"utf8"); return id&&!seen.has(id)?id:""; } catch { return ""; } },{timeout:20000}).not.toBe("");
       seen.add(readFileSync(`${eachGate}.waiting`,"utf8"));
@@ -91,7 +91,9 @@ describe.skipIf(process.platform==="win32")("memory refusal at a late submission
     }
     const messages=async()=>((await api("GET",`/api/threads/${threadId}/messages?limit=100`)).messages as any[]);
     const reply=(message:any)=>message.role==="bot"&&message.kind==="text"&&message.text==="Hello from late";
-    const without=(message:any)=>message.role==="bot"&&message.kind==="activity"&&/^Memory changed while .+ was starting, so this reply ran without remembered context\.$/.test(String(message.tool?.name??""));
+    // Roster/receipt authority refusals carry no lineage verdict. Their unknown cause gets the neutral sentence, while the
+    // exactly-once chip, dispatch count and final write proof below remain the same.
+    const without=(message:any)=>message.role==="bot"&&message.kind==="activity"&&message.memoryNote==="without-memory"&&message.tool?.name==="Murage prepared this reply from your message, with remembered context left out.";
     await expect.poll(async()=>(await messages()).some(reply),{timeout:30000}).toBe(true);
     await expect.poll(async()=>(await messages()).some(without),{timeout:10000}).toBe(true);
     await new Promise(resolve=>setTimeout(resolve,300));
@@ -101,11 +103,11 @@ describe.skipIf(process.platform==="win32")("memory refusal at a late submission
     // no error card, and the raw code never reaches the person
     expect(all.filter(message=>String(message.tool?.name??"").startsWith("error:"))).toEqual([]);
     expect(all.some(message=>/MEMORY_CONTEXT_REVOKED|submission_refused/.test(String(message.tool?.name??"")))).toBe(false);
-    // four dispatches (the first and three rebuilds), and only the last wrote its prompt; no fifth
+    // three dispatches (the first and two rebuilds), and only the last wrote its prompt; no fourth
     const mine=rowsOf(eachDump).filter(row=>row.threadId===threadId);
-    expect(mine.filter(row=>!row.prompt)).toHaveLength(4);
+    expect(mine.filter(row=>!row.prompt)).toHaveLength(3);
     expect(mine.filter(row=>row.prompt)).toHaveLength(1);
-    expect(mine.find(row=>row.prompt)?.turnId).toBe(mine.filter(row=>!row.prompt)[3]?.turnId);
+    expect(mine.find(row=>row.prompt)?.turnId).toBe(mine.filter(row=>!row.prompt)[2]?.turnId);
   },90000);
   // Thread recall on the last rebuild: once the memory retries run out, the rebuild runs with no remembered context, so it carries no memory
   // mount at all: neither memory_* nor thread_* (the active-mode frame and the off-mode thread tools both stop there). The first dispatch
@@ -118,7 +120,7 @@ describe.skipIf(process.platform==="win32")("memory refusal at a late submission
     expect((await api("GET","/api/memory/status")).mode).toBe("active");
     await api("POST",`/api/bots/${bot.id}/messages`,{threadId:bot.threadId,text:"hello with recall"});
     const seen=new Set<string>();
-    for(let attempt=1;attempt<=4;attempt++){
+    for(let attempt=1;attempt<=3;attempt++){
       await expect.poll(()=>{ try { const id=readFileSync(`${memGate}.waiting`,"utf8"); return id&&!seen.has(id)?id:""; } catch { return ""; } },{timeout:20000}).not.toBe("");
       seen.add(readFileSync(`${memGate}.waiting`,"utf8"));
       await api("PATCH",`/api/bots/${bot.id}`,{section:`Recall revoke ${attempt}`});
@@ -127,11 +129,11 @@ describe.skipIf(process.platform==="win32")("memory refusal at a late submission
     const messages=async()=>((await api("GET",`/api/threads/${bot.threadId}/messages?limit=100`)).messages as any[]);
     await expect.poll(async()=>(await messages()).some(message=>message.role==="bot"&&message.kind==="text"&&message.text==="Hello from late"),{timeout:30000}).toBe(true);
     const dispatches=rowsOf(memDump).filter(row=>row.threadId===bot.threadId&&!row.prompt);
-    expect(dispatches).toHaveLength(4);
+    expect(dispatches).toHaveLength(3);
     // the first dispatch, memory on: the memory mount and the thread tools (the bot's own direct chat reaches a thread)
     expect(dispatches[0]).toMatchObject({memory:true,threadRecall:true});
     // the last rebuild: no memory mount, no thread tools
-    expect(dispatches[3]).toMatchObject({memory:false,threadRecall:false});
+    expect(dispatches[2]).toMatchObject({memory:false,threadRecall:false});
   },90000);
   it("a bot frame reads no message row per task (index.ts withLastActivity)",async()=>{
     const bot=(await api("POST","/api/bots",{name:"Many tasks",modelSelection:{instanceId:"handback",model:"late-1"}})).bot;

@@ -13,6 +13,8 @@ export const DELETED_TEXT = { zh: "жжж", ef: "ффф", shcha: "щщщ" } as c
 
 /** The live file's merge setting while R6 batch 1 runs (automerge 0, deletemerge 0): a delete leaves its tombstones in place. */
 export function holdMerges(db: DatabaseSync): void {
+  // These are offline legacy-copy fixtures, independent of the serving initializer.
+  db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none)");
   db.exec("INSERT INTO messages_fts(messages_fts, rank) VALUES('automerge', 0)");
   db.exec("INSERT INTO messages_fts(messages_fts, rank) VALUES('deletemerge', 0)");
 }
@@ -75,3 +77,9 @@ export function headerIsRollback(path: string): boolean {
 export const sidecarsOf = (path: string) => ["-journal", "-wal", "-shm"].filter(suffix => existsSync(`${path}${suffix}`));
 export const keptRows = (db: DatabaseSync, thread: string) => Number(db.prepare("SELECT count(*) AS n FROM messages WHERE thread_id=?").get(thread)?.n);
 export const indexRows = (db: DatabaseSync) => Number(db.prepare("SELECT count(*) AS n FROM messages_fts_docsize").get()?.n);
+
+/** Fixed-size sync and drop intents in an offline copy; neither belongs in a published copy. */
+export function seedCopyIntents(db: DatabaseSync): void {
+  db.exec("CREATE TABLE IF NOT EXISTS search_intents(seq INTEGER PRIMARY KEY AUTOINCREMENT, nonce INTEGER NOT NULL, rowid INTEGER, thread_key TEXT, CHECK ((rowid IS NULL) <> (thread_key IS NULL)), CHECK (thread_key IS NULL OR length(CAST(thread_key AS BLOB)) <= 72))");
+  db.exec("INSERT INTO search_intents(nonce,rowid) VALUES(101,9999999); INSERT INTO search_intents(nonce,thread_key) VALUES(102,'queuecopycanary')");
+}

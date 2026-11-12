@@ -22,6 +22,15 @@ const LEVELS = [["Ask", ASK], ["Auto", AUTO], ["Full access", FULL], ["No limits
 const OWNER: Partial<AutoContext> = { fullAccessOrigin: "owner" };
 const ROUTINE: Partial<AutoContext> = { fullAccessOrigin: "routine", routineLevel: true, automated: true };
 
+/** NOLIM 1.0.19 (Sean 2026-11-10): a key path or a call Murage could not read cards at every level below No limits; the owner's No limits
+ * turn runs it (only the wipe list and Murage's own hook files still card there). */
+const holdsBelowNoLimits = (label: string, bot: AutoApprover, verdict: ReturnType<typeof autoVerdict>, source: string): void => {
+  // S1-B3 RULING (MAIN 2026-11-11 09:30Z): writes into protected key
+  // paths ask at No limits too; unread calls keep their separate expectation.
+  if (bot === NO_LIMITS && source !== "sensitive-guard") expect(verdict.approve, label).toBeTruthy();
+  else expect(verdict, label).toMatchObject({ approve: null, source });
+};
+
 const env = (...body: string[]) => ["*** Begin Patch", ...body, "*** End Patch"].join("\n");
 const add = (path: string) => env(`*** Add File: ${path}`, "+hello");
 const update = (path: string) => env(`*** Update File: ${path}`, "@@", "-a", "+b");
@@ -118,7 +127,7 @@ describe("NOLIMITS-CODEX-EDIT", () => {
   describe("a real key path cards at every level", () => {
     const keyed = (patch: string) => {
       const c = hook(patch);
-      for (const [label, bot] of LEVELS) expect(c.verdict(bot), label).toMatchObject({ approve: null, source: "sensitive-guard" });
+      for (const [label, bot] of LEVELS) holdsBelowNoLimits(label, bot, c.verdict(bot), "sensitive-guard");
     };
     it.each(["add", "update", "delete", "move"])("%s of ~/.ssh/id_rsa", (kind) => {
       const key = join(home, ".ssh", "id_rsa");
@@ -140,14 +149,14 @@ describe("NOLIMITS-CODEX-EDIT", () => {
       mkdirSync(join(project, "hop"));
       const c = hook(add("hop/../config"), other);
       expect(c.route.localHold).toEqual(expect.any(String));
-      for (const [label, bot] of LEVELS) expect(c.verdict(bot), label).toMatchObject({ approve: null, source: "sensitive-guard" });
+      for (const [label, bot] of LEVELS) holdsBelowNoLimits(label, bot, c.verdict(bot), "sensitive-guard");
       const n = native([{ path: "hop/../config", kind: { type: "add" } }], {}, other);
-      for (const [label, bot] of LEVELS) expect(n.verdict(bot), label).toMatchObject({ approve: null, source: "sensitive-guard" });
+      for (const [label, bot] of LEVELS) holdsBelowNoLimits(label, bot, n.verdict(bot), "sensitive-guard");
     });
 
     it("on the native route, with a plain card title", () => {
       const c = native([{ path: join(home, ".aws", "credentials"), kind: { type: "update", move_path: null } }]);
-      for (const [label, bot] of LEVELS) expect(c.verdict(bot), label).toMatchObject({ approve: null, source: "sensitive-guard" });
+      for (const [label, bot] of LEVELS) holdsBelowNoLimits(label, bot, c.verdict(bot), "sensitive-guard");
     });
   });
 
@@ -171,14 +180,16 @@ describe("NOLIMITS-CODEX-EDIT", () => {
       expect(route).toMatchObject({ route: "ask", tool: "edit", toolInputMissing: "patch" });
       if (route.route !== "ask") return;
       const c = judged({ engine: "codex", toolCall: route.toolCall as GrantCall["toolCall"], inputMissing: route.toolInputMissing, truncated: false }, route.tool, route.summary);
-      for (const [label, bot] of LEVELS) expect(c.verdict(bot), label).toMatchObject({ approve: null, source: "unread-call" });
+      for (const [label, bot] of LEVELS) holdsBelowNoLimits(label, bot, c.verdict(bot), "unread-call");
     });
   });
 
   describe("the contract", () => {
     it.each([[{}, "paths"], [{ paths: [] }, "paths"], [{ paths: "a" }, "paths"], [{ paths: ["a", ""] }, "paths[]"], [{ paths: ["a", 1] }, "paths[]"]])("%j is unread", (input, field) => {
       const c = judged({ engine: "codex", toolCall: { name: "edit", input }, truncated: false }, "edit", "edit");
-      expect(c.verdict(NO_LIMITS)).toMatchObject({ approve: null, source: "unread-call", rule: `the call does not carry what this tool needs (${field})` });
+      // the reader's own finding is the unread-call rule below; NOLIM 1.0.19 (N1) runs it at the owner's No limits turn
+      expect(c.verdict(FULL)).toMatchObject({ approve: null, source: "unread-call", rule: `the call does not carry what this tool needs (${field})` });
+      expect(c.verdict(NO_LIMITS).approve).toBeTruthy();
     });
   });
 
@@ -194,7 +205,7 @@ describe("NOLIMITS-CODEX-EDIT", () => {
     it("with no announced change there is nothing to read, so the card stays and says which field", () => {
       const c = native(undefined);
       expect(c.read).toEqual({ inputMissing: "changes" });
-      for (const [label, bot] of LEVELS) expect(c.verdict(bot), label).toMatchObject({ approve: null, source: "unread-call" });
+      for (const [label, bot] of LEVELS) holdsBelowNoLimits(label, bot, c.verdict(bot), "unread-call");
     });
 
     it("a delete and a move's old name each meet the stop line", () => {
@@ -211,7 +222,7 @@ describe("NOLIMITS-CODEX-EDIT", () => {
       for (const kind of [undefined, { type: "rename" }, 7, { type: "update", move_path: 17 }, { type: "update", move_path: "" }]) {
         const c = native([{ path, kind }]);
         expect(c.read, JSON.stringify(kind)).toEqual({ inputMissing: "changes" });
-        for (const [label, bot] of LEVELS) expect(c.verdict(bot), `${label} ${JSON.stringify(kind)}`).toMatchObject({ approve: null, source: "unread-call" });
+        for (const [label, bot] of LEVELS) holdsBelowNoLimits(`${label} ${JSON.stringify(kind)}`, bot, c.verdict(bot), "unread-call");
       }
     });
 
@@ -235,6 +246,8 @@ describe("NOLIMITS-CODEX-EDIT", () => {
       const key = join(home, ".aws", "credentials");
       const c = native([{ path: "a.md", kind: "add" }], { grantRoot: key });
       expect(c.read.toolCall?.input).toMatchObject({ paths: ["a.md", key] });
+      expect(c.verdict(FULL)).toMatchObject({ approve: null, source: "sensitive-guard" });
+      // S1-B3 RULING (MAIN 2026-11-11 09:30Z): the grant root is a protected write target.
       expect(c.verdict(NO_LIMITS)).toMatchObject({ approve: null, source: "sensitive-guard" });
     });
   });

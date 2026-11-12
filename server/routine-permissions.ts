@@ -1,3 +1,4 @@
+import { inheritedPermissions, routineFollowsNoLimits } from "./permission-inheritance.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -36,6 +37,7 @@ function isMode(value: unknown): value is RoutinePermissionMode {
 export function botPermissionMode(bot: AutoApprover | null | undefined): RoutinePermissionMode {
   // a draft-only bot (server/draft-only.ts) is at Ask whatever its flags say
   if ((bot as { draftOnly?: true } | null | undefined)?.draftOnly === true) return "ask";
+  bot = bot && inheritedPermissions(bot);
   if (bot?.autoApprove !== true) return "ask";
   if (bot.fullAccess !== true) return "auto";
   return bot.noLimits === true ? "unlimited" : "full";
@@ -44,11 +46,11 @@ export function botPermissionMode(bot: AutoApprover | null | undefined): Routine
 /** The lower of the stored ceiling and the bot's current level. A routine
  * awaiting migration still uses the bot's current level. */
 export function effectiveRoutinePermissionMode(
-  routine: { permissionMode?: RoutinePermissionMode },
+  routine: { permissionMode?: RoutinePermissionMode; permissionExplicit?: boolean },
   bot: AutoApprover | null | undefined,
 ): RoutinePermissionMode {
   const current = botPermissionMode(bot);
-  const ceiling = loadRoutinePermissionMode(routine.permissionMode) ?? current;
+  const ceiling = current === "unlimited" && routineFollowsNoLimits(routine) ? current : loadRoutinePermissionMode(routine.permissionMode) ?? current;
   return ROUTINE_PERMISSION_MODES[Math.min(ROUTINE_PERMISSION_MODES.indexOf(ceiling), ROUTINE_PERMISSION_MODES.indexOf(current))]!;
 }
 
@@ -58,6 +60,7 @@ export function applyRoutinePermissionMode<T extends AutoApprover>(bot: T, mode:
   if ((bot as { draftOnly?: true }).draftOnly === true) mode = "ask";
   return {
     ...bot,
+    permissionExplicit: true,
     autoApprove: mode !== "ask",
     fullAccess: mode === "full" || mode === "unlimited",
     noLimits: mode === "unlimited",
@@ -89,9 +92,9 @@ export function peerTurnAuthority(peer: AutoApprover, parentRun: RoutinePeerSour
 
 /** Every turn reaches the broker, without changing other instance modes. An Ask turn also says so (askLevel), so an
  *  engine that cannot ask before every change runs it read-only (server/drivers/ask-stop.ts). */
-export function turnPermissionEnforcement(bot: AutoApprover): Pick<SendTurnInput, "routeAsks" | "stopLine" | "askLevel"> {
+export function turnPermissionEnforcement(bot: AutoApprover): Pick<SendTurnInput, "routeAsks" | "stopLine" | "askLevel" | "noLimits"> {
   const mode = botPermissionMode(bot);
-  return mode === "ask" ? { routeAsks: true, askLevel: true } : mode === "auto" ? { routeAsks: true } : { stopLine: true };
+  return mode === "ask" ? { routeAsks: true, askLevel: true } : mode === "auto" ? { routeAsks: true } : mode === "unlimited" ? { stopLine: true, noLimits: true } : { stopLine: true };
 }
 
 /** AMEND-13 Rule 76b: a routine's remembered keys reach only the bot the

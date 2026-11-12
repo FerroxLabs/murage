@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "reds-main-builder",
+  "date": "2026-11-11",
+  "base": "41c3557cf2163e21c58b3c0b45afea0d3094baec",
+  "scope": "reds-main-pause-jargon",
+  "strings": {
+    "en:ux.l2c.pause.fluxTokens": {
+      "text": "Flux Router reached this key's monthly usage limit.",
+      "en": "Flux Router reached this key's monthly usage limit.",
+      "verdict": "pass",
+      "note": "Clear in context: this key reached a monthly usage limit. No money, counting jargon, or reset promise."
+    },
+    "de:ux.l2c.pause.fluxTokens": {
+      "text": "Das monatliche Nutzungslimit dieses Schlüssels bei Flux Router ist erreicht.",
+      "en": "Flux Router reached this key's monthly usage limit.",
+      "verdict": "pass",
+      "note": "Natural German. Nutzungslimit clearly describes monthly use for this key without implying a spending limit or reset."
+    },
+    "es:ux.l2c.pause.fluxTokens": {
+      "text": "Se ha alcanzado el límite mensual de uso de esta clave en Flux Router.",
+      "en": "Flux Router reached this key's monthly usage limit.",
+      "verdict": "pass",
+      "note": "Natural Spanish matching the adjacent notice. Límite mensual de uso preserves the usage meaning without technical units or promises."
+    },
+    "fr:ux.l2c.pause.fluxTokens": {
+      "text": "Cette clé a atteint sa limite mensuelle d’utilisation sur Flux Router.",
+      "en": "Flux Router reached this key's monthly usage limit.",
+      "verdict": "pass",
+      "note": "Fluent French. Clearly states that this key reached its monthly usage limit, with no financial meaning or promised reset."
+    },
+    "hi:ux.l2c.pause.fluxTokens": {
+      "text": "Flux Router में इस कुंजी के इस्तेमाल की मासिक सीमा पूरी हो गई है।",
+      "en": "Flux Router reached this key's monthly usage limit.",
+      "verdict": "pass",
+      "note": "Natural Hindi in context. इस्तेमाल makes this a monthly usage allowance for the key, with no counting jargon or future promise."
+    },
+    "ja:ux.l2c.pause.fluxTokens": {
+      "text": "Flux Routerでこのキーの月間利用上限に達しました。",
+      "en": "Flux Router reached this key's monthly usage limit.",
+      "verdict": "pass",
+      "note": "Concise, natural Japanese consistent with the adjacent notice. 月間利用上限 conveys monthly usage without money, technical units, or reset claims."
+    },
+    "pt-br:ux.l2c.pause.fluxTokens": {
+      "text": "Esta chave atingiu o limite mensal de uso no Flux Router.",
+      "en": "Flux Router reached this key's monthly usage limit.",
+      "verdict": "pass",
+      "note": "Fluent Brazilian Portuguese. Clearly associates the reached monthly usage limit with this key and makes no reset or change promise."
+    },
+    "zh:ux.l2c.pause.fluxTokens": {
+      "text": "此密钥已达到 Flux Router 中的每月用量上限。",
+      "en": "Flux Router reached this key's monthly usage limit.",
+      "verdict": "pass",
+      "note": "Natural Chinese interface wording. 每月用量上限 clearly means monthly usage for this key without monetary or technical counting language."
+    }
+  },
+  "files": {}
+}

@@ -76,6 +76,8 @@ describe('actual window attachments', () => {
     mount(h(LazyOverlay, { name: 'picker-window', kind: 'window', covers: 'always', onDismiss: close, onRetry: vi.fn() }, h(PickerWindow, { bot, close })));
     const trigger = document.querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!;
     act(() => trigger.click()); await settle();
+    // The dialog is a lazy chunk since 1.0.19 slice P: wait for it to draw.
+    await vi.waitFor(() => { if (!document.querySelector("[data-model-picker-content] input")) throw new Error("dialog not drawn yet"); });
     const search = document.querySelector<HTMLInputElement>('[data-model-picker-content] input')!;
     search.focus(); inputValue(search, 'query');
     act(() => press('Escape', search)); expect(search.value).toBe(''); expect(close).not.toHaveBeenCalled();
@@ -132,7 +134,7 @@ it('R3d fixture desktop Settings stays mounted after its General replies settle'
     mount(h(LazyOverlay, { name: 'settings', kind: 'window', covers: 'always', onDismiss: vi.fn(), onRetry: vi.fn() }, h(SettingsModal)));
     await settle();
     expect(document.querySelector('#settings-search')).not.toBeNull();
-    expect(document.querySelector('#about-me-heading')).not.toBeNull();
+    await vi.waitFor(() => expect(document.querySelector('#about-me-heading')).not.toBeNull());
     expect(openLayers()[0].container).toBe(document.querySelector('.settings-dialog'));
   } finally { fixture.desktop = false; }
 });

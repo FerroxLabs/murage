@@ -142,6 +142,14 @@ const ORDINARY: Row[] = [
   ["pnpm exec rimraf coverage", null],
 ];
 
+// S1-B3 RULING (MAIN 2026-11-11 09:30Z): these destinations are protected writes;
+// source-only reads retain their inherited No limits expectation.
+const PROTECTED_WRITES = new Set([
+ "rsync -a --remove-source-files ./inbox/ ~/", "rclone copy remote:x ~",
+ "robocopy C:\\src C:\\Users\\sean /E", "aws s3 sync s3://b ~",
+ "gsutil rsync -r gs://b ~", "azcopy sync https://a/b ~ --delete-destination=false", "mc mirror play/b ~",
+]);
+
 // MARKS r9 C1: FIX4 cards a destination path with no known project cwd (value-path) on No limits.
 // probe rsync -a --delete dist/ ./public/ -> null with cwd /w; unreadable (value-path) with no cwd.
 // The row runs at cwd /w; the (no cwd) twin asserts the card.
@@ -161,7 +169,7 @@ describe("always-ask: a mirror that deletes is a recursive delete of its destina
     it(cmd, () => {
       const cwd = cmd in R9_NOCWD || cmd in R9_NOW ? "/w" : undefined;
       // MARKS r12 re-baseline (MurageMain 11-07 item 1): the doubt-free read names it; strict read and every level still card
-      if ((R9_NOW[cmd] ?? rule) === "protected-path") return expectProtectedPath(cmd, cwd);
+      if ((R9_NOW[cmd] ?? rule) === "protected-path") return expectProtectedPath(cmd, cwd, undefined, PROTECTED_WRITES.has(cmd));
       expect(alwaysAskCommand(cmd, cwd)?.rule ?? null).toBe(R9_NOW[cmd] ?? rule);
     });
   }

@@ -64,6 +64,7 @@ async function bootServer(homeDir: string, port: number): Promise<{ child: Child
     JSON.stringify({ engineDiscovery: "explicit", instances: { fuigo: instance("fuigo", "fallback"), fuigoSilent: instance("fuigoSilent", "silent") } }),
   );
   const proc = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

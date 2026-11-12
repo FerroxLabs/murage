@@ -57,7 +57,7 @@ ${body}
 process.stdout.write("DONE\\n");
 `);
   return new Promise<{ signal: NodeJS.Signals | null; out: string }>((resolve, reject) => {
-    const proc = spawn(process.execPath, ["--no-warnings", script], { stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, HOME: root, MURAGE_DATA_DIR: join(root, "installation") } });
+    const proc = spawn(process.execPath, ["--no-warnings", script], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, HOME: root, MURAGE_DATA_DIR: join(root, "installation") } });
     let out = "", err = "";
     proc.stdout.on("data", chunk => { out += chunk; if (who === "parent" && String(chunk).includes("AT")) proc.kill("SIGKILL"); });
     proc.stderr.on("data", chunk => { err += chunk; });

@@ -11,7 +11,7 @@ import type { OptionCardData } from "@/state/store";
 import type { InboxItem, InboxLink, InboxPage, InboxStateUpdate, InboxView, RoutineRollup } from "../../shared/inbox";
 import { InboxQuickAnswer, InboxRequestAnswer, inlineAnswerKind, readRequestCard, requestHeadline, requestSummary } from "./InboxRequest";
 import { useSetupView } from "./FirstRunChrome";
-import { inboxTabCounts, signedOutEngineIds, signedOutEngineRows, type SignedOutEngineRow } from "@/lib/signed-out-engines";
+import { inboxTabCounts, signedOutCopy, signedOutEngineIds, signedOutEngineRows, type SignedOutEngineRow } from "@/lib/signed-out-engines";
 import { usePageVisible } from "@/lib/page-visible";
 import { onInboxChanged } from "@/lib/inbox-changed";
 import { backupWaitingSentence } from "../../shared/backup-waiting";
@@ -28,6 +28,8 @@ import { showSnoozeReturn } from "@/lib/notify";
 import { ApproveAllButton } from "./ApproveAll";
 import { approveAllHint } from "@/lib/approve-all";
 import { bulkReadyRows, rowKey, rowKind, rowLine, rowMeta } from "@/lib/approval-row";
+import { InboxEngineSignIn } from "./cloud/InboxEngineSignIn";
+import { isCloudHome } from "@/lib/cloud-workspace";
 
 const ProjectRows=lazy(()=>import("./ProjectInboxRows"));
 // One timer per row snoozed from the door, kept while the app is open (not while this page is), so the
@@ -409,6 +411,14 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   const fuigoReady = Boolean(fuigo);
   // Every write is awaited, so a refused one (a busy chat, say) reaches act's
   // catch and the row comes back; the setup view is re-read after all land.
+  // The turn-off confirm under a signed-out engine row, the same on the desktop row and the Cloud row.
+  const turnOffConfirm = (engine: SignedOutEngineRow) => (
+    turningOff === engine.id && <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-warning/20 pt-3">
+      <span className="mr-auto text-ink-secondary">Turn off {engine.name}? Bots stop using it. You can turn it back on in Settings, Engines.</span>
+      <button className={button} disabled={saving} onClick={() => setTurningOff(null)}>Keep it</button>
+      <button className={`${button} border-warning/50`} disabled={saving} onClick={() => void turnOff(engine.id)}>Turn it off</button>
+    </div>
+  );
   const moveToFuigo = (engine: SignedOutEngineRow) => act([`engine:${engine.id}`], async () => {
     if (!fuigo) return;
     const selection = { instanceId: fuigo.instanceId, model: fuigo.models.default };
@@ -436,6 +446,8 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   // WHAT NEEDS THE OWNER, FIRST (Sean 11-01). Health used to sit here as a whole card, and he scrolled past it every time
   // to reach what was waiting. Only a Health problem the owner must act on comes here, as an ordinary item with one
   // action, already counted by the server. Everything else is on the Health screen, one quiet link away above this page (needs/NeedsYouPageBody.tsx).
+  const hookNeeds = view === "decisions" || view === "all" ? result?.hookRepairNeeds ?? [] : [];
+  const [hookRestartError, setHookRestartError] = useState<string | null>(null);
   const healthNeeds = view === "decisions" || view === "all" ? result?.health?.needs ?? [] : [];
   const engineProblem = view === "decisions" || view === "connections" || view === "all" ? engineRow : null;
   // A FLUX ROUTER ALLOWANCE USED UP is a connection problem with two ways on (UX L2B): open Flux Router, or use your own
@@ -453,7 +465,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
   const memoryRows = view === "decisions" || view === "all" ? result?.memoryWaiting ?? [] : [];
   // Learning stopped at this month's limit: derived by the server on every read, counted once in `decisions` (server/inbox-learning-paused.ts).
   const learningPaused = view === "decisions" || view === "all" ? result?.learningPaused ?? null : null;
-  const ownRows = [...projectRows,...restoreRows, ...signedOut, ...healthNeeds, ...(engineProblem ? [engineProblem] : []), ...(backupWaiting ? [backupWaiting] : []), ...(backupFailed ? [backupFailed] : []), ...(learningPaused ? [learningPaused] : []), ...suggestionRows, ...memoryRows];
+  const ownRows = [...hookNeeds,...projectRows,...restoreRows, ...signedOut, ...healthNeeds, ...(engineProblem ? [engineProblem] : []), ...(backupWaiting ? [backupWaiting] : []), ...(backupFailed ? [backupFailed] : []), ...(learningPaused ? [learningPaused] : []), ...suggestionRows, ...memoryRows];
   const dismissible = list.filter(item => item.dismissible);
   const clearable = list.filter(item => item.clearable);
   // The live card for each waiting request on this page, keyed by message id.
@@ -582,7 +594,7 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
     else if (action.type === "snooze") { const item = ordered.find(entry => entry.id === action.id); if (item) snooze(item); }
   };
   const tally = result ? inboxTally(result.total - result.items.filter(item => gone.has(item.id)).length, result.unread) : "";
-  const sections = signedOut.length + restoreRows.length + healthNeeds.length + (engineProblem ? 1 : 0) + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + (learningPaused ? 1 : 0) + suggestionRows.length + memoryRows.length + (view === "routines" ? routineRows.length : 0) > 0;
+  const sections = hookNeeds.length + signedOut.length + restoreRows.length + healthNeeds.length + (engineProblem ? 1 : 0) + (backupWaiting ? 1 : 0) + (backupFailed ? 1 : 0) + (learningPaused ? 1 : 0) + suggestionRows.length + memoryRows.length + (view === "routines" ? routineRows.length : 0) > 0;
   /** One item's card: the classic Inbox row, and the inside of an open Needs you row (the same card, so the verbs match). */
   const remindLabel = () => { const target = snoozeTarget(Date.now()); return t(target.tomorrow ? "ux.l2b.snooze.tomorrow" : "ux.l2b.snooze.at", { time: target.time }); };
   const cardBody = (item: InboxItem) => {
@@ -717,11 +729,22 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
     {(healthNeeds.length > 0 || healthEngine) && (
       <InboxSection label={t("ux.l2a.health.title")}>
         <div className="space-y-2">
-          {healthEngine && <EngineNeedCard title={healthEngine.title} detail={healthEngine.detail} label={healthEngine.label} onOpen={onOpenSettingsPage ? () => onOpenSettingsPage(healthEngine.section) : undefined} />}
+          {healthEngine && <EngineNeedCard title={healthEngine.title} detail={healthEngine.detail} label={healthEngine.label} onOpen={onOpenSettingsPage && healthEngine.label ? () => onOpenSettingsPage(healthEngine.section) : undefined} />}
           {healthNeeds.map(need => <HealthNeedCard key={need.titleKey} need={need} now={Date.now()} onOpen={onOpenSettingsPage} />)}
         </div>
       </InboxSection>
     )}
+    {hookNeeds.map(need => <InboxSection key={`hook:${need.engine}`} label={need.engine}>
+      <div role="status" className="rounded-xl border border-danger/30 bg-danger/[0.06] p-4 text-[13px]">
+        <p>{t("runtimeError.local.engine-hook-repair-failed.message", { engine: need.engine })}</p>
+        <button type="button" className={button} onClick={() => {
+          const restart = window.muragebox?.restartForFluxKey;
+          if (!restart) { setHookRestartError("Quit and open Murage again, then send again."); return; }
+          void restart().catch(() => setHookRestartError("Quit and open Murage again, then send again."));
+        }}>{t("runtimeError.local.engine-hook-repair-failed.resolution")}</button>
+        {hookRestartError && <p role="alert">{hookRestartError}</p>}
+      </div>
+    </InboxSection>)}
     {backupFailed && (
       <InboxSection label="Backups">
         <div role="status" className="rounded-xl border border-danger/30 bg-danger/[0.06] p-4 text-[13px]">
@@ -767,6 +790,19 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
       <InboxSection label="Bots that can't answer">
         <ul className="space-y-2" aria-label="Bots that can't answer">
           {signedOut.map(engine => (
+            isCloudHome() ? (
+            <li key={engine.id} className="rounded-xl border border-warning/30 bg-warning/[0.06] p-4 text-[13px]">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-ink">{signedOutCopy(engine.name, isCloudHome(), !!engine.signInCommand).title}</p>
+                  <p className="mt-1 text-ink-secondary">{signedOutCopy(engine.name, isCloudHome(), !!engine.signInCommand).body}</p>
+                </div>
+                {turningOff !== engine.id && <button className={button} disabled={saving} onClick={() => setTurningOff(engine.id)}>I don't use {engine.name}</button>}
+              </div>
+              {isCloudHome() && <InboxEngineSignIn row={engine} onDone={refreshSetup} />}
+              {turnOffConfirm(engine)}
+            </li>
+            ) : (
             <InboxEngineSignInRow
               key={engine.id}
               engine={engine}
@@ -777,12 +813,9 @@ export function Inbox({ onOpen, onClose, onOpenBackups, onOpenLearning, onOpenMe
               onDone={refreshSetup}
             >
               {turningOff !== engine.id && <button className={`${button} mt-2`} disabled={saving} onClick={() => setTurningOff(engine.id)}>I don't use {engine.name}</button>}
-              {turningOff === engine.id && <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-warning/20 pt-3">
-                <span className="mr-auto text-ink-secondary">Turn off {engine.name}? Bots stop using it. You can turn it back on in Settings, Engines.</span>
-                <button className={button} disabled={saving} onClick={() => setTurningOff(null)}>Keep it</button>
-                <button className={`${button} border-warning/50`} disabled={saving} onClick={() => void turnOff(engine.id)}>Turn it off</button>
-              </div>}
+              {turnOffConfirm(engine)}
             </InboxEngineSignInRow>
+            )
           ))}
         </ul>
       </InboxSection>

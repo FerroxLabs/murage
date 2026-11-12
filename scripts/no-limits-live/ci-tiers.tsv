@@ -1,0 +1,35 @@
+# GATE inventory; apply ci-wiring.patch from the repository root.
+scripts/no-limits-live/baseline-f.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/baseline.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/cli.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/correction.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/field.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/launch-api.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/mandatory-powershell.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/mandatory-ruling.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/mandatory-unreadable.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/mandatory-wipe.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/oracle.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/origin-api.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/predicate.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/qualification.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/readers.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/release-legs.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/release.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/retry-observer.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/review-blocks.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/ruling-1019.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/ruling.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/start-accounting.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/workflows.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/nolim-replay/j1-availability.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/nolim-replay/python.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/nolim-replay/release-ruling.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/nolim-replay/replay-contract.test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/nolim-replay/ruling.node-test.mjs	all	No limits gate enforces wipe-only permission handling and fails missing or mutated evidence
+scripts/no-limits-live/audit-fixes.node-test.mjs	all	No limits gate rejects absent stored rules, unbounded correlation and missing blocking CI wiring
+scripts/no-limits-live/correlation.node-test.mjs	all	No limits gate rejects absent stored rules, unbounded correlation and missing blocking CI wiring
+scripts/nolim-replay/adapter.node-test.mjs	all	No limits gate rejects absent stored rules, unbounded correlation and missing blocking CI wiring
+scripts/no-limits-live/inventory.node-test.mjs	all	No limits diagnostic inventory distinguishes fixture settings text from product UI
+scripts/no-limits-live/origin-contract.node-test.mjs	all	Explicit guest bot permissions never inherit a legacy or workspace level
+scripts/no-limits-live/turn-window.node-test.mjs	all	Per-turn correlation stays bounded as same-thread history grows and rejects a missing durable boundary

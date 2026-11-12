@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import { createHash } from "node:crypto";
 import { closeSync, createReadStream, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
@@ -79,7 +80,7 @@ async function withWindowsPrivateStage<T>(parent:string,options:EncryptedBackupO
   try{
     const result=await runWindowsBackupTransport({operation:"private-stage",parentDirectory:parent,maxBytes:nativeBudget(budget(options).maxBytes),timeoutMs:options.timeoutMs,closeTimeoutMs:options.closeTimeoutMs,signal:options.signal,
       validate:async context=>{privateDirectory=context.directory;pending=Promise.resolve().then(()=>work(context.directory,combineSignal(context.signal,options.signal)));return{value:await pending};}},
-    {verifyHelper:runtime.verifyHelper,spawn});
+    {verifyHelper:runtime.verifyHelper,spawn: (file, args, options) => spawn(file, [...args], withHideInherit(options))});
     return{value:result.value,directory:result.directory};
   }catch(error){
     // A helper failure aborts context.signal. Wait for the caller's bounded age
@@ -145,7 +146,7 @@ export async function inspectEncryptedInstallationBackup(archive:string,outputPa
         report("readback-hash");
         const sha256=await hashFile(archive,signal);
         return{value:{directory:context.directory,stateDirectory:join(inspected.directory,"state"),manifest:inspected.manifest,sha256},ciphertextSha256:sha256};
-      })();return pending;}},{verifyHelper:runtime.verifyHelper,spawn});
+      })();return pending;}},{verifyHelper:runtime.verifyHelper,spawn: (file, args, options) => spawn(file, [...args], withHideInherit(options))});
     return result.value;
     }catch(error){
       let reported=error;

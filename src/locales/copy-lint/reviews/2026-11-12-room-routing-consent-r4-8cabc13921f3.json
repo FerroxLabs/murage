@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "mc63-room-routing-consent-r3",
+  "date": "2026-11-12",
+  "base": "e2aa9ce02717d1ec9d09f56dc80a26a26eff28b7",
+  "scope": "Browser checker processing disclosure in all eight languages",
+  "strings": {
+    "en:browserExt.checker.settingsLine": {
+      "text": "Turning this on sends your task and the page details to Flux to check browser actions.",
+      "en": "Turning this on sends your task and the page details to Flux to check browser actions.",
+      "verdict": "pass",
+      "note": "Clearly states the enabling condition, both data categories, Flux as recipient, and browser-action checking purpose."
+    },
+    "de:browserExt.checker.settingsLine": {
+      "text": "Wenn du dies einschaltest, werden deine Aufgabe und die Seitendetails an Flux gesendet, um Browseraktionen zu prüfen.",
+      "en": "Turning this on sends your task and the page details to Flux to check browser actions.",
+      "verdict": "pass",
+      "note": "Faithful, clear translation; both Aufgabe and Seitendetails are explicitly sent to Flux for checking browser actions."
+    },
+    "es:browserExt.checker.settingsLine": {
+      "text": "Al activar esta opción, se envían tu tarea y los detalles de la página a Flux para comprobar las acciones del navegador.",
+      "en": "Turning this on sends your task and the page details to Flux to check browser actions.",
+      "verdict": "pass",
+      "note": "Natural and faithful; preserves activation, both data categories, recipient, and purpose."
+    },
+    "fr:browserExt.checker.settingsLine": {
+      "text": "Activer cette option envoie ta tâche et les détails de la page à Flux pour vérifier les actions du navigateur.",
+      "en": "Turning this on sends your task and the page details to Flux to check browser actions.",
+      "verdict": "pass",
+      "note": "Clear translation with consistent informal address; preserves the complete disclosure."
+    },
+    "hi:browserExt.checker.settingsLine": {
+      "text": "इसे चालू करने पर ब्राउज़र की कार्रवाइयों की जाँच के लिए आपका काम और पेज की जानकारी Flux को भेजी जाती है।",
+      "en": "Turning this on sends your task and the page details to Flux to check browser actions.",
+      "verdict": "pass",
+      "note": "Understandably states that enabling sends the user's work/task and page information to Flux to check browser actions."
+    },
+    "ja:browserExt.checker.settingsLine": {
+      "text": "これをオンにすると、ブラウザーの操作を確認するために、タスクとページの詳細がFluxに送信されます。",
+      "en": "Turning this on sends your task and the page details to Flux to check browser actions.",
+      "verdict": "pass",
+      "note": "Clear Japanese; accurately names the task and page details, transmission to Flux, and browser-operation checking purpose."
+    },
+    "pt-br:browserExt.checker.settingsLine": {
+      "text": "Ao ativar esta opção, sua tarefa e os detalhes da página são enviados ao Flux para verificar as ações do navegador.",
+      "en": "Turning this on sends your task and the page details to Flux to check browser actions.",
+      "verdict": "pass",
+      "note": "Natural Brazilian Portuguese; faithfully preserves the enabling condition and full processing disclosure."
+    },
+    "zh:browserExt.checker.settingsLine": {
+      "text": "开启后，你的任务和页面详情会发送给 Flux，以检查浏览器操作。",
+      "en": "Turning this on sends your task and the page details to Flux to check browser actions.",
+      "verdict": "pass",
+      "note": "Concise and clear; explicitly preserves task, page details, Flux recipient, and browser-action checking purpose."
+    }
+  },
+  "files": {}
+}

@@ -1,3 +1,4 @@
+import { inertBot } from "../store.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -16,7 +17,7 @@ export function phoneTarget(
   if (w.revocations.refuses(t.deviceId, t.generation)) return { ok: false, code: "revoked" };
   if (!w.offered()) return { ok: false, code: "target_gone" };
   const bot = w.bot(t.botId);
-  if (!bot || bot.hidden === true) return { ok: false, code: "target_gone" };
+  if (!bot || inertBot(bot)) return { ok: false, code: "target_gone" };
   if (t.threadId !== "new" && !w.direct(t.botId, t.threadId)) return { ok: false, code: "target_gone" };
   return { ok: true };
 }

@@ -3,21 +3,25 @@
 // and the translation of Stripe events into the frozen B3 payment inbox.
 // Lifecycle (grace, suspend, retention, delete) stays in b3-control.ts; this file only
 // feeds it paid / payment_problem / canceled snapshots and sends notices.
-import { assertPinnedHome } from "./customer-identity";
+import { assertPinnedHome, inviteDecision } from "./customer-identity";
 import { commitQ, journalDispatch, stepUpOpOf } from "./step-up-op";
 import { z } from "zod";
-import { DAY_MS, PLANS, PLAN_RANK, billingConfig, BillingConfigError, checkoutRefundKeyError, submitLinksFor, type BillingConfig, type Plan } from "./b5-config";
+import { assertImageEpochCurrent } from "./image-admission";
+import { assertInvited } from "./sales-invite";
+import { assertSalesOpen, salesAllowlist, salesShut, DAY_MS, PLANS, PLAN_RANK, billingConfig, BillingConfigError, checkoutRefundKeyError, submitLinksFor, type BillingConfig, type Plan } from "./b5-config";
 import { checkoutCharged, invoiceView, StripeError, signStripePayload, STRIPE_API_VERSION, STRIPE_REQUEST_TIMEOUT_MS, customerCreateBody, customerMoveBody, firstCustomerBody, stripeClient, subscriptionPeriod, verifyStripeSignature, type InvoiceView, type InvoiceLineView,
   type EventObjectKind, type StripeClient, type StripeFetch } from "./b5-stripe";
+import { b3Config } from "./b3-config";
 import { admin, CHECKOUT_UNRESOLVED_ALERT, CHECKOUT_UNRESOLVED_ALERT_MS, NO_OTHER_REFUND_OPEN, reserveHomeForUser } from "./b3-control";
 import { b3Enabled } from "./b3-config";
 import { accountSession, type ControlPlaneAuth } from "./auth";
 import { accountContactEmail } from "./cloud-accounts";
+import { referralOnPaid, sweepReferralEnrollments } from "./referral";
 import { transactionalSender } from "./email";
 import { HTTPError, json, readBoundedBody, readBoundedJSON } from "./http";
 import {
   addMonthUtc, archiveCurrentDocs, archivedSnapshot, attachSessionToConsent, buildConfirmationEmail, CLOUD_MEMBERS_PATH, retentionDaysText, buildReminderEmail, buildTermsChangeEmail, buildTermsReminderEmail, changedSince, clientMeta,
-  acceptanceCounts, consentIsEu, consentSchema, queueServerReady, serverReadyData, declaredCountryOf, expireExportRequests, htmlOf, isoDate, type AcceptanceRow, getConsent, IncludedCreditUnavailable, latestAcceptance, loadAcceptedDocs,
+  acceptanceCounts, consentIsEu, consentSchema, queueServerReady, serverReadyData, SERVER_READY_SUBJECT, declaredCountryOf, expireExportRequests, htmlOf, isoDate, type AcceptanceRow, getConsent, IncludedCreditUnavailable, latestAcceptance, loadAcceptedDocs,
   planFrom, prepareConsent, recordConsent, traderIdentity, RENEWAL_REMINDER_LEAD_MS, saveTopup, getTopup, TERMS_NOTICE_MS, type ConsentRow, DISPUTE_RETURNED_SQL, disputeReturned,
   disputeCreditAlertQs, DISPUTE_CREDIT_OPEN_SQL,
 } from "./legal-flows";
@@ -31,6 +35,7 @@ import { LEGAL_DOCS } from "./legal-docs.generated";
 import { classifyReplacedInvoice, cutoverEstimate, invoiceCoveringPaidAt, NONE_SELLER, pathCoverage, periodEndFallback, replacementWords, routeExpiresAt, routeIsValid, usdFor, type CutoverBoundary, type ReplacedInvoiceClass, type RetryRoute } from "./checkout-replacement";
 import { sellerFor, sellerMismatch, sellerOfConsent, sellerSettings } from "./seller";
 import { sweepJourney } from "./journey";
+import { topupOffered } from "./held-until-item9-highs";
 import { captureRefundIdentity, enrichRefundIdentities, purgeRefundIdentity, REFUSAL_NOTICE_HOLD_MS, refusalNoticeRef, refusalNoticeState, refusalNoticeValid, RefusalWithdrawn,
   REFUSAL_HANDOFF_DEADLINE_MS, refusalHandoffStatements,
   finalisePendingObjections, reconcileRefusalDispatches, refusalSendLock, releaseRefusalSendLock, remindOpenObjections, retentionCutoff, retireRedundantKeys } from "./refund-identity";
@@ -40,10 +45,14 @@ import { apiAmountCents, CREDIT_NOTE_KINDS, refundLine, type RefundPath } from "
 import { DB_NOW, fence, fencedBatch, fencedRun, HomeBusy, LeaseLost, q, renewLeaseStatement, withHomeLease, type HomeLease, type Q } from "./billing-lease";
 import { deletionNoticeData, planChangeEnabled, planMovedStatements, resumeLeased, upgradeInvoiceOutcome } from "./members-api";
 import { allocateCancelRef } from "./cancel-reference";
+import { sweepAutoTopup, topupChargingEnabled, type TopupDeps } from "./topup-charge";
+import type { CapRaise } from "./b4-flux";
+import { fluxCredentialsMissing, fluxReadiness, fluxRoutesEnabled } from "./b4-flux-config";
 import { parkedSql, scheduleParked, stripeEndConfirmed, stripeEndConfirmedSql, stripeEndedQ, STRIPE_ENDED_ON_STATUS, STRIPE_ENDED_SET, SubscriptionParked, writeSubscription } from "./subscription-gateway";
 import { promiseOf, recordInvoice } from "./cancel-charges";
-import { composeFrozenBody, FluxGrantHeld, FluxGrantTargetUnsupported, FluxHookRetry, FluxNotDispatched, FluxTargetStale, grantsConfigured, grantsGuard, grantsHooks, isHold } from "./flux-grants";
+import { composeFrozenBody, grantKindOf, type EnsureOutcome, type GrantKind, FluxGrantHeld, FluxGrantPermanent, FluxReversalPermanent, FluxGrantTargetUnsupported, FluxHookRetry, FluxNotDispatched, FluxTargetStale, fluxCredentialsAlert, grantsConfigured, grantsGuard, grantsHooks, isHold } from "./flux-grants";
 import { allocateFenceRevision, claimGrantFence } from "./flux-grant-fence";
+import { autoSendMarkStatement, queueAutoSendProof, sendQueuedProofs, type FluxProofDependencies } from "./flux-email-proof";
 import { bindCustomerQ, bindSessionQ, bootstrapExpired, bootstrapTransitionQ, getBootstrap, issuancePast, PRE_PAYMENT, protectSetEmpty, publishClock,
   purchaseAuthority, reconcileAbandonment, stepUpRefused, type BootstrapGrant } from "./purchase-bootstrap";
 
@@ -65,7 +74,7 @@ export interface FluxEntitlementHooks {
    *  (credit_grants, Astra WP5-3 #3) and asks again with the same pair only after an interruption left the grant's outcome unrecorded.
    *  Throws FluxHookRetry when it cannot be granted now (see the error contract above); any other throw fails the caller. */
   grantMonthlyCredits(env: Env, input: { homeId: string; plan: string; invoiceId: string; periodStart: number;
-    periodEnd: number; kind?: "period" | "upgrade_delta"; previousPlan?: string;
+    periodEnd: number; kind?: GrantKind; previousPlan?: string;
     /** Astra JOURNEY-A-8 #2: the grant's pending refund target, applied by B4 IN THE SAME TRANSACTION as the grant (the grant is never live
      *  without it; contract: initial_target, capability grantWithTarget). A hook that cannot do that throws FluxGrantTargetUnsupported (held). */
     initialTarget?: { targetRemovedMicrocents: number; revision: number } },
@@ -84,13 +93,13 @@ export interface FluxEntitlementHooks {
    *  Independent of stopForBilling: the home's service and its current plan are not touched.
    *  Used for every reversal that is NOT refund-driven (a rejected order, an unserved renewal). A refund's credit adjustment is a versioned
    *  target (setReversalTarget), never this. */
-  revokeCredits(env: Env, input: { homeId: string; invoiceId: string; kind: "period" | "upgrade_delta"; grantId: string; reason: string }): Promise<unknown>;
+  revokeCredits(env: Env, input: { homeId: string; invoiceId: string; kind: GrantKind; grantId: string; reason: string }): Promise<unknown>;
   /** Astra JOURNEY-A-6 #2: a REFUND's credit adjustment, a VERSIONED CUMULATIVE TARGET for ONE grant (lanes/cloud-v2/b4/FLUX-REVERSAL-TARGET-
    *  CONTRACT.md): B4 sets what is removed from the grant to min(target, grant - consumed) (more when the target rises, RESTORED when it falls),
    *  applies a revision only if it is newer than the one it holds (an older one is refused: FluxHookRetry, 409 stale_revision) and answers a
    *  receipt for the revision it applied. Consumed credit, prepaid funds and every other grant are never touched. Dispatched only when the
    *  hooks advertise capabilities.reversalTargets (reversalTargetsEnabled); optional until a qualified router exists. */
-  setReversalTarget?(env: Env, input: { homeId: string; invoiceId: string; kind: "period" | "upgrade_delta"; grantId: string; reason: string;
+  setReversalTarget?(env: Env, input: { homeId: string; invoiceId: string; kind: GrantKind; grantId: string; reason: string;
     targetRemovedMicrocents: number; revision: number;
     /** Astra JOURNEY-A-9 #2: the grant was finally reversed by a legacy /reverse that the router confirms; this first target ADOPTS that
      *  removal (capability adoptLegacyReversal), so a lower target restores it. */
@@ -100,7 +109,7 @@ export interface FluxEntitlementHooks {
   /** Astra JOURNEY-A-9 #2: the router's own account of ONE grant (capability grantState): whether it exists, and whether a legacy /reverse
    *  finally reversed it (`reversed`, with what it removed) or tombstoned it (`tombstoned`: reversed before it existed). FluxHookRetry when
    *  the router cannot be asked. Read before a legacy refund-backed /reverse row is converted into a target. */
-  grantReversalState?(env: Env, input: { homeId: string; invoiceId: string; kind: "period" | "upgrade_delta"; grantId: string }): Promise<GrantReversalState>;
+  grantReversalState?(env: Env, input: { homeId: string; invoiceId: string; kind: GrantKind; grantId: string }): Promise<GrantReversalState>;
   /** What the router behind these hooks is qualified for. reversalTargets: the versioned reversal-target contract (the cutover checklist
    *  qualifies the router first). The stub advertises nothing. */
   readonly capabilities?: { readonly reversalTargets?: boolean };
@@ -121,11 +130,15 @@ export interface FluxEntitlementHooks {
   /** Usage summary (self-service.ts): the face value of the INCLUDED Flux credits the plan grants per period, in B4 microcents.
    *  Optional until B4 merges; without it the members area shows usage as unavailable, never a guessed number. */
   includedCreditMicrocents?(env: Env, input: { homeId: string; plan: string }): Promise<{ includedMicrocents: number }>;
+  /** Auto top-up (topup-charge.ts): the home's spendable balance in microcents from the router, null when unknown. Absent: no top-up is charged. */
+  topupBalance?(env: Env, homeId: string): Promise<number | null>;
+  /** Auto top-up: raise the home's cap to cover its balance (owner caps, owner stops and spending off are never overridden). */
+  raiseCapForTopup?(env: Env, homeId: string): Promise<CapRaise>;
   /** True only for the pre-B4 stub. Refunds that must take credits back, and auto top-up, wait for the real hooks. */
   readonly stub?: boolean;
   /** Lane H1, item 1: ensure the home owner's Flux account and its link row before the owner's first grant (flux-grants.ts
    *  ensureOwnerAccount: refusals alerted and not retried, 5xx held and retried). Flux off: no-op. Absent on the stub. */
-  ensureAccount?(env: Env, input: { homeId: string }): Promise<void>;
+  ensureAccount?(env: Env, input: { homeId: string }): Promise<EnsureOutcome | void>;
   /** Lane H1, item 3 (fence F4): read back the grants whose last fenced outcome is unknown or superseded. Absent on the stub. */
   reconcileFences?(env: Env, limit?: number): Promise<number>;
 }
@@ -173,11 +186,14 @@ export type NoticeKind = "payment_failed" | "cancel_scheduled" | "subscription_e
   | "confirmation" | "renewal_reminder" | "export_requested" | "export_delivered" | "withdrawal_ack" | "terms_change" | "checkout_repriced"
   | "refund_declined" | "export_ready" | "hold_started" | "hold_canceled" | "home_needs_attention"
   | "order_rejected" | "payment_received" | "payment_cancelled"
-  | "address_change" | "replacement_failed" | "replacement_done" | "refund_request_received" | "invoice_link" | "server_ready" | "pair_hold_ready";
+  | "address_change" | "replacement_failed" | "replacement_done" | "refund_request_received" | "invoice_link" | "server_ready" | "pair_hold_ready"
+  | "topup_declined" | "topup_action_needed" | "topup_cap_reached" | "topup_address_needed" | "topup_ineligible";
 export interface BillingNotifier {
   /** Must resolve only once the notice is durably handed off; rejecting makes the caller retry. */
   notify(env: Env, notice: { id: string; homeId: string; ownerId: string; kind: NoticeKind; data: Record<string, unknown> }, lease?: HomeLease): Promise<void>;
 }
+/** Suppression reasons that are FINAL: a duplicate event neither clears them nor asks again. */
+const PERMANENT_SUPPRESSIONS = ["not_applied_reversed", "topup_ceiling", "account_not_fresh"];
 const SUBJECTS: Record<NoticeKind, string> = {
   welcome: "Your Murage Cloud is being set up",
   payment_failed: "Murage Cloud: your payment failed",
@@ -209,11 +225,29 @@ const SUBJECTS: Record<NoticeKind, string> = {
   replacement_done: "Murage Cloud: your plan is switched",
   refund_request_received: "Murage Cloud: we received your refund request",
   invoice_link: "Murage Cloud: your invoice",
-  server_ready: "Murage Cloud: your server is ready",
+  server_ready: SERVER_READY_SUBJECT,
   // Door v2 (r4.2): a completed "Add a computer" pair hold (self-service.ts completeDueHolds).
   pair_hold_ready: "Your new computer can connect now",
+  topup_declined: "Murage Cloud: we could not add credits to your home",
+  topup_action_needed: "Murage Cloud: automatic top-up needs you",
+  topup_cap_reached: "Murage Cloud: your monthly top-up limit is reached",
+  topup_address_needed: "Murage Cloud: automatic top-up needs your billing address",
+  topup_ineligible: orderWords("topupIneligibleSubject", "en"),
 };
 const PLAIN_BODIES: Partial<Record<NoticeKind, string>> = {
+  topup_declined: "Your credits were running low, and we tried to add more with your automatic top-up. Your card was declined, so nothing was charged "
+    + "and no credits were added.\n\nWe will try again later. After three declines in a row we pause automatic top-up. You can update your card on the "
+    + "billing page in your Murage Cloud members area (we notice the new card and start again), or switch automatic top-up off there.",
+  topup_action_needed: "Your credits were running low, and automatic top-up could not add more. Your bank asked you to confirm the payment, or we have "
+    + "no card to charge. Nothing was charged.\n\nAutomatic top-up is paused. Open the billing page in your Murage Cloud members area and update your card, "
+    + "or switch automatic top-up off and on again there, and it will start again.",
+  topup_address_needed: "Your credits were running low, and automatic top-up could not add more because we could not work out the tax for your billing "
+    + "address. Nothing was charged.\n\nPlease check the billing address on the billing page in your Murage Cloud members area. We will try again "
+    + "on our own, a little less often each time, and we will not email you about this again until it works.",
+  // The German goes out through topupIneligibleData (the recipient's checkout language); this is the English fallback.
+  topup_ineligible: orderWords("topupIneligible", "en"),
+  topup_cap_reached: "Your credits are running low, but automatic top-up has reached the monthly limit you set, so it will not add more this month.\n\n"
+    + "The limit starts again at 00:00 UTC on the first of the month. You can raise it on the billing page in your Murage Cloud members area.",
   // The fallback when no evidence was read (Astra JOURNEY-A-10 #5): it promises nothing that is not confirmed. The sweep sends
   // provisionFailedEmail, worded from what is confirmed.
   provision_failed: "We tried several times to set up your Murage Cloud home and could not finish. We are sorry.\n\n"
@@ -445,6 +479,17 @@ export interface BillingDependencies {
   /** Internal: the home's billing lease when the caller already holds it (re-entrant serializer). */
   lease?: HomeLease | null;
   stripeFetch?: StripeFetch; flux?: FluxEntitlementHooks; notifier?: BillingNotifier; now?: () => number;
+  /** Tests: the email proof's sender and clock for the auto-send at checkout (flux-email-proof.ts queueAutoSendProof, sendQueuedProofs). */
+  fluxProof?: FluxProofDependencies;
+  /** Internal (stripeWebhook): told of each account whose proof mail the event queued, to send it after the checkpoint. */
+  proofQueued?: (accountId: string) => void;
+  /** Internal (processStoredEvent, ITEM 9 r2 H2): the proof markers the event owes, written in the SAME fenced batch as its checkpoint. */
+  proofMarks?: { owner: string; stmt: Q }[];
+  /** Tests: the fetch used for FirstPromoter (referral.ts). */
+  firstPromoterFetch?: typeof fetch;
+  /** The identity reader for the referral email check (default: the IDENTITY_READER binding); tests give a double. */
+  reader?: import("./public-tokens").IdentityReader | null;
+  readerTimeoutMs?: number;
   /** The scheduled invocation's hard wall (epoch ms), computed once by the cron handler (index.ts): the billing sweep's two bounded
    *  loops (stored-event retries, notice retries) start no attempt that could end past it. Only an upper bound: they run first, each on its
    *  own budget, and are never skipped for time other stages used (Astra MAILRETRY-6 P1). Absent: the run's start + SWEEP_RUN_MS.
@@ -462,7 +507,7 @@ export interface BillingDependencies {
    *  runtime keeps it alive until it ends (Astra MAILRETRY-4 P2). */
   waitUntil?: (work: Promise<unknown>) => void;
   /** The signed-in account for this request, or null. Default: accountSession (on Cloud routes, the Supabase identity). */
-  accountUser?: (request: Request, auth: ControlPlaneAuth) => Promise<{ id: string } | null>;
+  accountUser?: (request: Request, auth: ControlPlaneAuth) => Promise<{ id: string; email?: string | null; emailVerified?: boolean | null } | null>;
   /** 2FA step-up for checkout. FAIL CLOSED by default; the worker wires the members-area token's fresh aal2 (index.ts). */
   stepUp?: (env: Env, request: Request, auth: ControlPlaneAuth) => Promise<boolean>;
   /** The trusted second-factor check alone (the worker wires it; stepUp is it OR the purchase bootstrap on the three purchase routes). */
@@ -873,6 +918,20 @@ export async function replacementHomeFor(env: Env, userId: string, now: number):
     WHERE r.account_id=? AND r.reason='address_change' AND r.seller<>? AND r.expires_at>? ORDER BY h.created_at DESC LIMIT 1`).bind(userId, NONE_SELLER, now).first<{ id: string }>();
 }
 /** Operator (admin token, names a home) or the signed-in customer (their own home, found by owner). */
+/** The sales gate of reserve, checkout and checkout/resume. Open: passes, resolving nothing (today's rule). Shut with an empty invite list:
+ *  503 sales_closed, resolving nothing (today's rule). Shut with a list: the SIGNED-IN account (the resolved session, never a request body)
+ *  must be on CLOUD_SALES_ALLOWLIST; no session, or a session that cannot be resolved, is 503 sales_closed. */
+export async function assertSalesAllowedFor(request: Request, env: Env, deps: BillingDependencies, auth: ControlPlaneAuth): Promise<void> {
+  if (!salesShut(env) || salesAllowlist(env).size === 0) return assertSalesOpen(env);
+  let email: string | null = null;
+  try {
+    const user = await (deps.accountUser ?? (async (r, a) => (await accountSession(r, a))?.user ?? null))(request, auth);
+    const e = (user as { email?: unknown } | null)?.email;
+    email = typeof e === "string" ? e : null;
+  } catch { email = null; }
+  assertSalesOpen(env, email);
+}
+
 export async function actor(request: Request, env: Env, deps: BillingDependencies, auth: ControlPlaneAuth, named: string | undefined,
   pick: "payable" | "subscribed"): Promise<{ homeId: string; operator: boolean }> {
   if (await isOperator(request, env)) {
@@ -896,6 +955,9 @@ export async function actor(request: Request, env: Env, deps: BillingDependencie
 /** POST /v1/billing/checkout. After an emailed step-up approval the client resends the IDENTICAL request (the same body, including
  *  consent.disclosureToken as first sent) with stepUpIntentId; a refreshed token alone is 403 stepup_request_changed (step-up-email.ts). */
 export async function createCheckout(request: Request, env: Env, deps: BillingDependencies, auth: ControlPlaneAuth): Promise<Response> {
+  await assertSalesAllowedFor(request, env, deps, auth);
+  await assertInvited(env, () => (deps.accountUser ?? (async (r, a) => (await accountSession(r, a))?.user ?? null))(request, auth), inviteDecision(request));
+  await assertImageEpochCurrent(env);
   const config = cfg(env);
   // Selling needs the refund-identity key; nothing else does (b5-config.ts checkoutRefundKeyError).
   const keyError = checkoutRefundKeyError(env);
@@ -2185,6 +2247,9 @@ const sha256Hex = async (s: string) => [...new Uint8Array(await crypto.subtle.di
  *  User-scoped (never takes a user or home id from the body). One pending reservation per user; unpaid ones lapse. */
 export async function reserveHomeRoute(request: Request, env: Env, deps: BillingDependencies, auth: ControlPlaneAuth): Promise<Response> {
   if (!b3Enabled(env)) throw new HTTPError(404, "not_found");
+  await assertSalesAllowedFor(request, env, deps, auth);
+  await assertInvited(env, () => (deps.accountUser ?? (async (r, a) => (await accountSession(r, a))?.user ?? null))(request, auth), inviteDecision(request));
+  await assertImageEpochCurrent(env);
   const user = await (deps.accountUser ?? (async (r, a) => (await accountSession(r, a))?.user ?? null))(request, auth);
   if (!user) throw new HTTPError(401, "unauthorized");
   const authority = await purchaseAuthority(deps, env, request, auth, user.id, null);
@@ -2320,8 +2385,10 @@ export async function stripeWebhook(request: Request, env: Env, deps: BillingDep
   try { await holdDisputeFirst(env, event, now, disputeHoldLookup(config, deps)); } catch { /* recorded by processStoredEvent below */ }
   const row = await env.DB.prepare("SELECT processed_at FROM stripe_events WHERE id=?").bind(event.id).first<{ processed_at: number | null }>();
   if (row?.processed_at) return json({ received: true, duplicate });
+  // ITEM 9 M5: the proof mails the event queued go out after the checkpoint (below), never under the lease.
+  const proofOwners = new Set<string>();
   try {
-    await processStoredEvent(env, config, deps, event.id);
+    await processStoredEvent(env, config, { ...deps, proofQueued: (a) => { proofOwners.add(a); } }, event.id);
   } catch (e) {
     // A lookup miss (an unbound customer, a refund no ledger knows yet) whose retry is already recorded on the stored event: an expected
     // wait, durably queued, retried by the sweep. Acknowledged (2xx, typed) so Stripe does not redeliver an obligation already recorded
@@ -2330,6 +2397,8 @@ export async function stripeWebhook(request: Request, env: Env, deps: BillingDep
     // Stored but not applied: Stripe retries on 500 and the cron sweep retries too.
     throw new HTTPError(500, "event_processing_failed");
   }
+  // After the checkpoint: the event is recorded and its lease released. With no waitUntil the cron sweep sends them (sweepFluxEmailAutoSend).
+  for (const owner of proofOwners) deps.waitUntil?.(sendQueuedProofs(env, owner, deps.fluxProof));
   return json({ received: true, duplicate });
 }
 
@@ -2856,6 +2925,11 @@ async function refuseUnboundOrder(env: Env, deps: BillingDependencies, ctx: Refu
  *  Then the ledger cancels the subscription (prorate=false, invoice_now=false) and refunds in full. A payment that has not cleared yet opens no
  *  refund (there is nothing to refund): the subscription is cancelled here, and a payment that clears later is refunded by
  *  async_payment_succeeded or invoice.paid (refundStrandedPayment). Idempotent; a retry touches only this consent's own rows (Astra WP5-1 #9). */
+/** True only for the missing-column error of rejected_collected_country itself (not a longer column name that starts with it). */
+export function isMissingCollectedCountryColumn(e: unknown): boolean {
+  return /(no such column:?\s+(\w+\.)?|has no column named\s+)rejected_collected_country\b/i.test(String((e as Error)?.message ?? e));
+}
+
 async function rejectOrder(env: Env, deps: BillingDependencies, ctx: RefundContext, c: ConsentRow, i: { verdict: RejectKind; homeId: string; subscriptionId: string | null;
   session: Obj; collected: string | null; paid: boolean;
   /** The order was already provisioned (refundParkedOrder, Astra WP5-3 #1): its service is ended explicitly. The refund operation ends THIS
@@ -2890,7 +2964,7 @@ async function rejectOrder(env: Env, deps: BillingDependencies, ctx: RefundConte
       { consentId: c.id, declared, collected: i.collected, subscriptionId: i.subscriptionId, paid: refundable, opId }, now);
   const stmts: Q[] = [
     ...(refundable ? [refundOpInsert({ id: opId, kind: i.verdict, homeId: i.homeId, userId: c.user_id, invoiceId, paidCents: amount, targetCents: amount, endPlan: i.endService === true,
-      cancelSubscriptionId: i.subscriptionId, subscriptionId: i.subscriptionId, detail: { path: refundPathOf(c), ...(i.endService ? { revoke: true, consentId: c.id } : {}),
+      cancelSubscriptionId: i.subscriptionId, subscriptionId: i.subscriptionId, detail: { path: refundPathOf(c), consentId: c.id, ...(i.endService ? { revoke: true } : {}),
         ...(invoiceId ? {} : { sessionId: str(i.session.id) ?? undefined }) } }, now)] : []),
     // A provisioned order's server is stopped through the lifecycle, as a cancelled payment (the same inbox every payment state goes through).
     ...(i.endService ? [(() => {
@@ -2927,6 +3001,20 @@ async function rejectOrder(env: Env, deps: BillingDependencies, ctx: RefundConte
     // Only this order's own checkout: a newer attempt the customer started meanwhile is never failed by a retried rejection.
     q("UPDATE open_checkouts SET state='failed',updated_at=? WHERE home_id=? AND (consent_id=? OR (session_id IS NOT NULL AND session_id=?)) AND state<>'failed'",
       now, i.homeId, c.id, sessionId),
+    // The retry starts at once, on THIS home (first rejection only): a refused order leaves the home payment_pending, and POST /v1/billing/reserve
+    // hands that same home back (existing) until it lapses. It is not deleted here: its subscription and refund are still in flight, and the
+    // expiry sweep leaves a home with a billing record alone for the session lifetime. So the reservation (and its capacity slot) is renewed for a
+    // full window from the refusal, and the customer's next checkout reuses the home and its slot instead of finding them lapsed or taken.
+    // Only a still-live reservation is renewed (an expired one is never revived), and never past the home's creation plus TWO windows, so
+    // repeated refusals cannot hold a slot for ever.
+    ...(first ? [
+      q(`UPDATE cloud_homes SET reservation_expires_at=MIN(MAX(reservation_expires_at,MIN(?,created_at+?)),created_at+?) WHERE id=? AND desired_state='payment_pending' AND entitlement='pending'
+        AND reservation_expires_at>?`, now + b3Config(env).reservationMs, 2 * b3Config(env).reservationMs, 2 * b3Config(env).reservationMs, i.homeId, now),
+      q(`UPDATE cloud_capacity SET expires_at=MIN(MAX(expires_at,COALESCE((SELECT reservation_expires_at FROM cloud_homes WHERE id=?),0)),
+        COALESCE((SELECT created_at+? FROM cloud_homes WHERE id=?),expires_at)) WHERE home_id=? AND expires_at>?
+        AND home_id IN (SELECT id FROM cloud_homes WHERE id=? AND desired_state='payment_pending' AND entitlement='pending')`,
+        i.homeId, 2 * b3Config(env).reservationMs, i.homeId, i.homeId, now, i.homeId),
+    ] : []),
     // The retry route (plan §1.2): from Stripe's collected country only, so the next reserve pre-fills the country line with it. Written on the
     // original rejection only; a retried event never rewrites a route the customer may already have moved on from. An address_change route
     // (WP6) is never replaced by a mismatch route: the running plan it names still needs its replacement.
@@ -2939,6 +3027,12 @@ async function rejectOrder(env: Env, deps: BillingDependencies, ctx: RefundConte
     recordNotice(i.homeId, "order_rejected", opId, { ...rejectionEmail(c, i.verdict, i.collected, refundable ? REFUND_PREPARING : null), source }, now),
   ];
   await fencedBatch(env, lease, stmts);
+  // The collected country (migration 0131) is written apart from the refund batch: the Worker can run before that migration is applied
+  // (scripts/deploy.mjs does not apply migrations), and a missing column must never stop the refusal, the refund or the cancellation.
+  if (i.collected) {
+    try { await fencedRun(env, lease, "UPDATE checkout_consents SET rejected_collected_country=COALESCE(rejected_collected_country,?) WHERE id=?", i.collected.toUpperCase().slice(0, 2), c.id); }
+    catch (e) { if (e instanceof LeaseLost || !isMissingCollectedCountryColumn(e)) throw e; }
+  }
   if (refundable) await advanceRefundOp(env, ctx, opId);
   // The credit reversal journaled above: a failure here never stops the refund or the rejection; the sweep retries it.
   if (!i.endService) {
@@ -2985,7 +3079,7 @@ export async function grantOnce(env: Env, lease: HomeLease, flux: FluxEntitlemen
     .first<{ granted_at: number | null; suppressed_reason: string | null }>();
   // The router said this grant was reversed before it was applied (not_applied_reversed): that is FINAL (Astra WP5-P4-CP #7). A duplicate
   // invoice event neither clears the suppression nor asks again; only the caller's other writes are made.
-  if (held?.granted_at == null && held?.suppressed_reason === "not_applied_reversed") {
+  if (held?.granted_at == null && held?.suppressed_reason && PERMANENT_SUPPRESSIONS.includes(held.suppressed_reason)) {
     await fencedBatch(env, lease, extra);
     return false;
   }
@@ -2999,7 +3093,7 @@ export async function grantOnce(env: Env, lease: HomeLease, flux: FluxEntitlemen
     // D1 (WP5-P4): the canonical body (amount, recipient, expiry) is frozen INTO the claim here, once. A body already frozen is never replaced
     // (COALESCE below), so a configuration change between attempts cannot change what is resent.
     // Built from the claim's own facts only (no clock); held (NULL) when it cannot be built yet, e.g. no unfenced Flux link.
-    const built = grantsConfigured(env) ? await composeFrozenBody(env, { ...input, kind: kind as "period" | "upgrade_delta" }) : null;
+    const built = grantsConfigured(env) ? await composeFrozenBody(env, { ...input, kind: kind as GrantKind }) : null;
     const frozen = built && !isHold(built) ? built : null;
     await fencedRun(env, lease, `INSERT INTO credit_grants (invoice_id,kind,home_id,plan,claimed_at,period_start,period_end,previous_plan,subscription_id,body_json,body_sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(invoice_id,kind) DO UPDATE SET body_json=COALESCE(credit_grants.body_json,excluded.body_json),
@@ -3007,8 +3101,8 @@ export async function grantOnce(env: Env, lease: HomeLease, flux: FluxEntitlemen
       period_start=COALESCE(credit_grants.period_start,excluded.period_start),
       period_end=COALESCE(credit_grants.period_end,excluded.period_end),previous_plan=COALESCE(credit_grants.previous_plan,excluded.previous_plan),
       subscription_id=COALESCE(credit_grants.subscription_id,excluded.subscription_id),
-      suppressed_at=CASE WHEN credit_grants.suppressed_reason='not_applied_reversed' THEN credit_grants.suppressed_at ELSE NULL END,
-      suppressed_reason=CASE WHEN credit_grants.suppressed_reason='not_applied_reversed' THEN credit_grants.suppressed_reason ELSE NULL END`,
+      suppressed_at=CASE WHEN credit_grants.suppressed_reason IN ('not_applied_reversed','topup_ceiling','account_not_fresh') THEN credit_grants.suppressed_at ELSE NULL END,
+      suppressed_reason=CASE WHEN credit_grants.suppressed_reason IN ('not_applied_reversed','topup_ceiling','account_not_fresh') THEN credit_grants.suppressed_reason ELSE NULL END`,
       input.invoiceId, kind, input.homeId, input.plan, now, input.periodStart, input.periodEnd, input.previousPlan ?? null, subscriptionId,
       frozen?.json ?? null, frozen?.sha256 ?? null);
     return askGrant(env, lease, flux, input, kind, now, extra);
@@ -3020,6 +3114,12 @@ export async function grantOnce(env: Env, lease: HomeLease, flux: FluxEntitlemen
 }
 
 type GrantInput = Parameters<FluxEntitlementHooks["grantMonthlyCredits"]>[1];
+/** The credit an auto top-up bought, once per invoice (grantOnce kind "topup": claim, frozen body, retry and alarm as for a period grant, but no period
+ *  and no subscription condition: it was paid for). True when granted now. A Flux failure never fails the caller; the sweep retries (retryPendingGrants). */
+export async function grantTopup(env: Env, lease: HomeLease, flux: FluxEntitlementHooks, input: { homeId: string; invoiceId: string }, now: number): Promise<boolean> {
+  const sub = await getSub(env, input.homeId);
+  return grantOnce(env, lease, flux, { homeId: input.homeId, plan: "topup", invoiceId: input.invoiceId, periodStart: 0, periodEnd: 0, kind: "topup" }, sub?.subscription_id ?? null, now);
+}
 /** A claim or reversal still pending this long after it was made reaches ops, whatever its attempts (Astra STUB-3 #2). */
 const PENDING_ALERT_MS = 2 * 3_600_000;
 /** The home's ONE credit.grant_pending alert, rebuilt from credit_grants inside the caller's fenced batch (Astra STUB-1 #4, #5), after the
@@ -3098,12 +3198,22 @@ const grantAlertSync = (homeId: string, now: number): Q[] => [
 async function askGrant(env: Env, lease: HomeLease, flux: FluxEntitlementHooks, input: GrantInput, kind: string, now: number,
   extra: Q[]): Promise<boolean> {
   await fence(env, lease);
+  // PRODFLUX r3 (3): the credential hold is decided FIRST, before tries+1 or any dispatch stamp. Real hooks switched on with a Flux secret
+  // missing: the claim is HELD with only last_error written (no counter moves, nothing dispatched) and ONE config alert, best effort: an
+  // alert that cannot be written leaves the counters untouched too. The sweep asks again once the secret is back.
+  if (!flux.stub && fluxRoutesEnabled(env) && fluxCredentialsMissing(env) !== null) {
+    try { await fluxCredentialsAlert(env, "grantMonthlyCredits", now); } catch { /* advisory: the hold below is what matters */ }
+    await fencedBatch(env, lease, [...extra, q("UPDATE credit_grants SET last_error=? WHERE invoice_id=? AND kind=? AND granted_at IS NULL",
+      `${HELD}flux_not_ready`, input.invoiceId, kind)]);
+    return false;
+  }
   // The alert is rebuilt BEFORE this ask is counted (tries): tries-attempts is then exactly the asks that failed on infrastructure, which
   // record no outcome of their own, so 3 of them (or the claim's age) reach ops even while every ask keeps failing raw (Astra STUB-3 #2).
   await fencedBatch(env, lease, [...grantAlertSync(input.homeId, now),
     q("UPDATE credit_grants SET last_attempt_at=?,tries=tries+1 WHERE invoice_id=? AND kind=?", now, input.invoiceId, kind)]);
   let code: string | null = null;
   let suppressed = false;
+  let suppressReason = "not_applied_reversed";
   let held: string | null = null;
   let bodyHold: string | null = null;
   // D1 rebuild (Astra WP5-P4-CP #1, #5): with the grants client configured, a claim with no frozen body (a claim from the fail-closed stub,
@@ -3111,14 +3221,23 @@ async function askGrant(env: Env, lease: HomeLease, flux: FluxEntitlementHooks, 
   // body. One that still cannot be built is HELD: no router call, one alert. The token guard comes first: absent, nothing is dispatched.
   // Astra JOURNEY-A-10 #1: Flux off (stub or unqualified hooks): HELD before anything else, the hook is never invoked.
   const fluxOff = !fluxDispatchEnabled(flux);
-  const guard = !fluxOff && grantsConfigured(env) ? await grantsGuard(env, "grantMonthlyCredits", now) : null;
-  if (fluxOff) bodyHold = "flux_off";
-  else if (guard) code = guard;
+  // PRODFLUX (Astra HIGH 2): BOTH Flux credentials before any dispatch (fluxCredentialsAlert: switched on with one missing), then the grants
+  // token and URL (grantsGuard). A missing credential HOLDS the claim (no ask counted, attempts untouched) and is alerted; never a consumed try.
+  const guard = !fluxOff && grantsConfigured(env)
+    ? (await fluxCredentialsAlert(env, "grantMonthlyCredits", now)) ?? await grantsGuard(env, "grantMonthlyCredits", now) : null;
+  let guardHold = false;
+  if (fluxOff) { bodyHold = "flux_off"; await fluxCredentialsAlert(env, "grantMonthlyCredits", now); }
+  else if (guard) { code = guard; guardHold = true; }
   else if (grantsConfigured(env)) {
     // Lane H1, item 1: an owner with no Flux link gets its Flux account ensured (and the link written) before the first grant. A refusal is
     // alerted and nothing is dispatched (the claim stays held for want of a link); a 5xx or timeout leaves it held, retried by the sweep.
-    if (flux.ensureAccount) await flux.ensureAccount(env, { homeId: input.homeId });
-    bodyHold = await ensureFrozenBody(env, lease, input, kind, now);
+    const ensured = flux.ensureAccount ? await flux.ensureAccount(env, { homeId: input.homeId }) : undefined;
+    // FLUX-ENSURE-EMAIL-VERIFIED (design-ev3 section 4, Grok r3 High 1): the owner's Flux account waits for the email check. A LOCAL hold
+    // (grant_held:email_unverified) decided before any router call: the outcome write below takes the local-hold branch (tries rolled back,
+    // attempts untouched), and ensureFrozenBody (which would unhold a held claim) is not run while the hold stands. credit.grant_held is the
+    // home's one hold alert; credit.grant_pending keeps skipping the grant_held: prefix.
+    if (ensured === "email_unverified") bodyHold = "email_unverified";
+    else bodyHold = await ensureFrozenBody(env, lease, input, kind, now);
   }
   // Astra JOURNEY-A-7 #3 / A-8 #2: a grant whose payment has money returned (a refund-driven target with coverage) is never published at its
   // full balance, not even for one request: it goes out WITH its latest target in ONE request (initial_target, applied by the router in the
@@ -3157,6 +3276,8 @@ async function askGrant(env: Env, lease: HomeLease, flux: FluxEntitlementHooks, 
       suppressed = a.status === "not_applied_reversed";
       if (initialTarget && a.target && a.target.grantId === creditGrantId(input.invoiceId, kind)) receipt = a.target;
     } catch (e) {
+      // A permanent refusal of a top-up grant (ceiling, account not fresh): suppressed for good with an alert, never retried.
+      if (e instanceof FluxGrantPermanent) { suppressed = true; suppressReason = e.reason; } else {
       if (!(e instanceof FluxHookRetry)) throw e;
       code = e.code.slice(0, 80);
       if (e instanceof FluxGrantHeld) { held = e.routerCode; delivery = prevDelivery === "ambiguous" ? "ambiguous" : "dispatched"; }
@@ -3164,9 +3285,11 @@ async function askGrant(env: Env, lease: HomeLease, flux: FluxEntitlementHooks, 
       // a local hold like the ones above, the grant never sent without its target.
       if (e instanceof FluxNotDispatched || e instanceof FluxGrantTargetUnsupported) {
         delivery = e instanceof FluxGrantTargetUnsupported && code.startsWith("router_400") && prevDelivery !== "ambiguous" ? "dispatched" : prevDelivery;
-        if (code === "grant_body_missing" || e instanceof FluxGrantTargetUnsupported) {
+        if (code === "grant_body_missing" || code === "account_disputed" || e instanceof FluxGrantTargetUnsupported) {
+          // account_disputed (DISPUTE-FENCE-ACCOUNT): the allocation refused a credit grant for an account with an open dispute: a local hold.
           bodyHold = e instanceof FluxGrantTargetUnsupported ? "grant_with_target_unavailable" : code; code = `${HELD}${bodyHold}`.slice(0, 80);
         }
+      }
       }
     }
   }
@@ -3185,16 +3308,18 @@ async function askGrant(env: Env, lease: HomeLease, flux: FluxEntitlementHooks, 
   await fencedBatch(env, lease, [
     suppressed
       // Never asked again (suppressed_at takes it out of the sweep), listed in the home's pending-grant alert, and its own alert.
-      ? q("UPDATE credit_grants SET suppressed_at=?,suppressed_reason='not_applied_reversed',last_error=NULL,last_attempt_at=?,alerted_at=COALESCE(alerted_at,?) WHERE invoice_id=? AND kind=? AND granted_at IS NULL",
-        now, now, now, input.invoiceId, kind)
+      ? q("UPDATE credit_grants SET suppressed_at=?,suppressed_reason=?,last_error=NULL,last_attempt_at=?,alerted_at=COALESCE(alerted_at,?) WHERE invoice_id=? AND kind=? AND granted_at IS NULL",
+        now, suppressReason, now, now, input.invoiceId, kind)
       : code === null
       ? q("UPDATE credit_grants SET granted_at=COALESCE(granted_at,?),last_error=NULL,last_attempt_at=? WHERE invoice_id=? AND kind=?", now, now, input.invoiceId, kind)
-      : bodyHold !== null
+      : bodyHold !== null || guardHold
       // A LOCAL hold is not an ask (Astra WP5-P4-CP-2 #3): the pre-call tries+1 is taken back in this same outcome write (an outcome write that
       // never lands leaves it counted, as for any ask that failed raw), attempts is untouched, last_attempt_at keeps the fairness stamp.
       ? q("UPDATE credit_grants SET tries=MAX(tries-1,0),last_error=?,delivery_state=? WHERE invoice_id=? AND kind=? AND granted_at IS NULL", code, delivery, input.invoiceId, kind)
       : q("UPDATE credit_grants SET attempts=attempts+1,last_error=?,delivery_state=? WHERE invoice_id=? AND kind=? AND granted_at IS NULL", code, delivery, input.invoiceId, kind),
-    ...(suppressed ? [alertQ(input.homeId, "credit.grant_suppressed", `alert:credit_grant_suppressed:${grantId}`, { grantId, reason: "not_applied_reversed" }, now)] : []),
+    ...(suppressed ? [alertQ(input.homeId, "credit.grant_suppressed", `alert:credit_grant_suppressed:${grantId}`, { grantId, reason: suppressReason }, now)] : []),
+    // A top-up the router refused as not fresh was already charged: paid with no credit, so it also raises the page kind (as a plan grant does).
+    ...(suppressed && suppressReason === "account_not_fresh" ? [alertQ(input.homeId, "flux.account_not_fresh", `alert:flux_account_not_fresh:${grantId}`, { grantId, charged: true }, now)] : []),
     ...(held !== null ? [alertQ(input.homeId, "credit.grant_review", `alert:credit_grant_review:${grantId}`, { grantId, routerStatus: held }, now)] : []),
     // A landed grant's refund target is due again at a new revision (one settled while the grant had not landed removed nothing there).
     ...(code === null && !suppressed ? [q(`UPDATE credit_reversals SET target_revision=target_revision+1,reversed_at=NULL WHERE invoice_id=? AND kind=? AND scope='target'
@@ -3228,7 +3353,7 @@ async function ensureFrozenBody(env: Env, lease: HomeLease, input: GrantInput, k
       input.invoiceId, kind, HELD.length, HELD), ...heldAlertSync(input.homeId, now)]
     : [];
   if (row?.body_json) { if (unhold.length) await fencedBatch(env, lease, unhold); return null; }
-  const built = await composeFrozenBody(env, { ...input, kind: kind === "upgrade_delta" ? "upgrade_delta" : "period" });
+  const built = await composeFrozenBody(env, { ...input, kind: grantKindOf(kind) });
   if (isHold(built)) return built.held;
   await fencedBatch(env, lease, [q("UPDATE credit_grants SET body_json=?,body_sha256=? WHERE invoice_id=? AND kind=? AND body_json IS NULL AND granted_at IS NULL",
     built.json, built.sha256, input.invoiceId, kind), ...unhold]);
@@ -3254,15 +3379,16 @@ export async function retryPendingGrants(env: Env, lease: HomeLease, flux: FluxE
     WHERE g.home_id=? AND ${GRANT_RUNNABLE} ORDER BY COALESCE(g.last_attempt_at,0),g.claimed_at,g.invoice_id,g.kind LIMIT 20`).bind(homeId)
     .all<{ invoice_id: string; kind: string; plan: string; period_start: number | null; period_end: number | null; previous_plan: string | null; subscription_id: string | null }>();
   for (const g of due.results) {
-    const why = g.period_start === null || g.period_end === null || g.subscription_id === null ? "grant_input_missing"
+    // A top-up was paid for: it is granted whatever became of the subscription and has no period to be missing.
+    const why = g.kind === "topup" ? null : g.period_start === null || g.period_end === null || g.subscription_id === null ? "grant_input_missing"
       : !sub || sub.subscription_id !== g.subscription_id || ENDED(sub) ? "subscription_ended" : null;
     if (why) {
       await fencedBatch(env, lease, [q(`UPDATE credit_grants SET suppressed_at=?,suppressed_reason=?,last_attempt_at=?,alerted_at=COALESCE(alerted_at,?) WHERE invoice_id=? AND kind=?
         AND granted_at IS NULL AND suppressed_at IS NULL`, now, why, now, now, g.invoice_id, g.kind), ...grantAlertSync(homeId, now)]);
       continue;
     }
-    await askGrant(env, lease, flux, { homeId, plan: g.plan, invoiceId: g.invoice_id, periodStart: g.period_start!, periodEnd: g.period_end!,
-      kind: g.kind === "upgrade_delta" ? "upgrade_delta" : "period", ...(g.previous_plan ? { previousPlan: g.previous_plan } : {}) }, g.kind, now, []);
+    await askGrant(env, lease, flux, { homeId, plan: g.plan, invoiceId: g.invoice_id, periodStart: g.period_start ?? 0, periodEnd: g.period_end ?? 0,
+      kind: grantKindOf(g.kind), ...(g.previous_plan ? { previousPlan: g.previous_plan } : {}) }, g.kind, now, []);
   }
 }
 
@@ -3287,7 +3413,7 @@ export const reversalTargetsEnabled = (flux: FluxEntitlementHooks): boolean =>
 /** Astra JOURNEY-A-10 #1: Flux is OFF at launch, and OFF means JOURNAL-ONLY. A grant or a reversal of any kind (grant, full reversal, target,
  *  legacy conversion) is dispatched only to hooks that were explicitly switched on (real hooks, never the stub) AND advertise the qualified
  *  router capability. Otherwise the obligation stays journaled, nothing is sent and ops is alerted. The grants client adds its own gate
- *  (CLOUD_FLUX_ROUTES_ENABLED and a qualified client) before any request. */
+ *  (the Flux route switch and a qualified client) before any request. */
 export const fluxDispatchEnabled = (flux: FluxEntitlementHooks): boolean =>
   flux.stub !== true && flux.capabilities?.reversalTargets === true;
 
@@ -3363,7 +3489,7 @@ export async function reverseCredits(env: Env, lease: HomeLease, flux: FluxEntit
       ...heldAlertSync(homeId, now),
     ]);
     try {
-      await flux.revokeCredits(env, { homeId, invoiceId: r.invoice_id, kind: r.kind === "upgrade_delta" ? "upgrade_delta" : "period",
+      await flux.revokeCredits(env, { homeId, invoiceId: r.invoice_id, kind: grantKindOf(r.kind),
         grantId: creditGrantId(r.invoice_id, r.kind), reason: r.reason });
       await fencedBatch(env, lease, [
         q("UPDATE credit_reversals SET reversed_at=COALESCE(reversed_at,?),last_error=NULL WHERE invoice_id=? AND kind=? AND scope='full'", now, r.invoice_id, r.kind),
@@ -3374,6 +3500,7 @@ export async function reverseCredits(env: Env, lease: HomeLease, flux: FluxEntit
     } catch (e) {
       // The hooks' error contract (Astra STUB-2 #1): only FluxHookRetry is a failed attempt; a lost lease, a D1 failure or any other throw
       // propagates with nothing recorded (the caller's refund goes ahead regardless; the sweep retries the reversal).
+      if (e instanceof FluxReversalPermanent) { await parkReversal(env, lease, homeId, r, e.code, now); continue; }
       if (!(e instanceof FluxHookRetry)) throw e;
       const code = e.code.slice(0, 80);
       await fencedRun(env, lease, "UPDATE credit_reversals SET attempts=attempts+1,last_error=? WHERE invoice_id=? AND kind=? AND reversed_at IS NULL", code, r.invoice_id, r.kind);
@@ -3382,6 +3509,22 @@ export async function reverseCredits(env: Env, lease: HomeLease, flux: FluxEntit
       }
     }
   }
+}
+
+/** The ineligible top-up notice in the owner's checkout language (German when that is what they bought in; English otherwise). */
+async function topupIneligibleData(env: Env, homeId: string): Promise<Record<string, unknown>> {
+  const c = await env.DB.prepare("SELECT checkout_language AS l FROM checkout_consents WHERE home_id=? AND checkout_language IS NOT NULL ORDER BY created_at DESC LIMIT 1").bind(homeId).first<{ l: string | null }>();
+  const emailSubject = orderWords("topupIneligibleSubject", c?.l);
+  const emailText = `${emailSubject}\n\n${orderWords("topupIneligible", c?.l)}\n\nReference: ${homeId}`;
+  return { emailSubject, emailText, emailHtml: htmlOf(emailText) };
+}
+/** The router refused this reversal for good (422 removal ceiling): it is never sent again at this revision. The row is closed with the reason
+ *  (a later coverage change journals a new revision and reopens it) and ONE alert says the credit stays at the router. */
+async function parkReversal(env: Env, lease: HomeLease, homeId: string, r: { invoice_id: string; kind: string }, code: string, now: number): Promise<void> {
+  await fencedBatch(env, lease, [
+    q("UPDATE credit_reversals SET reversed_at=COALESCE(reversed_at,?),attempts=attempts+1,last_error=? WHERE invoice_id=? AND kind=? AND reversed_at IS NULL", now, `router_422_${code}`.slice(0, 80), r.invoice_id, r.kind),
+    alertQ(homeId, "credit.reversal_ceiling", `alert:credit_reversal_ceiling:${r.invoice_id}:${r.kind}`, { invoiceId: r.invoice_id, kind: r.kind, code }, now),
+  ]);
 }
 
 type LegacyRow = ReversalRow & { op_id: string | null; op_refunded_at: number | null; op_pi: string | null; op_invoice: string | null; op_sub: string | null;
@@ -3414,7 +3557,7 @@ async function convertLegacyReversal(env: Env, lease: HomeLease, flux: FluxEntit
   if (typeof flux.grantReversalState !== "function") { await pending("legacy_reversal_unreconciled", false); return; }
   let st: GrantReversalState;
   try {
-    st = await flux.grantReversalState(env, { homeId, invoiceId: r.invoice_id, kind: r.kind === "upgrade_delta" ? "upgrade_delta" : "period",
+    st = await flux.grantReversalState(env, { homeId, invoiceId: r.invoice_id, kind: grantKindOf(r.kind),
       grantId: creditGrantId(r.invoice_id, r.kind) });
   } catch (e) {
     if (!(e instanceof FluxHookRetry)) throw e;
@@ -3536,7 +3679,7 @@ async function reverseTarget(env: Env, lease: HomeLease, flux: FluxEntitlementHo
   ]);
   if (stamped.meta.changes !== 1) return; // a newer revision was journaled meanwhile: the next pass sends it
   try {
-    const receipt = await flux.setReversalTarget!(env, { homeId, invoiceId: r.invoice_id, kind: r.kind === "upgrade_delta" ? "upgrade_delta" : "period",
+    const receipt = await flux.setReversalTarget!(env, { homeId, invoiceId: r.invoice_id, kind: grantKindOf(r.kind),
       grantId: creditGrantId(r.invoice_id, r.kind), reason: r.reason, targetRemovedMicrocents: target, revision: rev, ...(adopting ? { adoptLegacyReversal: true } : {}) }, { lease });
     if (receipt.grantId !== creditGrantId(r.invoice_id, r.kind) || receipt.revision !== rev) {
       await fencedRun(env, lease, "UPDATE credit_reversals SET last_error='receipt_not_latest' WHERE invoice_id=? AND kind=? AND reversed_at IS NULL", r.invoice_id, r.kind);
@@ -3551,6 +3694,7 @@ async function reverseTarget(env: Env, lease: HomeLease, flux: FluxEntitlementHo
     await settle(receipt.removedMicrocents, unconfirmed ? [q("UPDATE credit_grants SET granted_at=COALESCE(granted_at,?) WHERE invoice_id=? AND kind=?", now, r.invoice_id, r.kind)] : [],
       receipt.targetRemovedMicrocents);
   } catch (e) {
+    if (e instanceof FluxReversalPermanent) { await parkReversal(env, lease, homeId, r, e.code, now); return; }
     if (!(e instanceof FluxHookRetry)) throw e;
     const code = e.code.slice(0, 80);
     // wp5-p5: the router holds a newer revision (stale_revision) or this revision with another target (revision_conflict), and says which:
@@ -4823,6 +4967,8 @@ export async function processStoredEvent(env: Env, config: BillingConfig, deps: 
       // fetched. A completed event is never applied twice, whatever snapshot this worker holds.
       const current = await env.DB.prepare("SELECT processed_at FROM stripe_events WHERE id=?").bind(eventId).first<{ processed_at: number | null }>();
       if (!current || current.processed_at) return;
+      // ITEM 9 r2 H2: the proof markers this event owes, committed in the checkpoint batch below (never before it).
+      const proofMarks: { owner: string; stmt: Q }[] = [];
       try {
         let outcome: string | null;
         if (reconciledFrom) {
@@ -4830,9 +4976,9 @@ export async function processStoredEvent(env: Env, config: BillingConfig, deps: 
           const fresh = await eventAtPinnedVersion(config, deps, event);
           const home = await homeOfEvent(env, config, deps, fresh);
           if (!("homeId" in home) || home.homeId !== lease.homeId) throw new Error("home_changed");
-          outcome = await reconcileEvent(env, config, { ...deps, lease }, fresh);
+          outcome = await reconcileEvent(env, config, { ...deps, lease, proofMarks }, fresh);
         } else {
-          outcome = await handleEvent(env, config, { ...deps, lease }, event);
+          outcome = await handleEvent(env, config, { ...deps, lease, proofMarks }, event);
         }
         // The checkpoint (and a reconciliation's completion) is written under the same lease as the work: a worker that lost the lease
         // cannot mark the event processed.
@@ -4843,7 +4989,9 @@ export async function processStoredEvent(env: Env, config: BillingConfig, deps: 
           // INTEGRATED-12 P2-6: what the hold held is due at once; a hold whose scope is still pending is never released by a checkpoint.
           q(`${WAKE_HELD_BY_HOLD_SQL} AND EXISTS (SELECT 1 FROM dispute_holds x WHERE x.event_id=?1 AND x.attributed_at IS NULL AND x.scope_pending=0)
             AND EXISTS (SELECT 1 FROM stripe_events e WHERE e.id=?1 AND e.processed_at IS NOT NULL)`, eventId, now),
-          q("UPDATE dispute_holds SET home_id=?,attributed_at=? WHERE event_id=? AND attributed_at IS NULL AND scope_pending=0", lease.homeId, now, eventId)]);
+          q("UPDATE dispute_holds SET home_id=?,attributed_at=? WHERE event_id=? AND attributed_at IS NULL AND scope_pending=0", lease.homeId, now, eventId),
+          ...proofMarks.map((m) => m.stmt)]);
+        for (const m of proofMarks) deps.proofQueued?.(m.owner);
       } catch (e) {
         if (e instanceof LeaseLost || e instanceof HomeBusy) throw e;
         // The failure is recorded under the SAME lease: a worker that lost it meanwhile (another one may have finished this event since)
@@ -5202,6 +5350,27 @@ async function replacementUnrecoverable(env: Env, ctx: RefundContext, c: Consent
   return "replacement_refunded";
 }
 
+/** FLUX-ENSURE-EMAIL-VERIFIED contract (c), launch flow A step 1: once the checkout completed and the home is being provisioned, the owner is
+ *  owed the email proof code ONCE (flux-email-proof.ts queueAutoSendProof: its own marker per account and revision, so a second delivery of the
+ *  event queues nothing). ITEM 9 M5 (PROOF-MAIL-AFTER-CHECKPOINT): under the lease it is only QUEUED; stripeWebhook sends it after the
+ *  checkpoint through waitUntil, and the cron sweep sends any queued row. It never makes the webhook fail or wait on a mailer. */
+async function autoSendEmailProof(env: Env, deps: BillingDependencies, homeId: string, now: number): Promise<void> {
+  try {
+    const owner = (await env.DB.prepare("SELECT owner_id FROM cloud_homes WHERE id=?").bind(homeId).first<{ owner_id: string }>())?.owner_id;
+    if (!owner) return;
+    // ITEM 9 r2 H2: under processStoredEvent the marker is only collected here and committed with the event's checkpoint (one fenced batch),
+    // so no sweep can see it before the checkpoint commits. Elsewhere (no collector) it is written at once.
+    if (deps.proofMarks) {
+      const m = await autoSendMarkStatement(env, owner, { now: () => now, ...deps.fluxProof });
+      if (m) deps.proofMarks.push({ owner, stmt: q(m.stmt[0], ...m.stmt[1]) });
+      return;
+    }
+    if ((await queueAutoSendProof(env, owner, { now: () => now, ...deps.fluxProof })) !== null) deps.proofQueued?.(owner);
+  } catch {
+    console.error(JSON.stringify({ message: "flux email proof auto-send failed", homeId }));
+  }
+}
+
 async function handleEvent(env: Env, config: BillingConfig, deps: BillingDependencies, event: z.infer<typeof eventSchema>): Promise<string | null> {
   const obj = event.data.object as Obj;
   const flux = deps.flux ?? stubFluxHooks;
@@ -5410,7 +5579,9 @@ async function handleEvent(env: Env, config: BillingConfig, deps: BillingDepende
       // A Link (Managed Payments) contract only authorizes Link to charge the card: an automatic top-up authorization carried over from an
       // earlier direct contract on this home is switched off here, in the same leased handling, and Flux is told (enabled:false).
       if (linkSale) await disableTopupForLink(env, lease, flux, id, c.user_id, now);
-      if (c.topup_enabled === 1 && !linkSale && !(await getTopup(env, id))) {
+      // While auto top-up is not offered (held-until-item9-highs.ts) no enabled row is written, even for a consent stored before the hold
+      // (Checkout TTL, webhook retries) or reached by step-up replay or resume: those skip prepareConsent and end here.
+      if (c.topup_enabled === 1 && !linkSale && topupOffered() && !(await getTopup(env, id))) {
         await saveTopup(env, lease, { homeId: id, userId: c.user_id, enabled: true, amountCents: c.topup_amount_cents ?? 0,
           thresholdCents: c.topup_threshold_cents ?? 0, capCents: c.topup_cap_cents ?? 0, consentId: c.id, source: "checkout", ip: null, userAgent: null }, now);
         await applyTopup(env, lease, flux, id, now);
@@ -5442,6 +5613,8 @@ async function handleEvent(env: Env, config: BillingConfig, deps: BillingDepende
       }
       // Moment 2 was recorded above: provisioning.
       await activate(env, lease, { eventId: event.id, homeId: id, created: event.created, paymentId: idOf(obj.invoice) ?? str(obj.id) ?? event.id, subscriptionId: incomingSub }, now);
+      // Launch flow A: the email proof code, mailed once (never fails the webhook).
+      await autoSendEmailProof(env, deps, id, now);
       return null;
     }
     case "checkout.session.async_payment_succeeded": {
@@ -5539,6 +5712,8 @@ async function handleEvent(env: Env, config: BillingConfig, deps: BillingDepende
       // "Payment received" (the second moment), after "We got your order" (the first).
       // (A replacement's customer gets "your plan is switched" instead.)
       if (!replaces) await sendPaymentNotice(env, deps, id, consent.id);
+      // Launch flow A: a delayed payment that cleared completes the checkout; the email proof code, mailed once (never fails the webhook).
+      await autoSendEmailProof(env, deps, id, now);
       return null;
     }
     case "checkout.session.async_payment_failed": {
@@ -5697,6 +5872,20 @@ async function handleEvent(env: Env, config: BillingConfig, deps: BillingDepende
         return "foreign_subscription";
       }
       if (await env.DB.prepare("SELECT 1 AS x FROM refund_ops WHERE invoice_id=? AND kind IN ('duplicate','price_mismatch','late_payment','mismatch','country_paused','rejected_consent')").bind(invoiceId).first()) return "refunded_invoice";
+      // An auto top-up invoice has no subscription line, so nothing below would ever act on it. One with a live attempt (claimed, invoiced, paid,
+      // done) is the sweep's to grant. One whose attempt was given up (abandoned, declined, action_required: an invoice left payable and paid later)
+      // took money no sweep will ever grant: it raises the paid-without-grant alert here, once per invoice, instead of vanishing.
+      const topupAttempt = await env.DB.prepare("SELECT attempt_id, home_id, state FROM topup_attempts WHERE invoice_id=?").bind(invoiceId).first<{ attempt_id: string; home_id: string; state: string }>();
+      if (topupAttempt) {
+        if (!["claimed", "invoiced", "paid", "done"].includes(topupAttempt.state)
+          && !await env.DB.prepare("SELECT 1 AS x FROM credit_grants WHERE invoice_id=? AND kind='topup' AND granted_at IS NOT NULL").bind(invoiceId).first()) {
+          await fence(env, lease);
+          await env.DB.prepare("INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING")
+            .bind(`alert:topup-paid-orphan:${invoiceId}`, topupAttempt.home_id, "topup.paid_not_granted", "high", JSON.stringify({ attemptId: topupAttempt.attempt_id, invoiceId, state: topupAttempt.state, amountPaid: inv.amount_paid }), now).run();
+          return "topup_paid_without_attempt";
+        }
+        return "topup_invoice";
+      }
       // Astra JOURNEY-BCORE-3 #5-#8: a payment on a subscription with a promised end is RECORDED (one record per invoice, its full line
       // snapshot, no amount) the moment it settles, whenever that is (independent of the termination, also after the resolution).
       const promise = await promiseOf(env, incomingSub ?? sub?.subscription_id ?? null);
@@ -5805,6 +5994,8 @@ async function handleEvent(env: Env, config: BillingConfig, deps: BillingDepende
             period.start * 1000, period.end * 1000, now, id, subscriptionNow)]);
         await propagatePlanOnInvoice(env, lease, flux, id, plan, invoiceId, idOf(obj.customer) ?? undefined);
       }
+      // A paying member becomes a FirstPromoter referral partner (referral.ts). Non-blocking: it never throws; a failure is retried by the sweep.
+      if (amountPaid > 0 && cls.kind === "renewal") await referralOnPaid(env, { firstPromoterFetch: deps.firstPromoterFetch, reader: deps.reader, readerTimeoutMs: deps.readerTimeoutMs, now: () => now }, id, now);
       return null;
     }
     case "invoice.payment_failed": {
@@ -5963,6 +6154,9 @@ async function handleEvent(env: Env, config: BillingConfig, deps: BillingDepende
         ended = await reconcilePaymentCoverage(env, lease, { stripe: stripe(), flux, deps, now, eventCreated: event.created }, id, payment);
       }
       if (ledger) return "ledger_refund";
+      // An auto top-up invoice has no subscription: its refund only lowers the credit it bought (the coverage pass above, unused part only at
+      // the router) and never ends a plan or raises the historical-payment alert.
+      if (owner.invoiceId && await env.DB.prepare("SELECT 1 AS x FROM topup_attempts WHERE invoice_id=?").bind(owner.invoiceId).first()) return "topup_refund_recorded";
       if (obj.refunded !== true) return "partial_refund_recorded"; // only a full refund ends service
       // Only a full refund of the RETAINED contract's payment ends service. A refund of an earlier contract's payment (one a replacement
       // checkout has since taken over from) affects only that payment's ledger and credits; the replacement keeps running.
@@ -6461,6 +6655,28 @@ export async function sweepBilling(env: Env, deps: BillingDependencies = {}): Pr
     const unapplied = await env.DB.prepare("SELECT home_id FROM topup_settings WHERE applied_revision IS NULL OR applied_revision<>revision LIMIT 50").all<{ home_id: string }>();
     for (const t of unapplied.results) await onHome(t.home_id, async (lease) => { await applyTopup(env, lease, flux, t.home_id, now); });
   }
+  // Auto top-up. Recovery of attempts already started (settle the invoice, grant a paid one, void an open one, alert a paid one that cannot be
+  // granted) runs whenever one is open, flag on or off, so a crash followed by switching the flag off never strands paid money. A NEW charge needs
+  // CLOUD_AUTOTOPUP_ENABLED exactly "1" with real Flux hooks that can read a balance. With nothing open and charging off this is one D1 read.
+  {
+    const charging = topupChargingEnabled(env) && !flux.stub && !!flux.topupBalance && fluxRoutesEnabled(env);
+    const stripe = stripeClient(config!, deps.stripeFetch);
+    const topupDeps: TopupDeps = {
+      stripe, taxCode: null,
+      isLink: (homeId) => homeSoldByLink(env, homeId, true),
+      // Queued under the lease the sweep already holds (notify would otherwise take it again and find the home busy).
+      notify: async (kind, homeId, key, lease) => notify(env, lease ? { ...deps, lease: lease as HomeLease } : deps, homeId, kind, key, kind === "topup_ineligible" ? await topupIneligibleData(env, homeId) : {}),
+    };
+    await guard(() => sweepAutoTopup(env, {
+      // PRODFLUX r4 A: a NEW claim also needs Flux able to issue (both secrets, the API base); open attempts keep running (their precheck
+      // answers flux_not_ready while not ready, so nothing is charged and an open invoice is voided).
+      now, deps: topupDeps, onHome, charging, claiming: fluxReadiness(env).issue, canGrant: !flux.stub && fluxRoutesEnabled(env),
+      spendable: (homeId) => (flux.topupBalance ? flux.topupBalance(env, homeId) : Promise.resolve(null)),
+      grant: (lease, homeId, invoiceId) => grantTopup(env, lease, flux, { homeId, invoiceId }, now),
+      raiseCap: (homeId) => (flux.raiseCapForTopup ? flux.raiseCapForTopup(env, homeId) : Promise.resolve("unknown" as CapRaise)),
+      fence: (lease) => fence(env, lease),
+    }));
+  }
 
   // The lifecycle's journaled service starts and ends not applied yet (the home was busy at the transition): applied under each home's lease.
   const serviceLog = await env.DB.prepare("SELECT DISTINCT home_id FROM service_interval_log WHERE applied_at IS NULL LIMIT 50").all<{ home_id: string }>();
@@ -6482,8 +6698,12 @@ export async function sweepBilling(env: Env, deps: BillingDependencies = {}): Pr
         return;
       }
       // Round 9b: the stop names the line it suspended (billing_hold_line): only a paid invoice of ANOTHER contract may lift that hold.
-      await flux.stopForBilling(env, r.home_id, undefined, { line: revokedLine });
-      await fencedRun(env, lease, "UPDATE cloud_outbox SET completed_at=?,receipt=? WHERE id=?", now, JSON.stringify({ fluxStopped: true }), r.id);
+      // PRODFLUX r3 (4'): the receipt says what the Stop returned. "stopping" (journaled, not yet sent: e.g. the service token missing) is
+      // fluxStopped false; the B4 sweep sends it once it can. A hook that returns no state (the pre-B4 stub) keeps the old receipt.
+      const stopped = await flux.stopForBilling(env, r.home_id, undefined, { line: revokedLine });
+      const stopState = typeof stopped === "object" && stopped !== null ? (stopped as { state?: unknown }).state : undefined;
+      await fencedRun(env, lease, "UPDATE cloud_outbox SET completed_at=?,receipt=? WHERE id=?", now,
+        JSON.stringify(stopState === undefined || stopState === "stopped" ? { fluxStopped: true } : { fluxStopped: false, fluxState: String(stopState).slice(0, 40) }), r.id);
     });
   }
 
@@ -6723,6 +6943,8 @@ export async function sweepBilling(env: Env, deps: BillingDependencies = {}): Pr
   }
   // An export request past its pause stops pausing the deletion; the record says it expired.
   await guard(() => expireExportRequests(env, now));
+  // Referral partners (referral.ts): never a billing failure; a FirstPromoter outage is retried on its own backoff.
+  try { await sweepReferralEnrollments(env, deps); } catch { console.warn("referral_sweep_failed"); }
   if (failures) throw new Error("billing_sweep_incomplete");
 }
 

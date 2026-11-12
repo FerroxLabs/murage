@@ -16,3 +16,16 @@ it('registered Node gates must have a blocking runner and never enter a Vitest s
   writeFileSync(join(root,'package.json'),JSON.stringify({scripts:{}}));expect(check(root).problems).toHaveLength(1);
  }finally{removeTempDirSync(root);}
 });
+
+it('registered probe Node tests stay out of Vitest and require their blocking runner',()=>{
+ const root=mkdtempSync(join(tmpdir(),'ci-probe-node-gates-'));
+ try{
+  for(const dir of ['ci','scripts'])mkdirSync(join(root,dir));
+  writeFileSync(join(root,'vite.config.ts'),'test: {include: ["scripts/*.test.mjs"],exclude: ["scripts/probe.test.mjs"]}');
+  writeFileSync(join(root,'scripts/unit.test.mjs'),'');writeFileSync(join(root,'scripts/probe.test.mjs'),'');
+  writeFileSync(join(root,'ci/gate-tests.txt'),'scripts/unit.test.mjs\tall\tunit\nscripts/probe.test.mjs\tall\tprobe\n');writeFileSync(join(root,'ci/extended-tests.txt'),'');
+  writeFileSync(join(root,'package.json'),JSON.stringify({scripts:{'test:electron':'node --test "scripts/probe.test.mjs"'}}));
+  expect(check(root).problems).toEqual([]);expect(select({tier:'gate'},root).files).toEqual(['scripts/unit.test.mjs']);
+  writeFileSync(join(root,'package.json'),JSON.stringify({scripts:{}}));expect(check(root).problems).toHaveLength(1);
+ }finally{removeTempDirSync(root);}
+});

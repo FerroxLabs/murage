@@ -84,10 +84,26 @@ Ferrox Labs is not required to include any Contribution in Murage.
 
 ## 7. How you sign
 
-Sign by posting the comment the CLA bot asks for on your first pull request:
+Sign by posting this exact comment on your first pull request:
 
 > I have read the CLA Document and I hereby sign the CLA
 
 Your GitHub username and the date are recorded as your signature. One signature
 covers all your later Contributions. If you contribute for an employer, ask
 Ferrox Labs for the corporate form first.
+
+The CLA workflow accepts the comment only from the pull request author, whose
+identity it reads from GitHub's pull request API. Extra text or whitespace and
+comments from another user do not record a signature. The `record` job stores
+your username, GitHub ID, comment date and PR/comment reference in
+`signatures/cla.json` on the `cla-signatures` branch. Maintainers must create
+that branch once; the workflow writes only the signature file there and never
+runs code from a pull request.
+
+After the recording job succeeds, a maintainer can select **Re-run failed jobs**
+on the original PR's CLA run to refresh its required check. Alternatively,
+**Actions → CLA → Run workflow**, with `pr_number` set to the PR number, verifies
+the current author's recorded signature. The author is fetched from GitHub;
+there is no username input. A manual run reports its own result; it does not
+replace the original PR check, so rerun that original check before merging.
+No additional signature comment is needed for later contributions.

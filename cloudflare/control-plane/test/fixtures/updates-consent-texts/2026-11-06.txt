@@ -1,0 +1,2 @@
+# design CONCIERGE-HELPER-1020.md:296 (8.7 FINAL 11-06; the 1.0.20 card is not built yet: its build needs a byte test on the rendered card)
+"Get Murage updates? We'll email you about new features and tips, about twice a month. You can unsubscribe any time. Your email: [field]. Buttons: No thanks / Yes, send me updates. After yes: Sent to {email}. Check your inbox to confirm. You can turn this off any time in Settings, then About and help."

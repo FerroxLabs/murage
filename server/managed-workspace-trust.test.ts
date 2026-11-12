@@ -177,7 +177,7 @@ describe("managed thread desk auto-trust", () => {
 
   it("grant scope is the exact desk: a git repository above it (the grant would cover a parent) is refused", () => {
     pinSkill(desk, "review");
-    execFileSync("git", ["init", "-q", join(dataDir, "workspaces", BOT)]);
+    execFileSync("git", ["init", "-q", join(dataDir, "workspaces", BOT)], { windowsHide: true });
     const scan = scanFolderTrustSources(desk);
     expect(scan.key).toBe(join(dataDir, "workspaces", BOT));
     expect(managedWorkspaceAutoTrust(desk, scan, input())).toBe(false);
@@ -204,7 +204,7 @@ describe("managed thread desk auto-trust", () => {
 
   it("a desk that is its own git root still keys on itself and may be trusted", () => {
     pinSkill(desk, "review");
-    execFileSync("git", ["init", "-q", desk]);
+    execFileSync("git", ["init", "-q", desk], { windowsHide: true });
     expect(scanFolderTrustSources(desk).key).toBe(desk);
     expect(decide(desk)).toBe(true);
   });
@@ -392,7 +392,7 @@ describe("managedDeskQualifies", () => {
     const picked = join(root, "picked");
     mkdirSync(picked);
     expect(qualifies(picked)).toBeNull();
-    execFileSync("git", ["init", "-q", dataDir]);
+    execFileSync("git", ["init", "-q", dataDir], { windowsHide: true });
     expect(qualifies(desk)).toBeNull();
   });
 });

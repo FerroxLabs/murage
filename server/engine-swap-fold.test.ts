@@ -1,3 +1,4 @@
+import { BotOutsideWrites } from "./bot-outside-writes.ts";
 import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 import { isRestoreHeld, releaseHeldContinuation, runnableContinuation } from "./restore-fence.ts";
 import { heldScanYield } from "./held-scan.ts";
@@ -64,8 +65,11 @@ function foldFixture() {
   const noop = () => undefined;
   const scope: Record<string, unknown> = {
     ...productionImports,
+    // Match an installation that has not accepted No limits terms; the real terms guard still runs.
+    cfg: {},
     // callSpeech: D24's call speech coordinator; no call is live, so no provider turn feeds call speech here
     callSpeech: { provider: () => undefined },
+    botOutsideWrites: new BotOutsideWrites(store, () => null),
     store, toolAction, startedToolAction, completedToolAction, engineStamp, plainConnectedAppMessage: (row: unknown) => row,
     internalCapabilities: { activeGeneration: () => undefined },
     // what index.ts imports for every permission event (engine-env.ts Rule 74a, shared/exact-command.ts): the real ones, as in production
@@ -77,6 +81,8 @@ function foldFixture() {
     // which tools are shell commands (auto-approve.ts), the real one, as in production
     isCommandTool,
     fluxFirstTokenProbe: { observe: noop, begin: noop },
+    // fc43c2145c routes waiting through browser execution; this fixture owns neither a browser nor a watchdog.
+    setWaitingOnHuman: noop,
     accountProjectEvent: noop, shouldIgnoreProviderEvent: () => false, replyGuardContext: () => null,
     accountPresentedProjectEvent: () => true, presentedRequests: { publish: noop },
     localVmThreadTargets: new Map(), groupGoalCoordinatorTurns: new Map(), groupGoalCoordinatorTurnForEvent: () => null,

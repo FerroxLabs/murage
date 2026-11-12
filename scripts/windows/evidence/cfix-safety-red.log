@@ -1,0 +1,330 @@
+✖ P1-1 outer launcher owns cleanup even when the child is killed (3.549361ms)
+✖ P1-2 physical containment checks existing ancestors before writes (0.988293ms)
+✖ P1-3 full staged tree and embedded provenance are verified (0.794273ms)
+✖ P2-1 observation needs group controls, a final gap, and full coverage (0.853292ms)
+✖ P2-2 fixture environment is set before either helper compiles (0.638672ms)
+✖ P2-3 every tested scheduler completion requires a fresh publication (1.677875ms)
+✖ P2-4 includes Claude Node cmd and all OS shell rows (1.117524ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 0
+ℹ fail 7
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 144.139357
+
+✖ failing tests:
+
+test at scripts/windows/safety.node-test.mjs:8:1
+✖ P1-1 outer launcher owns cleanup even when the child is killed (3.549361ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /finally\s*\{\s*Complete-RunLedger/. Input:
+  
+  '# OpenSSH is not the desktop. Register /IT under an explicitly named logged-on\n' +
+    '# account; no password, SYSTEM account, service session or stored credential.\n' +
+    '[CmdletBinding()]\n' +
+    'param(\n' +
+    "  [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$Commit,\n" +
+    '  [Parameter(Mandatory=$true)][string]$InteractiveUser,\n' +
+    '  [Parameter(Mandatory=$true)][string]$OutputDirectory,\n' +
+    "  [string]$Executable = 'C:\\murage-ci\\app\\Murage.exe',\n" +
+    "  [string]$ScenarioScript = 'C:\\murage-ci\\source\\scripts\\windows\\full-packaged-scenario.ps1',\n" +
+    "  [ValidateSet('Desktop','Handoff')][string]$Mode='Desktop',\n" +
+    '  [string]$HandoffReceipt,\n' +
+    "  [string]$Node='C:\\murage-ci\\node\\node.exe',\n" +
+    "  [string]$FeedDirectory='C:\\murage-ci\\feed',\n" +
+    '  [ValidateRange(60,3600)][int]$TimeoutSeconds = 1200\n' +
+    ')\n' +
+    "$ErrorActionPreference = 'Stop'\n" +
+    'Set-StrictMode -Version Latest\n' +
+    "if ($env:OS -ne 'Windows_NT') { throw 'Windows required' }\n" +
+    "# schtasks can otherwise ask for another account's password. This launcher\n" +
+    "# intentionally has no credential path: SSH as the desktop's logged-on user.\n" +
+    '$account = New-Object Security.Principal.NTAccount($InteractiveUser)\n' +
+    '$ownerSid = $account.Translate([Security.Principal.SecurityIdentifier]).Value\n' +
+    "if ($Mode -eq 'Handoff') {\n" +
+    "  if($env:COMPUTERNAME -ine 'gate-win-nogit'){throw 'Handoff is gate-win-nogit only'}\n" +
+    "  $marker=Get-Content -LiteralPath 'C:\\murage-ci\\gate-user.json' -Raw | ConvertFrom-Json\n" +
+    "  if($marker.sid -ne $ownerSid){throw 'Task must use provisioned gate user'}\n" +
+    "  $ScenarioScript='C:\\murage-ci\\source\\scripts\\windows\\updates-handoff.ps1'\n" +
+    "} elseif (-not $HandoffReceipt) {throw 'Desktop gate requires the handoff receipt and its artifacts'}\n" +
+    "if ($Mode -ne 'Handoff' -and $ownerSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { throw 'SSH/task registration must use the same account as the logged-on Desktop user; no credentials are accepted' }\n" +
+    "$root = 'C:\\murage-ci'\n" +
+    '$Executable = (Resolve-Path -LiteralPath $Executable).Path\n' +
+    '$ScenarioScript = (Resolve-Path -LiteralPath $ScenarioScript).Path\n' +
+    "$output = [IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\\')\n" +
+    'foreach ($file in @($Executable, $ScenarioScript, $output)) {\n' +
+    "  if (-not $file.StartsWith($root + '\\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Inputs and evidence must be under C:\\murage-ci' }\n" +
+    '}\n' +
+    "if (Test-Path -LiteralPath $output) { throw 'OutputDirectory must be new (prevents stale evidence)' }\n" +
+    'New-Item -ItemType Directory -Path $output | Out-Null\n' +
+    "$request = Join-Path $output 'request.json'\n" +
+    '[ordered]@{ executable=$Executable; scenarioScript=$ScenarioScript; commit=$Commit; timeoutSeconds=$TimeoutSeconds; mode=$Mode; handoffReceipt=$HandoffReceipt; node=$Node; feedDirectory=$FeedDirectory } |\n' +
+    '  ConvertTo-Json | Set-Content -LiteralPath $request -Encoding UTF8\n' +
+    ". (Join-Path $PSScriptRoot 'owned-process.ps1')\n" +
+    "$task = 'MurageCI-winhide-' + [Guid]::NewGuid().ToString('N')\n" +
+    "$scheduler = Join-Path $env:SystemRoot 'System32\\schtasks.exe'\n" +
+    "$powershell = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'\n" +
+    "$action = ((@($powershell, '-NoP', '-NonI', '-EP', 'Bypass', '-W', 'Hidden', '-File', (Join-Path $PSScriptRoot 'desktop-task.ps1'), '-Request', $request) | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' ')\n" +
+    "if ($action.Length -gt 260) { throw 'Task action exceeds schtasks /TR limit; use a shorter OutputDirectory' }\n" +
+    '# /SC ONCE is only a safety trigger; /Run starts the task immediately. A past\n' +
+    '# date prevents an accidental second run if the machine stays up overnight.\n' +
+    '$registered = $false\n' +
+    '$complete = $false\n' +
+    'try {\n' +
+    "  $create = Invoke-WindowsNative $scheduler @('/Create', '/TN', $task, '/TR', $action, '/SC', 'ONCE', '/SD', '01/01/2000', '/ST', '00:00', '/RU', $InteractiveUser, '/IT', '/RL', 'LIMITED')\n" +
+    '  if ($create.ExitCode -ne 0) { throw "Interactive task registration failed: $($create.Stdout) $($create.Stderr)" }\n' +
+    '  $registered = $true\n' +
+    "  $xml = Invoke-WindowsNative $scheduler @('/Query', '/TN', $task, '/XML')\n" +
+    '  if ($xml.ExitCode -ne 0) { throw "Task XML readback failed: $($xml.Stderr)" }\n' +
+    "  $xml.Stdout | Set-Content -LiteralPath (Join-Path $output 'task.xml') -Encoding UTF8\n" +
+    '  [xml]$definition = $xml.Stdout\n' +
+    "  if ($definition.Task.Principals.Principal.LogonType -ne 'InteractiveToken') { throw 'Task is not InteractiveToken (/IT)' }\n" +
+    "  $started = Invoke-WindowsNative $scheduler @('/Run', '/TN', $task)\n" +
+    '  if ($started.ExitCode -ne 0) { throw "Task start failed: $($started.Stderr)" }\n' +
+    '  $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds + 90)\n' +
+    "  $statusFile = Join-Path $output 'task-status.json'\n" +
+    '  while (-not (Test-Path -LiteralPath $statusFile -PathType Leaf)) {\n' +
+    "    if ([DateTime]::UtcNow -gt $deadline) { throw 'Interactive task timed out; verify the named user is logged on to the Desktop' }\n" +
+    '    Start-Sleep -Milliseconds 500\n' +
+    '  }\n' +
+    '  $status = Get-Content -LiteralPath $statusFile -Raw | ConvertFrom-Json\n' +
+    '  # Wait for the task process itself to finish after committing its status.\n' +
+    "  $service = New-Object -ComObject 'Schedule.Service'\n" +
+    '  $service.Connect()\n' +
+    "  $registeredTask = $service.GetFolder('\\').GetTask($task)\n" +
+    '  while ($registeredTask.State -eq 4) {\n' +
+    "    if ([DateTime]::UtcNow -gt $deadline) { throw 'Task wrote status but did not exit' }\n" +
+    '    Start-Sleep -Milliseconds 500\n' +
+    '  }\n' +
+    "  [ordered]@{ name=$task; lastRunTime=$registeredTask.LastRunTime.ToString('O'); lastTaskResult=$registeredTask.LastTaskResult; state=$registeredTask.State } |\n" +
+    "    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'task-result.json') -Encoding UTF8\n" +
+    '  $complete = $true\n' +
+    "  if (Test-Path -LiteralPath (Join-Path $output 'result.txt')) { Get-Content -LiteralPath (Join-Path $output 'result.txt') }\n" +
+    '  if (-not $status.ok -or $registeredTask.LastTaskResult -ne 0) { throw "Desktop gate failed: $($status.error); evidence=$output" }\n' +
+    '} finally {\n' +
+    '  if ($registered) {\n' +
+    '    try {\n' +
+    "      if (-not $complete) { Invoke-WindowsNative $scheduler @('/End', '/TN', $task) | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'task-end.json') -Encoding UTF8 }\n" +
+    '    } finally {\n' +
+    "      $deleted = Invoke-WindowsNative $scheduler @('/Delete', '/TN', $task, '/F')\n" +
+    "      $deleted | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'task-delete.json') -Encoding UTF8\n" +
+    '      if ($deleted.ExitCode -ne 0) { throw "Could not delete owned task $task; see $output\\task-delete.json" }\n' +
+    '    }\n' +
+    '  }\n' +
+    '}\n'
+  
+      at TestContext.<anonymous> (file:///work/scripts/windows/safety.node-test.mjs:9:47)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.start (node:internal/test_runner/test:1262:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: `# OpenSSH is not the desktop. Register /IT under an explicitly named logged-on\n# account; no password, SYSTEM account, service session or stored credential.\n[CmdletBinding()]\nparam(\n  [Parameter(Mandatory=$true)][ValidatePattern('^[0-9a-fA-F]{40}$')][string]$Commit,\n  [Parameter(Mandatory=$true)][string]$InteractiveUser,\n  [Parameter(Mandatory=$true)][string]$OutputDirectory,\n  [string]$Executable = 'C:\\murage-ci\\app\\Murage.exe',\n  [string]$ScenarioScript = 'C:\\murage-ci\\source\\scripts\\windows\\full-packaged-scenario.ps1',\n  [ValidateSet('Desktop','Handoff')][string]$Mode='Desktop',\n  [string]$HandoffReceipt,\n  [string]$Node='C:\\murage-ci\\node\\node.exe',\n  [string]$FeedDirectory='C:\\murage-ci\\feed',\n  [ValidateRange(60,3600)][int]$TimeoutSeconds = 1200\n)\n$ErrorActionPreference = 'Stop'\nSet-StrictMode -Version Latest\nif ($env:OS -ne 'Windows_NT') { throw 'Windows required' }\n# schtasks can otherwise ask for another account's password. This launcher\n# intentionally has no credential path: SSH as the desktop's logged-on user.\n$account = New-Object Security.Principal.NTAccount($InteractiveUser)\n$ownerSid = $account.Translate([Security.Principal.SecurityIdentifier]).Value\nif ($Mode -eq 'Handoff') {\n  if($env:COMPUTERNAME -ine 'gate-win-nogit'){throw 'Handoff is gate-win-nogit only'}\n  $marker=Get-Content -LiteralPath 'C:\\murage-ci\\gate-user.json' -Raw | ConvertFrom-Json\n  if($marker.sid -ne $ownerSid){throw 'Task must use provisioned gate user'}\n  $ScenarioScript='C:\\murage-ci\\source\\scripts\\windows\\updates-handoff.ps1'\n} elseif (-not $HandoffReceipt) {throw 'Desktop gate requires the handoff receipt and its artifacts'}\nif ($Mode -ne 'Handoff' -and $ownerSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) { throw 'SSH/task registration must use the same account as the logged-on Desktop user; no credentials are accepted' }\n$root = 'C:\\murage-ci'\n$Executable = (Resolve-Path -LiteralPath $Executable).Path\n$ScenarioScript = (Resolve-Path -LiteralPath $ScenarioScript).Path\n$output = [IO.Path]::GetFullPath($OutputDirectory).TrimEnd('\\')\nforeach ($file in @($Executable, $ScenarioScript, $output)) {\n  if (-not $file.StartsWith($root + '\\', [StringComparison]::OrdinalIgnoreCase)) { throw 'Inputs and evidence must be under C:\\murage-ci' }\n}\nif (Test-Path -LiteralPath $output) { throw 'OutputDirectory must be new (prevents stale evidence)' }\nNew-Item -ItemType Directory -Path $output | Out-Null\n$request = Join-Path $output 'request.json'\n[ordered]@{ executable=$Executable; scenarioScript=$ScenarioScript; commit=$Commit; timeoutSeconds=$TimeoutSeconds; mode=$Mode; handoffReceipt=$HandoffReceipt; node=$Node; feedDirectory=$FeedDirectory } |\n  ConvertTo-Json | Set-Content -LiteralPath $request -Encoding UTF8\n. (Join-Path $PSScriptRoot 'owned-process.ps1')\n$task = 'MurageCI-winhide-' + [Guid]::NewGuid().ToString('N')\n$scheduler = Join-Path $env:SystemRoot 'System32\\schtasks.exe'\n$powershell = Join-Path $env:SystemRoot 'System32\\WindowsPowerShell\\v1.0\\powershell.exe'\n$action = ((@($powershell, '-NoP', '-NonI', '-EP', 'Bypass', '-W', 'Hidden', '-File', (Join-Path $PSScriptRoot 'desktop-task.ps1'), '-Request', $request) | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' ')\nif ($action.Length -gt 260) { throw 'Task action exceeds schtasks /TR limit; use a shorter OutputDirectory' }\n# /SC ONCE is only a safety trigger; /Run starts the task immediately. A past\n# date prevents an accidental second run if the machine stays up overnight.\n$registered = $false\n$complete = $false\ntry {\n  $create = Invoke-WindowsNative $scheduler @('/Create', '/TN', $task, '/TR', $action, '/SC', 'ONCE', '/SD', '01/01/2000', '/ST', '00:00', '/RU', $InteractiveUser, '/IT', '/RL', 'LIMITED')\n  if ($create.ExitCode -ne 0) { throw "Interactive task registration failed: $($create.Stdout) $($create.Stderr)" }\n  $registered = $true\n  $xml = Invoke-WindowsNative $scheduler @('/Query', '/TN', $task, '/XML')\n  if ($xml.ExitCode -ne 0) { throw "Task XML readback failed: $($xml.Stderr)" }\n  $xml.Stdout | Set-Content -LiteralPath (Join-Path $output 'task.xml') -Encoding UTF8\n  [xml]$definition = $xml.Stdout\n  if ($definition.Task.Principals.Principal.LogonType -ne 'InteractiveToken') { throw 'Task is not InteractiveToken (/IT)' }\n  $started = Invoke-WindowsNative $scheduler @('/Run', '/TN', $task)\n  if ($started.ExitCode -ne 0) { throw "Task start failed: $($started.Stderr)" }\n  $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds + 90)\n  $statusFile = Join-Path $output 'task-status.json'\n  while (-not (Test-Path -LiteralPath $statusFile -PathType Leaf)) {\n    if ([DateTime]::UtcNow -gt $deadline) { throw 'Interactive task timed out; verify the named user is logged on to the Desktop' }\n    Start-Sleep -Milliseconds 500\n  }\n  $status = Get-Content -LiteralPath $statusFile -Raw | ConvertFrom-Json\n  # Wait for the task process itself to finish after committing its status.\n  $service = New-Object -ComObject 'Schedule.Service'\n  $service.Connect()\n  $registeredTask = $service.GetFolder('\\').GetTask($task)\n  while ($registeredTask.State -eq 4) {\n    if ([DateTime]::UtcNow -gt $deadline) { throw 'Task wrote status but did not exit' }\n    Start-Sleep -Milliseconds 500\n  }\n  [ordered]@{ name=$task; lastRunTime=$registeredTask.LastRunTime.ToString('O'); lastTaskResult=$registeredTask.LastTaskResult; state=$registeredTask.State } |\n    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'task-result.json') -Encoding UTF8\n  $complete = $true\n  if (Test-Path -LiteralPath (Join-Path $output 'result.txt')) { Get-Content -LiteralPath (Join-Path $output 'result.txt') }\n  if (-not $status.ok -or $registeredTask.LastTaskResult -ne 0) { throw "Desktop gate failed: $($status.error); evidence=$output" }\n} finally {\n  if ($registered) {\n    try {\n      if (-not $complete) { Invoke-WindowsNative $scheduler @('/End', '/TN', $task) | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'task-end.json') -Encoding UTF8 }\n    } finally {\n      $deleted = Invoke-WindowsNative $scheduler @('/Delete', '/TN', $task, '/F')\n      $deleted | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'task-delete.json') -Encoding UTF8\n      if ($deleted.ExitCode -ne 0) { throw "Could not delete owned task $task; see $output\\task-delete.json" }\n    }\n  }\n}\n`,
+    expected: /finally\s*\{\s*Complete-RunLedger/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at scripts/windows/safety.node-test.mjs:12:1
+✖ P1-2 physical containment checks existing ancestors before writes (0.988293ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/work/scripts/windows/package-identity.mjs' imported from /work/scripts/windows/safety.node-test.mjs
+      at finalizeResolution (node:internal/modules/esm/resolve:272:11)
+      at moduleResolve (node:internal/modules/esm/resolve:879:10)
+      at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+      at #resolve (node:internal/modules/esm/loader:687:17)
+      at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+      at node:internal/modules/esm/loader:636:32
+      at TracingChannel.tracePromise (node:diagnostics_channel:362:14) {
+    code: 'ERR_MODULE_NOT_FOUND',
+    url: 'file:///work/scripts/windows/package-identity.mjs'
+  }
+
+test at scripts/windows/safety.node-test.mjs:21:1
+✖ P1-3 full staged tree and embedded provenance are verified (0.794273ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/work/scripts/windows/package-identity.mjs' imported from /work/scripts/windows/safety.node-test.mjs
+      at finalizeResolution (node:internal/modules/esm/resolve:272:11)
+      at moduleResolve (node:internal/modules/esm/resolve:879:10)
+      at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+      at #resolve (node:internal/modules/esm/loader:687:17)
+      at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+      at node:internal/modules/esm/loader:636:32
+      at TracingChannel.tracePromise (node:diagnostics_channel:362:14) {
+    code: 'ERR_MODULE_NOT_FOUND',
+    url: 'file:///work/scripts/windows/package-identity.mjs'
+  }
+
+test at scripts/windows/safety.node-test.mjs:32:1
+✖ P2-1 observation needs group controls, a final gap, and full coverage (0.853292ms)
+  Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/work/scripts/windows/observation.mjs' imported from /work/scripts/windows/safety.node-test.mjs
+      at finalizeResolution (node:internal/modules/esm/resolve:272:11)
+      at moduleResolve (node:internal/modules/esm/resolve:879:10)
+      at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+      at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+      at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+      at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+      at #resolve (node:internal/modules/esm/loader:687:17)
+      at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+      at node:internal/modules/esm/loader:636:32
+      at TracingChannel.tracePromise (node:diagnostics_channel:362:14) {
+    code: 'ERR_MODULE_NOT_FOUND',
+    url: 'file:///work/scripts/windows/observation.mjs'
+  }
+
+test at scripts/windows/safety.node-test.mjs:38:1
+✖ P2-2 fixture environment is set before either helper compiles (0.638672ms)
+  AssertionError [ERR_ASSERTION]: desktop-task.ps1
+      at TestContext.<anonymous> (file:///work/scripts/windows/safety.node-test.mjs:40:69)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at scripts/windows/safety.node-test.mjs:45:1
+✖ P2-3 every tested scheduler completion requires a fresh publication (1.677875ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /function Await-Publication/. Input:
+  
+  '[CmdletBinding()]\n' +
+    "param([ValidateSet('Open','Closed','Cleanup')][string]$Mode,[string]$Fixture,[string]$Executable)\n" +
+    "$ErrorActionPreference='Stop'\n" +
+    'Set-StrictMode -Version Latest\n' +
+    ". (Join-Path $PSScriptRoot 'owned-process.ps1')\n" +
+    "$service=New-Object -ComObject 'Schedule.Service'\n" +
+    '$service.Connect()\n' +
+    "$evidence=Join-Path $Fixture 'evidence'\n" +
+    "$record=Join-Path $Fixture 'sentinel-owned.json'\n" +
+    "$base=Join-Path $env:LOCALAPPDATA 'MurageSentinel'\n" +
+    "$expectedData=if($env:MURAGE_DATA_DIR){$env:MURAGE_DATA_DIR}else{Join-Path $env:USERPROFILE '.murage'}\n" +
+    'function Owned-Descriptors {\n' +
+    '  if (-not (Test-Path -LiteralPath $base)) { return @() }\n' +
+    '  @(Get-ChildItem -LiteralPath $base -Filter descriptor.json -Recurse -File | Where-Object {\n' +
+    '    $d=Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json\n' +
+    "    # Bound to the fixture's data directory, including after the handoff changes executable path.\n" +
+    '    $d.installationRoot -eq $expectedData\n' +
+    '  })\n' +
+    '}\n' +
+    'function Await-Run($Task,[datetime]$After) {\n' +
+    '  $deadline=[DateTime]::Now.AddSeconds(75)\n' +
+    '  do {\n' +
+    '    Start-Sleep -Milliseconds 250\n' +
+    '    if($Task.LastRunTime -gt $After -and $Task.State -ne 4) {\n' +
+    '      if($Task.LastTaskResult -ne 0){throw "Scanner exit $($Task.LastTaskResult)"}\n' +
+    '      return $Task.LastRunTime\n' +
+    '    }\n' +
+    '  }while([DateTime]::Now -lt $deadline)\n' +
+    "  throw 'No successful scheduler run before deadline'\n" +
+    '}\n' +
+    "if($Mode -eq 'Cleanup') {\n" +
+    '  $names=@()\n' +
+    '  if(Test-Path -LiteralPath $record){$names+=@((Get-Content -LiteralPath $record -Raw | ConvertFrom-Json).names)}\n' +
+    "  foreach($file in @(Owned-Descriptors)){$names+='\\FerroxLabs\\Murage\\Sentinel\\'+$file.Directory.Name}\n" +
+    '  foreach($name in @($names | Select-Object -Unique)) {\n' +
+    "    try {$task=$service.GetFolder('\\').GetTask($name)} catch {continue}\n" +
+    '    $task.Stop(0)\n' +
+    '    $stopDeadline=[DateTime]::UtcNow.AddSeconds(10)\n' +
+    "    while($task.GetInstances(0).Count -gt 0){if([DateTime]::UtcNow -gt $stopDeadline){throw 'Owned scanner task did not stop'};Start-Sleep -Milliseconds 100}\n" +
+    '    $folder=Split-Path -Parent $name; $leaf=Split-Path -Leaf $name\n' +
+    '    $service.GetFolder($folder).DeleteTask($leaf,0)\n' +
+    '  }\n' +
+    '  return\n' +
+    '}\n' +
+    '$deadline=[DateTime]::Now.AddSeconds(90)\n' +
+    'do {\n' +
+    '  $files=@(Owned-Descriptors)\n' +
+    '  if($files.Count -eq 1){break}\n' +
+    '  Start-Sleep -Milliseconds 250\n' +
+    '}while([DateTime]::Now -lt $deadline)\n' +
+    "if($files.Count -ne 1){throw 'Expected one fixture-owned Sentinel descriptor'}\n" +
+    '$descriptor=$files[0].FullName\n' +
+    '$d=Get-Content -LiteralPath $descriptor -Raw | ConvertFrom-Json\n' +
+    "if($d.executable.path -ne $Executable){throw 'Descriptor must name packaged executable'}\n" +
+    "if(-not $d.executable.entry.StartsWith($files[0].DirectoryName+'\\runtime\\',[StringComparison]::OrdinalIgnoreCase)){throw 'Scanner entry escaped owned runtime'}\n" +
+    "if((Get-FileHash -LiteralPath $d.executable.entry -Algorithm SHA256).Hash -ne $d.executable.sha256){throw 'Scanner entry digest mismatch'}\n" +
+    "$name='\\FerroxLabs\\Murage\\Sentinel\\'+$files[0].Directory.Name\n" +
+    "$task=$service.GetFolder('\\').GetTask($name)\n" +
+    '[xml]$xml=$task.Xml\n' +
+    `if($xml.Task.Actions.Exec.Command -ne $Executable -or $xml.Task.Actions.Exec.Arguments -notlike '*--murage-sentinel-scan*' -or $xml.Task.Actions.Exec.Arguments -notlike "*$descriptor*"){throw 'Task does not invoke packaged scheduler entry'}\n` +
+    "if($xml.Task.Principals.Principal.LogonType -ne 'InteractiveToken' -or $xml.Task.Triggers.LogonTrigger.Repetition.Interval -ne 'PT2M'){throw 'Wrong production schedule'}\n" +
+    "$clone='MurageCI-sentinel-'+[Guid]::NewGuid().ToString('N')\n" +
+    '@{names=@($name,$clone)} | ConvertTo-Json | Set-Content -LiteralPath $record -Encoding UTF8\n' +
+    "$task.Xml | Set-Content -LiteralPath (Join-Path $evidence 'sentinel-task.xml') -Encoding UTF8\n" +
+    '$before=$task.LastRunTime\n' +
+    '[void]$task.Run($null)\n' +
+    '$ran=Await-Run $task $before\n' +
+    "$viewFile=Join-Path $files[0].DirectoryName 'view.json'\n" +
+    '$view=Get-Content -LiteralPath $viewFile -Raw | ConvertFrom-Json\n' +
+    "if($view.summary.scanner -ne 'running' -or -not $view.summary.lastCheckedAt){throw 'Scanner did not publish a checked view'}\n" +
+    "Copy-Item -LiteralPath $viewFile -Destination (Join-Path $evidence ('sentinel-view-'+$Mode.ToLowerInvariant()+'.json'))\n" +
+    "if($Mode -eq 'Open') {\n" +
+    "  @{descriptor=$descriptor;entry=$d.executable.entry;task=$name;lastTaskResult=$task.LastTaskResult;lastRunTime=$ran.ToString('O');app='open'} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidence 'sentinel-open.json') -Encoding UTF8\n" +
+    '  return\n' +
+    '}\n' +
+    '# Use the exact packaged task action under a gate-owned real time trigger. No /Run on this task.\n' +
+    '# A newly registered production LogonTrigger cannot repeat until the next logon.\n' +
+    '$ns=New-Object Xml.XmlNamespaceManager($xml.NameTable)\n' +
+    "$ns.AddNamespace('t',$xml.DocumentElement.NamespaceURI)\n" +
+    "$triggers=$xml.SelectSingleNode('/t:Task/t:Triggers',$ns)\n" +
+    '$triggers.RemoveAll()\n' +
+    "$trigger=$xml.CreateElement('TimeTrigger',$xml.DocumentElement.NamespaceURI)\n" +
+    `$trigger.InnerXml='<Repetition xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Interval>PT1M</Interval><Duration>PT4M</Duration><StopAtDurationEnd>true</StopAtDurationEnd></Repetition><StartBoundary xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">'+[DateTime]::Now.AddSeconds(10).ToString('yyyy-MM-ddTHH:mm:ss')+'</StartBoundary><Enabled xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">true</Enabled>'\n` +
+    '[void]$triggers.AppendChild($trigger)\n' +
+    "$xml.Task.RegistrationInfo.URI='\\'+$clone\n" +
+    "$xml.OuterXml | Set-Content -LiteralPath (Join-Path $evidence 'sentinel-recurring.xml') -Encoding UTF8\n" +
+    '$recurring=$null\n' +
+    'try {\n' +
+    "  $recurring=$service.GetFolder('\\').RegisterTask($clone,$xml.OuterXml,2,$null,$null,3,$null)\n" +
+    '  $first=Await-Run $recurring ([DateTime]::Now.AddSeconds(-1))\n' +
+    '  $second=Await-Run $recurring $first\n' +
+    "  @{descriptor=$descriptor;task=$name;closedManualRun=$ran.ToString('O');recurringTask=$clone;recurringRuns=2;times=@($first.ToString('O'),$second.ToString('O'));lastTaskResult=$recurring.LastTaskResult;app='closed'} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidence 'sentinel-closed.json') -Encoding UTF8\n" +
+    '} finally {\n' +
+    "  if($null -ne $recurring){$recurring.Stop(0);$service.GetFolder('\\').DeleteTask($clone,0)}\n" +
+    '}\n'
+  
+      at TestContext.<anonymous> (file:///work/scripts/windows/safety.node-test.mjs:46:49)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: `[CmdletBinding()]\nparam([ValidateSet('Open','Closed','Cleanup')][string]$Mode,[string]$Fixture,[string]$Executable)\n$ErrorActionPreference='Stop'\nSet-StrictMode -Version Latest\n. (Join-Path $PSScriptRoot 'owned-process.ps1')\n$service=New-Object -ComObject 'Schedule.Service'\n$service.Connect()\n$evidence=Join-Path $Fixture 'evidence'\n$record=Join-Path $Fixture 'sentinel-owned.json'\n$base=Join-Path $env:LOCALAPPDATA 'MurageSentinel'\n$expectedData=if($env:MURAGE_DATA_DIR){$env:MURAGE_DATA_DIR}else{Join-Path $env:USERPROFILE '.murage'}\nfunction Owned-Descriptors {\n  if (-not (Test-Path -LiteralPath $base)) { return @() }\n  @(Get-ChildItem -LiteralPath $base -Filter descriptor.json -Recurse -File | Where-Object {\n    $d=Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json\n    # Bound to the fixture's data directory, including after the handoff changes executable path.\n    $d.installationRoot -eq $expectedData\n  })\n}\nfunction Await-Run($Task,[datetime]$After) {\n  $deadline=[DateTime]::Now.AddSeconds(75)\n  do {\n    Start-Sleep -Milliseconds 250\n    if($Task.LastRunTime -gt $After -and $Task.State -ne 4) {\n      if($Task.LastTaskResult -ne 0){throw "Scanner exit $($Task.LastTaskResult)"}\n      return $Task.LastRunTime\n    }\n  }while([DateTime]::Now -lt $deadline)\n  throw 'No successful scheduler run before deadline'\n}\nif($Mode -eq 'Cleanup') {\n  $names=@()\n  if(Test-Path -LiteralPath $record){$names+=@((Get-Content -LiteralPath $record -Raw | ConvertFrom-Json).names)}\n  foreach($file in @(Owned-Descriptors)){$names+='\\FerroxLabs\\Murage\\Sentinel\\'+$file.Directory.Name}\n  foreach($name in @($names | Select-Object -Unique)) {\n    try {$task=$service.GetFolder('\\').GetTask($name)} catch {continue}\n    $task.Stop(0)\n    $stopDeadline=[DateTime]::UtcNow.AddSeconds(10)\n    while($task.GetInstances(0).Count -gt 0){if([DateTime]::UtcNow -gt $stopDeadline){throw 'Owned scanner task did not stop'};Start-Sleep -Milliseconds 100}\n    $folder=Split-Path -Parent $name; $leaf=Split-Path -Leaf $name\n    $service.GetFolder($folder).DeleteTask($leaf,0)\n  }\n  return\n}\n$deadline=[DateTime]::Now.AddSeconds(90)\ndo {\n  $files=@(Owned-Descriptors)\n  if($files.Count -eq 1){break}\n  Start-Sleep -Milliseconds 250\n}while([DateTime]::Now -lt $deadline)\nif($files.Count -ne 1){throw 'Expected one fixture-owned Sentinel descriptor'}\n$descriptor=$files[0].FullName\n$d=Get-Content -LiteralPath $descriptor -Raw | ConvertFrom-Json\nif($d.executable.path -ne $Executable){throw 'Descriptor must name packaged executable'}\nif(-not $d.executable.entry.StartsWith($files[0].DirectoryName+'\\runtime\\',[StringComparison]::OrdinalIgnoreCase)){throw 'Scanner entry escaped owned runtime'}\nif((Get-FileHash -LiteralPath $d.executable.entry -Algorithm SHA256).Hash -ne $d.executable.sha256){throw 'Scanner entry digest mismatch'}\n$name='\\FerroxLabs\\Murage\\Sentinel\\'+$files[0].Directory.Name\n$task=$service.GetFolder('\\').GetTask($name)\n[xml]$xml=$task.Xml\nif($xml.Task.Actions.Exec.Command -ne $Executable -or $xml.Task.Actions.Exec.Arguments -notlike '*--murage-sentinel-scan*' -or $xml.Task.Actions.Exec.Arguments -notlike "*$descriptor*"){throw 'Task does not invoke packaged scheduler entry'}\nif($xml.Task.Principals.Principal.LogonType -ne 'InteractiveToken' -or $xml.Task.Triggers.LogonTrigger.Repetition.Interval -ne 'PT2M'){throw 'Wrong production schedule'}\n$clone='MurageCI-sentinel-'+[Guid]::NewGuid().ToString('N')\n@{names=@($name,$clone)} | ConvertTo-Json | Set-Content -LiteralPath $record -Encoding UTF8\n$task.Xml | Set-Content -LiteralPath (Join-Path $evidence 'sentinel-task.xml') -Encoding UTF8\n$before=$task.LastRunTime\n[void]$task.Run($null)\n$ran=Await-Run $task $before\n$viewFile=Join-Path $files[0].DirectoryName 'view.json'\n$view=Get-Content -LiteralPath $viewFile -Raw | ConvertFrom-Json\nif($view.summary.scanner -ne 'running' -or -not $view.summary.lastCheckedAt){throw 'Scanner did not publish a checked view'}\nCopy-Item -LiteralPath $viewFile -Destination (Join-Path $evidence ('sentinel-view-'+$Mode.ToLowerInvariant()+'.json'))\nif($Mode -eq 'Open') {\n  @{descriptor=$descriptor;entry=$d.executable.entry;task=$name;lastTaskResult=$task.LastTaskResult;lastRunTime=$ran.ToString('O');app='open'} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidence 'sentinel-open.json') -Encoding UTF8\n  return\n}\n# Use the exact packaged task action under a gate-owned real time trigger. No /Run on this task.\n# A newly registered production LogonTrigger cannot repeat until the next logon.\n$ns=New-Object Xml.XmlNamespaceManager($xml.NameTable)\n$ns.AddNamespace('t',$xml.DocumentElement.NamespaceURI)\n$triggers=$xml.SelectSingleNode('/t:Task/t:Triggers',$ns)\n$triggers.RemoveAll()\n$trigger=$xml.CreateElement('TimeTrigger',$xml.DocumentElement.NamespaceURI)\n$trigger.InnerXml='<Repetition xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Interval>PT1M</Interval><Duration>PT4M</Duration><StopAtDurationEnd>true</StopAtDurationEnd></Repetition><StartBoundary xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">'+[DateTime]::Now.AddSeconds(10).ToString('yyyy-MM-ddTHH:mm:ss')+'</StartBoundary><Enabled xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">true</Enabled>'\n[void]$triggers.AppendChild($trigger)\n$xml.Task.RegistrationInfo.URI='\\'+$clone\n$xml.OuterXml | Set-Content -LiteralPath (Join-Path $evidence 'sentinel-recurring.xml') -Encoding UTF8\n$recurring=$null\ntry {\n  $recurring=$service.GetFolder('\\').RegisterTask($clone,$xml.OuterXml,2,$null,$null,3,$null)\n  $first=Await-Run $recurring ([DateTime]::Now.AddSeconds(-1))\n  $second=Await-Run $recurring $first\n  @{descriptor=$descriptor;task=$name;closedManualRun=$ran.ToString('O');recurringTask=$clone;recurringRuns=2;times=@($first.ToString('O'),$second.ToString('O'));lastTaskResult=$recurring.LastTaskResult;app='closed'} | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidence 'sentinel-closed.json') -Encoding UTF8\n} finally {\n  if($null -ne $recurring){$recurring.Stop(0);$service.GetFolder('\\').DeleteTask($clone,0)}\n}\n`,
+    expected: /function Await-Publication/,
+    operator: 'match',
+    diff: 'simple'
+  }
+
+test at scripts/windows/safety.node-test.mjs:49:1
+✖ P2-4 includes Claude Node cmd and all OS shell rows (1.117524ms)
+  AssertionError [ERR_ASSERTION]: fake-claude-cli.ts
+      at TestContext.<anonymous> (file:///work/scripts/windows/safety.node-test.mjs:50:144)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }

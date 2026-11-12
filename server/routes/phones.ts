@@ -56,7 +56,7 @@ const OFFER_ID = new RegExp(`^${UUID}$`);
 const leaseBody = z.strictObject({ offerId: z.string().regex(OFFER_ID) });
 const foregroundBody = z.strictObject({ active: z.boolean() });
 const revokeBody = z.strictObject({ deviceId: z.string().regex(DEVICE_ID), reason: z.enum(["removed", "switch-off"]) });
-const mintedBody = z.strictObject({ deviceId: z.string().regex(DEVICE_ID), scope: z.enum(["jobs", "ask"]).optional() });
+const mintedBody = z.strictObject({ deviceId: z.string().regex(DEVICE_ID), scope: z.enum(["jobs", "ask"]).optional(), wantsDeviceId: z.boolean().optional() });
 
 const askRevokeBody = z.strictObject({ deviceId: z.string().regex(DEVICE_ID), through: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER) });
 
@@ -93,7 +93,10 @@ export async function phoneRoute(req: PhoneRouteRequest, deps: PhoneRouteDeps): 
   if (path === "/api/phones") {
     if (method !== "GET") return answer(405, { error: "method not allowed" });
     if (!req.desktop) return answer(403, { error: "That belongs to the Murage app on this computer." });
-    return answer(200, { phones: deps.registry.list() });
+    // deviceIdOptIn is explicit for every phone. true: the latest ask mint opted in. false: it minted without opting in (paired before pin-at-pairing),
+    // which the desktop row tells to pair again. "unknown": this host has no record (a jobs-only phone, or one that minted before the host kept a record),
+    // which gets neutral guidance and no claim that it must pair again. A desktop that predates "unknown" compares only against false.
+    return answer(200, { phones: deps.registry.list().map((phone) => ({ ...phone, deviceIdOptIn: deps.registry.deviceIdOptIn(phone.deviceId) ?? "unknown" })) });
   }
 
   if (path === "/api/phones/revoke" || path === "/api/phones/minted") {
@@ -107,6 +110,7 @@ export async function phoneRoute(req: PhoneRouteRequest, deps: PhoneRouteDeps): 
       // Only a jobs mint clears the jobs barrier. An ask mint has no barrier to clear: its refusal is the generation the door sends,
       // which only grows, so the new token (a higher generation) is accepted and every older one stays refused.
       if (body.value.scope !== "ask") deps.revocations.clear(body.value.deviceId);
+      else deps.registry.setDeviceIdOptIn(body.value.deviceId, body.value.wantsDeviceId === true);
       return answer(200, { ok: true });
     }
     const body = await bodyOf(req, revokeBody);

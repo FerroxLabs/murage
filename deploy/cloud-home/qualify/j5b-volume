@@ -1,0 +1,14 @@
+#!/bin/bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# J5b rig: stands in for the volume attach of murage-volume.service. A 64 MB loop file on the ROOT DISK (not tmpfs, so a sysrq reboot keeps it) behind
+# dm "murage-data" (ext4 made once). Installed as /usr/local/libexec/j5b-volume and wired in by the murage-volume.service drop-in.
+set -euo pipefail
+IMG=/var/lib/j5b/data.img
+mkdir -p /var/lib/j5b
+[ -f "$IMG" ] || { truncate -s 64M "$IMG"; }
+LOOP=$(losetup -j "$IMG" -O NAME -n | head -n1)
+[ -n "$LOOP" ] || LOOP=$(losetup --find --show "$IMG")
+if [ ! -e /dev/mapper/murage-data ]; then
+  dmsetup create murage-data --table "0 $(blockdev --getsz "$LOOP") linear $LOOP 0"
+fi
+blkid /dev/mapper/murage-data >/dev/null 2>&1 || mkfs.ext4 -q -L murage-data /dev/mapper/murage-data

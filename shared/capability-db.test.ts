@@ -59,6 +59,17 @@ const SLICE = [
 ];
 
 describe("capability database", () => {
+  it("reads localized, shared and literal card names from the rendered registry", async () => {
+    const { buildNavigation } = await import("../scripts/build-capability-db.mjs");
+    const { cards } = buildNavigation();
+    expect(cards.get("memory/browser")?.label).toBe("Open memory");
+    expect(cards.get("general/send-key")?.label).toBe("Sending messages");
+    expect(cards.get("connections/bot-email")?.label).toBe("Bot email");
+    expect(cards.get("connections/phone-calls")?.label).toBe("Phone calls");
+    expect(cards.get("about/health")?.label).toBe("Health");
+    expect(cards.get("usage/spend-limit")?.label).toBe("Monthly spending notice");
+  });
+
   it("is valid and the generated file is fresh (recomputed from the sources, never the committed inventory)", () => {
     const result = run(["--check"]);
     expect(result.out).toContain("capability db up to date");
@@ -169,7 +180,7 @@ describe("export and diff", () => {
     expect(JSON.stringify(exported)).not.toContain("\"internal\"");
     for (const record of exported.entries) expect(record.applies).toMatch(/^Applies to /);
     expect(exported.valid_paths).toEqual(expect.arrayContaining([
-      "Settings → Bots → Advanced → Time limit for bot activity in channels", "Settings → Memory → Learn about me", "Team map", "Routines", "Connected apps", "Tools",
+      "Settings → How every bot behaves → Advanced → Time limit for bot activity in channels", "Settings → Memory → Learn about me", "Team map", "Routines", "Connected apps", "Tools",
     ]));
     const diff = run(["--diff", join(scratch, "no-previous.json"), "--current", file]);
     expect(diff.ok).toBe(true);

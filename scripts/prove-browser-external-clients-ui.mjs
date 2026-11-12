@@ -21,7 +21,7 @@ export async function api(path,options={}){const body=options.body?JSON.parse(op
  if(mode==='error')throw new Error('Connection settings unavailable. Reopen Murage and try again.');
  if(!body)return structuredClone(settings);
  if(body.action==='enabled')settings={...settings,enabled:body.enabled};
- if(body.action==='pair'){if(mode==='pair-error')throw new Error('Browser profile disconnected. Reconnect it before pairing.');settings={...settings,clients:[{clientId:'client_fixture',label:body.label}]};return {config:{mcpServers:{murage:{command:'/Applications/Fixture Murage.app/Contents/MacOS/Murage',args:['/Volumes/Scratch/fixture/browser-extension-mcp.js'],env:{ELECTRON_RUN_AS_NODE:'1',MURAGE_BROWSER_MCP_CONFIG:'/Volumes/Scratch/fixture/private/client_fixture.json'}}}}};}
+ if(body.action==='pair'){if(mode==='pair-error')throw new Error('Browser profile disconnected. Reconnect it before pairing.');settings={...settings,clients:[{clientId:'client_fixture',label:body.label}]};return {config:{mcpServers:{murage:{command:'/Applications/Fixture Murage.app/Contents/MacOS/Murage',args:['/Volumes/Fixture/fixture/browser-extension-mcp.js'],env:{ELECTRON_RUN_AS_NODE:'1',MURAGE_BROWSER_MCP_CONFIG:'/Volumes/Fixture/fixture/private/client_fixture.json'}}}}};}
  if(body.action==='revoke')settings={...settings,clients:settings.clients.filter(client=>client.clientId!==body.clientId)};
  return structuredClone(settings);
 }`);
@@ -41,3 +41,5 @@ try{
  await page.goto(url+'?mode=pair-error');await page.getByRole('textbox',{name:'Agent name'}).fill('Fixture Codex');await page.getByRole('combobox',{name:'Browser profile'}).focus();await page.keyboard.press('e');await page.getByRole('button',{name:'Pair agent',exact:true}).click();await page.getByRole('alert').waitFor();assert.equal(await page.locator('textarea').count(),0);await page.setViewportSize({width:390,height:900});await page.screenshot({path:join(output,'pair-error-390.png'),fullPage:true});receipt.checks.push({name:'pair-error-no-config',pass:true});
  await page.goto(url+'?mode=error');await page.getByRole('alert').waitFor();assert(await page.getByRole('checkbox').isDisabled());await page.screenshot({path:join(output,'offline-390.png'),fullPage:true});receipt.checks.push({name:'offline-disabled',pass:true});assert.deepEqual(errors,[]);receipt.checks.push({name:'console-clean',pass:true});receipt.pass=true;
 }catch(error){receipt.pass=false;receipt.error=error.stack;process.exitCode=1;}finally{await browser?.close();await new Promise(resolve=>server.close(resolve));await writeFile(join(output,'review.json'),JSON.stringify(receipt,null,2));console.log(JSON.stringify(receipt,null,2));}
+
+// secret-scan: fixture (generic /Volumes/Fixture and /Users/fixture paths only; no host data)

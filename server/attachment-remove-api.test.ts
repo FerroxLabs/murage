@@ -1,3 +1,4 @@
+import { engineLimitLine } from "../shared/web-read-routing.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -97,9 +98,12 @@ posixOnly("Remove an attachment (SL-H) through the harness", () => {
         pi: { driver: "piAgent", displayName: "pi fixture", environment: { FAKE_PI_DUMP: piDump }, config: { cli: FAKE_PI, fullAuto: true } },
       },
     }));
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, ["--import", "data:text/javascript,globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;", join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
+      // Existing S4 seam for fake engines in a disposable child.
       env: {
+        NODE_ENV: "test",
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1),
         MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1", MURAGE_MODEL_PROVIDER_CONNECTIONS: "", MURAGE_MODEL_PROVIDER_COMMIT_TOKEN: "",
@@ -208,7 +212,9 @@ posixOnly("Remove an attachment (SL-H) through the harness", () => {
     expect(acpImages(customDump)).toEqual([kept.marker]);
     expect(acpText(customDump)).toContain(tag(unbound.path));
     expect(acpText(customDump)).not.toContain(gone.path);
-    expect(await failures(bot.threadId)).toEqual([]);
+    // 9e6f55e198: a custom engine carries its declared web-reader limitation.
+    // It is the only unsuccessful activity; the removed path still reaches no engine text.
+    expect((await failures(bot.threadId)).map(message => message.tool)).toEqual([{ name: engineLimitLine("customAcp"), ok: false }]);
   }, 90_000);
 
   it("path (pi): the removed image's path is never handed to the engine", async () => {

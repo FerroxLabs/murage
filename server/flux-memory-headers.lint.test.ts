@@ -29,11 +29,25 @@ const REACHES_FLUX = (text: string): boolean =>
   || (/flux/i.test(text) && /fetch\(|fetchImpl|fetcher|\.fetch\b|new WebSocket|WebSocket\(/.test(text));
 const DECIDES = /flux-memory-(headers|wire)/;
 
+/** Generic busy-loop markers also mention Flux in transports that cannot send
+ * a Flux model turn. Keep these reasons shared by both header checks. */
+const BUSYLOOP_NON_FLUX_TURNS: Record<string, string> = {
+  "drivers/headless-target-guard.ts": "browser CDP socket; the marker registers decoded browser messages",
+  "drivers/local-inject.ts": "local-only catalog probes guarded by checkLocalServerUrl; no remote model turn",
+  "drivers/pi.ts": "passes fetchImpl to local-inject catalog discovery; model turns delegate to the headless driver",
+  "drivers/stop-gate.rules.config.ts": "source-expression fingerprints for tests; makes no request",
+  "local-tool-probe.ts": "local-only model probes guarded by checkLocalServerUrl before each request",
+};
+
 /** Files that mention Flux but make no Flux model request of their own, and why. */
 const NO_REQUEST_OF_THEIR_OWN: Record<string, string> = {
+  ...BUSYLOOP_NON_FLUX_TURNS,
+  "flux-contract-endpoints.ts": "read-only endpoint and caller inventory; it makes no request",
   "flux-config.ts": "reads the key",
   "flux-usage-tags.ts": "the usage tag values and the Flux host rule; makes no request",
+  "spend-gate.ts": "UX-L2C-PAUSE: GET /v1/key/limits account reads for the pause; no model request, so no memory headers",
   "flux-limits.ts": "UX-L2C: one GET of the key's monthly limits (/v1/key/limits); an account read, no model request, so no memory headers",
+  "cloud-home/flux-device-code-client.ts": "device-code sign-in and key revoke only; no model request",
   "opencode-config.ts": "connector plan for opencode.json; the headers ride the per-turn OPENCODE_CONFIG_CONTENT (drivers/acp/opencode-go.ts)",
   "announcements.ts": "a comment; announcements are fetched from Ferrox, not Flux",
   "model-gateway.ts": "a comment; the local gateway never falls back to Flux",
@@ -53,6 +67,8 @@ const NO_REQUEST_OF_THEIR_OWN: Record<string, string> = {
   "email/flux-email-client.ts": "bot email /v1/email/* (BOT-EMAIL-MURAGE-109): inbox, send and read routes, no model turn, nothing to capture or recall",
   "email/runtime.ts": "bot email wiring: hands the Flux base to email/flux-email-client.ts, makes no request itself",
   "browser-extension-integration.ts": "FLUX-FREE-MODEL r3: reads fluxKey() only to put a sha256 of it in the browser action checker fence (keyMark, in memory, never stored, logged or sent: designs/FFM-FENCE-NOTE.md:7); the check request is made by browser-action-checker-connection.ts",
+  "cloud-home/flux-home-gate.ts": "a Cloud home's GET /v1/cloud-home/status with its own sub-key (B4): a key check, no model turn, nothing to capture or recall",
+  "drivers/openai-compat.ts": "the model list GET /models for a named endpoint (tagged, a199f87a8): no model turn, nothing to capture or recall; the turn is the shared runtime's",
   "app-trigger-delivery.ts": "connected-app events /v1/app-events/*: claim, ack and the run ledger, no model turn, nothing to capture or recall",
 };
 /** Call-site ids whose code is owned by another lane. They may be unused until that lane lands. */
@@ -110,7 +126,15 @@ describe("stays out of the browser bundle", () => {
   it("flux-routing.ts (read by the model picker in src/lib/model-metadata.ts) reaches no node: module through the memory headers", () => {
     const routing = files.find((file) => file.rel === "flux-routing.ts")!.text;
     const imports = [...routing.matchAll(/^import[^;]*from\s+"([^"]+)"/gm)].map((match) => match[1]);
-    expect(imports.sort()).toEqual(["./contracts.ts", "./flux-memory-wire.ts"]);
+    // The Cloud home's pause and sign-in guards were moved out of the gate module so this file stays free of undici and
+    // node:crypto (ea81de2a3); each may import only the copy table.
+    expect(imports.sort()).toEqual(["./cloud-home/engine-flux-guard.ts", "./cloud-home/flux-pause.ts", "./contracts.ts", "./flux-memory-wire.ts"]);
+    for (const rel of ["cloud-home/engine-flux-guard.ts", "cloud-home/flux-pause.ts", "cloud-home/copy.ts"]) {
+      const guard = files.find((file) => file.rel === rel)!.text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+      expect(guard, rel).not.toMatch(/node:|require\(/);
+      const guardImports = [...guard.matchAll(/^import[^;]*from\s+"([^"]+)"/gm)].map((match) => match[1]);
+      expect(guardImports.filter((spec) => spec !== "./copy.ts"), rel).toEqual([]);
+    }
     const wire = files.find((file) => file.rel === "flux-memory-wire.ts")!.text;
     const code = wire.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
     expect(code).not.toMatch(/^\s*import\s|require\(|node:/m);
@@ -122,7 +146,9 @@ describe("stays out of the browser bundle", () => {
 // with the reason it makes no request of its own, or the reason its requests cannot be tagged.
 const TAGS_USAGE = /flux-usage-tags|fluxCallHeaders|fluxFetch\(|withFluxCallHeaders|fluxTurnDecision|fluxMemorySend|fluxMemoryAtSend/;
 const USAGE_NOT_TAGGED_HERE: Record<string, string> = {
+  ...BUSYLOOP_NON_FLUX_TURNS,
   "flux-routing.ts": "routing tables and the codex provider argv; makes no request",
+  "cloud-home/flux-device-code-client.ts": "device-code sign-in and key revoke only; no model request",
   "flux-config.ts": "reads the key",
   "opencode-config.ts": "connector plan; the tags ride OPENCODE_CONFIG_CONTENT from acp/core.ts fluxTurnDecision",
   "announcements.ts": "a comment; announcements are fetched from Ferrox, not Flux",

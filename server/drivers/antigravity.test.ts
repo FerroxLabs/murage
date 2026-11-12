@@ -1,3 +1,9 @@
+import * as procs from "../procs.ts";
+import { fluxRouteFor } from "../../shared/flux-route.ts";
+vi.mock("../../shared/flux-route.ts", async (original) => {
+  const actual = await original<typeof import("../../shared/flux-route.ts")>();
+  return { ...actual, fluxRouteFor: vi.fn(actual.fluxRouteFor) };
+});
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Antigravity driver contract tests, run against the scripted fake `agy` CLI
@@ -177,6 +183,32 @@ describe("Antigravity turns (fake CLI)", () => {
     delete process.env.FAKE_AGY_VERSION;
     recorder?.stop();
     await instance?.dispose();
+  });
+
+  it("R3 reviewer witness: antigravity text hi reaches a URL decision before the engine prompt", async () => {
+    await create();
+    vi.mocked(fluxRouteFor).mockClear();
+    const observed: number[] = [];
+    const spawn = procs.spawnCli;
+    const spy = vi.spyOn(procs, "spawnCli").mockImplementation((...args) => {
+      const child = spawn(...args);
+      const write = child.stdin.end;
+      child.stdin.end = ((...params: unknown[]) => {
+        try {
+          const frame = JSON.parse(String(params[0]));
+          if (frame.event === "user") observed.push(vi.mocked(fluxRouteFor).mock.calls.length);
+        } catch { /* non-prompt control bytes */ }
+        return Reflect.apply(write, child.stdin, params);
+      }) as typeof write;
+      return child;
+    });
+    try {
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "r3-antigravity", text: "hi" });
+      expect(await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId)).toMatchObject({ ok: true });
+      expect(fluxRouteFor).toHaveBeenCalled();
+      expect(observed).toHaveLength(1);
+      expect(observed[0]).toBeGreaterThan(0);
+    } finally { spy.mockRestore(); }
   });
 
   it("reports exactly one usage total for each of two turns",async()=>{

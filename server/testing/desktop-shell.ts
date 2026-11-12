@@ -154,6 +154,7 @@ export async function startDesktopShell(options: DesktopShellOptions): Promise<D
     secret = "";
     const boot = workspaceCredentialEnv(state.read()) as Record<string, string>;
     child = spawn(process.execPath, ["--import", PARENT_PORT_PRELUDE, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

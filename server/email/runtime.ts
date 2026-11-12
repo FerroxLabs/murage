@@ -11,6 +11,7 @@ import { randomUUID } from "node:crypto";
 import { EmailCapabilityProbe } from "./capabilities.ts";
 import { FluxEmailClient } from "./flux-email-client.ts";
 import { EmailSecretStore, credentialFingerprint, emailCredentialProvider, type EmailSecretsDoc } from "./email-secrets.ts";
+import { adoptLegacyParks } from "./restore.ts";
 import { EmailStore, LIVE_BINDING_STATES, type BindingState } from "./email-store.ts";
 import { EmailSendService, type EmailOutcomeEvent } from "./send-service.ts";
 import { EmailTools, type EmailToolResult } from "./tools.ts";
@@ -19,6 +20,8 @@ import { recordEmailTurn } from "./email-turns.ts";
 import { isEmailToolName } from "../drivers/email-tool-schemas.ts";
 import type { SendRow } from "./email-store.ts";
 import { EmailCards, type EmailCardHost } from "./cards.ts";
+import { deleteScope, tokensFor, type ParkRecord } from "./owner-view.ts";
+import { isGateRefusal } from "./removal-gate.ts";
 import { EmailBindingService, commitDeletionIntent, recordDeletionIntent, withdrawDeletionIntent } from "./binding-service.ts";
 import { EmailEventReader, type EmailArrival } from "./event-reader.ts";
 import type { BotRecord } from "../store.ts";
@@ -37,7 +40,12 @@ export const EMAIL_PRUNE_BATCH = 500;
 export const EMAIL_EVENT_KEEP_MS = 30 * 86_400_000;
 const EVER_ENABLED_SCOPE = "ever-enabled";
 
+import type {ServiceAuthorityReader} from '../narrow-denials.ts';
+
 export interface EmailRuntimeOptions {
+  authorityFor?: ServiceAuthorityReader;
+  /** True while a restore job is open (restore-job.ts restoreWindowOpen): the RemovalGate refuses every removal. */
+  restoreWindow?: () => boolean;
   /** The saved Flux account key (flux-config.ts fluxKey()); only #31 uses it. */
   accountKey: () => string | null;
   /** database.ts database() */
@@ -50,6 +58,8 @@ export interface EmailRuntimeOptions {
   now?: () => number;
   /** Hands every key change to the desktop shell's secret storage. */
   persistSecrets?: (doc: EmailSecretsDoc) => void;
+  /** Cloud: true once the last persisted change is acknowledged durably (index.ts wires the keystore saver); absent = always. */
+  secretsDurable?: () => Promise<boolean>;
   workspaceRoot: (botId: string, threadId: string) => string | undefined;
   bot: (botId: string) => BotRecord | undefined;
   onOutcome?: (event: EmailOutcomeEvent) => void;
@@ -60,14 +70,20 @@ export interface EmailRuntimeOptions {
    *  never a turn. Filtered mail (spam, blocked, unauthenticated) makes no notice; it is listed under Filtered in the panel. */
   onArrival?: (botId: string, threadId: string, notice: { from: string; more: number }) => void;
   log?: (line: string) => void;
+  /** The wait between confirming key reads on a key revoke 404 (binding-service KEY_CONFIRM_WAIT_MS); tests pass a no-op. */
+  sleep?: (ms: number) => Promise<void>;
   /** 2.6 boot: whether the bot's deletion proof (botDeletionKey) exists. Absent = false: an intent without proof waits (L2). */
   deletionProof?: (botId: string) => boolean;
+  /** False keeps email off on this host whatever Flux answers (capabilities.ts `offered`). */
+  offered?: () => boolean;
   /** EMAIL-CAPS-CACHE-1011: DATA_DIR/email-capabilities.json, the last definitive #31 answer for the saved key (caps-file.ts). */
   capsFile?: string;
   /** Told after every capability read lands, so the app reads the status again (the emailStatus socket frame). */
   onStatus?: () => void;
   /** NOLIMITS v1 V6 (b): a marked No limits lane turn; its sends always wait on the Send / Don't send card. */
   holdForOwner?: (threadId: string, botId: string, generation: string) => boolean;
+  /** Crash harness only: named durable boundaries of the removal and Keep paths (binding-service.ts C4..C14). A no-op in production. */
+  checkpoint?: (name: string) => void;
 }
 
 type Services = { db: DatabaseSync; store: EmailStore; send: EmailSendService; tools: EmailTools; bindings: EmailBindingService; cards: EmailCards | null; events: EmailEventReader };
@@ -110,7 +126,7 @@ export class EmailRuntime {
   private readonly options: EmailRuntimeOptions;
   constructor(options: EmailRuntimeOptions) {
     this.options = options;
-    this.secrets = new EmailSecretStore(options.persistSecrets);
+    this.secrets = new EmailSecretStore(options.persistSecrets, options.secretsDurable);
     this.health = new EmailKeyHealth({ now: options.now });
     const account = () => {
       // 1.0.11: the saved key has no email scope (403 email_scope_required, e.g. a dashboard key): once the owner signs in, the
@@ -130,6 +146,7 @@ export class EmailRuntime {
       client: this.client, accountRef: () => { const key = options.accountKey(); return key ? credentialFingerprint(key) : null; },
       ownerKeySaved: () => this.secrets.owner() !== null, now: options.now,
       capsFile: options.capsFile, log: options.log, onRead: () => options.onStatus?.(),
+      ...(options.offered ? { offered: options.offered } : {}),
     });
     // EMAIL-CAPS-CACHE-1011: the first on of a start runs the boot work once (a start that began with no definitive answer included);
     // a later on starts the tick as before, and off stops it as before
@@ -139,6 +156,15 @@ export class EmailRuntime {
       if (this.started && !this.booted) { this.booted = true; this.booting = this.runBoot(this.epoch, false); }
       else this.startTick();
     });
+  }
+
+  /** Section 8.3: from start on, no INSERT into email_parks can run through this connection (restore preparation, the Cloud marker consumer and legacy
+   *  adoption run before, on their own). A park is never created at runtime; dynamic SQL the structure test cannot see aborts here. */
+  private fenceParks(): void {
+    try {
+      const db = this.options.database();
+      if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='email_parks'").get()) db.exec("CREATE TEMP TRIGGER IF NOT EXISTS email_parks_no_insert BEFORE INSERT ON main.email_parks BEGIN SELECT RAISE(ABORT,'park_insert_at_runtime'); END");
+    } catch (error) { this.options.log?.(`[email] park fence: ${(error as Error)?.message ?? error}`); }
   }
 
   /** The launch switch (2.0). */
@@ -151,11 +177,12 @@ export class EmailRuntime {
     const db = this.options.database();
     if (this.current?.db === db) return this.current;
     const store = new EmailStore(db, { transaction: this.options.transaction });
+    if (this.started) this.fenceParks();
     persistTurnMarks(turnMarksIn(store));
     let installId = store.getCursor(INSTALL_ID_SCOPE);
     if (!installId) { installId = randomUUID(); store.setCursor(INSTALL_ID_SCOPE, installId, (this.options.now ?? Date.now)()); }
     const send = new EmailSendService({
-      store, client: this.client, installId, now: this.options.now,
+      store, client: this.client, installId, now: this.options.now, authorityFor:this.options.authorityFor,
       onRefusal: (code, botId, fields) => {
         void this.probe.noteRefusal(code).catch(() => undefined);
         // Flux #519: 403 email_scope_required names the scope it wanted; owner-side log only (scope names, never a key)
@@ -179,9 +206,12 @@ export class EmailRuntime {
       },
     }) : null;
     const bindings = new EmailBindingService({
-      store, client: this.client, secrets: this.secrets, installId, now: this.options.now,
+      store, client: this.client, secrets: this.secrets, installId, now: this.options.now, sleep: this.options.sleep, botExists: botId => Boolean(this.options.bot(botId)), checkpoint: this.options.checkpoint, restoreWindow: this.options.restoreWindow,
       withdrawSends: (botId, reason) => { send.withdrawAllForBot(botId, reason); },
       onRefusal: code => { void this.probe.noteRefusal(code).catch(() => undefined); },
+      onOps: line => this.options.log?.(`[email-ops] ${line.kind} bot=${line.botId} inbox=${line.gen.inboxId} since=${line.window.closingSinceMs} ${line.text}`),
+      // r3.4d parkUnauthorized: the one runtime park INSERT (adoptLegacyParks, on a binding already moved to removal_parked) runs with the INSERT fence lifted, then the fence is back
+      adoptParks: () => { const db = this.options.database(); try { db.exec("DROP TRIGGER IF EXISTS temp.email_parks_no_insert"); adoptLegacyParks(db); } finally { this.fenceParks(); } },
       // section 6: pause and hold raise one email-status notice per inbox per state change, on the bot's own thread
       onStateChange: row => {
         const threadId = this.options.bot(row.botId)?.threadId;
@@ -229,7 +259,7 @@ export class EmailRuntime {
 
   /** store.deleteBot's email hooks (2.6). They act whenever the email tables exist (email on or off now), never create them, never call
    * Flux; commit with email on also moves the binding to removing and wakes the reaper. */
-  deletionHooks(): { record: (id: string) => void; withdraw: (id: string) => void; commit: (id: string) => void } {
+  deletionHooks(): { record: (id: string) => void; withdraw: (id: string) => void; commit: (id: string, emailConfirm?: string) => void } {
     const present = (): EmailStore | null => {
       const services = this.services();
       if (services) return services.store;
@@ -241,12 +271,40 @@ export class EmailRuntime {
     return {
       record: id => { const store = present(); if (store) recordDeletionIntent(store, id, now()); },
       withdraw: id => { const store = present(); if (store) withdrawDeletionIntent(store, id); },
-      commit: id => {
+      commit: (id, emailConfirm) => {
         const services = this.services();
-        if (services) { services.bindings.commitDeletionIntent(id); void services.bindings.reap().catch(() => undefined); return; }
+        if (services) {
+          services.bindings.commitDeletionIntent(id);
+          // r3.1 section 6: the delete counts as the owner's Remove of a parked inbox only with the confirmation the owner saw (a fresh read decides)
+          const park = emailConfirm ? services.store.getPark(id) : null;
+          if (park && this.confirmsDelete(emailConfirm!, park)) {
+            const auth = services.bindings.gate.authorize({ kind: "park", botId: id, parkId: park.parkId, parkRev: park.parkRev, by: "bot_delete" });
+            if (!isGateRefusal(auth)) { void services.bindings.continueRemoval(auth.start, auth.authority).catch(() => undefined); return; }
+          }
+          void services.bindings.reap().catch(() => undefined); return;
+        }
         const store = present(); if (store) commitDeletionIntent(store, id);
       },
     };
+  }
+
+  private confirmsDelete(token: string, park: { parkId: string; parkRev: number; botId: string; address: string | null; inboxId: string | null; keyId: string | null; state: string; remoteDeletedAt: number | null }): boolean {
+    if (park.state !== "parked" || park.remoteDeletedAt !== null || !park.address) return false;
+    return tokensFor(this).check(token, deleteScope(asParkRecord(park)), (this.options.now ?? Date.now)()) === "ok";
+  }
+
+  /** r3.1 section 6.1: what the Delete confirmation says about the bot's email. A parked address (named, not already gone at Flux) comes with the token minted
+   *  from the same read; a live binding names its address with no token; anything else says nothing. */
+  deletionPreviewEmail(botId: string): { address: string; confirm?: string } | null {
+    const services = this.services();
+    if (!services) return null;
+    const park = services.store.getPark(botId);
+    if (park) {
+      if (park.state !== "parked" || park.remoteDeletedAt !== null || !park.address) return null;
+      return { address: park.address, confirm: tokensFor(this).mint(deleteScope(asParkRecord(park)), (this.options.now ?? Date.now)()) };
+    }
+    const binding = services.store.getBinding(botId);
+    return binding?.address && binding.inboxId && binding.state !== "removal_parked" ? { address: binding.address } : null;
   }
 
   /** G15: Flux refused this bot's stored email key; its tools stay unmounted until the key changes (Reconnect rotates it). */
@@ -271,6 +329,7 @@ export class EmailRuntime {
       const db = this.options.database();
       if (db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='email_event_cursor'").get()) persistTurnMarks(turnMarksIn(new EmailStore(db, { transaction: this.options.transaction })));
     } catch { /* marks stay in memory */ }
+    this.fenceParks();
     const epoch = ++this.epoch;
     this.stopped = false;
     this.started = true;
@@ -357,6 +416,7 @@ export class EmailRuntime {
       void services.send.tick().then(async () => {
         await services.bindings.retryStalledSetups();
         await services.cards?.sweep(); services.cards?.digest();
+        await services.bindings.resumeRemovals();
         await services.bindings.reap();
         if (refresh) for (const row of services.store.bindings()) if (LIVE_BINDING_STATES.has(row.state)) await services.bindings.refresh(row.botId).catch(() => undefined);
       }).catch(error => this.options.log?.(`[email] tick: ${(error as Error)?.message ?? error}`));
@@ -404,4 +464,8 @@ export class EmailRuntime {
 export async function stopEmailForTurn(runtime: EmailRuntime, botId: string, generation: string | undefined, map: (generation: string) => number): Promise<void> {
   if (!generation || !runtime.enabled()) return;
   try { await runtime.services()?.send.stop(botId, map(generation)); } catch { /* the next tick retries withdraw_pending rows */ }
+}
+
+function asParkRecord(park: { parkId: string; parkRev: number; botId: string; address: string | null; inboxId: string | null; keyId: string | null; state: string; remoteDeletedAt: number | null }): ParkRecord {
+  return { botId: park.botId, parkId: park.parkId, parkRev: park.parkRev, address: park.address, inboxId: park.inboxId, keyIds: park.keyId ? [park.keyId] : [], state: "parked", remoteDeleted: park.remoteDeletedAt !== null };
 }

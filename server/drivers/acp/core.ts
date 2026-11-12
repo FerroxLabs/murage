@@ -1,19 +1,44 @@
+import { guardEngineRelease } from '../../decision/provider-release.ts';
+import { noLimitsPowerFallbackActive, takeNoLimitsPowerFallbackNotice } from "../../host-power.ts";
+import { deliverNative, type NativeAskSlot } from '../native-ask.ts';
+import { recordPostureAck } from '../posture-tap.ts';
+import { RequestTransport } from '../request-transport.ts';
+import { PostureBarrier, POSTURE_CONTINUATION } from "../posture-barrier.ts";
+import { withRequestDelivery } from "../request-delivery.ts";
+import { approvalDecision } from "../../approval-decision.ts";
+import { type CanonSet } from "../../hook-canon.ts";
+import { checkAllHookCanon, ownHookCanon, releaseHookCanon, prepareHookCanon, noteHookRepairFailure, HOOK_CHECK_DENIED } from "../../hook-safety.ts";
+import { ToolTripwire } from "./tool-tripwire.ts";
+import { HelperReadEvidence } from '../helper-read-evidence.ts';
+import { complete_flag } from '../../turn-settle.ts';
+import { NotModelRequest } from "../../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite, fluxRouteFor, registerBusyloopRequestSite } from "../../../shared/flux-route.ts";
+import { acpRefusal, refusalResetAt } from "../flux-busyloop-readers.ts";
+import { isTerminal, type Decision } from "../../../shared/flux-busyloop.ts";
 import { recordOutsideInstallChange } from "../../outside-wire.ts";
+import { openAcpSession } from "./open-session.ts";
+import type { AcpLaunchMcpServer } from "./copilot-mcp-config.ts";
+import { offeredModels } from "./config-options.ts";
+import { startupCatalogPath, readStartupModelCatalog, writeStartupModelCatalog } from "../../startup-model-catalog.ts";
+import { SessionModelControls, type AcpModelSelection } from "./session-model-controls.ts";
 import { markBudgetReached } from "../../voice/voice-routes.ts";
 import { fluxKey } from "../../flux-config.ts";
 import { botFolderOrThrow } from "../../bot-folder.ts";
+import { openCodeToolLimitStore, readToolLimit, reduceCatalog, nativeCount, nativeExtras, applyCatalogRestrictions, effectivePermission, openCodeToolId, REQUIRED_CONTROLS, type ToolMount, type Restriction, type LimitRecord, type Reduction } from "./opencode-tool-budget.ts";
 import { OpenCodeQuiet, parseOpenCodeFailure } from "./opencode-quiet.ts";
 import { FuigoResumeTurn, FuigoPolicyError, FUIGO_SESSION_POLICY_CONFLICT_LINE } from "./fuigo-policy.ts";
 import { fluxDestination, fluxDestinationUnknownRefusal, FLUX_DESTINATION_ALIAS_REFUSAL, FLUX_DESTINATION_UNKNOWN_REFUSAL } from "../../flux-destination.ts";
 import type { DestinationContext, DestinationAnswer } from "../../opencode-destination.ts";
 class DestinationRefusal extends Error {}
 import { cliSig, engineLaunchFile, knownCliVersion, noteVersionProbe, rememberCliVersion, versionProbeAllowed } from "../isolation-cache.ts";
+import { classifyFluxRefusal as classifyCloudFluxRefusal, classifyFluxRefusalFromRpcError, reportFluxRefusal } from "../../cloud-home/flux-credit-refusal.ts";
 import { cloudEngineHome, cloudTurnBot, cloudTurnEnvironment } from "../../cloud-home/turn-process.ts";
+import { cloudEngineSignedInSomewhere } from "../../cloud-home/signin-status.ts";
 import { renderDriverReplay } from "../../turn-context.ts";
-import { fluxHourlyResetsAt, fluxRefusalCode, fluxRefusalFields, fluxRefusalFieldsKeeping, fluxRefusalFinal, type FluxRefusalCode } from "../../flux-refusal.ts";
+import { refusalHttpStatus, fluxHourlyResetsAt, fluxRefusalCode, fluxRefusalFields, fluxRefusalFieldsKeeping, fluxRefusalFinal, type FluxRefusalCode } from "../../flux-refusal.ts";
 import { anyMountHoldsStandIn, anyMountIncomplete, clearMountsIncomplete, connectorMountRefOfEnv } from "../turn-credentials.ts";
 import { acpMcpGateLine, acpMcpGateWorthLogging, acpMcpServerDetail, type AcpMcpGateFacts, type AcpMcpServerDetail } from "../mcp-readiness.ts";
-import { McpBackoff, MCP_REQUIRED_WAIT_MS, mcpReconnectWaitMs, mcpRecoveryMs, requiredMcpLabel, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels } from "../mcp-readiness.ts";
+import { McpBackoff, MCP_REQUIRED_WAIT_MS, mcpReconnectWaitMs, mcpRecoveryMs, toolsMayBeLoadingNotice, toolsUnavailableNotice, unavailableLabels } from "../mcp-readiness.ts";
 import { boundedEnvMs } from "../env-ms.ts";
 import { FUIGO_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../../murage-tool-surface.ts";
 // Generic ACP (Agent Client Protocol) driver core — one JSON-RPC-2.0-over-
@@ -34,7 +59,6 @@ import { FUIGO_TOOL_SURFACE, NEUTRAL_TOOL_SURFACE, renderMurageTurn } from "../.
 import { applyProviderRoute, FUIGO_ALLOW_UPSTREAM_ENV, grokResumeBinding, validateProviderTurnRoute } from "../../provider-routing.ts";
 import { isQuestionTool } from "../../auto-approve.ts";
 import { fluxHeaderRefusal, fluxTurnDecision, logFluxMemoryHeaders } from "../../flux-memory-headers.ts";
-import { fluxSurfaceFor, isFluxModel } from "../../flux-routing.ts";
 import { fuigoMemoryAllowOnce, newFuigoMemoryAlias } from "./fuigo-memory-permission.ts";
 import { ApprovalDeliveryError, approvalWriteReason, deliverApproval, writeAcpResponse, type ApprovalDeliveryFailure, type ApprovalDeliveryResult, type ApprovalWriteCallback } from "./approval-delivery.ts";
 import {
@@ -72,16 +96,16 @@ import { managedDeskQualifies } from "../../managed-workspace-trust.ts";
 import { canonicalFolder, folderHasGit, folderTrustAncestorDeclinesFor, folderTrustDeclinesFor, folderTrustKindNames, folderTrustRejectFor, isUnrecordableTrustRoot, pathStartsWith, scanFolderTrustSources } from "../../folder-trust.ts";
 import { cloudRenderFuigoSeed, cloudUnroutedFuigoHome, seedFuigoHome } from "../../folder-trust-seed.ts";
 import { fillFolderLineForEngine } from "../../capabilities-primer.ts";
-import { createHash } from "node:crypto";
-import { existsSync, mkdtempSync, rmSync, unlinkSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { sep as pathSep } from "node:path";
-import { MCP_LISTED_FILE_ENV } from "../../mcp-listed.ts";
+import { readMcpCatalog, retireCloudMcpCatalog, registerCloudMcpCatalog, mcpMarkerReady, MCP_LISTED_FILE_ENV } from "../../mcp-listed.ts";
 import { wakeAwareTimeout } from "../../sleep-clock.ts";
 import { humanWaitOpen } from "../../harness/human-wait.ts";
 import { stripVTControlCharacters } from "node:util";
 
-import { deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
+import { DATA_DIR, deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, WORKSPACE_CREDENTIAL_ENV } from "../../config.ts";
 import { decodeInjectId } from "../local-inject.ts";
 import { createFuigoFailureObservations, failureKind } from "./failure-diagnostics.ts";
 import { withCliMemoryLearning } from "../cli-memory-learning.ts";
@@ -90,13 +114,53 @@ import { enginePathFromEnv, noteEnginePath } from "../../outside-scan.ts";
 import { cliContainment, describeSpawnFailure, engineJob, engineProcessPid, engineWrapsHostPower, execCli, HOST_POWER_CODE, hostPowerMessage, hostPowerRefused, killCliTree, spawnCli } from "../../procs.ts";
 import { cachedCliVersion } from "../../cli-version-cache.ts";
 import { claudeExecutableIdentity } from "../claude-guards.ts";
-import { ProviderStopUnconfirmedError, stopBudget, TurnTeardowns, type ChildTeardown, type TeardownWait } from "../child-teardown.ts";
+import { ProviderStopUnconfirmedError, stopBudget, TurnTeardowns, ChildTeardown, type TeardownWait } from "../child-teardown.ts";
 import {
   createLifecycleRecorder,
   errnoCategory,
   type LifecycleFields,
   type LifecycleStopReason,
 } from "../lifecycle-diagnostic.ts";
+
+/** Fuigo 1.0.42 upstream facts precede legacy fields and flattened text.
+ * Only recognised states and valid numeric statuses cross this boundary. */
+function acpUpstream(data: unknown): { state?: unknown; http_status?: unknown } | undefined {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return;
+  const upstream = (data as { upstream?: unknown }).upstream;
+  return upstream && typeof upstream === "object" && !Array.isArray(upstream) ? upstream : undefined;
+}
+function acpLegacyData(data: unknown, depth = 0): unknown {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  const { upstream: _upstream, ...legacy } = data as Record<string, unknown>;
+  // The raw RPC error repeats data under refusal.data. Invalid typed fields
+  // must not re-enter through the legacy recursive text scanner.
+  for (const key of ["data", "error"]) {
+    if (key in legacy) legacy[key] = depth < 4 ? acpLegacyData(legacy[key], depth + 1) : undefined;
+  }
+  return legacy;
+}
+function acpRefusalCode(data: unknown, ...text: unknown[]): FluxRefusalCode | undefined {
+  const state = acpUpstream(data)?.state;
+  if (typeof state === "string" && ["free_cap_reached", "credit_exhausted", "credit_unresolved", "hold", "hourly_burn_limit"].includes(state)) return state as FluxRefusalCode;
+  return fluxRefusalCode(acpLegacyData(data), ...text.map(value => acpLegacyData(value)));
+}
+function acpExplicitHttpStatus(data: unknown): number | undefined {
+  const legacy = data && typeof data === "object" && !Array.isArray(data) ? (data as { http_status?: unknown }).http_status : undefined;
+  for (const status of [acpUpstream(data)?.http_status, legacy]) {
+    if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) return status;
+  }
+  return undefined;
+}
+function acpRateLimitStatus(data: unknown, rpcCode: unknown): number | undefined {
+  // Fuigo 1.0.41 deliberately omits data.http_status on rate-limit errors.
+  if (rpcCode === -32003 || acpEngineErrorKind(data) === "rate_limited") return 429;
+  return undefined;
+}
+function acpRefusalHttpStatus(data: unknown, rpcCode?: unknown, ...text: unknown[]): number | undefined {
+  return acpExplicitHttpStatus(data)
+    ?? refusalHttpStatus(acpLegacyData(data), ...text.map(value => acpLegacyData(value)))
+    ?? acpRateLimitStatus(data, rpcCode);
+}
 
 /** Lifecycle facts of a JSON-RPC error: validated numbers only, and a method
  * only when the response matched a pending request (R1-T8). */
@@ -110,7 +174,7 @@ function lifecycleRejection(error: unknown, rpcId: unknown, method?: string): Li
   if (method !== undefined) fields.method = method;
   const { code, data } = (error && typeof error === "object" ? error : {}) as { code?: unknown; data?: unknown };
   if (typeof code === "number" && Number.isSafeInteger(code)) fields.rpcCode = code;
-  const status = data && typeof data === "object" && !Array.isArray(data) ? (data as { http_status?: unknown }).http_status : undefined;
+  const status = acpExplicitHttpStatus(data) ?? acpRateLimitStatus(data, code);
   if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) fields.httpStatus = status;
   const terminalKind=(data&&typeof data==="object"&&!Array.isArray(data)?failureKind((data as {error_kind?:unknown}).error_kind):undefined) ?? (reasoningOnlyData(data)?"empty_response":undefined);
   if(terminalKind)fields.terminalKind=terminalKind;
@@ -125,7 +189,7 @@ export function acpFailedPromptLine(threadId: string, turnId: string, error: unk
   const failure = (error && typeof error === "object" ? error : {}) as { name?: unknown; message?: unknown; data?: unknown };
   const facts = lifecycleRejection(error, undefined);
   const name = error instanceof Error && typeof failure.name === "string" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(failure.name) ? failure.name : undefined;
-  const refusal = fluxRefusalCode(failure.message, failure.data);
+  const refusal = acpRefusalCode(failure.data, failure.message);
   return `acp turn failed thread=${threadId} turn=${turnId} method=session/prompt code=${facts.rpcCode ?? "none"}${facts.httpStatus ? ` http=${facts.httpStatus}` : ""}${facts.terminalKind ? ` kind=${facts.terminalKind}` : ""}${refusal ? ` refusal=${refusal}` : ""}${name ? ` error=${name}` : ""}`;
 }
 /** Project matched diagnostic facts; never spread an engine-owned object. */
@@ -136,7 +200,7 @@ export function acpErrorDiagnostic(base:{eventId:string;turnId:string},processGe
   return parseRuntimeErrorDiagnostic({version:1,diagnosticId:base.eventId,turnId:base.turnId,processGeneration,
     rpcId:facts.rpcId,method:facts.method,rpcCode:facts.rpcCode,httpStatus:facts.httpStatus,terminalKind:facts.terminalKind,observedKind:failureKind(candidate.fuigoObservedKind)});
 }
-import { classifyProviderError, ENGINE_ERROR_KIND_PREFIX, ERROR_MESSAGE_MAX } from "../../../shared/provider-error.ts";
+import { classifyProviderError, isFluxRouterRejection, ENGINE_ERROR_KIND_PREFIX, ERROR_MESSAGE_MAX } from "../../../shared/provider-error.ts";
 import { redactSecretsInText } from "../../redact.ts";
 import { withProviderSaid } from "../../provider-said.ts";
 
@@ -230,7 +294,7 @@ export const ACP_LOCATIONS_MAX = 32;
  *  nothing is judged. */
 export interface AcpOutsideHooks {
   judge(threadId: string, call: AcpOutsideCall, register: boolean): void;
-  mark(threadId: string, source: "outside tool" | "helper", site?: string): void;
+  mark(threadId: string, source: "outside tool" | "helper", site?: string, lifecycle?: boolean): void;
 }
 let acpOutsideHooks: AcpOutsideHooks | null = null;
 export function setAcpOutsideHooks(hooks: AcpOutsideHooks | null): void { acpOutsideHooks = hooks; }
@@ -407,11 +471,65 @@ export function acpToolFilePaths(toolCall: { locations?: unknown; rawInput?: unk
   return paths.length ? paths : undefined;
 }
 
+/** The HTTP status a Fuigo retry notice names: a numeric status field, or the status the engine writes at the start of its reason
+ *  ("API error (status 402 ...)", "429 Too Many Requests: ..."). Never the JSON-RPC code. Read only to hand the Cloud home's classifier. */
+function retryNoticeStatus(notice: unknown): number | undefined {
+  if (!notice || typeof notice !== "object") return undefined;
+  const evidence = refusalHttpStatus(notice);
+  if (evidence !== undefined) return evidence;
+  const record = notice as Record<string, unknown>;
+  for (const key of ["http_status", "httpStatus", "status", "status_code"]) {
+    const value = record[key];
+    if (typeof value === "number" && value >= 400 && value <= 599) return value;
+    if (typeof value === "string" && /^[45]\d{2}$/.test(value)) return Number(value);
+  }
+  for (const key of ["reason", "error", "message", "detail"]) {
+    const value = record[key];
+    const match = typeof value === "string" ? /(?:^|\b(?:status|HTTP)\s)([45]\d{2})\b/.exec(value.slice(0, 400)) : null;
+    if (match) return Number(match[1]);
+  }
+  return undefined;
+}
+/** On a Cloud home, the line Cloud's classifier gives for a Fuigo retry notice (a 402, 401 or 403 from the router); null off a home, and for every
+ *  429 (free cap, hourly, hold, busy), which 1.0.19's gateway cards keep. */
+export function cloudRetryNoticeRefusal(notice: unknown, options: { owned: boolean; fromRouter: boolean }): ReturnType<typeof classifyCloudFluxRefusal> {
+  if (process.env.MURAGE_CLOUD_ROLE !== "home") return null;
+  return classifyCloudFluxRefusal({ status: retryNoticeStatus(notice), body: notice, headers: retryNoticeHeaders(notice) }, options);
+}
+/** The response headers a retry notice carries, when it carries any: a headers record, or the Flux hold header written into its text. */
+function retryNoticeHeaders(notice: unknown): Record<string, string> | undefined {
+  if (!notice || typeof notice !== "object") return undefined;
+  const record = notice as Record<string, unknown>;
+  const given = record.headers ?? record.response_headers;
+  if (given && typeof given === "object") return given as Record<string, string>;
+  for (const key of ["reason", "error", "message", "detail"]) {
+    const value = record[key];
+    const match = typeof value === "string" ? /x-flux-hold-reason["']?\s*[:=]\s*["']?([A-Za-z0-9_-]{1,64})/i.exec(value.slice(0, 2000)) : null;
+    if (match) return { "x-flux-hold-reason": match[1]! };
+  }
+  return undefined;
+}
+
 /** Some ACP providers wrap actionable billing failures in "Internal error".
  * Classify only the observed shape; never copy nested provider data or URLs
  * into the transcript, where they may contain credentials or request text. */
-export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown }): string {
+export function acpRpcErrorMessage(error: { message?: unknown; data?: unknown }, owned = false): string {
   const info = classifyProviderError(error);
+  if (process.env.MURAGE_CLOUD_ROLE === "home") {
+    // Model-credits refusals on a Cloud home are worded by us from the raw answer; the router's own text never reaches the customer.
+    const refusal = classifyFluxRefusalFromRpcError(error, { fromRouter: isFluxRouterRejection(error), owned });
+    if (refusal) { reportFluxRefusal(refusal); return refusal.message; }
+  }
+  return acpRpcErrorMessageUnclassified(error, info);
+}
+
+/** True when `acpRpcErrorMessage` worded this error from a Cloud credits refusal (its message is then final customer copy). */
+export function acpIsFluxRefusal(error: { message?: unknown; data?: unknown }, owned = false): boolean {
+  if (process.env.MURAGE_CLOUD_ROLE !== "home") return false;
+  return classifyFluxRefusalFromRpcError(error, { fromRouter: isFluxRouterRejection(error), owned }) !== null;
+}
+
+function acpRpcErrorMessageUnclassified(error: { message?: unknown; data?: unknown }, info: ReturnType<typeof classifyProviderError>): string {
   if (info?.kind === "payment") return "Your AI service said payment or account access is needed. Check billing and access with your AI service, then try again.";
   // A ceiling the account reached, not a balance it spent. Saying "add
   // credits" here would be advice the provider itself contradicts.
@@ -978,8 +1096,7 @@ const ACP_DIAGNOSTIC_METHODS:ReadonlySet<string> = new Set(DIAGNOSTIC_RPC_METHOD
 export function acpRpcErrorDetails(error: unknown): string | undefined {
   if (!error || typeof error !== "object") return;
   const { code, data, acpMethod } = error as { code?: unknown; data?: unknown; acpMethod?: unknown };
-  const { http_status: status } = data && typeof data === "object" && !Array.isArray(data)
-    ? data as { http_status?: unknown } : {};
+  const status = acpExplicitHttpStatus(data) ?? acpRateLimitStatus(data, code);
   const kind = acpEngineErrorKind(data);
   const facts: string[] = [];
   if (typeof acpMethod === "string" && ACP_DIAGNOSTIC_METHODS.has(acpMethod)) facts.push(`ACP request: ${acpMethod}`);
@@ -1063,7 +1180,7 @@ import { createPrewarmGate, createTurnMemory, spawnInputsOf, TAKEOVER_FAILED_MES
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../../subtasks.ts";
 import { awaitScopeStart, withScopeRetry } from "../scoped-cli-home.ts";
 import { connectedAppsServerName, isConnectedAppsServer } from "../../../shared/connected-app-names.ts";
-import { AskStopRefusal, ASK_STOP_NOTE, ASK_STOP_PROMPT, askStopChangeKind, askStopRefusesKind, askStopUnavailableLine, replyCarriesAskStopNote } from "../ask-stop.ts";
+import { ASK_STOP_NOTE, ASK_STOP_PROMPT, askStopChangeKind, askStopRefusesKind, replyCarriesAskStopNote } from "../ask-stop.ts";
 
 /** Fuigo runs an interjection that missed its turn's final drain as its own
  *  prompt turn under this id prefix (fuigo-shell interjection.rs). */
@@ -1100,6 +1217,9 @@ export interface AcpInterjection {
 }
 
 export interface AcpSupport {
+  /** Requires a sent permission allow for every reported covered execution. */
+  toolTripwire?: boolean;
+  toolTripwireMatcher?(turn: SendTurnInput): string;
   driverKind: string;
   /** The engine runs on its own tools and approvals (OpenClaw): Murage hands
    * `session/new` no `mcpServers` and declares no Murage mount capability, so
@@ -1115,7 +1235,7 @@ export interface AcpSupport {
    * call on this turn's own mount. */
   hostComputerAskedByMurage?: boolean;
   /** The engine cannot ask before every change (Cursor, OpenClaw: server/drivers/ask-stop.ts). On an Ask turn
-   * (`turn.askLevel`) the core runs it read-only: a permission request that is not a read, search, think or fetch
+   * (`(turn.permissionNow?.() ?? turn).askLevel`) the core runs it read-only: a permission request that is not a read, search, think or fetch
    * is refused with no card, the prompt says what the bot can do, a change the engine reports as done stops the
    * turn, and the bot shows ASK_STOP_NOTE once when something was refused. Auto and Full access are unchanged. */
   askStop?: {
@@ -1127,6 +1247,13 @@ export interface AcpSupport {
      *  before the prompt: at Ask it must set read-only or throw (the turn then does not run); otherwise it puts
      *  back whatever an earlier Ask turn replaced. */
     apply?(ctx: { env: Record<string, string | undefined>; config: AcpConfig; turn: SendTurnInput; askLevel: boolean }): Promise<void>;
+  };
+  /** Admission checked for every session/prompt, including reuse and retry. Complete this await
+   * before the synchronous beforeSubmit fence; cancellation is rechecked after it. */
+  prePrompt?: {
+    apply(ctx: { env: Record<string, string | undefined>; config: AcpConfig; turn: SendTurnInput; askLevel: boolean }): Promise<void>;
+    notice: string | ((turn: SendTurnInput) => string | undefined);
+    refusal: string;
   };
   /** Never send `session/set_mode` (Fuigo 1.0.32: it advertises no modes, and set_mode resolves any id, "default"
    *  included, through the workspace's `.fuigo/agents/<id>.md` first, so a repo file could replace the bot's
@@ -1160,7 +1287,9 @@ export interface AcpSupport {
   /** Omit for subscription CLIs (the default). Custom-only CLIs sit below
    *  the picker-rail divider and have no first-party cloud catalog. */
   access?: "subscription" | "custom";
-  models: { default: string; options: Array<{ id: string; label: string }> };
+  models: ModelCatalog;
+  modelVariants?: boolean;
+  resolveModelsOnCreate?: boolean;
   /** Effort levels this harness's CLI accepts, ascending. Omit when it has
    * no reasoning-effort control. Static for the same reason `models` is:
    * describe() runs before any session exists, so there is no _meta to read
@@ -1206,11 +1335,16 @@ export interface AcpSupport {
   /** A turn that resets the session (edit, rewind, memory revocation) runs this before the spawn, for an engine whose
    *  conversation lives outside the process and is keyed by something the engine reuses (OpenClaw's gateway key). */
   onSessionReset?(turn: SendTurnInput): void;
-  spawnArgs(config: AcpConfig, turn: SendTurnInput, ctx?: { requestedModel?: string; folderTrusted?: boolean; env?: Record<string, string | undefined>; cliVersion?: string; mcpServerNames?: string[] }): string[];
+  spawnArgs(config: AcpConfig, turn: SendTurnInput, ctx?: { hookCanon?: CanonSet; requestedModel?: string; folderTrusted?: boolean; env?: Record<string, string | undefined>; cliVersion?: string; mcpServerNames?: string[] }): string[];
   /** spawnArgs needs `ctx.cliVersion` (a flag that only some versions accept):
    *  the core probes `--version` once before the first spawn when no snapshot
    *  has. An empty `cliVersion` means the probe failed; the support fails open. */
   spawnNeedsCliVersion?: boolean;
+  /** Isolation needs a version even when the ordinary probe is backed off. Unset: an engine that scopes its home with a mount function needs it; false opts out. */
+  scopeVersionRequired?: boolean;
+  toolBudget?: {
+    routeKey: (env: Record<string, string | undefined>, config: AcpConfig, version: string, model: string) => string | undefined;
+  };
   /** Read harness-specific instance fields (Hermes `profile`) off the raw
    *  config. Invalid values are dropped, never passed through. */
   decodeExtra?(raw: Record<string, unknown>): Partial<AcpConfig>;
@@ -1240,7 +1374,8 @@ export interface AcpSupport {
    *  harnesses whose ACP subcommand takes no -m (opencode). The agent must
    *  CONFIRM the requested model before we prompt: silently running a model
    *  other than the one the picker shows is the failure this guards. */
-  selectModel?: { configId: string };
+  selectModel?: AcpModelSelection;
+  fallbackModel?(sessionConfig: unknown, catalogDefault: string): string | null;
   /** Mutate the child env in place: strip a key, inject a policy. Receives the
    *  instance config so a support can vary with fullAuto. */
   transformEnv?(env: Record<string, string | undefined>, config: AcpConfig): void;
@@ -1266,7 +1401,7 @@ export interface AcpSupport {
   versionRequired?: boolean;
   /** The scoped home this env names (GROK_HOME, FACTORY_HOME_OVERRIDE, GEMINI_CLI_HOME): reconciled once more when the turn ends. */
   scopeRoot?(env: Record<string, string | undefined>): string | undefined;
-  applyMountEnv?(env: Record<string, string | undefined>, ctx: { mcpServerNames: readonly string[]; cliVersion?: string; botId?: string }): void;
+  applyMountEnv?(env: Record<string, string | undefined>, ctx: { mcpServerNames: readonly string[]; cliVersion?: string; botId?: string; noLimits?: boolean }): void;
   /** `_meta` the engine needs on EVERY session/new and session/load of this turn (Fuigo's launch policy, FUIGO-SCOPE),
    *  read from the finished child env. */
   sessionMeta?(env: Readonly<Record<string, string | undefined>>): Record<string, unknown> | undefined;
@@ -1289,7 +1424,7 @@ export interface AcpSupport {
   ): void;
   /** The engine sends this turn to Flux even though the pick is not a `flux-*` id (Fuigo hands its
    *  Flux key to every cloud model). Such a turn carries the Flux Memory headers too. */
-  reachesFlux?(model: string | undefined, env: Record<string, string | undefined>): boolean;
+  requestBaseUrl?(model: string | undefined, env: Record<string, string | undefined>): string | undefined;
   /** An engine whose header carrier is silently ignored by older builds names
    *  the lowest version that honours it. A turn whose headers say "off" is
    *  refused when the installed version is lower or unknown. */
@@ -1319,6 +1454,9 @@ export interface AcpSupport {
   /** The engine reads its MCP servers only when it starts: a pooled process is
    * not reused once the servers handed to the turn change. */
   restartOnMcpChange?: boolean;
+  /** Launcher-owned MCP config: still retain the scoped definitions for hooks and restart decisions. */
+  mcpServersFromLaunch?: boolean;
+  prepareMcpLaunch?(env: Record<string, string | undefined>, context: { threadId: string; mcpServers: AcpLaunchMcpServer[] }): void | (() => void);
   /** U2 C7: the engine re-sends a reply it already streamed, whole, under the same
    * messageId, as its reasoning block, a blank line, then the reply (Hermes with
    * reasoning on). That one chunk is dropped instead of appended (upstream 40deb33ce). */
@@ -1362,7 +1500,11 @@ export interface AcpSupport {
    *  the policy call, the stop line). Undefined: the request is read as sent. `ok: false`: the call could not be
    *  read and is held as unread (`toolInputMissing`). Hermes: an ask its hook escalated carries a placeholder as
    *  the command and the real arguments only in the hook's message. */
-  normalizeAsk?(rawInput: unknown): { ok: true; rawInput: Record<string, unknown>; summary: string } | { ok: false; why: string; summary?: string; cut?: true } | undefined;
+  normalizeAsk?(rawInput: unknown): {
+    ok: true; rawInput: Record<string, unknown>; summary: string;
+    /** Validated original call, before approval-only display fields were added. */
+    execution?: { identity: string; input: Record<string, unknown> };
+  } | { ok: false; why: string; summary?: string; cut?: true } | undefined;
   /** Rewrite a picker id (`omlx::model`) into the CLI-native id before spawn
    * and session/select. Local inject writers live here so the child sees a
    * model it already knows. */
@@ -1501,13 +1643,13 @@ const methodNotFound = (error: unknown): boolean => (error as { code?: unknown }
  *  and a turn removes its own before it hands the servers over, so a marker is
  *  always this turn's. Lazily created, removed on exit. */
 let mcpListedRoot: string | null = null;
-const mcpListedFile = (threadId: string, server: string): string => {
+const mcpListedFile = (threadId: string, server: string, generation: string): string => {
   if (!mcpListedRoot) {
     mcpListedRoot = mkdtempSync(`${tmpdir()}${pathSep}murage-mcp-listed-`);
     const root = mcpListedRoot;
     process.once("exit", () => { try { rmSync(root, { recursive: true, force: true }); } catch { /* best effort */ } });
   }
-  return [mcpListedRoot, createHash("sha256").update(`${threadId}\0${server}`).digest("hex").slice(0, 32)].join(pathSep);
+  return [mcpListedRoot, generation + "." + createHash("sha256").update(`${threadId}\0${server}`).digest("hex").slice(0, 32)].join(pathSep);
 };
 const clearMcpListed = (paths: Iterable<string>): void => {
   for (const path of paths) try { unlinkSync(path); } catch { /* not there */ }
@@ -1778,6 +1920,12 @@ const TRAILING_FRAME_MS = 500;
 /** A stable digest, so neither the spawn environment's secrets nor the
  * per-turn capability tokens in `mcpServers` are ever held as a key. */
 const digest = (value: unknown): string => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+
+/** The MCP contribution to a reusable process's contract; Copilot itself remains unpooled. */
+export function acpMcpSpawnFingerprint(support: Pick<AcpSupport, "restartOnMcpChange" | "mcpServersFromLaunch">, servers: AcpLaunchMcpServer[]): string[] {
+  return support.restartOnMcpChange ? [digest(support.mcpServersFromLaunch ? servers : servers.map(server => server.name))] : [];
+}
+
 /** After session/cancel the agent may still answer the prompt; past this the
  * turn settles as cancelled and the child is terminated. */
 const ACP_CANCEL_GRACE_MS = 5_000;
@@ -1862,6 +2010,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
     defaultConfig: () => decodeConfig({}),
 
     async create(input: DriverCreateInput<AcpConfig>): Promise<ProviderInstance> {
+
       // The engine as Settings names this instance, for every line the chat shows.
       const ENGINE = input.displayName?.trim() || support.displayName;
       const { instanceId, config } = input;
@@ -1889,23 +2038,27 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         support.transformEnv?.(env, config);
         return env;
       };
-      let models = support.models;
+      const catalogPath = startupCatalogPath([instanceId, config, input.environment]);
+      let models = support.resolveModelsOnCreate === false ? readStartupModelCatalog(catalogPath) ?? support.models : support.models;
       const refreshModels = async (options?: ModelRefreshOptions) => {
-        if (!support.resolveModels) return;
+        if (!support.resolveModels || (support.resolveModelsOnCreate === false && options?.manual === false)) return;
         try {
           const resolved = await support.resolveModels(childEnv(), config, options);
-          if (resolved.options.length) models = resolved;
+          if (resolved.options.length) { models = resolved; if (support.resolveModelsOnCreate === false) writeStartupModelCatalog(catalogPath, resolved); }
         } catch {
           // Keep the last usable catalog when an optional discovery source is down.
         }
       };
-      await refreshModels();
+      if (support.resolveModelsOnCreate !== false) await refreshModels();
+      const answerTransport = new RequestTransport();
       const listeners = new Set<RuntimeEventListener>();
+      const powerSession = {};
       interface Turn {
         stop: (reason: LifecycleStopReason) => void;
         interrupt: () => void;
         turnId: string;
         asks: Map<string, AcpAskFinish>;
+        onPostureChange?: () => Promise<void>;
         /** A host-computer action the service asks for (support.hostComputerAskedByMurage). */
         askHostAction?: (call: { name: string; arguments?: unknown }, signal?: AbortSignal) => Promise<"allow" | "deny">;
         /** Engines with support.interjection: put a message into this running turn (`_fuigo/interject`, `_x.ai/interject`). */
@@ -1966,12 +2119,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       // fine here. env is the ACP {name,value}[] shape.
       /** `listedFile`, when given, hands each of Murage's own required servers
        *  (agents, memory, connected apps) its marker path (mcp-listed.ts). */
-      const acpMcpServers = (turn: SendTurnInput, memoryName = "murage-memory", listedFile?: (server: string) => string) => {
+      const acpMcpServers = (turn: SendTurnInput, memoryName = "murage-memory", listedFile?: (server: string) => string, pendingCatalogs?: Set<string>) => {
         const servers: Array<{ name: string; command: string; args: string[]; env: Array<{ name: string; value: string }> }> = [];
         const acpEnv = (env: Record<string, string>) =>
           Object.entries(env).map(([name, value]) => ({ name, value: String(value) }));
-        const own = (name: string, env: Record<string, string>) =>
-          listedFile ? [...acpEnv(env), { name: MCP_LISTED_FILE_ENV, value: listedFile(name) }] : acpEnv(env);
+        const own = (name: string, env: Record<string, string>) => {
+          if (!listedFile) return acpEnv(env);
+          const path = listedFile(name);
+          const origin = env.MURAGE_HARNESS_URL ?? env.MURAGE_CONTROL_URL;
+          pendingCatalogs?.add(path);
+          return [...acpEnv(env), { name: MCP_LISTED_FILE_ENV, value: path },
+            ...(process.env.MURAGE_CLOUD_ROLE === "home" && origin ? [{ name: "MURAGE_MCP_LISTED_URL", value: registerCloudMcpCatalog(path, turn.threadId, origin) }] : [])];
+        };
         const agents = turn.integrations?.agents;
         if (agents) {
           const name = agents.serverName ?? "agents";
@@ -1994,12 +2153,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         }
         const browser = turn.integrations?.browser;
         if (browser) {
-          servers.push({ name: "browser", command: browser.command, args: browser.args, env: acpEnv(browser.env) });
+          servers.push({ name: "browser", command: browser.command, args: browser.args, env: own("browser", browser.env) });
         }
         // 1.0.9 S13b: the owner's phone, under the same name every engine uses. The phone confirms each call itself.
         const phoneJobs = turn.integrations?.phoneJobs;
         if (phoneJobs) {
-          servers.push({ name: "phoneJobs", command: phoneJobs.command, args: phoneJobs.args, env: acpEnv(phoneJobs.env) });
+          servers.push({ name: "phoneJobs", command: phoneJobs.command, args: phoneJobs.args, env: own("phoneJobs", phoneJobs.env) });
         }
         // native HighLevel (HL-S2, read only): the host checks the grant on every call and lists no change tool.
         const highlevel = turn.integrations?.highlevel;
@@ -2015,7 +2174,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             name: "computer",
             command: process.execPath,
             args: [COMPUTER_PROXY_PATH],
-            env: acpEnv({ ELECTRON_RUN_AS_NODE: "1", ...computerProxyEnv(computer) }),
+            env: own("computer", { ELECTRON_RUN_AS_NODE: "1", ...computerProxyEnv(computer) }),
           });
         } else if (turn.integrations?.localComputer) {
           const local = turn.integrations.localComputer;
@@ -2023,7 +2182,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             name: "computer",
             command: local.command,
             args: local.args,
-            env: acpEnv(local.env ?? {}),
+            env: own("computer", local.env ?? {}),
           });
         }
         // user-configured servers, after the built-ins: a residual name
@@ -2035,7 +2194,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         )) {
           // Rule 11: a name holding `__` cannot be told apart from its tools.
           if (mount.name.includes("__")) continue;
-          servers.push({ name: mount.name, command: mount.command, args: mount.args, env: acpEnv(mount.env) });
+          servers.push({ name: mount.name, command: mount.command, args: mount.args, env: mount.args.includes(SPAWNED_PROXIES.remoteMcp) ? own(mount.name, mount.env) : acpEnv(mount.env) });
         }
         return servers;
       };
@@ -2116,6 +2275,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         close(code: number | null, signal: NodeJS.Signals | null): void;
       }
       interface AcpProcess {
+        hookCanon?: CanonSet;
         readonly child: ReturnType<typeof spawnCli>;
         /** unique per process; keys its close observation */
         readonly key: string;
@@ -2132,6 +2292,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         sessionId: string | null;
         /** digest of the `mcpServers` that session was established with */
         sessionKey: string | null;
+        sessionConfigResult?: any;
         /** sessions the engine reported MCP-ready, recorded from the first
          *  byte of stdout, so a notification that beats its response is kept */
         readonly mcpReadySessions: Set<string>;
@@ -2178,6 +2339,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         /** the close observation `stopAll`/`dispose`/`interruptTurn` wait on
          *  once no turn owns the process */
         poolTeardown: ChildTeardown | null;
+        catalogPaths: Set<string>;
+        catalogLifetime: ChildTeardown;
       }
       /** Idle processes, by thread. A process owned by a running turn is
        *  never in here. */
@@ -2196,10 +2359,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       // key per thread, in memory only. A restart may say it once more.
       const declineChipsShown = new Map<string, Set<string>>();
       const epochOf = (threadId: string) => threadEpochs.get(threadId) ?? 0;
+      const pendingCatalogSetups = new Map<string, Set<() => void>>();
       const destinationProbes = new Map<string, { controller: AbortController; settled: Promise<DestinationAnswer>; fence: SendFence }>();
       const retireThread = (threadId: string) => {
         threadEpochs.set(threadId, epochOf(threadId) + 1);
         destinationProbes.get(threadId)?.controller.abort();
+        for (const retire of pendingCatalogSetups.get(threadId) ?? []) retire();
       };
       const waitDestination = async (threadId: string) => {
         const probe = destinationProbes.get(threadId);
@@ -2228,9 +2393,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         return killed;
       };
 
-      const writeTo = (threadId: string, proc: AcpProcess, obj: unknown, done?: ApprovalWriteCallback) => {
+      const writeTo = (threadId: string, proc: AcpProcess, obj: unknown, done?: ApprovalWriteCallback, requestUrl?: string) => {
         const out = obj as { id?: unknown; method?: unknown; result?: unknown; error?: unknown } | null;
-        writeAcpResponse(proc.child.stdin, obj, (error, accepted) => {
+        registerBusyloopRequestSite(fluxRouteFor(requestUrl), writeAcpResponse(proc.child.stdin, obj, (error, accepted) => {
           if (!error) {
             if (out && out.id !== undefined && out.method === undefined && (out.result !== undefined || out.error !== undefined)) {
               proc.openRequests.delete(String(out.id));
@@ -2238,7 +2403,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             appendNative(threadId, { dir: "out", source: SOURCE, msg: nativeLogMessage(obj) });
           } else if (!done) console.warn(`acp write thread=${threadId} error=${approvalWriteReason(error)}`);
           done?.(error, accepted);
-        });
+        }, requestUrl));
       };
 
       /** Remove this exact process from the driver pool, under whatever thread it is
@@ -2309,6 +2474,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           proc.poolTeardown ??= poolTeardowns.track(threadId, proc.key, proc.child);
         }
         proc.poolTeardown?.markStopRequested();
+        proc.catalogLifetime.markStopRequested();
         const first = !proc.closing;
         proc.closing = true;
         // Only a process that could have been pooled logs its close: every other
@@ -2351,7 +2517,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           closing: false,
           dead: false,
           poolTeardown: null,
+          catalogPaths: new Set(),
+          catalogLifetime: new ChildTeardown(child),
         };
+        proc.catalogLifetime.onClosed(() => {
+          for (const path of proc.catalogPaths) retireCloudMcpCatalog(path);
+          clearMcpListed(proc.catalogPaths);
+          proc.catalogPaths.clear();
+        });
         // Byte-bounded framing (A4): the splitter decodes UTF-8 only for
         // complete lines, so multibyte characters that straddle two reads
         // stay intact, and one frame can never hold more than
@@ -2361,7 +2534,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           onLine: (line) => {
             if (!line.trim()) return;
             let msg: any;
-            try { msg = JSON.parse(line); } catch { msg = null; }
+            try { msg = registerBusyloopPayloadSite("read", JSON.parse(line)); } catch { msg = null; }
             // Parked: retirement on any activity runs BEFORE the ownership filter, whichever
             // session sent the frame (a retired owner's late update, a sessionless one).
             // The fence only protects the handlers of a running turn.
@@ -2421,7 +2594,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (!line.trim()) return;
         let msg: any;
         try {
-          msg = JSON.parse(line);
+          msg = registerBusyloopPayloadSite("read", JSON.parse(line));
         } catch {
           return;
         }
@@ -2600,6 +2773,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
       /** The process each in-flight prewarm owns right now (read live from the turn, so a
        *  replacement is followed), for a takeover to end through its owned process tree. */
       const prewarmChildren = new Map<string, { child: () => ReturnType<typeof spawnCli> | null; fence: SendFence }>();
+      const threadCatalogs = new Map<string, ToolMount>();
+      const budgetStore = support.toolBudget ? openCodeToolLimitStore(DATA_DIR) : null;
       const sendTurnFenced = async (turn: SendTurnInput, fence: SendFence): Promise<{ turnId: string }> => {
       turn = { ...turn, cwd: botFolderOrThrow(turn) };
         const { threadId } = turn;
@@ -2629,29 +2804,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // and Murage answers every ask that is not one of the three at once.
         const turnConfig: AcpConfig = (turn.stopLine || turn.routeAsks) && config.fullAuto ? { ...config, fullAuto: false } : config;
         // The Ask hard stop (ask-stop.ts): this engine cannot ask before every change, so at Ask it runs read-only.
-        const askStop = support.askStop !== undefined && turn.askLevel === true;
+        const askStop = () => support.askStop !== undefined && (turn.permissionNow?.() ?? turn).askLevel === true;
         /** Something was refused at Ask (an ask with no card, a failed change, a change that ran): the note is due. */
         let askStopRefused = false;
         /** The whole reply this turn, to tell whether it already carries the note. */
         let askStopReply = "";
         /** Each tool call's kind, kept from its opening tool_call (an update need not repeat it). */
         const askStopKinds = new Map<string, string>();
-        /** A change the engine reports on an Ask turn: failed means its read-only switch refused it (the note is due);
-         *  completed means the switch did not hold, so the turn is stopped at once, before anything else runs. */
-        const noteAskStopTool = (u: { toolCallId?: unknown; kind?: unknown; status?: unknown }) => {
-          const id = typeof u.toolCallId === "string" ? u.toolCallId : undefined;
-          if (id && typeof u.kind === "string" && askStopKinds.size < 512) askStopKinds.set(id, u.kind);
-          const kind = typeof u.kind === "string" ? u.kind : id ? askStopKinds.get(id) : undefined;
-          if (!askStopChangeKind(kind)) return;
-          if (u.status === "failed") askStopRefused = true;
-          else if (u.status === "completed" && !state.settled && !state.cancelRequested) {
-            askStopRefused = true;
-            console.warn(`${ENGINE} ask stop: a ${kind} ran on an Ask turn; stopping the turn`);
-            appendNative(threadId, { dir: "in", source: SOURCE, msg: { askStop: "ran", kind } });
-            interrupt();
-          }
-        };
-        if (active.has(threadId) || destinationProbes.has(threadId)) throw new Error("a turn is already running on this thread");
         // The thread epoch this send starts under, captured BEFORE any await (the version probes below included): a Stop,
         // reset or dispose that lands during one of them moves it, and the send aborts instead of capturing the new epoch.
         const startEpoch = fence.startEpoch;
@@ -2711,7 +2870,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const grokBinding = support.driverKind === "grokAgent" && (providerBinding || process.env.MURAGE_CLOUD_ROLE !== "home") ? grokResumeBinding(threadId, providerBinding?.identity ?? null, turn.resumeCursor) : null;
         if (grokBinding?.replay && !turn.transcript) throw new Error("Grok provider binding changed. Reload the conversation before continuing.");
         const replayTurn = (preamble: string) => ({ ...turn, text: [preamble, "",
-          renderDriverReplay(turn.transcript ?? [], turn.replayMetadata), "", "[Latest message:]", turn.text].join("\n") });
+          renderDriverReplay((turn.transcript ?? []).filter(row => !turn.ownerMessageId || row.id !== turn.ownerMessageId), turn.replayMetadata), "", "[Latest message:]", turn.text].join("\n") });
         const replayGrokTurn = () => replayTurn("[The provider session binding changed. Continue from this authorised conversation history:]");
         let promptTurn = grokBinding?.replay ? replayGrokTurn() : turn;
         const fuigoResume = DRIVER_KIND === "fuigoAgent" ? new FuigoResumeTurn(turn.fuigoResume) : undefined;
@@ -2719,9 +2878,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (!providerBinding) support.applyTurnEnv?.(env, { model: resolvedModel, requestedModel: turn.model, cwd });
         // Flux Memory headers: decided per thread audience, applied only when the
         // turn actually reaches Flux (a Flux connection, or a flux-* pick with a key).
-        const fluxRoutedTurn = turn.providerRoute
-          ? turn.providerRoute.preset === "flux"
-          : (isFluxModel(turn.model) && fluxSurfaceFor(support.driverKind) !== null) || Boolean(support.reachesFlux?.(turn.model, env));
+        let requestUrl = turn.providerRoute?.baseUrl ?? support.requestBaseUrl?.(turn.model, env) ?? env.OPENAI_BASE_URL ?? env.ANTHROPIC_BASE_URL;
+        let fluxRoutedTurn = fluxRouteFor(requestUrl).routed;
         const effectiveMemory = support.effectiveDestination ? fluxTurnDecision(turn) : undefined;
         let effectiveAnswer: DestinationAnswer | undefined;
         let effectiveHeaders = false;
@@ -2747,23 +2905,65 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         if (support.spawnNeedsCliVersion && !lastCliVersion) await fenced(() => probeCliVersionForTurn(env));
         // An engine that scopes its home needs the version to decide: a failed or backed-off probe is tried once more now,
         // and a version still unknown rejects the turn (the engine's scope function) instead of starting unscoped.
-        if (support.spawnNeedsCliVersion && (support.versionRequired || (support.scopeKind && support.applyMountEnv)) && !lastCliVersion) await fenced(() => probeCliVersion(env));
+        if (support.spawnNeedsCliVersion && (support.versionRequired || (support.scopeVersionRequired ?? Boolean(support.scopeKind && support.applyMountEnv))) && !lastCliVersion) await fenced(() => probeCliVersion(env));
         // Fuigo's folder-trust generation (FUIGO-TRUST-V2): known here, before the
         // gate, the spawn and the primer's folder line all read it.
         const trustGeneration = support.folderTrust ? support.folderTrustGeneration?.(lastCliVersion) ?? 1 : 1;
         let cliTurn =
           resolvedModel !== undefined && resolvedModel !== turn.model
             ? { ...turn, model: resolvedModel }
-            : turn;
+            : { ...turn };
         const ownedMemoryAlias = support.driverKind === "fuigoAgent" && turn.integrations?.memory && !providerBinding
           ? newFuigoMemoryAlias() : null;
         // An engine whose turns wait for MCP readiness gets the direct signal from
         // Murage's own servers too (mcp-listed.ts): this turn's markers, cleared
         // before the servers are handed over, so any marker found is this turn's.
-        const mcpServers = support.ownTools ? [] : acpMcpServers(turn, ownedMemoryAlias ?? "murage-memory",
-          support.mcpReadyNotification || support.mcpListedWait ? (server) => mcpListedFile(threadId, server) : undefined);
-        const mcpListedPaths = mcpServers.flatMap((server) => server.env.filter((entry) => entry.name === MCP_LISTED_FILE_ENV).map((entry) => entry.value));
-        clearMcpListed(mcpListedPaths);
+        // Until attachment, this turn owns every registration, including setup failures.
+        // An earlier setup of this thread that never attached loses its registrations (its stop or takeover is the fence's job, not an epoch move here).
+        for (const retire of [...(pendingCatalogSetups.get(threadId) ?? [])]) retire();
+        const catalogSetupEpoch = epochOf(threadId);
+        const pendingCatalogs = new Set<string>();
+        const untrackPendingCatalogs = () => {
+          const setups = pendingCatalogSetups.get(threadId);
+          setups?.delete(retirePendingCatalogs);
+          if (setups?.size === 0) pendingCatalogSetups.delete(threadId);
+        };
+        const trackPendingCatalogs = () => {
+          let setups = pendingCatalogSetups.get(threadId);
+          if (!setups) pendingCatalogSetups.set(threadId, setups = new Set());
+          setups.add(retirePendingCatalogs);
+        };
+        const retirePendingCatalogs = () => {
+          for (const path of pendingCatalogs) retireCloudMcpCatalog(path);
+          clearMcpListed(pendingCatalogs);
+          pendingCatalogs.clear();
+          untrackPendingCatalogs();
+        };
+        trackPendingCatalogs();
+        let catalogSetupHandedBack = false;
+        try {
+        /** A change the engine reports on an Ask turn: failed means its read-only switch refused it (the note is due);
+         *  completed means the switch did not hold, so the turn is stopped at once, before anything else runs. */
+        const noteAskStopTool = (u: { toolCallId?: unknown; kind?: unknown; status?: unknown }) => {
+          const id = typeof u.toolCallId === "string" ? u.toolCallId : undefined;
+          if (id && typeof u.kind === "string" && askStopKinds.size < 512) askStopKinds.set(id, u.kind);
+          const kind = typeof u.kind === "string" ? u.kind : id ? askStopKinds.get(id) : undefined;
+          if (!askStopChangeKind(kind)) return;
+          if (u.status === "failed") askStopRefused = true;
+          else if (u.status === "completed" && !state.settled && !state.cancelRequested) {
+            askStopRefused = true;
+            console.warn(`${ENGINE} ask stop: a ${kind} ran on an Ask turn; stopping the turn`);
+            appendNative(threadId, { dir: "in", source: SOURCE, msg: { askStop: "ran", kind } });
+            interrupt();
+          }
+        };
+        let processGeneration = randomUUID();
+        let mcpServers = support.ownTools ? [] : acpMcpServers(turn, ownedMemoryAlias ?? "murage-memory",
+          support.mcpReadyNotification || support.mcpListedWait || support.toolBudget ? (server) => mcpListedFile(threadId, server, processGeneration) : undefined, pendingCatalogs);
+        const requiredMountNames = new Set([turn.integrations?.agents?.serverName ?? "agents", ownedMemoryAlias ?? "murage-memory", connectedAppsServerName(turn.integrations?.composio?.env ?? {})]);
+        let mcpListedPaths = mcpServers.filter(server => requiredMountNames.has(server.name)).flatMap((server) => server.env.filter((entry) => entry.name === MCP_LISTED_FILE_ENV).map((entry) => entry.value));
+        clearMcpListed(mcpServers.flatMap(server => server.env.filter(entry => entry.name === MCP_LISTED_FILE_ENV).map(entry => entry.value)));
+        const mcpLaunch: { release?: () => void } = {};
         // After the turn's own mounts are known (and before the spawn contract is taken).
         if (support.scopeKind) {
           const preparingId = `preparing-${turnId}`;
@@ -2776,7 +2976,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         }
         // Fails closed: contention is retried within a bound, and a scope that still cannot be established rejects the turn here,
         // before any spawn (never a start in the owner's own engine home, never the shared probe scope for a bot).
-        if (support.applyMountEnv) await withScopeRetry(() => { fence.check("scope"); return support.applyMountEnv!(env, { mcpServerNames: mcpServers.map((server) => server.name), cliVersion: lastCliVersion || undefined, botId: turn.warmIdentity?.botId }); }, support.displayName).catch((error: unknown) => { throw error instanceof Error && error.cause instanceof SendStoppedError ? error.cause : error; });
+        if (support.applyMountEnv) await withScopeRetry(() => { fence.check("scope"); return support.applyMountEnv!(env, { mcpServerNames: mcpServers.map((server) => server.name), cliVersion: lastCliVersion || undefined, botId: turn.warmIdentity?.botId, noLimits: (turn.permissionNow?.() ?? turn).noLimits === true }); }, support.displayName).catch((error: unknown) => { throw error instanceof Error && error.cause instanceof SendStoppedError ? error.cause : error; });
         const toolSurface = support.driverKind === "fuigoAgent" || support.driverKind === "grokAgent" ? FUIGO_TOOL_SURFACE : NEUTRAL_TOOL_SURFACE;
         const mounts = { servers: mcpServers.map(server => server.name), agents: mcpServers.find(server => turn.integrations?.agents && server.command === turn.integrations.agents.command && server.args === turn.integrations.agents.args)?.name,
           memory: mcpServers.find(server => turn.integrations?.memory && server.command === turn.integrations.memory.command && server.args === turn.integrations.memory.args)?.name,
@@ -2810,6 +3010,20 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // process: stop/settle are no-ops on the child and the turn's
         // teardown has nothing to wait for.
         let child: ReturnType<typeof spawnCli> | null = null;
+        let hookCanon: CanonSet | undefined;
+        let hookRevoked = false;
+        const inspectHermesHook = () => {
+          if (!support.toolTripwire) return true;
+          const deliveryReady = checkAllHookCanon("V-H2", hookCanon);
+          if (!deliveryReady) { hookRevoked = true; noteHookRepairFailure(ENGINE); }
+          return deliveryReady && !hookRevoked;
+        };
+        const stopHookRepair = () => {
+          if (state.settled) return;
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: HOOK_CHECK_DENIED });
+          if (sessionId) send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+          settle(false, "hook-repair-failed");
+        };
         let teardown: ReturnType<TurnTeardowns["track"]> | null = null;
         let spawned = false;
         // The process this turn is using (see the pool notes above), whether
@@ -2819,9 +3033,76 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         let reused = false;
         let poolable = false;
         let contractKey: string | null = null;
+        const budgetModel = cliTurn.model ?? turn.model ?? support.models.default;
+        const budgetKey = support.toolBudget?.routeKey(env, config, lastCliVersion, budgetModel);
+        let budgetRecord: LimitRecord | undefined = budgetKey ? await budgetStore!.get(budgetKey) : undefined;
+        if (disposed || epochOf(threadId) !== catalogSetupEpoch) throw new Error("the turn was stopped before it started");
+        const budgetBase: Record<string, unknown> = support.toolBudget ? JSON.parse(env.OPENCODE_CONFIG_CONTENT ?? "{}") : {};
+        let installedRestrictions: Restriction[] = [];
+        let budgetDecision: Extract<Reduction, { kind: "ok" }> | undefined;
+        let promptWrites = 0, recoveryUsed = false, prepromptDone = false;
+        let engineWriteOccurred = false, modelOutput = false;
+        const catalogSnapshot = (cached = false): ToolMount[] => mcpServers.map(server => {
+          const envMap = Object.fromEntries(server.env.map(entry => [entry.name, entry.value]));
+          const role: ToolMount["role"] = server.name === (turn.integrations?.agents?.serverName ?? "agents") && turn.integrations?.agents ? "agents"
+            : server.name === (ownedMemoryAlias ?? "murage-memory") && turn.integrations?.memory ? "memory"
+            : isConnectedAppsServer(server.name) ? "connected" : server.name === "browser" ? "browser" : server.name === "computer" ? "computer" : server.name === "phoneJobs" ? "phoneJobs" : "custom";
+          const key = digest([threadId, server.name, server.command, server.args, server.env.filter(entry => !entry.name.startsWith("MURAGE_MCP_LISTED_") && !entry.name.endsWith("_TOKEN"))]);
+          if (cached && threadCatalogs.has(key)) return structuredClone(threadCatalogs.get(key)!);
+          const marker = envMap[MCP_LISTED_FILE_ENV] ? readMcpCatalog(envMap[MCP_LISTED_FILE_ENV]) : undefined;
+          const mount: ToolMount = { name: server.name, role, resources: marker?.resources ?? "unknown",
+            ...(marker?.complete ? { tools: marker.tools } : {}),
+            ...(role === "agents" ? { required: envMap.MURAGE_PROJECT_ROLE === "proposal" ? ["project_propose"] : REQUIRED_CONTROLS.filter(name => name !== "project_propose") } : {}) };
+          if (marker?.complete) { threadCatalogs.set(key, structuredClone(mount)); if (threadCatalogs.size > 2048) threadCatalogs.delete(threadCatalogs.keys().next().value!); }
+          return mount;
+        });
+        const applyBudget = (decision: Extract<Reduction, { kind: "ok" }>) => {
+          env.OPENCODE_CONFIG_CONTENT = JSON.stringify(decision.overlay);
+          installedRestrictions = decision.restrictions; budgetDecision = decision;
+        };
+        const budgetLog = (stage: "spawn" | "pre-prompt" | "recovery", outcome: string, mounts: ToolMount[] = catalogSnapshot(), reason?: "unknown-catalog") => {
+          appendNative(threadId, { dir: "lifecycle", source: "murage.opencode-budget", msg: { type: "opencode_tool_budget", stage, outcome, ...(reason ? { reason } : {}),
+            limit: budgetRecord?.limit, native: nativeCount(budgetModel, mounts, nativeExtras(env)), margin: budgetRecord?.margin,
+            kept: budgetDecision?.kept.length, hidden: budgetDecision ? Object.values(budgetDecision.hidden).reduce((n, names) => n + names.length, 0) : undefined,
+            unknownDropped: budgetDecision?.unknown.length, promptOrdinal: promptWrites, processGeneration } });
+        };
+        const budgetFailure = (kind: "noRoom" | "catalogUnknown" | "catalogChanged") => new Error(kind === "noRoom"
+          ? `This AI accepts at most ${budgetRecord?.limit} tools, which is not enough for ${ENGINE} to work in Murage. Choose another model.`
+          : kind === "catalogUnknown" ? "Murage could not confirm this AI's tool list or the maximum number of tools it accepts. Your message was not sent."
+          : "The tool list changed while Murage was preparing this turn. Murage could not fit it within this AI's limit.");
+        const decideBudget = () => {
+          const mounts = catalogSnapshot(), record = budgetRecord!;
+          const budget = record.limit - nativeCount(budgetModel, mounts, nativeExtras(env)) - record.margin;
+          const decision = reduceCatalog(mounts, budget, budgetBase);
+          if (decision.kind !== "ok") return { decision, fits: false };
+          const overlay = JSON.parse(env.OPENCODE_CONFIG_CONTENT ?? "{}");
+          const permission = overlay.permission ?? {};
+          const required = mounts.flatMap(m => (m.required ?? []).map(name => openCodeToolId(m.name, name)));
+          const visible = new Set(mounts.flatMap(m => (m.tools ?? []).map(name => openCodeToolId(m.name, name))).filter(id => effectivePermission(permission, id) !== "deny"));
+          const unknownDenied = mounts.filter(m => !m.tools).every(m => installedRestrictions.some(([key, action]) => key === `${openCodeToolId(m.name, "")}*` && action === "deny")
+            && !installedRestrictions.some(([key, action]) => action === "ask" && key.startsWith(openCodeToolId(m.name, ""))));
+          return { decision, fits: visible.size <= budget && required.every(id => visible.has(id)) && unknownDenied };
+        };
+        if (budgetRecord) {
+          const cached = catalogSnapshot(true);
+          if (cached.filter(m => m.role === "agents").every(m => m.tools)) {
+            const decision = reduceCatalog(cached, budgetRecord.limit - nativeCount(budgetModel, cached, nativeExtras(env)) - budgetRecord.margin, budgetBase);
+            if (decision.kind === "ok") { applyBudget(decision); budgetLog("spawn", "applied", cached); }
+          }
+          // A base configuration which cannot fit must never reach a child.
+          applyCatalogRestrictions(budgetBase, []);
+        }
+        const rotateCatalogGeneration = () => {
+          retirePendingCatalogs();
+          trackPendingCatalogs();
+          processGeneration = randomUUID();
+          mcpServers = support.ownTools ? [] : acpMcpServers(turn, ownedMemoryAlias ?? "murage-memory", server => mcpListedFile(threadId, server, processGeneration), pendingCatalogs);
+          mcpListedPaths = mcpServers.filter(server => requiredMountNames.has(server.name)).flatMap(server => server.env.filter(entry => entry.name === MCP_LISTED_FILE_ENV).map(entry => entry.value));
+          clearMcpListed(mcpServers.flatMap(server => server.env.filter(entry => entry.name === MCP_LISTED_FILE_ENV).map(entry => entry.value)));
+        };
         // `producedItem`: the turn emitted something a person can see (a reply,
         // an image, a tool result). An end_turn without one is a lost turn.
-        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, stopRequested: false, /** a Flux refusal that sending again cannot fix, seen in the engine's own retry notice: the retry was cancelled (1.0.18 f) */ fluxRefusal: undefined as { code: FluxRefusalCode; text: string; /** the hourly gate's reset, from its notice's retry_after only */ resetsAt?: number } | undefined, /** engine retries already allowed for a Flux hold (one, after its Retry-After) */ fluxHoldRetries: 0, text: "", /** the messageId of the last streamed text chunk (C7) */ textMessageId: null as string | null, /** the text streamed so far under textMessageId only (C7): a replay re-sends one message, not the turn */ messageText: "", producedItem: false, toolsUnavailable: [] as string[], mcpReadiness: undefined as "unknown" | undefined,
+        const state = { settled: false, finished: false, failed: false, promptSent: false, cancelRequested: false, stopRequested: false, /** a Flux refusal that sending again cannot fix, seen in the engine's own retry notice: the retry was cancelled (1.0.18 f) */ fluxRefusal: undefined as { decision?: Decision; code?: FluxRefusalCode; text: string; httpStatus?: number; /** the hourly gate's reset, from its notice's retry_after only */ resetsAt?: number; notice?: unknown } | undefined, /** engine retries already allowed for a Flux hold (one, after its Retry-After) */ fluxHoldRetries: 0, text: "", /** the messageId of the last streamed text chunk (C7) */ textMessageId: null as string | null, /** the text streamed so far under textMessageId only (C7): a replay re-sends one message, not the turn */ messageText: "", producedItem: false, toolsUnavailable: [] as string[], mcpReadiness: undefined as "unknown" | undefined,
           /** Who denied the newest permission ask this turn delivered (cleared by a delivered allow). An engine that then
            *  ends the prompt `cancelled` without Murage asking it to stopped because of that deny, not a Stop. */
           deniedBy: undefined as "user" | "timeout" | "system" | undefined };
@@ -2856,6 +3137,28 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // update is judged again on the whole call. Kept past completion (bounded), so a repeated final update is no orphan.
         type CallFacts = { kind?: unknown; title?: unknown; rawInput?: unknown; _meta?: unknown; locations?: unknown };
         const callFacts = new Map<string, CallFacts>();
+        const toolAllows = new ToolTripwire();
+        const toolMatcher = support.toolTripwireMatcher ? new RegExp(`^(?:${support.toolTripwireMatcher(turn)})$`) : null;
+        let toolIncident = false;
+        const tripTool = () => {
+          if ((turn.permissionNow?.() ?? turn).noLimits === true) return;
+          if (!support.toolTripwire || toolIncident || state.settled) return;
+          toolIncident = true;
+          emit({ ...base(threadId, turnId), type: "runtime.error", message: "Hermes ran a tool without Murage’s check, so Murage stopped this turn." });
+          if (sessionId) send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+          settle(false, "gate_incident");
+        };
+        const checkTool = (u: any, facts: CallFacts, reportedSession: unknown) => {
+          if ((turn.permissionNow?.() ?? turn).noLimits === true || !support.toolTripwire || !["in_progress", "completed", "failed"].includes(u.status)) return true;
+          const raw = facts.rawInput && typeof facts.rawInput === "object" ? facts.rawInput as Record<string, unknown> : undefined;
+          const hasIdentity = facts.title !== undefined || Boolean(raw && ("tool_name" in raw || "toolName" in raw));
+          const identity = resolveToolIdentity(facts.title, facts.rawInput) ??
+            (!hasIdentity ? toolNames.get(u.toolCallId)?.identity : undefined);
+          if (identity && toolMatcher && !toolMatcher.test(identity)) return true;
+          if (!toolIncident && typeof reportedSession === "string" && reportedSession === sessionId && toolAllows.accepts(u.toolCallId, identity, facts.rawInput, reportedSession)) return true;
+          tripTool();
+          return false;
+        };
         // 1.0.19 A3: the calls whose ask already registered them, so their later tool_call is not registered again
         const askRegistered = new Set<string>();
         const rememberCall = (id: string, facts: CallFacts) => {
@@ -2873,7 +3176,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             try { hooks.mark(threadId, "outside tool", "acp-judge-failed"); } catch { /* the server's mark failed: it fails closed on its side */ }
           }
         };
-        const markAcpTurn = (source: "outside tool" | "helper", site?: string, params?: unknown) => {
+        const markAcpTurn = (source: "outside tool" | "helper", site?: string, params?: unknown, lifecycle = false) => {
           const hooks = acpOutsideHooks;
           if (!hooks) return;
           // NL-WIN-1018 D1: the param KEY names of a frame that marks (sorted, at most 16, plain names only; never a value)
@@ -2881,9 +3184,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const keys = Object.keys(params as Record<string, unknown>).filter((key) => /^[A-Za-z_]{1,32}$/.test(key)).sort().slice(0, 16);
             console.info(`acp mark-shape thread=${threadId} engine=${DRIVER_KIND} site=${site ?? "unlabelled"} keys=${keys.join(",")}`);
           }
-          try { hooks.mark(threadId, source, site); } catch { /* the server's mark failed: it fails closed on its side */ }
+          try { hooks.mark(threadId, source, site, lifecycle); } catch { /* the server's mark failed: it fails closed on its side */ }
         };
         let sessionId: string | null = null;
+        const modelControls = new SessionModelControls({
+          selection: support.selectModel, variants: support.modelVariants === true, displayName: ENGINE,
+          model: () => cliTurn.model, reportedModel: () => cliTurn.model,
+          state: () => proc?.sessionConfigResult, store: result => { if (proc) proc.sessionConfigResult = result; },
+          report: () => {},
+        });
         // Interjections sent to this turn that the engine has not echoed yet.
         const interjectionsPending = new Set<string>();
         // Echo waiters of interjections still deciding delivery (P2), and ids
@@ -2954,7 +3263,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // The folder-trust decision this turn runs under: the server's record
         // for the folder, or the owner's answer to the card raised below. It
         // also answers the engine's own request should one still arrive.
-        let folderTrusted: FolderTrustDecision | "skipped" | null = turn.folderTrust?.decision ?? null;
+        const storedFolderReject = turn.folderTrust?.decision === "reject" || Boolean(folderTrustRejectFor(turn.folderTrust?.rejects ?? [], canonicalFolder(cwd), canonicalFolder(cwd)));
+        let folderTrusted: FolderTrustDecision | "skipped" | null = (turn.permissionNow?.() ?? turn).noLimits === true
+          ? storedFolderReject ? "reject" : "trust" : turn.folderTrust?.decision ?? null;
         const folderSources = () => turn.folderTrust?.sources ?? [];
         // The user's own Fuigo install already trusts the folder (its
         // trusted_folders.toml, FUIGOTRUST2): the engine runs trusted from
@@ -2972,7 +3283,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // R4, R5: seeds go in before the spawn, and only into a home made for this turn.
         // A decision that is not a stored record is a policy grant (a managed desk, Full access).
         const seedGate = support.folderTrust ? turn.folderTrust : undefined;
-        const folderPolicyGrant = seedGate?.decision === "trust" && seedGate.fromRecord !== true && !(trustGeneration === 2 && seedGate.managedDesk);
+        const folderPolicyGrant = seedGate?.decision === "trust" && seedGate.fromRecord !== true && !(trustGeneration === 2 && seedGate.managedDesk)
+          && !((turn.permissionNow?.() ?? turn).noLimits === true && storedFolderReject);
         const freshFuigoHome = providerBinding?.freshFuigoHome ?? cloudUnroutedFuigoHome(support.driverKind, Boolean(providerBinding));
         // A Cloud seed lands when the launcher starts the engine, so its lines wait for the engine's first answer.
         let cloudSeedPending = false;
@@ -3003,7 +3315,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // Answering a server→client request (a permission decision, a file
           // read) hands the agent back the thing it was blocked on, so its
           // silence up to here was ours, not its: restart every idle deadline.
-          const message = obj as { id?: unknown; result?: unknown; error?: unknown };
+          const message = obj as { id?: unknown; method?: unknown; result?: unknown; error?: unknown };
+          if (message.method === "session/prompt") {
+            promptWrites++;
+            engineWriteOccurred = true;
+            done = (error, accepted) => { if (!error && accepted) turn.onEngineWrite?.(); };
+          }
           if (message.id !== undefined && (message.result !== undefined || message.error !== undefined)) {
             for (const pending of rpcPending.values()) pending.armIdle();
             // the same for the Fuigo watch: an answer is progress, and Murage's own work on the request is over
@@ -3012,12 +3329,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           fenceBeforeWrite(fence, state, obj, settleHalted);
           let written: unknown;
-          if (proc) written = writeTo(threadId, proc, obj, done);
-          else writeAcpResponse(child?.stdin, obj, (error, accepted) => {
+          if (proc) written = writeTo(threadId, proc, obj, done, requestUrl);
+          else registerBusyloopRequestSite(fluxRouteFor(requestUrl), writeAcpResponse(child?.stdin, obj, (error, accepted) => {
             if (!error) appendNative(threadId, { dir: "out", source: SOURCE, msg: nativeLogMessage(obj) });
             else if (!done) console.warn(`acp write thread=${threadId} error=${approvalWriteReason(error)}`);
             done?.(error, accepted);
-          });
+          }, requestUrl));
           fenceAfterWrite(state, obj);
           return written;
         };
@@ -3034,13 +3351,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           idleMs?: number,
           idleMessage?: string,
           toolStallMessage?: string,
+          receive?: (result: any) => void,
         ) =>
           new Promise<any>((resolveRpc, rejectRpc) => {
             if (method === "session/load") loadIssued = true;
             // MURAGE_TURN_TRACE: time every engine round trip; a no-op when off.
             const rpcTrace = turnTrace(threadId);
             const rpcDone = rpcTrace.enabled ? rpcTrace.span(`rpc.${method}`) : null;
-            const resolve = rpcDone ? (value: any) => { rpcDone("ok"); resolveRpc(value); } : resolveRpc;
+            const resolve = (value: any) => { receive?.(value); rpcDone?.("ok"); resolveRpc(value); };
             const reject = (error?: unknown) => {
               // a log fault never holds the rejection back; a stop the owner asked for is not a failed turn
               try { if (method === "session/prompt" && !state.settled && !stopWasAsked()) console.warn(acpFailedPromptLine(threadId, turnId, error)); } catch { /* the rejection stands */ }
@@ -3096,12 +3414,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               armIdle,
             });
             lifecycle.record("rpc_requested", { rpcId: id, method });
-            send({ jsonrpc: "2.0", id, method, params });
+            registerBusyloopRequestSite(fluxRouteFor(requestUrl), send({ jsonrpc: "2.0", id, method, params }));
           });
 
         /** Any stop reached this turn. Stop All and shutdown call `stop` without `cancelRequested`, which also decides whether a
          *  session/cancel went out and whether the process parks, so `stopRequested` is the wider latch for "send the engine nothing more". */
         const turnHalted = () => state.settled || state.cancelRequested || state.stopRequested || disposed || Boolean(proc?.closing) || Boolean(proc?.dead) || (!state.promptSent && !fence.live());
+        const externalHalt = () => state.settled || state.cancelRequested || state.stopRequested || disposed || epochOf(threadId) !== catalogSetupEpoch;
         /** A stop someone asked for, as opposed to the engine going away. An interrupt (`cancelRequested`) always is, and so is Stop All, before
          *  and after the prompt. `dispose` (quit, restart, an engine retired) alone never is: that turn reads as the engine closing, before and
          *  after its prompt, so the turn is retried and whoever waits on it hears. */
@@ -3196,7 +3515,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // Committing a text item clears both renderer streams, so the reasoning
           // shown before it is retired too: a later discard must never bring it back.
           for (let i = streamSegs.length - 1; i >= 0; i--) if (streamSegs[i].kind === "reasoning") streamSegs.splice(i, 1);
-          state.producedItem = true;
+          state.producedItem = true; modelOutput = true;
           // A part a hosted row cut is saved before that row, so the transcript
           // reads text, row, text in the order it streamed.
           for (const part of parts) if (part.text.trim()) emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "engine", text: part.text, ...(part.before ? { beforeItemId: part.before } : {}) });
@@ -3244,7 +3563,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           const kept = lines.slice(-ENGINE_STDERR_LINES);
           // OpenCode's captured text is already reduced to {"type":"opencode_failure","category"} lines (capturedEngineStderr), so the
           // category is a closed enum value, never engine text: it is the one thing the allowlist adds to the counts
-          const categories = DRIVER_KIND !== "opencodeGo" ? [] : [...new Set(captured.split(/\r?\n/).map((line) => { try { return (JSON.parse(line) as { category?: unknown }).category; } catch { return undefined; } })
+          const categories = DRIVER_KIND !== "opencodeGo" ? [] : [...new Set(captured.split(/\r?\n/).map((line) => { try { return (registerBusyloopPayloadSite("read", JSON.parse(line)) as { category?: unknown }).category; } catch { return undefined; } })
             .filter((category): category is string => category === "authentication" || category === "rate_limit" || category === "unavailable" || category === "tool_count"))];
           // NOLIMITS 1.0.18 sink allowlist (MurageMain ruling 11-06): engine stderr is free text (it can quote a file or a
           // command), so the native trace keeps that the engine wrote it and how much, never the lines
@@ -3259,6 +3578,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // SubagentProgress and SubagentFinished on `_fuigo/session_notification`).
         // The prompt result is not the end of the turn while any still runs:
         // the turn is held open so their asks take the normal approval path.
+        const helperReads = new HelperReadEvidence();
         const helpers = { tracker: new SubtaskTracker(), open: new Set<string>(), holding: false, wakePending: false, cap: undefined as ReturnType<typeof setTimeout> | undefined };
         const emitSubtask = (subtask: ReturnType<SubtaskTracker["end"]>) => {
           if (subtask) emit({ ...base(threadId, turnId), type: "turn.subtask", subtask, subtasks: helpers.tracker.snapshot() });
@@ -3269,10 +3589,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           ok: boolean,
           stopReason: string | null,
           cause: LifecycleStopReason = ok ? "turn_complete" : "turn_failure",
+          terminalSite?: "end_turn" | "settle_held",
         ) => {
           if (state.settled) return;
+          const interrupted = state.cancelRequested || state.stopRequested || fallback.accepted || interjectionsPending.size > 0 || interjectionsUncertain.size > 0;
+          const readsComplete = terminalSite !== undefined && complete_flag('acp', { site: terminalSite, cancel_requested: state.cancelRequested || state.stopRequested, interj_accepted: fallback.accepted, interj_pending: interjectionsPending.size, interj_uncertain: interjectionsUncertain.size }, new Set(['acp-helpers']));
+          const helperRow = terminalSite === 'settle_held' ? helperReads.terminal('acp-helpers', terminalSite, interrupted) : undefined;
           state.settled = true;
+          retirePendingCatalogs();
+          if (!child) releaseHookCanon(hookCanon);
           quiet?.stop();
+          if (!child) mcpLaunch.release?.();
           stopFuigoWatch();
           releaseTrustHold?.();
           releaseCardHolds();
@@ -3337,7 +3664,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           // The engine ended the prompt itself right after a deny (no Stop, no host interrupt): say whose deny it was.
           const deniedBy = ok && stopReason === "cancelled" && !state.cancelRequested ? state.deniedBy : undefined;
-          emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null, ...(deniedBy ? { deniedBy } : {}), ...(settledUsage ? { usage: settledUsage } : {}), ...(settledCharge !== undefined ? { charge: settledCharge } : {}), ...(state.toolsUnavailable.length ? { toolsUnavailable: state.toolsUnavailable } : {}), ...(state.mcpReadiness ? { mcpReadiness: state.mcpReadiness } : {}) });
+          emit({ ...base(threadId, turnId), type: "turn.completed", ok, stopReason, cost: null, ...(readsComplete ? { readsComplete: true as const } : {}), ...(helperRow ? { helperRow } : {}), ...(deniedBy ? { deniedBy } : {}), ...(settledUsage ? { usage: settledUsage } : {}), ...(settledCharge !== undefined ? { charge: settledCharge } : {}), ...(state.toolsUnavailable.length ? { toolsUnavailable: state.toolsUnavailable } : {}), ...(state.mcpReadiness ? { mcpReadiness: state.mcpReadiness } : {}) });
           if (!park) stop(cause); // the agent process does not exit on its own
           forgetPrewarm();
         };
@@ -3372,17 +3699,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               type: "runtime.error",
               message: `${ENGINE} asked a question Murage could not show (${normalized.error}); it was told nobody answered`,
             });
-            return send({ jsonrpc: "2.0", id: msg.id, result: cancelled });
+            return NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", send({ jsonrpc: "2.0", id: msg.id, result: cancelled }));
           }
           flushAssistantText();
           const questions: QuestionSpec[] = normalized.questions;
           const vendorAnswer = "reply" in normalized ? (normalized.reply as (answers: readonly QuestionAnswer[]) => unknown) : undefined;
           const requestId = newId();
+          const slot: NativeAskSlot = { closed: false };
           const finish: AcpAskFinish = (behavior, source = "user", answers) => {
-            if (!asks.delete(requestId)) return;
-            fallbackChanged();
-            traceClose("permission.wait", requestId, behavior);
-            timer?.clear();
             const picks = behavior === "answer" && answers?.length ? answers : null;
             // a vendor reply that maps to no answer is its cancelled reply, never a guessed one
             const vendorReply = vendor && picks ? vendorAnswer?.(picks) : null;
@@ -3400,14 +3724,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             } else {
               result = cancelled;
             }
-            send({ jsonrpc: "2.0", id: msg.id, result });
-            emit({
-              ...base(threadId, turnId),
-              type: "request.resolved",
-              requestId,
-              behavior: answered ? "answer" : "deny",
-              source,
-            });
+            return deliverNative(slot, source === 'user' ? 'answer' : 'retire', JSON.stringify({behavior,result}),
+              () => new Promise<boolean>(resolve => send({ jsonrpc: '2.0', id: msg.id, result }, error => resolve(!error))),
+              () => !!child && child.stdin.writable && !child.stdin.destroyed, accepted => {
+                asks.delete(requestId); fallbackChanged(); traceClose('permission.wait',requestId,behavior); timer?.clear();
+                answerTransport.confirm(threadId, requestId, Promise.resolve(accepted));
+                emit({ ...base(threadId, turnId), type: 'request.resolved', requestId,
+                  behavior: accepted && answered ? 'answer' : 'deny', source: accepted ? source : 'unavailable' });
+              });
           };
           // awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline
           const timer = turn.unattendedAskNote ? wakeAwareTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS) : undefined;
@@ -3432,56 +3756,46 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // calls off. ok:true — the turn is fine, the folder's files were
         // simply left out (or apply next time).
         let noticeSeq = 0;
+        let prePromptNoticeShown = false;
         const noteFolderTrust = (name: string) => {
           const itemId = `folder-trust-${turnId}-${++noticeSeq}`;
           emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title: name });
           emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
         };
 
-        // The folder-trust card (FUIGOTRUST1): one question, two answers, a
-        // decision about the folder. Never auto-answered in any mode, exactly
-        // like a question (ASK1/ASK2): auto mode does not trust folders. The
-        // engine's timeout is the question timeout; what happens when nobody
-        // answers is the caller's rule (`onDecided("unanswered")`).
+        // Folder trust is permission, even though the protocol encodes it as
+        // a question. Resolve the live gate before creating its prompt hold.
         const askFolderTrust = (
           sources: string[],
-          onDecided: (decision: FolderTrustDecision | "skipped" | "unanswered", released: () => void) => void,
+          onDecided: (decision: FolderTrustDecision | "skipped" | "unanswered", released: () => void) => void | Promise<boolean>,
           late = false,
           v2?: { key: string; folder: string; question: ReturnType<typeof folderTrustQuestionV2>; summary: string; declines: string[] },
         ) => {
           const folder = v2?.folder ?? turn.folderTrust?.folder ?? cwd;
           const key = v2?.key ?? turn.folderTrust?.key ?? cwd;
+          if (approvalDecision(threadId,"folder_trust",{folder,sources},true).verdict === "run") {
+            onDecided("trust", () => { releaseTrustHold?.(); });
+            return;
+          }
           const question = v2?.question ?? folderTrustQuestion({ key, folder, sources });
           const requestId = newId();
-          const finish: AcpAskFinish = (behavior, source = "user", answers) => {
-            if (!asks.delete(requestId)) return;
-            fallbackChanged();
-            traceClose("permission.wait", requestId, behavior);
-            timer?.clear();
-            const decision = behavior === "answer" ? folderTrustDecision(answers) : null;
-            // the hold lets the first prompt go only once the reply to this card
-            // has been written to the engine: the v2 caller releases it from the
-            // reply's write callback (a stop or settle releases every hold too)
-            const released = () => releaseCardHold(requestId);
-            // FUIGOTRUST2 (6): a late card (the engine had already started)
-            // closed by nobody: the turn finished, was stopped, or the ask
-            // timed out while the turn ran on — untrusted in every case.
-            // FUIGOTRUST3 (3): a turn that FAILED (spawn or rpc error, an
-            // early exit) is named as such, not as stopped.
-            const folderTrustLate = late && source !== "user"
-              ? source === "timeout" ? "timeout" : state.finished ? "finished" : state.failed ? "failed" : "stopped"
-              : undefined;
-            emit({
-              ...base(threadId, turnId),
-              type: "request.resolved",
-              requestId,
-              behavior: decision ? "answer" : "deny",
-              source,
-              ...(folderTrustLate ? { folderTrustLate } : {}),
-            });
-            if (!v2) released();
-            if (decision) onDecided(decision, released);
-            else onDecided(source === "user" ? "skipped" : "unanswered", released);
+          const slot: NativeAskSlot = { closed: false };
+          const finish: AcpAskFinish = (behavior, source = 'user', answers) => {
+            const decision = behavior === 'answer' ? folderTrustDecision(answers) : null;
+            const folderTrustLate = late && source !== 'user'
+              ? source === 'timeout' ? 'timeout' : state.finished ? 'finished' : state.failed ? 'failed' : 'stopped' : undefined;
+            return deliverNative(slot, source === 'user' ? 'answer' : 'retire', JSON.stringify({behavior,decision}),
+              async () => {
+                // v1/v2 callbacks return their actual wire receipt. The prelaunch
+                // folder choice is in process and has no native frame.
+                const receipt = onDecided(decision ?? (source === 'user' ? 'skipped' : 'unanswered'), () => {});
+                return receipt === undefined ? true : await receipt;
+              }, () => !!child && child.stdin.writable && !child.stdin.destroyed, accepted => {
+                asks.delete(requestId); fallbackChanged(); traceClose('permission.wait',requestId,behavior); timer?.clear();
+                releaseCardHold(requestId);
+                answerTransport.confirm(threadId,requestId,Promise.resolve(accepted));
+                emit({ ...base(threadId,turnId),type:'request.resolved',requestId,behavior:accepted && decision ? 'answer' : 'deny',source:accepted ? source : 'unavailable',...(folderTrustLate?{folderTrustLate}:{}) });
+              });
           };
           // awake time (1.0.10 C3): a sleep with the card open does not count toward its deadline
           const timer = turn.unattendedAskNote ? wakeAwareTimeout(() => finish("deny", "timeout"), QUESTION_TIMEOUT_MS) : undefined;
@@ -3546,14 +3860,22 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // records and computes none of its own. Rules run in order; a trust reply
         // is the only grant, and it grants exactly K.
         const handleFolderTrustV2 = (id: unknown, params: any, sources: string[]) => {
-          const reply = (decision: FolderTrustDecision, written?: () => void) => {
-            send({ jsonrpc: "2.0", id, result: decision === "trust" ? { outcome: "trust", scope: "configAndCommands" } : { outcome: "reject" } }, written ? (error) => {
-              if (error) console.warn(`acp write thread=${threadId} error=${approvalWriteReason(error)}`);
-              written();
-            } : undefined);
-            releaseTrustHold?.();
-          };
+          const reply = (decision: FolderTrustDecision, written?: () => void) => new Promise<boolean>(resolve => {
+            send({jsonrpc:'2.0',id,result:decision === 'trust' ? {outcome:'trust',scope:'configAndCommands'} : {outcome:'reject'}}, error => {
+              if (!error) { written?.(); releaseTrustHold?.(); }
+              resolve(!error);
+            });
+          });
           const key: unknown = params.workspace;
+          if ((turn.permissionNow?.() ?? turn).noLimits === true) {
+            const answering = typeof key === "string" ? folderTrustRejectFor(turn.folderTrust?.rejects ?? [], key, canonicalFolder(cwd)) : null;
+            if (storedFolderReject || answering) {
+              reply("reject");
+              const declinedKey = answering?.key ?? turn.folderTrust?.key ?? canonicalFolder(cwd);
+              return noteDeclineOnce(declinedKey, folderTrustDeclinedName(sources, declinedKey));
+            }
+            return reply("trust");
+          }
           // Rule 1: not the question this client understands, or a key nothing may hold.
           if (params.scope !== "configAndCommands" || typeof key !== "string" || isUnrecordableTrustRoot(key)) {
             markFolderTrustUnfit("folder-trust-undecided");
@@ -3604,7 +3926,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (processReply || freshHomeThisTurn) {
               if (live && kindsOk && !(insideNo && !declinesSeeded)) {
                 markFolderTrustUnfit("folder-trust-card");
-                send({ jsonrpc: "2.0", id, result: processReply ? { outcome: "trust", scope: "configAndCommands", duration: "process" } : { outcome: "trust", scope: "configAndCommands" } });
+                NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", send({ jsonrpc: "2.0", id, result: processReply ? { outcome: "trust", scope: "configAndCommands", duration: "process" } : { outcome: "trust", scope: "configAndCommands" } }));
                 releaseTrustHold?.();
                 return;
               }
@@ -3622,7 +3944,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // digest does not carry a grant it holds.
             if (support.folderTrustProcessReply?.(lastCliVersion) === true) {
               markFolderTrustUnfit("folder-trust-card");
-              send({ jsonrpc: "2.0", id, result: { outcome: "trust", scope: "configAndCommands", duration: "process" } });
+              NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", send({ jsonrpc: "2.0", id, result: { outcome: "trust", scope: "configAndCommands", duration: "process" } }));
               releaseTrustHold?.();
               if (!state.settled) noteFolderTrust(folderTrustChosenName(sources));
               return;
@@ -3659,12 +3981,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             markFolderTrustUnfit(answered ? "folder-trust-card" : "folder-trust-undecided");
             // the held first prompt goes once this reply is written, so the
             // engine always reads the answer before the prompt
-            reply(decision === "trust" ? "trust" : "reject", released);
-            if (decision === "unanswered") return noteFolderTrust(folderTrustWithheldName(sources));
-            if (state.settled) return;
-            noteFolderTrust(decision === "trust" ? folderTrustChosenName(sources)
+            const receipt = reply(decision === "trust" ? "trust" : "reject", released);
+            if (decision === "unanswered") noteFolderTrust(folderTrustWithheldName(sources));
+            else if (!state.settled) noteFolderTrust(decision === "trust" ? folderTrustChosenName(sources)
               : decision === "reject" ? folderTrustDeclinedName(sources, key)
               : folderTrustWithheldName(sources));
+            return receipt;
           }, true, { key, folder: turn.folderTrust?.folder ?? realCwd, question, summary: folderTrustSummaryV2(card), declines });
         };
 
@@ -3680,11 +4002,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const handleFolderTrustRequest = (msg: any) => {
           const raw = msg.params ?? {};
           const params = raw.params && typeof raw.params === "object" ? raw.params : raw;
-          const reply = (decision: FolderTrustDecision | "skipped") =>
-            send({ jsonrpc: "2.0", id: msg.id, result: { outcome: decision === "trust" ? "trust" : "reject" } });
+          const reply = (decision: FolderTrustDecision | "skipped") => new Promise<boolean>(resolve =>
+            send({ jsonrpc: '2.0', id: msg.id, result: { outcome: decision === 'trust' ? 'trust' : 'reject' } }, error => resolve(!error)));
           const kinds = Array.isArray(params.configKinds) ? params.configKinds : [];
           const sources = folderSources().length ? folderSources() : folderTrustKindNames(kinds);
           if (params.scope !== undefined) return handleFolderTrustV2(msg.id, params, sources);
+          if ((turn.permissionNow?.() ?? turn).noLimits === true && !storedFolderReject) return reply("trust");
           // FUIGOTRUST3 (1): the engine asks ONLY when its own store did not
           // trust the folder, so a request on an `upstreamTrusted` turn means
           // Murage's reading of trusted_folders.toml and the engine's
@@ -3707,19 +4030,111 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const answered = decision === "trust" || decision === "reject";
             folderTrusted = answered ? decision : "skipped";
             markFolderTrustUnfit(answered ? "folder-trust-card" : "folder-trust-undecided");
-            reply(folderTrusted);
+            const receipt = reply(folderTrusted);
             // FUIGOTRUST2 (6): nobody decided while the engine ran — it ran
             // untrusted, so the chip names what it asked about. A settle
             // closes the ask BEFORE it emits turn.completed, so the chip
             // still lands inside the turn.
-            if (decision === "unanswered") return noteFolderTrust(folderTrustWithheldName(sources));
-            if (state.settled) return;
-            noteFolderTrust(decision === "trust" ? folderTrustLateName(sources) : folderTrustWithheldName(sources));
+            if (decision === "unanswered") noteFolderTrust(folderTrustWithheldName(sources));
+            else if (!state.settled) noteFolderTrust(decision === "trust" ? folderTrustLateName(sources) : folderTrustWithheldName(sources));
+            return receipt;
           }, true);
         };
 
+        const sendUnknownRequest = (msg: any) => send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
+        // The native posture must catch up before an answer can release the next tool.
+        let postureModes: { currentModeId?: unknown; availableModes?: Array<{ id?: unknown }> } | undefined;
+        let appliedPosture: boolean | undefined;
+        let appliedPermission: {askLevel?: boolean; noLimits?: boolean; stopLine?: boolean} | undefined;
+        let posturePending: Promise<void> = Promise.resolve();
+        let postureContinuation = false;
+        const postureBarrier = new PostureBarrier();
+        const postureRestartSignal = new Error('posture-restart');
+        const powerRetrySignal = new Error('power-retry');
+        let powerRetryPending = false, powerRetried = false;
+        let restartingPosture = false;
+        let postureEpoch = 0, postureFailures = 0;
+        const MAX_POSTURE_RECOVERY_FAILURES = 2;
+        let postureFailureNoted = false;
+        const failPosture = (reason: string) => {
+          if (!postureFailureNoted) {
+            postureFailureNoted = true;
+            emit({ ...base(threadId, turnId), type: 'runtime.error', message: 'The engine did not acknowledge the changed permission level.' });
+          }
+          settle(false, reason);
+        };
+        let postureResume: string | null = null;
+        let restartReady: (() => void) | undefined;
+        let restartFailed: ((error: unknown) => void) | undefined;
+        let restartNativePosture: (() => Promise<void>) | undefined;
+        const immutablePosture = Boolean(support.askStop?.apply && !support.askStop?.sessionMode);
+        const syncSessionPosture = (id: string | null): Promise<void> => {
+          const next = posturePending.catch(() => {}).then(async () => {
+            if (!id || state.settled || state.cancelRequested) return;
+            while (appliedPosture !== askStop()) {
+              const wanted = askStop();
+              const wantedPermission = {...(turn.permissionNow?.() ?? turn)};
+              if (immutablePosture && appliedPosture !== undefined) { if (postureRecoveryPending) return; await onPostureChange(); return; }
+              const mode = support.noSessionModes ? undefined : support.askStop?.sessionMode;
+              try {
+                fence.check("ask-stop");
+                if (mode) {
+                  if (wanted) {
+                    if (Array.isArray(postureModes?.availableModes) && !postureModes.availableModes.some(m => m.id === mode.readOnly)) throw new Error("read-only mode unavailable");
+                    await request("session/set_mode", { sessionId: id, modeId: mode.readOnly }, SESSION_CONFIG_TIMEOUT);
+                    askStopModeSessions.add(id);
+                  } else if (appliedPosture === true || askStopModeSessions.has(id) || postureModes?.currentModeId === mode.readOnly) {
+                    await request("session/set_mode", { sessionId: id, modeId: mode.normal }, SESSION_CONFIG_TIMEOUT);
+                    askStopModeSessions.delete(id);
+                    postureModes = { ...postureModes, currentModeId: mode.normal };
+                  }
+                }
+                fence.check("ask-stop");
+                await support.askStop?.apply?.({ env, config: turnConfig, turn, askLevel: wanted });
+                appliedPosture = wanted; appliedPermission = wantedPermission;
+                if (mode) recordPostureAck(DRIVER_KIND, instanceId, threadId, turnId, appliedPermission, 'session/set_mode');
+
+              } catch (error) {
+                if (error instanceof SendStoppedError) throw error;
+                throw error;
+
+              }
+            }
+          });
+          posturePending = next;
+          return next;
+        };
+        let postureRecoveryPending: Promise<void> | undefined;
+        const restartPosture = (): Promise<void> => {
+          if (postureRecoveryPending) return postureRecoveryPending;
+          postureRecoveryPending = Promise.resolve().then(() => restartNativePosture?.()).finally(() => { postureRecoveryPending = undefined; });
+          return postureRecoveryPending;
+        };
+        const onPostureChange = async () => {
+          if (postureRecoveryPending) return postureRecoveryPending;
+          const wasAsk = appliedPosture;
+          // A pre-prompt native grant (OpenClaw) cannot be narrowed by an ACP
+          // session mode. End that full-access turn before the lower level runs.
+          if (support.prePrompt && appliedPermission?.noLimits === true && (turn.permissionNow?.() ?? turn).noLimits !== true && !state.settled && !state.cancelRequested) {
+            interrupt();
+            return;
+          }
+          if (wasAsk === askStop() || state.settled || state.cancelRequested) return;
+          postureContinuation ||= wasAsk === true && !askStop();
+          if (immutablePosture) return postureBarrier.change(restartPosture);
+          let deadline: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([syncSessionPosture(sessionId), new Promise<never>((_, reject) => {
+              deadline = setTimeout(() => reject(new Error('posture synchronization deadline')), 10_000);
+            })]);
+          } catch (error) {
+            if (!sessionId || state.settled || state.cancelRequested || restartingPosture) throw error;
+            await restartPosture();
+          } finally { if (deadline) clearTimeout(deadline); }
+        };
         // server→client permission request → canonical request.opened
-        const handleServerRequest = (msg: any) => {
+        const handleServerRequest = async (msg: any) => {
+          const requestProcess = proc;
           if (state.promptSent && sessionId && msg.params?.sessionId === sessionId) quiet?.progress();
           if (FUIGO_FOLDER_TRUST_METHODS.has(msg.method)) return handleFolderTrustRequest(msg);
           const vendorAsk = questionMethodFor(msg.method);
@@ -3732,21 +4147,20 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             console.warn(`acp unknown server request thread=${threadId} engine=${DRIVER_KIND} method=${logMethodName(msg.method)}`);
             // Astra r1 (6): a vendor method Murage does not know may be a tool it never sees: the turn is marked
             if (!state.settled) markAcpTurn("outside tool", `acp-request:${logMethodName(msg.method)}`, msg.params);
-            return send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: "method not found" } });
+            const sent = NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", sendUnknownRequest(msg));
+            tripTool();
+            return sent;
           }
+          try { await syncSessionPosture(sessionId); }
+          catch { if (requestProcess === proc) send({ jsonrpc: '2.0', id: msg.id, result: { outcome: { outcome: 'cancelled' } } }); return; }
+          if (requestProcess !== proc) return;
+          if (state.settled || state.cancelRequested) { send({ jsonrpc: "2.0", id: msg.id, result: { outcome: { outcome: "cancelled" } } }); return; }
+          const hooksReady = inspectHermesHook();
           const params = msg.params ?? {};
           // Only the same native request in this turn/session shares a card;
           // an identical command with a new RPC id still needs its own decision.
           const paramsKey = createHash("sha256").update(JSON.stringify(params)).digest("hex");
           const pendingNative = nativeApprovals.get(msg.id);
-          if (pendingNative) {
-            if (pendingNative.paramsKey === paramsKey) return;
-            // An RPC id cannot name two pending operations. Retire its original
-            // resolver and cancel the id once; an accepted answer is uncertain
-            // and teardown must not send a conflicting cancellation after it.
-            settle(false, "approval_request_conflict");
-            return;
-          }
           flushAssistantText();
           const options: Array<{ optionId?: string; kind?: string }> = Array.isArray(params.options) ? params.options : [];
           // A card answers only this request. Never widen it to an engine's
@@ -3768,6 +4182,51 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // The engine's own reading of what it sent, once, so every reader below takes the same input.
           const normalAsk = support.normalizeAsk?.(sentToolCall.rawInput);
           const normalCall = normalAsk?.ok ? { ...sentToolCall, rawInput: normalAsk.rawInput } : sentToolCall;
+          const sendPermission = (response: any, done?: ApprovalWriteCallback) => {
+            let repairFailed = !hooksReady;
+            let retireAllow: (() => void) | undefined;
+            const selected = response.result?.outcome;
+            const option = selected?.outcome === "selected" ? options.find(o => o.optionId === selected.optionId) : undefined;
+            if (support.toolTripwire && (option?.kind === "allow_once" || option?.kind === "allow_always")) {
+              repairFailed = repairFailed || !inspectHermesHook();
+              if (repairFailed || toolIncident || state.settled || state.cancelRequested || !state.promptSent || !sessionId || params.sessionId !== sessionId) {
+                const reject = optionFor("reject");
+                response = { ...response, result: reject ? { outcome: { outcome: "selected", optionId: reject } } : cancelled };
+              } else {
+                const id = normalCall.toolCallId;
+                const facts = { ...(typeof id === "string" ? callFacts.get(id) : {}), ...normalCall };
+                // Hermes permission titles/inputs are display wrappers; its execution
+                // reports name the original call. Keep policy input intact and bind
+                // the allow to the validated execution representation instead.
+                const execution = normalAsk?.ok ? normalAsk.execution : undefined;
+                retireAllow = toolAllows.record(id, execution?.identity ?? resolveToolIdentity(facts.title, facts.rawInput), execution ? execution.input : facts.rawInput, sessionId);
+              }
+            }
+            try {
+              const sent = send(response, (error, accepted) => { if (error) retireAllow?.(); done?.(error, accepted); });
+              if (repairFailed) stopHookRepair();
+              return sent;
+            } catch (error) { retireAllow?.(); throw error; }
+          };
+          if (!hooksReady) {
+            if (pendingNative) {
+              // Retire the original resolver once, including any pending write;
+              // a duplicate must not retain permission authority after V-H2 fails.
+              asks.get(pendingNative.requestId)?.("cancel", "system");
+              stopHookRepair();
+              return;
+            }
+            const reject = optionFor("reject");
+            return sendPermission({ jsonrpc: "2.0", id: msg.id, result: reject ? { outcome: { outcome: "selected", optionId: reject } } : cancelled });
+          }
+          if (pendingNative) {
+            if (pendingNative.paramsKey === paramsKey) return;
+            // An RPC id cannot name two pending operations. Retire its original
+            // resolver and cancel the id once; an accepted answer is uncertain
+            // and teardown must not send a conflicting cancellation after it.
+            settle(false, "approval_request_conflict");
+            return;
+          }
           const kind = String(normalCall.kind ?? "");
           // ISSUE-PERMS-1010 B: Fuigo's codex apply_patch carries its targets only inside the patch; they are read with the
           // Codex driver's reader into `locations`, so every path check reads the real destinations (a patch it cannot read
@@ -3803,7 +4262,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const register = askId === undefined || prior === undefined || changed;
             if (askId !== undefined) rememberCall(askId, merged);
             if (!recordOutsideInstallChange(threadId, { ...acpOutsideCall(merged, askId), origin: "engine" }, cwd, { acpRaw: true })) {
-              return send({ jsonrpc: "2.0", id: msg.id, result: cancelled });
+              return NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", sendPermission({ jsonrpc: "2.0", id: msg.id, result: cancelled }));
             }
             judgeAcpCall(merged, false, askId);
             if (register) {
@@ -3816,32 +4275,32 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               };
             }
           }
-          if (ownedMemoryAlias && !turnConfig.fullAuto && !questionTool && state.promptSent &&
+          if ((turn.permissionNow?.() ?? turn).noLimits !== true && ownedMemoryAlias && !turnConfig.fullAuto && !questionTool && state.promptSent &&
             sessionId && params.sessionId === sessionId && !state.settled && !state.cancelRequested &&
             Array.from(rpcPending.values()).some(pending => pending.method === "session/prompt")) {
             const allow = fuigoMemoryAllowOnce(toolCall, options, ownedMemoryAlias);
             if (allow) {
               registerOnAllow?.();
-              return send({ jsonrpc: "2.0", id: msg.id,
-                result: { outcome: { outcome: "selected", optionId: allow } } });
+              return NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", sendPermission({ jsonrpc: "2.0", id: msg.id,
+                result: { outcome: { outcome: "selected", optionId: allow } } }));
             }
           }
           // The Ask hard stop: anything that is not a read, search, think or fetch is refused here, with no card.
-          if (askStop && !questionTool && askStopRefusesKind(toolCall.kind)) {
+          if (askStop() && !questionTool && askStopRefusesKind(toolCall.kind)) {
             askStopRefused = true;
             const reject = optionFor("reject");
             appendNative(threadId, { dir: "out", source: SOURCE, msg: { askStop: "refused", kind: kind || null } });
-            return send({ jsonrpc: "2.0", id: msg.id, result: reject ? { outcome: { outcome: "selected", optionId: reject } } : cancelled });
+            return NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", sendPermission({ jsonrpc: "2.0", id: msg.id, result: reject ? { outcome: { outcome: "selected", optionId: reject } } : cancelled }));
           }
-          if (turnConfig.fullAuto && !questionTool) {
+          if (turnConfig.fullAuto && !questionTool && (turn.permissionNow?.()??turn).noLimits!==true) {
             const allow = optionFor("allow", !support.allowOnceOnly);
             if (!allow) missing("allow");
             else registerOnAllow?.();
-            return send({
+            return NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", sendPermission({
               jsonrpc: "2.0",
               id: msg.id,
               result: allow ? { outcome: { outcome: "selected", optionId: allow } } : cancelled,
-            });
+            }));
           }
           const tool = questionTool ?? (kind === "execute" ? "shell" : kind === "edit" ? "edit" : kind || "tool");
           // The headline is the real target: the command (an argv array is
@@ -3858,11 +4317,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // target (paths); keep it, marked as the model's, so a move's
           // destination named only in the title is not lost.
           const titleText = typeof toolCall.title === "string" && toolCall.title.trim() ? toolCall.title : undefined;
+          const titleCommand = kind === "execute" && !commandLine && !normalAsk && titleText && (toolCall.rawInput === undefined || (isPlainInput(toolCall.rawInput) && !Object.hasOwn(toolCall.rawInput, "command")))
+            ? titleText : undefined;
           const reason = editPaths && titleText && titleText !== summary ? approvalSummary(titleText) : undefined;
           // A tool with no command and no paths (fetch, other, MCP): its arguments.
           const toolInput = !commandLine && !editPaths ? boundedToolInput(toolCall.rawInput) : undefined;
           const computerAsk = controlsHost && acpAskControlsComputer(toolCall);
           const requestId = newId();
+          let nativeReleaseInput:unknown;
           let delivery: { behavior: string; promise: Promise<AcpAskResult>; stop: AbortController; uncertain: boolean; superseded: boolean } | undefined;
           let expired = false;
           const clearAsk = () => {
@@ -3876,7 +4338,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (state.settled || behavior === "cancel") {
               // A pending ask still needs ACP's cancellation reply. An in-flight
               // answer is uncertain: never write a second response to that RPC.
-              if (!delivery?.uncertain) send({ jsonrpc: "2.0", id: msg.id, result: cancelled });
+              if (!delivery?.uncertain) NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", sendPermission({ jsonrpc: "2.0", id: msg.id, result: cancelled }));
               clearAsk();
               traceClose("permission.wait", requestId, "engine_stopped");
               if (delivery || state.failed) {
@@ -3916,6 +4378,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               pending.stop.abort();
               return pending.promise.then(() => finish("deny", source));
             }
+            if(behavior==='allow'&&(turn.permissionNow?.()??turn).noLimits===true&&!answerTransport.guardRelease(threadId,requestId,()=>guardEngineRelease({threadId,turnId,requestId,providerInstanceId:instanceId},nativeReleaseInput)))return false;
             const want = behavior === "allow" ? "allow" : "reject";
             const optionId = optionFor(want);
             if (!optionId) missing(want);
@@ -3980,14 +4443,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }
             };
             delivery = current;
+            let confirm!: (accepted: boolean) => void;
+            answerTransport.confirm(threadId, requestId, new Promise(resolve => { confirm = resolve; }));
             current.promise = deliverApproval(done => {
+              if(behavior==='allow'&&(turn.permissionNow?.()??turn).noLimits===true&&!answerTransport.guardRelease(threadId,requestId,()=>guardEngineRelease({threadId,turnId,requestId,providerInstanceId:instanceId},nativeReleaseInput))){done(new Error('protected-release-held'),false);return;}
               current.uncertain = true;
-              send(response, (error, accepted = true) => {
+              NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", sendPermission(response, (error, accepted = true) => {
+                confirm(!error);
                 current.uncertain = !!error && accepted;
                 if (!error) clearAsk();
                 else if (expired && behavior === "allow") current.stop.abort();
                 done(error, accepted);
-              });
+              }));
             }, alive, current.stop.signal, result => {
               acceptResult(result);
               releaseDelivery();
@@ -4010,9 +4477,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           else openCard(execEnvHanded(f12, cwd, acpShellForm));
           function openCard(execEnv?: ExecEnv) {
           if (!asks.has(requestId)) return;
-          emit({
+          const opened:Extract<RuntimeEvent,{type:'request.opened'}>={
             ...base(threadId, turnId),
             type: "request.opened",
+            executionCwd: cwd,
             ...(execEnv ? { execEnv } : {}),
             // 1.0.19 A3: the call's key, so its own first mark is read without it (index.ts outsideContextFields)
             ...(typeof toolCall.toolCallId === "string" ? { callKey: toolCall.toolCallId } : {}),
@@ -4040,14 +4508,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             ...(acpCommandShell ? { commandShell: acpCommandShell } : {}),
             // F5: no kind on the wire means nothing to resolve the call by;
             // the title is never a name.
+            // Retaining a title for safety readers does not fill the command missing on the wire.
+            ...(!questionTool && titleCommand ? { toolInputMissing: "command" } : {}),
             ...(!questionTool && !kind ? { toolInputMissing: "kind" } : patchRead.unread ? { toolInputMissing: "patch" } : {}),
             // Rules 2, 55: a source that is present but malformed (a rawInput that is not an object, locations that are not a list) makes
             // the whole call unread; it is never dropped or replaced with an empty input.
             ...(() => { const bad = !questionTool && kind ? acpMalformedSource(toolCall) : undefined; return bad ? { toolInputMissing: bad } : {}; })(),
             // An ask the engine's reader could not read (Hermes: a hook message it does not recognise) is unread.
             ...(normalAsk && !normalAsk.ok && !questionTool ? { toolInputMissing: normalAsk.why } : {}),
-            // Provenance (design R3): a cut hook message, and a shell call whose only text is a title past the card's cap.
-            ...((normalAsk && !normalAsk.ok && normalAsk.cut === true) || (!normalAsk && kind === "execute" && !commandLine && summary !== headline) ? { toolInputTruncated: true } : {}),
+            // Protocol truncation is distinct from the display cap (RULING-R3 R2).
+            ...(normalAsk && !normalAsk.ok && normalAsk.cut === true ? { toolInputTruncated: true } : {}),
             // Structured, off the wire — never parsed back out of `summary`,
             // which is composed from what the model wrote.
             ...(() => { const filePaths = acpToolFilePaths(toolCall); return filePaths ? { filePaths } : {}; })(),
@@ -4066,9 +4536,13 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               name: kind === "execute" ? "shell" : kind === "delete" ? "delete" : kind,
               input: kind === "delete" || kind === "edit" || kind === "read" || kind === "move"
                 ? { ...(isPlainInput(toolCall.rawInput) ? toolCall.rawInput : {}), ...(toolCall.locations !== undefined ? { locations: toolCall.locations } : {}) }
-                : toolCall.rawInput,
+                : titleCommand
+                  // Preserve the whole fallback command for deny and wipe readers; summary is display only.
+                  ? { ...(toolCall.rawInput ?? {}), command: titleCommand }
+                  : toolCall.rawInput,
             } }),
-          });
+          };
+          nativeReleaseInput=opened.toolCall?.input;emit(opened);
           }
         };
 
@@ -4077,7 +4551,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const settleHeld = () => {
           if (!helpers.holding || state.settled || helpers.open.size > 0 || helpers.wakePending) return;
           flushAssistantText();
-          settleClean();
+          settleClean('settle_held');
         };
         const fallbackGraceMs = (): number => envOr("MURAGE_FUIGO_FALLBACK_GRACE_MS", 2_000);
         const fallbackCapMs = (): number => envOr("MURAGE_FUIGO_FALLBACK_CAP_MS", 10 * 60_000);
@@ -4107,12 +4581,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         };
         /** A clean finish. Once an interjection was accepted it waits for any
          *  `interject-fallback-` turn Fuigo runs for it, bounded by the cap. */
-        const settleClean = () => {
+        const settleClean = (terminalSite: "end_turn" | "settle_held" = "end_turn") => {
           if (state.settled) return;
           // A helper or fallback hold that ends after a Flux refusal cancelled the engine's retry is that refusal, not a clean end.
           if (state.fluxRefusal && !state.cancelRequested && !state.stopRequested) { finishFluxRefusal(); return; }
           if (!support.interjection || (!fallback.accepted && interjectionsPending.size === 0)) {
-            settle(true, null);
+            settle(true, null, "turn_complete", terminalSite);
             return;
           }
           if (!fallback.holding) {
@@ -4182,7 +4656,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           flushAssistantText();
           emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: note });
           emit({ ...base(threadId, turnId), type: "item.completed", itemType: "assistant_text", origin: "murage", text: note });
-          state.producedItem = true;
+          state.producedItem = true; modelOutput = true;
           settle(true, "background_wait_cap");
         };
         const holdForHelpers = () => {
@@ -4225,7 +4699,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             runningTools.delete(id);
             traceToolClose(id, "interrupted");
             toolNames.delete(id);
-            state.producedItem = true;
+            state.producedItem = true; modelOutput = true;
             emit({ ...base(threadId, turnId), type: "item.completed", itemType: "tool", itemId: id, ok: false, detail: HOSTED_ROW_INTERRUPTED });
           }
           if (!streamSegs.some(seg => seg.kind === "text" && seg.cut)) liveBreak = false;
@@ -4251,38 +4725,57 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const finishFluxRefusal = () => {
           if (state.settled || !state.fluxRefusal || state.cancelRequested || state.stopRequested) return;
           const eventBase = base(threadId, turnId);
+          // A Cloud home words 402, 401 and 403 refusals itself (cloud-home/flux-credit-refusal.ts), here as on the RPC-error path: its line,
+          // no gateway fields, no Fuigo-is-busy card. A 429 (free cap, hourly, hold, busy) is never claimed by it and falls through to the card below.
+          const cloudRefusal = cloudRetryNoticeRefusal(state.fluxRefusal.notice, { owned: support.driverKind === "fuigoAgent", fromRouter: fluxRoutedTurn });
+          if (cloudRefusal) {
+            reportFluxRefusal(cloudRefusal);
+            emit({ ...eventBase, type: "runtime.error", message: cloudRefusal.message, diagnostic: acpErrorDiagnostic(eventBase, lifecycle.generation) });
+            settle(false, "rpc_error");
+            return;
+          }
           emit({
             ...eventBase,
             type: "runtime.error",
             message: acpEngineErrorText(state.fluxRefusal.text) ?? `${ENGINE} could not finish this turn.`,
             gatewayCode: state.fluxRefusal.code,
+            fluxDecision: state.fluxRefusal.decision,
+            httpStatus: state.fluxRefusal.httpStatus,
             ...(state.fluxRefusal.resetsAt !== undefined ? { gatewayResetsAt: state.fluxRefusal.resetsAt } : {}),
             diagnostic: acpErrorDiagnostic(eventBase, lifecycle.generation),
           });
           settle(false, "rpc_error");
         };
         const onRetryState = (u: any) => {
-          if (u.type !== "retrying") return;
+          if (state.fluxRefusal || state.cancelRequested || state.stopRequested) return;
+          const terminal = u.type === "exhausted" || u.type === "failed";
+          if (u.type !== "retrying" && !terminal) return;
           // 1.0.18 (f): a Masterclass customer's Fuigo sent one free_cap_reached 429 fourteen times in four minutes; the engine's
           // own retries (FUIGO_MAX_RETRIES) resent a refusal that no resend can fix. A Flux code in the retry notice cancels the
           // retry before it goes out: a spent allowance or credit is sent once, a hold gets one retry after its Retry-After.
           // A plain busy 429 with no code keeps the engine's own quiet retries.
           // Astra r4/r6: read only on a turn that reaches Flux (the same test as the Flux Memory headers): a saved connection
           // that is not Flux, or a local model, keeps the engine's retries whatever words its notice holds.
-          const code = fluxRoutedTurn && !state.cancelRequested && !state.fluxRefusal && sessionId ? fluxRefusalCode(u.reason, u.error, u.message, u.detail) : undefined;
+          const decision = fluxRoutedTurn && !state.cancelRequested && !state.fluxRefusal && sessionId ? acpRefusal(registerBusyloopPayloadSite("classify", u)) : undefined;
+          const code = fluxRoutedTurn && !state.cancelRequested && !state.fluxRefusal && sessionId ? acpRefusalCode(u) : undefined;
           // Astra r4: Fuigo sends one retry notice on both rails (session/update and its own notification), so a hold is
           // counted once per engine attempt, not once per notice. A notice with no attempt number counts on its own.
-          const freshHold = code === "hold" && (typeof u.attempt !== "number" || !fluxHoldAttempts.has(u.attempt));
+          const freshHold = (decision?.action === "RETRY_ONCE" || code === "hold") && (typeof u.attempt !== "number" || !fluxHoldAttempts.has(u.attempt));
           if (freshHold && typeof u.attempt === "number") fluxHoldAttempts.add(u.attempt);
-          if (code && (fluxRefusalFinal(code) || (freshHold && ++state.fluxHoldRetries > 1))) {
-            const resetsAt = code === "hourly_burn_limit" ? fluxHourlyResetsAt(Date.now(), u.reason, u.error, u.message, u.detail) : undefined;
-            state.fluxRefusal = { code, text: typeof u.reason === "string" ? u.reason.slice(0, 2000) : "", ...(resetsAt !== undefined ? { resetsAt } : {}) };
-            send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+          const retryOnceSpent = freshHold && ++state.fluxHoldRetries > 1;
+          if ((decision && (isTerminal(decision) || terminal || retryOnceSpent)) || (code && (terminal || fluxRefusalFinal(code) || retryOnceSpent))) {
+            const resetsAt = refusalResetAt(decision, u) ?? (code === "hourly_burn_limit" ? fluxHourlyResetsAt(Date.now(), u.reason, u.error, u.message, u.detail) : undefined);
+            state.fluxRefusal = { code, decision, httpStatus: acpRefusalHttpStatus(u), text: typeof u.reason === "string" ? u.reason.slice(0, 2000) : "", ...(resetsAt !== undefined ? { resetsAt } : {}), notice: u };
+            // Exhausted/failed notices precede the prompt response; keep their
+            // typed facts without cancelling a turn the engine already ended.
+            if (terminal) return;
+            NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } }));
             // Astra r4: an engine that never answers the cancel still ends this turn as the refusal, once.
             const deadline = setTimeout(finishFluxRefusal, ACP_CANCEL_GRACE_MS);
             deadline.unref?.();
             return;
           }
+          if (terminal) return;
           if (!retryDiscard) resetForRetry();
           else if (u.discardEmitted === true) discardForRetry(u);
         };
@@ -4310,22 +4803,30 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           // Murage never judges item by item: it marks the turn `helper`. A loaded session's history is the server's to
           // prove (r1 5); the same frame before the prompt of a turn that loaded nothing marks too.
           if (!state.settled && u && typeof u === "object" && !ACP_HELPER_RAIL_NON_TOOL.has(u.sessionUpdate)
-            && ((!replay && state.promptSent) || !loadIssued)) markAcpTurn("helper", "acp-helper-rail", u);
+            && ((!replay && state.promptSent) || !loadIssued)) {
+            const lifecycle = ['subagent_spawned', 'subagent_progress', 'subagent_finished'].includes(u.sessionUpdate);
+            markAcpTurn("helper", "acp-helper-rail", u, lifecycle);
+            if (!lifecycle) helperReads.read();
+          }
+          if (u && typeof u === "object" && !ACP_HELPER_RAIL_NON_TOOL.has(u.sessionUpdate) && !(loadIssued && (!state.promptSent || replay))) tripTool();
           if (replay || !state.promptSent || state.settled || !u || typeof u !== "object") return;
           if (typeof sid === "string" && sessionId && sid !== sessionId) return;
           const id = typeof u.subagent_id === "string" ? u.subagent_id : null;
           switch (u.sessionUpdate) {
             case "subagent_spawned":
+              helperReads.spawn(id);
               if (!id) return;
               emitSubtask(helpers.tracker.start(id, u.description));
               helpers.open.add(id);
               fallbackChanged();
               break;
             case "subagent_progress":
+              helperReads.progress(id, u.tool_call_count);
               if (!id) return;
               emitSubtask(helpers.tracker.progress(id, { toolCount: u.tool_call_count }));
               break;
             case "subagent_finished":
+              helperReads.finish(id, u.status === 'completed');
               if (!id) return;
               helpers.open.delete(id);
               emitSubtask(helpers.tracker.end(id, u.status === "completed"));
@@ -4372,7 +4873,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
         };
 
-        const handleNotification = (msg: any) => {
+        const handleNotification = async (msg: any) => {
           failureObservations.observe(msg, {
             source: SOURCE, sessionId, promptStartedAt,
             pendingPrompts: [...rpcPending.values()].filter(p => p.method === "session/prompt").length,
@@ -4437,10 +4938,36 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           if (msg.method !== "session/update") {
             // NOLIMITS v1 (Astra r1 6): a vendor notification off the closed non-tool list may be a tool Murage never sees
-            if (!state.settled && !ACP_NON_TOOL_NOTIFICATIONS.has(String(msg.method)) && !acpConfigNotification(msg.method, msg.params)) markAcpTurn("outside tool", `acp-notify:${logMethodName(msg.method)}`, msg.params);
+            if (!state.settled && !ACP_NON_TOOL_NOTIFICATIONS.has(String(msg.method)) && !acpConfigNotification(msg.method, msg.params)) {
+              markAcpTurn("outside tool", `acp-notify:${logMethodName(msg.method)}`, msg.params);
+              tripTool();
+            }
             return;
           }
+          if (support.toolBudget && recoveryUsed && externalHalt()) return;
           const p = msg.params ?? {};
+          const history = loadIssued && (!state.promptSent || p._meta?.isReplay === true);
+          const updateKind = p.update?.sessionUpdate;
+          const toolFrame = updateKind === "tool_call" || updateKind === "tool_call_update";
+          if (toolFrame && !history && p.sessionId === sessionId) {
+            const notificationProcess = proc;
+            if (postureBarrier.changing) {
+              if (p.update?.status === 'completed' || p.update?.status === 'failed') postureBarrier.boundary();
+              return;
+            }
+            try { await syncSessionPosture(sessionId); }
+            catch { interrupt(); return; }
+            if (notificationProcess !== proc || state.settled || state.cancelRequested) return;
+          }
+          if (!history && ((toolFrame && (!state.promptSent || p._meta?.isReplay === true)) ||
+            (!toolFrame && !["agent_message_chunk", "agent_thought_chunk", "plan", "retry_state", "available_commands_update"].includes(updateKind) && p.update && Object.prototype.hasOwnProperty.call(p.update, "toolCallId")))) {
+            tripTool();
+            if (support.toolTripwire) return;
+          }
+          if (p.update?.sessionUpdate === "config_option_update" && p.sessionId === sessionId && p._meta?.isReplay !== true) {
+            modelControls.receive(p.update);
+            return;
+          }
           // The engine's own "/" commands. Fuigo and Grok Build send the list
           // right after session/new, BEFORE the prompt, so this is read ahead
           // of the prompt gate below that drops every other pre-prompt
@@ -4461,6 +4988,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             return;
           }
           const u = p.update ?? {};
+          if (["agent_message_chunk", "agent_thought_chunk", "plan", "tool_call", "tool_call_update"].includes(u.sessionUpdate)) modelOutput = true;
           if (p.sessionId === sessionId && ["agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update"].includes(u.sessionUpdate)) quiet?.progress();
           turnTrace(threadId).once("first.update", { kind: String(u.sessionUpdate) });
           switch (u.sessionUpdate) {
@@ -4470,7 +4998,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const delta = content?.text;
               if (content?.type === "image" && typeof content.data === "string" && content.data) {
                 flushAssistantText();
-                state.producedItem = true;
+                state.producedItem = true; modelOutput = true;
                 emit({
                   ...base(threadId, turnId),
                   type: "item.completed",
@@ -4488,7 +5016,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 const startMs = p._meta?.streamStartMs ?? u._meta?.streamStartMs;
                 splitAtNewResponse(startMs);
                 state.text += delta;
-                if (askStop && askStopReply.length < 65_536) askStopReply += delta;
+                if (askStop() && askStopReply.length < 65_536) askStopReply += delta;
                 recordSeg("text", delta, startMs);
                 // live only: the committed items are split at the tool row
                 if (liveBreak) { liveBreak = false; if (state.text.length > delta.length) emit({ ...base(threadId, turnId), type: "content.delta", streamKind: "assistant_text", delta: "\n\n" }); }
@@ -4523,7 +5051,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
             case "tool_call": {
               traceToolOpen(u.toolCallId);
-              if (askStop) noteAskStopTool(u);
+              if (askStop()) noteAskStopTool(u);
               {
                 const startMs = p._meta?.streamStartMs ?? u._meta?.streamStartMs;
                 const backend = p._meta?.backend === true || u._meta?.backend === true;
@@ -4551,7 +5079,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // (merged only onto its own ask: facts kept from an earlier call that reused the id never carry over)
                 const id = typeof u.toolCallId === "string" ? u.toolCallId : undefined;
                 const askedFirst = id !== undefined && askRegistered.has(id);
-                const prior = askedFirst ? callFacts.get(id) : undefined;
+                const prior = id !== undefined && (askedFirst || support.toolTripwire) ? callFacts.get(id) : undefined;
                 const present: CallFacts = {
                   ...(u.kind !== undefined ? { kind: u.kind } : {}), ...(u.title !== undefined ? { title: u.title } : {}),
                   ...(u.rawInput !== undefined ? { rawInput: u.rawInput } : {}), ...(u._meta !== undefined ? { _meta: u._meta } : {}),
@@ -4560,6 +5088,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 const facts: CallFacts = { ...(prior ?? {}), ...present };
                 const changed = prior === undefined || JSON.stringify(prior) !== JSON.stringify(facts);
                 if (id !== undefined) { askRegistered.delete(id); rememberCall(id, facts); }
+                if (!checkTool(u, facts, p.sessionId)) return;
                 judgeAcpCall(facts, !askedFirst || changed, id);
               }
               emit({
@@ -4601,11 +5130,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                   ...(meta !== undefined ? { _meta: meta } : {}),
                 };
                 if (id !== undefined) rememberCall(id, merged);
+                if (!checkTool(u, merged, p.sessionId)) return;
                 if (!prior || brings) judgeAcpCall(merged, true, id);
               }
               // a row a discard already closed as interrupted stays closed
               if (typeof u.toolCallId === "string" && interruptedRows.has(u.toolCallId)) break;
-              if (askStop) noteAskStopTool(u);
+              if (askStop()) noteAskStopTool(u);
               if (u.status === "completed" || u.status === "failed") hostedRows.delete(u.toolCallId);
               trackRunningTool(runningTools, u);
               if (u.status === "completed" || u.status === "failed") {
@@ -4614,7 +5144,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // go only into the model's context; the person who has to act
                 // on it never saw it.
                 const detail = u.status === "failed" ? redactSecretsInText(toolFailureText(u) ?? "") || undefined : undefined;
-                state.producedItem = true;
+                state.producedItem = true; modelOutput = true;
                 emit({
                   ...base(threadId, turnId),
                   type: "item.completed",
@@ -4691,7 +5221,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (!line.trim()) return;
           let msg: any;
           try {
-            msg = JSON.parse(line);
+            msg = registerBusyloopPayloadSite("read", JSON.parse(line));
           } catch {
             return;
           }
@@ -4722,8 +5252,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               if (msg.error) {
                 const observedKind=pend.method==="session/prompt"&&!state.settled&&!state.cancelRequested?failureObservations.kind():undefined;
                 lifecycle.record("rpc_rejected", {...lifecycleRejection(msg.error, msg.id, pend.method),...(observedKind?{observedKind}:{})});
-                const error = new Error(acpRpcErrorMessage(msg.error));
-                Object.assign(error, { code: msg.error.code, data: msg.error.data, acpMethod: pend.method, acpRpcId:msg.id });
+                // Fuigo's 401/403 is Flux's only when this turn really went to Flux (a Fuigo pick can route elsewhere).
+                const ownedByFlux = support.displayName === "Fuigo" && fluxRoutedTurn;
+                const error = new Error(acpRpcErrorMessage(msg.error, ownedByFlux));
+                Object.assign(error, { code: msg.error.code, data: msg.error.data, refusal: msg.error, acpMethod: pend.method, acpRpcId:msg.id });
+                if (acpIsFluxRefusal(msg.error, ownedByFlux)) Object.assign(error, { fluxRefusal: true });
                 if (pend.method === "session/prompt" && !state.settled && !state.cancelRequested) {
                   Object.assign(error, { fuigoFailureObservation: failureObservations.details(),fuigoObservedKind:observedKind });
                 }
@@ -4739,18 +5272,24 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
         };
 
+        /** All Murage-authored engine notices share the same provenance and settlement guard. */
+        const emitNotice = (title: string, itemId = `engine-notice-${turnId}-${++noticeSeq}`) => {
+          if (state.settled || state.cancelRequested) return;
+          emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title, toolKind: "notice" });
+          emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
+        };
+
         /** Plug this turn into a process: its output, its stderr and its
          * exit are this turn's until the turn settles and parks or stops it. */
         const attachHooks = (target: AcpProcess) => {
+        // Transfer synchronously before hooks can settle or close the process.
+        for (const path of pendingCatalogs) target.catalogPaths.add(path);
+        pendingCatalogs.clear();
+        untrackPendingCatalogs();
         target.owner.hooks = {
         line: handleStdoutLine,
         overflow: handleOverflow,
-        notice: (title) => {
-          if (state.settled || state.cancelRequested) return;
-          const itemId = `engine-notice-${turnId}-${++noticeSeq}`;
-          emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", title, toolKind: "notice" });
-          emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
-        },
+        notice: emitNotice,
         stderr: (text) => {
           if (!state.settled && !state.cancelRequested && !state.stopRequested) quiet?.feed(text);
           else quiet?.stop();
@@ -4759,14 +5298,20 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (text.length > remaining) stderrDiagnosticTruncated = true;
         },
         error: (e) => {
+          if (restartingPosture && restartFailed) { restartFailed(e); return; }
           if (!spawned) lifecycle.record("spawn_failed", { errno: errnoCategory(e) });
           if (!state.promptSent && fence.retired()) { settleHalted(); return; } // G14: a reset or Stop before the prompt ends the turn as the stopped receipt, never spawn_error
           emit({ ...base(threadId, turnId), type: "runtime.error", ...describeSpawnFailure(e, config.cli) });
           // S4 power: a launch the block could not cover wrote no prompt (turn-attribution.ts notWritten).
-          if ((e as NodeJS.ErrnoException).code === HOST_POWER_CODE) turn.notWritten?.();
+          if ((e as NodeJS.ErrnoException).code === HOST_POWER_CODE) if (!engineWriteOccurred) turn.notWritten?.();
           settle(false, "spawn_error");
         },
         close: (code, signal) => {
+          if (restartingPosture && restartFailed) {
+            const error = new Error('posture replacement closed');
+            for (const pending of rpcPending.values()) { if(pending.timer) clearTimeout(pending.timer); if(pending.idleTimer) clearTimeout(pending.idleTimer); pending.reject(postureRestartSignal); }
+            rpcPending.clear(); restartFailed(error); return;
+          }
           // Redact before splitting records, so a credential crossing a chunk
           // boundary is not exposed. A capped partial final line is omitted.
           const captured = capturedEngineStderr();
@@ -4810,8 +5355,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // where a crash's fatal line is.
             // S4 power (design sections 2 and 8): bwrap or sandbox-exec refused before the engine ran; nothing was delivered.
             if (hostPowerRefused(target.child)) {
+              if (!state.promptSent && !powerRetried && (turn.permissionNow?.() ?? turn).noLimits === true && noLimitsPowerFallbackActive(powerSession)) {
+                powerRetryPending = true;
+                for (const pending of rpcPending.values()) {
+                  if (pending.timer) clearTimeout(pending.timer);
+                  if (pending.idleTimer) clearTimeout(pending.idleTimer);
+                  pending.reject(powerRetrySignal);
+                }
+                rpcPending.clear();
+                return;
+              }
               emit({ ...base(threadId, turnId), type: "runtime.error", message: hostPowerMessage() });
-              turn.notWritten?.();
+              if (!engineWriteOccurred) turn.notWritten?.();
               settle(false, "exit_before_result");
               stderrDiagnostic = "";
               return;
@@ -4858,7 +5413,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               cancelRequested: true,
               promptSent: state.promptSent,
             });
-            send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } });
+            NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", send({ jsonrpc: "2.0", method: "session/cancel", params: { sessionId } }));
             if (helpers.holding || fallback.holding) { settle(true, "cancelled", "user_cancel"); return; }
           } else stop("unspecified");
           // U24 design R4: the cancel grace is armed once, on the first Stop. A repeat re-sends session/cancel (above) and
@@ -4921,7 +5476,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // The direct signal (mcp-listed.ts): every one of Murage's own servers
             // has answered the engine's tools/list, by name, so it holds for a
             // connector turn too. When those are all the mounts, all have settled.
-            const ownListed = () => mcpListedPaths.length > 0 && mcpListedPaths.every((path) => existsSync(path));
+            const ownListed = () => mcpListedPaths.length > 0 && mcpListedPaths.every((path) => mcpMarkerReady(path));
             const listedOutcome = () => (mcpListedPaths.length === mcpServers.length ? "ready" : "own_ready");
             if (ready.has(id) || mcpListShowsSettled) return resolve("ready");
             if (state.settled || state.cancelRequested) return resolve("aborted");
@@ -4988,7 +5543,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             timer = setTimeout(() => resolve({ kind: "timeout" }), ackMs);
             timer.unref?.();
           });
-          const response = request(support.interjection!.method, { sessionId, text, interjectionId }, ackMs).then(
+          const response = NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", request(support.interjection!.method, { sessionId, text, interjectionId }, ackMs)).then(
             (res: any) => ({ kind: "response" as const, res }),
             (error: unknown) => ({ kind: "error" as const, error }),
           );
@@ -5093,6 +5648,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           finally { if (destinationProbes.get(threadId)?.fence === fence) destinationProbes.delete(threadId); }
           fence.check("destination-done");
           const result = fluxDestination(effectiveAnswer, "flux");
+          if ("urls" in effectiveAnswer && !turn.providerRoute) {
+            // The probe lists provider defaults before model overrides. Keep
+            // the most specific URL for both policy and the eventual prompt.
+            requestUrl = effectiveAnswer.urls.filter((url): url is string => typeof url === "string" && url !== "").at(-1) ?? requestUrl;
+          }
+          fluxRoutedTurn = fluxRouteFor(requestUrl).routed;
           if (result === "refuse-alias") throw new DestinationRefusal(FLUX_DESTINATION_ALIAS_REFUSAL);
           if (result === "refuse-unknown") throw new DestinationRefusal(fluxDestinationUnknownRefusal(effectiveAnswer.failureVersion));
           if (!cliTurn.model && effectiveAnswer.model && !turn.resumeCursor) cliTurn = { ...cliTurn, model: effectiveAnswer.model };
@@ -5110,27 +5671,27 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // FUIGO-SCOPE: every session/new and session/load of this turn carries the engine's session `_meta` (read from
         // the finished env), and every answer is checked before anything is prompted.
         const sessionParams = <T extends object>(params: T): T => {
+          if (support.mcpServersFromLaunch) params = { ...params, mcpServers: [] };
           const meta = support.sessionMeta?.(env);
           return meta ? { ...params, _meta: { ...((params as { _meta?: Record<string, unknown> })._meta ?? {}), ...meta } } : params;
         };
-        const sessionOpened = <T>(result: T): T => { if (result) support.checkSession?.(result, env); return result; };
-        /** session/new or session/load with this turn's `_meta`, its answer checked. An engine refusal that is a policy
-         *  failure becomes that failure. `strict`: a null answer is checked too (a reconnect on a live session). */
-        const openSession = async (method: "session/new" | "session/load", params: object, timeoutMs: number, strict = false): Promise<any> => {
-          let result: any;
-          try {
-            result = await request(method, sessionParams(params), timeoutMs);
-          } catch (error) {
-            throw fuigoResume ? fuigoResume.wrap(error, method) : support.policyFailure?.(error) ?? error;
-          }
-          if (strict && !result) support.checkSession?.({}, env);
-          if (method === "session/load" && effectiveAnswer && !turn.model) {
-            const destination = fluxDestination(effectiveAnswer.forModel?.((Array.isArray(result?.configOptions) ? result.configOptions : []).find((option: any) => option?.id === (support.selectModel?.configId ?? "model"))?.currentValue ?? result?.models?.currentModelId, true) ?? { unknown: "session model" }, "flux");
-            if (destination === "refuse-alias") throw new DestinationRefusal(FLUX_DESTINATION_ALIAS_REFUSAL);
-            if (destination === "refuse-unknown" || (destination === "connector" && !effectiveHeaders)) throw new DestinationRefusal(FLUX_DESTINATION_UNKNOWN_REFUSAL);
-          }
-          return sessionOpened(result);
-        };
+        /** A successful open binds its ID before the next stdout frame; policy failures roll it back. */
+        const openSession = (method: "session/new" | "session/load", params: object, timeoutMs: number, strict = false): Promise<any> =>
+          openAcpSession({
+            method, params, sessionId: () => sessionId, bind: id => { sessionId = id; },
+            owner: proc?.owner,
+            request: receive => NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", request(method, sessionParams(params), timeoutMs, undefined, undefined, undefined, receive)),
+            receive: result => modelControls.receive(result, true),
+            check: result => {
+              if (result || strict) support.checkSession?.(result || {}, env);
+              if (method === "session/load" && effectiveAnswer && !turn.model) {
+                const destination = fluxDestination(effectiveAnswer.forModel?.((Array.isArray(result?.configOptions) ? result.configOptions : []).find((option: any) => option?.id === (support.selectModel?.configId ?? "model"))?.currentValue ?? result?.models?.currentModelId, true) ?? { unknown: "session model" }, "flux");
+                if (destination === "refuse-alias") throw new DestinationRefusal(FLUX_DESTINATION_ALIAS_REFUSAL);
+                if (destination === "refuse-unknown" || (destination === "connector" && !effectiveHeaders)) throw new DestinationRefusal(FLUX_DESTINATION_UNKNOWN_REFUSAL);
+              }
+            },
+            policyFailure: error => fuigoResume ? fuigoResume.wrap(error, method) : support.policyFailure?.(error),
+          });
         const rethrowPolicyFailure = (error: unknown): void => {
           if (error instanceof DestinationRefusal) throw error;
           const failure = support.policyFailure?.(error);
@@ -5141,15 +5702,20 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
          *  reaches the computer, with the tool's exact name and arguments. The
          *  card is the one a stamped MCP call on this turn's own mount gets;
          *  a deny or the turn ending (asks are cancelled) stops it; like every card it waits for the owner. */
-        const askHostAction = (call: { name: string; arguments?: unknown }, signal?: AbortSignal): Promise<"allow" | "deny"> => new Promise((resolveAsk) => {
+        const askHostAction = async (call: { name: string; arguments?: unknown }, signal?: AbortSignal): Promise<"allow" | "deny"> => {
+          try { await syncSessionPosture(sessionId); } catch { return "deny"; }
+          return new Promise((resolveAsk) => {
           if (signal?.aborted || state.settled || state.cancelRequested || !controlsHost || !/^[A-Za-z0-9_.-]{1,128}$/.test(call.name)) return resolveAsk("deny");
           const requestId = newId();
           const finish: AcpAskFinish = (behavior, source = "user") => {
+            if(behavior==='allow'&&(turn.permissionNow?.()??turn).noLimits===true&&!answerTransport.guardRelease(threadId,requestId,()=>guardEngineRelease({threadId,turnId,requestId,providerInstanceId:instanceId},call.arguments??{})))return false;
             if (!asks.delete(requestId)) return false;
             fallbackChanged();
             traceClose("permission.wait", requestId, behavior);
             signal?.removeEventListener("abort", withdrawn);
             const allow = behavior === "allow";
+            // In-process host-action receipt: resolveAsk hands the decision to its waiting mount.
+            answerTransport.confirm(threadId, requestId, Promise.resolve(true));
             resolveAsk(allow ? "allow" : "deny");
             emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: allow ? "allow" : "deny", source: allow || behavior === "deny" ? source : "system", approvalScope: "local-computer" });
             return true;
@@ -5178,11 +5744,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             toolCall: { name: tool, input },
           });
         });
+        };
         const start = () => {
           if (started) return;
           started = true;
           fence.handOff();
-          active.set(threadId, { stop, interrupt, turnId, asks, ...(support.hostComputerAskedByMurage && controlsHost ? { askHostAction } : {}), ...(support.interjection ? { interject } : {}) });
+          active.set(threadId, { stop, interrupt, turnId, asks, onPostureChange, ...(support.hostComputerAskedByMurage && controlsHost ? { askHostAction } : {}), ...(support.interjection ? { interject } : {}) });
           emit({ ...base(threadId, turnId), type: "turn.started" });
         };
 
@@ -5192,7 +5759,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const launch = (trusted: boolean) => {
         fence.check("launch"); // L0
         if (turn.sessionReset === true) support.onSessionReset?.(turn);
-        const argv = support.spawnArgs(turnConfig, cliTurn, { requestedModel: turn.model, folderTrusted: trusted, env, cliVersion: lastCliVersion, mcpServerNames: mcpServers.map(server => server.name) });
+        mcpLaunch.release = support.prepareMcpLaunch?.(env, { threadId, mcpServers }) || undefined;
+        const launchContext: NonNullable<Parameters<AcpSupport["spawnArgs"]>[2]> = { requestedModel: turn.model, folderTrusted: trusted, env, cliVersion: lastCliVersion, mcpServerNames: mcpServers.map(server => server.name) };
+        const nativePermission = turn.permissionNow?.() ?? turn;
+        cliTurn = { ...cliTurn, askLevel: nativePermission.askLevel, routeAsks: nativePermission.routeAsks,
+          stopLine: nativePermission.stopLine, noLimits: nativePermission.noLimits };
+        let argv = support.spawnArgs(turnConfig, cliTurn, launchContext);
+        hookCanon = launchContext.hookCanon;
+        if (hookCanon) ownHookCanon(hookCanon, { engine: ENGINE, revoke: () => { hookRevoked = true; }, stop: stopHookRepair });
         // The spawn contract (see the pool notes): everything that decides
         // which process a turn gets. The model, effort, permission mode and
         // `--trust` all ride argv; the environment is the child's exact env,
@@ -5216,20 +5790,26 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // from the user's own trusted_folders.toml) must reach a new process.
         // S4 power (design sections 2 and 7): Fuigo is not under the block on Mac and Linux (it does not nest with a command
         // sandbox there); every other ACP engine is, and Windows covers them all. A spawn under the block puts the constant in the digest.
-        const hostPowerOptions = { posixHostPower: support.driverKind !== "fuigoAgent" };
-        contractKey = poolable
-          ? digest([config.cli, launchTarget, argv, cwd, env, support.folderTrust ? turn.folderTrust ?? null : null,
+        const hostPowerOptions = { posixHostPower: support.driverKind !== "fuigoAgent",
+          noLimits: (turn.permissionNow?.() ?? turn).noLimits === true, powerSession };
+        const computeProcessContract = () => poolable
+          ? digest([config.cli, launchTarget, argv, cwd, env, support.folderTrust ? turn.folderTrust ?? null : null, { noLimits: hostPowerOptions.noLimits },
             ...(trustGeneration === 2 ? [{ folderTrustGeneration: 2 }] : []),
             ...(engineWrapsHostPower(hostPowerOptions) ? [{ hostPower: 1 }] : []),
             ...(support.spawnFingerprint ? [support.spawnFingerprint(env, config)] : []),
-            ...(support.restartOnMcpChange ? [mcpServers.map((server) => server.name)] : [])])
+            ...acpMcpSpawnFingerprint(support, mcpServers)])
           : null;
+        contractKey = computeProcessContract();
         // `sessionReset` outranks the cursor (contracts.ts, #1562): the
         // rebuilt history is already in the prompt, and resuming the old
         // native session under it would hand the engine both branches.
         const resumeId = turn.sessionReset !== true && typeof turn.resumeCursor === "string" ? turn.resumeCursor : null;
 
-        const spawnFresh = () => {
+        // Each spawn gets its own argv: the cold spawn at launch uses the argv computed above (nothing between that and the spawn changes env or
+        // mcpServers), and every other spawn (budget replace, rotated catalogs, whatever process the turn started on) recomputes it.
+        const spawnFresh = (recompute: boolean) => {
+          if (recompute) argv = support.spawnArgs(turnConfig, cliTurn, { requestedModel: turn.model, folderTrusted: trusted, env, cliVersion: lastCliVersion, mcpServerNames: mcpServers.map(server => server.name) });
+          contractKey = computeProcessContract();
           spawned = false;
           lifecycle.record("spawn_requested");
           const spawnedChild = (() => {
@@ -5250,13 +5830,26 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
           })();
           child = spawnedChild;
+          if (hostPowerOptions.noLimits) {
+            const title = takeNoLimitsPowerFallbackNotice(powerSession);
+            if (title) {
+              const itemId = `power-fallback-${turnId}`;
+              emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", toolKind: "notice", title });
+              emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
+            }
+          }
           spawnedChild.once("spawn", () => {
             spawned = true;
             lifecycle.record("spawned", { pid: spawnedChild.pid ?? null });
           });
           teardown = teardowns.track(threadId, turnId, spawnedChild);
-          teardown.onClosed(releaseHome);
+          teardown.onClosed(() => { if (!restartingPosture && !powerRetryPending) releaseHome(); });
+          const release = mcpLaunch.release;
+          teardown.onClosed(() => release?.());
           proc = openProcess(threadId, spawnedChild, contractKey, support.scopeKind ? { kind: support.scopeKind, bot: turn.warmIdentity?.botId ?? null } : null);
+          proc.hookCanon = hookCanon;
+          const childCanon = hookCanon;
+          spawnedChild.once("exit", () => releaseHookCanon(childCanon));
           reused = false;
           attachHooks(proc);
         };
@@ -5334,6 +5927,9 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // goes out, and from now on refuses every frame that does not name it.
             if (crossThread && idle.sessionId) idle.retiredSessions.add(idle.sessionId);
             if (crossThread) idle.transferred = true;
+            if (hookCanon !== idle.hookCanon) releaseHookCanon(hookCanon);
+            hookCanon = idle.hookCanon;
+            if (hookCanon) ownHookCanon(hookCanon, { engine: ENGINE, revoke: () => { hookRevoked = true; }, stop: stopHookRepair });
             idle.owner = { threadId, sessionId: crossThread ? resumeId : idle.sessionId, hooks: null };
             attachHooks(idle);
             appendNative(threadId, { dir: "out", source: SOURCE, msg: { acpPool: "reuse", ...(crossThread ? { crossThread: true } : {}) } });
@@ -5346,6 +5942,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         // a process-only grant lands in that prompt. Only a new process asks, and
         // Fuigo does not ask at all for a folder its own store already answers.
         const armTrustHold = () => {
+          if ((turn.permissionNow?.() ?? turn).noLimits === true) return;
           const holdKey = turn.folderTrust?.key;
           const gate = turn.folderTrust;
           if (trustHold || reused || turn.prewarm || !holdKey || !gate) return;
@@ -5394,14 +5991,92 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             arm();
           }
         };
-        if (!proc) { spawnFresh(); armTrustHold(); }
+        if (!proc) { spawnFresh(false); armTrustHold(); }
         if (turn.prewarm) prewarmChildren.set(threadId, { child: () => child, fence });
         start();
         turnTrace(threadId).mark("engine.acquire", { cold: !reused, pooling: poolingEnabled(), poolable });
 
+        let reloadCursor = resumeId;
+        const replaceForBudget = async (decision: Extract<Reduction, { kind: "ok" }>) => {
+          if (externalHalt()) { settleHalted(); return false; }
+          reloadCursor = sessionId ?? reloadCursor;
+          const old = proc, oldTeardown = teardown;
+          if (old) {
+            old.owner.hooks = null;
+            oldTeardown?.markStopRequested();
+            closeProcess(threadId, old, "tool_limit");
+            const closed = await oldTeardown?.wait(stopBudget(0));
+            if (externalHalt()) { settleHalted(); return false; }
+            if (closed && !closed.closeConfirmed) throw new ProviderStopUnconfirmedError(DRIVER_KIND, closed);
+          }
+          proc = null; sessionId = null; state.promptSent = false;
+          rotateCatalogGeneration(); applyBudget(decision);
+          if (externalHalt()) { settleHalted(); return false; }
+          spawnFresh(true); armTrustHold(); return true;
+        };
+
+        restartNativePosture = async () => {
+          if (restartingPosture || state.settled || state.cancelRequested) return;
+          postureEpoch++; postureFailures = 0;
+          const stopped = () => state.settled || state.cancelRequested || state.stopRequested || disposed;
+          while (!stopped()) {
+            restartingPosture = true;
+            let deadline: ReturnType<typeof setTimeout> | undefined, expired = false;
+            const ready = new Promise<void>((resolve,reject) => { restartReady=resolve; restartFailed=reject; });
+            void ready.catch(() => {});
+            const attempt = async () => {
+              postureResume = sessionId ?? postureResume;
+              const old = proc;
+              if (sessionId) send({jsonrpc:'2.0',method:'session/cancel',params:{sessionId}});
+              for (const finish of [...asks.values()]) await finish('cancel','system');
+              for (const pending of rpcPending.values()) {
+                if (pending.timer) clearTimeout(pending.timer);
+                if (pending.idleTimer) clearTimeout(pending.idleTimer);
+                pending.reject(postureRestartSignal);
+              }
+              rpcPending.clear();
+              if (old) {
+                old.owner.hooks=null; closeProcess(threadId,old,'permission-level-change');
+                const closed=await teardowns.wait(threadId,turnId,acpStopBudget());
+                if (!closed.closeConfirmed) throw new Error('posture process closure unconfirmed');
+              }
+              if (expired || stopped()) throw new Error('posture restart stopped');
+              teardown?.detach(); proc=null; child=null; sessionId=null; reused=false;
+              state.promptSent=false; runningTools.clear(); loadIssued=false;
+              appliedPosture=undefined; posturePending=Promise.resolve(); postureContinuation=false;
+              const wanted=askStop(), wantedPermission={...(turn.permissionNow?.() ?? turn)};
+              await support.askStop?.apply?.({env,config:turnConfig,turn,askLevel:wanted});
+              if (expired || stopped()) throw new Error('posture restart stopped');
+              appliedPosture=wanted; appliedPermission=wantedPermission; promptTurn={...promptTurn,text:POSTURE_CONTINUATION};
+              launch(trusted);
+              await ready;
+            };
+            try {
+              await Promise.race([attempt(),new Promise<never>((_,reject)=>{
+                deadline=setTimeout(()=>{expired=true;const error=new Error('posture recovery deadline');restartFailed?.(error);reject(error);},10_000);
+              })]);
+              postureFailures=0;
+              if (appliedPosture !== askStop()) { postureEpoch++; continue; }
+              const noticeId=`posture-continued-${turnId}-${postureEpoch}`;
+              emit({...base(threadId,turnId),type:'item.started',itemId:noticeId,itemType:'tool',origin:'murage',toolKind:'notice',title:'Continued at the new level'});
+              emit({...base(threadId,turnId),type:'item.completed',itemId:noticeId,itemType:'tool',ok:true});
+              return;
+            } catch(error) {
+              restartFailed?.(error); restartReady=undefined; restartFailed=undefined;
+              postureFailures++;
+              if (stopped()) throw error;
+              if (postureFailures >= MAX_POSTURE_RECOVERY_FAILURES) { failPosture('posture-recovery-exhausted'); throw error; }
+              // The next attempt closes any half-started replacement before launching.
+            } finally { if(deadline) clearTimeout(deadline); restartingPosture=false; }
+          }
+        };
         (async () => {
+          while (!externalHalt()) {
           try {
-            const sessionKey = digest(mcpServers);
+            // Catalog metadata is not a reconnect reason for engines that do
+            // not consume budgets. A retained unchanged MCP process keeps its
+            // existing readiness; budgeted turns always verify fresh paths.
+            const sessionKey = digest(support.toolBudget ? mcpServers : mcpServers.map(server => ({ ...server, env: server.env.filter(entry => !entry.name.startsWith("MURAGE_MCP_LISTED_")) })));
             // Whether this turn (re-)established MCP servers and so must wait
             // for the engine to report them ready before prompting.
             let mcpEstablished = true;
@@ -5422,7 +6097,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const buildKey = proc?.mcpBuildKey;
               if (buildKey && acpMcpListUnsupported.has(buildKey)) return null;
               try {
-                const answer = await request(support.mcpListMethod, { sessionId }, timeoutMs);
+                const answer = await NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", request(support.mcpListMethod, { sessionId }, timeoutMs));
                 // Fuigo double-wraps ext results ({result: {...}}); take either shape.
                 const body = Array.isArray(answer?.servers) ? answer : answer?.result;
                 if (!Array.isArray(body?.servers)) return null;
@@ -5493,7 +6168,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               closeProcess(threadId, live, reason);
               teardown?.detach();
               proc = null;
-              spawnFresh();
+              rotateCatalogGeneration();
+              // The replacement child owns a new reference: the old child's
+              // exit must not retire this child's protection.
+              if (hookCanon) {
+                hookCanon = prepareHookCanon(hookCanon.files, "V-H1", ENGINE);
+                ownHookCanon(hookCanon, { engine: ENGINE, revoke: () => { hookRevoked = true; }, stop: stopHookRepair });
+              }
+              spawnFresh(true);
               armTrustHold();
               sessionId = null;
               sessionResult = null;
@@ -5571,7 +6253,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }
             }
             if (!reused) {
-            init = await request(
+            init = await NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", request(
               "initialize",
               {
                 protocolVersion: 1,
@@ -5590,7 +6272,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 },
               },
               INIT_TIMEOUT,
-            );
+            ));
+            if (externalHalt()) { settleHalted(); return; }
             proc!.initResult = init;
             seedLanded();
             recordProbedImages(imagesKey(), init);
@@ -5600,7 +6283,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (!(support.driverKind === "grokAgent" && providerBinding) && !skipSubscriptionAuthForLocalInject(turn.model)) {
               if (methodId) {
                 try {
-                  await request("authenticate", { methodId }, INIT_TIMEOUT);
+                  await NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", request("authenticate", { methodId }, INIT_TIMEOUT));
                 } catch {
                   if (support.authFailure === "fail") throw new Error(support.loginNote);
                   // else: proceed on an ambient login
@@ -5612,7 +6295,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               }
             }
 
-            const cursor = grokBinding ? grokBinding.cursor : resumeId;
+            const cursor = postureResume ?? (grokBinding ? grokBinding.cursor : reloadCursor);
             const renewed = (reason: "data-root-moved" | "data-root-copied") => {
               if (fuigoResume) fuigoResume.renewed = true;
               console.warn(`fuigo-session-renewed reason=${reason} thread=${threadId}`);
@@ -5659,8 +6342,10 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // session is gone. Taking the cursor on that answer pinned
                 // sessionId to a dead id, skipped the session/new below, and
                 // prompted a session the agent had already forgotten.
+                if (externalHalt()) { settleHalted(); return; }
                 if (sessionResult) sessionId = cursor;
               } catch (error) {
+                if (externalHalt()) { settleHalted(); return; }
                 if (error instanceof FuigoPolicyError && error.rootMoved) {
                   renewed("data-root-moved");
                 } else {
@@ -5686,6 +6371,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 /* session gone, load unsupported, or too slow — start fresh */
               }
             }
+            if (externalHalt()) { settleHalted(); return; }
             if (!sessionId) {
               if (grokBinding && cursor) {
                 if (!turn.transcript) throw new Error("Grok session could not be restored. Reload the conversation before continuing.");
@@ -5730,34 +6416,53 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
 
             try {
               if (support.selectModel) {
-                const { configId } = support.selectModel;
-                const currentOf = (r: any) =>
-                  (Array.isArray(r?.configOptions) ? r.configOptions : []).find((o: any) => o?.id === configId)
-                    ?.currentValue ?? null;
-                selectedModel = currentOf(sessionResult);
-                if (cliTurn.model && cliTurn.model !== selectedModel) {
-                  selectedModel = currentOf(
-                    await request(
-                      "session/set_config_option",
-                      { sessionId, configId, value: cliTurn.model },
-                      INIT_TIMEOUT,
-                    ),
-                  );
-                  // an agent that answers OK but keeps its old model is worse than
-                  // one that errors: it burns a paid turn on the wrong thing
-                  if (selectedModel !== cliTurn.model) {
-                    throw new Error(
-                      `${ENGINE} did not switch to ${cliTurn.model} (still ${selectedModel ?? "unknown"})`,
-                    );
+                const offered = offeredModels(proc?.sessionConfigResult, support.selectModel.configId);
+                if (support.fallbackModel && (!cliTurn.model || !offered.includes(cliTurn.model))) {
+                  const fallback = support.fallbackModel(proc?.sessionConfigResult, models.default);
+                  if (fallback) {
+                    const previous = cliTurn.model;
+                    cliTurn.model = fallback;
+                    cliTurn.variant = undefined;
+                    if (previous && previous !== fallback) {
+                      const itemId = `model-fallback-${turnId}`;
+                      emit({ ...base(threadId, turnId), type: "item.started", itemId, itemType: "tool", origin: "murage", toolKind: "notice", title: `${ENGINE} no longer offers ${previous}. Using ${fallback}.` });
+                      emit({ ...base(threadId, turnId), type: "item.completed", itemId, itemType: "tool", ok: true });
+                    }
                   }
+                }
+                selectedModel = await modelControls.select(
+                  (method, params, timeout, receive) => NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", request(method, params, timeout, undefined, undefined, undefined, receive)),
+                  sessionId, INIT_TIMEOUT);
+              }
+
+              if (cliTurn.variant === undefined && resumeId && support.modelVariants) {
+                const call = (method: string, params: unknown, timeout: number, receive?: (result: any) => void) =>
+                  NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", request(method, params, timeout, undefined, undefined, undefined, receive));
+                if (!await modelControls.resetVariant(call, sessionId, INIT_TIMEOUT)) {
+                  // Without an advertised default, only a new session establishes the engine's default.
+                  sessionResult = await openSession("session/new", { cwd, mcpServers }, NEW_SESSION_TIMEOUT);
+                  sessionId = typeof sessionResult?.sessionId === "string" ? sessionResult.sessionId : null;
+                  if (!sessionId) throw new Error(`${ENGINE} did not open a conversation.`);
+                  proc!.owner.sessionId = sessionId;
+                  proc!.retiredSessions.delete(sessionId);
+                  promptTurn = replayTurn("[Your previous session could not be restored. Continue from this conversation history:]");
+                  selectedModel = await modelControls.select(call, sessionId, INIT_TIMEOUT);
                 }
               }
 
+              if (cliTurn.variant !== undefined) {
+                const option = modelControls.variant(cliTurn.variant);
+                if (option.currentValue !== cliTurn.variant) {
+                  await NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", request("session/set_config_option", { sessionId, configId: option.configId, value: cliTurn.variant }, INIT_TIMEOUT,
+                    undefined, undefined, undefined, response => modelControls.receive(response)));
+                }
+                if (modelControls.variant(cliTurn.variant).currentValue !== cliTurn.variant) throw new Error(`${ENGINE} did not confirm thinking ${cliTurn.variant}`);
+              }
               if (!support.configureSession) pinConfirmed = true;
               if (support.configureSession) {
                 await support.configureSession({
                   request: (method, params, timeoutMs) =>
-                    request(method, params, timeoutMs ?? SESSION_CONFIG_TIMEOUT),
+                    NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", request(method, params, timeoutMs ?? SESSION_CONFIG_TIMEOUT)),
                   sessionId,
                   config: turnConfig,
                   turn: cliTurn,
@@ -5778,42 +6483,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // report the slug we set so the UI does not claim otherwise.
                 if (!selectedModel && cliTurn.model) selectedModel = cliTurn.model;
               }
-              // The Ask hard stop (ask-stop.ts): the engine's own read-only switch, set before anything is prompted.
-              // At Ask a switch that cannot be set refuses the turn; otherwise what an earlier Ask turn set is put back.
-              const readOnlyMode = support.noSessionModes ? undefined : support.askStop?.sessionMode;
-              if (readOnlyMode && sessionId) {
-                const modes = sessionResult?.modes as { currentModeId?: unknown; availableModes?: Array<{ id?: unknown }> } | undefined;
-                if (askStop) {
-                  const listed = Array.isArray(modes?.availableModes) ? modes!.availableModes.some((m) => m?.id === readOnlyMode.readOnly) : true;
-                  try {
-                    if (!listed) throw new Error(`no ${readOnlyMode.readOnly} mode`);
-                    await request("session/set_mode", { sessionId, modeId: readOnlyMode.readOnly }, SESSION_CONFIG_TIMEOUT);
-                  } catch (error) {
-                    console.warn(`${ENGINE} ask stop: read-only mode not set (${(error as Error)?.message ?? error})`);
-                    throw new Error(askStopUnavailableLine(ENGINE));
-                  }
-                  askStopModeSessions.add(sessionId);
-                } else if (askStopModeSessions.has(sessionId) || modes?.currentModeId === readOnlyMode.readOnly) {
-                  try {
-                    await request("session/set_mode", { sessionId, modeId: readOnlyMode.normal }, SESSION_CONFIG_TIMEOUT);
-                    askStopModeSessions.delete(sessionId);
-                  } catch (error) {
-                    // Left read-only: the bot can still read and plan; the next turn tries again.
-                    console.warn(`${ENGINE} ask stop: ${readOnlyMode.normal} mode not restored (${(error as Error)?.message ?? error})`);
-                  }
-                }
-              }
-              if (support.askStop?.apply) {
-                fence.check("ask-stop"); // G9: outside the try, so its refusal is not read as an unavailable read-only mode
-                try {
-                  await support.askStop.apply({ env, config: turnConfig, turn, askLevel: askStop });
-                } catch (error) {
-                  if (!askStop) throw error;
-                  if (error instanceof AskStopRefusal) throw error;
-                  console.warn(`${ENGINE} ask stop: read-only not set (${(error as Error)?.message ?? error})`);
-                  throw new Error(askStopUnavailableLine(ENGINE));
-                }
-              }
+              postureModes = sessionResult?.modes;
+              await syncSessionPosture(sessionId);
             } catch (error) {
               // session.started is the only place the resume cursor is recorded,
               // so a rejected setting must not orphan a session we just created.
@@ -5821,6 +6492,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               throw error;
             }
             emitSessionStarted();
+            if (postureEpoch > 0) recordPostureAck(DRIVER_KIND, instanceId, threadId, turnId, appliedPermission ?? turn, 'replacement-session');
             // A stop while the session was being set up (a model pin can wait for the engine's catalog) ends the turn here:
             // nothing is prompted after it.
             if (state.settled) return;
@@ -5845,7 +6517,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               const capMs = (acpMcpQuiet.get(quietKey) ?? 0) >= MCP_LISTED_QUIET_AFTER ? Math.min(mcpListedWaitMs(), MCP_LISTED_QUIET_WAIT_MS) : mcpListedWaitMs();
               const mcpDone = turnTrace(threadId).span("mcp.listed.wait", { servers: mcpListedPaths.length });
               const startedAt = Date.now();
-              const missing = () => mcpListedPaths.filter((path) => !existsSync(path));
+              const missing = () => mcpListedPaths.filter((path) => !mcpMarkerReady(path));
               while (missing().length && Date.now() - startedAt < capMs && !state.settled && !state.cancelRequested) {
                 await new Promise((resolve) => setTimeout(resolve, MCP_LISTED_POLL_MS));
               }
@@ -5859,7 +6531,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 acpMcpQuiet.set(quietKey, (acpMcpQuiet.get(quietKey) ?? 0) + 1);
                 // a quiet build that answers late is heard: the first marker that shows up (within the cap, after the turn went ahead) ends the quiet
                 if (quiet) {
-                  const heard = setInterval(() => { if (mcpListedPaths.some((path) => existsSync(path))) { acpMcpQuiet.delete(quietKey); clearInterval(heard); } }, 250);
+                  const heard = setInterval(() => { if (mcpListedPaths.some((path) => mcpMarkerReady(path))) { acpMcpQuiet.delete(quietKey); clearInterval(heard); } }, 250);
                   heard.unref?.();
                   setTimeout(() => clearInterval(heard), mcpListedWaitMs()).unref?.();
                 }
@@ -5887,7 +6559,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             let requiredMissing: string[] | null = null;
             /** Required servers the engine's list did not name: their readiness is unknown. */
             let absentRequired: string[] = [];
-            const requiredNames = mcpServers.map(server => server.name).filter(name => requiredMcpLabel(name) !== null);
+            const requiredNames = mcpServers.map(server => server.name).filter(name => requiredMountNames.has(name));
             if (support.mcpListMethod && sessionId && requiredNames.length) {
               // Connected apps count as ready only once the engine holds the real tool list: the bridge files a
               // marker while it holds only a stand-in, and the engine's own status says "ready" either way.
@@ -6000,6 +6672,23 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               if (state.settled) return;
               if (state.cancelRequested) { settle(true, "cancelled"); return; }
             }
+            if (support.toolBudget && budgetRecord) {
+              const { decision, fits } = decideBudget();
+              if (decision.kind !== "ok") { budgetLog("pre-prompt", "no-room", undefined, decision.kind === "catalogUnknown" ? "unknown-catalog" : undefined); throw budgetFailure(decision.kind); }
+              if (!fits) {
+                if (prepromptDone || recoveryUsed) { budgetLog("pre-prompt", "catalog-changed"); throw budgetFailure("catalogChanged"); }
+                prepromptDone = true;
+                if (!await replaceForBudget(decision)) return;
+                continue;
+              }
+              // Current names update disclosure without changing the installed permissions.
+              const current = catalogSnapshot(), overlay = JSON.parse(env.OPENCODE_CONFIG_CONTENT!);
+              const permission = overlay.permission ?? {};
+              budgetDecision = { ...decision, restrictions: installedRestrictions, overlay,
+                kept: current.flatMap(m => (m.tools ?? []).map(n => openCodeToolId(m.name, n))).filter(id => effectivePermission(permission, id) !== "deny"),
+                hidden: Object.fromEntries(current.filter(m => m.tools).map(m => [m.name, m.tools!.filter(n => effectivePermission(permission, openCodeToolId(m.name, n)) === "deny")])),
+                unknown: current.filter(m => !m.tools).map(m => m.name) };
+            }
             // A command turn is the command alone. Fuigo and Grok Build
             // recognise "/name" only when it opens the FIRST text block
             // (fuigo-shell slash_authority::parse_slash_prefix), so the
@@ -6019,7 +6708,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             // Claude driver uses, so it reports a missing tool instead of guessing.
             // With a per-server answer the notice names exactly what is missing;
             // without one it can only say connected apps may still be loading.
-            const requiredMcpNames = mcpServers.map(server => server.name).filter(name => requiredMcpLabel(name) !== null);
+            const requiredMcpNames = mcpServers.map(server => server.name).filter(name => requiredMountNames.has(name));
             // The two kinds of finding are reported independently: servers the
             // engine said failed, and servers it did not report at all (or that
             // timed out with no per-server answer). A turn with both carries both
@@ -6029,24 +6718,61 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               : requiredMissing === null && mcpOutcome === "timeout" && requiredMcpNames.length ? toolsMayBeLoadingNotice(unavailableLabels(requiredMcpNames)) : null;
             const loadingNotice = turn.engineCommand ? null : [failedNotice, looseNotice].filter(Boolean).join("\n\n") || null;
             if (!turn.engineCommand && (absentRequired.length || (requiredMissing === null && mcpOutcome === "timeout" && requiredMcpNames.length))) state.mcpReadiness = "unknown";
-            const askedTurn = askStop && !turn.engineCommand ? { ...promptTurn, text: `${ASK_STOP_PROMPT}\n\n${promptTurn.text}` } : promptTurn;
+            const askedTurn = askStop() && !turn.engineCommand ? { ...promptTurn, text: `${ASK_STOP_PROMPT}\n\n${promptTurn.text}` } : promptTurn;
             const noticedTurn = loadingNotice ? { ...askedTurn, text: `${loadingNotice}\n\n${askedTurn.text}` } : askedTurn;
             const textTurn = stackAlreadySent ? { ...noticedTurn, system: undefined } : noticedTurn;
-            const text = turn.engineCommand
+            let text = turn.engineCommand
               ? engineCommandText(turn.engineCommand)
               : support.buildPromptText
               ? support.buildPromptText(textTurn)
               : textTurn.system
                 ? `${textTurn.system}\n\n${textTurn.text}`
                 : textTurn.text;
+            if (support.toolBudget && budgetRecord && budgetDecision && (budgetDecision.unknown.length > 0 || Object.values(budgetDecision.hidden).some(names => names.length > 0))) {
+              if (externalHalt()) { settleHalted(); return; }
+              let shown = 0, remaining = 0;
+              const omissions = Object.entries(budgetDecision.hidden).map(([server, names]) => {
+                const picked = names.slice(0, Math.max(0, 40 - shown)); shown += picked.length; remaining += names.length - picked.length;
+                return picked.length ? `${JSON.stringify(server)}: ${picked.map(name => JSON.stringify(name)).join(", ")}` : "";
+              }).filter(Boolean);
+              omissions.push(...budgetDecision.unknown.map(server => `all tools from ${JSON.stringify(server)}; count unknown`));
+              if (remaining) omissions.push(`and ${remaining} more`);
+              const explanation = `Murage left out some tools because this provider accepts at most ${budgetRecord.limit} tools. ${omissions.join("; ")}. If the task needs one of them, say so in your reply.`;
+              text = `${explanation}\n\n${text}`;
+              emitNotice(`Some tools were left out this turn: this AI accepts at most ${budgetRecord.limit} tools.`, `tool-limit-${turnId}`);
+              budgetLog(recoveryUsed ? "recovery" : "pre-prompt", "applied");
+            }
+            if (recoveryUsed) text = `Murage is sending the previous message again after the provider rejected the tool count. The engine already stored that message. ${text}`;
             // Every wait above checks a user's Stop; this one also covers Stop All and shutdown, with no await left before the write.
             if (state.settled) return;
             if (turnHalted()) { settleHalted(); return; }
+            if (support.prePrompt) {
+              fence.check("pre-prompt");
+              try {
+                await support.prePrompt.apply({ env, config: turnConfig, turn, askLevel: askStop() });
+              } catch {
+                if (state.settled) return;
+                if (turnHalted()) { settleHalted(); return; }
+                emitNotice(support.prePrompt.refusal);
+                settle(false, "submission_refused");
+                return;
+              }
+              if (state.settled) return;
+              if (turnHalted()) { settleHalted(); return; }
+              if (!prePromptNoticeShown) {
+                const notice = typeof support.prePrompt.notice === "function" ? support.prePrompt.notice(turn) : support.prePrompt.notice;
+                if (notice) emitNotice(notice);
+                prePromptNoticeShown = true;
+              }
+            }
+            if (support.modelVariants && !modelControls.confirms(cliTurn.model)) throw new Error(`${ENGINE} changed model before the prompt`);
+            if (cliTurn.variant !== undefined && modelControls.variant(cliTurn.variant).currentValue !== cliTurn.variant) throw new Error(`${ENGINE} changed thinking before the prompt`);
             // The submission fence (SendTurnInput.beforeSubmit), for every
             // ACP engine: no await separates it from the session/prompt write
-            // below. A refusal writes nothing. Before sendTurn handed the id
-            // back the harness stops the turn by it; after, the turn settles
-            // failed here and the harness re-runs it on a reset session.
+            // below. A refusal prevents this write, but any prior release or
+            // confirmed submission still counts. Before handback the harness
+            // stops this turn by id; afterward it settles failed here. Only
+            // verified unwritten dispatches may rebuild automatically.
             try {
               turn.beforeSubmit?.();
             } catch (refusal) {
@@ -6056,15 +6782,15 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             }
             // The fence is the harness's own code and can stop this turn. Nothing is written after a stop, and what the fence recorded
             // for this write is withdrawn.
-            if (turnHalted()) { turn.notWritten?.(); settleHalted(); return; }
+            if (turnHalted()) { if (!engineWriteOccurred) turn.notWritten?.(); settleHalted(); return; }
             const promptIdleMs = acpPromptIdleTimeoutMs();
             const prompted = request(
               "session/prompt",
-              {
+              registerBusyloopRequestSite(fluxRouteFor(requestUrl), {
                 sessionId,
                 prompt: [{ type: "text", text }, ...(turn.images ?? []).map(image => ({ type: "image", ...image }))],
                 ...(support.promptMeta ? { _meta: support.promptMeta } : {}),
-              },
+              }),
               undefined,
               promptIdleMs,
               // Shown in the chat: the engine as Settings names it, and a
@@ -6076,6 +6802,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (state.promptSent) {
               if (sessionId) quiet?.start(sessionId);
               turnTrace(threadId).once("prompt.sent");
+              restartReady?.(); restartReady = undefined; restartFailed = undefined;
               promptStartedAt = Date.now();
               if (DRIVER_KIND === "fuigoAgent") startFuigoWatch();
             }
@@ -6085,7 +6812,20 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (turn.folderTrust?.storedNoPick && trustGeneration === 2 && !turn.prewarm && folderSources().length) {
               noteDeclineOnce(`stored-no:${turn.folderTrust.key}`, FOLDER_TRUST_STORED_NO_NAME);
             }
-            const result = await prompted;
+            let result = await prompted;
+            await posturePending;
+            if (postureContinuation && !state.settled && !state.cancelRequested) {
+              postureContinuation = false;
+              turn.beforeSubmit?.();
+              result = await request("session/prompt", { sessionId, prompt: [{ type: "text", text: POSTURE_CONTINUATION }] }, undefined, promptIdleMs);
+            }
+                        if (support.toolBudget && recoveryUsed && externalHalt()) { settleHalted(); return; }
+            const resultDecision = fluxRoutedTurn ? acpRefusal(registerBusyloopPayloadSite("classify", result)) : undefined;
+            if (isTerminal(resultDecision)) {
+              const code = acpRefusalCode(result);
+              const legacy = fluxRefusalFields(code, Date.now(), result?.error, result?.message, result?._meta, result);
+              state.fluxRefusal = {decision:resultDecision, code, text:typeof result?.message === "string" ? result.message : "Refused", httpStatus:acpRefusalHttpStatus(result), resetsAt:refusalResetAt(resultDecision, result) ?? legacy.gatewayResetsAt};
+            }
             if (stackKey && stackHash && !stackAlreadySent) {
               systemDelivered.delete(stackKey);
               systemDelivered.set(stackKey, stackHash);
@@ -6177,20 +6917,90 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 ...eventBase,
                 type: "runtime.error",
                 message: errorMessage,
-                ...fluxRefusalFields(fluxRefusalCode(result?.error, result?.message, result?._meta), Date.now(), result?.error, result?.message, result?._meta),
+                // Keep the body-bearing ACP fields as separate retry-time sources.
+                // The bounded body parser intentionally does not traverse root message or _meta.
+                ...fluxRefusalFields(acpRefusalCode(result), Date.now(), result?.error, result?.message, result?._meta, result),
+                ...(resultDecision ? {fluxDecision:resultDecision} : {}),
+                httpStatus: acpRefusalHttpStatus(result),
                 diagnostic:acpErrorDiagnostic(eventBase,lifecycle.generation),
               });
               settle(false, reason ?? "failed");
             }
           } catch (e) {
+            // A broken startup pipe may precede procs' close classification.
+            if (!state.promptSent && !powerRetried && (turn.permissionNow?.() ?? turn).noLimits === true && child && (child.stdin.destroyed || child.exitCode !== null)) {
+              await teardown?.wait(acpStopBudget());
+            }
+            if ((e === powerRetrySignal || powerRetryPending) && !powerRetried) {
+              powerRetried = true;
+              const closed = await teardown?.wait(acpStopBudget());
+              if (externalHalt()) { settleHalted(); return; }
+              if (closed && !closed.closeConfirmed) {
+                emit({ ...base(threadId, turnId), type: "runtime.error", message: `${ENGINE} could not stop its refused startup. Try again or switch engine.` });
+                powerRetryPending = false; settle(false, "exit_before_result"); return;
+              }
+              if (proc) proc.owner.hooks = null;
+              teardown?.detach(); proc = null; child = null; sessionId = null; reused = false;
+              powerRetryPending = false;
+              // The refused child retired its hook authority and launch mounts.
+              // Rebuild both before the replacement, just as a cold launch does.
+              mcpLaunch.release = support.prepareMcpLaunch?.(env, { threadId, mcpServers }) || undefined;
+              const retryContext: NonNullable<Parameters<AcpSupport["spawnArgs"]>[2]> = { requestedModel: turn.model, folderTrusted: trusted, env, cliVersion: lastCliVersion, mcpServerNames: mcpServers.map(server => server.name) };
+              argv = support.spawnArgs(turnConfig, cliTurn, retryContext);
+              hookCanon = retryContext.hookCanon;
+              if (hookCanon) ownHookCanon(hookCanon, { engine: ENGINE, revoke: () => { hookRevoked = true; }, stop: stopHookRepair });
+              spawnFresh(false);
+              continue;
+            }
+            if (e === postureRestartSignal) return;
+            if (restartingPosture && restartFailed) { restartFailed(e); return; }
+            const limit = support.toolBudget ? readToolLimit(e) : undefined;
+            if (limit !== undefined) {
+              let persisting = true;
+              try {
+                budgetRecord = budgetKey ? await budgetStore!.learn(budgetKey, limit, budgetModel)
+                  : { limit: Math.min(budgetRecord?.limit ?? limit, limit), margin: budgetRecord?.margin ?? 4, learnedAt: budgetRecord?.learnedAt ?? Date.now(), updatedAt: Date.now(), model: budgetModel, engine: "opencode" };
+                persisting = false; budgetLog("recovery", "learned");
+                // Second rejection and no-reduction increments use the same serialized boundary.
+                if (promptWrites === 2 || recoveryUsed) {
+                  persisting = true;
+                  budgetRecord = budgetKey ? await budgetStore!.increaseMargin(budgetKey) : { ...budgetRecord, margin: Math.min(64, budgetRecord.margin + 8) };
+                  persisting = false;
+                  if (externalHalt()) { settleHalted(); return; }
+                  budgetLog("recovery", "refused-again");
+                } else {
+                  if (externalHalt()) { settleHalted(); return; }
+                  if (promptWrites === 1 && state.promptSent && !modelOutput && !state.text && !state.messageText && !toolNames.size && !state.producedItem && !turn.prewarm && !turn.engineCommand) {
+                    const { decision, fits } = decideBudget();
+                    if (decision.kind !== "ok") { budgetLog("recovery", "no-room", undefined, decision.kind === "catalogUnknown" ? "unknown-catalog" : undefined); e = budgetFailure(decision.kind); }
+                    else if (fits || JSON.stringify(decision.restrictions) === JSON.stringify(installedRestrictions)) {
+                      persisting = true;
+                  budgetRecord = budgetKey ? await budgetStore!.increaseMargin(budgetKey) : { ...budgetRecord, margin: Math.min(64, budgetRecord.margin + 8) };
+                      if (externalHalt()) { settleHalted(); return; }
+                      budgetLog("recovery", "refused-again");
+                    } else {
+                      recoveryUsed = true;
+                      if (!await replaceForBudget(decision)) return;
+                      continue;
+                    }
+                  } else budgetLog("recovery", "fenced");
+                }
+              } catch (failure) {
+                if (persisting) budgetLog("recovery", "persistence-failed");
+                else e = failure;
+                if (externalHalt()) { settleHalted(); return; }
+              }
+            }
             if (!state.settled) {
               if (stopWasAsked() || (disposed && !state.promptSent)) { settleHalted(); return; }
               const message = e instanceof Error ? e.message : String(e);
               const code = support.classifyError?.(e);
-              const flux = turn.providerRoute ? turn.providerRoute.preset === "flux" : (isFluxModel(turn.model) && fluxSurfaceFor(support.driverKind) !== null) || Boolean(support.reachesFlux?.(turn.model, env));
-              const providerError = classifyProviderError(e, flux);
+              // A Cloud credits refusal is final customer copy (acpRpcErrorMessage): no generic card, no engine text over it, no desktop Flux path.
+              const fluxRefusal = (e as { fluxRefusal?: unknown })?.fluxRefusal === true;
+              const flux = fluxRoutedTurn;
+              const providerError = fluxRefusal ? undefined : classifyProviderError(e, flux);
               const budgetKey = turn.providerRoute?.apiKey ?? fluxKey();
-              if (providerError?.fluxBudget && budgetKey) markBudgetReached({ via: "flux", label: "Flux", baseUrl: turn.providerRoute?.baseUrl ?? "https://api.fluxrouter.ai/v1", key: budgetKey, model: "" });
+              if (!fluxRefusal && providerError?.fluxBudget && budgetKey) markBudgetReached({ via: "flux", label: "Flux", baseUrl: requestUrl!, key: budgetKey, model: "" });
               // Authentication setup is a user action, not a retry. The
               // classifier is preferred; loginNote remains a compatibility
               // fallback for existing ACP supports.
@@ -6200,12 +7010,17 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               // An RPC rejection shows the engine's own explanation (its
               // `error.data`) when it sent one; fixed credit copy still wins.
               // Classification above keeps reading the JSON-RPC message.
-              const rpc = e as { acpMethod?: unknown; data?: unknown };
-              const engineText = providerError?.kind !== "credits" && providerError?.kind !== "payment" && providerError?.kind !== "spend-cap" && !reasoningOnlyData(rpc?.data) && typeof rpc?.acpMethod === "string"
+              const rpc = e as { code?: unknown; acpMethod?: unknown; data?: unknown; refusal?: unknown };
+              const engineText = !fluxRefusal && providerError?.kind !== "credits" && providerError?.kind !== "payment" && providerError?.kind !== "spend-cap" && !reasoningOnlyData(rpc?.data) && typeof rpc?.acpMethod === "string"
                 ? acpEngineErrorText(rpc.data) : undefined;
               // The kind travels structurally. The card reads this field, not
               // the error text, so an engine cannot claim a kind in prose.
-              const errorKind = acpEngineErrorKind(rpc?.data);
+              const errorKind = fluxRefusal ? undefined : acpEngineErrorKind(rpc?.data);
+              const decision = flux ? acpRefusal(registerBusyloopPayloadSite("classify", rpc?.data), rpc?.code, message) ?? state.fluxRefusal?.decision : undefined;
+              const legacyCode = acpRefusalCode(rpc?.data, message, rpc?.refusal);
+              const legacyFields = legacyCode ? fluxRefusalFieldsKeeping(legacyCode, Date.now(), state.fluxRefusal, message, rpc?.data)
+                : state.fluxRefusal ? { gatewayCode: state.fluxRefusal.code, gatewayResetsAt: state.fluxRefusal.resetsAt } : {};
+              const resetsAt = refusalResetAt(decision, rpc?.data) ?? legacyFields.gatewayResetsAt;
               // The JSON-RPC `error.message` is engine-controlled text too —
               // `acpRpcErrorMessage` returns it verbatim — and it reaches the
               // card and messages.db by the same route as `error.data`. So it
@@ -6217,14 +7032,18 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               emit({
                 ...eventBase,
                 type: "runtime.error",
-                message: engineText ?? acpEngineErrorText(message) ?? `${ENGINE} could not finish this turn.`,
+                message: fluxRefusal ? message : engineText ?? acpEngineErrorText(message) ?? `${ENGINE} could not finish this turn.`,
                 ...(errorKind ? { errorKind } : {}),
                 ...(acpEngineErrorCode(e) ? { engineCode: acpEngineErrorCode(e) } : {}),
                 // Read from the raw error and its data, before the text above is sanitised (Flux's code sits in error.state,
-                // a header name or a Python repr that the sanitiser drops).
-                ...(fluxRefusalCode(message, rpc?.data) ? fluxRefusalFieldsKeeping(fluxRefusalCode(message, rpc?.data), Date.now(), state.fluxRefusal, message, rpc?.data)
-                  : state.fluxRefusal ? { gatewayCode: state.fluxRefusal.code, ...(state.fluxRefusal.resetsAt !== undefined ? { gatewayResetsAt: state.fluxRefusal.resetsAt } : {}) } : {}),
-                ...(acpEngineLimitResetsAt(rpc?.data) !== undefined ? { limitResetsAt: acpEngineLimitResetsAt(rpc?.data) } : {}),
+                // Cloud refusal copy retains ownership of its fields; desktop refusals retain typed terminal facts.
+                ...(fluxRefusal ? {} : {
+                  ...legacyFields,
+                  ...(decision ? { fluxDecision: decision } : {}),
+                  ...(resetsAt !== undefined ? { gatewayResetsAt: resetsAt } : {}),
+                  httpStatus: acpRefusalHttpStatus(rpc?.data, rpc?.code, message, rpc?.refusal) ?? state.fluxRefusal?.httpStatus,
+                  ...(acpEngineLimitResetsAt(rpc?.data) !== undefined ? { limitResetsAt: acpEngineLimitResetsAt(rpc?.data) } : {}),
+                }),
                 diagnostic:acpErrorDiagnostic(eventBase,lifecycle.generation,e),
                 details: [acpRpcErrorDetails(e), e instanceof Error
                   ? (e as Error & { fuigoFailureObservation?: string }).fuigoFailureObservation : undefined]
@@ -6232,10 +7051,12 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
                 // What the provider itself said travels on the structured info, cleaned (server/provider-said.ts), for every
                 // kind: the card shows it under "What <service> said" while its headline stays the reviewed copy.
                 ...(providerError ? { providerError: withProviderSaid(providerError, e) } : {}),
-                ...(needsAuth ? { setup: true } : {}),
+                ...(needsAuth && !isTerminal(decision) ? { setup: true } : {}),
               });
               settle(false, needsAuth ? "auth_required" : "rpc_error");
             }
+          }
+          return;
           }
         })();
         };
@@ -6251,20 +7072,27 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const gate = turn.folderTrust;
         // Generation 2: never a card before the spawn and never `--trust`. The engine
         // asks during the turn and the request is answered there (R1).
-        const needsCard = Boolean(trustGeneration === 1 && support.folderTrust && gate && !gate.decision && gate.sources.length && !upstreamTrusted);
+        const needsCard = Boolean((turn.permissionNow?.() ?? turn).noLimits !== true && trustGeneration === 1 && support.folderTrust && gate && !gate.decision && gate.sources.length && !upstreamTrusted);
         // A warm on intent never raises a card: with no decision recorded there is nothing to warm.
         // Nor does a warm start an engine while Murage removes a deleted conversation from the engine's files (holdIdle); no await separates this from the launch.
         if (turn.prewarm && (needsCard || idleHeld > 0)) { endPrewarm(); forgetPrewarm(); return { turnId }; }
+        if (immutablePosture) {
+          await support.askStop!.apply!({ env, config: turnConfig, turn, askLevel: askStop() });
+          appliedPosture = askStop();
+        }
         if (!needsCard) {
           try {
             launch(trustGeneration === 1 && folderTrusted === "trust");
           } catch (error) {
+            if (!child) releaseHookCanon(hookCanon);
             releaseHome();
+            if (!child) mcpLaunch.release?.();
             throw error;
           }
           if (trustGeneration === 1 && support.folderTrust && folderTrusted === "reject" && gate?.sources.length && !upstreamTrusted) noteFolderTrust(folderTrustWithheldName(gate.sources));
           if (!cloudSeedPending || reused) seedLanded();
           handedBack = true;
+          catalogSetupHandedBack = true;
           return { turnId };
         }
         fence.check("card"); // G5
@@ -6288,7 +7116,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           if (decision !== "trust") noteFolderTrust(folderTrustWithheldName(gate!.sources));
         });
         handedBack = true;
+        catalogSetupHandedBack = true;
         return { turnId };
+        } finally {
+          if (!catalogSetupHandedBack) retirePendingCatalogs();
+        }
       };
 
       /** A send stopped before it started ends as a stopped turn: the pair `settle(true, "cancelled")` emits, returning the turn id. A prewarm emits nothing. */
@@ -6403,11 +7235,16 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         lastCliVersion = probe.version;
         lastCliSigSeen = cliSig(launchCliFor(env), env);
         const versionNote = support.versionNote?.(probe.version);
-        const authenticated = await support.isAuthenticated(env, config);
-        return { state: "available", version: probe.version, ...(support.signInAnswerIsLocalHint ? { signInAnswerIsLocalHint: true as const } : {}), ...(authenticated === undefined ? (support.authUnknownIsUnverified ? { authUnverified: true as const } : {}) : { authenticated }), ...(versionNote ? { versionNote } : {}) };
+        // On a Cloud home the sign-ins are root-only per-bot stores this server cannot read, so the engine's own
+        // check reads "not signed in" even when bots are signed in. The launcher's reading can only raise it;
+        // off a home it reads undefined and the desktop keeps the engine's own reading. On a home the launcher's answer is the
+        // authoritative one, so the "local hint" flag is not added when it says signed in.
+        const signedInOnHome = (await cloudEngineSignedInSomewhere(support.driverKind)) === true;
+        const authenticated = signedInOnHome ? true : await support.isAuthenticated(env, config);
+        return { state: "available", version: probe.version, ...(support.signInAnswerIsLocalHint && !signedInOnHome ? { signInAnswerIsLocalHint: true as const } : {}), ...(authenticated === undefined ? (support.authUnknownIsUnverified ? { authUnverified: true as const } : {}) : { authenticated }), ...(versionNote ? { versionNote } : {}), ...(signedInOnHome ? { setUpOnHome: true } : {}) };
       };
 
-      return withCliMemoryLearning({
+      return withRequestDelivery(withCliMemoryLearning({
         instanceId,
         driverKind: DRIVER_KIND,
         displayName: input.displayName,
@@ -6512,6 +7349,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             const turn = active.get(threadId);
             return turn?.askHostAction ? turn.askHostAction(call, signal) : null;
           },
+          onPostureChange: async (threadId) => { await active.get(threadId)?.onPostureChange?.(); },
           respondToRequest: async (threadId, requestId, decision) => {
             const turn = active.get(threadId);
             const finish = turn?.asks.get(requestId);
@@ -6519,8 +7357,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (decision.behavior === "answer") {
               // only a question ask carries the owner's picks to the engine
               if (!decision.answers?.length) return "unavailable";
-              await finish("answer", "user", decision.answers);
-              return "answered";
+              const delivered = await finish("answer", "user", decision.answers);
+              return delivered === false ? "unavailable" : "answered";
             }
             const delivered = await finish(decision.behavior === "allow" ? "allow" : "deny", "user");
             if (delivered && typeof delivered === "object" && !delivered.ok) throw new ApprovalDeliveryError(delivered.reason, delivered.terminal);
@@ -6538,7 +7376,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             },
           } : {}),
           stopAll: async () => {
-            for (const threadId of new Set([...active.keys(), ...pool.keys(), ...fences.threads(), ...destinationProbes.keys()])) retireThread(threadId);
+            for (const threadId of new Set([...active.keys(), ...pool.keys(), ...fences.threads(), ...destinationProbes.keys(), ...pendingCatalogSetups.keys()])) retireThread(threadId);
             await stopAllOwned("stop_all");
           },
           onEvent: (listener) => {
@@ -6549,12 +7387,14 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         dispose: async () => {
           disposed = true;
           for (const probe of destinationProbes.values()) probe.controller.abort(); // M3: abort only, no epoch move (dispose is not a stop)
+          // Dispose is not a stop (M3): release the pending catalog registrations without moving any thread's epoch.
+          for (const setups of [...pendingCatalogSetups.values()]) for (const retire of [...setups]) retire();
           await stopAllOwned("dispose");
           // Same as codex: an unconfirmed close keeps listeners attached so
           // the owned child's late events are still accounted for.
           listeners.clear();
         },
-      }, { oneShotFolder: support.oneShotFolder });
+      }, { oneShotFolder: support.oneShotFolder }), answerTransport);
     },
   };
 }

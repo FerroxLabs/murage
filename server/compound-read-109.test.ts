@@ -10,6 +10,7 @@ import { posix, win32 } from "node:path";
 import { describe, expect, it } from "vitest";
 import { autoVerdict, type AutoApprover, type AutoContext } from "./auto-approve.ts";
 import { classifyAsk, type StopLinePlace } from "./stop-line.ts";
+import { expectNoLimitsOwnerOutcome } from "./testing/no-limits-1019.ts";
 import type { GrantCall } from "../shared/app-action-grant.ts";
 
 const r = String.raw;
@@ -146,9 +147,12 @@ describe("1.0.9 D2 simplified compound reads", () => {
   it("shapes outside the four still ask at every level", () => {
     const allowed: string[] = [];
     for (const [dialects, command] of STILL_ASK) for (const dialect of dialects) for (const [level, bot] of LEVELS) {
+      if (level === "No limits") continue; // NOLIM 1.0.19: the owner's No limits turn runs these (only the wipe list asks; none of these rows is one)
       if (verdict(command, bot, dialect).approve !== null) allowed.push(`${dialect} ${level}: ${command}`);
     }
     expect(allowed).toEqual([]);
+    const noLimits = LEVELS[3]![1];
+    for (const [dialects, command] of STILL_ASK) for (const dialect of dialects) expectNoLimitsOwnerOutcome(verdict(command, noLimits, dialect), command, null, dialect + " No limits: " + command);
   });
 
   it("the corpus rows these shapes cover no longer ask at Full access or No limits", () => {

@@ -105,16 +105,12 @@ it("the lineage write-time backfill", { tags: ["perf-budget"] }, () => {
   expect(db.prepare("SELECT phase,cursor,done,ready FROM memory_lineage_cert WHERE id=1").get()).not.toEqual(before);
 });
 
-it("the search index fill", { tags: ["perf-budget"] }, () => {
-  const db = database();
-  messages.appendMessage("t", text("m1"));
-  writeIndexState(db, "search_fts", { done: 0, cursor: 0, skipped: 0 });
+it("the search index fill never writes on main, including while another writer holds the file", { tags: ["perf-budget"] }, () => {
+  const db=database();
   hold();
-  busyAttempt(() => stepMessageSearchBackfill(db));
-  expect(readIndexState(db, "search_fts")).toMatchObject({ done: 0, cursor: 0 });
-  release();
-  stepMessageSearchBackfill(db);
-  expect(readIndexState(db, "search_fts").done).toBe(1);
+  try { expect(stepMessageSearchBackfill(db)).toMatchObject({more:false}); }
+  finally { release(); }
+  expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='messages_fts'").get()).toBeUndefined();
 });
 
 it("the message walker", { tags: ["perf-budget"] }, () => {

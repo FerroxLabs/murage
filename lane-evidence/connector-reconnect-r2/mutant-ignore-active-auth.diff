@@ -1,0 +1,11 @@
+--- server/composio.ts
++++ server/composio.ts
+@@ -1743,7 +1743,7 @@
+   const reading = readAppAnswer(tools, request.id, bytes, rowIndex);
+   // Status is primary. An upstream 401 also proves auth rejection; a safe
+   // credential probe's 403 is the Flux contract's ACTIVE-but-lapsed fallback.
+-  reading.failed = new Map([...reading.authStatus].filter(([, code]) => code === 401 || (probe && code === 403)).map(([slug, code]) => [slug, `HTTP ${code}`]));
++  reading.failed = new Map([...reading.authStatus].filter(() => false).map(([slug, code]) => [slug, `HTTP ${code}`]));
+   const owner = inventoryOwner(cfg);
+   if (!owner) return;
+   const requirements = connectedAppRequirements(request.params?.arguments, request.params?.name);

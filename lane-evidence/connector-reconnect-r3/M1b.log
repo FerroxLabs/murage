@@ -1,0 +1,69 @@
+
+ RUN  v4.1.12 /work
+
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1a failed probe still awaits EXPIRED inventory
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1b failed probe still awaits EXPIRED inventory
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1c ACTIVE uncertainty is unverified
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1d ACTIVE uncertainty is unverified
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1e success re-reads ACTIVE, clears only that account and its unverified state
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1f failed inventory retains incident and renders unverified copy
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1g Flux kind=auth is an outage and still re-reads inventory
+ × server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after transport 98ms
+   → expected true to be false // Object.is equality
+ × server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after http 62ms
+   → expected true to be false // Object.is equality
+ × server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after brokerAuth 61ms
+   → expected true to be false // Object.is equality
+ × server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after upstreamAuth 61ms
+   → expected true to be false // Object.is equality
+ × server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after toolError 60ms
+   → expected true to be false // Object.is equality
+ × server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after ok 61ms
+   → expected true to be false // Object.is equality
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1 unknown keeps an existing incident; alias change preserves unverified
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1 removal between probe and refresh blocks that ID on scheduled dispatch
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=false) cannot replace post-probe EXPIRED inventory 112ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=true) cannot replace post-probe EXPIRED inventory 111ms
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3d preflight response.error.status 403 with ACTIVE creates an incident
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e row-level Flux auth never creates an incident
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1f late timed-out inventory cannot clear or create incidents
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1 durable unknown survives reopening and a status change clears it
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R1e healthy recovery clears a durable unknown check
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope error-kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-error-kind is an outage
+ ↓ server/connector-reconnect-r3-preflight.test.ts > R3 broker diagnostic in a failed row only suppresses reconnect
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after transport
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after http
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after brokerAuth
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after upstreamAuth
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after toolError
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after ok
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:70:98
+     68|   afterProbe=()=>{holdInventory=new Promise<void>(resolve=>{release=re…
+     69|   const checking=check().then(()=>{resolved=true;});
+     70|   try { await vi.waitFor(()=>expect(reads).toBe(1)); expect(completed)…
+       |                                                                                                  ^
+     71|   finally { release?.(); await checking; }
+     72|   expect(completed).toBe(1); expect(reads).toBe(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  6 failed | 2 passed | 19 skipped (27)
+   Start at  05:09:31
+   Duration  10.34s (transform 7.61s, setup 8.59s, import 961ms, tests 637ms, environment 0ms)
+

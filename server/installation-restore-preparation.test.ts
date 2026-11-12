@@ -17,12 +17,13 @@ import { isReservedBotId, CANARY_BROWSER_ID } from "../shared/bot-identity.ts";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore as prepareOfflineRestore } from "./installation-restore-preparation.ts";
 import { initializeMessageTables } from "./message-tables.ts";
-import { trigramQuery } from "./message-search-index.ts";
+import { stopSearchIndex, trigramQuery } from "./message-search-index.ts";
 import { initializeImageOperations } from "./image-operations-schema.ts";
 import { migrateMemorySchema } from "./memory/schema.ts";
 import { initializeTeamIdentityTables } from "./team-identities.ts";
 import { initializeProjectTables } from "./project-tables.ts";
 import { initializePendingDelegations } from "./pending-delegations-schema.ts";
+import { initializeDelegationPacks } from "./delegation-pack/schema.ts";
 import { completeRequest, insertRoomRequest, markRequestDispatched } from "./room-requests.ts";
 import { assertRestoreReviewed, RESTORE_REVIEW_FILE } from "../electron/restore-review.mjs";
 import { restoredConnectionProfile } from "../electron/restored-connections.mjs";
@@ -141,7 +142,7 @@ it("the real harness refuses prepared state before starting any provider or sche
   const entry = fileURLToPath(new URL("./index.ts", import.meta.url));
   let failure: any;
   try {
-    await promisify(execFile)(process.execPath, [entry], { timeout: 20_000, env: { PATH: dirname(process.execPath), HOME: f.root, USERPROFILE: f.root, MURAGE_DATA_DIR: prepared.stateDirectory, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) } });
+    await promisify(execFile)(process.execPath, [entry], { windowsHide: true, timeout: 20_000, env: { PATH: dirname(process.execPath), HOME: f.root, USERPROFILE: f.root, MURAGE_DATA_DIR: prepared.stateDirectory, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) } });
   } catch (error) { failure = error; }
   expect(failure?.code).toBe(1);
   expect(failure.stderr).toContain("RESTORE_REVIEW_REQUIRED");
@@ -360,6 +361,8 @@ it("carries search through restore and discards saved summaries for the resumabl
   // archive inspector over the database: neither may orphan or refuse the search index.
   const f = await fixture({
     db: (db) => {
+      // Explicit legacy archive: 1.0.19 serving opens no longer create this table.
+      db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none)");
       const add = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)");
       const index = db.prepare("INSERT INTO messages_fts(rowid, t) VALUES(?, ?)");
       for (const [id, at, text] of [["s1", 10, "searchable Railway deploy note"], ["s2", 11, "日本語の検索"]] as const) {
@@ -412,6 +415,18 @@ const queueRows = (db: DatabaseSync, count: number) => {
   const insert = db.prepare("INSERT INTO pending_delegations(id, source_thread_id, to_bot_id, from_bot_id, phase, retry_at, item) VALUES(?,?,?,?,?,?,?)");
   for (let i = 0; i < count; i++) insert.run(`q-${i}`, `src-${i % 7}`, "peer", "bot", i % 3 === 0 ? "busy" : "fresh", i % 3 === 0 ? 5 : null, JSON.stringify({ message: `queued ${i}`, depth: 0, attempts: 0 }));
 };
+it.each([0, 1])("T-GONE: restore removes packs with %i pending handoffs; kills missing restore deletion", async pending => {
+  const f = await fixture({ withoutLegacyQueueFile: true, db: db => {
+    queueRows(db, pending);
+    initializeDelegationPacks(db);
+    db.prepare("INSERT INTO delegation_packs VALUES('pack','q-0','thread','bot','peer','target','[\"terminal\"]','[]',1,1)").run();
+  } });
+  const source = new DatabaseSync(join(f.data, "messages.db"), { readOnly: true });
+  try { expect(source.prepare("SELECT count(*) AS n FROM delegation_packs").get()?.n).toBe(1); } finally { source.close(); }
+  const prepared = await prepareInstallationRestore(f.archive, f.root);
+  const restored = new DatabaseSync(join(prepared.stateDirectory, "messages.db"), { readOnly: true });
+  try { expect(restored.prepare("SELECT count(*) AS n FROM delegation_packs").get()?.n).toBe(0); } finally { restored.close(); }
+});
 it("a restore with 50 queued handoffs leaves the table empty, keeps the rows as evidence, and activation passes; a row put back is refused", async () => {
   const f = await fixture({ withoutLegacyQueueFile: true, db: (db) => queueRows(db, 50) });
   const prepared = await prepareInstallationRestore(f.archive, f.root);
@@ -540,6 +555,8 @@ it.each(["absent tables", "absent singleton", "existing singleton"].flatMap(shap
   const archive = readFileSync(f.archive);
   mkdirSync(DATA_DIR, { recursive: true });
   const serving = servingDatabase.database(), servingGen = readChatsGen(serving), send = vi.fn();
+  // 5d5a791f19 starts an independent search reset transaction on this handle. Join it before spying on restore.
+  expect(await stopSearchIndex()).toBe(true);
   const dispose = registerChatsGenPublisher(serving, send);
   const servingExec = vi.spyOn(serving, "exec");
   const accessor = vi.spyOn(servingDatabase, "database");
@@ -605,7 +622,7 @@ it.each(["before", "inside", "after"])("T-RESTORE-RETAIN: a process crash %s rem
     await prepareInstallationRestore(${JSON.stringify(f.archive)},${JSON.stringify(f.root)});
     process.exit(72);
   `;
-  await expect(promisify(execFile)(process.execPath,["--input-type=module","-e",source],{timeout:30_000,env:{...process.env,MURAGE_DATA_DIR:join(f.root,"child-private")}}).catch(error => { if(error.code!==71) console.error(error.stderr); throw error; })).rejects.toMatchObject({code:71});
+  await expect(promisify(execFile)(process.execPath,["--input-type=module","-e",source],{ windowsHide: true,timeout:30_000,env:{...process.env,MURAGE_DATA_DIR:join(f.root,"child-private")}}).catch(error => { if(error.code!==71) console.error(error.stderr); throw error; })).rejects.toMatchObject({code:71});
   const retained = readdirSync(f.root).map(name=>join(f.root,name,"state")).filter(path=>existsSync(join(path,RESTORE_REVIEW_FILE)));
   expect(retained).toHaveLength(1);
   expect(JSON.parse(readFileSync(join(retained[0],RESTORE_REVIEW_FILE),"utf8")).status).toBe("preparing");
@@ -645,11 +662,24 @@ it.each(["absent tables", "absent singleton", "existing singleton"])("T-RESTORE-
     await new Promise(done=>setTimeout(done,300));
     console.log('COLD_RESULT '+JSON.stringify({stateDirectory:result.stateDirectory,gen,opens}));
   `;
-  const child=await promisify(execFile)(process.execPath,["--input-type=module","-e",source],{env:{...process.env,MURAGE_DATA_DIR:forbidden},timeout:30_000});
+  const child=await promisify(execFile)(process.execPath,["--input-type=module","-e",source],{ windowsHide: true,env:{...process.env,MURAGE_DATA_DIR:forbidden},timeout:30_000});
   const result=JSON.parse(child.stdout.split("COLD_RESULT ")[1]);
   expect(result.opens).not.toContain(join(forbidden,"messages.db"));expect(result.opens).toContain(":memory:");
   expect(result.gen).toEqual({epoch:expect.stringMatching(/^[a-f0-9]{32}$/),rev:0});expect(existsSync(forbidden)).toBe(false);
   const reopen=`const {database,closeDatabase}=await import(${JSON.stringify(new URL("./database.ts",import.meta.url).href)});const db=database();console.log('OPEN_RESULT '+JSON.stringify(db.prepare('SELECT epoch,rev FROM chats_gen WHERE id=1').get()));closeDatabase();`;
-  const opened=await promisify(execFile)(process.execPath,["--input-type=module","-e",reopen],{env:{...process.env,MURAGE_DATA_DIR:result.stateDirectory},timeout:30_000});
+  const opened=await promisify(execFile)(process.execPath,["--input-type=module","-e",reopen],{ windowsHide: true,env:{...process.env,MURAGE_DATA_DIR:result.stateDirectory},timeout:30_000});
   expect(JSON.parse(opened.stdout.split("OPEN_RESULT ")[1].split("\n")[0])).toEqual(result.gen);
 },60_000);
+
+it("T-RESTORE-ROTATE: restoring an owner's own backup changes search identity inside the candidate transaction", async () => {
+  const f = await fixture({ db: db => {
+    db.exec("INSERT OR REPLACE INTO transcript_index_state(name,done,cursor,skipped) VALUES('search_owner',1,0,0)");
+  } });
+  const result = await prepareInstallationRestore(f.archive, f.root);
+  const db = new DatabaseSync(join(result.stateDirectory, "messages.db"), { readOnly: true });
+  try {
+    const owner = db.prepare("SELECT * FROM transcript_index_state WHERE name='search_owner'").get();
+    expect(owner).toMatchObject({ name: "search_owner", done: expect.any(String), cursor: 0, skipped: 0 });
+    expect(owner).not.toEqual({ name: "search_owner", done: 1, cursor: 0, skipped: 0 });
+  } finally { db.close(); }
+});

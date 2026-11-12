@@ -1,0 +1,274 @@
+[
+  {
+    "mutant": "M1a",
+    "file": "server/composio.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connector-reconnect-r3-preflight.test.ts",
+      "-t",
+      "R1a|R1h",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M1a.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M1a.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M1b",
+    "file": "server/composio.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connector-reconnect-r3-preflight.test.ts",
+      "-t",
+      "R1h",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M1b.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M1b.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M1c",
+    "file": "server/composio.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connector-reconnect-r3-preflight.test.ts",
+      "-t",
+      "R1f",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M1c.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M1c.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M1d",
+    "file": "server/composio.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connector-reconnect-r3-preflight.test.ts",
+      "-t",
+      "R1d",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M1d.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M1d.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M1e",
+    "file": "server/composio.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connector-reconnect-r3-preflight.test.ts",
+      "-t",
+      "R1 unknown",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M1e.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M1e.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M2a",
+    "file": "server/composio.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connector-reconnect-r3-attribution.test.ts",
+      "-t",
+      "R2a",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M2a.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M2a.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M2b",
+    "file": "server/composio.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connector-reconnect-r3-attribution.test.ts",
+      "-t",
+      "R2 unattributed batch mixed",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M2b.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M2b.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M2c",
+    "file": "server/composio.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connector-reconnect-r3-attribution.test.ts",
+      "-t",
+      "R2 unattributed batch same",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M2c.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M2c.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M2d",
+    "file": "shared/connected-app-calls.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connector-reconnect-r3-attribution.test.ts",
+      "-t",
+      "R2b",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M2d.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M2d.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M3a",
+    "file": "server/connected-app-health.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connected-app-health.test.ts",
+      "-t",
+      "R3a|R3b",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M3a.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M3a.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M3b",
+    "file": "server/connected-app-health.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connected-app-health.test.ts",
+      "-t",
+      "R3g",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M3b.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M3b.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M3c",
+    "file": "server/connected-app-health.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connected-app-health.test.ts",
+      "-t",
+      "R3e",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M3c.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M3c.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M3d",
+    "file": "server/connected-app-health.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connected-app-health.test.ts",
+      "-t",
+      "R3d|R3g",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M3d.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M3d.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M4a",
+    "file": "server/index.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connector-reconnect-r3-schedule.test.ts",
+      "-t",
+      "R4a",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M4a.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M4a.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M4b",
+    "file": "server/connector-health-store.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connector-reconnect-r3-schedule.test.ts",
+      "-t",
+      "R4b",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M4b.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M4b.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M4c",
+    "file": "server/connector-health-store.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connector-reconnect-r3-schedule.test.ts",
+      "-t",
+      "R4b",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M4c.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M4c.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  },
+  {
+    "mutant": "M3-row",
+    "file": "server/connected-app-health.ts",
+    "command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "server/connector-reconnect-r3-preflight.test.ts",
+      "-t",
+      "R3e row-level",
+      "--reporter=verbose"
+    ],
+    "log": "lane-evidence/connector-reconnect-r3/M3-row.log",
+    "patch": "lane-evidence/connector-reconnect-r3/M3-row.patch",
+    "exit": 1,
+    "killed_by_assertion": true
+  }
+]

@@ -12,8 +12,9 @@ import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
-import { classifyDataDirEntry, DATA_DIR_ENTRIES, DATA_DIR_PATTERNS } from "./data-dir-inventory.ts";
+import { classifyDataDirEntry, DATA_DIR_ENTRIES } from "./data-dir-inventory.ts";
 import { DataRoots } from "./data-roots.ts";
+import { SEARCH_FILES } from "./message-search-index.ts";
 import { DATA_DIR_DATABASES_AFTER_102, DATA_DIR_NAMES_AFTER_102, DATA_DIR_OWNER_NOTES_AFTER_102, DATA_DIR_RECORDS_AFTER_102, downgradeInstallationMemorySchema, removeDataDirNamesAfter102 } from "./installation-memory-downgrade.ts";
 import { readOwnerPrefs } from "./owner-prefs.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -25,11 +26,12 @@ const OUTPUT_PUBLICATIONS_102 = `CREATE TABLE output_publications (
     artifact_id TEXT, attachment_id TEXT, message_id TEXT, error_category TEXT,
     created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
     UNIQUE(producer,bot_id,thread_id,run_id,path_token,sha256))`;
-const known102 = new Set((JSON.parse(readFileSync(join(import.meta.dirname, "testing", "data-dir-1.0.2-names.json"), "utf8")) as { names: string[] }).names);
+import { classifyDataDirEntry as frozen102 } from "./testing/frozen/inventory-102.ts";
+const CUSTODY_SOURCES = ["signal", "connector-health.json", "connector-notice-receipts.json"];
 /** Whether 1.0.2's backup classifies this top-level name (its patterns are 1.0.3's, unchanged). */
-const classifiedBy102 = (name: string) => known102.has(name) || DATA_DIR_PATTERNS.some(item => item.pattern.test(name));
+const classifiedBy102 = (name: string) => frozen102(name) !== undefined;
 /** 1.0.3 names only a Cloud home writes (server/cloud-home/, the cloud browser and timezone): a Cloud home never reinstalls desktop 1.0.2. */
-const CLOUD_ONLY = [".murage-health", ".murage-home-machine", "cloud-browser-profile-usage.json", "own-server", "owner.json", "proxy", "secrets", "server-home"];
+const CLOUD_ONLY = [".murage-events", ".murage-health", ".murage-home-machine", "cloud-browser-profile-usage.json", "cloud-signin-offers.json", "cloud-signin-offers.json.tmp", "own-server", "owner.json", "proxy", "restore-provenance.json", "secrets", "server-home"];
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 afterEach(() => { closeDatabase(); });
@@ -41,10 +43,13 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
 
   it("every 1.0.3 name 1.0.2 does not know is removed by the downgrade or written only by a Cloud home", () => {
     const newer = Object.keys(DATA_DIR_ENTRIES).filter(name => !classifiedBy102(name)).sort();
-    expect(newer).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...DATA_DIR_DATABASES_AFTER_102, ...DATA_DIR_RECORDS_AFTER_102, ...CLOUD_ONLY].sort());
+    expect(newer).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...DATA_DIR_DATABASES_AFTER_102, ...DATA_DIR_RECORDS_AFTER_102, ...SEARCH_FILES, ...CLOUD_ONLY, ...CUSTODY_SOURCES].sort());
     // the S5 root record is backed up and restored by 1.0.18, and the downgrade still takes it away for 1.0.2
     for (const name of DATA_DIR_RECORDS_AFTER_102) expect(DATA_DIR_ENTRIES[name]?.backup, name).toBe("record");
     for (const name of DATA_DIR_NAMES_AFTER_102) expect(DATA_DIR_ENTRIES[name]?.backup, name).toBe("excluded");
+    // 2de8a7c65c removes the separate search family through removeMessageSearchFiles,
+    // outside the legacy name list. Keep the inventory and its real removal covered.
+    for (const name of SEARCH_FILES) expect(DATA_DIR_ENTRIES[name]?.backup, name).toBe("excluded");
     // the follow-model marker is the owner's (backed up with bots.json), and the downgrade still takes it away for 1.0.2
     for (const name of DATA_DIR_OWNER_NOTES_AFTER_102) expect(DATA_DIR_ENTRIES[name]?.backup, name).toBe("owner-file");
     // the phone call history is a backed-up database (in every newer backup); only it and its own sidecars are on this list
@@ -103,9 +108,15 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     writeFileSync(join(DATA_DIR, "highlevel", "connection.json"), JSON.stringify({ locationId: "loc-1" }), { mode: 0o600 });
     // the bot phone call history and its sidecars (1.0.20 phone-calls/store.ts; 1.0.2 has no phone calls)
     for (const name of DATA_DIR_DATABASES_AFTER_102) writeFileSync(join(DATA_DIR, name), "", { mode: 0o600 });
+    // New browser choices and regenerable engine/browser caches do not exist in 1.0.2.
+    writeFileSync(join(DATA_DIR, "browser-modes.json"), "{}", { mode: 0o600 });
+    mkdirSync(join(DATA_DIR, "browser-window"), { mode: 0o700 });
+    mkdirSync(join(DATA_DIR, "model-catalogs"), { mode: 0o700 });
+    // 2de8a7c65c: the derived search database and sidecars leave on the separate lifecycle path.
+    for (const name of SEARCH_FILES) writeFileSync(join(DATA_DIR, name), "", { mode: 0o600 });
     // the S5 root record (1.0.18 data-roots.ts; 1.0.2 never reads it)
     writeFileSync(join(DATA_DIR, ".murage-root.json"), JSON.stringify({ schema: 1, root: DATA_DIR, previous: [] }), { mode: 0o600 });
-    expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...DATA_DIR_DATABASES_AFTER_102, ...DATA_DIR_RECORDS_AFTER_102].sort());
+    expect(readdirSync(DATA_DIR).filter(name => !classifiedBy102(name)).sort()).toEqual([...DATA_DIR_NAMES_AFTER_102, ...DATA_DIR_OWNER_NOTES_AFTER_102, ...DATA_DIR_DATABASES_AFTER_102, ...DATA_DIR_RECORDS_AFTER_102, ...SEARCH_FILES].sort());
 
     expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ status: "downgraded", to: 10 });
 
@@ -114,7 +125,7 @@ describe("1.0.3 data-folder names after memory-downgrade --to 10", () => {
     // a later upgrade reads the removed prefs as the defaults: the caution shows again, Today opens Calm, nothing throws
     expect(existsSync(join(DATA_DIR, "owner-prefs.json"))).toBe(false);
     expect(existsSync(join(DATA_DIR, "outside-state.jsonl"))).toBe(false);
-    expect(readOwnerPrefs(DATA_DIR)).toEqual({ approveAllCautionDismissed: false, todayView: "calm" });
+    expect(readOwnerPrefs(DATA_DIR)).toEqual({ approveAllCautionDismissed: false, todayView: "calm", firstRunJobs: { pending: [] } });
     expect(existsSync(join(DATA_DIR, "messages.db"))).toBe(true);
     // a second run (already v10) finds nothing more to remove and still succeeds
     expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });

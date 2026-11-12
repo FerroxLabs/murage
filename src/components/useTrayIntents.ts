@@ -18,7 +18,9 @@ export function useTrayIntents() {
   latest.current = state;
   useEffect(() => window.muragebox?.tray?.onOpen((target: TrayOpenTarget) => {
     const current = latest.current;
-    if (target?.kind === "approval" && id(target.threadId) && id(target.messageId)) {
+    if (target?.kind === "connector" && id(target.reconnectIncidentId) && id(target.threadId)) {
+      openNotificationTarget(dispatch, target, current);
+    } else if (target?.kind === "approval" && id(target.threadId) && id(target.messageId)) {
       void openInboxLink({ threadId: target.threadId, messageId: target.messageId }, current, dispatch).catch(() => {
         if (id(target.botId)) openNotificationTarget(dispatch, { botId: target.botId, threadId: target.threadId }, current);
       });

@@ -10,18 +10,21 @@
 // While the status route does not say enabled: true, the card and the section render a stub (SETTINGS-UX-1011 S1): the title and one
 // line saying why and how to turn it on; "Checking" while a saved key has no definitive answer yet (EMAIL-CAPS-CACHE-1011: never shown as
 // off). Words come from shared/email-copy.ts verbatim; the stub lines from SettingsStub.tsx.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Mail } from "lucide-react";
+import { t } from "@/lib/i18n";
 import { Card, Switch } from "./SettingsPrimitives";
 import { SETTINGS_STUB_COPY, SettingsStub, chiefName } from "./SettingsStub";
 import { useBotSettingsNavigation } from "./bot-settings-drafts";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { configAfterFluxKeyChange } from "@/lib/spend-meter";
 import { useDesktopSurface } from "@/lib/use-surface";
-import { isCloudOrigin } from "@/lib/cloud-workspace";
+import { CloudEmailSigninCard } from "./CloudEmailSigninCard";
+import { isCloudHome, isCloudOrigin } from "@/lib/cloud-workspace";
 import { inNativeShell } from "@/lib/native-shell";
 import { fluxDesktopSigninEnabled } from "@/lib/feature-flags";
 import { emailOwnerAct, emailSectionActions, priceLine, readBotEmail, readEmailStatus, removeOtherSetup, setEmailAccount, signInEmailOwner, signInFluxAgain, useEmailStatus, type EmailStatusState } from "@/lib/bot-email";
+import { UnsupportedViewError, actionOf, canAct, createHttpEmailKeepRemoveClient, hasRejectedPath, parseView, refusalText, type EmailActionKind, type EmailRow } from "@/lib/email-keep-remove-client";
 import { EMAIL_FILTERED_COPY, EMAIL_OWNER_COPY, EMAIL_POLICY_COPY, EMAIL_SETUP_COPY, EMAIL_STATUS_COPY, type EmailBotView, type EmailOwnerAction, type EmailStatusView } from "../../shared/email-copy.ts";
 
 const SETUP_REREAD_MS = 15_000;
@@ -106,10 +109,94 @@ export function BotEmailStub({ status, testId, onStatus }: { status: EmailStatus
     ? canSignInFlux ? signInAction : onComputer ? openModels : undefined
     : gate === "needs-email-scope" ? canSignInEmail ? emailSignInAction : onComputer ? openModels : undefined
       : undefined;
+  if (isCloudHome()) return <CloudEmailSigninCard />;
   return <>
     <SettingsStub title={SETTINGS_STUB_COPY.botEmailTitle} state={gate === "key-refused" || gate === "needs-email-scope" ? "needs-account" : gate} line={line} action={action} testId={testId} />
     {error && <p role="alert" className="mt-2 text-[12px] leading-relaxed text-danger" data-testid={`${testId}-error`}>{error}</p>}
   </>;
+}
+
+const ROW_KINDS: readonly EmailActionKind[] = ["keep", "remove", "confirm_inventory", "try_again_now"];
+const kindLabel = (kind: EmailActionKind): string => kind === "keep" ? EMAIL_OWNER_COPY.keepAddress : kind === "remove" ? EMAIL_OWNER_COPY.remove : kind === "confirm_inventory" ? t("emailPark.confirmInventory") : t("emailPark.tryAgainNow");
+/** The row's line: the server's own words, shown in the app's language when they are exactly one of the shared English lines. */
+function rowLine(row: EmailRow): string {
+  const text = row.line ?? row.address ?? "";
+  const address = row.address ?? EMAIL_OWNER_COPY.parkedUnknownAddress;
+  if (row.section === "restore_check") return text === EMAIL_OWNER_COPY.restoreCheckLine ? t("emailPark.restoreCheckLine") : text;
+  if (row.section !== "parked" && row.section !== "key_only") return text;
+  if (text === EMAIL_OWNER_COPY.parkedOrphanLine(address)) return t("emailPark.orphanLine", { address });
+  if (text === EMAIL_OWNER_COPY.keepingLine(address)) return t("emailPark.keepingLine", { address });
+  if (text === EMAIL_OWNER_COPY.goneLine(address)) return t("emailPark.goneLine", { address });
+  return text;
+}
+
+/** The owner's Keep/Remove rows (restore park, contract rounds 1 to 5): parked and key-only addresses, and addresses from another
+ *  setup. Everything shown is the server's row: its line verbatim, only the actions it sent, each POSTed to its own validated path with
+ *  the token from THIS view. A refusal is the server's line; it is kept per row through the re-read that follows it. */
+function OwnerRows({ view, onStatus }: { view: EmailStatusView; onStatus: (next: EmailStatusState) => void }) {
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [refusals, setRefusals] = useState<Record<string, string>>({});
+  const parsed = useMemo(() => {
+    if (!Array.isArray(view.rows)) return null;
+    try { return parseView(view).rows; } catch (caught) { if (caught instanceof UnsupportedViewError) return "unsupported" as const; throw caught; }
+  }, [view]);
+  if (parsed === null) return null;
+  if (parsed === "unsupported") return <p role="alert" className="mt-3 text-[12.5px] text-warning" data-testid="bot-email-rows-unsupported">{EMAIL_OWNER_COPY.actionFailed}</p>;
+  const parked = parsed.filter(row => row.section === "parked" || row.section === "key_only");
+  const others = parsed.filter(row => row.section === "other_setup");
+  const checks = parsed.filter(row => row.section === "restore_check");
+  const removings = parsed.filter(row => row.section === "removing" && actionOf(row, "try_again_now") !== null);
+  const shown = new Set([...parked, ...others, ...checks, ...removings].map(row => row.id));
+  const lost = Object.entries(refusals).filter(([id]) => !shown.has(id));
+  const run = async (row: EmailRow, kind: EmailActionKind) => {
+    if (busyId !== null) return;
+    if (kind === "remove" && !window.confirm(EMAIL_OWNER_COPY.otherSetupRemoveConfirm(row.address ?? EMAIL_OWNER_COPY.parkedUnknownAddress))) return;
+    setBusyId(row.id);
+    setRefusals(have => Object.fromEntries(Object.entries(have).filter(([id]) => id !== row.id)));
+    try {
+      const answer = await createHttpEmailKeepRemoveClient().act(row, kind);
+      if (answer.ok) {
+        // the answer is the full home view: it replaces this one, so no token from the old view is ever used again
+        if (answer.view && answer.body && typeof answer.body === "object") { onStatus({ kind: "on", view: { ...view, ...(answer.body as EmailStatusView) } }); return; }
+      } else {
+        const id = answer.rowId ?? row.id;
+        setRefusals(have => ({ ...have, [id]: refusalText(answer) }));
+      }
+      // a refusal, or an answer that was not a home view: read the status again for the current rows and tokens
+      onStatus(await readEmailStatus(undefined, true));
+    } finally { setBusyId(null); }
+  };
+  const rowView = (row: EmailRow) => (
+    <div key={row.id} className="mt-2" data-testid={`bot-email-row-${row.id}`}>
+      <p className="text-[12.5px] text-ink-secondary">{rowLine(row)}</p>
+      <div className="mt-1 flex flex-wrap gap-2">
+        {ROW_KINDS.map(kind => actionOf(row, kind) && (
+          <button key={kind} type="button" className={`${button} ${kind === "keep" || kind === "confirm_inventory" ? "bg-accent text-white" : "bg-control text-ink"}`} disabled={busyId !== null || !canAct(row, kind)} onClick={() => void run(row, kind)}>{kindLabel(kind)}</button>
+        ))}
+      </div>
+      {hasRejectedPath(row) && !refusals[row.id] && <p role="alert" className="mt-1 text-[12.5px] text-warning">{EMAIL_OWNER_COPY.actionFailed}</p>}
+      {refusals[row.id] !== undefined && <p role="alert" className="mt-1 text-[12.5px] text-warning" data-testid={`bot-email-refusal-${row.id}`}>{refusals[row.id]}</p>}
+    </div>
+  );
+  return (
+    <>
+      {parked.length > 0 && (
+        <div className="mt-3" data-testid="bot-email-parked">
+          <p className="text-[13px] font-medium text-ink">{t("emailPark.title")}</p>
+          {parked.map(rowView)}
+        </div>
+      )}
+      {others.length > 0 && (
+        <div className="mt-3" data-testid="bot-email-other-setups">
+          <p className="text-[13px] font-medium text-ink">{EMAIL_OWNER_COPY.otherSetupsTitle}</p>
+          {others.map(rowView)}
+        </div>
+      )}
+      {checks.length > 0 && <div className="mt-3" data-testid="bot-email-restore-check">{checks.map(rowView)}</div>}
+      {removings.length > 0 && <div className="mt-3" data-testid="bot-email-removing">{removings.map(rowView)}</div>}
+      {lost.map(([id, line]) => <p key={id} role="alert" className="mt-2 text-[12.5px] text-warning" data-testid={`bot-email-refusal-${id}`}>{line}</p>)}
+    </>
+  );
 }
 
 export function BotEmailAccountCard({ status: given }: { status?: EmailStatusState }) {
@@ -118,6 +205,7 @@ export function BotEmailAccountCard({ status: given }: { status?: EmailStatusSta
   const [status, setStatus] = useState<EmailStatusState>(given ?? read);
   const [busy, setBusy] = useState(false), [error, setError] = useState<string | null>(null);
   useEffect(() => { if (!given) setStatus(read); }, [read, given]);
+  if (isCloudHome() && (status.kind !== "on" || !status.view.ownerSignedIn)) return <CloudEmailSigninCard />;
   if (status.kind === "checking") return <Card title={EMAIL_OWNER_COPY.sectionTitle}><p className="text-[13px] text-ink-secondary" data-testid="bot-email-checking">{status.note ?? EMAIL_STATUS_COPY.checking}</p></Card>;
   if (status.kind !== "on") return <BotEmailStub status={status} testId="bot-email-account-stub" onStatus={setStatus} />;
   const view = status.view;
@@ -149,14 +237,15 @@ export function BotEmailAccountCard({ status: given }: { status?: EmailStatusSta
         <span className="text-[13px] text-ink">{on ? EMAIL_OWNER_COPY.accountOnLine : EMAIL_OWNER_COPY.accountOffLine}</span>
         <Switch data-setting-control="bot-email-heading" checked={on} disabled={busy} aria-label={on ? EMAIL_OWNER_COPY.accountOffAction : EMAIL_OWNER_COPY.accountOn} onClick={() => void change(!on)} />
       </div>
+      {isCloudHome() && <CloudEmailSigninCard connected={view.ownerSignedIn} />}
       {price && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-price">{price}</p>}
       {view.staleNote && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-stale">{view.staleNote}</p>}
       {view.ownerKeyLine && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-owner-key">{view.ownerKeyLine}</p>}
       {view.reasonLine && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-reason">{view.reasonLine}</p>}
       {on && canSignIn && (view.ownerKeyLine || !view.ownerSignedIn) && <button type="button" className={`${button} mt-2 bg-control text-ink`} disabled={busy} onClick={() => void signIn()}>{EMAIL_SETUP_COPY.signInAction}</button>}
       {view.accountSends && <p className="mt-2 text-[12.5px] text-ink-secondary" data-testid="bot-email-account-sends">{EMAIL_OWNER_COPY.accountSentToday(view.accountSends.today, view.accountSends.perDay)}</p>}
-      {view.removing.map(item => <p key={item.botId} className="mt-2 text-[12.5px] text-ink-secondary">{EMAIL_OWNER_COPY.removingLine(item.address ?? "an address")}</p>)}
-      {view.otherSetups?.length ? (
+      {view.removing.filter(item => !(Array.isArray(view.rows) && view.rows.some(row => row.section === "removing" && row.botId === item.botId))).map(item => <p key={item.botId} className="mt-2 text-[12.5px] text-ink-secondary">{EMAIL_OWNER_COPY.removingLine(item.address ?? "an address")}</p>)}
+      {Array.isArray(view.rows) ? <OwnerRows view={view} onStatus={setStatus} /> : (view.otherSetups?.length ? (
         <div className="mt-3" data-testid="bot-email-other-setups">
           <p className="text-[13px] font-medium text-ink">{EMAIL_OWNER_COPY.otherSetupsTitle}</p>
           {view.otherSetups.map(item => (
@@ -166,7 +255,7 @@ export function BotEmailAccountCard({ status: given }: { status?: EmailStatusSta
             </div>
           ))}
         </div>
-      ) : null}
+      ) : null)}
       {error && <p role="alert" className="mt-2 text-[13px] text-warning">{error}</p>}
     </Card>
   );

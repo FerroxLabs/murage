@@ -305,6 +305,8 @@ export interface DictationSink {
   /** The box text right now. */
   read(): string;
   target(): CleanupTarget;
+  /** Show the inline model notice when clean-up starts, without awaiting it. */
+  onCleanupStart?(): void;
   /** A tidy-up landed: replace the box and offer the undo. */
   applyCleanup(next: string, undo: CleanupUndo): void;
 }
@@ -461,6 +463,7 @@ function run(effect: DictationEffect) {
       const atStop = sink.read();
       const said = dictatedPortion(base, atStop);
       if (!said) return;
+      sink.onCleanupStart?.();
       void requestCleanup(said, sink.target()).then((result) => {
         // judged at the moment the answer lands: a send, an unmount or a newer start voids it
         if (state.writeGen !== writeGen || sinks.get(owner) !== sink) return;

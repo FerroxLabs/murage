@@ -1,3 +1,4 @@
+import { fluxRouteFor, registerBusyloopPayloadSite } from "../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -74,7 +75,7 @@ async function readJson(req: IncomingMessage): Promise<Json | null> {
     if (size > MAX_BODY) return null;
     chunks.push(chunk as Buffer);
   }
-  try { const parsed = JSON.parse(Buffer.concat(chunks).toString("utf8")); return record(parsed) ? parsed : null; }
+  try { const parsed = registerBusyloopPayloadSite("read", JSON.parse(Buffer.concat(chunks).toString("utf8"))); return record(parsed) ? parsed : null; }
   catch { return null; }
 }
 
@@ -166,7 +167,7 @@ export async function handleModelGateway(req: IncomingMessage, res: ServerRespon
   const call = async (token: { accessToken: string; accountId?: string }) => {
     const url = upstreamUrl(provider, route);
     if (new URL(url).hostname !== PINNED_HOSTS[provider]) throw new Error("upstream host is not pinned");
-    return fetcher(url, { method: "POST", headers: upstreamHeaders(provider, token, provider === "chatgpt" || wantStream), body: JSON.stringify(upstreamBody), signal: controller.signal, redirect: "error" });
+    return fetcher(fluxRouteFor(url).requestUrl, { method: "POST", headers: upstreamHeaders(provider, token, provider === "chatgpt" || wantStream), body: JSON.stringify(upstreamBody), signal: controller.signal, redirect: "error" });
   };
 
   // 401 is kept for a bad gateway key. A plan token problem is a 403 with
@@ -203,7 +204,7 @@ export async function handleModelGateway(req: IncomingMessage, res: ServerRespon
   if (!upstream.ok) {
     const raw = await readLimited(upstream);
     let parsed: unknown = null;
-    try { parsed = JSON.parse(raw); } catch { parsed = null; }
+    try { parsed = registerBusyloopPayloadSite("read", JSON.parse(raw)); } catch { parsed = null; }
     if (upstream.status === 429) {
       if (isPlanLimit(provider, parsed)) {
         const until = limitResetsAt(parsed, upstream.headers.get("retry-after"), now) ?? now + DEFAULT_PAUSE_MS;

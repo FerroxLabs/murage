@@ -1,3 +1,4 @@
+import { initializeApprovals } from './decision/records.ts';
 import { THREAD_SUMMARY_SQL, withChatsPreviewTransaction } from "./thread-summary.ts";
 import { dropLegacyUpgradeTables, ensureDirectTurnInflight } from "./memory/upgrade-app-tables.ts";
 import type { DatabaseSync } from "node:sqlite";
@@ -18,6 +19,10 @@ import { ensureKeyedCardIndex, ensureOpenCardIndex, isOpenCardJson, newestRowid,
 
 export { isOpenCardJson };
 
+/** Shared with the worker and the offline legacy-schema reference builder. */
+export const MESSAGE_SEARCH_DDL = "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none)";
+
+
 /** The transcript tables every installation's messages.db carries. Owned here,
  * without DATA_DIR or any other import-time state, so the offline archive
  * inspector (installation-database-snapshot.ts) can build its reference schema
@@ -29,18 +34,17 @@ export function initializeMessageTables(db: DatabaseSync, indexHooks: EnsureInde
       CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id);
       CREATE INDEX IF NOT EXISTS messages_at ON messages(at DESC);
       CREATE TABLE IF NOT EXISTS thread_state(thread_id TEXT PRIMARY KEY, active_leaf_id TEXT);`);
+  initializeApprovals(db);
   // Serving open creates both preview tables together with the generation.
   if (!indexHooks.defer) withChatsPreviewTransaction(db, handle => handle.exec(THREAD_SUMMARY_SQL));
   // The per-thread storage sequence (transcript-seq.ts, ROOM-ORDER-DESIGN r7 R1): appended by ALTER TABLE on every file, a fresh one
   // included, so a migrated and a fresh messages table keep one definition text. Metadata only: no row is read or rewritten.
   ensureSeqColumn(db);
-  // Substring-search candidate index (server/message-search-index.ts):
-  // contentless, keyed by messages.rowid, so it holds trigrams and no text;
-  // detail=none drops positions (about 7x smaller), so a query is an AND of
-  // its trigrams and the LIKE check in searchMessages() decides adjacency.
-  // Its shadow tables (_data, _idx, _docsize, _config) are allowlisted by name
-  // in installation-database-snapshot.ts.
-  db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none)`);
+  // Reference-only queue. No message text, JSON, or rowid lists can enter it.
+  db.exec(`CREATE TABLE IF NOT EXISTS search_intents(
+    seq INTEGER PRIMARY KEY AUTOINCREMENT, nonce INTEGER NOT NULL, rowid INTEGER, thread_key TEXT,
+    CHECK ((rowid IS NULL) <> (thread_key IS NULL)),
+    CHECK (thread_key IS NULL OR length(CAST(thread_key AS BLOB)) <= 72))`);
   // message_image: which rows of a thread name an image attachment, by path, so a
   // send that names an image finds the rows that bound it without reading the
   // thread (TurnImages.promote). Written with the row; filled for older rows by

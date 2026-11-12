@@ -1,0 +1,62 @@
+[
+  {
+    "id": "en:ux.l2c.pause.fluxAlso",
+    "file": "src/locales/en-ux/l2c.json",
+    "old": "Flux Router's own limit for this key also applies.",
+    "new": "A limit in Flux Router has also been reached."
+  },
+  {
+    "id": "de:ux.l2c.pause.fluxAlso",
+    "file": "src/locales/de.json",
+    "old": "Das eigene Limit von Flux Router für diesen Schlüssel gilt ebenfalls.",
+    "new": "Ein Limit in Flux Router ist ebenfalls erreicht."
+  },
+  {
+    "id": "de:ux.l2c.pause.capabilityOff.body",
+    "file": "src/locales/de.json",
+    "old": "Flux Router liefert den Kontobetrag nicht mehr, den Murage zum Pausieren an deinem Limit braucht. Deine Bots arbeiten weiter, und die Anzeige warnt dich weiterhin bei 80% und 100%. Limits, die du in Flux Router festlegst, gelten weiterhin.",
+    "new": "Flux Router liefert den Kontobetrag nicht mehr, den Murage braucht, um beim Erreichen deines Limits zu pausieren. Deine Bots arbeiten weiter, und die Anzeige warnt dich weiterhin bei 80% und 100%. Limits, die du in Flux Router festlegst, gelten weiterhin."
+  },
+  {
+    "id": "es:ux.l2c.pause.fluxAlso",
+    "file": "src/locales/es.json",
+    "old": "También se aplica el límite que Flux Router tiene para esta clave.",
+    "new": "También se ha alcanzado un límite en Flux Router."
+  },
+  {
+    "id": "fr:ux.l2c.pause.fluxAlso",
+    "file": "src/locales/fr.json",
+    "old": "La limite définie dans Flux Router pour cette clé s’applique aussi.",
+    "new": "Une limite de Flux Router est également atteinte."
+  },
+  {
+    "id": "fr:ux.l2c.pause.capabilityOff.body",
+    "file": "src/locales/fr.json",
+    "old": "Flux Router n’envoie plus le montant du compte dont Murage a besoin pour mettre tes bots en pause à ta limite. Tes bots continuent de travailler et l’indicateur t’avertit toujours à 80% et à 100%. Les limites que tu définis dans Flux Router restent en vigueur.",
+    "new": "Flux Router n’envoie plus le montant du compte dont Murage a besoin pour mettre tes bots en pause lorsque ta limite est atteinte. Tes bots continuent de travailler et l’indicateur t’avertit toujours à 80% et à 100%. Les limites que tu définis dans Flux Router restent en vigueur."
+  },
+  {
+    "id": "hi:ux.l2c.pause.fluxAlso",
+    "file": "src/locales/hi.json",
+    "old": "Flux Router में इस कुंजी के लिए तय सीमा भी लागू होती है।",
+    "new": "Flux Router में भी एक सीमा पूरी हो गई है।"
+  },
+  {
+    "id": "ja:ux.l2c.pause.fluxAlso",
+    "file": "src/locales/ja.json",
+    "old": "Flux Routerでこのキーに設定された上限も適用されます。",
+    "new": "Flux Router側の上限にも達しています。"
+  },
+  {
+    "id": "pt-br:ux.l2c.pause.fluxAlso",
+    "file": "src/locales/pt-br.json",
+    "old": "O limite definido no Flux Router para esta chave também se aplica.",
+    "new": "Um limite no Flux Router também foi atingido."
+  },
+  {
+    "id": "zh:ux.l2c.pause.fluxAlso",
+    "file": "src/locales/zh.json",
+    "old": "Flux Router 为此密钥设置的限额也会生效。",
+    "new": "Flux Router 中的一项限额也已达到。"
+  }
+]

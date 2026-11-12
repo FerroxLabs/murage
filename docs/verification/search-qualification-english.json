@@ -1,0 +1,835 @@
+[
+  {
+    "file": "scripts/qualify-search/baseline.sh",
+    "line": 9,
+    "literal": "rm -rf \"${R:?}\"",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/baseline.sh",
+    "line": 20,
+    "literal": "--network none --memory 16g --tmpfs /data:rw,size=12g,uid=2001,gid=2001,mode=0755 -v $NM:/nm:ro -v $JOB_DIR/evidence/r4:/qual-evidence",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/baseline.sh",
+    "line": 23,
+    "literal": "${MURAGE_QUAL_COPY_SOURCE:?RC copy path required}",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/baseline.sh",
+    "line": 24,
+    "literal": "$NETARG -v $MURAGE_QUAL_COPY_SOURCE:/copy-source:ro",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/baseline.sh",
+    "line": 25,
+    "literal": "MURAGE_QUAL_COPY_SOURCE=/copy-source ",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/baseline.sh",
+    "line": 26,
+    "literal": "usage: baseline.sh legacy|copy",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/baseline.sh",
+    "line": 29,
+    "literal": "$(awk '{print int($1)}' /proc/loadavg)",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/baseline.sh",
+    "line": 30,
+    "literal": "MURAGE_QUAL_SMOKE=1 ",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/baseline.sh",
+    "line": 32,
+    "literal": " in */.vite-temp|*/.vite|*/.cache) ;; *) ln -sfn \\",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/baseline.sh",
+    "line": 32,
+    "literal": " node_modules/\\$(basename \\",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/baseline.sh",
+    "line": 32,
+    "literal": ");; esac; done; MURAGE_QUAL_BASELINE=1 MURAGE_QUAL_BASE_SHA=$BASE MURAGE_QUAL_STORAGE=/data MURAGE_QUAL_EVIDENCE=/qual-evidence $SMOKE_ENV$COPY_ENV node node_modules/vitest/vitest.mjs run --config scripts/qualify-search/vitest.config.ts --tags-filter=qual",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/baseline.sh",
+    "line": 32,
+    "literal": "mkdir -p node_modules; for f in /nm/* /nm/.[!.]*; do case \\",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/check-reset-set.mjs",
+    "line": 7,
+    "literal": "reset qualification set missing or failed: ",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/check-smoke.py",
+    "line": 3,
+    "literal": "Validate execution, not release qualification; preserve every measured miss.",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/check-smoke.py",
+    "line": 9,
+    "literal": "suite/setup/teardown failed",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/check-smoke.py",
+    "line": 29,
+    "literal": "unexpected smoke failure",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/check-smoke.py",
+    "line": 30,
+    "literal": " measured bars OPEN: ",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/check-smoke.py",
+    "line": 34,
+    "literal": "not a behavioural assertion",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/copy-tools.ts",
+    "line": 18,
+    "literal": "copy gate refuses symbolic links",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/copy-tools.ts",
+    "line": 21,
+    "literal": "copy gate requires ordinary files",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/copy-tools.ts",
+    "line": 27,
+    "literal": "copy target must be outside original",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/copy-tools.ts",
+    "line": 31,
+    "literal": "copy gate refuses symbolic links",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/copy-tools.ts",
+    "line": 34,
+    "literal": "copy gate requires ordinary files",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/copy-tools.ts",
+    "line": 39,
+    "literal": "copy contains no searchable messages",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/copy-tools.ts",
+    "line": 86,
+    "literal": "copy parity enumeration did not advance",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/macos-ci-try.yml",
+    "line": 4,
+    "literal": "search qualification macOS",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/macos-ci-try.yml",
+    "line": 9,
+    "literal": "Run containing green hz-gate and q1-legacy artifacts for this snapshot",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/macos-ci-try.yml",
+    "line": 12,
+    "literal": "Squashed ci/try snapshot SHA attested by the hz gate",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/macos-ci-try.yml",
+    "line": 30,
+    "literal": "$(git rev-list --count HEAD)",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/macos-ci-try.yml",
+    "line": 31,
+    "literal": "$(git rev-parse HEAD)",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/macos-ci-try.yml",
+    "line": 31,
+    "literal": "${{ inputs.snapshot_sha }}",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/macos-ci-try.yml",
+    "line": 62,
+    "literal": "(version 1)(allow default)(deny network*)",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/macos-ci-try.yml",
+    "line": 63,
+    "literal": "(version 1)(allow default)(deny network*)",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/macos-ci-try.yml",
+    "line": 74,
+    "literal": "hdiutil detach \"$mount\"",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/macos-ci-try.yml",
+    "line": 75,
+    "literal": "(version 1)(allow default)(deny network*)",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/private-cases.ts",
+    "line": 24,
+    "literal": "invalid private-case manifest",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/private-cases.ts",
+    "line": 26,
+    "literal": "invalid private case",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-mutations.py",
+    "line": 32,
+    "literal": "this.pass[id] = failBar === id ? false : value;",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-mutations.py",
+    "line": 32,
+    "literal": "this.pass[id] = value;",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-mutations.py",
+    "line": 33,
+    "literal": "{ if (candidates.size < 2000) candidates.add(Number(row.rowid)); }",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-mutations.py",
+    "line": 34,
+    "literal": "hash() { const hash =",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-mutations.py",
+    "line": 34,
+    "literal": "hash() { return hashRows(db); const hash =",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-mutations.py",
+    "line": 35,
+    "literal": "if (existsSync(file)) unlinkSync(file);",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-mutations.py",
+    "line": 35,
+    "literal": "if (false && existsSync(file)) unlinkSync(file);",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-mutations.py",
+    "line": 37,
+    "literal": "return source; return source.replaceAll(anchor,",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-mutations.py",
+    "line": 37,
+    "literal": "return source.replaceAll(anchor,",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-mutations.py",
+    "line": 38,
+    "literal": "return ['--force','--out',out];",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-mutations.py",
+    "line": 38,
+    "literal": "return [];",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-mutations.py",
+    "line": 39,
+    "literal": "/C15': SIGKILL reset-before-delete/,/C15': SIGKILL reset-after-wal-delete/,",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-mutations.py",
+    "line": 40,
+    "literal": "if(literal !== 'copy gate refuses symbolic links') entries.push({file,line,literal,",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-red.sh",
+    "line": 7,
+    "literal": "usage: review-red.sh red|mutants",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-red.sh",
+    "line": 10,
+    "literal": "rm -rf \"${R:?}\"",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-red.sh",
+    "line": 24,
+    "literal": "$(awk '{print int($1)}' /proc/loadavg)",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-red.sh",
+    "line": 26,
+    "literal": "--network none --memory 16g --tmpfs /data:rw,size=192m,uid=2001,gid=2001,mode=0755 -v $NM:/nm:ro -v $JOB_DIR/evidence/r4:/qual-evidence",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-red.sh",
+    "line": 30,
+    "literal": " in */.vite-temp|*/.vite|*/.cache) ;; *) ln -sfn \\",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-red.sh",
+    "line": 30,
+    "literal": " node_modules/\\$(basename \\",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-red.sh",
+    "line": 30,
+    "literal": ");; esac; done; MURAGE_QUAL_EVIDENCE=/qual-evidence/afix-$MODE python3 scripts/qualify-search/review-mutations.py $MODE",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/review-red.sh",
+    "line": 30,
+    "literal": "mkdir -p node_modules; for f in /nm/* /nm/.[!.]*; do case \\",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/rig.mjs",
+    "line": 34,
+    "literal": "-e HOME=/tmp/home",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/rig.mjs",
+    "line": 35,
+    "literal": "shard Docker environment anchor changed",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/rig.mjs",
+    "line": 36,
+    "literal": "-e MURAGE_FTS_MERGED_SHA=\"${MURAGE_FTS_MERGED_SHA:?merged marker required}\" ",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/rig.mjs",
+    "line": 43,
+    "literal": "merged marker must equal the sharded tip",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/rig.mjs",
+    "line": 52,
+    "literal": "unresolved rig commit",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/rig.mjs",
+    "line": 56,
+    "literal": "merged marker must be the full tip SHA",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/rig.mjs",
+    "line": 57,
+    "literal": "hz gate worktree HEAD must equal the tip being sharded",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/rig.mjs",
+    "line": 60,
+    "literal": "missing lockfile in rig commit",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/rig.mjs",
+    "line": 62,
+    "literal": "preseed shared dependencies before network-isolated rig: ",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 11,
+    "literal": "shared dependencies missing for lockfile",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 13,
+    "literal": "$(awk '{print int($1)}' /proc/loadavg)",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 27,
+    "literal": "$(awk '{print int($1)}' /proc/loadavg)",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 30,
+    "literal": "--network none --memory 16g --tmpfs /data:rw,size=$size,uid=2001,gid=2001,mode=0755 -v $NM:/nm:ro -v $JOB_DIR/evidence/r4:/qual-evidence ${QUAL_EXTRA_MOUNTS:-}",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 32,
+    "literal": "mkdir -p node_modules; for f in /nm/* /nm/.[!.]*; do case \"$f\" in */.vite-temp|*/.vite|*/.cache) ;; *) ln -sfn \"$f\" node_modules/$(basename \"$f\");; esac; done; ",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 38,
+    "literal": "node node_modules/vitest/vitest.mjs run --config scripts/qualify-search/vitest.config.ts --tags-filter=qual",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 41,
+    "literal": "node scripts/qualify-search/english-inventory.mjs",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 47,
+    "literal": "MURAGE_QUAL_STORAGE=/data MURAGE_QUAL_SMOKE=1 MURAGE_QUAL=review MURAGE_QUAL_FAIL_BAR=integrity $VT --reporter=json --outputFile=/qual-evidence/review.json",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 50,
+    "literal": "node node_modules/typescript/bin/tsc -p scripts/qualify-search/tsconfig.json",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 53,
+    "literal": "pnpm typecheck && node node_modules/typescript/bin/tsc -p scripts/qualify-search/tsconfig.json",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 58,
+    "literal": "q1-103k:main-fts q2-diskfull:integrity q3-copy:parity rig-smoke:new-fails",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 71,
+    "literal": "MURAGE_QUAL_FAIL_BAR=$bar ",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 73,
+    "literal": "MURAGE_QUAL_STORAGE=/data MURAGE_QUAL_SMOKE=1 MURAGE_QUAL=$leg MURAGE_QUAL_EVIDENCE=/qual-evidence/$relative $injection$VT --reporter=json --outputFile=/qual-evidence/$relative/vitest.json",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 75,
+    "literal": "negative unexpectedly passed: $leg",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 78,
+    "literal": "smoke $leg $variant: expected result observed",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 83,
+    "literal": "run baseline.sh legacy first",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 85,
+    "literal": "MURAGE_QUAL_STORAGE=/data MURAGE_QUAL=q1-103k MURAGE_QUAL_EVIDENCE=/qual-evidence MURAGE_QUAL_LEGACY_REPORT=/qual-evidence/q1-legacy.json $VT",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 86,
+    "literal": "MURAGE_QUAL_STORAGE=/data MURAGE_QUAL=q1-1m MURAGE_QUAL_EVIDENCE=/qual-evidence MURAGE_QUAL_LEGACY_REPORT=/qual-evidence/q1-legacy.json $VT",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 88,
+    "literal": "node scripts/qualify-search/compare.mjs /qual-evidence",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 92,
+    "literal": "MURAGE_QUAL_STORAGE=/data MURAGE_QUAL=q2-diskfull MURAGE_QUAL_EVIDENCE=/qual-evidence $VT",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 95,
+    "literal": "MURAGE_QUAL_STORAGE=/data MURAGE_QUAL=q3-bound-1k MURAGE_QUAL_EVIDENCE=/qual-evidence $VT",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 100,
+    "literal": "mount paths must have no whitespace, comma or colon",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 104,
+    "literal": "-v $source:/copy-source:ro -v $private:/qual-private.json:ro",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 105,
+    "literal": "MURAGE_QUAL_STORAGE=/data MURAGE_QUAL=q3-copy MURAGE_QUAL_EVIDENCE=/qual-evidence MURAGE_QUAL_COPY_SOURCE=/copy-source MURAGE_QUAL_COPY_REFERENCE=/qual-evidence/q3-base.json MURAGE_QUAL_1K_BOUND=/qual-evidence/q3-1k-bound.json MURAGE_QUAL_PRIVATE_CASES=/qual-private.json $VT",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/run.sh",
+    "line": 107,
+    "literal": "usage: run.sh smoke|typecheck|q1|q2-diskfull|q3-bound-1k|q3-copy",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/segments.ts",
+    "line": 11,
+    "literal": "truncated FTS structure",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/segments.ts",
+    "line": 14,
+    "literal": "unrecognized FTS structure format",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/segments.ts",
+    "line": 22,
+    "literal": "\nparentPort.on('message',message=>{\n  if(message.type!=='qual-prepare-segments')return;\n  const began=performance.now();let generations=0;\n  a.exec(\"INSERT INTO messages_fts(messages_fts,rank) VALUES('automerge',0);INSERT INTO messages_fts(messages_fts,rank) VALUES('deletemerge',0);INSERT INTO messages_fts(messages_fts,rank) VALUES('crisismerge',16)\");\n  const top=Number(b.prepare('SELECT MAX(rowid) AS n FROM messages').get().n);\n  const next=()=>{\n    try{\n      let layout=qualLevels(a);\n      if([3,4,5].every(i=>layout[i]===15)||performance.now()-began>=message.budgetMs){\n        a.exec(\"INSERT INTO messages_fts(messages_fts) VALUES('integrity-check')\");\n        send('qual-fixture-complete',{levels:layout,generations,ms:performance.now()-began});return;\n      }\n      for(let i=0;i<256;i++){\n        const row=live(1+(generations%top),4*1024*1024);generations++;\n        if(!row.live||!row.text)continue;\n        a.exec('BEGIN IMMEDIATE');\n        try{\n          a.prepare('DELETE FROM messages_fts WHERE rowid=?').run(row.rowid);\n          a.prepare('INSERT INTO messages_fts(rowid,t) VALUES(?,?)').run(row.rowid,row.text);\n          a.exec('COMMIT');\n        }catch(error){if(a.isTransaction)a.exec('ROLLBACK');throw error;}\n        layout=qualLevels(a);\n        if([3,4,5].every(level=>layout[level]===15))break;\n      }\n      a.exec('PRAGMA wal_checkpoint(PASSIVE)');\n      setImmediate(next);\n    }catch(error){send('qual-fixture-complete',{error:true,levels:qualLevels(a),generations,ms:performance.now()-began});}\n  };next();\n});\n",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/segments.ts",
+    "line": 22,
+    "literal": "\\nconst qualLevels=${levels.toString()};\\n",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/segments.ts",
+    "line": 56,
+    "literal": "qualification worker observer not installed",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/segments.ts",
+    "line": 58,
+    "literal": "segment fixture worker deadline",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/support.ts",
+    "line": 52,
+    "literal": "unknown injected bar",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/support.ts",
+    "line": 103,
+    "literal": " abcdefghijklmnopqrstuvwxyz",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/support.ts",
+    "line": 103,
+    "literal": "synthetic canary ",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/support.ts",
+    "line": 112,
+    "literal": "qualification canary owner send",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/support.ts",
+    "line": 183,
+    "literal": "SCAN (subquery-1)",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/support.ts",
+    "line": 183,
+    "literal": "SCAN CONSTANT ROW",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/support.ts",
+    "line": 183,
+    "literal": "SCAN e VIRTUAL TABLE INDEX 3:",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/support.ts",
+    "line": 183,
+    "literal": "SCAN pragma_data_version VIRTUAL TABLE INDEX 0:",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/support.ts",
+    "line": 183,
+    "literal": "SCAN sqlite_schema",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/support.ts",
+    "line": 183,
+    "literal": "SCAN temp.identity_epoch",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/support.ts",
+    "line": 187,
+    "literal": "SCAN ",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/support.ts",
+    "line": 187,
+    "literal": "SCAN ",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/telemetry.ts",
+    "line": 6,
+    "literal": "\nconst qualTimes = {};\nlet qualScrubs = 0;\nfor (const name of ['apply','drop','rebuild','cleanup']) {\n  const original = eval(name);\n  const wrapped = (...args) => {\n    const at = performance.now();\n    let merging = false;\n    if (name === 'cleanup') { try { merging = String(state('debt')).endsWith(':0'); } catch {} }\n    try { return original(...args); }\n    finally { qualTimes[merging ? 'merge' : name] = performance.now() - at; }\n  };\n  if (name === 'apply') apply = wrapped;\n  if (name === 'drop') drop = wrapped;\n  if (name === 'rebuild') rebuild = wrapped;\n  if (name === 'cleanup') cleanup = wrapped;\n}\nconst qualPrepare = DatabaseSync.prototype.prepare;\nDatabaseSync.prototype.prepare = function(sql) {\n  const statement = qualPrepare.call(this,sql);\n  if (/^PRAGMA wal_checkpoint(TRUNCATE)/i.test(sql)) {\n    const get = statement.get.bind(statement);\n    statement.get = (...args) => {\n      qualScrubs++;\n      return get(...args);\n    };\n  }\n  return statement;\n};\nconst qualPost = parentPort.postMessage.bind(parentPort);\nparentPort.postMessage = event => {\n  if (event.type === 'stepped') {\n    event['step-ms'] ??= (qualTimes.apply || 0) + (qualTimes.rebuild || 0) + (qualTimes.cleanup || 0);\n    event['merge-ms'] ??= qualTimes.merge || 0;\n    event['qual-phases'] = {...qualTimes};\n    event['qual-scrubs'] = qualScrubs;\n    for (const key of Object.keys(qualTimes)) delete qualTimes[key];\n    qualScrubs = 0;\n  }\n  return qualPost(event);\n};\n",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/vitest.config.ts",
+    "line": 8,
+    "literal": "Explicit search release qualification; never selected by the default config.",
+    "class": "diagnostic",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/windows-copy-job.ps1",
+    "line": 6,
+    "literal": "Unapproved runner directory",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/windows-copy-job.ps1",
+    "line": 11,
+    "literal": "archive extraction failed",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/windows-copy-job.ps1",
+    "line": 15,
+    "literal": "install failed",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/windows-copy-job.ps1",
+    "line": 20,
+    "literal": "103k qualification failed",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/windows-copy-job.ps1",
+    "line": 22,
+    "literal": "reset qualification failed",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/windows-copy-job.ps1",
+    "line": 24,
+    "literal": "reset qualification set incomplete",
+    "class": "internal-error",
+    "change": "NEW"
+  },
+  {
+    "file": "scripts/qualify-search/windows-copy-job.ps1",
+    "line": 31,
+    "literal": "Removed qualification folder; evidence: $Evidence",
+    "class": "diagnostic",
+    "change": "NEW"
+  }
+]

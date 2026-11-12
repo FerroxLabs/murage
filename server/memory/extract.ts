@@ -1,7 +1,10 @@
+import { registerBusyloopPayloadSite, fluxRouteFor } from "../../shared/flux-route.ts";
+import { inspectFluxResponse } from "../drivers/flux-busyloop-readers.ts";
+import { isTerminal as isFluxTerminal } from "../../shared/flux-busyloop.ts";
 import { ExtractionReplyError, extractionOutcomes, type ExtractionDeferral, type ExtractionFailureReason } from "./extraction-outcomes.ts";
 import { recordCounter, type ExtractionSettlement } from "../health/counters.ts";
 import { gateCandidates } from "./candidate-gate.ts";
-import { fluxCallHeaders } from "../flux-memory-headers.ts";
+import { fluxCallHeaders, isFluxUrl } from "../flux-memory-headers.ts";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { DEFAULT_MEMORY_EVOLUTION_POLICY, readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
@@ -15,6 +18,7 @@ import { awaitWriterGate, isDatabaseBusy } from "../db-busy.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { MemorySendFenced, isMemorySendFenced, logFencedDrop } from "./learning-send-fence.ts";
 import { gatePasses, droppedUnsent, type LearningGate } from "./learning-send.ts";
+import { authorizeFluxDispatch } from "../flux-start-gate.ts";
 /** The one gate of a learning call (learning-send.ts); the transport calls `send` at its physical write. */
 type MemorySendFence = LearningGate;
 
@@ -76,7 +80,7 @@ export const unmeteredPause=(spend:Partial<MonthSpendRow>|null|undefined)=>unsee
 export function clearUnseenExcess(db:DatabaseSync,at=Date.now()){
   const id=learningSpendLedgerId(learningSpendMonth(at)),row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id);
   if(!row)return;
-  const spend=JSON.parse(String(row.intent)) as MonthSpendRow;
+  const spend=registerBusyloopPayloadSite("read", JSON.parse(String(row.intent))) as MonthSpendRow;
   reconcileDeadRetries(db,spend);
   const mine=count(spend.open?.[RESERVATION_BOOT]);
   const {unmetered:_cleared,open:_open,...rest}=spend;
@@ -123,7 +127,7 @@ export async function requestMemoryInference(input:Parameters<typeof requestMemo
 }
 /** A background call to Flux: capture off, inject off, x-flux-memory-app murage (flux-memory-headers.ts decides). Other endpoints get none. */
 export function extractionFluxHeaders(url: URL): Record<string, string> {
-  return /(^|\.)fluxrouter\.ai$/i.test(url.hostname) ? fluxCallHeaders("memory-extraction") : {};
+  return fluxRouteFor(url).routed ? fluxCallHeaders("memory-extraction") : {};
 }
 async function requestMemoryTransport(input:Parameters<typeof requestMemoryExtraction>[0],text:string,maximumOutputTokens:number,signal:AbortSignal,messages:ReadonlyArray<Readonly<{role:string;content:string}>>|undefined,outputCap:number,gate?:LearningGate):Promise<string>{
   if(!text.trim()||Buffer.byteLength(text)>65536||!Number.isSafeInteger(maximumOutputTokens)||maximumOutputTokens<1||maximumOutputTokens>outputCap)throw new Error("MEMORY_EXTRACTION_LIMIT");
@@ -136,7 +140,11 @@ async function requestMemoryTransport(input:Parameters<typeof requestMemoryExtra
   // the one release per physical fetch (r8 §1): checked and released under the write lock, the fetch started before COMMIT, no await between.
   // No gate, no send (r6 §0/§4, no exemption): a call that arrives without its gate is refused here and nothing leaves; it settles unsent.
   if(!gate)throw new MemorySendFenced();
-  const response=await gate.send(()=>fetch(url,init));
+  if(isFluxUrl(url))await authorizeFluxDispatch(input.apiKey); // spend gate: memory extraction runs outside any turn, so it is a start
+  let response=await gate.send(()=>{const response=fetch(fluxRouteFor(url).requestUrl,init);if(isFluxUrl(url))notifyLearningFluxSend();return response;});
+  const fluxResponse=await inspectFluxResponse(response, fluxRouteFor(url).routed, init.signal ?? undefined, true);
+  if(fluxResponse.decision && fluxResponse.decision.action!=="PASS")throw Object.assign(new ExtractionReplyError("MEMORY_EXTRACTION_REQUEST_FAILED",isFluxTerminal(fluxResponse.decision)?"refusal":"transport-error"),{status:response.status,fluxDecision:fluxResponse.decision});
+  if(fluxResponse.rawBody!==undefined&&response.body)response=new Response(fluxResponse.rawBody,{status:response.status,headers:{"content-length":String(fluxResponse.bytes)}});
   if(!response.ok||!response.body){await response.body?.cancel();throw Object.assign(new Error("MEMORY_EXTRACTION_REQUEST_FAILED"),{status:response.status});}
   const declared=Number(response.headers.get("content-length"));
   // Every reply received from here on was paid for: it settles exactly once, and its settlement is taken before this returns or throws (so
@@ -151,7 +159,7 @@ async function requestMemoryTransport(input:Parameters<typeof requestMemoryExtra
     finally{reader.releaseLock();}
     const body=Buffer.concat(parts).toString("utf8");
     if(!body.trim())throw new ExtractionReplyError("MEMORY_EXTRACTION_INVALID_RESPONSE","empty-reply");
-    let result:unknown;try{result=JSON.parse(body);}catch{throw new ExtractionReplyError("MEMORY_EXTRACTION_INVALID_RESPONSE","not-json");}
+    let result:unknown;try{result=registerBusyloopPayloadSite("read", JSON.parse(body));}catch{throw new ExtractionReplyError("MEMORY_EXTRACTION_INVALID_RESPONSE","not-json");}
     // A completed reply is paid whether or not its content is admitted: what the provider reported settles first, before any rejection
     // below (cut off at max_tokens, a tool call, a malformed choice).
     const usage=z.object({prompt_tokens:z.number().int().nonnegative().optional(),completion_tokens:z.number().int().nonnegative().optional()}).safeParse((result as {usage?:unknown}|null)?.usage);
@@ -247,7 +255,7 @@ export function journalMemoryRetry(usage?:MemoryUsageReport):boolean {
   try{return transaction(db=>{
     const row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(handle.monthLedgerId);
     if(!row)return false;
-    const month=JSON.parse(String(row.intent)) as MonthSpendRow;
+    const month=registerBusyloopPayloadSite("read", JSON.parse(String(row.intent))) as MonthSpendRow;
     if(Object.keys(month.retryRecords??{}).length>=UNSEEN_EXCESS_CALLS)return false;
     (month.retryRecords??={})[handle.id!]={boot:RESERVATION_BOOT,ledgerId:handle.ledgerId,tokens:handle.tokens,usage:{prompt_tokens:usage?.prompt_tokens,completion_tokens:usage?.completion_tokens},...(usage?.estimatedRuns?{estimated:true as const}:{})};
     db.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=?").run(JSON.stringify(month),handle.monthLedgerId);
@@ -263,7 +271,7 @@ export function reconcileDeadRetries(db:DatabaseSync,month:MonthSpendRow):void {
     if(record.boot===RESERVATION_BOOT)continue;
     const input=Math.max(0,(record.usage.prompt_tokens??0)-record.tokens.input),output=Math.max(0,(record.usage.completion_tokens??0)-record.tokens.output);
     const row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(record.ledgerId);
-    if(row){const day=JSON.parse(String(row.intent));day.input+=input;day.output+=output;db.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=?").run(JSON.stringify(day),record.ledgerId);}
+    if(row){const day=registerBusyloopPayloadSite("read", JSON.parse(String(row.intent)));day.input+=input;day.output+=output;db.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=?").run(JSON.stringify(day),record.ledgerId);}
     month.input+=input;month.output+=output;month.unmetered=count(month.unmetered)+1;
     if(record.usage.prompt_tokens!==undefined&&record.usage.completion_tokens!==undefined&&month.open){
       const left=count(month.open[record.boot])-1;
@@ -282,7 +290,7 @@ export function reconcileRecentMonths(at=Date.now()):void {
       const id=learningSpendLedgerId(learningSpendMonth(new Date(now.getFullYear(),now.getMonth()-offset,1).getTime()));
       const row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id);
       if(!row)continue;
-      const month=JSON.parse(String(row.intent)) as MonthSpendRow;
+      const month=registerBusyloopPayloadSite("read", JSON.parse(String(row.intent))) as MonthSpendRow;
       if(!Object.keys(month.retryRecords??{}).length)continue;
       const applied=transaction(db=>{
         // Claim this exact snapshot under the writer lock without another point read. A concurrent
@@ -340,7 +348,7 @@ export function reserveExtraction(messages:ReadonlyArray<Readonly<{role:string;c
       output=Math.min(requestedOutput,settings.perCallOutputTokens[purpose==="evaluation"?"extraction":purpose]);
     }
     const monthRow=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(monthLedgerId);
-    const spend=monthRow?JSON.parse(String(monthRow.intent)):{input:0,output:0};
+    const spend=monthRow?registerBusyloopPayloadSite("read", JSON.parse(String(monthRow.intent))):{input:0,output:0};
     reconcileDeadRetries(db,spend);
     if(monthRow)db.prepare("UPDATE memory_scope_bindings SET intent=? WHERE id=?").run(JSON.stringify(spend),monthLedgerId);
     if(!ceilingAdmits(settings.ceiling,{input:Number(spend.input)||0,output:Number(spend.output)||0},{input,output}))return "spend-ceiling";
@@ -351,7 +359,7 @@ export function reserveExtraction(messages:ReadonlyArray<Readonly<{role:string;c
     if(unseen.inFlight+unseen.settled>=UNSEEN_EXCESS_CALLS)return "extractor-busy";
     const scope=ensureScope("workspace",memoryState().installationId), id=ledgerId;
     const row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(id);
-    const budget=row?JSON.parse(String(row.intent)):{input:0,output:0,bytes:0,minute,calls:0};
+    const budget=row?registerBusyloopPayloadSite("read", JSON.parse(String(row.intent))):{input:0,output:0,bytes:0,minute,calls:0};
     if(budget.minute!==minute){budget.minute=minute;budget.calls=0;}
     if(output<1)return "budget-exhausted";
     if(budget.calls>=settings.callsPerMinute)return isContinuity?"call-pace":"budget-exhausted";
@@ -394,7 +402,7 @@ export function reserveExtraction(messages:ReadonlyArray<Readonly<{role:string;c
       for(const ledger of [handle.ledgerId,handle.monthLedgerId]){
         const row=db.prepare("SELECT intent FROM memory_scope_bindings WHERE id=?").get(ledger);
         if(!row)continue;
-        const budget=JSON.parse(String(row.intent));
+        const budget=registerBusyloopPayloadSite("read", JSON.parse(String(row.intent)));
         if(usage?.prompt_tokens!==undefined)budget.input=Math.max(0,budget.input-handle.tokens.input+usage.prompt_tokens);
         if(usage?.completion_tokens!==undefined)budget.output=Math.max(0,budget.output-handle.tokens.output+usage.completion_tokens);
         if(usage?.prompt_tokens===undefined)budget.input+=Math.max(0,(usage?.knownFloor?.prompt_tokens??0)-handle.tokens.input);
@@ -512,9 +520,9 @@ function extractionFailureCode(error:unknown){
 function extractionJson(raw:string):unknown{
   const trimmed=raw.trim();
   if(!trimmed)throw new ExtractionReplyError("MEMORY_EXTRACTION_EMPTY_REPLY","empty-reply");
-  try{return JSON.parse(trimmed);}catch{/* a fenced answer, below */}
+  try{return registerBusyloopPayloadSite("read", JSON.parse(trimmed));}catch{/* a fenced answer, below */}
   const fenced=/^```[A-Za-z]*[ \t]*\r?\n([\s\S]*?)\r?\n?```$/.exec(trimmed);
-  if(fenced){try{return JSON.parse(fenced[1]!);}catch{/* not JSON inside either */}}
+  if(fenced){try{return registerBusyloopPayloadSite("read", JSON.parse(fenced[1]!));}catch{/* not JSON inside either */}}
   throw new Error("MEMORY_EXTRACTION_NOT_JSON");
 }
 /** Where `quote` sits in the source, by its own bytes. A quote found more than once takes the occurrence nearest the model's hint;
@@ -608,3 +616,13 @@ export async function withMemoryInferenceLease<T>(callback:(lease:MemoryInferenc
 }
 /** Continuity's own lease: a second slot, so one reflection and one learning run can be in flight at once. */
 export const withContinuityInferenceLease=<T>(callback:(lease:MemoryInferenceLease)=>Promise<T>,observer?:MemoryInferenceObserver)=>withMemoryInferenceLease(callback,observer,continuitySlot);
+
+// Only a boolean crosses to the disclosure UI; no chat content is included.
+let learningFluxSent = false;
+let learningFluxSendListener: (() => void) | undefined;
+export const hasLearningFluxSent = (): boolean => learningFluxSent;
+export function setLearningFluxSendListener(listener: () => void): void { learningFluxSendListener = listener; }
+function notifyLearningFluxSend(): void {
+  learningFluxSent = true;
+  try { learningFluxSendListener?.(); } catch { /* Disclosure must not affect extraction. */ }
+}

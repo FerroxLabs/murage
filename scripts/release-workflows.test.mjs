@@ -250,11 +250,10 @@ describe("release.yml should_release guard", () => {
   });
 
   it("gates every job that signs, builds or uploads", () => {
-    for (const job of ["mac", "mac-x64", "windows", "linux", "ci-gate", "assemble"]) {
+    for (const job of ["mac", "mac-x64", "windows", "linux", "ci-gate", "stage", "assemble"]) {
       expect(release.jobs[job].if, job).toBe("needs.prepare.outputs.should_release == 'true'");
     }
-    const refuse = release.jobs.prepare.steps.find((step) => String(step.name || "").startsWith("Refuse to overwrite"));
-    expect(refuse.if).toBe("steps.pin.outputs.should_release == 'true'");
+    expect(JSON.stringify(release.jobs.prepare)).not.toContain("RELEASES_PAT");
   });
 });
 
@@ -266,25 +265,11 @@ describe("prepare-release.yml", () => {
     expect(Object.keys(triggers(prepare))).toEqual(["workflow_dispatch"]);
   });
 
-  it("claims no more permission than it needs to open a PR", () => {
-    expect(prepare.permissions).toEqual({
-      actions: "write",
-      contents: "write",
-      "pull-requests": "write",
-    });
-  });
-
-  it("checks our own releases repo, with the secret release.yml already uses", () => {
-    const refuse = prepare.jobs.prepare.steps.find((step) => String(step.name || "").startsWith("Refuse an existing"));
-    expect(refuse.env.GH_TOKEN).toBe("${{ secrets.RELEASES_PAT }}");
-    expect(refuse.run).toContain('node scripts/release-guard.mjs absent "$VERSION"');
-  });
-
-  it("names Murage in the PR it opens, and promises only a draft", () => {
-    const pr = prepare.jobs.prepare.steps.find((step) => step.id === "pr");
-    expect(pr.run).toContain("Bumps Murage to");
-    expect(pr.run).toContain("FerroxLabs/murage-releases");
-    expect(pr.run).toMatch(/DRAFT/);
+  it("prepares a patch with read-only contents and no release secret", () => {
+    expect(prepare.permissions).toEqual({contents: "read"});
+    expect(source).not.toContain("secrets.");
+    expect(source).not.toMatch(/git push|gh pr create/);
+    expect(prepare.jobs.prepare.steps.find(step => step.with?.name === "release-version-patch").with.path).toBe("release-version.patch");
   });
 
   it("passes workflow inputs through env, never straight into a run body", () => {
@@ -296,11 +281,7 @@ describe("prepare-release.yml", () => {
     expect(source).toContain("CUSTOM_VERSION: ${{ inputs.version }}");
   });
 
-  it("dispatches CI, which is why ci.yml grew a manual trigger", () => {
-    const start = prepare.jobs.prepare.steps.at(-1);
-    expect(start.run).toContain("gh workflow run ci.yml");
-    expect(Object.keys(triggers(load("ci.yml")))).toContain("workflow_dispatch");
-  });
+
 });
 
 describe("release mutation boundaries", () => {
@@ -314,18 +295,12 @@ describe("release mutation boundaries", () => {
     const checkout = assemble.steps.find(step => String(step.uses).startsWith("actions/checkout"));
     expect(checkout.with.ref).toBe("${{ needs.prepare.outputs.sha }}");
     const upload = assemble.steps.find(step => step.id === "upload");
-    expect(upload.run).toContain("node scripts/release-guard.mjs upload");
+    expect(upload.run).toBe("node scripts/release-guard.mjs upload-prepared");
     const publish = assemble.steps.find(step => String(step.name).startsWith("Publish"));
     expect(publish.env.RELEASE_ID).toBe("${{ steps.upload.outputs.release_id }}");
-    expect(publish.run).toContain('node scripts/release-guard.mjs publish "$VERSION" "$RELEASE_ID"');
+    expect(publish.run).toBe("node scripts/release-guard.mjs publish-prepared");
   });
-  it("only creates a release branch when the inspected branch is absent", () => {
-    const prepare = load("prepare-release.yml");
-    const commit = prepare.jobs.prepare.steps.find(step => step.name === "Commit the version bump");
-    expect(commit.if).toBe("steps.branch.outputs.branch_exists != 'true'");
-    expect(prepare.jobs.prepare.steps.find(step => step.id === "pr").env.EXISTING_PR)
-      .toBe("${{ steps.branch.outputs.pr_url }}");
-  });
+
 });
 
 describe("published Linux artifact verification", () => {
@@ -424,6 +399,15 @@ describe("scoped CI confirmation", () => {
     expect(full.if).toBe("inputs.vitest_file == ''");
     // The blocking shards run only GATE files, each on the OSes ci/gate-tests.txt names for it.
     expect(full.run).toContain('node scripts/ci-test-tiers.mjs list --tier gate --os "$os" --shard "$SHARD"');
+    expect(full.run).toContain("--skip server/installation-windows-backup-roundtrip.test.ts");
+    expect(full.run).toContain("--skip server/cloud-home/placeholder-launcher-root.test.ts");
+    // The gate file the shards leave out needs root (the launcher makes .agents 0555, then creates targets in it); it runs as root once.
+    // placeholder-launcher.test.ts, the non-root half, stays in the shards with no --skip.
+    expect(full.run).not.toContain("--skip server/cloud-home/placeholder-launcher.test.ts");
+    const placeholderRoot = vitest.steps.find(step => step.name === "Run the root-only placeholder-launcher test as root");
+    expect(placeholderRoot.if).toBe("${{ !cancelled() && inputs.vitest_file == '' && matrix.os == 'ubuntu-24.04' && matrix.vitest_shard == 1 }}");
+    expect(placeholderRoot.run).toContain("node_modules/vitest/vitest.mjs run server/cloud-home/placeholder-launcher-root.test.ts");
+    expect(placeholderRoot.run.startsWith("sudo -E ")).toBe(true);
     expect(full.run).toContain("node node_modules/vitest/vitest.mjs run --tags-filter='!nightly && !perf-budget' \"${args[@]}\"");
     expect(full.env.SHARD).toBe("${{ matrix.vitest_shard }}/${{ matrix.os == 'windows-latest' && 12 || 10 }}");
     expect(full.env.MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE).toBe("${{ matrix.os == 'windows-latest' && '1' || '0' }}");
@@ -456,7 +440,8 @@ describe("scoped CI confirmation", () => {
       "pnpm exec vitest run \"${test_paths[@]}\"",
     ]);
     // The blocking Windows shards leave out the same one file, which the standard-user step runs.
-    expect(full.run).toContain("--skip server/installation-windows-backup-roundtrip.test.ts > \"$RUNNER_TEMP/vitest-args.txt\"");
+    expect(full.run).toContain("--skip server/installation-windows-backup-roundtrip.test.ts");
+    expect(full.run).toContain('> "$RUNNER_TEMP/vitest-args.txt"');
     // Every downstream gate still runs, unconditionally, in the quality job.
     for (const run of ["pnpm typecheck", "pnpm check:contrast", "pnpm broker:check", "pnpm broker:test", "pnpm test:electron", "pnpm test:packaged-server", "pnpm check:electron"]) {
       const step = steps.find(item => item.run === run);
@@ -643,21 +628,20 @@ describe("release.yml provenance gates (audit C8)", () => {
     expect(release.jobs.prepare["timeout-minutes"]).toBeLessThanOrEqual(30);
   });
 
-  it("platform builds start on the pin; only assemble waits for CI", () => {
+  it("platform builds wait for the early probe; staging waits for CI", () => {
     const needs = job => [release.jobs[job].needs].flat();
     for (const job of ["mac", "windows", "linux"]) {
-      expect(needs(job), job).toEqual(["prepare"]);
+      expect(needs(job), job).toEqual(["prepare", "preflight"]);
     }
-    expect(needs("mac-x64")).toEqual(["prepare", "mac"]);
-    expect(needs("assemble")).toEqual(expect.arrayContaining(["ci-gate", "mac", "mac-x64", "windows", "linux"]));
+    expect(needs("mac-x64")).toEqual(["prepare", "preflight", "mac"]);
+    expect(needs("assemble")).toEqual(["prepare"]);
+    expect(needs("stage")).toEqual(expect.arrayContaining(["ci-gate", "mac", "mac-x64", "windows", "linux"]));
     // nothing that creates a draft or touches murage-releases runs before assemble
     for (const job of ["mac", "mac-x64", "windows", "linux"]) {
       expect(JSON.stringify(release.jobs[job]), job).not.toContain("RELEASES_PAT");
       expect(JSON.stringify(release.jobs[job]), job).not.toContain("release-guard.mjs upload");
     }
-    const abort = release.jobs["abort-on-ci-failure"];
-    expect(abort.permissions).toEqual({ actions: "write" });
-    expect(abort.if).toContain("needs.ci-gate.result == 'failure'");
+    expect(release.jobs["abort-on-ci-failure"]).toBeUndefined();
   });
 
   it("the x64 smoke runs natively on an Intel runner with one retry", () => {
@@ -686,16 +670,13 @@ describe("release.yml provenance gates (audit C8)", () => {
     expect(upload.with.path).toContain("release/SHA256SUMS-ubuntu-x64.txt.asc");
   });
 
-  it("the Linux job attests build provenance with a full-SHA pin and only the permissions it needs", () => {
-    const step = release.jobs.linux.steps.find(item => String(item.uses ?? "").startsWith("actions/attest-build-provenance@"));
-    expect(step, "an attestation step").toBeDefined();
-    expect(step.uses).toMatch(/@[0-9a-f]{40}$/);
-    expect(step.with["subject-path"]).toContain("release/*.AppImage");
-    expect(release.jobs.linux.permissions).toEqual({ contents: "read", "id-token": "write", attestations: "write" });
+  it("the Linux job stays read-only under the exact write allowlist", () => {
+    expect(release.jobs.linux.permissions).toEqual({ contents: "read" });
+    expect(release.jobs.linux.steps.some(item => String(item.uses ?? "").startsWith("actions/attest-build-provenance@"))).toBe(false);
   });
 
   it("assembly requires the signature whenever one was made, and never lets a stray file through", () => {
-    const gate = release.jobs.assemble.steps.find(step => String(step.name).startsWith("Refuse an incomplete installer"));
+    const gate = release.jobs.stage.steps.find(step => String(step.name).startsWith("Refuse an incomplete installer"));
     expect(gate.run).toContain("SHA256SUMS-ubuntu-x64.txt.asc");
     expect(gate.run).toContain("required+=(");
     expect(gate.run).toContain('"${#required[@]}"');
@@ -787,7 +768,8 @@ describe("only GATE tests block CI (ci/gate-tests.txt)", () => {
     const { gate } = readLists();
     for (const [path, entry] of gate) {
       expect(entry.oses.length, path).toBeGreaterThan(0);
-      if (path.startsWith("server/cloud-home/")) expect(entry.oses, path).toEqual(["linux"]);
+      if (path === "server/cloud-home/i16c-r5.test.ts") expect(entry.oses, path).toEqual(["linux", "mac", "windows"]); // Pure policy checks run everywhere.
+      else if (path.startsWith("server/cloud-home/")) expect(entry.oses, path).toEqual(["linux"]);
     }
     const count = os => (os === "windows" ? 12 : 10);
     const shards = os => Array.from({ length: count(os) }, (_, i) => select({ tier: "gate", os, shard: `${i + 1}/${count(os)}` }).files).flat();
@@ -851,4 +833,54 @@ describe("native arm64 S4 power qualification", () => {
     expect(ci.jobs.required.steps[0].env.HOST_POWER_ARM64).toBe("${{ needs.host-power-arm64.result }}");
     expect(ci.jobs.required.steps[0].run).toContain('test "$HOST_POWER_ARM64" = success');
   });
+});
+
+describe("Signal release gates", () => {
+  it("T-RELEASE-NO-SKIP: pin gate precedes all builds and staging is unconditional", () => {
+    const jobs = load("release.yml").jobs;
+    const first = Object.keys(jobs)[0];
+    const gate = jobs[first].steps.find(s => s.run === "node scripts/signal-release-check.mjs");
+    expect(gate).toBeDefined(); expect(gate.if).toBeUndefined(); expect(gate["continue-on-error"]).toBeUndefined();
+    for (const [job, target, pack] of [["mac", "darwin-arm64", "mac"], ["windows", "win32-x64", "win"], ["linux", "linux-x64", "linux"]]) {
+      expect([jobs[job].needs].flat()).toContain(first);
+      const steps = jobs[job].steps;
+      const at = steps.findIndex(s => s.run?.includes(`stage-signal-runtime.mjs --target ${target} --release`));
+      expect(at).toBeGreaterThanOrEqual(0);
+      expect(steps[at].if).toBeUndefined(); expect(steps[at]["continue-on-error"]).toBeUndefined();
+      expect(at).toBeLessThan(steps.findIndex(s => s.run?.includes(`pnpm package:${pack}`)));
+    }
+    const rc = load("prepare-release.yml").jobs.prepare.steps;
+    const at = rc.findIndex(s => s.run === "node scripts/signal-release-check.mjs");
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(at).toBeLessThan(rc.findIndex(s => s.name === "Prepare the version bump for review"));
+    expect(rc[at].if).toBeUndefined(); expect(rc[at]["continue-on-error"]).toBeUndefined();
+    for (const steps of [jobs[first].steps, rc]) {
+      const check = steps.findIndex(s => s.run === "node scripts/signal-release-check.mjs");
+      expect(check).toBeGreaterThanOrEqual(0);
+      expect(steps[check].env.RELEASE).toBe("1");
+      expect(steps[check].if).toBeUndefined();
+      expect(steps[check]["continue-on-error"]).toBeUndefined();
+      if (steps === rc) expect(check).toBeLessThan(steps.findIndex(s => s.name === "Prepare the version bump for review"));
+    }
+  });
+});
+
+it("T-RELEASE-NO-REBUILD: releases only fetch immutable runtime inputs", () => {
+  const release = load("release.yml");
+  expect(release.jobs["signal-runtime-inputs"]).toBeUndefined();
+  for (const job of Object.values(release.jobs)) for (const step of job.steps ?? []) {
+    expect(step.run ?? "").not.toMatch(/build-signal-runtime-inputs|normalize-signal-runtime|jlink|--archive|publish-signal-runtime-inputs/);
+  }
+  for (const job of ["mac", "windows", "linux"]) {
+    const step = release.jobs[job].steps.find(s => s.run?.includes("stage-signal-runtime.mjs"));
+    expect(step.run).toMatch(/--release$/);
+    expect(step.if).toBeUndefined(); expect(step["continue-on-error"]).toBeUndefined();
+  }
+  const manual = load("signal-runtime-inputs.yml");
+  expect(Object.keys(manual.on)).toEqual(["workflow_dispatch"]);
+  expect(Object.values(manual.jobs).every(j => j["runs-on"] === "ubuntu-24.04")).toBe(true);
+  expect(read("signal-runtime-inputs.yml")).not.toContain("RELEASES_PAT");
+  const inputs = load("signal-runtime-input-check.yml");
+  expect(inputs.on.push.branches).toContain("dev/1019-signal");
+  expect(inputs.jobs.inputs.steps.at(-1).run).toContain("--assert-runtime-inputs");
 });

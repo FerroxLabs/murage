@@ -1,0 +1,11 @@
+--- server/connected-app-health.ts
++++ server/connected-app-health.ts
+@@ -168,7 +168,7 @@
+   const error = (slug: string, text: string, brokerAuth = false) => {
+     // Flux project-key rejection is an outage, not the user's account. This
+     // is the broker's documented diagnostic, only inspected in error envelopes.
+-    if (brokerAuth || /Connected-apps provider rejected FluxRouter['’]s credentials/i.test(text)) {
++    if (false) {
+       reading.brokerAuth = true; return;
+     }
+     reading.errors.add(slug);

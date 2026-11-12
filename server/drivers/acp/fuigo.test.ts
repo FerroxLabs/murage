@@ -48,12 +48,22 @@ import { resetPathCacheForTests, restrictInstallScanDirsForTests } from "../../e
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
-import { ensureFuigoLocalModel, FuigoAgentDriver, fuigoLocalKeyEnv, fuigoLocalSlug, FUIGO_EXTERNAL_MCP_GATES, isolateFuigoFromExternalMcp, parseFuigoModels, scrubFuigoCredentialEnv, STATIC_FUIGO_MODELS } from "./fuigo.ts";
+import { ensureFuigoLocalModel, FuigoAgentDriver, fuigoLocalKeyEnv, fuigoLocalSlug, FUIGO_EXTERNAL_MCP_GATES, isolateFuigoFromExternalMcp, parseFuigoModels, pointFuigoAtFlux, scrubFuigoCredentialEnv, STATIC_FUIGO_MODELS } from "./fuigo.ts";
+import { FLUX_OPENAI_BASE } from "../../flux-routing.ts";
 import { noteFluxKeyRefused, resetFluxKeyHealthForTests } from "../../flux-key-health.ts";
 import { fluxKeyState } from "../../flux-config.ts";
 import { acpVersionFailureDetail, createAcpDriver, FALLBACK_CAP_LINE, MCP_OWN_READY_WAIT_MS, MCP_READY_WAIT_MS, resetAcpMcpReadinessForTests, type AcpSupport } from "./core.ts";
 import { configureLocalServerStore, writeLocalServers } from "../../local-servers.ts";
 import { localHost } from "../local-inject.ts";
+
+// The Cloud-home test below reads the environment each spawn hands the turn launcher: on a home the real spawn goes through `sudo`
+// and the launcher, which a test machine does not have. The launcher's own contract is driven by server/cloud-home/*launcher*.test.ts.
+const launches = vi.hoisted(() => [] as Array<Record<string, string | undefined>>);
+const launchArgs = vi.hoisted(() => [] as string[][]);
+vi.mock("../../cloud-home/turn-process.ts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../cloud-home/turn-process.ts")>()),
+  cloudTurnLaunch: (_command: string, args: string[], env?: NodeJS.ProcessEnv) => { launches.push({ ...env }); launchArgs.push([...args]); return null; },
+}));
 
 // The pinned bundle version, read from the packaging script (one source of truth).
 const FUIGO_VERSION = /FUIGO_VERSION = "(\d+\.\d+\.\d+)"/.exec(readFileSync(new URL("../../../scripts/prepare-fuigo.mjs", import.meta.url), "utf8"))![1]!;
@@ -103,7 +113,7 @@ import { delimiter, join } from "node:path";
 const argv = process.argv.slice(2);
 const kind = argv.includes("--version") ? "version" : argv[0] === "models" ? "models" : "agent";
 // Explicit fields only; credentials are fixture-dump.ts fingerprints, never values.
-const PLAIN = ["FUIGO_CONFIG", "FUIGO_ALLOW_UPSTREAM_HOSTS", "PATH", "HOME", "FUIGO_HOME", "FUIGO_MEMORY", "FUIGO_CLAUDE_SKILLS_ENABLED", "FUIGO_CLAUDE_RULES_ENABLED", "FUIGO_CLAUDE_AGENTS_ENABLED", "FUIGO_CLAUDE_MCPS_ENABLED", "FUIGO_CLAUDE_HOOKS_ENABLED", "FUIGO_CLAUDE_SESSIONS_ENABLED", "FUIGO_CURSOR_SKILLS_ENABLED", "FUIGO_CURSOR_RULES_ENABLED", "FUIGO_CURSOR_AGENTS_ENABLED", "FUIGO_CURSOR_MCPS_ENABLED", "FUIGO_CURSOR_HOOKS_ENABLED", "FUIGO_CURSOR_SESSIONS_ENABLED", "FUIGO_CODEX_SKILLS_ENABLED", "FUIGO_CODEX_RULES_ENABLED", "FUIGO_CODEX_AGENTS_ENABLED", "FUIGO_CODEX_MCPS_ENABLED", "FUIGO_CODEX_HOOKS_ENABLED", "FUIGO_CODEX_SESSIONS_ENABLED", "FUIGO_AGENTS_SKILLS_ENABLED", "OPENAI_BASE_URL", "OPENAI_MODEL", "FUIGO_SUBAGENTS", "FUIGO_WORKFLOWS", "FUIGO_SCHEDULER_BACKGROUND_LOOPS", "FUIGO_GOAL", "FUIGO_ENVRC_TIMEOUT_SECS", "FUIGO_AGENT", "FUIGO_WORKSPACE_REWIND_GIT"];
+const PLAIN = ["FUIGO_CONFIG", "FUIGO_ALLOW_UPSTREAM_HOSTS", "PATH", "HOME", "FUIGO_HOME", "FUIGO_MEMORY", "FUIGO_CLAUDE_SKILLS_ENABLED", "FUIGO_CLAUDE_RULES_ENABLED", "FUIGO_CLAUDE_AGENTS_ENABLED", "FUIGO_CLAUDE_MCPS_ENABLED", "FUIGO_CLAUDE_HOOKS_ENABLED", "FUIGO_CLAUDE_SESSIONS_ENABLED", "FUIGO_CURSOR_SKILLS_ENABLED", "FUIGO_CURSOR_RULES_ENABLED", "FUIGO_CURSOR_AGENTS_ENABLED", "FUIGO_CURSOR_MCPS_ENABLED", "FUIGO_CURSOR_HOOKS_ENABLED", "FUIGO_CURSOR_SESSIONS_ENABLED", "FUIGO_CODEX_SKILLS_ENABLED", "FUIGO_CODEX_RULES_ENABLED", "FUIGO_CODEX_AGENTS_ENABLED", "FUIGO_CODEX_MCPS_ENABLED", "FUIGO_CODEX_HOOKS_ENABLED", "FUIGO_CODEX_SESSIONS_ENABLED", "FUIGO_AGENTS_SKILLS_ENABLED", "OPENAI_BASE_URL", "OPENAI_MODEL", "FUIGO_WEB_FETCH", "FUIGO_SUBAGENTS", "FUIGO_WORKFLOWS", "FUIGO_SCHEDULER_BACKGROUND_LOOPS", "FUIGO_GOAL", "FUIGO_ENVRC_TIMEOUT_SECS", "FUIGO_AGENT", "FUIGO_WORKSPACE_REWIND_GIT", "FUIGO_API_BASE_URL", "FUIGO_MODELS_BASE_URL"];
 const CREDENTIALS = ["FUIGO_API_KEY", "FUIGO_CODE_API_KEY", "FLUX_API_KEY", "MURAGE_FLUX_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY",
   ...Object.keys(process.env).filter((key) => /^MURAGE_LOCAL_[A-Z0-9_]+_API_KEY$/.test(key))];
 const fingerprint = (value) => createHash("sha256").update(value).digest("hex");
@@ -308,6 +318,11 @@ process.stdin.on("data", (d) => {
       order("prompt");
       if (process.env.FUIGO_FAKE_DUMP_DIR) writeFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "prompt.json"), JSON.stringify(m.params));
       if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "prompts.log"), JSON.stringify(m.params) + "\\n");
+      if (process.env.FUIGO_FAKE_REFUSAL) {
+        const response = JSON.parse(process.env.FUIGO_FAKE_REFUSAL);
+        send({ jsonrpc: "2.0", id: m.id, ...response });
+        return;
+      }
       // FUIGO_FAKE_SCRIPT: a JSON array of raw messages sent in place of the "ok" chunk.
       if (process.env.FUIGO_FAKE_SCRIPT) for (const raw of JSON.parse(process.env.FUIGO_FAKE_SCRIPT)) send(raw);
       else send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID,
@@ -811,6 +826,7 @@ describe("fuigo engine isolation from the owner's global MCP config", () => {
     for (const spawn of ["agent", "models"] as const) {
       const { env } = dump(spawn);
       for (const name of ["FUIGO_SUBAGENTS", "FUIGO_WORKFLOWS", "FUIGO_SCHEDULER_BACKGROUND_LOOPS", "FUIGO_GOAL"]) expect([spawn, name, env[name]]).toEqual([spawn, name, "0"]);
+      expect([spawn, env.FUIGO_WEB_FETCH]).toEqual([spawn, "0"]);
       expect([spawn, env.FUIGO_ENVRC_TIMEOUT_SECS]).toEqual([spawn, "0"]);
       expect([spawn, env.FUIGO_AGENT, env.FUIGO_WORKSPACE_REWIND_GIT]).toEqual([spawn, undefined, undefined]);
     }
@@ -909,6 +925,66 @@ describe("fuigo credential — transformEnv, not applyTurnEnv", () => {
       expect(dump("models").env.FUIGO_ALLOW_UPSTREAM_HOSTS).toBeUndefined();
       expect(dump("agent").env.FUIGO_ALLOW_UPSTREAM_HOSTS).toBeUndefined();
     } finally { delete process.env.FUIGO_ALLOW_UPSTREAM_HOSTS; }
+  });
+
+  it("a Cloud home points the turn and the catalog spawn at FLUX_OPENAI_BASE, never Fuigo's compiled default", async () => {
+    // A staging image rewrites FLUX_OPENAI_BASE to api-staging but cannot rewrite the Fuigo binary;
+    // without these names its Fuigo dialled the prod host and hung at the egress proxy.
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    process.env.FUIGO_API_BASE_URL = "https://somewhere-else.example/v1";
+    process.env.FUIGO_MODELS_BASE_URL = "https://somewhere-else.example/v1";
+    launches.length = 0; launchArgs.length = 0;
+    try {
+      await runTurn({ model: "flux-auto" });
+      // every spawn on a home (the turn and the catalog spawn) is handed the launcher with both base names on Flux's host.
+      // The two are told apart by their command line: the catalog spawn runs `models`, the agent spawn is anything else but a version probe.
+      const named = launches.filter(env => env.FUIGO_API_BASE_URL !== undefined || env.FUIGO_MODELS_BASE_URL !== undefined);
+      const catalog = launches.filter((_, i) => launchArgs[i]?.includes("models"));
+      const agent = launches.filter((_, i) => !launchArgs[i]?.includes("models") && !launchArgs[i]?.includes("--version"));
+      expect(catalog.length, `catalog spawn captured: ${JSON.stringify(launchArgs)}`).toBeGreaterThanOrEqual(1);
+      expect(agent.length, "agent spawn captured").toBeGreaterThanOrEqual(1);
+      for (const env of [...catalog, ...agent]) expect(env.FUIGO_API_BASE_URL, "every catalog and agent spawn names Flux").toBe(FLUX_OPENAI_BASE);
+      expect(named.length).toBeGreaterThanOrEqual(catalog.length + agent.length);
+      for (const env of named) {
+        expect(env.FUIGO_API_BASE_URL).toBe(FLUX_OPENAI_BASE);
+        expect(env.FUIGO_MODELS_BASE_URL).toBe(FLUX_OPENAI_BASE);
+        expect(env.OPENAI_BASE_URL).toBeUndefined();
+      }
+      expect(FLUX_OPENAI_BASE).toMatch(/^https:\/\/api(-staging)?\.fluxrouter\.ai\/v1$/);
+      // Provider-route precedence: an OPENAI_BASE_URL the owner's environment carries never wins over the Flux pin, on either spawn.
+      launches.length = 0; launchArgs.length = 0;
+      await runTurn({ model: "flux-auto", environment: { OPENAI_BASE_URL: "https://owner-route.example/v1" } });
+      expect(launches.length).toBeGreaterThanOrEqual(1);
+      for (const env of launches.filter(e => e.FUIGO_API_BASE_URL !== undefined)) {
+        expect(env.FUIGO_API_BASE_URL).toBe(FLUX_OPENAI_BASE);
+        expect(env.OPENAI_BASE_URL).not.toBe("https://owner-route.example/v1");
+      }
+    } finally { vi.unstubAllEnvs(); delete process.env.FUIGO_API_BASE_URL; delete process.env.FUIGO_MODELS_BASE_URL; }
+  });
+
+  it("a desktop keeps the configured FUIGO_API_BASE_URL and FUIGO_MODELS_BASE_URL", async () => {
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "");
+    process.env.FUIGO_API_BASE_URL = "https://somewhere-else.example/v1";
+    process.env.FUIGO_MODELS_BASE_URL = "https://somewhere-else.example/models";
+    try {
+      await runTurn({ model: "flux-auto" });
+      for (const kind of ["agent", "models"] as const) {
+        expect(dump(kind).env.FUIGO_API_BASE_URL).toBe("https://somewhere-else.example/v1");
+        expect(dump(kind).env.FUIGO_MODELS_BASE_URL).toBe("https://somewhere-else.example/models");
+      }
+    } finally { vi.unstubAllEnvs(); delete process.env.FUIGO_API_BASE_URL; delete process.env.FUIGO_MODELS_BASE_URL; }
+  });
+
+  it("pointFuigoAtFlux replaces every casing of both base names on Windows", () => {
+    const env: Record<string, string | undefined> = { Fuigo_Api_Base_Url: "http://127.0.0.1:9", FUIGO_MODELS_BASE_URL: "x" };
+    pointFuigoAtFlux(env, "win32");
+    expect(env).toEqual({ FUIGO_API_BASE_URL: FLUX_OPENAI_BASE, FUIGO_MODELS_BASE_URL: FLUX_OPENAI_BASE });
+  });
+
+  it("names no base when Murage has no key, so a user's own install keeps its own setup", async () => {
+    delete process.env.FLUX_API_KEY;
+    await runTurn({ model: "flux-auto", environment: { FUIGO_API_KEY: USER_OWN_FLUX_KEY } });
+    expect(dump("models").env.FUIGO_API_BASE_URL).toBeUndefined();
   });
 
   it("leaves a user's own credential alone when Murage has no key", async () => {
@@ -1196,7 +1272,9 @@ describe("fuigo binary resolution — the bundled engine", () => {
     expect(dump("agent").env.PATH.split(delimiter)[0]).toBe(bundleDir);
     const session = JSON.parse(readFileSync(join(dumps, "session.json"), "utf8"));
     expect(session.mcpServers).toContainEqual({ name: "browser", command: browser.command, args: browser.args,
-      env: [{ name: "PATH", value: emptyBin }, { name: "ELECTRON_RUN_AS_NODE", value: "1" }] });
+      // Catalog readiness adds its generated marker without replacing either caller env entry.
+      env: [{ name: "PATH", value: emptyBin }, { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+        { name: "MURAGE_MCP_LISTED_FILE", value: expect.stringMatching(/[/\\]murage-mcp-listed-[^/\\]+[/\\][a-f0-9-]{36}\.[a-f0-9]{32}$/) }] });
   });
 
   const snapshotDefault = async (cli = "fuigo") => {
@@ -2257,7 +2335,7 @@ describe("1.0.18 (f): a Flux refusal in Fuigo's own retry notice is sent exactly
   const SID = "fake-fuigo-session";
   const retrying = (reason: string, attempt: number) => ({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID, update: { sessionUpdate: "retry_state", type: "retrying", attempt, reason } } });
   const log = (name: string) => existsSync(join(dumps, name)) ? readFileSync(join(dumps, name), "utf8").split("\n").filter(Boolean) : [];
-  // Recorded shape: LiteLLM flattens flux-router's 429 detail dict into the message as a Python repr; the code is only in `state`.
+  // Synthetic LiteLLM-like repr, not a binary capture; kept as defensive parser coverage.
   const FREE_CAP = "429 Too Many Requests: {'error': {'type': 'rate_limit_exceeded', 'state': 'free_cap_reached', 'message': \"Your account's monthly allowance is used up.\"}}";
   const HOLD = "429 Too Many Requests: Your credit is busy because other requests have temporarily reserved it. Retry in 2s.";
   const reply = { jsonrpc: "2.0", method: "session/update", params: { sessionId: SID, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "answered" } } } };
@@ -2306,6 +2384,105 @@ describe("1.0.18 (f): a Flux refusal in Fuigo's own retry notice is sent exactly
     expect(rec.events.find((e) => e.type === "runtime.error")).toBeUndefined();
     expect(rec.events.find((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
   });
+
+  // INT1019-CLOUD R1.2: off a home the retry-notice refusal is exactly 1.0.19's. The home mapping is tested in cloud-retry-notice.test.ts
+  // (a home scrubs the fake CLI's script env, so a turn cannot be driven end to end here).
+  const withHeaders = (reason: string, headers: Record<string, string>) => {
+    const notice = retrying(reason, 1);
+    return { ...notice, params: { ...notice.params, update: { ...notice.params.update, headers } } };
+  };
+  const ownRefusal = (rec: EventRecorder) => rec.events.find((e) => e.type === "runtime.error") as unknown as { message: string; gatewayCode?: string; gatewayResetsAt?: number; httpStatus?: number } | undefined;
+  it("R1.2 off a home: the same 402 notice keeps the 1.0.19 gateway code", async () => {
+    const rec = await turn([withHeaders("API error (status 402 Payment Required): None: credit_exhausted", { "x-flux-hold-reason": "billing" })]);
+    expect(ownRefusal(rec)).toMatchObject({ gatewayCode: "credit_exhausted" });
+  });
 });
 
 useOutsideStoreFixture();
+
+// busyloop: synthetic ACP envelopes containing the reported Flux body.
+// These are relay regressions, not captures from the customer's Fuigo binary.
+// They do not establish whether that binary preserves the upstream cap signal.
+describe("busyloop synthetic Fuigo refusal relay", () => {
+  const monthly = "Your account's monthly free-tier token allowance is exhausted.";
+  // RULING-busyloop.md §3 B4: data.http_status:429 on -32003 and nested
+  // data.error.state are defensive shapes, never emitted by Fuigo 1.0.41.
+  const cases = [
+    ["synthetic-error.state", { error: { code: -32003, message: "API error (status 429 Too Many Requests)", data: { http_status: 429, error: { state: "free_cap_reached", message: monthly } } } }, "free_cap_reached", "freeCap"],
+    ["synthetic-top-level result state", { result: { stopReason: "failed", state: "free_cap_reached", http_status: 429, message: "Request refused" } }, "free_cap_reached", "freeCap"],
+    ["synthetic-JSON fragment", { error: { code: -32003, message: 'API error (status 429 Too Many Requests): {"state":"free_cap_reached"}', data: { error_kind: "rate_limited" } } }, "free_cap_reached", "freeCap"],
+    ["synthetic-LiteLLM message", { error: { code: -32003, message: "API error (status 429 Too Many Requests)", data: { error: { message: '{"error":{"state":"free_cap_reached"}}' } } } }, "free_cap_reached", "freeCap"],
+    ["synthetic-monthly words only", { error: { code: -32003, message: "API error (status 429 Too Many Requests): " + monthly } }, "free_cap_reached", "freeCap"],
+    ["synthetic-credit exhausted", { error: { code: -32003, message: "API error (status 402 Payment Required)", data: { state: "credit_exhausted" } } }, "credit_exhausted", "credit"],
+    ["synthetic-credit unresolved", { error: { code: -32003, message: "API error (status 402 Payment Required)", data: { error: { state: "credit_unresolved" } } } }, "credit_unresolved", "unresolved"],
+    ["synthetic-hold state", { error: { code: -32003, message: "API error (status 429 Too Many Requests)", data: { state: "hold" } } }, "hold", "hold"],
+  ] as const;
+  it.each(cases)("%s survives to the turn and its existing card", async (_name, response, code, reason) => {
+    const { LimitTurns, gatewayBusy } = await import("../../limit-continuation.ts");
+    const rec = await runTurn({ model: "flux-auto", environment: { FUIGO_FAKE_REFUSAL: JSON.stringify(response) } });
+    const error = rec.events.find(e => e.type === "runtime.error");
+    expect(error).toMatchObject({ gatewayCode: code, httpStatus: code.startsWith("credit_") ? 402 : 429 });
+    const turns = new LimitTurns();
+    turns.begin({ botId: "b", threadId: "t-fuigo", selection: { instanceId: "fuigo-test", model: "flux-auto" }, engineName: "Fuigo", driverKind: "fuigoAgent", viaGateway: false, sendIds: [], sourceMessageId: "m", sourceText: "hi", ownerDirect: true, routine: false, onFailover: false, activity: false });
+    for (const event of rec.events) turns.observe(event);
+    const turn = turns.get("t-fuigo")!;
+    expect(turn.httpStatus).toBe(code.startsWith("credit_") ? 402 : 429);
+    expect(gatewayBusy(turn, { resetsAt: null })).toBe(reason);
+  });
+});
+
+
+describe("busyloop failed-result hourly reset preservation", () => {
+  it.each([
+    ["message JSON", { message: '{"error":"hourly_burn_limit","retry_after":60}' }],
+    ["metadata", { message: "hourly_burn_limit", _meta: { retry_after: 60 } }],
+    ["error JSON", { error: '{"error":"hourly_burn_limit","retry_after":60}' }],
+    ["whole result", { state: "hourly_burn_limit", retry_after: 60 }],
+  ])("%s reaches the hourly card with the supplied reset time", async (_name, fields) => {
+    const { LimitTurns, gatewayBusy } = await import("../../limit-continuation.ts");
+    const before = Date.now();
+    const rec = await runTurn({ model: "flux-auto", environment: {
+      FUIGO_FAKE_REFUSAL: JSON.stringify({ result: { stopReason: "failed", http_status: 429, ...fields } }),
+    } });
+    const after = Date.now();
+    const error = rec.events.find(e => e.type === "runtime.error");
+    expect(error).toMatchObject({ gatewayCode: "hourly_burn_limit", httpStatus: 429 });
+    expect(error?.gatewayResetsAt).toBeGreaterThanOrEqual(before + 60_000);
+    expect(error?.gatewayResetsAt).toBeLessThanOrEqual(after + 60_000);
+    const turns = new LimitTurns();
+    turns.begin({ botId: "b", threadId: "t-fuigo", selection: { instanceId: "fuigo-test", model: "flux-auto" }, engineName: "Fuigo", driverKind: "fuigoAgent", viaGateway: false, sendIds: [], sourceMessageId: "m", sourceText: "hi", ownerDirect: true, routine: false, onFailover: false, activity: false });
+    for (const event of rec.events) turns.observe(event);
+    const turn = turns.get("t-fuigo")!;
+    expect(gatewayBusy(turn, { resetsAt: null })).toBe("hourly");
+    expect(turn.gatewayResetsAt).toBe(error?.gatewayResetsAt);
+  });
+});
+
+// Synthetic contract regressions; captured engine evidence lives in the replay file.
+describe("busyloop typed upstream contract (synthetic)", () => {
+  it.each([
+    ["typed credit overrides free-cap prose", { code: -32003, message: "monthly free-tier token allowance", data: { upstream: { state: "credit_exhausted", http_status: 402 } } }, "credit_exhausted", 402],
+    ["typed hold overrides free-cap data prose", { code: -32003, message: "Rate limited", data: { upstream: { state: "hold", http_status: 429 }, message: "monthly free-tier token allowance" } }, "hold", 429],
+    ["typed status overrides legacy status", { code: -32003, message: "Rate limited", data: { http_status: 500, upstream: { state: "free_cap_reached", http_status: 429 } } }, "free_cap_reached", 429],
+    ["RPC rate-limit code implies 429", { code: -32003, message: "Rate limited", data: { message: "monthly free-tier token allowance" } }, "free_cap_reached", 429],
+    ["typed error kind implies 429", { code: -32603, message: "Rate limited", data: { error_kind: "rate_limited", message: "monthly free-tier token allowance" } }, "free_cap_reached", 429],
+    ["explicit status wins over inferred 429", { code: -32003, message: "Rate limited", data: { http_status: 402, state: "credit_exhausted" } }, "credit_exhausted", 402],
+    ["malformed upstream falls back to prose", { code: -32003, message: "Rate limited", data: { upstream: { state: ["hold"], http_status: "402" }, message: "monthly free-tier token allowance" } }, "free_cap_reached", 429],
+  ])("%s", async (_name, error, gatewayCode, httpStatus) => {
+    const rec = await runTurn({ model: "flux-auto", environment: { FUIGO_FAKE_REFUSAL: JSON.stringify({ error }) } });
+    expect(rec.events.find(e => e.type === "runtime.error")).toMatchObject({ gatewayCode, httpStatus });
+  });
+});
+
+
+describe("busyloop typed retry notices (synthetic)", () => {
+  it.each(["retrying", "exhausted", "failed"])("%s preserves upstream state before conflicting reason text", async type => {
+    const rec = await runTurn({ model: "flux-auto", environment: { FUIGO_FAKE_SCRIPT: JSON.stringify([
+      { jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: "fake-fuigo-session", update: {
+        sessionUpdate: "retry_state", type, attempt: 1, upstream: { state: "credit_exhausted", http_status: 402 }, reason: "monthly free-tier token allowance",
+      } } },
+    ]) } });
+    expect(rec.events.find(e => e.type === "runtime.error")).toMatchObject({ gatewayCode: "credit_exhausted", httpStatus: 402 });
+    expect(rec.events.find(e => e.type === "turn.completed")).toMatchObject({ ok: false });
+  });
+});

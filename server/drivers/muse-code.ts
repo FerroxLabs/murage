@@ -1,3 +1,13 @@
+import { takeNoLimitsPowerFallbackNotice } from "../host-power.ts";
+import type { EngineTransport } from "../../shared/engine-transport.ts";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
+import { registerBusyloopRequestSite, fluxRouteFor, noFluxTraffic } from "../../shared/flux-route.ts";
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
+import { guardEngineRelease } from '../decision/provider-release.ts';
+import { recordPostureAck } from './posture-tap.ts';
+import { RequestTransport } from './request-transport.ts';
+import { PostureBarrier, POSTURE_CONTINUATION } from "./posture-barrier.ts";
+import { withRequestDelivery } from "./request-delivery.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -6,7 +16,7 @@
 // see NOTICE and third_party/muse-code-sdk). Portions ported from OpenMausBot (Apache-2.0), upstream
 // eea36bdb1cd76f5fda659e68f564f106d177cbc1 server/drivers/muse-code.ts (driver history head ead27095b), changed for
 // Murage's levels (BRIEF-1016-MUSE-BUILD.md, plan GAP-MUSE-CHECK-1101.md):
-//   - never `allowAll` and never `--disable-sandbox`: every level runs the session at `promptUnmatched` with Muse's
+//   - never `allowAll`: every level runs the session at `promptUnmatched`; No limits disables Muse's sandbox. With Muse's
 //     sandbox on, and every ask reaches Murage, which answers it through its own level decision (Full access and No
 //     limits keep the stop line). An allow picks Muse's ONCE choice only, never a session grant or a policy rule.
 //     Meta's own approval judge is off on every child (MUSE_DISABLE_APPROVAL_JUDGE=1): probe 2 showed it approving a
@@ -30,7 +40,7 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve as resolvePath } from "node:path";
-import { Connection, MspError, type DuplexTransport } from "@muse-code/sdk";
+import { Connection, MspError, type DuplexTransport as SdkDuplexTransport } from "@muse-code/sdk";
 import { z } from "zod";
 import { deleteEnvNames, PROVIDER_CREDENTIAL_ENV, stripRoutingEnv, stripWorkspaceCredentialEnv } from "../config.ts";
 import type {
@@ -39,8 +49,9 @@ import type {
 } from "../contracts.ts";
 import { newEventId, newId } from "../contracts.ts";
 import { augmentedPath } from "../env-path.ts";
-import { awaitCliTreeStopped, describeSpawnFailure, engineJob, spawnCli } from "../procs.ts";
+import { awaitCliTreeStopped, describeSpawnFailure, engineJob, engineExecutableMissing, noteEngineMissing, resolveEngineExecutable, hostPowerRefused, spawnCli } from "../procs.ts";
 import { botFolderOrThrow } from "../bot-folder.ts";
+import { hostPowerPlatform, recordNoLimitsMacPowerRefusal } from "../host-power.ts";
 import { probeFolder } from "../probe-folder.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { answersFromMessage, fromCodex, type QuestionAnswer, type QuestionSpec } from "../question-normalize.ts";
@@ -77,6 +88,7 @@ export const MUSE_NO_REGULAR_MODEL_LINE = "Murage couldn't start Muse on a regul
 export const MUSE_KEY_ENV = "META_API_KEY";
 export const MUSE_SIGN_IN_NOTE = "Sign in to Muse Code: run `muse login` in a terminal.";
 export const MUSE_NOT_INSTALLED_NOTE = "Muse Code isn't installed on this computer.";
+export const MUSE_POWER_REFUSED_NOTE = "Muse Code could not start because Murage could not apply its power protection. Murage will retry automatically with increasing delays, up to five minutes. You can choose another engine or update Murage.";
 export const MUSE_MODELS_LOADING_NOTE = "Muse Code is still listing its models.";
 export const MUSE_MOUNTS_REFUSED_LINE = "This Muse Code cannot take Murage's tools (memory, connected apps, teammates, computer), so the turn did not run. Update Muse Code and try again.";
 
@@ -90,18 +102,19 @@ const configSchema = z.object({
 type MuseConfig = z.output<typeof configSchema>;
 
 /** Where a turn stands: Ask (read-only), Auto (cards), or Full access / No limits (stop line). */
-export type MusePosture = "ask" | "auto" | "full";
-export function musePosture(turn: Pick<SendTurnInput, "askLevel" | "stopLine" | "routeAsks">): MusePosture {
-  if (turn.askLevel) return "ask";
-  if (turn.stopLine) return "full";
+export type MusePosture = "ask" | "auto" | "full" | "unlimited";
+export function musePosture(turn: Pick<SendTurnInput, "askLevel" | "stopLine" | "routeAsks" | "noLimits" | "permissionNow">): MusePosture {
+  if ((turn.permissionNow?.() ?? turn).noLimits) return "unlimited";
+  if ((turn.permissionNow?.() ?? turn).askLevel) return "ask";
+  if ((turn.permissionNow?.() ?? turn).stopLine) return "full";
   return "auto";
 }
 
-/** The launch: read-only at Ask, no file writes at Auto, Contributor off on all; never `--trust-workspace`, never
- *  `--disable-sandbox`. */
+/** Read-only at Ask, no file writes at Auto, Contributor off on all. No limits
+ * disables the native sandbox; every tool still reaches Murage. */
 export function museServeArgs(posture: MusePosture): string[] {
   const limits = posture === "ask" ? ["--disable-shell", "--disable-write"] : posture === "auto" ? ["--disable-write"] : [];
-  return ["serve", ...limits, ...MUSE_CONTRIBUTOR_OFF_ARGS];
+  return ["serve", ...limits, ...(posture === "unlimited" ? ["--disable-sandbox"] : []), ...MUSE_CONTRIBUTOR_OFF_ARGS];
 }
 
 /** The environment of every Muse child (serve and --version). Every credential list and routing switch is removed,
@@ -279,7 +292,7 @@ export function museChangeItem(item: MuseItem): boolean {
 function parseArgs(args: string | undefined): Record<string, unknown> | undefined {
   if (!args) return undefined;
   try {
-    const parsed: unknown = JSON.parse(args);
+    const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(args));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as Record<string, unknown> : undefined;
   } catch {
     return undefined; // streaming model-written arguments may not be JSON yet
@@ -362,6 +375,7 @@ export function museModelRefusal(error: unknown): boolean {
 const AUTH_FAILURE = /\b(?:not signed in|sign in|log ?in|unauthori[sz]ed|unauthenticated|not authenticated|authRequired|401)\b/i;
 
 interface Pending {
+  operationInput?:unknown;
   resolving?: boolean;
   host: Host;
   active: ActiveTurn;
@@ -372,6 +386,10 @@ interface Pending {
 }
 
 interface ActiveTurn {
+  permissionNow?:NonNullable<SendTurnInput['permissionNow']>;
+  onPostureChange?: () => Promise<void>;
+  postureBarrier?: PostureBarrier;
+  restarting?: boolean;
   turnId: string;
   posture: MusePosture;
   /** Muse's turn id: the turn/start command id; unset until sent. */
@@ -564,7 +582,7 @@ export async function musePromptCommand(
   admissions.set(commandId, token);
   try {
     // Retries need a new admission; never let the SDK replay a prompt under a consumed token.
-    const result = await connection.command(method, params, { commandId, maxAttempts: 1 }).catch(error => {
+    const result = await registerBusyloopRequestSite(fluxRouteFor(noFluxTraffic({ citation: "server/drivers/muse-code.ts:museTurnModel; museWriteCheck; museParams", reason: "Muse admits only regular models with providerId meta; custom providers and URLs are refused by the command schema" })), connection.command(method, params, { commandId, maxAttempts: 1 })).catch(error => {
       // An engine error response is receipt evidence too, even before the write callback.
       if (error instanceof MspError) token.received = true;
       throw error;
@@ -593,18 +611,25 @@ const standaloneGate = createStopGate({ engineName: ENGINE, emit: () => {}, base
 const noTurnEntry = standaloneGate.enter("muse-no-turn");
 
 /** MSP over the stdio of a spawnCli child (never the SDK's own spawn, which starts Muse outside Murage's launcher). */
+// Brand the SDK adapter too: calls through a Connection alias are still sinks.
+class MuseConnection extends Connection implements EngineTransport {
+  readonly engineTransport = true as const;
+}
+type DuplexTransport = SdkDuplexTransport & EngineTransport;
+
 export function stdioTransport(child: ReturnType<typeof spawnCli>, exited: Promise<void>, admissions: Map<string, MuseAdmission>, check: MuseWriteCheck, refused?: (error: Error) => void, gate: StopGate = standaloneGate): DuplexTransport {
   child.stdout.setEncoding("utf8");
   child.stderr.resume();
   child.stdin.on("error", () => {});
   const pending = new Set<(error: Error) => void>();
   return {
+    engineTransport: true,
     incoming: child.stdout as AsyncIterable<string>,
     write: (chunk) => new Promise<void>((resolve, reject) => {
       let frame: Record<string, unknown>;
       try {
         if (!chunk.endsWith("\n")) throw new Error();
-        frame = JSON.parse(chunk);
+        frame = registerBusyloopPayloadSite("read", JSON.parse(chunk));
         if (!frame || typeof frame !== "object" || Array.isArray(frame)) throw new Error();
       } catch { throw new Error("MUSE_UNADMITTED_WRITE"); }
       let p: MuseAdmission | undefined;
@@ -675,14 +700,14 @@ export function stdioTransport(child: ReturnType<typeof spawnCli>, exited: Promi
           try {
             gate.launch(prompt.entry, () => {
               submit();
-              child.stdin.write(bytes, "utf8", onWritten);
+              registerBusyloopRequestSite(fluxRouteFor(noFluxTraffic({ citation: "server/drivers/muse-code.ts:museTurnModel; museWriteCheck; museParams", reason: "Muse admits only regular models with providerId meta; custom providers and URLs are refused by the command schema" })), child.stdin.write(bytes, "utf8", onWritten));
             }, { liveOn: "call" });
           } finally { if (synthetic) gate.leave(prompt.entry); }
         };
         // The one allowlisted site that writes to the child outside gate.launch. The type refuses a prompt frame.
         const writeControl = (bytes: ControlFrame) => {
           submit();
-          child.stdin.write(bytes, "utf8", onWritten);
+          registerBusyloopRequestSite(fluxRouteFor(noFluxTraffic({ citation: "server/drivers/muse-code.ts:museTurnModel; museWriteCheck; museParams", reason: "Muse admits only regular models with providerId meta; custom providers and URLs are refused by the command schema" })), child.stdin.write(bytes, "utf8", onWritten));
         };
         if (p && MUSE_PROMPT_METHODS.has(String(frame.method))) writePrompt(p as PromptFrame, chunk);
         else writeControl(controlFrame(chunk, frame));
@@ -720,6 +745,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
   async create(input): Promise<ProviderInstance> {
     const { instanceId, config } = input;
     const listeners = new Set<RuntimeEventListener>();
+    const answerTransport = new RequestTransport();
     const threads = new Map<string, ThreadState>();
     let catalog: ModelCatalog = museInitialCatalog(config.model);
     let catalogLoaded = false;
@@ -732,6 +758,38 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
     let generation = 0, catalogGeneration = 0;
     let auxiliaryShutdownUnconfirmed = false;
     let refreshing: Promise<void> | undefined;
+    let version: string | null | undefined;
+    let versionProbe: Promise<string | null> | undefined;
+    let versionProbing = false;
+    const childEnv = () => museChildEnv(process.env, input.environment);
+    // Presence is shared across routes. Session/turn work only reads this admission; status and catalog reads re-check it.
+    let executable = resolveEngineExecutable(config.cli, childEnv(), probeFolder());
+    const checkExecutable = (manual = false) => {
+      const previous = executable;
+      executable = resolveEngineExecutable(config.cli, childEnv(), probeFolder(), manual);
+      if (!previous && executable) { version = undefined; versionProbe = undefined; }
+      return executable !== null;
+    };
+    const missingExecutable = () => {
+      executable = null;
+      noteEngineMissing(config.cli, childEnv(), probeFolder());
+      version = undefined; versionProbe = undefined;
+    };
+    // Genuine power failures retain ee05a26b9's shared bounded cooldown. No retry timer owns a child.
+    let powerFailures = 0, powerRetryAt = 0;
+    const powerSession = {};
+    const museJob = (noLimits = false) => engineJob({ noLimits, powerSession });
+    const powerBlocked = () => powerFailures > 0 && Date.now() < powerRetryAt;
+    const powerRecovered = () => { powerFailures = 0; powerRetryAt = 0; };
+    const watchPowerRefusal = (child: ReturnType<typeof spawnCli>) => {
+      child.once("close", () => {
+        // procs registers its close observer first, including pid-less EPOWER. Count each failed child exactly once.
+        if (engineExecutableMissing(child)) { missingExecutable(); return; }
+        if (!hostPowerRefused(child)) return;
+        powerFailures = Math.min(powerFailures + 1, 5);
+        powerRetryAt = Date.now() + Math.min(30_000 * 2 ** (powerFailures - 1), 300_000);
+      });
+    };
     const auxiliary = new Set<ReturnType<typeof spawnCli>>();
     const auxiliaryCleanup = new Map<ReturnType<typeof spawnCli>, () => Promise<void>>();
     const guardSpawn = () => {
@@ -760,11 +818,14 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
     });
     /** Which thread a gate entry belongs to: dispose uses it to tell a turn held by an unconfirmed host shutdown from a stuck startup. */
     const entryThreads = new WeakMap<GateEntry, ThreadState>();
-    const childEnv = () => museChildEnv(process.env, input.environment);
-
-    const startHost = async (args: string[], cwd: string, key: string, requestMcp: boolean, register?: (host: Host) => void): Promise<Host> => {
+    const startHost = async (args: string[], cwd: string, key: string, requestMcp: boolean, register?: (host: Host) => void, noLimits = false, powerRetried = false): Promise<Host> => {
       guardSpawn();
-      const child = spawnCli(config.cli, args, { cwd, env: childEnv(), stdio: ["pipe", "pipe", "pipe"] }, engineJob());
+      if (!executable) throw new Error(MUSE_NOT_INSTALLED_NOTE);
+      if (powerBlocked() && !noLimits) throw new Error(MUSE_POWER_REFUSED_NOTE);
+      const child = spawnCli(config.cli, args, { cwd, env: childEnv(), stdio: ["pipe", "pipe", "pipe"] }, museJob(noLimits));
+      let initializing = true;
+      const recoveringStartup = () => noLimits && initializing;
+      watchPowerRefusal(child);
       let spawnError: NodeJS.ErrnoException | undefined;
       child.once("error", (error) => { spawnError = error as NodeJS.ErrnoException; });
       let rootDone!: () => void;
@@ -774,7 +835,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
       liveChildren.set(child, exited);
 
       const admissions = new Map<string, MuseAdmission>();
-      const connection = new Connection(stdioTransport(child, exited, admissions, (frame, submitting) =>
+      const connection = new MuseConnection(stdioTransport(child, exited, admissions, (frame, submitting) =>
         checkMuseWrite(frame, host, catalogLoaded && host.catalogGeneration === catalogGeneration, classify, submitting), error => { host.localRefusal = error; }, gate));
       let closing: Promise<unknown> | undefined;
       const host: Host = {
@@ -807,10 +868,12 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
       }
       register?.(host);
       child.once("exit", () => {
-        if (!host.closed) void retireHost(host, "Muse Code stopped unexpectedly.").catch(() => {});
+        // No limits initialization may recover a wrapper refusal at close,
+        // after procs has classified its complete stderr.
+        if (!host.closed && !recoveringStartup()) void retireHost(host, "Muse Code stopped unexpectedly.").catch(() => {});
         rootDone();
       });
-      attach(host);
+      attach(host, recoveringStartup);
       connection.onServerRequest(async request => {
         if (!["approval/request", "userInput/request"].includes(request.method) || host.fatal || host.closed || host.selection?.classification !== "regular" || host.selection.provisional || asRecord(request.params).sessionId !== host.sessionId) {
           void retireHost(host, MUSE_NO_REGULAR_MODEL_LINE).catch(() => {});
@@ -822,28 +885,45 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
       let timer: NodeJS.Timeout | undefined;
       try {
         const initialized = await Promise.race([
-          connection.request("initialize", { clientInfo: CLIENT_INFO, capabilities: { requestedCapabilities: requestMcp ? ["sessionMcp"] : [] } }),
+          NotModelRequest("Muse protocol initialization or model/list catalog query; no command launches inference", connection.request("initialize", { clientInfo: CLIENT_INFO, capabilities: { requestedCapabilities: requestMcp ? ["sessionMcp"] : [] } })),
           exited.then(() => { throw new Error(`${ENGINE} closed before it started.`); }),
           new Promise<never>((_resolve, reject) => {
             timer = setTimeout(() => reject(new Error(`${ENGINE} did not start within 30 seconds.`)), STARTUP_TIMEOUT_MS);
             timer.unref?.();
           }),
         ]);
-        connection.notify("initialized");
+        NotModelRequest("Muse protocol initialization or model/list catalog query; no command launches inference", connection.notify("initialized"));
         await connection.flush();
+        initializing = false;
         const granted = initialized.grantedCapabilities;
         host.grantedMcp = Array.isArray(granted) && granted.includes("sessionMcp");
+        powerRecovered();
         return host;
       } catch (error) {
+        if (noLimits && hostPowerPlatform() === "darwin") await host.close();
+        const retryPower = noLimits && !powerRetried && hostPowerPlatform() === "darwin" && hostPowerRefused(child);
+        const previousState = host.state, previousActive = previousState?.active, previousSession = previousState?.sessionId;
+        if (retryPower) host.owner = undefined;
         await retireHost(host, spawnError ? describeSpawnFailure(spawnError, config.cli).message : "Muse Code startup failed.");
+        if (engineExecutableMissing(child)) throw new Error(MUSE_NOT_INSTALLED_NOTE);
+        if (retryPower) {
+          if (previousActive && (previousState?.active !== previousActive || previousActive.finished || previousActive.stopping || gate.why(previousActive.entry) !== null)) throw new Error(`${ENGINE} was stopped while it was starting.`);
+          if (previousState && previousState.host === undefined) previousState.sessionId = previousSession;
+          recordNoLimitsMacPowerRefusal(powerSession, "sandbox-exec refused the Muse launch after its profile probe");
+          powerRecovered();
+          return startHost(args, cwd, key, requestMcp, register, true, true);
+        }
+        if (hostPowerRefused(child)) throw new Error(MUSE_POWER_REFUSED_NOTE);
         throw spawnError ? new Error(describeSpawnFailure(spawnError, config.cli).message) : error;
       } finally {
         if (timer) clearTimeout(timer);
       }
     };
 
-    const refreshModels = (): Promise<void> => {
+    const refreshModels = (options?: { manual?: boolean; noLimits?: boolean }): Promise<void> => {
       if (refreshing) return refreshing;
+      if (!checkExecutable(options?.manual === true)) return Promise.resolve();
+      if (powerBlocked() && !options?.noLimits) return Promise.resolve();
       catalogLoaded = false;
       regularIds.clear();
       const current = ++catalogGeneration;
@@ -857,19 +937,17 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
         let host: Host | undefined;
         let result: unknown;
         try {
-          host = await startHost(["serve", "--disable-shell", "--disable-write", "--no-session-log", ...MUSE_CONTRIBUTOR_OFF_ARGS], cwd, "models", false, launch => { host = launch; });
+          host = await startHost(["serve", "--disable-shell", "--disable-write", "--no-session-log", ...MUSE_CONTRIBUTOR_OFF_ARGS], cwd, "models", false, launch => { host = launch; }, options?.noLimits);
           let timer: NodeJS.Timeout | undefined;
           result = await Promise.race([
-            host.connection.request("model/list", {}),
+            NotModelRequest("Muse protocol initialization or model/list catalog query; no command launches inference", host.connection.request("model/list", {})),
             new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error("Muse model list unavailable.")), MODEL_LIST_TIMEOUT_MS); timer.unref?.(); }),
           ]).finally(() => { if (timer) clearTimeout(timer); });
         } catch (error) {
           if (auxiliaryShutdownUnconfirmed) throw new Error("MUSE_SHUTDOWN_UNCONFIRMED");
         } finally {
-          if (host) {
-            await host.close();
-            if (dirname(cwd) === resolvePath(tmpdir()) && basename(cwd).startsWith("murage-muse-models-")) rmSync(cwd, { recursive: true, force: true });
-          }
+          if (host) await host.close();
+          if (dirname(cwd) === resolvePath(tmpdir()) && basename(cwd).startsWith("murage-muse-models-")) rmSync(cwd, { recursive: true, force: true });
         }
         if (current !== catalogGeneration || disposed || auxiliaryShutdownUnconfirmed) return;
         const rows = asRecord(result).models;
@@ -890,16 +968,17 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
       return refreshing;
     };
 
-    let version: string | null | undefined;
-    let versionProbe: Promise<string | null> | undefined;
     const probeVersion = (): Promise<string | null> => {
       guardSpawn();
       if (versionProbe) return versionProbe;
+      versionProbing = true;
       versionProbe = Promise.resolve().then(async () => {
         guardSpawn();
+        if (!executable || powerBlocked()) return null;
         let child: ReturnType<typeof spawnCli>;
-        try { child = spawnCli(config.cli, ["--version"], { cwd: probeFolder(), env: childEnv(), stdio: ["ignore", "pipe", "pipe"] }, engineJob()); }
+        try { child = spawnCli(config.cli, ["--version"], { cwd: probeFolder(), env: childEnv(), stdio: ["ignore", "pipe", "pipe"] }, museJob()); }
         catch { return null; }
+        watchPowerRefusal(child);
         let rootDone!: () => void;
         const rootExit = new Promise<void>(resolve => { rootDone = resolve; });
         const closed = new Promise<void>(resolve => child.once("close", () => resolve()));
@@ -928,8 +1007,11 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
         });
         if (timer) clearTimeout(timer);
         await clean();
+        if (hostPowerRefused(child)) return null;
+        if (!failed && child.exitCode === 0 && out.trim()) powerRecovered();
         return failed || child.exitCode !== 0 || !out.trim() ? null : /(\d+\.\d+\.\d+[\w.-]*)/.exec(out)?.[1] ?? out.trim();
       });
+      void versionProbe.then(() => { versionProbing = false; }, () => { versionProbing = false; });
       const probe = versionProbe;
       void probe.then(result => {
         // Null is retryable only after the probe has confirmed cleanup (or never spawned).
@@ -976,6 +1058,11 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
 
     const failTurn = (state: ThreadState, active: ActiveTurn, message: string, extra: Record<string, unknown> = {}, final = false) => {
       if (active.finished) return;
+      // Installation absence before delivery is an unavailable engine, with no chat warning card.
+      if (!executable && !active.nativeTurnId && !active.pendingNativeCommandId) {
+        finishTurn(state, active, { ok: false, stopReason: "refused", final });
+        return;
+      }
       const auth = AUTH_FAILURE.test(message);
       // The failure card travels in the verdict; finish emits it (or, under a mark, the stopped pair / the engine-closed line instead).
       finishTurn(state, active, { ok: false, stopReason: "error", final, error: {
@@ -996,19 +1083,20 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
       void active.stopping.catch(() => {});
     };
 
-    const ownedCommand = async (state: ThreadState, host: Host, active: ActiveTurn, method: string, params: Record<string, unknown>) => {
+    const ownedCommand = async (state: ThreadState, host: Host, active: ActiveTurn, method: string, params: Record<string, unknown>,beforeSubmit?:()=>void,onWrite?:()=>void) => {
       host.commands++;
       try {
         return await musePromptCommand(host.connection, host.admissions, method, params, {
+          beforeSubmit,onWrite,
           stopped: () => host.closed || state.host !== host || host.owner !== active.turnId || state.active !== active || active.finished || Boolean(active.stopping),
         });
       } finally { host.commands--; }
     };
-    const decide = (state: ThreadState, approval: MuseApproval, choice: MuseChoice, host = state.host!, active = state.active!) =>
+    const decide = (state: ThreadState, approval: MuseApproval, choice: MuseChoice, host = state.host!, active = state.active!,beforeSubmit?:()=>void,onWrite?:()=>void) =>
       ownedCommand(state, host, active, "approval/decide", {
         sessionId: approval.sessionId, approvalId: approval.approvalId,
         requirementId: approval.currentRequirementId, choiceId: choice.choiceId,
-      });
+      },beforeSubmit,onWrite);
 
     const onApproval = (state: ThreadState, active: ActiveTurn, approval: MuseApproval) => {
       const subject = approval.subject ?? {};
@@ -1020,16 +1108,18 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
         void decide(state, approval, deny).catch(() => haltForAskStop(state, active));
         return;
       }
-      state.pending.set(approval.approvalId, { host: state.host!, active, kind: "approval", sessionId: approval.sessionId, approval });
       const shell = subject.kind === "shell" && typeof subject.command === "string" ? subject.command : undefined;
       const tool = approval.toolName || subject.toolName || subject.kind || "tool";
       const args = parseArgs(approval.rawArgs);
       const filePath = subject.kind === "fileAccess" && subject.path ? resolvePath(subject.workspaceRoot ?? state.cwd ?? process.cwd(), subject.path) : undefined;
+      const operationInput=shell!==undefined?{command:shell,...(active.permissionNow?.().noLimits?{cwd:state.cwd}:{})}:active.permissionNow?.().noLimits&&filePath?{...(args??subject),path:filePath,cwd:state.cwd}:args??subject;
+      state.pending.set(approval.approvalId,{host:state.host!,active,kind:'approval',sessionId:approval.sessionId,approval,operationInput});
       emit({
         type: "request.opened", threadId: state.threadId, turnId: active.turnId, requestId: approval.approvalId, requestType: "permission",
+        executionCwd: state.cwd,
         tool: shell !== undefined ? "shell" : tool,
         summary: redactSecretsInText(oneLine(shell ?? subject.path ?? subject.host ?? subject.target ?? approval.toolName ?? `${ENGINE} asks to continue`, 500)),
-        toolCall: shell !== undefined ? { name: "shell", input: { command: shell } } : { name: tool, input: args ?? subject },
+        toolCall: {name:shell!==undefined?"shell":tool,input:operationInput},
         ...(subject.kind ? { toolKind: subject.kind === "shell" ? "execute" : subject.kind === "fileAccess" ? (subject.access === "read" ? "read" : "edit") : subject.kind } : {}),
         ...(filePath ? { filePaths: [filePath] } : {}),
         ...(shell !== undefined && process.platform === "win32" ? { commandShell: "pwsh" } : {}),
@@ -1037,7 +1127,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
     };
 
     const onNotification = (state: ThreadState, host: Host, method: string, params: Record<string, unknown>) => {
-      if (host.closed || host.fatal || state.host !== host || params.sessionId !== host.sessionId) return;
+      if (host.closed || host.fatal || state.host !== host || params.sessionId !== host.sessionId || state.active?.restarting) return;
       const active = state.active;
       const threadId = state.threadId;
       // A correlated native notification is delivery evidence even before an ack.
@@ -1071,6 +1161,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
             if (!isRunning(item.status) && (!seen || isRunning(seen.status))) {
               emit({ type: "item.completed", threadId, turnId: active.turnId, itemId: item.itemId, itemType: "tool", ...museToolOutput(item) });
             }
+            if (item.status === "completed") active.postureBarrier?.boundary();
             if (active.posture === "ask" && museChangeItem(item)) haltForAskStop(state, active);
           }
           return;
@@ -1112,6 +1203,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
             : undefined;
           if (!active.nativeTurnId) { active.earlyTerminal = params; return; }
           const terminal = String(params.terminal);
+          if (active.postureBarrier?.changing) { active.postureBarrier.boundary(); return; }
           if (terminal === "completed") finishTurn(state, active, { ok: true, usage: tokens });
           else if (terminal === "cancelled") finishTurn(state, active, { ok: false, stopReason: "interrupted", usage: tokens });
           else void retireHost(host, "Muse Code turn failed.").catch(() => {});
@@ -1196,7 +1288,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
       }
     };
 
-    const attach = (host: Host) => {
+    const attach = (host: Host, recoveringStartup: () => boolean = () => false) => {
       host.connection.onNotification(notification => {
         try {
           const params = asRecord(notification.params);
@@ -1208,7 +1300,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
       });
       host.connection.onProtocolError(() => { void retireHost(host, "Muse Code protocol error.").catch(() => {}); });
       void host.connection.closed.then(() => {
-        if (!host.closed) void retireHost(host, host.localRefusal?.message ?? "Muse Code connection closed.").catch(() => {});
+        if (!host.closed && !recoveringStartup()) void retireHost(host, host.localRefusal?.message ?? "Muse Code connection closed.").catch(() => {});
       });
     };
 
@@ -1263,6 +1355,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
     const ensureSession = async (state: ThreadState, turn: SendTurnInput, active: ActiveTurn): Promise<{ started: boolean; host: Host }> => {
       const e = active.entry;
       await gate.step(e, initialModels);
+      if (active.posture === "unlimited" && !catalogLoaded) { powerRecovered(); await gate.step(e, refreshModels({ noLimits: true })); }
       guardSpawn();
       if (active.finished || active.stopping || state.active !== active) throw new Error(`${ENGINE} was stopped while it was starting.`);
       const selected = turn.model !== undefined ? museTurnModel(turn.model) : museTurnModel(catalog.default) ?? museTurnModel(MUSE_DEFAULT_MODEL);
@@ -1289,13 +1382,21 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
       let host: Host;
       try {
         // A mark that lands while the host starts reaps the host it started (onStopped), then the step throws GateStopped.
-        host = await gate.step(e, startHost(args, cwd, key, mcpServers !== null, (launch) => { launch.owner = active.turnId; launch.state = state; launch.requested = selected; launch.selection = { model: selected, classification: classify(selected), revision: 0, generation: launch.generation, source: "requested", provisional: true }; state.host = launch; }),
+        host = await gate.step(e, startHost(args, cwd, key, mcpServers !== null, (launch) => { launch.owner = active.turnId; launch.state = state; launch.requested = selected; launch.selection = { model: selected, classification: classify(selected), revision: 0, generation: launch.generation, source: "requested", provisional: true }; state.host = launch; }, active.posture === "unlimited"),
           { onStopped: (started) => { void started.close().catch(() => {}); } });
       } catch (error) {
         if (error instanceof GateStopped) throw error;
         // A turn whose read-only launch fails does not run.
         if (active.posture === "ask") throw new Error(askStopUnavailableLine(ENGINE));
         throw error;
+      }
+      if (active.posture === "unlimited") {
+        const title = takeNoLimitsPowerFallbackNotice(powerSession);
+        if (title) {
+          const itemId = `power-fallback-${active.turnId}`;
+          emit({ type: "item.started", threadId: turn.threadId, turnId: active.turnId, itemId, itemType: "tool", origin: "murage", toolKind: "notice", title });
+          emit({ type: "item.completed", threadId: turn.threadId, turnId: active.turnId, itemId, itemType: "tool", ok: true });
+        }
       }
       if (state.active !== active || active.finished || active.stopping) {
         await gate.step(e, host.close().catch(() => {}));
@@ -1374,6 +1475,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
     };
 
     const runTurn = async (state: ThreadState, turn: SendTurnInput, active: ActiveTurn) => {
+      active.permissionNow=turn.permissionNow??(()=>turn);
       const threadId = turn.threadId;
       const e = active.entry;
       try {
@@ -1463,7 +1565,9 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
         queueing: true,
       },
       async sendTurn(turn) {
+        if ((turn.permissionNow?.() ?? turn).noLimits === true) powerRecovered();
         guardSpawn();
+        if (!executable) throw new Error(MUSE_NOT_INSTALLED_NOTE);
         const state = threadOf(turn.threadId);
         if (state.host?.shutdownFailed) throw new Error("MUSE_SHUTDOWN_UNCONFIRMED");
         if (state.host?.fatal) throw new Error(`${ENGINE} is still stopping on this thread.`);
@@ -1472,7 +1576,32 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
         const e = gate.enter(turn.threadId, { turnId });
         entryThreads.set(e, state);
         return gate.run(e, async () => {
-          const active: ActiveTurn = { turnId, posture: musePosture(turn), items: new Map(), streamed: new Map(), reply: "", finished: false, entry: e };
+          const active: ActiveTurn = { turnId, get posture() { return musePosture(turn); }, items: new Map(), streamed: new Map(), reply: "", finished: false, entry: e };
+          const barrier = active.postureBarrier = new PostureBarrier();
+          let applied = musePosture(turn);
+          active.onPostureChange = async () => {
+            if (active.finished || active.stopping || applied === musePosture(turn)) return;
+            await barrier.change(async () => {
+              if (active.finished || active.stopping || state.active !== active) return;
+              active.restarting = true;
+              try {
+                const host = state.host;
+                if (host && active.nativeTurnId) {
+                  await musePromptCommand(host.connection, host.admissions, "turn/interrupt",
+                    { sessionId: state.sessionId, turnId: active.nativeTurnId }, { stopped: () => host.closed });
+                }
+                for (const requestId of state.pending.keys()) emit({ type: "request.resolved", threadId: state.threadId,
+                  turnId, requestId, behavior: "deny", source: "system" });
+                state.pending.clear();
+                await closeHost(state);
+                if (gate.why(e) !== null || active.finished) return;
+                active.nativeTurnId = undefined; active.pendingNativeCommandId = undefined; active.earlyTerminal = undefined;
+                applied = musePosture(turn);
+              } finally { active.restarting = false; }
+              await runTurn(state, { ...turn, text: POSTURE_CONTINUATION }, active);
+              recordPostureAck(DRIVER_KIND, instanceId, state.threadId, turnId, turn.permissionNow?.() ?? turn, 'replacement-session');
+            });
+          };
           // A terminal is on its way while a Stop (endUnconfirmed / active.stopping) runs: a startup that ends then is not abandoned.
           e.terminalPending = () => Boolean(active.stopping) && !active.finished;
           // the gate's settleOutstanding after a drain timeout carries the last usage the host reported (ruling U): a sync getter, nothing awaited
@@ -1496,6 +1625,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
           return { turnId };
         }, () => null);
       },
+      async onPostureChange(threadId) { await threads.get(threadId)?.active?.onPostureChange?.(); },
       async interruptTurn(threadId) {
         gate.ask(threadId);
         const state = threads.get(threadId);
@@ -1531,12 +1661,16 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
         const resolved = (behavior: "deny" | "allow" | "answer", source: "system" | "user") => {
           if (state.pending.get(requestId) !== pending) return;
           state.pending.delete(requestId);
+          // In-process tool loop: consuming this decision is the native receipt.
+          answerTransport.confirm(threadId, requestId, Promise.resolve(true));
           emit({ type: "request.resolved", threadId, ...(turnId ? { turnId } : {}), requestId, behavior, source });
         };
+        let releaseHeld=false;
         try {
           if (pending.kind === "approval" && pending.approval) {
             const choices = pending.approval.availableChoices;
             if (decision.behavior === "allow") {
+              if(pending.active.permissionNow?.().noLimits===true&&!answerTransport.guardRelease(threadId,requestId,()=>guardEngineRelease({threadId,requestId,turnId:pending.active.turnId,providerInstanceId:instanceId},pending.operationInput))){pending.resolving=false;return 'unavailable';}
               const once = museAllowOnce(choices);
               if (!once) {
                 // No one-off allow on offer: nothing broader is ever picked, so the ask is refused.
@@ -1545,7 +1679,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
                 resolved("deny", "system");
                 return "unavailable";
               }
-              await decide(state, pending.approval, once, pending.host, pending.active);
+              await decide(state, pending.approval, once, pending.host, pending.active,()=>{if(pending.active.permissionNow?.().noLimits===true&&!answerTransport.guardRelease(threadId,requestId,()=>guardEngineRelease({threadId,requestId,turnId:pending.active.turnId,providerInstanceId:instanceId},pending.operationInput))){releaseHeld=true;throw new Error('protected-release-held');}},()=>{if(pending.active.permissionNow?.().noLimits===true)resolved('allow','user');});
               resolved("allow", "user");
               return "allowed-once";
             }
@@ -1569,6 +1703,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
           resolved("answer", "user");
           return "answered";
         } catch {
+          if(releaseHeld){pending.resolving=false;return "unavailable";}
           resolved("deny", "system");
           return "unavailable";
         }
@@ -1623,7 +1758,7 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
 
     const initialModels = refreshModels();
     void initialModels.catch(() => {});
-    return {
+    return withRequestDelivery({
       instanceId,
       driverKind: DRIVER_KIND,
       displayName: input.displayName,
@@ -1633,7 +1768,16 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
       adapter,
       async snapshot(): Promise<ProviderSnapshot> {
         guardSpawn();
+        const wasMissing = !executable;
+        if (!checkExecutable()) return { state: "unavailable", reason: MUSE_NOT_INSTALLED_NOTE, authenticated: false };
+        if (wasMissing) await refreshModels();
+        const powerStatus = (): ProviderSnapshot => ({ state: "unavailable", reason: MUSE_POWER_REFUSED_NOTE, authenticated: false });
+        if (powerBlocked()) return powerStatus();
+        // A prior successful version must not hide a later catalog/session refusal. Retry the probe at the deadline.
+        if (powerFailures && !versionProbing) { version = undefined; versionProbe = undefined; }
         version ??= await probeVersion();
+        if (!executable) return { state: "unavailable", reason: MUSE_NOT_INSTALLED_NOTE, authenticated: false };
+        if (powerFailures) return powerStatus();
         if (version === null) {
           version = undefined;
           return { state: "unavailable", reason: MUSE_NOT_INSTALLED_NOTE, authenticated: false };
@@ -1670,6 +1814,6 @@ export const MuseCodeDriver: ProviderDriver<MuseConfig> = {
         threads.clear();
         listeners.clear();
       },
-    };
+    }, answerTransport);
   },
 };

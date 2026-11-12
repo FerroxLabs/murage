@@ -1,277 +1,84 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The trigram search index (messages_fts) must change WHICH rows a search
-// reads, never WHICH rows it returns. Every test here either proves the index
-// stays in step with messages through each write path, or compares the
-// indexed search against the plain scan it replaced.
+// Search candidates can lag; the live-row LIKE, audience, order and scope remain
+// authoritative. These tests use the real worker and an isolated test data dir.
 import { mkdirSync } from "node:fs";
-import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { beforeEach, describe, expect, it } from "vitest";
-
+import { beforeEach,afterEach,it } from "vitest";
+import { expect } from "./testing/search-index-oracle.ts";
 import { DATA_DIR } from "./config.ts";
-import { database, finishBackgroundUpgradeWorkNow } from "./database.ts";
-import { closeMessageDb, deleteThread, insertMessage, searchMessages, updateMessage } from "./message-db.ts";
-import {
-  backfillMessageSearchIndex,
-  messageSearchIndexReady,
-  rebuildMessageSearchIndex,
-  trigramQuery,
-} from "./message-search-index.ts";
-import type { Message } from "./store.ts";
+import { database } from "./database.ts";
+import { closeMessageDb,deleteThread,insertMessage,searchMessages,updateMessage } from "./message-db.ts";
+import { intentCount,openSearchIndex,searchCleanupPending,searchIndexTestHooks,stopSearchIndex,trigramQuery,readMessageSearchCandidates,rebuildMessageSearchIndex } from "./testing/search-index-compat.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
-
-let clock = 1_000;
-const msg = (id: string, text: string, extra: Partial<Message> = {}): Message => ({ id, role: "user", kind: "text", text, at: ++clock, ...extra });
-const chip = (id: string, tool: string): Message =>
-  ({ id, role: "bot", kind: "activity", at: ++clock, tool: { name: tool, ok: true } }) as Message;
-
-/** The query searchMessages() ran before the index existed, verbatim. */
-function scan(needle: string, limit = 40, thread?: string) {
-  const folded = needle.trim().toLowerCase();
-  const pattern = `%${folded.replace(/([\\%_])/g, "\\$1")}%`;
-  return database()
-    .prepare(
-      "SELECT thread_id, id FROM messages " +
-        `WHERE ${thread ? "thread_id = ? AND " : ""}((kind = 'text' AND text IS NOT NULL AND lower(text) LIKE ? ESCAPE '\\') ` +
-        "   OR (kind = 'activity' AND json_extract(json, '$.tool.name') IS NOT NULL AND lower(json_extract(json, '$.tool.name')) LIKE ? ESCAPE '\\')) " +
-        "ORDER BY at DESC, rowid DESC LIMIT ?",
-    )
-    .all(...(thread ? [thread] : []), pattern, pattern, limit)
-    .map((row) => `${row.thread_id}/${row.id}`);
-}
-const found = (query: string, limit = 40, thread?: string) =>
-  searchMessages(query, limit, thread).map((hit) => `${hit.threadId}/${hit.messageId}`);
-const indexedRows = () => Number(database().prepare("SELECT COUNT(*) AS n FROM messages_fts_docsize").get()!.n);
-const fts = (query: string) =>
-  database().prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?").all(trigramQuery(query)).length;
-
-beforeEach(() => {
-  closeMessageDb();
-  removeTempDirSync(DATA_DIR);
-  mkdirSync(DATA_DIR, { recursive: true });
+import * as messageDb from './message-db.ts';
+const searchMessagesWithMeta = messageDb.searchMessagesWithMeta ?? ((...args:Parameters<typeof messageDb.searchMessages>)=>({hits:messageDb.searchMessages(...args),partial:false}));
+import type { Message } from "./store.ts";
+let clock=1000;
+const msg=(id:string,text:string,extra:Partial<Message>={}):Message=>({id,role:"user",kind:"text",text,at:++clock,...extra});
+const chip=(id:string,name:string):Message=>({id,role:"bot",kind:"activity",at:++clock,tool:{name,ok:true}} as Message);
+const found=(q:string,n=40,scope?:string)=>searchMessages(q,n,scope,{owner:true}).map(h=>h.threadId+"/"+h.messageId);
+async function idle(){database();const deadline=Date.now()+20000;while(searchCleanupPending(database())){if(Date.now()>deadline)throw Error("index not settled");await new Promise(r=>setTimeout(r,20));}}
+function withIndex<T>(run:(db:DatabaseSync)=>T):T{const db=openSearchIndex(DATA_DIR);try{return run(db);}finally{db.close();}}
+const indexed=()=>withIndex(db=>Number((db.prepare("SELECT 1 FROM sqlite_schema WHERE name='docs'").get()?db.prepare("SELECT COUNT(*) AS n FROM docs").get()!.n:db.prepare("SELECT COUNT(*) AS n FROM messages_fts_docsize").get()!.n)));
+const fts=(query:string)=>withIndex(db=>db.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?").all(trigramQuery(query)).length);
+beforeEach(async()=>{closeMessageDb();await stopSearchIndex();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
+afterEach(async()=>{searchIndexTestHooks.halted=false;closeMessageDb();await stopSearchIndex();});
+it("T-SEARCH: insert, patch, activity rename, kind change and replace converge while pending stays searchable",async()=>{
+  insertMessage("t",msg("a","first alpacas"));insertMessage("t",chip("b","Bash: alembic upgrade"));
+  expect(found("alpacas"), "ORACLE:T-SEARCH").toEqual(["t/a"]);await idle();expect(indexed(), "ORACLE:T-SEARCH").toBe(2);expect(fts("alpacas"), "ORACLE:T-SEARCH").toBe(1);
+  updateMessage("t",msg("a","second llamas"));expect(found("alpacas"), "ORACLE:T-SEARCH").toEqual([]);expect(found("llamas"), "ORACLE:T-SEARCH").toEqual(["t/a"]);
+  updateMessage("t",chip("b","Grep: needle"));expect(found("bash"), "ORACLE:T-SEARCH").toEqual([]);expect(found("grep"), "ORACLE:T-SEARCH").toEqual(["t/b"]);
+  await idle();expect(fts("alpacas"), "ORACLE:T-SEARCH").toBe(0);expect(indexed(), "ORACLE:T-SEARCH").toBe(2);
+  expect(intentCount(database()),"ORACLE:T-SEARCH" + " " + ("replacement has durable fixed references")).toBeGreaterThan(0);
+  const before=Number(database().prepare("SELECT MAX(seq) AS n FROM search_intents").get()!.n);
+  updateMessage("t",{...msg("a","second llamas"),attachments:[]});
+  expect(Number(database().prepare("SELECT MAX(seq) AS n FROM search_intents").get()!.n), "ORACLE:T-SEARCH").toBe(before);
+  updateMessage("t",{...msg("a","second llamas"),kind:"options"});await idle();expect(indexed(), "ORACLE:T-SEARCH").toBe(1);
+  insertMessage("t",msg("a","third draft"));insertMessage("t",msg("a","fourth draft"));await idle();expect(indexed(), "ORACLE:T-SEARCH").toBe(2);expect(fts("third draft"), "ORACLE:T-SEARCH").toBe(0);expect(found("fourth draft"), "ORACLE:T-SEARCH").toEqual(["t/a"]);
 });
-
-describe("index stays in step with every write path", () => {
-  it("indexes inserts and answers from the index", () => {
-    insertMessage("t", msg("m1", "Deploy the Railway service"));
-    insertMessage("t", chip("c1", "Bash: alembic upgrade head"));
-    insertMessage("t", { ...msg("m2", "an options card"), kind: "options" });
-    expect(messageSearchIndexReady(database())).toBe(true);
-    expect(indexedRows()).toBe(2); // the text row and the chip; not the card
-    expect(found("railway")).toEqual(["t/m1"]);
-    expect(found("ALEMBIC upgrade")).toEqual(["t/c1"]);
-    expect(found("options card")).toEqual([]);
-    expect(fts("railway")).toBe(1);
-  });
-
-  it("an edit re-indexes: the old words stop matching, the new ones start", () => {
-    insertMessage("t", msg("m1", "first draft about alpacas"));
-    updateMessage("t", msg("m1", "second draft about llamas"));
-    expect(found("alpacas")).toEqual([]);
-    expect(found("llamas")).toEqual(["t/m1"]);
-    expect(fts("alpacas")).toBe(0);
-    expect(indexedRows()).toBe(1);
-  });
-
-  it("a patch that leaves the text alone does not disturb the entry", () => {
-    insertMessage("t", msg("m1", "stable words here"));
-    updateMessage("t", { ...msg("m1", "stable words here"), attachments: [] });
-    expect(found("stable words")).toEqual(["t/m1"]);
-    expect(indexedRows()).toBe(1);
-  });
-
-  it("a message that changes kind or loses its text leaves the index", () => {
-    insertMessage("t", msg("m1", "will become a card"));
-    insertMessage("t", msg("m2", "will lose text"));
-    updateMessage("t", { ...msg("m1", "will become a card"), kind: "options" });
-    updateMessage("t", { id: "m2", role: "user", kind: "text", at: 5 } as Message);
-    expect(found("become a card")).toEqual([]);
-    expect(found("lose text")).toEqual([]);
-    expect(indexedRows()).toBe(0);
-  });
-
-  it("an activity chip is found by tool name and follows a rename", () => {
-    insertMessage("t", chip("c1", "Bash: ls"));
-    updateMessage("t", chip("c1", "Grep: needle"));
-    expect(found("bash")).toEqual([]);
-    expect(found("grep: needle")).toEqual(["t/c1"]);
-  });
-
-  it("re-inserting an id (INSERT OR REPLACE gives it a new rowid) leaves exactly one entry", () => {
-    insertMessage("t", msg("m1", "version one text"));
-    insertMessage("t", msg("m2", "neighbour"));
-    insertMessage("t", msg("m1", "version two text"));
-    expect(found("version one")).toEqual([]);
-    expect(found("version two")).toEqual(["t/m1"]);
-    expect(indexedRows()).toBe(2);
-    // replacing the newest row reuses its rowid: the entry must still be right
-    insertMessage("t", msg("m1", "version three text"));
-    expect(found("version two")).toEqual([]);
-    expect(found("version three")).toEqual(["t/m1"]);
-    expect(indexedRows()).toBe(2);
-  });
-
-  it("deleting a thread removes its entries and merges them out of the index", () => {
-    insertMessage("a", msg("m1", "qzvxkjw keepsake"));
-    insertMessage("b", msg("m2", "zzqwvmx secret conversation"));
-    deleteThread("b");
-    expect(found("secret conversation")).toEqual([]);
-    expect(found("keepsake")).toEqual(["a/m1"]);
-    expect(indexedRows()).toBe(1);
-    const db = database();
-    db.exec("CREATE VIRTUAL TABLE temp.terms USING fts5vocab(main, messages_fts, 'row')");
-    try {
-      const terms = db.prepare("SELECT term FROM temp.terms").all().map((row) => String(row.term));
-      expect(terms).toContain("qzv");
-      expect(terms.filter((term) => "zzqwvmx secret conversation".includes(term) && !"qzvxkjw keepsake".includes(term))).toEqual([]);
-    } finally { db.exec("DROP TABLE temp.terms"); }
-  });
-
-  it("scoped search sees only its threads, with LIMIT counted among visible rows", () => {
-    for (let i = 0; i < 5; i++) insertMessage("noisy", msg(`n${i}`, "needle in the noise"));
-    insertMessage("quiet", msg("q1", "needle in the quiet"));
-    expect(found("needle", 40, "quiet")).toEqual(["quiet/q1"]);
-    expect(searchMessages("needle", 3, ["quiet", "noisy"]).length).toBe(3);
-    expect(searchMessages("needle", 40, [])).toEqual([]);
-  });
+it("T-EDIT-REPLACE / M34: replacement emits old and new rowid references in one owner commit",async()=>{
+  insertMessage("t",msg("a","old marker"));insertMessage("t",msg("b","neighbour"));await idle();searchIndexTestHooks.halted=true;
+  expect(intentCount(database()),"ORACLE:T-EDIT-REPLACE" + " " + ("replacement has durable fixed references")).toBeGreaterThan(0);
+  const before=Number(database().prepare("SELECT MAX(seq) AS n FROM search_intents").get()!.n);
+  const old=Number(database().prepare("SELECT rowid FROM messages WHERE id='a'").get()!.rowid);
+  insertMessage("t",msg("a","new marker"));
+  const fresh=Number(database().prepare("SELECT rowid FROM messages WHERE id='a'").get()!.rowid);
+  expect(database().prepare("SELECT rowid FROM search_intents WHERE seq>? ORDER BY seq").all(before).map(r=>Number(r.rowid)), "ORACLE:T-EDIT-REPLACE").toEqual([old,fresh]);
+  expect(found("old marker"), "ORACLE:T-EDIT-REPLACE").toEqual([]);expect(found("new marker"), "ORACLE:T-EDIT-REPLACE").toEqual(["t/a"]);
+  searchIndexTestHooks.halted=false;await idle();expect(indexed(), "ORACLE:T-EDIT-REPLACE").toBe(2);expect(fts("old marker"), "ORACLE:T-EDIT-REPLACE").toBe(0);
 });
-
-describe("indexed search equals the scan it replaced", () => {
-  it("agrees on a mixed corpus: case, wildcards, quotes, FTS syntax, CJK, emoji, accents", () => {
-    const corpus = [
-      "Railway deploy RAILWAY up", "50% done_ready", "she said \"hello world\" twice", "NEAR(a b) AND OR NOT *star* ^caret -dash",
-      "日本語のテキストを検索する", "你好，世界。再见", "हिन्दी में खोज", "emoji 😀😀😀 party", "Café crème brûlée ÉCOLE",
-      "col:umn t:filter {braces} (parens) 'single'", "tab\tand\nnewline spaced   out", "ab", "x".repeat(300) + " tail needle",
-    ];
-    corpus.forEach((text, i) => insertMessage(i % 2 ? "odd" : "even", msg(`m${i}`, text)));
-    insertMessage("odd", chip("chip", "Edit: Café.ts"));
-    const queries = [
-      "railway", "RAILWAY UP", "50%", "_ready", "done_", "\"hello", "hello world\"", "\"hello world\"", "near(a b)", "and or", "*star*", "^caret", "-dash",
-      "日本語", "日本", "本語の", "テキストを検索", "你好", "你好，世界", "世界。再", "हिन्दी", "😀😀😀", "😀😀", "é", "café", "CAFÉ", "crème", "École", "brûlée",
-      "col:umn", "t:filter", "{braces}", "(parens)", "'single'", "tab\tand", "newline spaced", "ab", "a", "tail needle", "Edit: Café", "nomatchatall", "x".repeat(40), "%", "_", "\\",
-    ];
-    for (const query of queries) expect({ query, got: found(query) }).toEqual({ query, got: scan(query) });
-  });
-
-  it("agrees with a limit and with a thread scope", () => {
-    for (let i = 0; i < 30; i++) insertMessage(i % 3 ? "x" : "y", msg(`m${i}`, `common phrase number ${i}`));
-    expect(found("common phrase", 7)).toEqual(scan("common phrase", 7));
-    expect(found("common phrase", 40, "y")).toEqual(scan("common phrase", 40, "y"));
-  });
-
-  it("agrees across the newest-rows shortcut and the index: dense word, rare word, equal timestamps, scope", () => {
-    const db = database();
-    db.exec("BEGIN");
-    for (let i = 0; i < 1200; i++) {
-      const text = `filler ${i} dense${i % 7 === 0 ? " common-word" : ""}${i === 3 ? " ancient-needle" : ""}`;
-      const at = i < 20 ? 5 : i; // a run of rows sharing one timestamp
-      db.prepare("INSERT INTO messages(thread_id, id, at, role, kind, text, json) VALUES (?, ?, ?, 'user', 'text', ?, ?)")
-        .run(i % 2 ? "x" : "y", `m${i}`, at, text, JSON.stringify({ id: `m${i}`, at, role: "user", kind: "text", text }));
-    }
-    db.exec("COMMIT");
-    closeMessageDb(); // reopen backfills
-    for (const [query, limit, thread] of [["common-word", 40], ["common-word", 5], ["common-word", 300], ["ancient-needle", 40], ["dense", 40], ["filler 1", 25], ["common-word", 40, "x"], ["ancient-needle", 40, "y"], ["ancient-needle", 40, "x"]] as const) {
-      expect({ query, limit, thread, got: found(query, limit, thread) }).toEqual({ query, limit, thread, got: scan(query, limit, thread) });
-    }
-  });
-
-  it("short queries and queries under three code points scan and still find everything", () => {
-    insertMessage("t", msg("m1", "日本の天気"));
-    insertMessage("t", msg("m2", "😀😀 two faces"));
-    insertMessage("t", msg("m3", "go to ab"));
-    expect(found("日本")).toEqual(["t/m1"]); // 2 code points: below a trigram
-    expect(found("😀😀")).toEqual(["t/m2"]); // 4 UTF-16 units, 2 code points
-    expect(found("ab")).toEqual(["t/m3"]);
-    expect(found("の")).toEqual(["t/m1"]);
-    expect(found("日本の")).toEqual(["t/m1"]); // 3 code points: indexed
-  });
-
-  it("searches without the index when it is gone, and writes keep working", () => {
-    insertMessage("t", msg("m1", "before the index broke"));
-    database().exec("DROP TABLE messages_fts");
-    expect(found("index broke")).toEqual(["t/m1"]); // query fails, falls back to the scan
-    expect(messageSearchIndexReady(database())).toBe(false);
-    expect(() => insertMessage("t", msg("m2", "after the index broke"))).not.toThrow();
-    expect(found("index broke")).toEqual(["t/m2", "t/m1"]);
-  });
+it("T-SEARCH: a thread drop scrubs search postings separately from messages WAL",async()=>{
+  insertMessage("a",msg("a","qzvxkjw secret"));insertMessage("b",msg("b","keepsake"));await idle();deleteThread("a");
+  expect(found("qzvxkjw"), "ORACLE:T-SEARCH").toEqual([]);await idle();expect(indexed(), "ORACLE:T-SEARCH").toBe(1);expect(fts("qzvxkjw"), "ORACLE:T-SEARCH").toBe(0);
 });
-
-describe("backfill", () => {
-  const raw = (id: string, text: string, at: number, kind = "text") =>
-    database()
-      .prepare("INSERT INTO messages(thread_id, id, at, role, kind, text, json) VALUES ('t', ?, ?, 'user', ?, ?, ?)")
-      .run(id, at, kind, text, JSON.stringify({ id, at, role: "user", kind, text, ...(kind === "activity" ? { tool: { name: text } } : {}) }));
-
-  it("builds the index for existing rows on open, once, and only above what it covers", () => {
-    insertMessage("t", msg("m1", "indexed already"));
-    raw("m2", "added by an older release", 5);
-    raw("m3", "Bash: from an old chip", 6, "activity");
-    closeMessageDb(); // the next open notes where the index ends; the background work fills the rest
-    finishBackgroundUpgradeWorkNow();
-    expect(found("older release")).toEqual(["t/m2"]);
-    expect(found("old chip")).toEqual(["t/m3"]);
-    expect(indexedRows()).toBe(3);
-    expect(backfillMessageSearchIndex(database())).toBe(0); // idempotent
-    expect(indexedRows()).toBe(3);
-  });
-
-  it("builds a whole index from nothing (a database restored from before the index) in chunks", () => {
-    const db = database();
-    db.exec("BEGIN");
-    for (let i = 0; i < 1300; i++) raw(`r${i}`, `restored row number ${i} with some text`, i + 1);
-    db.exec("COMMIT");
-    db.exec("INSERT INTO messages_fts(messages_fts) VALUES('delete-all')");
-    expect(indexedRows()).toBe(0);
-    closeMessageDb();
-    finishBackgroundUpgradeWorkNow();
-    expect(found("number 1234 with")).toEqual(["t/r1234"]);
-    expect(indexedRows()).toBe(1300);
-  });
-
-  it("walks the rows in bounded slices of rowids and reports each, ending at the last row", () => {
-    const db = database();
-    db.exec("BEGIN");
-    for (let i = 0; i < 1300; i++) raw(`s${i}`, `sliced row number ${i} with some text`, i + 1);
-    db.exec("COMMIT");
-    db.exec("INSERT INTO messages_fts(messages_fts) VALUES('delete-all')");
-    const last = Number(db.prepare("SELECT max(rowid) AS top FROM messages").get()!.top);
-    const seen: Array<{ done: number; total: number }> = [];
-    expect(backfillMessageSearchIndex(db, { onProgress: (progress) => seen.push(progress) })).toBe(1300);
-    expect(seen.length).toBeGreaterThanOrEqual(Math.floor(last / 500));
-    expect(seen.every((progress, at) => progress.total === last && (at === 0 || progress.done > seen[at - 1]!.done))).toBe(true);
-    expect(seen.at(-1)).toEqual({ done: last, total: last });
-    expect(indexedRows()).toBe(1300);
-    expect(backfillMessageSearchIndex(db, { onProgress: (progress) => seen.push(progress) })).toBe(0);
-  });
-
-  it("resumes an interrupted backfill and agrees with the scan afterwards", () => {
-    const db = database();
-    for (let i = 0; i < 40; i++) raw(`r${i}`, `resumable row ${i}`, i + 1);
-    rebuildMessageSearchIndex(db);
-    db.prepare("DELETE FROM messages_fts WHERE rowid > 20").run(); // killed halfway
-    closeMessageDb();
-    finishBackgroundUpgradeWorkNow();
-    for (const query of ["resumable row 3", "resumable row 39", "resumable"]) expect(found(query)).toEqual(scan(query));
-    expect(indexedRows()).toBe(40);
-  });
-
-  it("survives VACUUM and VACUUM INTO: rowids, and so the index, are unchanged", () => {
-    for (let i = 0; i < 50; i++) insertMessage("t", msg(`m${i}`, `vacuum subject ${i}`));
-    deleteThread("t"); // leave holes in the rowid space
-    for (let i = 0; i < 50; i++) insertMessage("u", msg(`n${i}`, `vacuum survivor ${i}`));
-    const db = database();
-    const before = db.prepare("SELECT rowid, id FROM messages ORDER BY rowid").all().map((row) => `${row.rowid}:${row.id}`);
-    db.exec("VACUUM");
-    expect(db.prepare("SELECT rowid, id FROM messages ORDER BY rowid").all().map((row) => `${row.rowid}:${row.id}`)).toEqual(before);
-    expect(found("vacuum survivor 7")).toEqual(scan("vacuum survivor 7"));
-    expect(found("vacuum survivor 7")).toEqual(["u/n7"]);
-    const copy = join(DATA_DIR, "copy.db");
-    db.prepare("VACUUM INTO ?").run(copy);
-    
-    const other = new DatabaseSync(copy);
-    try {
-      expect(other.prepare("SELECT rowid, id FROM messages ORDER BY rowid").all().map((row) => `${row.rowid}:${row.id}`)).toEqual(before);
-      expect(other.prepare("SELECT COUNT(*) AS n FROM messages_fts WHERE messages_fts MATCH ?").get(trigramQuery("survivor 7"))!.n).toBe(1);
-    } finally { other.close(); }
-  });
+it("T-SEARCH: indexed and pending LIKE agree on Unicode, literal wildcards and FTS syntax",async()=>{
+  const corpus=["Railway deploy RAILWAY up","50% done_ready","she said \"hello world\" twice","NEAR(a b) AND OR NOT *star* ^caret -dash","日本語のテキストを検索する","你好，世界。再见","हिन्दी में खोज","emoji 😀😀😀 party","Café crème brûlée ÉCOLE","col:umn t:filter {braces} (parens) 'single'","tab\tand\nnewline spaced   out","ab","x".repeat(300)+" tail needle"];
+  corpus.forEach((text,i)=>insertMessage(i%2?"odd":"even",msg("m"+i,text)));
+  const queries=["railway","RAILWAY UP","50%","_ready","done_","\"hello","hello world\"","near(a b)","and or","*star*","^caret","-dash","日本語","日本","本語の","テキストを検索","你好","你好，世界","世界。再","हिन्दी","😀😀😀","😀😀","é","café","CAFÉ","crème","École","brûlée","col:umn","t:filter","{braces}","(parens)","'single'","tab\tand","newline spaced","ab","a","tail needle","nomatchatall","x".repeat(40),"%","_","\\"];
+  const expected=(q:string)=>database().prepare("SELECT thread_id,id FROM messages WHERE kind='text' AND text LIKE ? ESCAPE '\\' ORDER BY at DESC,rowid DESC").all("%"+q.trim().toLowerCase().replace(/([\\%_])/g,"\\$1")+"%").map(r=>r.thread_id+"/"+r.id);
+  for(const q of queries)expect(found(q),"ORACLE:T-SEARCH" + " " + (q)).toEqual(expected(q));await idle();for(const q of queries)expect(found(q),"ORACLE:T-SEARCH" + " " + (q)).toEqual(expected(q));
+});
+it("T-SEARCH-SCOPED: limits count live visible hits, with total timestamp/rowid order",async()=>{
+  for(let i=0;i<1200;i++)insertMessage(i%2?"x":"y",{...msg("m"+i,`dense common-word ${i===3?"ancient-needle":""}`),at:i<20?5:i});
+  await idle();
+  const scan=(q:string,n:number,t?:string)=>database().prepare(`SELECT thread_id,id FROM messages WHERE text LIKE ? ${t?"AND thread_id=?":""} ORDER BY at DESC,rowid DESC LIMIT ?`).all("%"+q+"%",...(t?[t]:[]),n).map(r=>r.thread_id+"/"+r.id);
+  for(const[q,n,t]of [["common-word",5],["common-word",300],["ancient-needle",40],["common-word",40,"x"],["ancient-needle",40,"y"]] as const)expect(found(q,n,t), "ORACLE:T-SEARCH-SCOPED").toEqual(scan(q,n,t));
+  expect(searchMessages("common-word",40,[]), "ORACLE:T-SEARCH-SCOPED").toEqual([]);
+});
+it("T-SEARCH-PARTIAL: unavailable index preserves bounded pending search and discloses partial",async()=>{
+  insertMessage("t",msg("a","needle"));await stopSearchIndex();
+  const result=searchMessagesWithMeta("needle",40,undefined,{owner:true});expect(result.hits.map(h=>h.messageId), "ORACLE:T-SEARCH-PARTIAL").toContain("a");expect(result.partial, "ORACLE:T-SEARCH-PARTIAL").toBe(true);
+});
+it("T-SEARCH-SCOPED: withheld and forgotten audience verification survives stale candidates",async()=>{
+  insertMessage("t",msg("a","needle",{withheldFromBots:true}));insertMessage("t",msg("b","needle",{withheldFromBots:"forgotten"}));await idle();
+  expect(found("needle"), "ORACLE:T-SEARCH-SCOPED").toEqual(["t/b","t/a"]);
+  expect(searchMessagesWithMeta("needle",40,undefined,{owner:true,excludeForgotten:true}).hits.map(h=>h.messageId), "ORACLE:T-SEARCH-SCOPED").toEqual(["a"]);
+  expect(searchMessages("needle"), "ORACLE:T-SEARCH-SCOPED").toEqual([]);
+});
+it("T-REBUILD: schema/VACUUM changes reset off-thread; restored history is never scanned on main",async()=>{
+  for(let i=0;i<1300;i++)insertMessage("t",msg("r"+i,`restored row number ${i}`));await idle();
+  database().exec("VACUUM");await idle();expect(found("number 1234"), "ORACLE:T-REBUILD").toEqual(["t/r1234"]);expect(indexed(), "ORACLE:T-REBUILD").toBe(1300);
+  rebuildMessageSearchIndex(database());
+  const snapshot=readMessageSearchCandidates(database(),trigramQuery("restored"),10);expect(snapshot.rowids.length, "ORACLE:T-REBUILD").toBeLessThanOrEqual(2010);
+  await idle();expect(indexed(), "ORACLE:T-REBUILD").toBe(1300);
 });

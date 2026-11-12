@@ -1,0 +1,394 @@
+2026-11-10 20:39:25 [INFO] acp_adapter.entry: No .env found at /tmp/s0-home/hermes/.env, using system env
+2026-11-10 20:39:25 [INFO] acp_adapter.entry: Starting hermes-agent ACP adapter
+2026-11-10 20:39:25 [INFO] hermes_cli.plugins: Plugin 'browser-browser-use' registered browser provider: browser-use
+2026-11-10 20:39:25 [INFO] hermes_cli.plugins: Plugin 'browser-browserbase' registered browser provider: browserbase
+2026-11-10 20:39:25 [INFO] hermes_cli.plugins: Plugin 'browser-firecrawl' registered browser provider: firecrawl
+2026-11-10 20:39:26 [INFO] acp_adapter.server: ACP client connected
+2026-11-10 20:39:26 [INFO] acp_adapter.server: Initialize from murage-s0-capture (protocol v1)
+2026-11-10 20:39:26 [INFO] run_agent: No .env file found. Using system environment variables.
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'deepinfra' registered image_gen provider: deepinfra
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'fal' registered image_gen provider: fal
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'krea' registered image_gen provider: krea
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'meta-ai-image-gen' registered image_gen provider: meta-ai
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'openai' registered image_gen provider: openai
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'openai-codex' registered image_gen provider: openai-codex
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'openrouter' registered image_gen provider: openrouter
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'openrouter' registered image_gen provider: nous
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'xai' registered image_gen provider: xai
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'deepinfra' registered video_gen provider: deepinfra
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'fal' registered video_gen provider: fal
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'openrouter' registered video_gen provider: openrouter
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'xai' registered video_gen provider: xai
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'web-brave-free' registered web provider: brave-free
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'web-ddgs' registered web provider: ddgs
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'web-exa' registered web provider: exa
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'web-firecrawl' registered web provider: firecrawl
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'web-keenable' registered web provider: keenable
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'web-openai-native' registered web provider: openai-native
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'web-parallel' registered web provider: parallel
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'web-perplexity' registered web provider: perplexity
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'web-searxng' registered web provider: searxng
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'web-tavily' registered web provider: tavily
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin 'web-xai' registered web provider: xai
+2026-11-10 20:39:26 [INFO] hermes_cli.plugins: Plugin discovery complete: 55 found, 51 enabled
+2026-11-10 20:39:27 [WARNING] hermes_state: state.db: linked SQLite 3.40.1 (interpreter /usr/local/bin/python) is vulnerable to the WAL-reset corruption bug (https://sqlite.org/wal.html#walresetbug) — using journal_mode=DELETE instead of enabling WAL. Upgrade to SQLite 3.51.3+ (or backports 3.50.7 / 3.44.6); Hermes-managed installs can repair the embedded runtime with `hermes update`. See `hermes doctor`. This warning fires once per process per database.
+2026-11-10 20:39:27 [WARNING] acp_adapter.session: Background MCP discovery previously exited with no connected servers; retrying discovery thread
+2026-11-10 20:39:28 [INFO] run_agent: OpenAI client created (agent_init, shared=True) thread=asyncio_0:130543987455680 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:28 [INFO] tools.registry: check_fn check_react_requirements returned False; dependent tools will be unavailable this turn
+2026-11-10 20:39:28 [INFO] agent.auxiliary_client: Vision auto-detect: using main provider custom:s0 (s0-stub)
+2026-11-10 20:39:28 [INFO] agent.auxiliary_client: Vision auto-detect: using main provider custom:s0 (s0-stub)
+2026-11-10 20:39:28 [INFO] agent.credential_pool: credential pool: no available entries (all exhausted or empty)
+2026-11-10 20:39:28 [WARNING] hermes_cli.auth: Refusing non-HTTPS xAI base_url override 'http://127.0.0.1:18080/v1' (xai-oauth bearer would be sent in cleartext); falling back to https://api.x.ai/v1.
+2026-11-10 20:39:28 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-10 20:39:28 [WARNING] agent.model_metadata: Could not determine context length for model 's0-stub' (base_url=http://127.0.0.1:18080/v1) — falling back to 256,000 tokens. Set model.context_length in config.yaml to override.
+2026-11-10 20:39:28 [INFO] tools.tool_search: tool_search activated (tier 1): 14 core/visible tools kept, 15 deferred (~4875 tokens), listing full (budget ~4000 tokens)
+2026-11-10 20:39:28 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-10 20:39:28 [INFO] acp_adapter.session: Created ACP session b58e37c2-75db-4351-b4db-8919ed1f2c37 (cwd=/tmp/s0-work)
+2026-11-10 20:39:29 [INFO] tools.mcp_tool: MCP server 's0' (stdio): registered 1 tool(s): mcp__s0__echo
+2026-11-10 20:39:29 [INFO] tools.mcp_tool: MCP: registered 1 tool(s) from 1 server(s)
+2026-11-10 20:39:29 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-10 20:39:29 [INFO] tools.tool_search: tool_search activated (tier 1): 14 core/visible tools kept, 16 deferred (~4923 tokens), listing full (budget ~4000 tokens)
+2026-11-10 20:39:29 [INFO] acp_adapter.server: Session b58e37c2-75db-4351-b4db-8919ed1f2c37: refreshed tool surface after ACP MCP registration (17 tools)
+2026-11-10 20:39:29 [INFO] acp_adapter.server: New session b58e37c2-75db-4351-b4db-8919ed1f2c37 (cwd=/tmp/s0-work)
+2026-11-10 20:39:29 [INFO] hermes_cli.model_catalog: model catalog fetch failed (https://hermes-agent.nousresearch.com/docs/api/model-catalog.json): <urlopen error [Errno -3] Temporary failure in name resolution>
+2026-11-10 20:39:29 [INFO] hermes_cli.model_catalog: model catalog fetch failed (https://raw.githubusercontent.com/NousResearch/hermes-agent/main/website/static/api/model-catalog.json): <urlopen error [Errno -3] Temporary failure in name resolution>
+2026-11-10 20:39:29 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture terminal
+2026-11-10 20:39:29 [WARNING] agent.relay_runtime: Hermes Relay runtime initialization failed
+Traceback (most recent call last):
+  File "/hermes/agent/relay_runtime.py", line 877, in for_profile
+    host = RelayRuntime(profile_key=key)
+  File "/hermes/agent/relay_runtime.py", line 403, in __init__
+    self.relay = relay or _load_nemo_relay()
+                          ~~~~~~~~~~~~~~~~^^
+  File "/hermes/agent/relay_runtime.py", line 1335, in _load_nemo_relay
+    return importlib.import_module("nemo_relay")
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.14/importlib/__init__.py", line 88, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+           ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<frozen importlib._bootstrap>", line 1406, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1371, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 1335, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'nemo_relay'
+2026-11-10 20:39:29 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=0 msg='Run isolated fixture terminal'
+2026-11-10 20:39:30 [INFO] run_agent: OpenAI client created (chat_completion_stream_request, shared=False) thread=Thread-3 (<lambda>):130543744169664 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:30 [INFO] agent.conversation_loop: API call #1: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.2s id=s0-response
+2026-11-10 20:39:30 [INFO] tools.terminal_tool: Creating new local environment for task session:...
+2026-11-10 20:39:30 [INFO] tools.environments.base: Session snapshot created (session=8e7506a08bd2, cwd=/tmp/s0-work)
+2026-11-10 20:39:30 [INFO] tools.terminal_tool: local environment ready for task session:
+2026-11-10 20:39:30 [INFO] agent.tool_executor: tool terminal completed (0.16s, 56 chars)
+2026-11-10 20:39:30 [INFO] agent.conversation_loop: API call #2: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:30 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=1 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:30 [INFO] agent.auxiliary_client: Auxiliary auto-detect: using main provider custom (s0-stub)
+2026-11-10 20:39:30 [INFO] agent.auxiliary_client: Auxiliary title_generation: using custom (s0-stub) at http://127.0.0.1:18080/v1/
+2026-11-10 20:39:30 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture execute-code
+2026-11-10 20:39:30 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=4 msg='Run isolated fixture execute-code'
+2026-11-10 20:39:30 [INFO] agent.conversation_loop: API call #3: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:30 [INFO] agent.tool_executor: tool execute_code completed (0.11s, 302 chars)
+2026-11-10 20:39:30 [INFO] agent.conversation_loop: API call #4: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:30 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=1/9223372036854775807 tool_turns=2 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:30 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture execute-code-long
+2026-11-10 20:39:30 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=8 msg='Run isolated fixture execute-code-long'
+2026-11-10 20:39:30 [INFO] agent.conversation_loop: API call #5: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:30 [INFO] agent.tool_executor: tool execute_code completed (0.04s, 312 chars)
+2026-11-10 20:39:30 [INFO] agent.conversation_loop: API call #6: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:30 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=1/9223372036854775807 tool_turns=3 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:30 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture write-file
+2026-11-10 20:39:30 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=12 msg='Run isolated fixture write-file'
+2026-11-10 20:39:30 [INFO] agent.conversation_loop: API call #7: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:30 [INFO] agent.tool_executor: tool write_file completed (0.10s, 217 chars)
+2026-11-10 20:39:30 [INFO] agent.conversation_loop: API call #8: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:30 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=4 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:30 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture patch
+2026-11-10 20:39:30 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=16 msg='Run isolated fixture patch'
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: API call #9: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:31 [INFO] agent.tool_executor: tool patch completed (0.12s, 274 chars)
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: API call #10: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=5 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:31 [INFO] run_agent: OpenAI client created (agent_init, shared=True) thread=bg-review:130543517693632 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:31 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture read-before-repeat
+2026-11-10 20:39:31 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-10 20:39:31 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-10 20:39:31 [INFO] run_agent: Shared OpenAI client retired (cache_evict, tcp_shutdown=0, fd_release=deferred_to_gc) thread=bg-review:130543517693632 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:31 [INFO] agent.background_review: Background review complete: thread=bg-review calls=0 in=0 out=0 cache_read=0 result=none
+2026-11-10 20:39:31 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=20 msg='Run isolated fixture read-before-repeat'
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: API call #11: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:31 [INFO] agent.tool_executor: tool read_file completed (0.00s, 136 chars)
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: API call #12: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=6 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:31 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture write-repeat
+2026-11-10 20:39:31 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=24 msg='Run isolated fixture write-repeat'
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: API call #13: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:31 [WARNING] agent.tool_executor: Tool write_file returned error (0.00s): {"error": "Refusing to overwrite /tmp/s0-work/edit.txt: /tmp/s0-work/edit.txt exists but this task has not seen its full current content (never read, patched without a prior full read, or only a redac
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: API call #14: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=7 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:31 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture patch-v4a
+2026-11-10 20:39:31 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=28 msg='Run isolated fixture patch-v4a'
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: API call #15: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:31 [INFO] agent.tool_executor: tool patch completed (0.25s, 300 chars)
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: API call #16: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=8 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:31 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture shell-python-c
+2026-11-10 20:39:31 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=32 msg='Run isolated fixture shell-python-c'
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: API call #17: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:31 [INFO] agent.auxiliary_client: Auxiliary auto-detect: using main provider custom (s0-stub)
+2026-11-10 20:39:31 [INFO] agent.auxiliary_client: Auxiliary approval: using custom (s0-stub) at http://127.0.0.1:18080/v1/
+2026-11-10 20:39:31 [INFO] agent.tool_executor: tool terminal completed (0.09s, 152 chars)
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: API call #18: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=9 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:31 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture shell-python-heredoc
+2026-11-10 20:39:31 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=36 msg='Run isolated fixture shell-python-heredoc'
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: API call #19: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:31 [INFO] agent.auxiliary_client: Auxiliary approval: using custom (s0-stub) at http://127.0.0.1:18080/v1/
+2026-11-10 20:39:31 [INFO] agent.tool_executor: tool terminal completed (0.09s, 154 chars)
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: API call #20: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:31 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=10 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:31 [INFO] run_agent: OpenAI client created (agent_init, shared=True) thread=bg-review:130543517693632 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:31 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture shell-bash-c
+2026-11-10 20:39:31 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-10 20:39:32 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-10 20:39:32 [INFO] run_agent: Shared OpenAI client retired (cache_evict, tcp_shutdown=0, fd_release=deferred_to_gc) thread=bg-review:130543517693632 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:32 [INFO] agent.background_review: Background review complete: thread=bg-review calls=0 in=0 out=0 cache_read=0 result=none
+2026-11-10 20:39:32 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=40 msg='Run isolated fixture shell-bash-c'
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #21: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.auxiliary_client: Auxiliary approval: using custom (s0-stub) at http://127.0.0.1:18080/v1/
+2026-11-10 20:39:32 [INFO] agent.tool_executor: tool terminal completed (0.08s, 157 chars)
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #22: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=11 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:32 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture mcp
+2026-11-10 20:39:32 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=44 msg='Run isolated fixture mcp'
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #23: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.tool_executor: tool mcp__s0__echo completed (0.03s, 20 chars)
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #24: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=12 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:32 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture read_file
+2026-11-10 20:39:32 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=48 msg='Run isolated fixture read_file'
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #25: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.tool_executor: tool read_file completed (0.00s, 144 chars)
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #26: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=13 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:32 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture search_files
+2026-11-10 20:39:32 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=52 msg='Run isolated fixture search_files'
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #27: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.tool_executor: tool search_files completed (0.09s, 97 chars)
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #28: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=14 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:32 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture tool_describe
+2026-11-10 20:39:32 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=56 msg='Run isolated fixture tool_describe'
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #29: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.tool_executor: tool tool_describe completed (0.01s, 1316 chars)
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #30: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=15 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:32 [INFO] run_agent: OpenAI client created (agent_init, shared=True) thread=bg-review:130543517693632 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:32 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture skills_list
+2026-11-10 20:39:32 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-10 20:39:32 [INFO] run_agent: Shared OpenAI client retired (cache_evict, tcp_shutdown=0, fd_release=deferred_to_gc) thread=bg-review:130543517693632 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:32 [INFO] agent.background_review: Background review complete: thread=bg-review calls=0 in=0 out=0 cache_read=0 result=none
+2026-11-10 20:39:32 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=60 msg='Run isolated fixture skills_list'
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #31: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.tool_executor: tool skills_list completed (0.00s, 101 chars)
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #32: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=16 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:32 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture skill_view
+2026-11-10 20:39:32 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=64 msg='Run isolated fixture skill_view'
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #33: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [WARNING] agent.tool_executor: Tool skill_view returned error (0.00s): {"success": false, "error": "Skill 's0-missing' not found.", "available_skills": [], "hint": "Use skills_list to see all available skills"}
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #34: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=17 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:32 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture session_search
+2026-11-10 20:39:32 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=68 msg='Run isolated fixture session_search'
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #35: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.tool_executor: tool session_search completed (0.01s, 465 chars)
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #36: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=18 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:32 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture todo_list
+2026-11-10 20:39:32 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=72 msg='Run isolated fixture todo_list'
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #37: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.tool_executor: tool todo_list completed (0.00s, 117 chars)
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #38: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=19 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:32 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture clarify
+2026-11-10 20:39:32 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=76 msg='Run isolated fixture clarify'
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #39: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [WARNING] agent.tool_executor: Tool clarify returned error (0.00s): {"error": "Clarify tool is not available in this execution context."}
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: API call #40: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:32 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=20 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:32 [INFO] run_agent: OpenAI client created (agent_init, shared=True) thread=bg-review:130543517693632 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:32 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture web_search
+2026-11-10 20:39:32 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-10 20:39:32 [INFO] run_agent: Shared OpenAI client retired (cache_evict, tcp_shutdown=0, fd_release=deferred_to_gc) thread=bg-review:130543517693632 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:33 [INFO] agent.background_review: Background review complete: thread=bg-review calls=0 in=0 out=0 cache_read=0 result=none
+2026-11-10 20:39:33 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=80 msg='Run isolated fixture web_search'
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #41: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] tools.web_tools: Web search via parallel: 's0-no-network' (limit: 5)
+2026-11-10 20:39:33 [INFO] plugins.web.parallel.provider: Parallel keyless search: 's0-no-network' (limit=10)
+2026-11-10 20:39:33 [WARNING] agent.tool_executor: Tool web_search returned error (0.02s): {
+  "success": false,
+  "error": "Keyless Parallel search failed: request failed: HTTPSConnectionPool(host='search.parallel.ai', port=443): Max retries exceeded with url: /mcp (Caused by NameResolutio
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #42: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=21 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:33 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture web_extract
+2026-11-10 20:39:33 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=84 msg='Run isolated fixture web_extract'
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #43: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] tools.web_tools: Extracting content from 1 URL(s)
+2026-11-10 20:39:33 [WARNING] tools.url_safety: Blocked request to private/internal address: 127.0.0.1 -> 127.0.0.1
+2026-11-10 20:39:33 [INFO] tools.web_tools: Extracted content from 1 pages
+2026-11-10 20:39:33 [WARNING] agent.tool_executor: Tool web_extract returned error (0.01s): {
+  "results": [
+    {
+      "url": "http://127.0.0.1:18080/page",
+      "title": "",
+      "content": "",
+      "error": "Blocked: URL targets a private or internal network address"
+    }
+  ]
+}
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #44: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=22 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:33 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture vision_analyze
+2026-11-10 20:39:33 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=88 msg='Run isolated fixture vision_analyze'
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #45: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] tools.vision_tools: Analyzing image: /tmp/s0-work/missing.png
+2026-11-10 20:39:33 [INFO] tools.vision_tools: User prompt: Fully describe and explain everything about this image, then answer the following question:
+
+s0
+2026-11-10 20:39:33 [ERROR] tools.vision_tools: Error analyzing image: media file not found: '/tmp/s0-work/missing.png'
+Traceback (most recent call last):
+  File "/hermes/tools/vision_tools.py", line 646, in _prepare_image
+    resolved = await resolve_image_source(image_url, ResolveContext(task_id=task_id))
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/hermes/tools/image_source.py", line 82, in resolve_image_source
+    raise SourceNotFound(f"media file not found: '{p}'", src=s, origin="file")
+tools.image_source.SourceNotFound: media file not found: '/tmp/s0-work/missing.png'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/hermes/tools/vision_tools.py", line 858, in _run_analysis
+    analysis, scale_note = await stage(user_prompt, debug_call_data, temp_paths)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/hermes/tools/vision_tools.py", line 893, in stage
+    prepared = await _prepare_image(image_url, task_id, region, validate_decode=False)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/hermes/tools/vision_tools.py", line 648, in _prepare_image
+    raise _ImagePrepError(str(exc)) from exc
+tools.vision_tools._ImagePrepError: media file not found: '/tmp/s0-work/missing.png'
+2026-11-10 20:39:33 [WARNING] agent.tool_executor: Tool vision_analyze returned error (0.01s): {
+  "success": false,
+  "error": "Error analyzing image: media file not found: '/tmp/s0-work/missing.png'",
+  "analysis": "There was a problem with the request and the image could not be analyzed. Err
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #46: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=23 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:33 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture video_analyze
+2026-11-10 20:39:33 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=92 msg='Run isolated fixture video_analyze'
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #47: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] tools.vision_tools: Analyzing video: /tmp/s0-work/missing.mp4
+2026-11-10 20:39:33 [INFO] tools.vision_tools: User prompt: Fully describe and explain everything happening in this video, including visual content, motion, aud
+2026-11-10 20:39:33 [ERROR] tools.vision_tools: Error analyzing video: Invalid video source. Provide an HTTP/HTTPS URL or a valid local file path.
+Traceback (most recent call last):
+  File "/hermes/tools/vision_tools.py", line 858, in _run_analysis
+    analysis, scale_note = await stage(user_prompt, debug_call_data, temp_paths)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/hermes/tools/vision_tools.py", line 1125, in stage
+    temp_video_path = await _materialize_video(video_url, task_id, temp_paths)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/hermes/tools/vision_tools.py", line 1118, in _materialize_video
+    raise ValueError("Invalid video source. Provide an HTTP/HTTPS URL or a valid local file path.")
+ValueError: Invalid video source. Provide an HTTP/HTTPS URL or a valid local file path.
+2026-11-10 20:39:33 [WARNING] agent.tool_executor: Tool video_analyze returned error (0.00s): {
+  "success": false,
+  "error": "Error analyzing video: Invalid video source. Provide an HTTP/HTTPS URL or a valid local file path.",
+  "analysis": "There was a problem with the request and the video
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #48: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=24 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:33 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture show_tip
+2026-11-10 20:39:33 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=96 msg='Run isolated fixture show_tip'
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #49: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [WARNING] agent.tool_executor: Tool show_tip returned error (0.00s): {"error": "tip is only available in the Hermes desktop app."}
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #50: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=25 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:33 [INFO] run_agent: OpenAI client created (agent_init, shared=True) thread=bg-review:130543517693632 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:33 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture read_terminal
+2026-11-10 20:39:33 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-10 20:39:33 [INFO] run_agent: Shared OpenAI client retired (cache_evict, tcp_shutdown=0, fd_release=deferred_to_gc) thread=bg-review:130543517693632 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:33 [INFO] agent.background_review: Background review complete: thread=bg-review calls=0 in=0 out=0 cache_read=0 result=none
+2026-11-10 20:39:33 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=100 msg='Run isolated fixture read_terminal'
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #51: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [WARNING] agent.tool_executor: Tool read_terminal returned error (0.01s): {"error": "read_terminal is only available in the Hermes desktop app."}
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #52: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=26 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:33 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture read_window_below
+2026-11-10 20:39:33 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=104 msg='Run isolated fixture read_window_below'
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #53: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [WARNING] agent.tool_executor: Tool read_window_below returned error (0.00s): {"error": "read_window_below is only available in the Hermes desktop app."}
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #54: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=27 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:33 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture x_search
+2026-11-10 20:39:33 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=108 msg='Run isolated fixture x_search'
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #55: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [WARNING] agent.tool_executor: Tool x_search returned error (0.00s): {"error": "query is required for x_search"}
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #56: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=28 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:33 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture memory
+2026-11-10 20:39:33 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=112 msg='Run isolated fixture memory'
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #57: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] agent.tool_executor: tool memory completed (0.01s, 196 chars)
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #58: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=29 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:33 [INFO] acp_adapter.server: Session b58e37c2-75db-4351-b4db-8919ed1f2c37: mode switched to accept_edits
+2026-11-10 20:39:33 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture write-accept_edits
+2026-11-10 20:39:33 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=116 msg='Run isolated fixture write-accept_edits'
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #59: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] acp_adapter.edit_approval: Auto-approved ACP edit under policy workspace_session: /tmp/s0-work/accept_edits.txt
+2026-11-10 20:39:33 [INFO] agent.tool_executor: tool write_file completed (0.09s, 233 chars)
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: API call #60: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:33 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=30 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:33 [INFO] run_agent: OpenAI client created (agent_init, shared=True) thread=bg-review:130543517693632 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:33 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture patch-accept_edits
+2026-11-10 20:39:34 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-10 20:39:34 [INFO] run_agent: Shared OpenAI client retired (cache_evict, tcp_shutdown=0, fd_release=deferred_to_gc) thread=bg-review:130543517693632 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:34 [INFO] agent.background_review: Background review complete: thread=bg-review calls=0 in=0 out=0 cache_read=0 result=none
+2026-11-10 20:39:34 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=120 msg='Run isolated fixture patch-accept_edits'
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: API call #61: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:34 [INFO] acp_adapter.edit_approval: Auto-approved ACP edit under policy workspace_session: /tmp/s0-work/accept_edits.txt
+2026-11-10 20:39:34 [INFO] agent.tool_executor: tool patch completed (0.11s, 306 chars)
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: API call #62: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=31 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:34 [INFO] acp_adapter.server: Session b58e37c2-75db-4351-b4db-8919ed1f2c37: mode switched to dont_ask
+2026-11-10 20:39:34 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture write-dont_ask
+2026-11-10 20:39:34 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=124 msg='Run isolated fixture write-dont_ask'
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: API call #63: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:34 [INFO] acp_adapter.edit_approval: Auto-approved ACP edit under policy session: /tmp/s0-work/dont_ask.txt
+2026-11-10 20:39:34 [INFO] agent.tool_executor: tool write_file completed (0.11s, 225 chars)
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: API call #64: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=32 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:34 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture patch-dont_ask
+2026-11-10 20:39:34 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=128 msg='Run isolated fixture patch-dont_ask'
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: API call #65: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:34 [INFO] acp_adapter.edit_approval: Auto-approved ACP edit under policy session: /tmp/s0-work/dont_ask.txt
+2026-11-10 20:39:34 [INFO] agent.tool_executor: tool patch completed (0.11s, 290 chars)
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: API call #66: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=33 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:34 [INFO] acp_adapter.server: Session b58e37c2-75db-4351-b4db-8919ed1f2c37: mode switched to default
+2026-11-10 20:39:34 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture write-default
+2026-11-10 20:39:34 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=132 msg='Run isolated fixture write-default'
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: API call #67: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:34 [INFO] agent.tool_executor: tool write_file completed (0.11s, 223 chars)
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: API call #68: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=34 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:34 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture patch-default
+2026-11-10 20:39:34 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=136 msg='Run isolated fixture patch-default'
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: API call #69: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:34 [INFO] agent.tool_executor: tool patch completed (0.10s, 286 chars)
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: API call #70: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=35 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37
+2026-11-10 20:39:34 [INFO] run_agent: OpenAI client created (agent_init, shared=True) thread=bg-review:130543517693632 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:34 [INFO] acp_adapter.server: Prompt on session b58e37c2-75db-4351-b4db-8919ed1f2c37: Run isolated fixture write-denied
+2026-11-10 20:39:34 [INFO] agent.model_metadata: Could not detect context length for model 's0-stub' at http://127.0.0.1:18080/v1 — defaulting to 256,000 tokens (probe-down). Set model.context_length in config.yaml to override.
+2026-11-10 20:39:34 [INFO] run_agent: Shared OpenAI client retired (cache_evict, tcp_shutdown=0, fd_release=deferred_to_gc) thread=bg-review:130543517693632 provider=custom base_url=http://127.0.0.1:18080/v1 model=s0-stub
+2026-11-10 20:39:34 [INFO] agent.background_review: Background review complete: thread=bg-review calls=0 in=0 out=0 cache_read=0 result=none
+2026-11-10 20:39:34 [INFO] agent.turn_context: conversation turn: session=b58e37c2-75db-4351-b4db-8919ed1f2c37 model=s0-stub provider=custom platform=acp history=140 msg='Run isolated fixture write-denied'
+2026-11-10 20:39:34 [INFO] agent.conversation_loop: API call #71: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:34 [WARNING] agent.tool_executor: Tool write_file returned error (0.00s): {"error": "Edit approval denied by ACP client; file was not modified."}
+2026-11-10 20:39:35 [INFO] agent.conversation_loop: API call #72: model=s0-stub provider=custom in=100 out=20 total=120 latency=0.0s id=s0-response
+2026-11-10 20:39:35 [INFO] agent.conversation_loop: Turn ended: reason=text_response(finish_reason=stop) model=s0-stub api_calls=2/9223372036854775807 budget=2/9223372036854775807 tool_turns=36 last_msg_role=assistant response_len=20 session=b58e37c2-75db-4351-b4db-8919ed1f2c37

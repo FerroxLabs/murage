@@ -31,6 +31,7 @@ function start(env: Record<string, string>) {
   // Each bridge gets its own remembered-list folder unless a test names one.
   const toolsCache = env.MURAGE_CONNECTOR_TOOLS_CACHE_DIR ?? mkdtempSync(join(tmpdir(), "murage-proxy-cache-"));
   child = spawn(process.execPath, ["--experimental-strip-types", ENTRY], {
+    windowsHide: true,
     // Windows trusts a cache folder only when the harness verified its ACL; the test folders are private temp ones.
     env: { ...process.env, MURAGE_CONNECTOR_TOOLS_CACHE_DIR: toolsCache, ...(process.platform === "win32" ? { MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE: "1" } : {}), ...env },
     stdio: ["pipe", "pipe", "pipe"],

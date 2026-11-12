@@ -1,0 +1,24 @@
+{
+  "status": "PROVISIONAL: FluxMain production cross-check and live commit unavailable",
+  "S1": {
+    "file": "/tmp/fixture-root/keylimits-fin/master/src/rate_limits.py",
+    "line": 1270,
+    "sha256": "ce88819b43820cb7a5ed5dab82c7a6a29e52f187cd60c138899c5e8707b8b2f9"
+  },
+  "S2": {
+    "version": "1.92.2",
+    "files": [
+      "litellm-exceptions.py:441,484",
+      "litellm-proxy-server.py:1338-1348"
+    ],
+    "wrapper": "source-derived; production match unverified"
+  },
+  "S3": {
+    "kind": "controlled plain busy response; not production capture"
+  },
+  "S4": {
+    "file": "/tmp/fixture-root/keylimits-fin/master/src/gateway.py",
+    "line": 11967,
+    "sha256": "7db917b80f072f22d0fcfde227d56d42773ef45158e1c808461c820b59c8f679"
+  }
+}

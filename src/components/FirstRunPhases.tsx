@@ -47,6 +47,7 @@ import {
   useOnline,
 } from "@/lib/first-run";
 import { useDesktopSurface } from "@/lib/use-surface";
+import { isCloudHome } from "@/lib/cloud-workspace";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { useStore } from "@/state/store";
 import type { SetupView } from "../../shared/setup";
@@ -104,6 +105,8 @@ export function FirstRunPhases() {
     else if (allSetAt.current !== state.selectedId) dismissFirstRunAllSet();
   }, [allSet, state.selectedId]);
 
+  // A Cloud home draws no bar: its pills would name "what is here" and "Flux Router", steps a Cloud home passes over by itself.
+  if (isCloudHome()) return null;
   if (desktop !== true || !view || !firstRunPhasesVisible(view, bar)) return null;
   return <FirstRunPhasesBody view={view} online={online} onClose={closeFirstRun} macInset={capabilities.windowChrome === "mac-inset"} />;
 }

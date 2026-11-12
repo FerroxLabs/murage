@@ -104,7 +104,7 @@ export function callFirstCustomTool(engine: string, name: string, launch: Custom
       setTimeout(() => { try { child.kill(); } catch { /* gone */ } }, 200).unref?.();
       resolve(done({ tools, ...(tool ? { tool } : {}), ...outcome }));
     };
-    const child = spawn(spawnAs.command, spawnAs.args, { env: spawnAs === launch ? env : { ...env, ...spawnAs.env }, stdio: ["pipe", "pipe", "ignore"] });
+    const child = spawn(spawnAs.command, spawnAs.args, { windowsHide: true, env: spawnAs === launch ? env : { ...env, ...spawnAs.env }, stdio: ["pipe", "pipe", "ignore"] });
     const timer = setTimeout(() => finish({ text: "custom tool: no answer in time", isError: true }), Number(process.env.FAKE_CUSTOM_TOOL_TIMEOUT_MS) || 90_000);
     child.on("error", (error) => finish({ text: `custom tool: could not start (${error.message})`, isError: true }));
     child.on("exit", () => finish({ text: "custom tool: the server closed", isError: true }));

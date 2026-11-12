@@ -12,6 +12,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
+import { patchUpdaterNoShellExecute } from "./patch-updater-no-shell-execute.mjs";
+import { patchUpdaterWindowsHide } from "./patch-updater-windows-hide.mjs";
 import { patchAppImageUpdater } from "./patch-appimage-updater.mjs";
 import { assertWindowsVerifierSource, patchWindowsSignatureVerifier } from "./patch-windows-signature-verifier.mjs";
 
@@ -45,5 +47,5 @@ const quitSites = [...patched.matchAll(/^(\s*)this\.app\.quit\(\);/gm)];
 if (quitSites.length !== 3) throw new Error("Updater quit sites changed; review shutdown causes before bundling");
 const withQuitCauses = patched.replace(/^(\s*)this\.app\.quit\(\);/gm,
   '$1this.app.murageShutdownCause = "automatic";\n$1this.app.quit();');
-await writeFile(outfile, withQuitCauses);
+await writeFile(outfile, patchUpdaterNoShellExecute(patchUpdaterWindowsHide(withQuitCauses)));
 console.log("patched AppImage install and fail-closed Windows signature verification");

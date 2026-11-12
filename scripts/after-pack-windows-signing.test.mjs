@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { parse } from "yaml";
 import { afterEach, expect, it, vi } from "vitest";
 import { ZipFile } from "yazl";
@@ -30,11 +31,23 @@ vi.mock("./prepare-fuigo.mjs", () => ({
 vi.mock("./prepare-browser.mjs", () => ({ verifyBrowserBundle: vi.fn() }));
 // The packaged-import guard has its own suite (windows-native-imports.test.mjs); the fixtures here are not real PE files.
 vi.mock("./windows-native-imports.mjs", () => ({ assertWindowsNativeImports: vi.fn(() => ({})) }));
+// Anchored native execution is proved on the native gate; these fixtures exercise signing order.
+vi.mock("./anchored-read-resource.mjs", () => ({ proveAnchoredReadResource: vi.fn(() => "loaded") }));
+import { proveAnchoredReadResource } from "./anchored-read-resource.mjs";
 // The engine-exclusion addon gate has its own suite (engine-exclusion-build.test.mjs); this one is about signing, and has no packaged Electron to load it with.
-vi.mock("./engine-exclusion-resource.mjs", () => ({
-  validateEngineExclusionResource: (resources) => path.join(resources, "engine-exclusion.node"),
-  loadEngineExclusionResource: () => "loaded",
-}));
+// R16/R25: afterPack must hand the validator the build's own receipt; `exclusionRun.receipt` swaps in a test receipt and runs the REAL validator on it.
+const exclusionRun = vi.hoisted(() => ({ calls: [], receipt: undefined }));
+vi.mock("./engine-exclusion-resource.mjs", async importOriginal => {
+  const actual = await importOriginal();
+  return {
+    validateEngineExclusionResource: (resources, platform, arch, receipt) => {
+      exclusionRun.calls.push([platform, arch, receipt]);
+      if (exclusionRun.receipt === undefined) return path.join(resources, "engine-exclusion.node");
+      return actual.validateEngineExclusionResource(resources, platform, arch, exclusionRun.receipt);
+    },
+    loadEngineExclusionResource: () => "loaded",
+  };
+});
 // The GEPA runtime is required before signing (GEPA_RESOURCE_BUILD_RECEIPT_REQUIRED);
 // its bundle verification has its own suite (server/gepa-resource.test.ts).
 vi.mock("../server/gepa-resource.ts", () => ({ verifyGepaBundle: vi.fn() }));
@@ -56,6 +69,8 @@ import { verifyFuigoExecutable } from "./prepare-fuigo.mjs";
 const temporaryDirectories = [];
 afterEach(() => {
   vi.resetAllMocks();
+  exclusionRun.calls.length = 0;
+  exclusionRun.receipt = undefined;
   for (const directory of temporaryDirectories.splice(0)) removeTempDirSync(directory);
 });
 
@@ -76,8 +91,13 @@ function writeAppAsar(resources, member = CONTROL_PLANE) {
 }
 
 function fixture() {
+  proveAnchoredReadResource.mockReturnValue("loaded");
   verifyWindowsBrowserImage.mockReturnValue({ signed: true });
   const appOutDir = fs.mkdtempSync(path.join(os.tmpdir(), "murage-windows-signing-"));
+  const gui = Buffer.alloc(512);
+  gui.writeUInt16LE(0x5a4d); gui.writeUInt32LE(128, 0x3c); gui.writeUInt32LE(0x4550, 128);
+  gui.writeUInt16LE(240, 148); gui.writeUInt16LE(0x20b, 152); gui.writeUInt16LE(2, 220);
+  fs.writeFileSync(path.join(appOutDir, "Murage.exe"), gui);
   temporaryDirectories.push(appOutDir);
   const resources = path.join(appOutDir, "resources");
   for (const name of ["fuigo", "fuigo-probe", "cloudflared", "licenses"]) fs.mkdirSync(path.join(resources, name), { recursive: true });
@@ -91,6 +111,7 @@ function fixture() {
   fs.writeFileSync(browser.engine, "pinned browser engine");
   fs.writeFileSync(browser.chrome, "pinned browser chrome");
   fs.writeFileSync(path.join(resources, "cloudflared", "cloudflared.exe"), "vendor fixture");
+  fs.writeFileSync(path.join(resources, "anchored-read.node"), Buffer.alloc(4096));
   fs.writeFileSync(path.join(resources, "engine-exclusion.node"), Buffer.concat([Buffer.from("MZ"), Buffer.alloc(4096)])); // the engine-exclusion addon (the gate refuses a package without it)
   for (const name of ["fuigo-LICENSE.txt", "fuigo-README.md", "fuigo-THIRD_PARTY_NOTICES.md", "cloudflared-LICENSE.txt", "cloudflared-README.md"]) {
     fs.writeFileSync(path.join(resources, "licenses", name), "fixture");
@@ -149,12 +170,25 @@ function fixture() {
     fs.appendFileSync(file, " signed fixture");
     return true;
   });
-  return { executable, recovery, browser, helper, helperManifest, backupDirectory, backupHelper, signIf, context: { appOutDir, arch: "x64", electronPlatformName: "win32", packager: { signIf, config: { extraMetadata: { murageGepaManifests: { "win32-x64": GEPA_RECEIPT } } } } } };
+  // The signing builder supplies a clean source repository for package provenance.
+  const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "murage-signing-source-"));
+  temporaryDirectories.push(projectDir);
+  fs.writeFileSync(path.join(projectDir, "package.json"), JSON.stringify({ name: "signing-fixture", version: "1.0.19" }));
+  const git = args => execFileSync("git", args, { cwd: projectDir, encoding: "utf8" }).trim();
+  git(["init", "-q"]);
+  git(["add", "package.json"]);
+  git(["-c", "user.name=ci", "-c", "user.email=ci@example.test", "commit", "-qm", "signing fixture"]);
+  return { executable, recovery, browser, helper, helperManifest, backupDirectory, backupHelper, signIf, context: { appOutDir, arch: "x64", electronPlatformName: "win32", packager: { projectDir, signIf, appInfo: { updaterCacheDirName: "signing-fixture-updater" }, config: { publish: null, extraMetadata: { murageGepaManifests: { "win32-x64": GEPA_RECEIPT } } } } } };
 }
 
 it("verifies pinned inventory before signing engines and updater helper", async () => {
   const { context, executable, recovery, browser, helper, helperManifest, backupDirectory, backupHelper, signIf } = fixture();
   await afterPack(context);
+  expect(JSON.parse(fs.readFileSync(path.join(context.appOutDir, "resources", "build-provenance.json"), "utf8"))).toEqual({
+    commit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: context.packager.projectDir, encoding: "utf8" }).trim(),
+    tree: execFileSync("git", ["rev-parse", "HEAD^{tree}"], { cwd: context.packager.projectDir, encoding: "utf8" }).trim(),
+    version: "1.0.19",
+  });
   expect(verifyGepaBundle).toHaveBeenCalledWith(path.join(context.appOutDir, "resources", "gepa-worker"), "win32-x64", GEPA_RECEIPT);
   expect(signIf.mock.calls.map(([file]) => file)).toEqual([executable, browser.engine, browser.chrome, recovery, backupHelper, helper]);
   expect(fs.readFileSync(recovery, "utf8")).toBe("recovery fixture signed fixture");
@@ -164,6 +198,36 @@ it("verifies pinned inventory before signing engines and updater helper", async 
   verifyWindowsBackupTools(backupDirectory);
   expect(JSON.parse(fs.readFileSync(helperManifest, "utf8")).binarySha256).toBe(createHash("sha256").update(fs.readFileSync(helper)).digest("hex"));
   expect(fs.readFileSync(executable, "utf8")).toBe("pinned fixture signed fixture");
+});
+
+// CONTRACTS-B 1.5 R16/R25 (Astra r1 block 2): the /MT receipt check is part of the Windows packaging path, through afterPack itself.
+const peAddon = () => { const b = Buffer.alloc(4096); b[0] = 0x4d; b[1] = 0x5a; b.writeUInt32LE(0x80, 0x3c); b.writeUInt32BE(0x50450000, 0x80); b.writeUInt16LE(0x8664, 0x84); b.writeUInt16LE(0x2000, 0x80 + 22); return b; };
+const receiptFile = (context, value, raw) => {
+  const file = path.join(context.appOutDir, "receipt.json");
+  fs.writeFileSync(file, raw ?? JSON.stringify(value));
+  return file;
+};
+it("afterPack gives the Windows addon check the build script's own receipt for the target", async () => {
+  const { context } = fixture();
+  await afterPack(context);
+  expect(exclusionRun.calls).toHaveLength(1);
+  const [platform, arch, receipt] = exclusionRun.calls[0];
+  expect([platform, arch]).toEqual(["win32", "x64"]);
+  expect(receipt).toBe(path.resolve(import.meta.dirname, "..", "dist-native", "engine-exclusion", "win32-x64", "build.json"));
+});
+it("afterPack refuses a Windows addon whose receipt is missing, malformed or not /MT, and accepts /MT", async () => {
+  const run = async (make) => {
+    const { context } = fixture();
+    fs.writeFileSync(path.join(context.appOutDir, "resources", "engine-exclusion.node"), peAddon());
+    exclusionRun.receipt = make(context);
+    return afterPack(context);
+  };
+  await expect(run(context => path.join(context.appOutDir, "no-such-build.json"))).rejects.toThrow("ENGINE_EXCLUSION_RECEIPT_MISSING");
+  await expect(run(context => receiptFile(context, null, "not json"))).rejects.toThrow("ENGINE_EXCLUSION_RECEIPT_MISSING");
+  await expect(run(context => receiptFile(context, { crt: "MTd" }))).rejects.toThrow("ENGINE_EXCLUSION_RECEIPT_CRT");
+  await expect(run(context => receiptFile(context, { crt: "other" }))).rejects.toThrow("ENGINE_EXCLUSION_RECEIPT_CRT");
+  await expect(run(context => receiptFile(context, {}))).rejects.toThrow("ENGINE_EXCLUSION_RECEIPT_CRT");
+  await expect(run(context => receiptFile(context, { crt: "MT" }))).resolves.toBeUndefined();
 });
 
 it("never signs a package whose control-plane module differs from the source", async () => {
@@ -362,4 +426,19 @@ it("copies the configured browser EXEs without electron-builder's early signing 
   expect(fs.readFileSync(copied.manifest, "utf8")).toBe("original manifest");
   expect(transformer.mock.calls.map(([file]) => path.basename(file))).not.toContain("agent-browser.exe");
   expect(transformer.mock.calls.map(([file]) => path.basename(file))).not.toContain("chrome-headless-shell.exe");
+});
+
+it("refuses a failed anchored-reader packaged smoke before invoking the signer", async () => {
+  const f = fixture();
+  proveAnchoredReadResource.mockImplementationOnce(() => { throw Error("ANCHORED_RESOURCE_PROOF_FAILED"); });
+  await expect(afterPack(f.context)).rejects.toThrow("ANCHORED_RESOURCE_PROOF_FAILED");
+  expect(f.signIf).not.toHaveBeenCalled();
+});
+
+it("refuses a console-subsystem Murage before signing or scheduling can flash a terminal", async () => {
+  const { context, signIf } = fixture();
+  const file = path.join(context.appOutDir, "Murage.exe");
+  const bytes = fs.readFileSync(file); bytes.writeUInt16LE(3, 220); fs.writeFileSync(file, bytes);
+  await expect(afterPack(context)).rejects.toThrow("WINDOWS_GUI_SUBSYSTEM_REQUIRED");
+  expect(signIf).not.toHaveBeenCalled();
 });

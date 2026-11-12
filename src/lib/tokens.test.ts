@@ -269,6 +269,8 @@ describe("token drift", () => {
       "src/lib/mascot.ts": "EMBER_COLORS — agent identity, theme-invariant by design",
       "src/components/EmberAvatar.tsx": "the mascot's own gradients and flame tones",
       "src/components/Avatar.tsx": "mascot fallback tones",
+      "src/components/MurageLockup.tsx": "the brand logo: ink and Ember tones are fixed brand colours, theme-invariant by design",
+      "src/components/FirstRunWelcome.tsx": "the welcome first paint matches the start-up window palette so the hand-off does not flash",
       "src/components/ProviderIcons.tsx": "vendor brand marks (Anthropic, OpenAI, …)",
       "src/components/HermesMark.tsx": "vendor brand mark",
       "src/components/CursorMark.tsx": "vendor brand mark",

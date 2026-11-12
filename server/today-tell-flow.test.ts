@@ -112,6 +112,7 @@ describe.skipIf(process.platform === "win32")("the Today Tell box reaches the Ch
       },
     }));
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

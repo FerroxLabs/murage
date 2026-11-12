@@ -19,6 +19,7 @@ import { launchVerificationServer, type VerificationServer } from "../scripts/co
 
 const ROUTINES = fileURLToPath(new URL("./routines.ts", import.meta.url));
 const WORKER = fileURLToPath(new URL("./memory/worker-controller.ts", import.meta.url));
+const SEARCH = fileURLToPath(new URL("./memory/search.ts", import.meta.url));
 let fixture: VerificationServer, headers: Record<string, string> = {}, model: string;
 const api = async (method: string, path: string, body?: unknown) => {
   const response = await fetch(fixture.info.url + path, { method, headers: { ...headers, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -52,6 +53,10 @@ const instrumentation = `
   const hold=MemoryWorkerController.prototype.holdForTurn;
   MemoryWorkerController.prototype.holdForTurn=function(...args){const release=hold.apply(this,args);return()=>{frozen=true;return release();};};
   const {RoutineManager}=await import(pathToFileURL(${JSON.stringify(ROUTINES)}).href);
+  // 349eff48b9: search authorizes in timed slices, each with its own access pass.
+  // Force one candidate per slice so the count oracle always measures the maximum
+  // per-record reader checks, independent of runner speed. No count is filtered.
+  (await import(pathToFileURL(${JSON.stringify(SEARCH)}).href)).setAuthorizeSliceMsForTest(0);
   const note=RoutineManager.prototype.notePinnedBundle;
   RoutineManager.prototype.notePinnedBundle=function(...args){
     if(fs.existsSync(path.join(dir,'slow-setup')))Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,3000);

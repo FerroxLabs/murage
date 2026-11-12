@@ -34,6 +34,17 @@ export interface InstallFacts {
   dismissed: boolean;
   /** Inside the Murage phone app, which is already the app. */
   nativeShell: boolean;
+  /** A Cloud home opened in a desktop-width or non-touch browser, where the invitation is noise. Absent off Cloud. */
+  cloudDesktop?: boolean;
+}
+
+/** Width at or above which a browser counts as a desktop window rather than a phone. */
+export const CLOUD_DESKTOP_MIN_WIDTH = 1024;
+
+/** Whether a Cloud home is open in a desktop-style browser: no touch screen, or a wide window. Always false off Cloud. */
+export function isCloudDesktopBrowser(cloud: boolean, maxTouchPoints: number, innerWidth: number): boolean {
+  if (!cloud) return false;
+  return maxTouchPoints < 1 || innerWidth >= CLOUD_DESKTOP_MIN_WIDTH;
 }
 
 /** Which invitation, if any, this browser should be shown.
@@ -45,7 +56,7 @@ export interface InstallFacts {
  * something that cannot happen, and the person would follow them and get
  * nothing. Silence is the honest answer until the address is HTTPS. */
 export function installInvite(facts: InstallFacts): InstallInvite {
-  if (facts.nativeShell || facts.standalone || !facts.secure || facts.dismissed) return "hidden";
+  if (facts.nativeShell || facts.standalone || !facts.secure || facts.dismissed || facts.cloudDesktop === true) return "hidden";
   if (facts.captured) return "prompt";
   return facts.ios ? "manual" : "hidden";
 }

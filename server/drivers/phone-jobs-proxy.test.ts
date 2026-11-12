@@ -1,3 +1,7 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { readMcpCatalog } from "../mcp-listed.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The phone-jobs MCP proxy lists exactly the tools its launch names and forwards a call to the harness with the device token.
@@ -24,9 +28,10 @@ async function route(status: number, reply: unknown, seen: Array<{ auth: string 
   return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
-async function exchange(base: string, tools: string | undefined, requests: unknown[]): Promise<any[]> {
+async function exchange(base: string, tools: string | undefined, requests: unknown[], marker?: string): Promise<any[]> {
   const child = spawn(process.execPath, [PROXY], {
-    env: { PATH: process.env.PATH, MURAGE_CONTROL_URL: base, MURAGE_CONTROL_TOKEN: "device-token", ...(tools === undefined ? {} : { MURAGE_PHONE_TOOLS: tools }) },
+    windowsHide: true,
+    env: { PATH: process.env.PATH, ...(marker ? { MURAGE_MCP_LISTED_FILE: marker } : {}), MURAGE_CONTROL_URL: base, MURAGE_CONTROL_TOKEN: "device-token", ...(tools === undefined ? {} : { MURAGE_PHONE_TOOLS: tools }) },
     stdio: ["pipe", "pipe", "inherit"],
   });
   let output = "";
@@ -86,4 +91,33 @@ describe("phone-jobs proxy", () => {
     expect(toolsFromEnv("phone_call_dial, phone_calendar_read,phone_call_dial")).toEqual(["phone_calendar_read", "phone_call_dial"]);
     expect(toolsFromEnv(undefined)).toEqual([]);
   });
+});
+
+it("c11-marker-writers phoneJobs publishes its served list but never a tool call", async () => {
+  const marker = join(mkdtempSync(join(tmpdir(), "c11-phone-")), "generation.phone");
+  const base = await route(200, { ok: true, text: "fixture" });
+  await exchange(base, "phone_calendar_read", [{ id: 1, method: "tools/call", params: { name: "phone_calendar_read" } }], marker);
+  expect(readMcpCatalog(marker)).toBeUndefined();
+  const answers = await exchange(base, "phone_calendar_read", [{ id: 1, method: "initialize" }, { id: 2, method: "tools/list" }], marker);
+  expect(readMcpCatalog(marker)).toMatchObject({ complete: true, resources: false, tools: answers[1].result.tools.map((tool: any) => tool.name) });
+});
+
+it("c11-cancel phoneJobs: a cancelled tools/list gets no answer and its chain leaves the active set, so the next list certifies", async () => {
+  const marker = join(mkdtempSync(join(tmpdir(), "c11-phone-cancel-")), "generation.phone");
+  const base = await route(200, { ok: true, text: "fixture" });
+  const child = spawn(process.execPath, [PROXY], {
+    env: { PATH: process.env.PATH, MURAGE_MCP_LISTED_FILE: marker, MURAGE_CONTROL_URL: base, MURAGE_CONTROL_TOKEN: "device-token", MURAGE_PHONE_TOOLS: "phone_calendar_read" },
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+  let output = ""; child.stdout.on("data", (chunk) => { output += chunk; });
+  const lines = () => output.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line));
+  // the request and its withdrawal arrive together, before the proxy has started on it
+  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list" })}\n${JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 1 } })}\n`);
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "tools/list" })}\n`);
+  for (let waited = 0; lines().length < 1 && waited < 10000; waited += 20) await new Promise((resolve) => setTimeout(resolve, 20));
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  child.stdin.end(); await new Promise((resolve) => child.once("close", resolve));
+  expect(lines().map((frame) => frame.id)).toEqual([2]);
+  expect(readMcpCatalog(marker)).toMatchObject({ complete: true, tools: ["phone_calendar_read"] });
 });

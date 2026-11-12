@@ -31,6 +31,7 @@
   const NOT_PAUSED = "Some work in the restored copy is still switched on, so it can't be opened yet. Open the diagnostics folder and contact support.";
   const NOTHING_TO_UNDO = "There is no restore on this computer to undo.";
   const UNDO_FIRST = "An earlier restore didn't finish. Choose Undo a restore first, then restore again.";
+  const UNDO_RETRY = "Murage couldn't finish undoing the restore because it couldn't update its conversations file, and nothing was changed. Close every other Murage window and anything else using Murage's data folder, then choose Undo a restore again.";
   const UNDO_FAILED = "The restore couldn't be undone, and your files were kept as they are. Open the diagnostics folder and contact support.";
   const VM = "Backups can't include a local VM's files yet, so the backup was not made. Open the diagnostics folder and contact support.";
   const PARTS = "Part of your workspace couldn't be read, so the backup was not made. Close anything else using Murage's data folder, then try again.";
@@ -154,6 +155,7 @@
     // a voice reply still finishing (prepare-voice-finishing.mjs): the minutes left ride in the code
     const voice = typeof code === "string" ? /^DOWNGRADE_VOICE_FINISHING_([1-9][0-9]?)$/.exec(code) : null;
     if (voice) return `Murage is finishing a voice reply. Try again in about ${voice[1]} min. Your chats and memories are as they were.`;
+    if (code === "RESTORE_ROLLBACK_FAILED" && context.action === "rollback" && context.path === "messages.db") return UNDO_RETRY;
     const capture = CAPTURE_ACTIONS.has(context.action);
     let text = (capture && captureMessages[code]) || messages[code] || DEFAULT;
     if (code === "RECOVERY_OWNERSHIP_REQUIRED" && context.backupMode) text = OWNER_BACKUP_MODE;
@@ -191,5 +193,5 @@
     if (lines.length) lines.push("Everything else was backed up.");
     return lines;
   };
-  root.murageRecoveryMessages = { messages, captureMessages, fallback: DEFAULT, sentence, skippedLines };
+  root.murageRecoveryMessages = { messages, captureMessages, fallback: DEFAULT, sentence, skippedLines, undoRetry: UNDO_RETRY };
 })(globalThis);

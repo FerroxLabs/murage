@@ -65,14 +65,14 @@ const ALLOWED: Readonly<Record<string, readonly string[]>> = {
   "engine-exec.ts": ["node:path", "./engine-closed.ts", "./engine-fs.ts", "./engine-plan-core.ts", "./engine-redo.ts", "./sqlite-checkpoint.ts"],
   "engine-redo.ts": ["node:path", "node:crypto", "./engine-fs.ts", "./engine-plan-core.ts"],
   "engine-history-run.ts": ["./engine-closed.ts", "./engine-exec.ts", "./engine-redo.ts", "./engine-fs.ts", "./engine-plan-acp.ts", "./engine-plan-files.ts", "./engine-plan-core.ts"],
-  "engine-history-worker.ts": ["node:worker_threads", "./engine-history-run.ts"],
+  "engine-history-worker.ts": ["../shared/win-hide-child-process.mjs", "node:worker_threads", "./engine-history-run.ts"],
   "engine-history-offthread.ts": ["node:worker_threads", "./proxy-paths.ts"],
   // audited leaves: single-purpose modules, each with a closed list of its own
   "blake3.ts": [],
   "sqlite-checkpoint.ts": ["./observe.ts"],
   // shared/spawned-proxies.mjs is the proxy name list the desktop main process reads too (4adf5e642); it is data with no
   // imports of its own, which engine-plan-structure.test.ts checks, so the leaf stays closed.
-  "proxy-paths.ts": ["node:fs", "node:path", "node:url", "../shared/spawned-proxies.mjs"],
+  "proxy-paths.ts": ["../shared/win-hide-child-process.mjs", "node:fs", "node:path", "node:url", "../shared/spawned-proxies.mjs"],
   "observe.ts": ["node:perf_hooks"],
 };
 
@@ -358,7 +358,7 @@ function scriptModules(text: string): string[] {
 
 /** For a module outside the deletion set that must start an eval worker (wal-maintenance.ts): the worker's source (a literal, or a
  * top-level const holding one) may require only the modules in `allowed`, and may use no other route to code. */
-export function evalWorkerViolations(name: string, src: string, allowed: readonly string[]): string[] {
+export function evalWorkerViolations(name: string, src: string, allowed: readonly string[], pins: Readonly<Record<string, readonly string[]>> = {}): string[] {
   const out: string[] = [];
   const file = parse(name, src);
   const constants = new Map<string, string>();
@@ -368,13 +368,48 @@ export function evalWorkerViolations(name: string, src: string, allowed: readonl
   for (const use of workerUses(file)) {
     if (use.eval === "no") continue;
     if (use.eval === "maybe") { out.push(`${name}: starts a worker whose options could carry eval: true and cannot be read here`); continue; }
-    const first = use.node.arguments![0]!;
+    let first = use.node.arguments![0]!;
+    // The Windows startup prelude is separately verified and contains no launch.
+    // Only this exact imported prefix may precede the audited worker body.
+    const hasPrelude = file.statements.some(node => ts.isImportDeclaration(node)
+      && ts.isStringLiteral(node.moduleSpecifier) && node.moduleSpecifier.text === "../shared/win-hide-child-process.mjs"
+      && node.importClause?.namedBindings && ts.isNamedImports(node.importClause.namedBindings)
+      && node.importClause.namedBindings.elements.some(item => item.name.text === "windowsHidePrelude" && !item.propertyName));
+    if (hasPrelude && ts.isBinaryExpression(first) && first.operatorToken.kind === ts.SyntaxKind.PlusToken
+      && ts.isIdentifier(first.left) && first.left.text === "windowsHidePrelude") first = first.right;
     const text = ts.isStringLiteralLike(first) ? first.text : ts.isIdentifier(first) ? constants.get(first.text) : undefined;
     if (text === undefined) { out.push(`${name}: starts a worker from a string that cannot be read here`); continue; }
     for (const module of scriptModules(text)) if (!allowed.includes(module)) out.push(`${name}: its eval worker requires ${module}, which is not on its list (${allowed.join(", ")})`);
     const { escapes } = importsOf(text, "<eval worker>.js");
     for (const escape of escapes) if (escape !== "require") out.push(`${name}: its eval worker uses ${escape}`);
+    for (const [module, members] of Object.entries(pins)) out.push(...pinnedMemberViolations(name, text, module, members));
   }
+  return out;
+}
+
+/** A module the eval worker may load only for named members: every require of it must be `const { a, b } = require("module")` with plain
+ * names, and each name must be on the pinned list. Anything else (a namespace object, a rename, a rest or computed name, an indexed use)
+ * is a violation, so a new member of node:fs cannot arrive without this list changing. */
+function pinnedMemberViolations(name: string, text: string, module: string, members: readonly string[]): string[] {
+  const out: string[] = [];
+  const file = parse("<eval worker>.js", text);
+  const isRequire = (node: ts.Node | undefined): node is ts.CallExpression =>
+    !!node && ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "require" && !!node.arguments[0] && ts.isStringLiteralLike(node.arguments[0]) && node.arguments[0].text === module;
+  let total = 0, destructured = 0;
+  walk(file, (node) => {
+    if (isRequire(node)) total++;
+    if (ts.isVariableDeclaration(node) && isRequire(node.initializer)) {
+      if (!ts.isObjectBindingPattern(node.name)) { out.push(`${name}: its eval worker takes ${module} as a whole object, not named members`); return; }
+      destructured++;
+      if (!ts.isVariableDeclarationList(node.parent) || !(node.parent.flags & ts.NodeFlags.Const)) out.push(`${name}: its eval worker takes ${module} members without const bindings`);
+      for (const element of node.name.elements) {
+        const member = element.propertyName ?? element.name;
+        if (element.dotDotDotToken || !ts.isIdentifier(member) || element.propertyName || element.initializer) out.push(`${name}: its eval worker takes ${module} members in a form that cannot be pinned (${element.getText(file)})`);
+        else if (!members.includes(member.text)) out.push(`${name}: its eval worker uses ${module} member ${member.text}, which is not on its pinned list (${members.join(", ")})`);
+      }
+    }
+  });
+  if (total !== destructured) out.push(`${name}: its eval worker requires ${module} other than as a destructured list of named members`);
   return out;
 }
 
@@ -453,7 +488,7 @@ export function violations(name: string, src: string, role: Role | undefined = E
     });
   }
   if (role === "worker") {
-    for (const module of modules) if (module !== "node:worker_threads" && module !== "./engine-history-run.ts") out.push(`${name}: the worker may import only node:worker_threads and engine-history-run.ts, not ${module}`);
+    for (const module of modules) if (!(ALLOWED["engine-history-worker.ts"] ?? []).includes(module)) out.push(`${name}: the worker may import only the Windows installer, node:worker_threads and engine-history-run.ts, not ${module}`);
   }
   if (role === "offthread") {
     for (const module of modules) if (module.startsWith("./engine-")) out.push(`${name}: the thread that serves the app must not load ${module}`);

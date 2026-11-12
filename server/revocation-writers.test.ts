@@ -5,7 +5,7 @@
 // gate in database.ts; the revocation index build no longer takes it, it writes in short slices) waits asynchronously or
 // requeues without losing work: scheduler ticks, routine runs, the mutating GET /api/mobile/push/binding, background timers,
 // plus the HTTP turn. None of them crashes the server, none fails terminally, and the event loop stays free.
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
@@ -205,4 +205,18 @@ it("a foreground write with no hold in force costs nothing and never waits", asy
   const t0 = Date.now();
   await gateWriteRequest("POST"); await awaitWriterGateForeground();
   expect(Date.now() - t0).toBeLessThan(50);
+});
+
+it("export stays answered while the index writer is held: POST /api/teams/export is read-only and skips the write gate, every other POST still waits", async () => {
+  holdWritersForIndexBuild(true); // held for the whole test
+  const t0 = Date.now();
+  await gateWriteRequest("POST", "/api/teams/export");
+  expect(Date.now() - t0).toBeLessThan(50);
+  const t1 = Date.now();
+  await Promise.race([gateWriteRequest("POST", "/api/teams/export-evil"), new Promise(res => setTimeout(res, 300))]);
+  expect(Date.now() - t1).toBeGreaterThanOrEqual(250); // near-miss paths and other methods keep the gate
+  const t2 = Date.now();
+  await Promise.race([gateWriteRequest("PUT", "/api/teams/export"), new Promise(res => setTimeout(res, 300))]);
+  expect(Date.now() - t2).toBeGreaterThanOrEqual(250);
+  expect(readFileSync(new URL("./index.ts", import.meta.url), "utf8")).toContain("await gateWriteRequest(method, path);");
 });

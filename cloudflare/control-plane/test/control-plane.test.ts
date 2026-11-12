@@ -147,6 +147,7 @@ describe("control-plane migrations and health", () => {
     const misconfiguredEnv: Env = {
       DB: env.DB,
       EMAIL: env.EMAIL,
+      MURAGE_ENV: env.MURAGE_ENV,
       BETTER_AUTH_URL: env.BETTER_AUTH_URL,
       EMAIL_FROM: env.EMAIL_FROM,
       ALLOWED_ORIGINS: env.ALLOWED_ORIGINS,

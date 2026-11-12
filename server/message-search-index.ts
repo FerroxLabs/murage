@@ -1,257 +1,505 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// Substring-search index over message text (messages_fts, FTS5 trigram).
-//
-// /api/search used to run `lower(text) LIKE ?` over the whole messages table,
-// which reads every page of a ~200 MB database per query. A trigram index
-// turns that into a posting-list intersection. The index is a CANDIDATE
-// filter only: searchMessages() still checks each candidate with the same
-// LIKE it always used, so a stale or over-wide index can never invent a hit.
-// A stale index can only miss one, which is why every write path in
-// message-db.ts keeps it in step and the startup backfill below repairs a
-// restored, downgraded or interrupted one.
-//
-// The table is contentless (contentless_delete=1): it stores trigrams keyed
-// by messages.rowid, never a second copy of the text. The DDL lives in
-// message-tables.ts so the offline archive inspector builds its reference
-// schema from it.
-import { rebuildThreadSummaries } from "./thread-summary.ts";
-import type { DatabaseSync } from "node:sqlite";
-import { beginBackground, isDatabaseBusy } from "./db-busy.ts";
-import { readIndexState, writeIndexState } from "./transcript-backfill.ts";
+// The main connection appends fixed-size references only. FTS lives in search.db,
+// written by one worker; its commits cannot change messages.db's data_version.
+import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { Worker } from "node:worker_threads";
+import { windowsHidePrelude } from "../shared/win-hide-child-process.mjs";
+import { MESSAGE_SEARCH_DDL } from "./message-tables.ts";
+import { SEARCH_INDEX_WORKER_SOURCE } from "./search-index-worker.ts";
+import { ioBudget } from "./io-budget.ts";
+import { ownerFirst } from "./owner-first.ts";
+import { isDatabaseBusy, writersHeldForIndexBuild } from "./db-busy.ts";
+import { assertWalWriteAdmission, walMaintenanceCounters } from "./wal-maintenance.ts";
+import { registerTestHandle, pathIsWithin } from "./test-handle-registry.ts";
 
+export const SEARCH_FILES = ["search.db", "search.db-wal", "search.db-shm"] as const;
 export const MESSAGE_SEARCH_TABLE = "messages_fts";
-/** Fewer code points than this cannot form a trigram: those queries scan. */
 export const MIN_INDEXED_QUERY_CODEPOINTS = 3;
-
-/** The MATCH expression for a needle: every distinct trigram, ANDed (capped; any
- * subset still names a superset of the true matches). The index keeps no
- * positions (detail=none), so adjacency is the LIKE check's job. Needle must
- * have at least MIN_INDEXED_QUERY_CODEPOINTS code points. */
-export function trigramQuery(needle: string): string {
-  const points = [...needle.toLowerCase()];
-  const grams = new Set<string>();
-  for (let i = 0; i + 3 <= points.length && grams.size < 16; i++) grams.add(points.slice(i, i + 3).join(""));
-  return [...grams].map((gram) => `"${gram.replace(/"/g, '""')}"`).join(" AND ");
+export const INTENT_MAX_BYTES = 120;
+export const PRUNE_PER_COMMIT = 2;
+export const IDLE_PRUNE_ROWS = 64;
+export const RETIRE_CHUNK_BYTES = 256 * 1024;
+export const PENDING_MAX = 2_000;
+export const SEARCH_RECOVERY_CONSECUTIVE = 8;
+export const SEARCH_RECOVERY_ATTEMPTS = SEARCH_RECOVERY_CONSECUTIVE;
+export const SEARCH_RECOVERY_WINDOW_MS = 24 * 3600_000;
+export const SEARCH_RECOVERY_WINDOW_MAX = 12;
+// Self-contained so serializing the pure function also survives bundle minification.
+export function scrubDelay(n: number): number {
+  const base = 50, cap = 30_000;
+  return Math.min(base * 2 ** Math.min(Math.max(0, n - 1), 10), cap);
 }
-
-/** Rowids covered by one backfill statement and its transaction (at most this many rows indexed per transaction). */
-const BACKFILL_WINDOW = 500;
-/** Rows read by one step of the background fill (stepMessageSearchBackfill, upgui). */
-const BACKFILL_CHUNK = 500;
-/** A chunk is read in pieces of this many rows and stops once it has used this long, or has indexed this much text (it commits what it indexed). */
-const BACKFILL_PIECE = 100, BACKFILL_CHUNK_MS = 25, BACKFILL_CHUNK_CHARS = 256 * 1024;
-/** The rowids one piece of the background fill reads at most, whatever their kind. */
-const BACKFILL_SPAN = 2_000;
-const ready = new WeakSet<DatabaseSync>();
-let warned = false;
-
-/** What a row contributes to the index: a text row's text, or an activity
- * chip's tool name; otherwise nothing. Mirrors the two arms of the search. */
+export const SCRUB_BACKOFF_BASE_MS = scrubDelay(1);
+export const SCRUB_BACKOFF_CAP_MS = scrubDelay(50);
+export function searchRetryDelay(n: number): number { return Math.max(10, Math.min(SCRUB_BACKOFF_CAP_MS, n)); }
+export { MESSAGE_SEARCH_DDL };
+export function intentCount(db: DatabaseSync): number {
+  return db.prepare("SELECT 1 FROM sqlite_schema WHERE name='search_intents'").get()
+    ? Number(db.prepare("SELECT COUNT(*) AS n FROM search_intents").get()!.n) : 0;
+}
+export function searchDbPath(dir: string): string { return join(dir, SEARCH_FILES[0]); }
+export function openSearchIndex(dir: string): DatabaseSync { return new DatabaseSync(searchDbPath(dir), { readOnly: true }); }
+type RecoveryState = "HEALTHY" | "RECOVERING" | "DEFERRED" | "THROTTLED" | "PARKED";
+interface Recovery { state: RecoveryState; consecutive: number; cycleStarts: number[]; markerSeq?: number }
+export function recovery(db: DatabaseSync): { state: RecoveryState; consecutive: number; windowCount: number } {
+  const current = runs.get(db)?.recovery;
+  return { state: current?.state ?? "HEALTHY", consecutive: current?.consecutive ?? 0,
+    windowCount: current?.cycleStarts.filter(at => at > searchIndexTestHooks.now() - SEARCH_RECOVERY_WINDOW_MS).length ?? 0 };
+}
+export const PRUNE_SQL = "DELETE FROM search_intents WHERE seq < ? AND seq IN (SELECT seq FROM search_intents WHERE seq>0 ORDER BY seq LIMIT ?)";
+// LIMIT applies BEFORE filtering drops or deduplicating rowids.
+export const PENDING_SQL = "SELECT seq,rowid FROM search_intents WHERE seq > ? ORDER BY seq DESC LIMIT ?";
+export function threadKey(id: string): string {
+  // Hash every id: raw h:<digest> identifiers cannot collide with hashed ids.
+  return "h:" + createHash("sha256").update(id).digest("hex").slice(0, 32);
+}
+export function trigramQuery(needle: string): string {
+  const points = [...needle.toLowerCase()], grams = new Set<string>();
+  for (let i = 0; i + 3 <= points.length && grams.size < 16; i++) grams.add(points.slice(i, i + 3).join(""));
+  return [...grams].map(gram => `"${gram.replace(/"/g, '""')}"`).join(" AND ");
+}
 export function searchableText(message: { kind: string; text?: string | null; tool?: { name?: unknown } }): string | null {
   if (message.kind === "text") return typeof message.text === "string" && message.text !== "" ? message.text : null;
-  if (message.kind === "activity") {
-    const name = message.tool?.name;
-    return typeof name === "string" && name !== "" ? name : null;
-  }
-  return null;
+  const name = message.kind === "activity" ? message.tool?.name : null;
+  return typeof name === "string" && name !== "" ? name : null;
 }
-
-/** True when the index may be used to answer a query on this handle. */
-export function messageSearchIndexReady(db: DatabaseSync): boolean {
-  return ready.has(db);
+const nonce = () => randomBytes(8).readBigUInt64BE() & ((1n << 63n) - 1n);
+const retirementWarnings = new WeakSet<DatabaseSync>();
+// No catch here: losing an intent must roll back the owner's message as well.
+export function syncMessageSearchRow(db: DatabaseSync, rowid: number, _text: string | null): void {
+  db.prepare("INSERT INTO search_intents(nonce,rowid) VALUES(?,?)").run(nonce(), rowid);
+  nudge(db);
 }
-
-/** Stop trusting the index on this handle (a query against it failed). */
-export function disableMessageSearchIndex(db: DatabaseSync, error: unknown): void {
-  degrade(db, error);
-}
-
-function degrade(db: DatabaseSync, error: unknown): void {
-  ready.delete(db);
-  // a held write lock is not a broken index: nothing is said, the fill tries again later
-  if (warned || isDatabaseBusy(error)) return;
-  warned = true;
-  console.warn("[message-search] index unavailable, searching without it:", error instanceof Error ? error.message : error);
-}
-
-/** Keep one row's entry current: drop any entry, then add `text` when given.
- * Never throws: a broken index must not break saving a message; searches fall
- * back to the scan until the next start repairs it. */
-export function syncMessageSearchRow(db: DatabaseSync, rowid: number, text: string | null): void {
-  try {
-    db.prepare(`DELETE FROM ${MESSAGE_SEARCH_TABLE} WHERE rowid = ?`).run(rowid);
-    if (text !== null) db.prepare(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(rowid, t) VALUES (?, ?)`).run(rowid, text);
-  } catch (error) { degrade(db, error); }
-}
-
-/** Drop the entries of every row of a thread; call BEFORE deleting the rows.
- * Returns whether any entry existed, so the caller can merge the segments. */
 export function dropThreadSearchRows(db: DatabaseSync, threadId: string): boolean {
-  try {
-    const present = db.prepare(
-      `SELECT 1 AS present FROM ${MESSAGE_SEARCH_TABLE}_docsize WHERE id IN (SELECT rowid FROM messages WHERE thread_id = ?) LIMIT 1`,
-    ).get(threadId) !== undefined;
-    if (present) db.prepare(`DELETE FROM ${MESSAGE_SEARCH_TABLE} WHERE rowid IN (SELECT rowid FROM messages WHERE thread_id = ?)`).run(threadId);
-    return present;
-  } catch (error) { degrade(db, error); return false; }
+  db.prepare("INSERT INTO search_intents(nonce,thread_key) VALUES(?,?)").run(nonce(), threadKey(threadId));
+  nudge(db);
+  return true;
 }
+/** Compatibility entry point: no FTS, merge, or checkpoint runs on main. */
+export function mergeMessageSearchIndex(_db: DatabaseSync): void { /* worker debt owns cleanup */ }
 
-/** Deleted entries stay in the index's segments as markers until a merge, so
- * a conversation deletion merges them away (secure_delete zeroes the freed
- * pages), the same way the Fuigo session index is scrubbed. */
-export function mergeMessageSearchIndex(db: DatabaseSync): void {
-  try { db.exec(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(${MESSAGE_SEARCH_TABLE}) VALUES('optimize')`); }
-  catch (error) { degrade(db, error); }
-}
-
-/** A database a pre-release build opened with the checkpointer-worker merge carries what that build left: automerge=0 and deletemerge=0
- * in the index config, and perhaps a `search_merge` marker row (done=0: a merge is owed; done=1: only a WAL scrub is). Runs on every
- * database() open: the SQLite defaults (automerge 4, deletemerge 10) come back each time. Only the `optimize` (the owed merge) and the
- * wal_checkpoint(TRUNCATE) scrub wait on the marker, and only on the first open (`firstOpen`, before listen): a reopen after listen (a
- * restore or a data-dir switch) skips both and keeps the marker, so the next start pays them before it listens. The marker goes only after
- * a scrub that completed; a failure keeps it and costs time only: the next first open tries again. Never throws. */
-export function settleInheritedSearchMerge(db: DatabaseSync, firstOpen: boolean): void {
+/** Astra's safer D2: no shadow deletion or final DROP can have an unproved page
+ * bound. Retired tables stay completely inert until offline settle-copy/downgrade.
+ * R0a ALWAYS invalidates the owner, even when R0b has no rename slot. */
+export function settleInheritedSearchMerge(db: DatabaseSync, _firstOpen: boolean): void {
+  if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='messages_fts' AND type='table'").get()) return;
+  const own = !db.isTransaction;
+  if (own) db.exec("BEGIN IMMEDIATE");
   try {
-    const marker = db.prepare("SELECT done FROM transcript_index_state WHERE name = ?").get("search_merge") as { done?: unknown } | undefined;
-    const config = new Map<string, number>();
-    for (const row of db.prepare(`SELECT k, v FROM ${MESSAGE_SEARCH_TABLE}_config WHERE k IN ('automerge', 'deletemerge')`).all()) config.set(String(row.k), Number(row.v));
-    // a missing row is the default; only a stored value that differs is written back (literals: a bound parameter fails)
-    if (config.has("automerge") && config.get("automerge") !== 4) db.exec(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(${MESSAGE_SEARCH_TABLE}, rank) VALUES('automerge', 4)`);
-    if (config.has("deletemerge") && config.get("deletemerge") !== 10) db.exec(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(${MESSAGE_SEARCH_TABLE}, rank) VALUES('deletemerge', 10)`);
-    if (!marker) return;
-    // a reopen is after listen: a synchronous scrub there would hold the writer lock on the serving thread, so the marker waits for the next start
-    if (!firstOpen) return;
-    if (Number(marker.done) === 0) db.exec(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(${MESSAGE_SEARCH_TABLE}) VALUES('optimize')`);
-    const timeout = Number(db.prepare("PRAGMA busy_timeout").get()!.timeout);
-    try {
-      db.exec("PRAGMA busy_timeout=0");
-      const checkpoint = db.prepare("PRAGMA wal_checkpoint(TRUNCATE)").get();
-      if (checkpoint?.busy !== 0) throw new Error("inherited merge WAL scrub did not complete");
-    } finally {
-      db.exec(`PRAGMA busy_timeout=${timeout}`);
+    db.prepare("INSERT OR REPLACE INTO transcript_index_state(name,done,cursor,skipped) VALUES('search_owner',?,0,0)").run(randomUUID());
+    db.prepare("DELETE FROM transcript_index_state WHERE name='search_merge'").run();
+    db.prepare("INSERT OR REPLACE INTO transcript_index_state(name,done,cursor,skipped) VALUES('search_fts',0,0,0)").run();
+    let renamed = false;
+    for (let i = 1; i <= 8; i++) {
+      const name = "messages_fts_retired" + (i === 1 ? "" : `_${i}`);
+      if (db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(name)) continue;
+      db.exec("SAVEPOINT search_retire_name");
+      try {
+        db.exec(`ALTER TABLE messages_fts RENAME TO ${name}`);
+        db.exec("RELEASE search_retire_name");
+      } catch {
+        // R0a must survive a failed R0b too. Keep the old table inert and
+        // disclose offline cleanup; no legacy index is ever trusted again.
+        db.exec("ROLLBACK TO search_retire_name; RELEASE search_retire_name");
+        break;
+      }
+      renamed = true; break;
     }
-    db.prepare("DELETE FROM transcript_index_state WHERE name = ?").run("search_merge");
-  } catch (error) {
-    console.warn("[message-search] the inherited merge settings could not be settled; the next open tries again:", error instanceof Error ? error.message : error);
+    if (own) db.exec("COMMIT");
+    if (!renamed && !retirementWarnings.has(db)) {
+      retirementWarnings.add(db);
+      console.warn("[message-search] legacy index retained; offline cleanup required");
+    }
+  } catch (error) { if (own) db.exec("ROLLBACK"); throw error; }
+}
+/** Offline recovery route, deliberately never called by the server. The caller
+ * must close Murage, acquire EXCLUSIVE locking, BEGIN EXCLUSIVE, invoke this,
+ * COMMIT, then require a successful TRUNCATE before publishing completion. */
+export function dropRetiredSearchIndexesOffline(db: DatabaseSync): void {
+  if (!db.isTransaction || String(db.prepare("PRAGMA locking_mode").get()?.locking_mode).toLowerCase() !== "exclusive")
+    throw new Error("offline search cleanup requires exclusive locking and a transaction");
+  db.exec("PRAGMA secure_delete=ON");
+  const names = ["messages_fts", ...Array.from({ length: 8 }, (_, i) => "messages_fts_retired" + (i === 0 ? "" : `_${i+1}`))];
+  for (const name of names) if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(name)) db.exec(`DROP TABLE ${name}`);
+}
+export function prepareMessageSearchBackfill(db: DatabaseSync): boolean {
+  db.prepare("INSERT OR IGNORE INTO transcript_index_state(name,done,cursor,skipped) VALUES('search_owner',?,0,0)").run(randomUUID());
+  return true;
+}
+interface Cache { indexId: string; applied: number; at: number }
+interface SearchRun {
+  db: DatabaseSync; file: string; token: string; worker: Worker; reader: DatabaseSync | null;
+  indexId: string | null; cache: Cache | null; stopped: boolean; exited: Promise<void>;
+  recovery: Recovery; resetMarker?: { seq: number; nonce: string };
+  inflight: boolean; scrubTimer?: boolean; nudged?: boolean; ioState?: RecoveryState; timer?: ReturnType<typeof setTimeout>; firstDeferredAt?: number;
+}
+const runs = new WeakMap<DatabaseSync, SearchRun>();
+const live = new Set<SearchRun>();
+const sessions = new Set<SearchRun>();
+const pendingStarts = new Map<DatabaseSync, { file: string; timer?: ReturnType<typeof setTimeout> }>();
+export const searchIndexTestHooks: {
+  barrier: { name: string; shared: SharedArrayBuffer } | null;
+  event: ((event: { type: string; token: string; [key: string]: unknown }) => void) | null;
+  halted: boolean;
+  failStart: boolean;
+  candidateSnapshot: (() => void) | null;
+  fence: () => boolean;
+  now: () => number;
+  recovery: typeof recovery;
+} = { now: () => Date.now(), recovery, barrier: null, event: null, halted: false, failStart: false, candidateSnapshot: null, fence: () => writersHeldForIndexBuild() || walMaintenanceCounters()?.resetWant === 1 };
+
+/** Kept pure to pin ordering and starvation age independently of wall time. */
+export function dispatchSearchStep(run: { firstDeferredAt?: number }, now: number, ports: {
+  fenced(): boolean; deferred(): number; admit(waitedMs: number): boolean; post(): void;
+}): boolean {
+  run.firstDeferredAt ??= now;
+  if (ports.fenced() || ports.deferred() > 0) return false;
+  if (!ports.admit(now - run.firstDeferredAt)) return false;
+  ports.post(); run.firstDeferredAt = undefined;
+  return true;
+}
+// Appends only replace the existing scrub timer. An in-flight response also
+// observes the wake, so an append cannot be lost between dispatch and reply.
+function nudge(db: DatabaseSync): void {
+  const run = runs.get(db);
+  if (!run || run.stopped || !["HEALTHY", "RECOVERING"].includes(run.recovery.state)) return;
+  run.nudged = true;
+  if (run.timer && run.scrubTimer) {
+    clearTimeout(run.timer); run.timer = undefined;
+    schedule(run, 10);
   }
 }
-
-/** Index every searchable row above what the index already covers. Rows are
- * indexed in ascending rowid order, so the highest indexed rowid is a resume
- * point: a fresh/restored-from-older-release database starts at 0, an
- * interrupted run continues, and rows appended while an older release (with
- * no index) was running are picked up. Idempotent and chunked: one short
- * transaction per BACKFILL_WINDOW rowids. Marks the handle ready when done;
- * on failure leaves it not ready (searches scan) rather than throwing.
- *
- * @returns how many rows were indexed by this call. */
-export function backfillMessageSearchIndex(db: DatabaseSync, options: { onProgress?: (progress: { done: number; total: number }) => void } = {}): number {
-  let indexed = 0;
-  try {
-    let cursor = Number((db.prepare(`SELECT COALESCE(MAX(id), 0) AS top FROM ${MESSAGE_SEARCH_TABLE}_docsize`).get() as { top: number }).top);
-    const last = Number((db.prepare("SELECT COALESCE(MAX(rowid), 0) AS top FROM messages").get() as { top: number }).top);
-    // Each statement reads one bounded window of rowids, so a long run of rows with nothing to index (tool and
-    // status rows after the last text row) is walked in slices with progress, never as one multi-second scan.
-    const read = db.prepare(
-      "SELECT rowid AS r, CASE kind WHEN 'activity' THEN json_extract(json, '$.tool.name') ELSE text END AS t " +
-        // `+kind`: walk the rowid window itself. Without it the planner takes the (kind, thread, at) index, which reads every text and
-        // activity row in the database and sorts them for each window (0.1 to 1.3 s on the owner's 103k-message history).
-        "FROM messages WHERE rowid > ? AND rowid <= ? AND +kind IN ('text', 'activity') ORDER BY rowid",
-    );
-    const add = db.prepare(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(rowid, t) VALUES (?, ?)`);
-    while (cursor < last) {
-      const high = Math.min(last, cursor + BACKFILL_WINDOW);
-      const rows = read.all(cursor, high) as Array<{ r: number; t: unknown }>;
-      if (rows.length) {
-        beginBackground(db, "search-backfill");
-        try {
-          for (const row of rows) if (typeof row.t === "string" && row.t !== "") { add.run(row.r, row.t); indexed++; }
-          db.exec("COMMIT");
-        } catch (error) { try { db.exec("ROLLBACK"); } catch { /* none open */ } throw error; }
-      }
-      cursor = high;
-      options.onProgress?.({ done: cursor, total: last });
-    }
-    ready.add(db);
-  } catch (error) { degrade(db, error); }
-  return indexed;
+function schedule(run: SearchRun, delay = 25, scrubTimer = false): void {
+  if (run.stopped || run.timer || !["HEALTHY", "RECOVERING"].includes(run.recovery.state)) return;
+  run.scrubTimer = scrubTimer;
+  run.timer = setTimeout(() => {
+    run.timer = undefined; run.scrubTimer = false;
+    searchIndexTestHooks.event?.({ type: "timer", token: run.token });
+    if (run.stopped || run.inflight) return;
+    const sent = !searchIndexTestHooks.halted && dispatchSearchStep(run, performance.now(), {
+      fenced: searchIndexTestHooks.fence,
+      deferred: () => ioBudget.deferredForMs("search-index"),
+      admit: waitedMs => ownerFirst.admit("search-index", { waitedMs }).admitted,
+      post: () => { run.nudged = false; run.inflight = true; run.worker.postMessage({ type: "step", token: run.token }); },
+    });
+    if (!sent) schedule(run, 100);
+  }, delay);
+  run.timer.unref();
 }
-
-/** Throw the index away and rebuild it from messages (repair path). */
+function closeReader(run: SearchRun): void {
+  // Cache invalidation precedes the reset ack and every worker unlink.
+  run.cache = null; run.indexId = null;
+  try { run.reader?.close(); } catch { /* already closed */ } run.reader = null;
+}
+/** A failed derived index may stay unavailable, but cannot write forever.
+ * Explicit stop/start permits another bounded recovery session. */
+function recoveryWarning(error: unknown): void {
+  console.warn("[message-search] recovery failed:", error instanceof Error ? error.message : String(error));
+}
+function recoveryBudget(run: SearchRun): boolean {
+  if (run.recovery.state === "PARKED") return false;
+  if (run.recovery.consecutive >= SEARCH_RECOVERY_CONSECUTIVE) {
+    run.recovery.state = "PARKED";
+    recoveryWarning("retry limit reached; search remains partial until reopened");
+    return false;
+  }
+  const now = searchIndexTestHooks.now();
+  run.recovery.cycleStarts = run.recovery.cycleStarts.filter(at => at > now - SEARCH_RECOVERY_WINDOW_MS);
+  if (run.recovery.cycleStarts.length >= SEARCH_RECOVERY_WINDOW_MAX) {
+    run.recovery.state = "THROTTLED";
+    const delay = run.recovery.cycleStarts[0] + SEARCH_RECOVERY_WINDOW_MS - now;
+    console.warn(`[message-search] recovery paused; resumes in ${Math.ceil(delay / 60_000)} min`);
+    searchIndexTestHooks.event?.({ type: "recovery-throttled", token: run.token, delay });
+    run.timer = setTimeout(() => { run.timer = undefined; if (!run.stopped) acknowledgeSearchReset(run); }, delay);
+    run.timer.unref();
+    return false;
+  }
+  return true;
+}
+function retryRecovery(run: SearchRun, retry: () => void): void {
+  if (run.stopped || run.timer || !recoveryBudget(run)) return;
+  const delay = Math.min(100 * 2 ** run.recovery.consecutive, 5000);
+  run.timer = setTimeout(() => { run.timer = undefined; if (!run.stopped) retry(); }, delay);
+  run.timer.unref();
+}
+function acknowledgeSearchReset(run: SearchRun): void {
+  if (run.stopped || (!run.ioState && !recoveryBudget(run))) return;
+  const { db } = run;
+  if (db.isTransaction || searchIndexTestHooks.fence() || ioBudget.deferredForMs("search-index") > 0 ||
+      !ownerFirst.admit("search-index-reset").admitted) {
+    run.recovery.state = "DEFERRED";
+    retryRecovery(run, () => acknowledgeSearchReset(run)); return;
+  }
+  let began = false;
+  try {
+    // A single retained marker serves every retry until ready. Admission refusal
+    // and failed marker transactions do not consume a reset cycle.
+    assertWalWriteAdmission(run.file);
+    if (!run.resetMarker) {
+      db.exec("BEGIN IMMEDIATE"); began = true;
+      const n = nonce();
+      const inserted = db.prepare("INSERT INTO search_intents(nonce,rowid) VALUES(?,0)").run(n);
+      db.exec("COMMIT"); began = false;
+      run.resetMarker = { seq: Number(inserted.lastInsertRowid), nonce: String(n) };
+    }
+    if (run.ioState) { run.recovery.state = run.ioState; run.ioState = undefined; }
+    run.recovery.consecutive++;
+    run.recovery.cycleStarts.push(searchIndexTestHooks.now());
+    run.recovery.markerSeq = run.resetMarker.seq;
+    run.recovery.state = "RECOVERING";
+    searchIndexTestHooks.event?.({ type: "reset-ack", token: run.token, readerClosed: run.reader === null, cacheCleared: run.cache === null });
+    run.worker.postMessage({ type: "reset", token: run.token, marker: run.resetMarker });
+  } catch (error) {
+    if (began) try { db.exec("ROLLBACK"); } catch { /* keep the original failure */ }
+    recoveryWarning(error);
+    if (storageFull(error)) {
+      throttleStorage(run, () => acknowledgeSearchReset(run), 1000); return;
+    }
+    run.recovery.state = "DEFERRED";
+    retryRecovery(run, () => acknowledgeSearchReset(run));
+  }
+}
+function throttleStorage(run: SearchRun, retry: () => void, delay: number): void {
+  run.ioState ??= run.recovery.state;
+  run.recovery.state = "THROTTLED";
+  if (run.timer) clearTimeout(run.timer);
+  run.timer = setTimeout(() => { run.timer = undefined; if (!run.stopped) retry(); }, searchRetryDelay(delay));
+  run.timer.unref();
+}
+function retryStorageOperation(run: SearchRun, operation: string): void {
+  if (run.db.isTransaction || searchIndexTestHooks.fence() || ioBudget.deferredForMs("search-index") > 0 ||
+      !ownerFirst.admit(operation === "step" ? "search-index" : "search-index-reset").admitted) {
+    throttleStorage(run, () => retryStorageOperation(run, operation), 100); return;
+  }
+  run.worker.postMessage({ type: operation, token: run.token, marker: run.resetMarker });
+}
+function storageFull(error: unknown): boolean {
+  const e = error as { code?: string; errcode?: number };
+  return e?.code === "ENOSPC" || e?.code === "SQLITE_FULL" || (typeof e?.errcode === "number" && (e.errcode & 255) === 13);
+}
+function openSearchReader(run: SearchRun, indexId: string): void {
+  if (run.stopped) return;
+  closeReader(run);
+  try {
+    run.reader = new DatabaseSync(join(dirname(run.file), SEARCH_FILES[0]), { readOnly: true });
+    run.reader.exec("PRAGMA busy_timeout=0; PRAGMA query_only=ON");
+    run.indexId = indexId; run.inflight = false;
+    // Ready only proves the empty index opened. A persistent error can recur
+    // on its first step, so it must not replenish the recovery write budget.
+    run.resetMarker = undefined;
+    schedule(run);
+  } catch (error) {
+    closeReader(run); run.inflight = true;
+    recoveryWarning(error);
+    retryRecovery(run, () => { if (!run.stopped) run.worker.postMessage({ type: "reset-request", token: run.token }); });
+  }
+}
+export function startSearchIndex(db: DatabaseSync, file: string): void {
+  const existing = runs.get(db);
+  if (existing && !existing.stopped) return;
+  if (pendingStarts.has(db)) return;
+  const prior = [...live].filter(run => run.file === file && run.db !== db);
+  if (prior.length) {
+    const pending = { file }; pendingStarts.set(db, pending);
+    for (const run of prior) {
+      run.stopped = true; sessions.delete(run); closeReader(run);
+      if (run.timer) clearTimeout(run.timer);
+      run.worker.postMessage({ type: "stop", token: run.token });
+      const timer = setTimeout(() => { void run.worker.terminate(); }, 1500); timer.unref();
+      void run.exited.then(() => clearTimeout(timer));
+    }
+    void Promise.all(prior.map(run => run.exited)).then(() => {
+      if (pendingStarts.get(db) !== pending) return;
+      pendingStarts.delete(db);
+      try { if (db.isOpen) startSearchIndex(db, file); } catch { /* a closed handle cannot reactivate */ }
+    });
+    return;
+  }
+  prepareMessageSearchBackfill(db);
+  const token = randomUUID();
+  let worker: Worker;
+  try {
+    if (searchIndexTestHooks.failStart) throw new Error("fixture worker start failure");
+    worker = new Worker(windowsHidePrelude + SEARCH_INDEX_WORKER_SOURCE, { eval: true, workerData: {
+    file, searchFile: join(dirname(file), SEARCH_FILES[0]), ddl: MESSAGE_SEARCH_DDL, token, barrier: searchIndexTestHooks.barrier,
+    scrubDelaySource: scrubDelay.toString(), scrubBase: SCRUB_BACKOFF_BASE_MS, scrubCap: SCRUB_BACKOFF_CAP_MS,
+    recoveryConsecutive: SEARCH_RECOVERY_CONSECUTIVE, recoveryWindowMs: SEARCH_RECOVERY_WINDOW_MS, recoveryWindowMax: SEARCH_RECOVERY_WINDOW_MAX,
+    } });
+  } catch (error) {
+    console.warn("[message-search] worker stopped:", error instanceof Error ? error.message : String(error));
+    const pending: { file: string; timer?: ReturnType<typeof setTimeout> } = { file };
+    pendingStarts.set(db, pending);
+    pending.timer = setTimeout(() => {
+      if (pendingStarts.get(db) !== pending) return;
+      pendingStarts.delete(db);
+      if (db.isOpen) startSearchIndex(db, file);
+    }, 1000);
+    pending.timer.unref();
+    return;
+  }
+  worker.unref();
+  let exited!: () => void;
+  const run: SearchRun = { db, file, token, worker, reader: null, indexId: null, cache: null, stopped: false, inflight: true, recovery: { state: "HEALTHY", consecutive: 0, cycleStarts: [] },
+    exited: new Promise<void>(resolve => { exited = resolve; }) };
+  runs.set(db, run); live.add(run); sessions.add(run);
+  worker.on("message", (event: { type: string; token: string; index_id?: string; worked?: boolean; rebuilding?: boolean; applied?: number; retryInMs?: number; operation?: string; message?: string }) => {
+    if (event.token !== token || run.stopped || runs.get(db) !== run) return;
+    searchIndexTestHooks.event?.(event);
+    if ((event.type === "ready" || event.type === "stepped") && run.ioState) {
+      run.recovery.state = run.ioState; run.ioState = undefined;
+    }
+    if (event.type === "storage-full") {
+      recoveryWarning(event.message);
+      // Retry the same operation, retaining its marker and cycle. No reset is
+      // requested for a full disk, and repeated failures spend no reset budget.
+      throttleStorage(run, () => retryStorageOperation(run, event.operation ?? "step"), event.retryInMs ?? 1000);
+    } else if (event.type === "failure") {
+      recoveryWarning(event.message ?? "worker failure");
+    } else if (event.type === "reset-needed" || event.type === "reset-retry") {
+      closeReader(run); run.inflight = true;
+      if (run.timer) { clearTimeout(run.timer); run.timer = undefined; }
+      // A busy reset stays a reset: no step can run until it has succeeded.
+      if (run.recovery.consecutive === 0) setImmediate(() => acknowledgeSearchReset(run));
+      else retryRecovery(run, () => acknowledgeSearchReset(run));
+    } else if (event.type === "ready") {
+      openSearchReader(run, String(event.index_id));
+    } else if (event.type === "stepped") {
+      run.inflight = false;
+      if (run.recovery.state === "RECOVERING" && event.rebuilding === false && run.reader &&
+          event.applied !== undefined && event.applied >= (run.recovery.markerSeq ?? Infinity)) {
+        run.recovery.state = "HEALTHY";
+        run.recovery.consecutive = 0;
+        run.recovery.markerSeq = undefined;
+      }
+      // Pruning is idle admitted and never paid by a small owner commit.
+      try {
+        if (!event.worked && !db.isTransaction && !searchIndexTestHooks.fence() && ioBudget.deferredForMs("search-index") === 0 &&
+            ownerFirst.admit("search-index-prune").admitted) {
+          assertWalWriteAdmission(file);
+          pruneMessageSearchIntents(db, IDLE_PRUNE_ROWS);
+        }
+      } catch (error) { recoveryWarning(error); }
+      schedule(run, event.worked || run.nudged ? 10 : searchRetryDelay(event.retryInMs ?? 250),
+        !event.worked && !run.nudged && event.retryInMs !== undefined);
+    }
+  });
+  worker.on("error", error => { console.warn("[message-search] worker stopped:", error instanceof Error ? error.message : String(error)); });
+  worker.on("exit", () => {
+    closeReader(run); live.delete(run); exited();
+    if (run.timer) clearTimeout(run.timer);
+    if (!run.stopped && runs.get(db) === run) {
+      run.stopped = true;
+      run.timer = setTimeout(() => {
+        run.timer = undefined;
+        if (!run.stopped || runs.get(db) !== run) return;
+        sessions.delete(run);
+        try { startSearchIndex(db, file); } catch { /* next open retries */ }
+      }, 1000);
+      run.timer.unref();
+    } else { sessions.delete(run);
+    }
+  });
+}
+export function pruneMessageSearchIntents(db: DatabaseSync, count = PRUNE_PER_COMMIT): void {
+  const run = runs.get(db);
+  if (!run?.reader || !run.indexId) return;
+  if (!run.cache || performance.now() - run.cache.at >= 1000) {
+    try {
+      const row = run.reader.prepare("SELECT (SELECT v FROM search_state WHERE k='index_id') AS id,(SELECT v FROM search_state WHERE k='applied_seq') AS seq").get();
+      if (row?.id !== run.indexId) { run.cache = null; return; }
+      run.cache = { indexId: String(row.id), applied: Number(row.seq), at: performance.now() };
+    } catch { run.cache = null; return; }
+  }
+  if (run.cache.indexId === run.indexId) db.prepare(PRUNE_SQL).run(run.cache.applied, Math.min(count, IDLE_PRUNE_ROWS));
+}
+export function messageSearchIndexReady(db: DatabaseSync): boolean { return !!runs.get(db)?.reader; }
+export function disableMessageSearchIndex(db: DatabaseSync, _error: unknown): void {
+  const run = runs.get(db);
+  if (run && !run.stopped) { closeReader(run); run.worker.postMessage({ type: "reset-request", token: run.token }); }
+}
+/** Index candidates AND progress come from ONE search.db snapshot. No ATTACH,
+ * FTS writes, pending-text copies or fallback history walks run on main. */
+export function readMessageSearchCandidates(db: DatabaseSync, match: string, cap: number): { rowids: number[]; partial: boolean } {
+  const run = runs.get(db); let applied = 0, partial = true, rowids: number[] = [];
+  if (run?.reader) {
+    const reader = run.reader;
+    try {
+      reader.exec("BEGIN");
+      const progress = reader.prepare("SELECT (SELECT v FROM search_state WHERE k='index_id') AS id,(SELECT v FROM search_state WHERE k='applied_seq') AS seq, EXISTS(SELECT 1 FROM search_state WHERE k='built') AS building, EXISTS(SELECT 1 FROM docs WHERE oversized=1) AS oversized").get()!;
+      if (progress.id !== run.indexId) throw new Error("search index generation changed");
+      applied = Number(progress.seq); partial = !!progress.building || !!progress.oversized;
+      rowids = reader.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ? ORDER BY rowid DESC LIMIT ?").all(match, cap + 1).map(row => Number(row.rowid));
+      if (rowids.length > cap) { rowids.length = cap; partial = true; }
+      searchIndexTestHooks.candidateSnapshot?.();
+      reader.exec("COMMIT");
+    } catch (error) {
+      if (reader.isTransaction) reader.exec("ROLLBACK");
+      if (!isDatabaseBusy(error)) disableMessageSearchIndex(db, error);
+      applied = 0; partial = true; rowids = [];
+    }
+  }
+  const pending = db.prepare(PENDING_SQL).all(applied, PENDING_MAX + 1);
+  if (pending.length > PENDING_MAX) { pending.length = PENDING_MAX; partial = true; }
+  for (const row of pending) if (row.rowid !== null && Number(row.rowid) !== 0) rowids.push(Number(row.rowid));
+  return { rowids: [...new Set(rowids)], partial };
+}
+export function searchRetirementPending(db: DatabaseSync): boolean {
+  return !!db.prepare("SELECT 1 FROM sqlite_schema WHERE name GLOB 'messages_fts_retired*' OR name='messages_fts' LIMIT 1").get();
+}
+export function searchCleanupPending(db: DatabaseSync): boolean {
+  if (searchRetirementPending(db)) return true;
+  const run = runs.get(db);
+  if (!run?.reader) {
+    if (pendingStarts.has(db) || (run && !run.stopped)) return true;
+    // Offline/test callers may supply a pre-upgrade database with no queue.
+    // A real deletion always leaves its drop intent until the worker applies it.
+    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='search_intents'").get()) return false;
+    return db.prepare("SELECT 1 FROM search_intents LIMIT 1").get() !== undefined;
+  }
+  try {
+    const state = run.reader.prepare("SELECT (SELECT v FROM search_state WHERE k='applied_seq') AS seq,EXISTS(SELECT 1 FROM search_state WHERE k IN ('debt','drop_cursor','built')) AS owed").get()!;
+    const newest = Number(db.prepare("SELECT COALESCE(MAX(seq),0) AS n FROM search_intents").get()!.n);
+    return !!state.owed || Number(state.seq) < newest;
+  } catch { return true; }
+}
+/** Close reader first; the writer is last and can checkpoint search.db on close.
+ * Resolves true ONLY after every thread has actually exited. */
+export async function stopSearchIndex(): Promise<boolean> {
+  for (const pending of pendingStarts.values()) if (pending.timer) clearTimeout(pending.timer);
+  pendingStarts.clear();
+  const stopping = [...new Set([...sessions, ...live])];
+  for (const run of stopping) {
+    run.stopped = true; sessions.delete(run);
+    if (run.timer) clearTimeout(run.timer);
+    closeReader(run); run.worker.postMessage({ type: "stop", token: run.token });
+  }
+  const joined = Promise.all(stopping.map(async run => {
+    const timer = setTimeout(() => { void run.worker.terminate(); }, 1500); timer.unref();
+    try { await run.exited; return true; } finally { clearTimeout(timer); }
+  }));
+  return (await joined).every(Boolean);
+}
+registerTestHandle("close", dir => {
+  for (const [db, pending] of pendingStarts) if (dir === undefined || pathIsWithin(pending.file, dir)) { if (pending.timer) clearTimeout(pending.timer); pendingStarts.delete(db); }
+  // Include threads already stopping: closeDatabase requests their stop without waiting.
+  // A fixture may reuse this path only after every old SQLite connection has actually left.
+  const stopping = [...live].filter(run => dir === undefined || pathIsWithin(run.file, dir));
+  for (const run of stopping) {
+    run.stopped = true; sessions.delete(run); closeReader(run); if (run.timer) clearTimeout(run.timer); void run.worker.terminate();
+  }
+  return Promise.all(stopping.map(run => run.exited));
+});
+// A close request removes a session before its thread exits. Async test cleanup must join those live threads too.
+registerTestHandle("stop", async dir => {
+  await Promise.all([...live].filter(run => dir === undefined || pathIsWithin(run.file, dir)).map(run => run.exited));
+});
+// Legacy background API stays inert: all rebuilding belongs to the worker.
+export function messageSearchFillPending(_db: DatabaseSync): boolean { return false; }
+export function stepMessageSearchBackfill(_db: DatabaseSync, _rows = 256): { more: boolean; done: number; total: number } { return { more: false, done: 0, total: 0 }; }
+export function backfillMessageSearchIndex(_db: DatabaseSync, _options: { onProgress?: (p: { done: number; total: number }) => void } = {}): number { return 0; }
 export function rebuildMessageSearchIndex(db: DatabaseSync): number {
-  rebuildThreadSummaries(db);
-  ready.delete(db);
-  db.exec(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(${MESSAGE_SEARCH_TABLE}) VALUES('delete-all')`);
-  return backfillMessageSearchIndex(db);
-}
-
-/** The state row that keeps the place of the background fill (transcript_index_state): `cursor` is the highest rowid already covered at the
- * start of this run. It is taken at open, before any write of this run, because a write adds its own entry and would otherwise move the
- * "highest indexed rowid" past older rows that were never indexed. */
-const SEARCH_FILL = "search_fts";
-
-/** At open: notes where the index ends. With nothing past that point the index is complete and is trusted at once; otherwise the rows past it
- * are filled by stepMessageSearchBackfill in the background, and searches scan until it has finished. Cheap: a seek and a probe. */
-export function prepareMessageSearchBackfill(db: DatabaseSync): boolean {
-  try {
-    // A fill that was started and not finished keeps its own place. The highest indexed rowid says nothing about it: a live write of the
-    // earlier run indexed a row beyond the unfinished history, and taking that rowid as the cursor would skip everything in between for good.
-    const saved = db.prepare("SELECT done FROM transcript_index_state WHERE name = ?").get(SEARCH_FILL) as { done: number } | undefined;
-    if (saved && Number(saved.done) === 0) return true;
-    const top = Number((db.prepare(`SELECT COALESCE(MAX(id), 0) AS top FROM ${MESSAGE_SEARCH_TABLE}_docsize`).get() as { top: number }).top);
-    // A seek on the rowid alone: filtering by kind here walked every row past the index when they were all of other kinds (6 s on a 48 GB history before the server listened). A row past the index that has no text is found by the fill, which finishes at once.
-    const tail = db.prepare("SELECT 1 AS present FROM messages WHERE rowid > ? LIMIT 1").get(top) !== undefined;
-    writeIndexState(db, SEARCH_FILL, { done: tail ? 0 : 1, cursor: top, skipped: 0 });
-    if (!tail) ready.add(db);
-    return tail;
-  } catch (error) { degrade(db, error); return false; }
-}
-/** True while the fill of the rows past the index still has work. */
-export function messageSearchFillPending(db: DatabaseSync): boolean {
-  try { return !ready.has(db) && readIndexState(db, SEARCH_FILL).done === 0 && db.prepare(`SELECT 1 AS present FROM sqlite_schema WHERE name = '${MESSAGE_SEARCH_TABLE}_docsize'`).get() !== undefined; } catch { return false; }
-}
-/** One chunk of the fill, committed with its place. Returns whether more remain; marks the handle ready at the end. */
-export function stepMessageSearchBackfill(db: DatabaseSync, rows = BACKFILL_CHUNK): { more: boolean; done: number; total: number } {
-  const state = readIndexState(db, SEARCH_FILL);
-  if (state.done) return { more: false, done: state.cursor, total: state.cursor };
-  const newest = Number((db.prepare("SELECT COALESCE(MAX(rowid), 0) AS n FROM messages").get() as { n: number }).n);
-  // A chunk runs on the main thread, so all of its work counts against its time: reading a row, indexing it, and the commit. Rows are read one
-  // at a time and indexed as they are read; after each row the chunk checks the time it has used and the text it has indexed, and stops there,
-  // committing its place at that row. One long row (a pasted document) can only take the chunk past its time by that row's own indexing; a run
-  // of long rows is spread over many chunks. Each piece is a bounded window of rowids read in rowid order (`+kind` keeps the planner off the
-  // (kind, thread, at) index, which read and sorted every text and activity row past the cursor for each piece: 0.1 to 1.3 s per piece on the
-  // owner's 103k-message history), so a piece costs its own rows and never the history, and a long run of rows with nothing to index is
-  // crossed a window at a time.
-  const piece = db.prepare(
-    "SELECT rowid AS r, CASE kind WHEN 'activity' THEN json_extract(json, '$.tool.name') ELSE text END AS t FROM messages WHERE rowid > ? AND rowid <= ? AND +kind IN ('text', 'activity') ORDER BY rowid LIMIT ?",
-  );
-  // prepared once for the chunk: preparing two statements per row cost as much as the writes themselves
-  const remove = db.prepare(`DELETE FROM ${MESSAGE_SEARCH_TABLE} WHERE rowid = ?`);
-  const add = db.prepare(`INSERT INTO ${MESSAGE_SEARCH_TABLE}(rowid, t) VALUES (?, ?)`);
-  const began = performance.now();
-  const spent = () => performance.now() - began >= BACKFILL_CHUNK_MS;
-  let cursor = state.cursor, taken = 0, chars = 0, full = false;
-  beginBackground(db, "search-fill"); // a busy start throws before the try: the index is not degraded, the job tries later
-  try {
-    while (!full && taken < rows && cursor < newest) {
-      const limit = Math.min(BACKFILL_PIECE, rows - taken);
-      const high = Math.min(newest, cursor + BACKFILL_SPAN);
-      let got = 0, last = cursor;
-      for (const row of piece.iterate(cursor, high, limit) as Iterable<{ r: number; t: unknown }>) {
-        got++; taken++; last = Number(row.r);
-        // a write of this run may already have added the entry: replace, never duplicate
-        remove.run(row.r);
-        if (typeof row.t === "string" && row.t !== "") { add.run(row.r, row.t); chars += row.t.length; }
-        if (chars >= BACKFILL_CHUNK_CHARS || spent()) { full = true; break; }
-      }
-      // stopped inside the piece, or a full piece: carry on after its last row; otherwise the whole window is covered
-      cursor = full || got === limit ? last : high;
-      if (spent()) full = true;
-    }
-    const finished = cursor >= newest;
-    writeIndexState(db, SEARCH_FILL, { done: finished ? 1 : 0, cursor: finished ? Math.max(cursor, newest) : cursor, skipped: 0 });
-    db.exec("COMMIT");
-    if (finished) ready.add(db);
-    return { more: !finished, done: cursor, total: newest };
-  } catch (error) { try { db.exec("ROLLBACK"); } catch { /* none open */ } degrade(db, error); throw error; }
+  db.prepare("UPDATE transcript_index_state SET done=? WHERE name='search_owner'").run(randomUUID());
+  return 0;
 }

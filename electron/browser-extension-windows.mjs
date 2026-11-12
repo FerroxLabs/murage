@@ -15,7 +15,7 @@ export function resolveWindowsBrowserHelper({ resources = process.resourcesPath 
   return helper;
 }
 function invoke(args, { input, helper = resolveWindowsBrowserHelper(), exec = execFileSync } = {}) {
-  try { return exec(helper, args, { input, windowsHide: true, maxBuffer: MAX + 1024, timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'] }); }
+  try { return exec(helper, [...args], { input, windowsHide: true, maxBuffer: MAX + 1024, timeout: 15000, stdio: ['pipe', 'pipe', 'pipe'] }); }
   catch { throw Object.assign(Error('windows_browser_private_storage_unavailable'), { code: 'windows_browser_private_storage_unavailable', helperPath: helper }); }
 }
 export function createPrivateWindowsDirectory(directory, options) {

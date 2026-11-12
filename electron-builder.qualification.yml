@@ -7,8 +7,6 @@
 #
 #   MURAGE_QUALIFICATION_FEED_URL=https://… pnpm package:<os> --config electron-builder.qualification.yml
 extends: ./electron-builder.yml
-publish:
-  - provider: generic
-    url: ${env.MURAGE_QUALIFICATION_FEED_URL}
-    channel: latest
-    updaterCacheDirName: murage-qualification-updater
+publish: null
+extraMetadata:
+  murageQualification: true

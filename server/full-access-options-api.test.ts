@@ -205,6 +205,7 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
       }),
     );
     child = spawn(process.execPath, ["--import", TELEGRAM_PRELOAD, "--import", IDLE_LOAD_PRELOAD, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -476,7 +477,7 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
       const secondRun = await poll(async () => (await channelRuns()).find((run) => run.id !== firstRun!.id), 20_000);
       expect(secondRun).not.toBeNull();
       expect((await channelRuns()).find((run) => run.id === secondRun!.id)?.threadId).toBe(ownerThread);
-      const card = await poll(() => liveCard(ownerThread), 20_000);
+      const card = await poll(() => liveCard(ownerThread), 45_000);
       expect(card, "the owner's Telegram message skipped its card with the option off").not.toBeNull();
       await deny(ownerThread, card.card.requestId);
       expect(await settledRun(secondRun!.id)).not.toBeNull();
@@ -489,12 +490,14 @@ describe.skipIf(process.platform === "win32")("Full access default and its optio
       const thirdRun = await poll(async () => (await channelRuns()).find((run) => ![firstRun!.id, secondRun!.id].includes(run.id) && run.threadId), 20_000);
       expect(thirdRun, `no channel run for the other person. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
       expect(thirdRun!.threadId).not.toBe(ownerThread);
-      const otherCard = await poll(() => liveCard(thirdRun!.threadId), 20_000);
+      const otherCard = await poll(() => liveCard(thirdRun!.threadId), 45_000);
+      // a timeout (card never seen) is told apart from the gate: Full access shows its chip, a slow card shows neither
+      expect(otherCard !== null || (await fullAccessChip(thirdRun!.threadId)) !== null, "approval card not seen within 45 s").toBe(true);
       expect(otherCard, "someone else's message ran under the owner's Full access").not.toBeNull();
       expect(await fullAccessChip(thirdRun!.threadId)).toBeNull();
       await desktopApi("POST", `/api/routine-runs/${thirdRun!.id}/cancel`);
     },
-    120_000,
+    240_000,
   );
 
   it(

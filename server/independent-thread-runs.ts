@@ -68,13 +68,10 @@ type ResourceWaiter = {
   shown?: string;
 };
 
-/** A turn may go on WITHOUT some of what it asked for instead of waiting for
- * it: `resources` names what it can do without, and `holderYields` says
- * whether a holder is one worth not waiting behind. The built-in browser is
- * the case (D4): a routine that holds the bot's browser profile while it
- * waits for the person's approval, possibly for hours, must not block every
- * other conversation with that bot. The turn that goes on never claims the
- * browser, so two turns still never drive the same profile at once. */
+/** Optional resources a caller may elect to omit rather than queue for.
+ * Ordinary browser owner waits do not use this policy: BrowserTurnExecution
+ * fences and drains the waiting driver, then releases its execution claims
+ * so siblings can acquire the browser instead of running without it. */
 export type ResourceYield = Readonly<{ resources: ReadonlySet<string>; holderYields: (holder: TurnOwner) => boolean }>;
 
 function yieldsTo(policy: ResourceYield, blockers: readonly ResourceBlocker[]): boolean {
@@ -86,8 +83,17 @@ function yieldsTo(policy: ResourceYield, blockers: readonly ResourceBlocker[]): 
  * retires dispatch authority immediately; resource and capacity leases remain
  * until the caller confirms provider teardown/final screen settlement. */
 export class IndependentThreadRuns<T> {
+  private readonly changeListeners = new Set<() => void>();
+  /** Resource releases and run retirement wake short-lived execution waits.
+   * Subscribers must unsubscribe when settled; they never reserve resources. */
+  subscribeChanges(listener: () => void): () => void {
+    this.changeListeners.add(listener);
+    return () => { this.changeListeners.delete(listener); };
+  }
+  private changed(): void { for (const listener of [...this.changeListeners]) listener(); }
   private readonly runs = new Map<string, DirectThreadRun<T>>();
   private readonly resources = new TurnResources();
+  private readonly releaseWatches = new Map<string, Set<() => void>>();
   /** FIFO. A waiter never holds a claim, so waiting cannot deadlock. */
   private readonly waiters: ResourceWaiter[] = [];
   private pumping = false;
@@ -119,6 +125,8 @@ export class IndependentThreadRuns<T> {
       const held = this.runs.get(threadId);
       if (!held || held.generation !== options.takeOver || held.phase !== "rebuilding") throw new DirectRebuildCancelled();
       takenOver = held.botId;
+      // Takeover can reach freed() on failure, but never wakes the replaced generation's watch.
+      this.releaseWatches.delete(held.generation);
       this.drop(held);
     }
     try {
@@ -316,6 +324,7 @@ export class IndependentThreadRuns<T> {
     const run = this.runs.get(owner.threadId);
     if (!run || !this.current(owner)) return false;
     this.runs.set(owner.threadId, Object.freeze({ ...run, phase: "stopping" }));
+    this.fireReleaseWatches(owner.generation);
     this.pump();
     return true;
   }
@@ -327,11 +336,37 @@ export class IndependentThreadRuns<T> {
     // (dispatch authority retired) until its provider teardown is confirmed. A held rebuild has no provider turn to settle.
     if (run.phase === "rebuilding") return false;
     if (run.phase !== "stopping") this.runs.set(owner.threadId, Object.freeze({ ...run, phase: "settling" }));
+    this.changed();
     return true;
   }
 
   /** Told the conversation whose run was just released, and its bot (the shared queue wakes the teams waiting on that conversation, and on the bot's slot). */
   onReleased?: (threadId: string, botId: string | undefined, generation: string) => void;
+
+  /** Watch this generation's first release or cancellation, independently of onReleased.
+   * A stopped or retired generation cannot register again; takeover only removes its watches. */
+  watch(owner: TurnOwner, cb: () => void): () => void {
+    if (!this.current(owner) || this.runs.get(owner.threadId)?.phase === "stopping") return () => {};
+    let watches = this.releaseWatches.get(owner.generation);
+    if (!watches) { watches = new Set(); this.releaseWatches.set(owner.generation, watches); }
+    const listener = () => cb();
+    watches.add(listener);
+    return () => {
+      watches.delete(listener);
+      if (!watches.size && this.releaseWatches.get(owner.generation) === watches) this.releaseWatches.delete(owner.generation);
+    };
+  }
+
+  private fireReleaseWatches(generation: string): void {
+    const watches = this.releaseWatches.get(generation);
+    this.releaseWatches.delete(generation);
+    if (!watches) return;
+    // Delete before invoking: a callback can synchronously cancel or release again.
+    for (const listener of watches) {
+      watches.delete(listener);
+      try { listener(); } catch { /* a listener never keeps a run from being released */ }
+    }
+  }
 
   /** Only after teardown/final capture is confirmed. Late cleanup is harmless. */
   release(owner: TurnOwner): boolean {
@@ -355,6 +390,7 @@ export class IndependentThreadRuns<T> {
 
   private freed(threadId: string, botId: string | undefined, generation: string): void {
     try { this.onReleased?.(threadId, botId, generation); } catch { /* a listener never keeps a run from being released */ }
+    this.fireReleaseWatches(generation);
     this.pump();
   }
 
@@ -453,6 +489,7 @@ export class IndependentThreadRuns<T> {
     try {
       do { this.pumpAgain = false; this.pumpOnce(); } while (this.pumpAgain);
     } finally { this.pumping = false; }
+    this.changed();
   }
 
   private pumpOnce(): void {

@@ -1,0 +1,2 @@
+# muragesite c8e6ce21612c73a563690e016a78202f6ef84660 apps/web/app/[locale]/(marketing)/_lib/murage/waitlist.action.ts:32 (WAITLIST_CONSENT, source waitlist)
+const WAITLIST_CONSENT = 'Email me when Murage for Team and Business opens';

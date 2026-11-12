@@ -1,5 +1,5 @@
 {
-  "@source": "57c41d0f4509791921344f3d826b6015ceced077",
+  "@source": "500fec5c01dbd58f272383f9dc5a866d959cfd15",
   "label.cloudPairing": "Ein neues Gerät zu deinem Cloud-Home hinzufügen",
   "label.cloudDevicesAccount": "Die Geräte oder das Konto deines Cloud-Homes ändern",
   "label.modelSigninStart": "Eine Modell-Anmeldung auf deinem Cloud-Home starten",
@@ -8,6 +8,7 @@
   "label.modelSigninRemove": "Eine Modell-Verbindung von deinem Cloud-Home entfernen",
   "label.ownServer": "Den Server ändern, den deine Bots als Computer nutzen",
   "label.engineLogin": "Dich bei einer Engine auf deinem Cloud-Home an- oder abmelden",
+  "label.engineSigninCode": "Eine Antigravity-Anmeldung für einen Bot auf deiner Cloud-Startseite abschließen",
   "label.botCreate": "Einen Bot erstellen",
   "label.botDelete": "Einen Bot und seine Unterhaltungen löschen",
   "label.botSettings": "Die Einstellungen eines Bots ändern",
@@ -59,6 +60,7 @@
   "label.localModels": "Die lokalen Modelle ändern",
   "label.claudeAccounts": "Ein Claude-Konto ändern",
   "label.chatChannels": "Eine Telegram-, Slack- oder Discord-Verbindung ändern",
+  "label.signal": "Die Signal-Verbindung ändern",
   "label.whatsapp": "Die WhatsApp-Verbindung ändern",
   "label.memory": "Das Gedächtnis ändern",
   "label.skillsCollection": "Die Skills-Sammlung ändern",
@@ -131,5 +133,6 @@
   "dialog.close": "Schließen",
   "prepare.voiceFinishing": "Murage beendet gerade eine Sprachantwort.",
   "prepare.voiceFinishingDetail": "Versuch es in etwa {minutes} Min. noch einmal. Deine Chats und Erinnerungen sind unverändert.",
-  "prepare.quit": "Beenden"
+  "prepare.quit": "Beenden",
+  "label.claudeCodeImport": "Skills und Tool-Server aus Claude Code importieren"
 }

@@ -8,10 +8,10 @@ export class HomeExecutionGate {
   /** Safe mode (self-service, until the next start): channels stay held, schedules and the owner's add-ons stay off. */
   readonly safeMode: boolean;
   constructor(db: DatabaseSync, authority: () => boolean = () => false, safeMode = false) {this.db=db;this.authority=authority;this.safeMode=safeMode;}
-  holdChannels(): void {for(const channel of ["telegram","slack","discord"])this.db.prepare("INSERT OR REPLACE INTO cloud_meta VALUES (?, '1')").run(`recovery-channel:${channel}`);}
-  channelHeld(channel: "telegram"|"slack"|"discord"): boolean {return this.safeMode || Boolean(this.db.prepare("SELECT 1 FROM cloud_meta WHERE key=?").get(`recovery-channel:${channel}`));}
-  channelsOpen(channel: "telegram"|"slack"|"discord"): boolean {return this.open() && !this.channelHeld(channel);}
-  releaseChannel(channel: "telegram"|"slack"|"discord"): void {this.db.prepare("DELETE FROM cloud_meta WHERE key=?").run(`recovery-channel:${channel}`);}
+  holdChannels(): void {for(const channel of ["telegram","slack","discord","signal"])this.db.prepare("INSERT OR REPLACE INTO cloud_meta VALUES (?, '1')").run(`recovery-channel:${channel}`);}
+  channelHeld(channel: "telegram"|"slack"|"discord"|"signal"): boolean {return this.safeMode || Boolean(this.db.prepare("SELECT 1 FROM cloud_meta WHERE key=?").get(`recovery-channel:${channel}`));}
+  channelsOpen(channel: "telegram"|"slack"|"discord"|"signal"): boolean {return this.open() && !this.channelHeld(channel);}
+  releaseChannel(channel: "telegram"|"slack"|"discord"|"signal"): void {this.db.prepare("DELETE FROM cloud_meta WHERE key=?").run(`recovery-channel:${channel}`);}
   explicitHeld(): boolean {return Boolean(this.db.prepare("SELECT 1 FROM cloud_meta WHERE key='execution-hold'").get());}
   leaseHeld(): boolean {return Boolean(this.db.prepare("SELECT 1 FROM cloud_meta WHERE key='lease-hold'").get());}
   open(): boolean { return this.authority() && !this.explicitHeld() && !this.leaseHeld(); }

@@ -1,0 +1,5 @@
+PASS reviewer Desktop snapshot >300 seconds: 11 real C# events; owned job terminated and empty; unrelated PID untouched
+PASS broker returns timeout only after closed empty no-breakaway job proof
+PASS broker persists native proof and consumes exact request
+PASS broker refuses expired before native creation
+PASS broker refuses wrong-helper before native creation

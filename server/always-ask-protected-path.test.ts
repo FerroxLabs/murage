@@ -25,7 +25,7 @@ const CARD: Row[] = [
   ["srm -rf /home/tester", "protected-path"],
   ["lftp -c 'local mirror --delete x /home/tester'", "protected-path"],
   ["shred -u ~/*", "protected-path"],
-  ["rm -rf /Volumes/Scratch", "protected-path"],
+  ["rm -rf /Volumes/Fixture", "protected-path"],
   ["made-up-tool --wipe ~", "protected-path"],
   ["docker run -v ~:/h img", "protected-path"],
   // tools the reader has never heard of, every protected class
@@ -39,7 +39,7 @@ const CARD: Row[] = [
   ["zorbwipe /media/tester/USB", "protected-path"],
   ["zorbwipe /run/media/tester/USB", "protected-path"],
   ["zorbwipe /Volumes", "protected-path"],
-  ["zorbwipe /Volumes/Scratch/", "protected-path"],
+  ["zorbwipe /Volumes/Fixture/", "protected-path"],
   ["./tools/nuke /", "protected-path"],
   ["/opt/bin/cleanse --target=/Users/tester", "protected-path"],
   ["zorbwipe -C /", "protected-path"],
@@ -62,7 +62,7 @@ const CARD: Row[] = [
   // -c strings, tokenised
   ["lftp -e 'mirror -R --delete x /usr; quit' host", "protected-path"],
   ["zorbtool --command 'wipe ~'", "protected-path"],
-  ["zorbtool -c \"wipe /Volumes/Scratch\"", "protected-path"],
+  ["zorbtool -c \"wipe /Volumes/Fixture\"", "protected-path"],
   // Docker and Podman mount sources
   ["docker run -v /:/host img", "protected-path"],
   ["docker run --volume ~:/h img", "protected-path"],
@@ -70,14 +70,14 @@ const CARD: Row[] = [
   ["docker run -v ~:/h:ro img", "protected-path"],
   ["podman run -v /etc:/etc:ro img", "protected-path"],
   ["docker run --mount type=bind,source=/Users/tester,target=/u img", "protected-path"],
-  ["docker run --mount=type=bind,src=/Volumes/Scratch,dst=/m img", "protected-path"],
-  ["docker run -v /Volumes/Scratch:/m img", "protected-path"],
+  ["docker run --mount=type=bind,src=/Volumes/Fixture,dst=/m img", "protected-path"],
+  ["docker run -v /Volumes/Fixture:/m img", "protected-path"],
   // wrapper arguments, before the wrapper is taken off
   ["env -C / zorb", "protected-path"],
   ["env --chdir=/home/tester ls", "protected-path"],
   ["flock /home/tester zorb", "protected-path"],
   // a relative path from a folder the text fixes
-  ["cd /Volumes/Scratch/work && zorbwipe ..", "protected-path"],
+  ["cd /Volumes/Fixture/ExampleWorkspace && zorbwipe ..", "protected-path"],
   ["cd ~/dev && zorbwipe ..", "protected-path"],
   // exactness: case-sensitive on POSIX, a suffix is another program
   ["LS ~", "protected-path"],
@@ -111,6 +111,14 @@ const CARD: Row[] = [
   ["awk 'BEGIN{system(\"x\")}' ~", "protected-path"],
 ];
 
+// S1-B3 RULING (MAIN 2026-11-11 09:30Z): fixture-declared protected writes
+// supersede the inherited run assertion; read-only operands keep it.
+const PROTECTED_WRITES = new Set(CARD.map(([cmd]) => cmd).filter(cmd =>
+ /^(?:srm|shred|rm|made-up-tool --wipe|zorbwipe|wipe|sudo srm|timeout 5 zorbwipe|\.\/tools\/nuke|\/opt\/bin\/cleanse|cp |chmod |chown |mv |tar |truncate |sed -i)/.test(cmd)
+ || (/^(?:docker|podman) /.test(cmd) && !cmd.includes(':ro'))
+ || cmd.startsWith('flock ') || cmd.includes('zorbwipe ..') || cmd.includes('Copy-Item x') || cmd.includes('Invoke-Zap') || cmd.includes('zapit ')
+));
+
 /** find actions that delete, run or hide a value: some card asks, whichever rule reads it first. */
 const ANY_CARD: string[] = [
   "find ~ -delete",
@@ -127,12 +135,12 @@ const ORDINARY: Row[] = [
   // searches: read-only by name
   ["grep -r foo ~", null],
   ["egrep -r foo /", null],
-  ["fgrep -r foo /Volumes/Scratch", null],
+  ["fgrep -r foo /Volumes/Fixture", null],
   ["rg foo ~", null],
   ["rg -n foo /", null],
   ["find / -name x", null],
   ["find ~ -name '*.log' -type f", null],
-  ["find /Volumes/Scratch -maxdepth 2 -print", null],
+  ["find /Volumes/Fixture -maxdepth 2 -print", null],
   // the rows the lane brief names
   ["ls ~", null],
   ["du -sh ~/Downloads", null],
@@ -140,9 +148,9 @@ const ORDINARY: Row[] = [
   // the tiny allow list, exactly as named
   ["pwd", null],
   ["ls -la /", null],
-  ["ls /Volumes/Scratch", null],
+  ["ls /Volumes/Fixture", null],
   ["du -sh ~", null],
-  ["df -h /Volumes/Scratch", null],
+  ["df -h /Volumes/Fixture", null],
   ["df -h /", null],
   ["stat ~", null],
   ["wc -l /etc", null],
@@ -165,8 +173,8 @@ const ORDINARY: Row[] = [
   ["zorbwipe ~/dev/x", null],
   ["zorbwipe /tmp", null],
   ["zorbwipe /private/tmp/x", null],
-  ["zorbwipe /Volumes/Scratch/x", null],
-  ["zorbwipe /Volumes/Scratch/work/app", null],
+  ["zorbwipe /Volumes/Fixture/x", null],
+  ["zorbwipe /Volumes/Fixture/ExampleWorkspace/app", null],
   ["zorbwipe C:/Users/tester/src", null],
   ["zorbwipe /usr/local/bin/x", null],
   ["zorbwipe /etc/hosts", null],
@@ -186,7 +194,7 @@ const ORDINARY: Row[] = [
   ["docker run -v ./data:/data img", null],
   ["docker run --mount type=bind,source=/tmp/x,target=/x img", null],
   ["cd ~/dev && zorbwipe .", null],
-  ["cd /Volumes/Scratch/work/app && zorbwipe ../other", null],
+  ["cd /Volumes/Fixture/ExampleWorkspace/app && zorbwipe ../other", null],
   // values, substitutions and an unknown folder: today's behaviour
   ["zorbwipe $X", null],
   ["zorbwipe \"$(pwd)\"", null],
@@ -208,7 +216,7 @@ const ORDINARY: Row[] = [
 describe("A+: a protected literal under a program off the allow list asks", () => {
   it.each(CARD)("%s -> %s", (cmd, rule) => {
     // MARKS r12 re-baseline (MurageMain 11-07 item 1): the doubt-free read names it; strict read and every level still card
-    if (rule === "protected-path") return expectProtectedPath(cmd);
+    if (rule === "protected-path") return expectProtectedPath(cmd, undefined, undefined, PROTECTED_WRITES.has(cmd));
     expect(alwaysAskCommand(cmd)?.rule ?? null).toBe(rule);
   });
   it("names the class in plain words", () => {
@@ -216,9 +224,9 @@ describe("A+: a protected literal under a program off the allow list asks", () =
     expect(doubtFree("zorbwipe ~")?.what).toMatch(/home folder/);
     expect(doubtFree("zorbwipe /")?.what).toMatch(/main drive/);
     expect(doubtFree("zorbwipe /usr")?.what).toMatch(/needs to run/);
-    expect(doubtFree("zorbwipe /Volumes/Scratch")?.what).toMatch(/whole disk or volume/);
+    expect(doubtFree("zorbwipe /Volumes/Fixture")?.what).toMatch(/whole disk or volume/);
     // MARKS r13 (Astra M4): and each keeps the shared check: strict read cards, every level cards, Full access names protected-path
-    for (const cmd of ["zorbwipe ~", "zorbwipe /", "zorbwipe /usr", "zorbwipe /Volumes/Scratch"]) expectProtectedPath(cmd);
+    for (const cmd of ["zorbwipe ~", "zorbwipe /", "zorbwipe /usr", "zorbwipe /Volumes/Fixture"]) expectProtectedPath(cmd, undefined, undefined, true);
   });
 });
 
@@ -261,7 +269,7 @@ describe("A+ only adds cards", () => {
     expect(alwaysAskCommand("rm -rf /")?.rule).toBe("delete-root");
     expect(alwaysAskCommand("rm -rf /usr")?.rule).toBe("delete-system-folder");
     expect(alwaysAskCommand("rsync -a --delete empty/ ~")?.rule).toBe("delete-home");
-    expectProtectedPath("zorbwipe $(cat x) ~"); // MARKS r12 re-baseline
+    expectProtectedPath("zorbwipe $(cat x) ~", undefined, undefined, true); // MARKS r12 re-baseline
     // a protected-path hit early in the text never hides a later rule's own verdict
     expect(alwaysAskCommand("cp ~ /tmp/x; rm -rf ~")?.rule).toBe("delete-home");
     expect(alwaysAskCommand("find / -name x | sort | xargs rm -rf")?.rule).toBe("delete-root");
@@ -273,7 +281,7 @@ describe("A+ only adds cards", () => {
   it("a fixed cwd resolves relative literals, and a project cwd stays ordinary", () => {
     expect(alwaysAskCommand("zorbwipe .", "/Users/tester/project")).toBeNull();
     expect(alwaysAskCommand("zorbwipe src", "/Users/tester/project")).toBeNull();
-    expectProtectedPath("zorbwipe ..", "/Users/tester/project"); // MARKS r12 re-baseline
+    expectProtectedPath("zorbwipe ..", "/Users/tester/project", undefined, true); // MARKS r12 re-baseline
     expect(alwaysAskCommand("ls ..", "/Users/tester/project")).toBeNull();
   });
 });

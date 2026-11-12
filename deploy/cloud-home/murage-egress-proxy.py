@@ -33,6 +33,9 @@ import time
 # Sorted engine list; port = BASE_PORT + index. murage-egress.nft carries the same
 # table (egress-allowlist.test.ts proves they agree; launcher ENGINES is covered too).
 ENGINES = ("antigravity", "claudeAgent", "codex", "cursorAgent", "customAcp", "droidAgent", "fuigoAgent", "geminiAgent", "grokAgent", "hermesAgent", "kimiAgent", "opencodeGo", "pi", "qwenAgent")
+# STRUCTURAL CONTROL (B4): Claude Code and Codex run only on the customer's own sign-in.
+# Whatever the allowlist or the owner's "extra" says, these engines can never reach a Flux host.
+SIGN_IN_ONLY_ENGINES = ("claudeAgent", "codex")
 BASE_PORT = 8810
 PORTS = {engine: BASE_PORT + index for index, engine in enumerate(ENGINES)}
 # DNS mode (A2): one UDP listener per engine, same sorted order; 5353 (mDNS) is avoided.
@@ -179,6 +182,8 @@ class Allowlist:
         self.extra = extra
 
     def allows(self, engine, host):
+        if engine in SIGN_IN_ONLY_ENGINES and is_flux_host(host):
+            return False
         for wildcard, base in list(self.engines.get(engine, ())) + list(self.extra):
             if host == base and not wildcard:
                 return True
@@ -203,10 +208,20 @@ def parse_allowlist(text):
         if not isinstance(hosts, list):
             raise ConfigError("engine hosts must be a list")
         engines[engine] = [_pattern(item) for item in hosts]
+        if engine in SIGN_IN_ONLY_ENGINES and any(covers_flux(pattern) for pattern in engines[engine]):
+            raise ConfigError("a sign-in engine may not list a Flux host")
     extra = doc.get("extra", [])
     if not isinstance(extra, list):
         raise ConfigError("extra must be a list")
     return Allowlist(engines, [_pattern(item) for item in extra])
+
+
+def covers_flux(pattern):
+    """True when an allowlist pattern would admit fluxrouter.ai or any host under it (e.g. *.ai)."""
+    wildcard, base = pattern
+    if is_flux_host(base):
+        return True
+    return wildcard and "fluxrouter.ai".endswith("." + base)
 
 
 def load_allowlist(path=ALLOWLIST_PATH):
@@ -225,11 +240,22 @@ def is_global(address):
     return ip.is_global and not ip.is_multicast
 
 
+def is_flux_host(host):
+    """api.fluxrouter.ai, fluxrouter.ai and any *.fluxrouter.ai (case and trailing dot tolerant)."""
+    name = host.lower().rstrip(".") if isinstance(host, str) else ""
+    return name == "fluxrouter.ai" or name.endswith(".fluxrouter.ai")
+
+
 async def default_resolve(host):
     loop = asyncio.get_running_loop()
-    infos = await asyncio.wait_for(loop.getaddrinfo(host, UPSTREAM_PORT, type=socket.SOCK_STREAM), RESOLVE_TIMEOUT)
+    # Flux binds a home key to the home's IPv4 address, so Flux hosts are resolved
+    # and dialled over IPv4 only; an IPv6 path would present an address Flux never saw.
+    family = socket.AF_INET if is_flux_host(host) else 0
+    infos = await asyncio.wait_for(loop.getaddrinfo(host, UPSTREAM_PORT, family=family, type=socket.SOCK_STREAM), RESOLVE_TIMEOUT)
     seen = []
     for info in infos:
+        if is_flux_host(host) and info[0] != socket.AF_INET:
+            continue
         if info[4][0] not in seen:
             seen.append(info[4][0])
     return seen
@@ -305,6 +331,8 @@ async def serve_connection(engine, allowlist, reader, writer, resolve=default_re
         try:
             hello = await asyncio.wait_for(read_hello(reader), hello_timeout)
             host = parse_sni(hello)
+            if engine in SIGN_IN_ONLY_ENGINES and is_flux_host(host):
+                raise Refused("flux-forbidden")  # before the allowlist: nothing can open this
             if not allowlist.allows(engine, host):
                 raise Refused("not-allowed")
             try:

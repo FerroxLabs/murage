@@ -127,7 +127,13 @@ describe("the provider wiring", () => {
   it("feeds every transcript frame to the cache and clears it on a fresh snapshot", () => {
     for (const kind of ['case "message": {', 'case "message.patch":', 'case "thread":']) {
       const at = store.indexOf(kind, store.indexOf("handleFrame = (frame"));
-      expect(store.slice(at, at + 120)).toContain("conversationCache()?.applyFrame(frame)");
+      // de0e1d65ee adds review cleanup before the cache update. Check the whole
+      // branch, and still require the cache to update before the transcript.
+      expect(at).toBeGreaterThan(-1);
+      const branch = store.slice(at, store.indexOf("\n        case ", at + kind.length));
+      const cache = branch.indexOf("conversationCache()?.applyFrame(frame)");
+      expect(cache).toBeGreaterThan(-1);
+      expect(cache).toBeLessThan(branch.indexOf("rawDispatch("));
     }
     expect(store).toMatch(/conversationCache\(\)\?\.clear\(\);[\s\S]{0,200}?rawDispatch\(\{\s+type: "hydrate",\s+\.\.\.fromAnswer\(answer\)/);
   });

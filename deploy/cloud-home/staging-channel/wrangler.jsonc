@@ -1,0 +1,13 @@
+// STAGING ONLY. Deploy from this directory with the staging Cloudflare token (account 874fe1689a53e6f56ff74816a9f23b26):
+//   wrangler deploy --config wrangler.jsonc
+// The bucket must exist first (wrangler r2 bucket create murage-staging-releases). There is no route and no custom domain: the channel is
+// the workers.dev name below, which is what the staging image pin names.
+{
+  "name": "murage-staging-releases",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-01-01",
+  "account_id": "874fe1689a53e6f56ff74816a9f23b26",
+  "workers_dev": true,
+  "preview_urls": false,
+  "r2_buckets": [{ "binding": "RELEASES", "bucket_name": "murage-staging-releases" }]
+}

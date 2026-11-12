@@ -1,0 +1,5 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# j5b-wait DIR NAME LIMIT : ONE blocking command, armed race-tight (DESIGN-J5b-r7.md section 9). Waits for DIR/barrier-NAME. The existence check runs before
+# every wait, and the 2 s cap on inotifywait covers a file created between the check and the watch. Exit 124 when LIMIT seconds pass.
+exec timeout "$3" sh -c 'until [ -e "$1/barrier-$2" ]; do inotifywait -qq -t 2 -e create,moved_to "$1"; done' _ "$1" "$2"

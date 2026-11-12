@@ -203,6 +203,8 @@ describe("every config key saveConfig accepts reaches config.json", () => {
     notifications: { first: { previewContent: false }, second: { previewContent: true } }, spend: { first: { monthlyLimitUsd: 25 }, second: { monthlyLimitUsd: 50 } },
     engineDiscovery: { first: "explicit", second: "automatic" }, hermesProfilesPinned: { first: true, second: false },
     newBots: { first: { effort: "high" }, second: { effort: null }, afterSecond: {} },
+    computer: { first: { defaultForNewBots: "off" }, second: { defaultForNewBots: "vm" } },
+    claudeCodeImport: { first: { enabled: true }, second: { enabled: false } },
     mcpServers: { first: { "guard-a": { command: "guard-a" } }, second: { "guard-b": { command: "guard-b" } }, afterSecond: { "guard-b": { command: "guard-b" } } },
     language: { first: "fr", second: "de" }, xai: { first: { url: "https://a.example.invalid" }, second: { url: "https://b.example.invalid" } },
     modelProviders: { first: { bank: "bank-a" }, second: { bank: "bank-b" } },
@@ -1694,6 +1696,20 @@ describe("the All apps rollback switch (0.1.61 plan 8.1)", async () => {
 describe("newBots effort default (triage row 23)", () => {
   const file = join(DATA_DIR, "config.json");
   beforeEach(() => { mkdirSync(DATA_DIR, { recursive: true }); rmSync(file, { force: true }); });
+
+  it("preserves new-bot permission when the effort row is saved or cleared", () => {
+    saveConfig(parseConfigPatch({ newBots: { permissionLevel: "auto" } }));
+    saveConfig(parseConfigPatch({ newBots: { effort: "high" } }));
+    expect(loadConfig().newBots).toEqual({ permissionLevel: "auto", effort: "high" });
+    saveConfig(parseConfigPatch({ newBots: { effort: null } }));
+    expect(loadConfig().newBots).toEqual({ permissionLevel: "auto" });
+    expect(JSON.parse(readFileSync(file, "utf8")).newBots).toEqual({ permissionLevel: "auto" });
+    saveConfig(parseConfigPatch({ newBots: { effort: "low" } }));
+    saveConfig(parseConfigPatch({ newBots: { permissionLevel: "ask" } }));
+    expect(loadConfig().newBots).toEqual({ permissionLevel: "ask", effort: "low" });
+    saveConfig(parseConfigPatch({ newBots: {} }));
+    expect(loadConfig().newBots).toEqual({ permissionLevel: "ask", effort: "low" });
+  });
 
   it("is patchable through the config route and null clears it", () => {
     saveConfig(parseConfigPatch({ newBots: { effort: "high" } }));

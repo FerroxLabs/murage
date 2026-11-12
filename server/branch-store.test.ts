@@ -8,7 +8,7 @@
 import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it, vi } from "vitest";
 import { DATA_DIR } from "./config.ts";
-import { closeDatabase, database } from "./database.ts";
+import { closeDatabase, database, transaction } from "./database.ts";
 import { fillSlice, threadKey, verifyDerivedRows } from "./branch-index.ts";
 import { boundedBranchWalk, branchRows, branchTester, withBranchWalkBudget, isPrepared, prepareStats, prepareThread, prepareThreadSync } from "./branch-store.ts";
 import * as messages from "./message-db.ts";
@@ -168,10 +168,14 @@ it("an edit forked in a thread stored behind the writers' back keeps the rows ab
 it("a search over many unfilled threads walks a flat number of rows, however many threads it meets", windowsNightly(), () => {
   const db = database();
   const threads = Array.from({ length: 12 }, (_, i) => `u${i}`);
-  for (const t of threads) {
-    messages.appendMessage(t, row("m0", null));
-    for (let i = 1; i < 400; i++) messages.appendMessage(t, row(`m${i}`, `m${i - 1}`));
-  }
+  // Seed atomically: 5d5a791f19 bounds uncheckpointed commit bursts. The
+  // measured branch walks below still use the same 4,800 real writer rows.
+  transaction(() => {
+    for (const t of threads) {
+      messages.appendMessage(t, row("m0", null));
+      for (let i = 1; i < 400; i++) messages.appendMessage(t, row(`m${i}`, `m${i - 1}`));
+    }
+  });
   db.exec("DELETE FROM thread_key; DELETE FROM seg; DELETE FROM msg_branch; DELETE FROM line; DELETE FROM fill_pending");
   for (const t of threads) expect(isPrepared(t)).toBe(false);
   const ask = () => threads.map(t => branchTester(t, "m399")("m0")); // the oldest row: the walk goes the whole way

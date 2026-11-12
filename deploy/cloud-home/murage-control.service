@@ -25,6 +25,11 @@ LimitCORE=0
 NoNewPrivileges=yes
 CapabilityBoundingSet=
 AmbientCapabilities=
+# The Flux sub-key hand-off (/run/murage-control/flux-subkey) belongs to this root user and to the supervisor's group, which is the
+# `murage` user's own group (build-image.sh useradd --system makes it; identity.json "gid"). Being a member is what lets this
+# capability-less root chgrp its own files to that group (an owner may, without CAP_CHOWN) and read the supervisor's receipt through
+# the group (no CAP_DAC_OVERRIDE). The poller never chowns to another uid. The group has no other use here.
+SupplementaryGroups=murage
 ProtectSystem=strict
 ProtectHome=yes
 PrivateTmp=yes
@@ -42,8 +47,11 @@ RuntimeDirectoryPreserve=restart
 # ProtectSystem=strict. It holds the clock_ahead render refusal; no other path is opened for it.
 StateDirectory=murage-control
 StateDirectoryMode=0700
+# The Flux hand-off directory is under the runtime directory above; the pending-ack record (flux-ack-pending.json) is under StateDirectory.
 ReadWritePaths=/run/murage-control
 ReadWritePaths=-/var/lib/murage-home/events
+# The server's own spool (server/home-events.ts), made by the home supervisor before the server drops privileges.
+ReadWritePaths=-/data/.murage-events
 # The readiness check dataWritable writes a temp file in one root-owned probe directory, a top-level entry of the data volume that the
 # home supervisor makes (root:root 0700, every ancestor root owned, nothing the murage user can replace). That directory only; the rest
 # of /data stays read-only to this unit. Missing (-): the bind is skipped and the check reports false.

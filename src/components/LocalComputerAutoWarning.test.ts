@@ -5,6 +5,8 @@
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { setLocale, t } from "@/lib/i18n";
+import { en } from "@/locales";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -38,13 +40,24 @@ describe("the this-computer warning names the mode being switched on", () => {
     expect(render("full")).not.toContain("Destructive and sensitive actions still stop");
   });
 
-  it("says what No limits still asks about, a command it cannot read in full among them", () => {
+  it("pins the wipe-only No limits warning and honoured owner choices", () => {
     const markup = render("unlimited");
     expect(markup).toContain("Allow No limits on this computer?");
-    expect(markup).toContain(LOCAL_COMPUTER_NO_LIMITS_WARNING);
-    expect(LOCAL_COMPUTER_NO_LIMITS_WARNING).toContain("It still asks before a wipe it can read and before a command it cannot read in full");
-    expect(LOCAL_COMPUTER_NO_LIMITS_WARNING).toContain("A script file can still run unread.");
+    expect(markup.replace(/&#x27;/g, "'")).toContain(LOCAL_COMPUTER_NO_LIMITS_WARNING);
+    expect(LOCAL_COMPUTER_NO_LIMITS_WARNING).toBe(en["ux.lcopyb.level.unlimitedHere"]);
     expect(LOCAL_COMPUTER_NO_LIMITS_WARNING).not.toMatch(/\bsafe\b|\u2014/i);
+  });
+
+  it.each(["en", "de", "es", "fr", "hi", "ja", "pt-br", "zh"])("renders the translated No limits warning in %s", async (code) => {
+    try {
+      await setLocale(code);
+      const markup = render("unlimited");
+      const expected = renderToStaticMarkup(createElement("p", null, t("ux.lcopyb.level.unlimitedHere")));
+      expect(markup).toContain(expected.slice(3, -4));
+      if (code !== "en") expect(t("ux.lcopyb.level.unlimitedHere")).not.toBe(LOCAL_COMPUTER_NO_LIMITS_WARNING);
+    } finally {
+      await setLocale("en");
+    }
   });
 
   it("renders nothing while closed", () => {

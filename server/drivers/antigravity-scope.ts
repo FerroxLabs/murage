@@ -1,3 +1,6 @@
+import type { CanonSet } from "../hook-canon.ts";
+import { canonFile, prepareHookCanon, releaseHookCanon } from "../hook-safety.ts";
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Antigravity (`agy`) reads its whole setup from `$HOME/.gemini`: MCP servers
 // (config/mcp_config.json and plugins), hooks, skills, workflows, rules and
 // the GEMINI.md / AGENTS.md instruction files. It has no flag or environment
@@ -99,6 +102,7 @@ export interface AntigravityMcpEntry {
 }
 
 export interface AntigravityScopedHome {
+  canon?: CanonSet;
   /** The HOME (and USERPROFILE) to give the agy child. */
   home: string;
   /** Record the agy child that runs in this home (pid + start time), so a restart after a crash does not reconcile or remove the home of a child that is still running. Call right after the spawn. */
@@ -295,6 +299,7 @@ export function buildAntigravityScopedHome(options: {
   const records: MirrorRecord[] = [];
   let mounted = false;
   let askHook = false;
+  let canon: CanonSet | undefined;
   try {
     for (const level of scopedLevels()) {
       records.push(...mirrorDirectory(join(realHome, level.rel), join(home, level.rel), level.omit, {
@@ -318,14 +323,14 @@ export function buildAntigravityScopedHome(options: {
     mounted = Object.keys(servers).length > 0;
     if (options.askStopHooks !== undefined) {
       const path = join(home, ".gemini", "config", "hooks.json");
-      writeFileSync(path, options.askStopHooks, { mode: 0o600 });
-      chmodSync(path, 0o600);
+      canon = prepareHookCanon([canonFile(path, options.askStopHooks, "config", "antigravity", dirname(scopeRoot))], "V-A2", "Antigravity");
       askHook = true;
     }
     // Written before the turn runs, so a crash mid-turn can still be reconciled at the next start.
     writeManifest({ realHome, home, records, mounted, askHook, owner: ownProcessRecord() });
     liveScopes.add(home);
   } catch (error) {
+    releaseHookCanon(canon);
     // Nothing has run in it yet: only our own links and copies are there.
     rmSync(home, { recursive: true, force: true });
     rmSync(manifestPath(home), { force: true });
@@ -336,6 +341,7 @@ export function buildAntigravityScopedHome(options: {
   let child: ProcessRecord | undefined;
   return {
     home,
+    canon,
     adoptChild: (pid) => {
       child = recordOf(pid);
       if (!child) return;
@@ -348,6 +354,7 @@ export function buildAntigravityScopedHome(options: {
     dispose: () => {
       if (disposed) return;
       disposed = true;
+      releaseHookCanon(canon);
       liveScopes.delete(home);
       try {
         // A child still running keeps its home: the next start reconciles it once it has exited.
@@ -376,7 +383,7 @@ export function recoverScopedHome(scopeRoot: string, name: string): "recovered" 
   if (liveScopes.has(home)) return "running";
   let manifest: ScopeManifest | null = null;
   try {
-    const parsed = JSON.parse(readFileSync(manifestPath(home), "utf8")) as ScopeManifest;
+    const parsed = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(manifestPath(home), "utf8"))) as ScopeManifest;
     if (parsed && typeof parsed.realHome === "string" && Array.isArray(parsed.records)) manifest = { ...parsed, home, mounted: parsed.mounted === true, askHook: parsed.askHook === true };
   } catch { /* no manifest: keep the tree below */ }
   if (manifest) {
@@ -456,7 +463,7 @@ export function withRealFileLock<T>(lockRoot: string, realPath: string, fn: () =
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       let holder: ProcessRecord | null = null;
-      try { holder = JSON.parse(readFileSync(join(dir, "owner.json"), "utf8")) as ProcessRecord; } catch { /* no owner yet */ }
+      try { holder = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(join(dir, "owner.json"), "utf8"))) as ProcessRecord; } catch { /* no owner yet */ }
       let age = 0;
       try { age = Date.now() - statSync(dir).mtimeMs; } catch { continue; } // released meanwhile
       const dead = holder && Number.isInteger(holder.pid) && holder.pid !== me.pid ? !processRunning(holder) : false;
@@ -735,7 +742,7 @@ export function removeAntigravityLegacyMcpEntries(realHome: string): string[] {
   }
   let config: unknown;
   try {
-    config = JSON.parse(text);
+    config = registerBusyloopPayloadSite("read", JSON.parse(text));
   } catch {
     return [];
   }

@@ -1,0 +1,265 @@
+[
+  {
+    "id": "R13-shell-quote",
+    "identity": "terminal",
+    "payload": "printf '",
+    "expected": "card:cut"
+  },
+  {
+    "id": "R13-shell-size",
+    "identity": "terminal",
+    "repeat": {
+      "text": " ",
+      "count": 1000000
+    },
+    "expected": "card:cut"
+  },
+  {
+    "id": "R13-mcp-size",
+    "identity": "mcp__s__note",
+    "repeat": {
+      "text": "x",
+      "count": 16777217,
+      "field": "note"
+    },
+    "expected": "card:cut"
+  },
+  {
+    "id": "R13-env-timeout",
+    "identity": "terminal",
+    "payload": "printf ok",
+    "context": {
+      "envUnchecked": {
+        "reason": "timeout"
+      }
+    },
+    "expected": "card:cut"
+  },
+  {
+    "id": "R13-truncated",
+    "identity": "terminal",
+    "payload": "printf ok",
+    "context": {
+      "inputTruncated": true
+    },
+    "expected": "card:cut"
+  },
+  {
+    "id": "R13-alias-shift",
+    "identity": "python",
+    "payload": "import shutil as s\ns.rmtree('/')\nx = 1 << 2",
+    "expected": "card:root"
+  },
+  {
+    "id": "R13-decimal-limit",
+    "identity": "python",
+    "repeat": {
+      "prefix": "x=",
+      "text": "9",
+      "count": 5000
+    },
+    "expected": "card:cut"
+  },
+  {
+    "id": "R13-work-limit",
+    "identity": "python",
+    "repeat": {
+      "text": "x=0\n",
+      "count": 140000
+    },
+    "expected": "card:cut"
+  },
+  {
+    "id": "R13-cr-comment",
+    "identity": "python",
+    "payload": "#note\ros.remove('/')",
+    "expected": "card:root"
+  },
+  {
+    "id": "R13-cr-escape",
+    "identity": "python",
+    "payload": "os.system(\"r\\\rm ./cache\")",
+    "expected": "card:word"
+  },
+  {
+    "id": "R13-numeric-value",
+    "identity": "python",
+    "payload": "os.remove(f'/lib{0x20}')",
+    "expected": "card:system"
+  },
+  {
+    "id": "R13-command-whitespace",
+    "identity": "mcp__s__run",
+    "payload": {
+      "command": "\u001c",
+      "cmd": "rm ./cache"
+    },
+    "expected": "card:word"
+  },
+  {
+    "id": "R13-one-shot-exception",
+    "identity": "terminal",
+    "payload": "printf ok",
+    "fault": "exception",
+    "expected": "card:cut"
+  },
+  {
+    "id": "R13-returned-depth",
+    "identity": "terminal",
+    "payload": "printf ok",
+    "fault": "depth",
+    "expected": "card:cut"
+  },
+  {
+    "id": "R13-returned-nesting",
+    "identity": "terminal",
+    "payload": "printf ok",
+    "fault": "nesting",
+    "expected": "card:cut"
+  },
+  {
+    "id": "R13-returned-expansion",
+    "identity": "terminal",
+    "payload": "printf ok",
+    "fault": "expansion",
+    "expected": "card:cut"
+  },
+  {
+    "id": "R13-benign-terminal",
+    "identity": "terminal",
+    "payload": "printf ok",
+    "expected": "run"
+  },
+  {
+    "id": "R13-benign-python",
+    "identity": "python",
+    "payload": "import math as s\ns.sqrt(4)\nx = 0x20",
+    "expected": "run"
+  },
+  {
+    "id": "R13-benign-mcp",
+    "identity": "mcp__s__run",
+    "payload": {
+      "command": "\u001c",
+      "cmd": "printf ok"
+    },
+    "expected": "run"
+  },
+  {
+    "id": "R13-import-separator",
+    "identity": "python",
+    "payload": "import math as os os.remove('/')",
+    "expected": "card:word"
+  },
+  {
+    "id": "R13-import-separator-ok",
+    "identity": "python",
+    "payload": "import math as os; os.remove('/')",
+    "expected": "run"
+  },
+  {
+    "id": "R13-from-separator",
+    "identity": "python",
+    "payload": "from math import sqrt as os os.remove('/')",
+    "expected": "card:word"
+  },
+  {
+    "id": "R13-bytes-nonascii",
+    "identity": "python",
+    "payload": "import math as os; os.remove(b'\u00ff')",
+    "expected": "card:word"
+  },
+  {
+    "id": "R13-bytes-ascii-ok",
+    "identity": "python",
+    "payload": "import math as os; os.remove(b'y')",
+    "expected": "run"
+  },
+  {
+    "id": "R13-fstring-brace",
+    "identity": "python",
+    "payload": "import math as os; os.remove(f'}')",
+    "expected": "card:word"
+  },
+  {
+    "id": "R13-leading-zero",
+    "identity": "python",
+    "payload": "import math as os; os.remove('x'); x=09",
+    "expected": "card:word"
+  },
+  {
+    "id": "R13-leading-zero-ok",
+    "identity": "python",
+    "payload": "import math as os; os.remove('x'); x=0",
+    "expected": "run"
+  },
+  {
+    "id": "R13-adjacent-bytes",
+    "identity": "python",
+    "payload": "import math as os; os.remove(b'a' 'b')",
+    "expected": "card:word"
+  },
+  {
+    "id": "R13-keyword-effects",
+    "identity": "python",
+    "payload": "print(x=os.system('rm ./cache'), x=0)",
+    "expected": "card:word"
+  },
+  {
+    "id": "R13-parameter-budget",
+    "identity": "python",
+    "repeat": {
+      "prefix": "def f(",
+      "text": "a,",
+      "count": 300000,
+      "suffix": "): pass"
+    },
+    "expected": "card:cut",
+    "oracleExpected": "run",
+    "conservative": true
+  },
+  {
+    "id": "R13-parameter-over-budget",
+    "identity": "python",
+    "repeat": {
+      "prefix": "def f(",
+      "text": "a,",
+      "count": 400000,
+      "suffix": "): pass"
+    },
+    "expected": "card:cut"
+  },
+  {
+    "id": "R13-keyword-budget",
+    "identity": "python",
+    "repeat": {
+      "text": "f(a=0)\n",
+      "count": 80000
+    },
+    "expected": "card:cut"
+  },
+  {
+    "id": "R13-min-parameter-budget",
+    "identity": "python",
+    "repeat": {
+      "prefix": "def f(",
+      "text": "a,",
+      "count": 333331,
+      "suffix": "): pass"
+    },
+    "expected": "card:cut",
+    "minimization": "first repeat count crossing the reference work budget"
+  },
+  {
+    "id": "R13-min-keyword-budget",
+    "identity": "python",
+    "repeat": {
+      "prefix": "",
+      "text": "f(a=0)\n",
+      "count": 76923,
+      "suffix": ""
+    },
+    "expected": "card:cut",
+    "minimization": "first repeat count crossing the reference work budget"
+  }
+]

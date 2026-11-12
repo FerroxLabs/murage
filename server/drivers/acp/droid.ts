@@ -1,3 +1,5 @@
+import { NotModelRequest } from "../../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 // Factory Droid harness support — the `droid` CLI over ACP stdio
 // (`droid exec -o acp`), on the Factory login (~/.factory/auth.v2.file) or a
 // FACTORY_API_KEY. The generic protocol runtime lives in acp/core.ts; this
@@ -93,7 +95,7 @@ export function ensureDroidInjectModel(
   const path = join(dir, "settings.json");
   let settings: FactorySettings & Record<string, unknown> = {};
   try {
-    settings = JSON.parse(readFileSync(path, "utf8")) as FactorySettings & Record<string, unknown>;
+    settings = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(path, "utf8"))) as FactorySettings & Record<string, unknown>;
   } catch (error) {
     if (existsSync(path)) throw error;
   }
@@ -160,7 +162,7 @@ export function applyDroidLocalAuthEnv(
 }
 
 function readSettings(env: Record<string, string | undefined>): FactorySettings {
-  return JSON.parse(readFileSync(join(factoryHome(env), ".factory", "settings.json"), "utf8")) as FactorySettings;
+  return registerBusyloopPayloadSite("read", JSON.parse(readFileSync(join(factoryHome(env), ".factory", "settings.json"), "utf8"))) as FactorySettings;
 }
 
 async function resolveModels(env: Record<string, string | undefined>) {
@@ -204,7 +206,7 @@ async function applySetting(
   what: string,
 ) {
   try {
-    await request(method, params);
+    await NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", request(method, params));
   } catch (e) {
     throw new Error(
       `Droid rejected ${what} via ${method}: ${(e as Error).message}. ` +
@@ -285,7 +287,7 @@ function droidScopeSpec(realFactory: string, botId?: string): ScopedCliHomeSpec 
         const path = join(realFactory, name);
         let settings: Record<string, unknown> = {};
         try {
-          const parsed = JSON.parse(readText(path)) as unknown;
+          const parsed = registerBusyloopPayloadSite("read", JSON.parse(readText(path))) as unknown;
           if (isPlainObject(parsed)) settings = { ...parsed };
         } catch { pathExists(path); if (name === "settings.local.json") continue; }
         for (const key of DROID_PERSONAL_SETTINGS_KEYS) delete settings[key];
@@ -334,7 +336,7 @@ export function applyDroidHostComputerGrant(turn: Pick<SendTurnInput, "integrati
   const local = turn.integrations?.localComputer?.scope === "local-computer" ? turn.integrations.localComputer : undefined;
   let doc: Record<string, unknown> = {};
   try {
-    const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const parsed = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(path, "utf8"))) as unknown;
     if (isPlainObject(parsed)) doc = { ...parsed };
   } catch { /* none yet, or unreadable: start from an empty document */ }
   const perms = isPlainObject(doc.persistentPermissions) ? { ...doc.persistentPermissions } : {};
@@ -377,10 +379,11 @@ export const droidSupport: AcpSupport = {
   // No model/mode flags here on purpose: see the header note. `-o acp` is the
   // ACP entry point; everything else is negotiated over the protocol.
   // The host-computer grant is written here: after the scoped home is set (applyMountEnv) and before the spawn.
-  spawnArgs: (_config, turn, ctx) => { applyDroidHostComputerGrant(turn, ctx?.env); return ["exec", "-o", "acp"]; },
+  spawnArgs: (_config, turn, ctx) => { applyDroidHostComputerGrant(turn, ctx?.env); return ["exec", "-o", "acp", ...(turn.integrations?.agents ? ["--remove-tools", "FetchUrl"] : [])]; },
   hostComputerAskedByMurage: true,
   // The version gates the scoped home below.
   spawnNeedsCliVersion: true,
+  scopeVersionRequired: true,
   credentialEnv: ["FACTORY_API_KEY"],
   // After resolveTurnModel, so a local model is written to the real settings.json first.
   scopeKind: "droid",

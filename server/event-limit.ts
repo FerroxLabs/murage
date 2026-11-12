@@ -1,3 +1,5 @@
+import { serviceThreadNoLimits } from './service-no-limits.ts';
+import { murageLine } from './murage-line.ts';
 // What happens when a run started by an event (a channel message, a webhook,
 // a routine) reaches the number of hand-offs or new bots it may do on its own.
 // The old answer was a flat refusal the bot could only relay as a dead end.
@@ -53,6 +55,8 @@ export interface EventLimitContext {
   fromThreadId: string;
   /** The bot being handed to, or the new bot's name. */
   targetName?: string;
+  /** Stable directed bot pair, independent of message text. */
+  handoffPair?: string;
   /** Does the owner's Full access already cover this run's origin? */
   fullAccess: () => boolean;
   /** Throws when the turn that asked is no longer running. */
@@ -97,8 +101,15 @@ export async function admitEventWithOwner(ctx: EventLimitContext): Promise<void>
     // The owner's Not now comes before any admission: capacity freed by a refund can never let a new action through.
     // Only a receipt already in the ledger is replayed, and that never reaches here.
     if (ctx.routines.eventKindDeclined(ctx.eventId, ctx.kind)) refuse(notNow);
-    const verdict = ctx.routines.admitEventActionDetailed(ctx.eventId, ctx.admissionId, ctx.kind);
+    const noLimits = serviceThreadNoLimits(ctx.fromThreadId, ctx.from.id);
+    const verdict = ctx.routines.admitEventActionDetailed(ctx.eventId, ctx.admissionId, ctx.kind, noLimits ? { pair: ctx.handoffPair } : undefined);
     if (verdict.ok) return;
+    if (verdict.reason === "loop" || verdict.reason === "ceiling") {
+      const text = verdict.reason === "loop" ? "This run stopped repeating the same hand-off between bots. Work already started can finish."
+        : "This run stopped after a large number of actions. Work already started can finish.";
+      ctx.bus.store.appendMessage(ctx.fromThreadId, murageLine({ role: "bot", kind: "text", text }));
+      refuse(text);
+    }
     if (verdict.reason === "closed") {
       refuse(verdict.closedReason === "stopped" ? `This run was stopped, so I can't ${doing} from it.`
         : verdict.closedReason === "watch" ? `This check only looks for changes, so I can't ${doing} from it.`
@@ -218,7 +229,7 @@ export async function runEventAction<R>(spec: EventActionSpec<R>, step: (handle:
         charge: async () => {
           spec.stillActive();
           await admitEventWithOwner({ routines, bus: spec.bus, eventId, kind: spec.kind, admissionId: actionId, from: spec.from, fromThreadId: spec.fromThreadId,
-            ...(spec.targetName ? { targetName: spec.targetName } : {}), fullAccess: spec.fullAccess, stillActive: spec.stillActive });
+            ...(spec.targetName ? { targetName: spec.targetName } : {}), ...(spec.kind === "handoff" ? { handoffPair: JSON.stringify([...spec.identity.slice(1, 3)].sort()) + ":" + createHash("sha256").update(JSON.stringify(spec.identity.slice(3))).digest("hex") } : {}), fullAccess: spec.fullAccess, stillActive: spec.stillActive });
           charged = true;
           let early: R | undefined;
           try { early = await spec.revalidate(); } catch (error) {

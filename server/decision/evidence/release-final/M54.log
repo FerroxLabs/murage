@@ -1,0 +1,30 @@
+COMMAND node_modules/.bin/vitest run server/decision/records-dedup.test.ts -t "M54 terminal SQL"
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/records-dedup.test.ts > M54 terminal SQL tombstone rejects a second record with the same request key
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=2
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/records-dedup.test.ts (4 tests | 1 failed | 3 skipped) 628ms
+   ↓ A4b M54 terminal duplicate allow retains one tombstone and row
+   ↓ A4b M54 terminal duplicate deny retains one tombstone and row
+   ↓ A4b M54 terminal duplicate expire retains one tombstone and row
+   × M54 terminal SQL tombstone rejects a second record with the same request key 621ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 skipped (4)
+   Start at  07:42:16
+   Duration  8.29s (transform 5.99s, setup 7.08s, import 437ms, tests 628ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/records-dedup.test.ts > M54 terminal SQL tombstone rejects a second record with the same request key
+AssertionError: expected [Function] to throw an error
+ ❯ server/decision/records-dedup.test.ts:11:105
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

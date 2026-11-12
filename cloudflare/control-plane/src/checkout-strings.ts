@@ -9,7 +9,7 @@
 import type { Plan } from "./b5-config";
 import { PLAN_MONTHLY_USD } from "./b5-config";
 import { checkoutLocale, isConsumerWithdrawalCountry } from "./checkout-policy";
-import type { SellerKind } from "./seller";
+import type { SellerKind, SubmitLinks } from "./seller";
 
 export type Lang = "en" | "de";
 export type CheckoutPath = "direct" | "managed";
@@ -58,7 +58,7 @@ const en: Strings = {
     mp: "Link (by Stripe) takes your payment for us, in your currency. The amount can change with exchange rates.",
     eu: "EU, EEA and UK: your server starts as soon as you pay, at your request. You can still change your mind within 14 days of it starting and we refund you in full.",
     deat: (c) => `In ${c}, the law needs an order button that says you must pay. Stripe only has that in German, so the payment page is in German.`,
-    acceptance: "You accept the [Murage Cloud terms] and [Terms of Service] when you submit your order on the payment page. [Privacy Policy].",
+    acceptance: "You confirm you are 18 or older, and you accept the [Murage Cloud terms], [Terms of Service] and [Flux Router Terms of Service] when you submit your order on the payment page. [Privacy Policy].",
     countryLine: (c, l) => `Buying as a consumer in ${c} · Checkout language ${l} · [change]`,
     countryLineForcedGerman: (c) => `Buying as a consumer in ${c} · Checkout language Deutsch · [change country]`,
     button: "Start my server and continue to payment",
@@ -69,8 +69,8 @@ const en: Strings = {
   // Astra DROPDOWN-DIRECT-1 (6): the label keeps Fable's statement ("the total shown"); Managed Payments charges in local currency and
   // exchange rates can change that total, so the option (the customer's action, <=100) states the basis. Fable re-check pending.
   renewalOption: "OK, renew monthly until I cancel (in my currency with tax; exchange rates can change the amount)",
-  submitShort: "You also agree to the [Terms of Service].",
-  submitFull: "By submitting your order you agree to the [Murage Cloud terms] and [Terms of Service]. [Privacy Policy].",
+  submitShort: "You also confirm you are 18 or older, and you agree to the [Terms of Service] and [Flux Router Terms of Service].",
+  submitFull: "By submitting your order you confirm you are 18 or older, and you agree to the [Murage Cloud terms], [Terms of Service] and [Flux Router Terms of Service]. [Privacy Policy].",
   topupBox: "Top up my Flux credits automatically: add ${amount} whenever my balance falls below ${threshold}, up to a monthly cap of ${cap}. "
     + "I can change the amount or the cap, or turn this off, at any time.",
   topupCharge: "When my Flux balance falls below ${threshold}, I authorize Ferrox Labs, LLC to charge my payment method ${total} "
@@ -88,7 +88,7 @@ const de: Strings = {
     mp: "Link (by Stripe) nimmt Ihre Zahlung für uns entgegen, in Ihrer Währung. Der Betrag kann sich mit dem Wechselkurs ändern.",
     eu: "EU, EWR und UK: Ihr Server startet auf Ihren Wunsch sofort nach der Zahlung. Sie können sich innerhalb von 14 Tagen nach dem Start anders entscheiden und erhalten alles zurück.",
     deat: (c) => `In ${c} muss die Bestellschaltfläche die Zahlungspflicht nennen. Stripe bietet das nur auf Deutsch an, deshalb ist die Zahlungsseite auf Deutsch.`,
-    acceptance: "Mit dem Absenden Ihrer Bestellung auf der Zahlungsseite akzeptieren Sie die [Murage-Cloud-Bedingungen] und die [Nutzungsbedingungen]. [Datenschutzerklärung].",
+    acceptance: "Sie bestätigen, dass Sie mindestens 18 Jahre alt sind, und akzeptieren mit dem Absenden Ihrer Bestellung auf der Zahlungsseite die [Murage-Cloud-Bedingungen], die [Nutzungsbedingungen] und die [Nutzungsbedingungen von Flux Router]. [Datenschutzerklärung].",
     countryLine: (c, l) => `Kauf als Verbraucher in ${c} · Sprache der Zahlungsseite ${l} · [ändern]`,
     countryLineForcedGerman: (c) => `Kauf als Verbraucher in ${c} · Sprache der Zahlungsseite Deutsch · [Land ändern]`,
     button: "Server starten und weiter zur Zahlung",
@@ -99,8 +99,8 @@ const de: Strings = {
   renewalSubmit: (usd) => `Verlängert sich monatlich für ${usd} US$ zzgl. Steuern, bis Sie im Konto kündigen.`,
   renewalLabelManaged: "Ihr Plan verlängert sich monatlich zum angezeigten Gesamtbetrag, bis Sie im Konto kündigen.",
   renewalOption: "OK, monatlich verlängern, bis ich kündige (in meiner Währung inkl. Steuern, je nach Wechselkurs)",
-  submitShort: "Sie stimmen außerdem den [Nutzungsbedingungen] zu.",
-  submitFull: "Mit dem Absenden Ihrer Bestellung stimmen Sie den [Murage-Cloud-Bedingungen] und den [Nutzungsbedingungen] zu. [Datenschutzerklärung].",
+  submitShort: "Sie bestätigen außerdem, dass Sie mindestens 18 Jahre alt sind, und stimmen den [Nutzungsbedingungen] und den [Nutzungsbedingungen von Flux Router] zu.",
+  submitFull: "Mit dem Absenden Ihrer Bestellung bestätigen Sie, dass Sie mindestens 18 Jahre alt sind, und stimmen den [Murage-Cloud-Bedingungen], den [Nutzungsbedingungen] und den [Nutzungsbedingungen von Flux Router] zu. [Datenschutzerklärung].",
   topupBox: "Meine Flux-Guthaben automatisch aufladen: ${amount} hinzufügen, sobald mein Guthaben unter ${threshold} fällt, bis zu einer monatlichen Obergrenze von ${cap}. "
     + "Ich kann den Betrag oder die Obergrenze jederzeit ändern oder dies jederzeit ausschalten.",
   topupCharge: "Wenn mein Flux-Guthaben unter ${threshold} fällt, ermächtige ich Ferrox Labs, LLC, meine Zahlungsmethode mit ${total} für Flux-Guthaben im Wert von ${amount} zu belasten, "
@@ -153,17 +153,17 @@ export function renewalField(locale: string) {
   return { label: s.renewalLabelManaged, option: s.renewalOption };
 }
 /** The §3.3 direct-only acceptance text in a Stripe locale. `links` turns each "[Label]" into a Markdown link "[Label](url)" (Stripe's custom_text). */
-export function submitText(locale: string, variant: SubmitVariant, links?: { terms: string; tos: string; privacy: string }): string {
+export function submitText(locale: string, variant: SubmitVariant, links?: SubmitLinks): string {
   const s = stringsFor(locale);
   const raw = variant === "short" ? s.submitShort : s.submitFull;
   if (!links) return raw;
-  const urlFor = (label: string) => /Murage|Cloud/i.test(label) ? links.terms : /Privacy|Datenschutz/i.test(label) ? links.privacy : links.tos;
+  const urlFor = (label: string) => /Flux/i.test(label) ? links.flux : /Murage|Cloud/i.test(label) ? links.terms : /Privacy|Datenschutz/i.test(label) ? links.privacy : links.tos;
   return raw.replace(/\[([^\]]+)\]/g, (_m, label: string) => `[${label}](${urlFor(label)})`);
 }
 /** The direct path's whole submit message (custom_text.submit.message, directly above the Pay button): the renewal sentence for this plan
  *  (cadence, the plan's price plus tax as on our page, how to end it), then the acceptance sentence with its links. Our prices are always
  *  tax-exclusive (the disclosure's price line says "plus tax" in every country), so the sentence always says "+ tax" / "zzgl. Steuern". */
-export function directSubmitMessage(locale: string, plan: Plan, variant: SubmitVariant, links?: { terms: string; tos: string; privacy: string }): string {
+export function directSubmitMessage(locale: string, plan: Plan, variant: SubmitVariant, links?: SubmitLinks): string {
   return `${stringsFor(locale).renewalSubmit(PLAN_MONTHLY_USD[plan])} ${submitText(locale, variant, links)}`;
 }
 /** What Stripe's page shows for a consent of this path, plan and Stripe locale (archived with the consent, links left as labels). */

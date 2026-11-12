@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { readMcpCatalog } from "../mcp-listed.ts";
 
 const PROXY = join(dirname(fileURLToPath(import.meta.url)), "host-computer-proxy.ts");
 
@@ -22,6 +23,7 @@ describe("host computer proxy", () => {
   let port = 0;
   let delayMs = 1_500;
   let received = 0;
+  let listReply: unknown = null; // when set, the harness answers with this body instead of a tool-call result
   const closed: IncomingMessage[] = [];
 
   beforeAll(async () => {
@@ -37,7 +39,7 @@ describe("host computer proxy", () => {
         received += 1;
         const timer = setTimeout(() => {
           res.writeHead(200, { "content-type": "application/json" });
-          res.end(JSON.stringify({ content: [{ type: "text", text: `done ${JSON.parse(body).method}` }] }));
+          res.end(JSON.stringify(listReply ?? { content: [{ type: "text", text: `done ${JSON.parse(body).method}` }] }));
         }, delayMs);
         res.on("close", () => {
           clearTimeout(timer);
@@ -54,14 +56,16 @@ describe("host computer proxy", () => {
     removeTempDirSync(dir);
   });
 
-  const start = () => {
+  const start = (extraEnv: Record<string, string> = {}) => {
     const child = spawn(process.execPath, ["--experimental-strip-types", "--import", pathToFileURL(join(dir, "compress.mjs")).href, PROXY], {
+      windowsHide: true,
       env: {
         ...process.env,
         MURAGE_CONTROL_URL: `http://127.0.0.1:${port}/api/internal/computer-control?botId=b1`,
         MURAGE_CONTROL_TOKEN: "t",
         MURAGE_BOT_ID: "b1",
         MURAGE_THREAD_ID: "th1",
+        ...extraEnv,
       },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -117,6 +121,25 @@ describe("host computer proxy", () => {
     expect(results.has(2)).toBe(false);
     child.stdin!.end();
     await exited(child);
+  }, 20_000);
+
+  it("c11-cancel hostComputer: a cancelled tools/list gets no answer and its chain leaves the active set, so the next list certifies", async () => {
+    const marker = join(dir, "generation.host");
+    delayMs = 200; listReply = { tools: [{ name: "host_click" }] };
+    try {
+      const { child, results, rpc } = start({ MURAGE_MCP_LISTED_FILE: marker });
+      // the request and its withdrawal arrive together, before the proxy has started on it
+      child.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id: 21, method: "tools/list" }) + "\n" + JSON.stringify({ jsonrpc: "2.0", method: "notifications/cancelled", params: { requestId: 21 } }) + "\n");
+      await new Promise((r) => setTimeout(r, 500));
+      rpc({ jsonrpc: "2.0", id: 22, method: "tools/list" });
+      const res = await waitFor(results, 22);
+      expect(res.result).toEqual({ tools: [{ name: "host_click" }] });
+      await new Promise((r) => setTimeout(r, 300));
+      expect(results.has(21)).toBe(false);
+      expect(readMcpCatalog(marker)).toMatchObject({ complete: true, tools: ["host_click"] });
+      child.stdin!.end();
+      await exited(child);
+    } finally { listReply = null; }
   }, 20_000);
 
   it("the engine closing the tool withdraws the action in flight", async () => {

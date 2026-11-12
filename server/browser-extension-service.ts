@@ -1,3 +1,5 @@
+import {noLimitsAppliesTo} from './no-limits-origin.ts';
+import { serviceOwnerNoLimits, type ServiceAuthority } from "./narrow-denials.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { redactPageOutput } from "./browser-output-redaction.ts";
 import fs from 'node:fs/promises';
@@ -67,7 +69,7 @@ const originOnly = (value: unknown): value is string => { if (typeof value !== '
 // What the page did that the bot cannot otherwise see (a dialog, a blocked download, a new tab) is
 // told in plain words on the next result. Page-supplied text is quoted and labelled as the page's.
 const NOTICE_LIMIT = 8;
-type Entry = StoredBinding & { avatarBound?: number; avatarEpoch: number; avatarFailed?: boolean; avatarHeld?: string; avatarDirty?: boolean; avatarJob?: Promise<void>; freeNavigation?: string; /** A7: the owner instruction id whose turn has already delivered a browser result (anything outside may have been read). */ outsideSeen?: string; /** A7: counts every delivered result, whatever the lookup found, so a cached exemption sees any delivery since it was computed. Memory only. */ outsideMarks?: number; /** A7: set while this call's admitted exempt open is on its way: its address and the delivery count it was admitted at, checked again right before that navigate goes out. */ exemptOpen?: { url: string; marks: number }; runtimeState?: 'active' | 'paused' | 'stopped'; siteEpoch: number; taskL1: Set<string>; autoL1?: Set<string>; endedFor?: { id: string | undefined; reason?: TaskEndReason }; taskL2: Set<string>; taskEnded?: boolean; taskEndReason?: TaskEndReason; notices: string[]; pageRead: boolean; documents: Map<number, ExtensionDocument>; executor?: BrowserExtensionExecutor; busy: boolean; revision: number; selectedTabId?:number; fence?:Fence; /** SABLE-B 5.4: the one step being checked on this binding (prediction to end of admission). */ checking?: Step; navigation?:{tabId:number;url?:string}; mutationLease?:boolean; effect?:{tabId:number;navigationEpoch:number;origin:string}; release?: () => void; authorize?: () => boolean; pausedReason?: PausedReason; handoffText?: string; /** The one sentence for the browser's side panel while the owner has the turn. */ handoffNote?: string; /** An uncertain restart report: the last step may have run. Held until the owner resumes or stops. */ outcomeUnknown?: boolean; unbound?: boolean; task?: TaskState; /** SABLE-B 5.6: a site grant's bind failed; set to a fresh number in the failure's tick, compare-and-cleared only by a bind sent after it whose answer settles. Memory only (row 17). */ setOwed?: number; /** SABLE-B 5.6: the handoff pause is a failed grant's, so Continue tells the bot the step did not run. */ grantPause?: boolean;
+type Entry = StoredBinding & { avatarBound?: number; avatarEpoch: number; avatarFailed?: boolean; avatarHeld?: string; avatarDirty?: boolean; avatarJob?: Promise<void>; freeNavigation?: string; /** A7: the owner instruction id whose turn has already delivered a browser result (anything outside may have been read). */ outsideSeen?: string; /** A7: counts every delivered result, whatever the lookup found, so a cached exemption sees any delivery since it was computed. Memory only. */ outsideMarks?: number; /** A7: set while this call's admitted exempt open is on its way: its address and the delivery count it was admitted at, checked again right before that navigate goes out. */ exemptOpen?: { url: string; marks: number }; runtimeState?: 'active' | 'paused' | 'stopped'; siteEpoch: number; taskL1: Set<string>; /** Read access for this dispatch only. Never persisted as task consent. */ readL1?: Set<string>; autoL1?: Set<string>; endedFor?: { id: string | undefined; reason?: TaskEndReason }; taskL2: Set<string>; taskEnded?: boolean; taskEndReason?: TaskEndReason; notices: string[]; pageRead: boolean; documents: Map<number, ExtensionDocument>; executor?: BrowserExtensionExecutor; busy: boolean; revision: number; selectedTabId?:number; fence?:Fence; /** SABLE-B 5.4: the one step being checked on this binding (prediction to end of admission). */ checking?: Step; navigation?:{tabId:number;url?:string}; mutationLease?:boolean; effect?:{tabId:number;navigationEpoch:number;origin:string}; release?: () => void; authorize?: () => boolean; pausedReason?: PausedReason; handoffText?: string; /** The one sentence for the browser's side panel while the owner has the turn. */ handoffNote?: string; /** An uncertain restart report: the last step may have run. Held until the owner resumes or stops. */ outcomeUnknown?: boolean; unbound?: boolean; task?: TaskState; /** SABLE-B 5.6: a site grant's bind failed; set to a fresh number in the failure's tick, compare-and-cleared only by a bind sent after it whose answer settles. Memory only (row 17). */ setOwed?: number; /** SABLE-B 5.6: the handoff pause is a failed grant's, so Continue tells the bot the step did not run. */ grantPause?: boolean;
   /** EXT-RESTART r6 (memory only). resumedGen: the newest resumedAt consumed (consume-once, set before any await). takenInGen: the
    * resumedAt of a Resume actually taken in (the late-event marker). resumeHeard: the newest valid resumedAt heard (3.3b). adoptDue: the
    * next hello or owner action reads again. */
@@ -76,7 +78,7 @@ type Entry = StoredBinding & { avatarBound?: number; avatarEpoch: number; avatar
 /** SABLE-B 4.2: the call's snapshot. Created per dispatch (its identity is the dispatch); mode, freeNavigation and probeFlagged are filled after dispatch's taskOf. */
 type Fence = { generation: number; revision: number; instruction?: { id: string; text: string }; mode: ApprovalMode; freeNavigation?: string; probeFlagged: boolean };
 /** SABLE-B 5.1: the call's scope as the service sees it. */
-type Scope = CallScope & { fence: Fence };
+type Scope = CallScope & { fence: Fence; readOnly?: boolean };
 /** SABLE-B 4: the inputs one step's prediction and its decision share (computed once, the same object). */
 type StepInputs = { destination?: string; operation: 'navigate' | 'mutation' | 'read'; instruction?: { id: string; text: string }; ownerRequested: boolean; /** The owner-named bare origin exemption (A0-A9) is part of ownerRequested. */ bareOwnerNamed?: boolean; /** The delivery count when bareOwnerNamed was computed. */ outsideMarks?: number; disclosed: boolean; conversationApproved: boolean; admitted: Set<string> };
 type Step = { scope: Scope; action: ExtensionAction; inputs?: StepInputs };
@@ -261,6 +263,9 @@ export async function createBrowserExtensionService(options: {
   savedNever?: (context: BindingContext) => string[];
   /** The bot's approval mode (T21 supplies it). Without it the service asks at every step, as before. */
   approvalMode?: (context: BindingContext) => ApprovalMode;
+  /** App-proven current turn and effective conversation level, including the owner's paired channel DM. */
+  readTurn?: (context: BindingContext) => { noLimits: boolean; origin: import('./no-limits-origin.ts').NoLimitsOrigin } | undefined;
+  authorityFor?: (context: BindingContext) => ServiceAuthority | undefined;
   /** The model checker's transport for this bot (T23's resolver). Undefined means none: the bot is treated as Ask each step. */
   checker?: (context: BindingContext) => { deps: CheckerDeps; /** Which checker this is (source and models). A resolver that builds a fresh transport per call names it here so a settings change can be told from a new call. */ key?: string } | undefined;
   /** What only the app knows about this task, for the browser's side panel: the conversation's name, the bot's colour, whether Full access is on offer and the last lines of activity. */
@@ -567,7 +572,7 @@ export async function createBrowserExtensionService(options: {
     const bindGeneration = entry.context.generation;
     // SABLE-B 5.6: read in the same tick the set is computed and the frame written, so only a bind SENT after a failure can clear it.
     const owed = entry.setOwed;
-    const approvedOrigins = [...new Set([...Object.entries(entry.sites).filter(([, access]) => access === 'allow').map(([origin]) => origin), ...entry.taskL1])];
+    const approvedOrigins = [...new Set([...Object.entries(entry.sites).filter(([, access]) => access === 'allow').map(([origin]) => origin), ...entry.taskL1, ...(entry.readL1 ?? [])])];
     const value = await request(entry, 'bind', { profileId: entry.context.profileId, botName: String(options.botLabel?.(entry.context) ?? entry.context.botId).slice(0, 80), approvedOrigins, appProtocol: BROWSER_APP_PROTOCOL });
     await reconcile(entry, value);
     if (owed !== undefined && entry.setOwed === owed && settles(value)) entry.setOwed = undefined;
@@ -881,7 +886,8 @@ export async function createBrowserExtensionService(options: {
   };
   /** Take one site's task grants back, in the server and in the policy. The extension is told by the caller's rebind. */
   const dropGrants = (entry: Entry, origin: string) => {
-    entry.taskL1.delete(origin); entry.taskL2.delete(origin); entry.autoL1?.delete(origin); entry.task?.chats.delete(origin);
+    entry.executor?.invalidateReadOrigin(origin);
+    entry.readL1?.delete(origin); entry.taskL1.delete(origin); entry.taskL2.delete(origin); entry.autoL1?.delete(origin); entry.task?.chats.delete(origin);
     try { policy.revokeL2(entry.context, origin); } catch { /* the policy never held it */ }
     if (entry.sites[origin] !== 'allow') { try { policy.setSiteAccess(entry.context, origin, entry.sites[origin] ?? 'ask'); } catch { /* nothing to take back */ } }
   };
@@ -901,9 +907,10 @@ export async function createBrowserExtensionService(options: {
     // EXT-RESTART 4.3: at most 64 Allow always rows per binding, so a bind lists at most 128 origins.
     if (access === 'allow' && entry.sites[origin] !== 'allow' && Object.values(entry.sites).filter(value => value === 'allow').length >= MAX_STORED_GRANTS)
       throw Object.assign(new Error(ALLOW_LIMIT_TEXT), { code: 'allow_limit', status: 409, errorKey: 'browserExt.sites.errorAllowLimit' });
+    entry.executor?.invalidateReadOrigin(origin);
     entry.revision++; entry.siteEpoch++; entry.task?.chats.delete(origin);
     // Lowering a site ends its task grants too: Never and Ask each time do not leave a Level 2 grant behind.
-    if (access !== 'allow') { entry.taskL1.delete(origin); entry.taskL2.delete(origin); try { policy.revokeL2(entry.context, origin); } catch { /* none held */ } }
+    if (access !== 'allow') { entry.readL1?.delete(origin); entry.taskL1.delete(origin); entry.taskL2.delete(origin); try { policy.revokeL2(entry.context, origin); } catch { /* none held */ } }
     await applySite(entry, origin, access);
   };
   /** What an approval is bound to (T22): the generation, the document epoch, and a digest each of the target, where it goes, what it carries
@@ -916,16 +923,43 @@ export async function createBrowserExtensionService(options: {
       submissionDigest: digestOf(['submission', action.name, keyedUrl(destination), facts.recipients ? withoutSecretValues(facts.recipients as string[]) : null, facts.form ?? null, action.document.url]),
       payloadDigest: digestOf(['payload', typeof action.arguments.url === 'string' ? { ...action.arguments, url: keyedUrl(action.arguments.url) } : action.arguments]), actionDigest: action.digest };
   };
+  const ownerReadTurn = (entry: Entry, scope?: Scope) => {
+    const turn = scope?.readOnly ? options.readTurn?.({ ...entry.context }) : undefined;
+    return !!turn&&noLimitsAppliesTo(turn.origin,{autoApprove:turn.noLimits,fullAccess:turn.noLimits,noLimits:turn.noLimits,permissionExplicit:true});
+  };
+  const ordinaryOwnerRead = (entry: Entry, origin: string, scope?: Scope) => ownerReadTurn(entry, scope)
+    && siteCategory(entry, origin, new URL(origin).hostname).category === 'normal'
+    && (entry.readL1?.has(origin) || (entry.sites[origin] !== 'never' && options.siteSetting?.({ ...entry.context }, origin)?.rule !== 'never'));
   /** The site card. The owner's "Allow for this task" grants Level 1 for this task and this site only: it is not remembered
-   * (Allow always is the owner's own setting), it never carries to another site or task, and a routine never gets here. */
+   * (Allow always is the owner's own setting), it never carries to another site or task, and Ask/Auto routines cannot mint consent. */
   const consent = async (entry: Entry, origin: string, scope?: Scope, action?: ExtensionAction, opts?: { ownerShare?: boolean; stepAction?: ExtensionAction }) => {
-    if (origin === 'null' || entry.sites[origin] === 'allow' || entry.taskL1.has(origin)) return;
+    if (origin === 'null' || entry.sites[origin] === 'allow' || entry.taskL1.has(origin) || entry.readL1?.has(origin)) return;
     // SABLE-B 5.1/5.4: only the owner's Share runs without a call scope; a dead scope writes nothing; another step's check holds the binding.
     if (!scope && !opts?.ownerShare) fail('binding_inactive');
     if (scope && !live(entry, scope)) fail('binding_inactive');
     // SABLE-B 5.4 locks the bot's own steps; the owner's Share is not a step (row 18, test 48: O is granted while a call's site card is open).
     if (!opts?.ownerShare) { const held = heldBy(entry); if (held && held.action !== (action ?? opts?.stepAction)) fail('binding_busy'); }
-    if (entry.sites[origin] === 'never') fail('site_denied');
+    const generation = entry.context.generation, epoch = entry.siteEpoch;
+    if(serviceOwnerNoLimits(options.authorityFor?.(entry.context))) {
+      const answer=await options.askSite?.({...entry.context},origin,siteBinding(entry,origin));
+      if(answer==='waiting')throw refusal(WAITING_TEXT,true);
+      if(answer!=='allow')fail('site_denied');
+      entry.taskL1.add(origin);policy.setSiteAccess(entry.context,origin,'allow');return;
+    }
+    const ownerRead = ownerReadTurn(entry, scope);
+    let neverRead = false;
+    if (entry.sites[origin] === 'never' || (ownerRead && options.siteSetting?.({ ...entry.context }, origin)?.rule === 'never')) {
+      // Allow overrides Never for this read call only. The saved refusal remains in place.
+      if (!ownerRead) fail('site_denied');
+      const binding = siteBinding(entry, origin);
+      const earlier = options.consumeApproval?.({ ...entry.context }, { kind: 'site', binding }) === true;
+      const answer = earlier ? 'allow' : await options.askSite?.({ ...entry.context }, origin, binding);
+      if (!live(entry, scope) || generation !== entry.context.generation || epoch !== entry.siteEpoch) fail('stale_binding');
+      if (answer === 'waiting') throw refusal(WAITING_TEXT, true);
+      if (answer !== 'allow') fail('site_denied');
+      neverRead = true;
+    }
+
     // EXT-RESTART 4.1 (ruling 3, test 20): a Never-by-default site the owner has not lifted in this process is refused before any site
     // card, with the line decide() gives it. A card here could only lead to a refusal, and a saved Allow on disk does not lift it.
     { let hostname = ''; try { hostname = new URL(origin).hostname; } catch { /* not a URL: the card path below decides */ }
@@ -942,13 +976,13 @@ export async function createBrowserExtensionService(options: {
         // so there is always exactly one. `recorded` alone only keeps admit() from adding a denial: the waiting and failed-grant refusals carry it and write none.
         throw Object.assign(refusal('NOT DONE: This site is for the owner in person or is set to Never, so the action is refused.', true), opts?.ownerShare ? {} : lineWritten ? { activityRecorded: true, activityId } : { activityId });
       } }
-    if (routineOf(entry)) fail('site_consent_required');
+    if (routineOf(entry) && !ownerRead) fail('site_consent_required');
     const askSite = options.askSite ?? (() => fail('site_consent_required'));
-    const generation = entry.context.generation, epoch = entry.siteEpoch;
     taskOf(entry);
     // M8: the saved file holds at most MAX_STORED_GRANTS sites for a task; refuse the next one now rather than write a file the next start rejects.
     if (entry.taskL1.size >= MAX_STORED_GRANTS) fail('site_consent_required');
     // SABLE-B 4.2: inside a call the mode is the call's snapshot; the owner's Share reads it live.
+    const ordinaryRead = neverRead || ordinaryOwnerRead(entry, origin, scope);
     let full = fullAllowsNewSite(entry, origin, scope ? scope.fence.mode : options.approvalMode?.({ ...entry.context }) ?? 'step');
     // SABLE-B 1/4 (K1): under attended Full a destination is granted automatically only for a step predicted to pass with no card.
     // A page consent (scope, no action) is the page the bot is on (section 8): granted without a prediction, as base.
@@ -959,20 +993,22 @@ export async function createBrowserExtensionService(options: {
     }
     // T22: an Allow the owner gave after the wait is used once, here, where the card would have been raised.
     const binding = siteBinding(entry, origin);
-    const earlier = !full && options.consumeApproval?.({ ...entry.context }, { kind: 'site', binding }) === true;
-    const access = full || earlier ? 'allow' as const : await askSite({ ...entry.context }, origin, binding);
+    const earlier = !ordinaryRead && !full && options.consumeApproval?.({ ...entry.context }, { kind: 'site', binding }) === true;
+    const access = ordinaryRead || full || earlier ? 'allow' as const : await askSite({ ...entry.context }, origin, binding);
     if (scope && !live(entry, scope)) fail('stale_binding');
     // An answer to an old card never overwrites what the owner set since, or acts for a changed binding or a task that ended.
     if (!active(entry) || generation !== entry.context.generation || epoch !== entry.siteEpoch) fail('stale_binding');
     if (access === 'waiting') throw refusal(WAITING_TEXT, true);
     if (access !== 'allow') { if (access === 'never') await applySite(entry, origin, access); fail('site_denied'); }
-    entry.taskL1.add(origin); policy.setSiteAccess(entry.context, origin, 'allow');
+    // Automatic No limits reads and one-use Never answers are call authority, never task consent.
+    if (ordinaryRead) (entry.readL1 ??= new Set()).add(origin); else entry.taskL1.add(origin);
+    policy.setSiteAccess(entry.context, origin, 'allow');
     // H2: Full permissive's automatic grant is not the owner's grant, so intent rule I1 does not count it as a site the owner named.
-    if (full) (entry.autoL1 ??= new Set()).add(origin); else entry.autoL1?.delete(origin);
+    if (full && !ordinaryRead) (entry.autoL1 ??= new Set()).add(origin); else entry.autoL1?.delete(origin);
     if (full) { try { recordBrowserActivity({ botId: entry.context.botId, bindingId: entry.context.bindingId, taskId: entry.context.threadId, site: new URL(origin).host, action: 'allow site', level: 1, decision: 'Full permissive', decidedBy: 'full-permissive', outcome: 'done' }); } catch { /* the log is best effort */ } }
     try { if (online(entry)) await bind(entry); await persist().catch(() => {}); }
     // SABLE-B 5.6 failClosed: P2. The undo runs synchronously in the failure's tick, then the task fails closed for the owner.
-    catch { entry.taskL1.delete(origin); entry.autoL1?.delete(origin); try { policy.setSiteAccess(entry.context, origin, entry.sites[origin] ?? 'ask'); } catch { /* none held */ } await failClosed(entry, origin); throw refusal(GRANT_FAILED_TEXT, true); }
+    catch { entry.readL1?.delete(origin); entry.taskL1.delete(origin); entry.autoL1?.delete(origin); try { policy.setSiteAccess(entry.context, origin, entry.sites[origin] ?? 'ask'); } catch { /* none held */ } await failClosed(entry, origin); throw refusal(GRANT_FAILED_TEXT, true); }
   };
   /** The owner approved the first Level 2 card on this site in Allow for this task mode: later Level 2 steps here are silent. */
   const mintL2 = (entry: Entry, origin: string) => {
@@ -1201,7 +1237,7 @@ export async function createBrowserExtensionService(options: {
   /** SABLE-B 4.1: wouldCard false => under the same live scope the admission's decision is pass, a refusal, the floor or a pause, never a card. */
   const wouldCard = async (entry: Entry, action: ExtensionAction, inputs: StepInputs, scope: Scope) => (await decideFor(entry, action, inputs, scope.fence, { predict: true })).outcome !== 'pass';
   const makeExecutor = (entry: Entry) => {
-    const transport={document:(tabId?:number)=>documentFor(entry,tabId),send:(method:string,params:Record<string,unknown>,document:ExtensionDocument)=>send(entry,method,params,document)};
+    const transport={document:(tabId?:number)=>documentFor(entry,tabId),send:(method:string,params:Record<string,unknown>,document:ExtensionDocument)=>send(entry,method,params,document),frames:(document:ExtensionDocument)=>send(entry,'Murage.getAllFrames',{},document)};
     const site=activitySite;
     const record=(action:{name:string;document:ExtensionDocument;mutation:boolean;target?:string;fromPage?:boolean;textLength?:number},decision:BrowserActivityDecision,decidedBy:BrowserActivityDecider,outcome:BrowserActivityOutcome,level?:1|2|3,extra?:Pick<BrowserActivityInput,'recipientScanReason'|'checker'>,id?:string)=>{
       recordBrowserActivity({...(id?{id}:{}),botId:entry.context.botId,bindingId:entry.context.bindingId,taskId:entry.context.threadId,site:site(action.document,(action as {arguments?:Record<string,unknown>}).arguments?.url),action:action.name.replace(/^agent_browser_/,''),...(action.target?{target:action.target,fromPage:action.fromPage===true}:{}),level:level??(action.mutation?2:1),decision,decidedBy,outcome,...(action.textLength!==undefined?{textLength:action.textLength}:{}),...extra});
@@ -1251,7 +1287,10 @@ export async function createBrowserExtensionService(options: {
           if(keep==='no')taskOf(entry).chats.delete(action.document.origin);
         }
         const checkerBefore=options.checker?.({...entry.context});
-        const decision=await decideFor(entry,action,inputs,snap,{alive:()=>live(entry,scope)});
+        const ownerNoLimits=serviceOwnerNoLimits(options.authorityFor?.(context));
+        let decision:Decision & {mode:ApprovalMode;recipientUnknown:boolean}=ownerNoLimits
+          ? {outcome:'pass',stage:'mode',rule:'',reason:'',decidedBy:'policy',trace:[],mode:snap.mode,recipientUnknown:false}
+          : await decideFor(entry,action,inputs,snap,{alive:()=>live(entry,scope)});
         if(exemptionStale())fail('stale_binding');
         if(inputs.bareOwnerNamed&&destination!==undefined)entry.exemptOpen={url:canonicalOr(destination),marks:inputs.outsideMarks??0};
         // SEC-03: the owner may change the mode or the action check while the checker is thinking. An answer reached under the old settings never
@@ -1297,6 +1336,13 @@ export async function createBrowserExtensionService(options: {
         // no card. The step still needs its one-use approval for the policy's lease, so the service issues it here, in place of a
         // card, for an attended mutation only (a navigation that carries data and a routine keep their own card paths).
         let fullPass=false;
+        if(ownerNoLimits){
+          const answer=await options.askAction?.(context,action,actionBinding(entry,action));
+          if(answer==='waiting')throw refusal(WAITING_TEXT,true);
+          if(answer!==true)return false;
+          fullPass=true;
+        }
+        if(fullPass&&checked.requiresApproval)approvalId=policy.issueApproval(context,policyAction);
         if(decision.mode==='full'&&decision.outcome==='pass'&&(operation==='mutation'||operation==='navigate')&&!routineOf(entry)&&checked.requiresApproval&&(decision.level==='L2'||decision.level==='L3'||(operation==='navigate'&&decision.level==='L1'))){approvalId=policy.issueApproval(context,policyAction);fullPass=true;}
         const carded=decision.outcome==='card'||decision.outcome==='site-card';
         if(decision.decidedBy==='intent'&&carded&&decision.recipientUnknown === true)taskOf(entry).counters.hits++;
@@ -1342,13 +1388,15 @@ export async function createBrowserExtensionService(options: {
         if(destination)entry.navigation={tabId:action.document.tabId,url:destination};
         {const asked=(checked.requiresApproval&&!fullPass)||carded;const typed=typeof action.arguments.text==='string'?action.arguments.text:undefined;
           if(typed!==undefined){const task=taskOf(entry);{const kind=action.name.replace(/^agent_browser_/,'');if(kind==='fill'||kind==='type')task.lastTyped.set(action.document.origin,{id:targetId(action),composer:composerLike(action),node:nodeKey(action)});}let to=action.document.origin;try{if(destination)to=new URL(destination).origin;}catch{/* the document's origin stands */}task.typedHistory.set(to,nextTypedHistory(task.typedHistory.get(to),typed));}
-          record(action,asked?(decision.decidedBy==='intent'?'intent card':'you allowed'):fullPass?'Full permissive':'free',asked?'owner':fullPass?'full-permissive':'policy','done',levelNumber,activityExtra(action,decision));}
+          record(action,asked?(decision.decidedBy==='intent'?'intent card':'you allowed'):fullPass&&!ownerNoLimits?'Full permissive':'free',asked?'owner':fullPass&&!ownerNoLimits?'full-permissive':'policy','done',levelNumber,activityExtra(action,decision));}
         // SABLE-B 4.3/7.2: what this call admitted (canonical origin and exact URL).
         if(destination){try{scope!.admitted.add(new URL(destination).origin);scope!.admittedUrls.add(destination);}catch{/* not a web URL: nothing to cover */}}
         return true;
     };
     return new BrowserExtensionExecutor({
-      authorize:()=>active(entry),authorizationError:()=>authorizationError(entry),transport,
+      documentOwner: entry.context.botId,
+      authorize:()=>active(entry),authorizationError:()=>authorizationError(entry),
+      transport:{...transport,frames:document=>transport.send('Murage.getAllFrames',{},document)},
       ...(options.collectFacts?{collectFacts:options.collectFacts}:{}),
       activity:event=>record({name:event.operation,document:event.document,mutation:true,target:event.target,fromPage:event.fromPage,textLength:event.textLength},event.decision,event.decision==='your turn'?'policy':'owner',event.outcome,undefined,undefined,event.id),
       onFloor:async (info,callScope)=>{const scope=callScope as Scope|undefined;
@@ -1476,7 +1524,7 @@ export async function createBrowserExtensionService(options: {
       entry.executor ??= makeExecutor(entry);
       return { tools: entry.executor.tools() };
     },
-    async dispatch(bindingId: string, method: unknown, params: unknown, authorize: () => boolean) {
+    async dispatch(bindingId: string, method: unknown, params: unknown, authorize: () => boolean, bootstrapOnly = false) {
       const entry = entryFor(bindingId);
       // A7: whatever this call returns or throws (a result, an error, a refusal, a notice), it is marked before it reaches the bot.
       let startedUnder: string | undefined;
@@ -1503,12 +1551,21 @@ export async function createBrowserExtensionService(options: {
         fence.mode = options.approvalMode?.({ ...entry.context }) ?? 'step'; fence.freeNavigation = entry.freeNavigation; fence.probeFlagged = probe.isFlagged(entry.context.bindingId);
         entry.executor ??= makeExecutor(entry);
         try {
-          const output = await entry.executor.call(method, params, { fence, signal: cancel.signal, admitted: new Set(), admittedUrls: new Set() });
+          const output = await entry.executor.call(method, params, { fence, readOnly: String(method).replace(/^agent_browser_/, '') === 'read', signal: cancel.signal, admitted: new Set(), admittedUrls: new Set(), bootstrapOnly } as Scope);
           if (['snapshot', 'read', 'screenshot', 'get_text', 'get_title', 'get_url', 'wait_for_text', 'wait_for_selector'].includes(String(method).replace(/^agent_browser_/, ''))) entry.pageRead = true;
           return deliver(entry, method, output, true);
         }
         catch (error) { const moved = await navigatedAfterEffect(entry, method); if (moved) return deliver(entry, method, moved, false); throw error; }
-      } finally { cancel.abort(); if (entry.task) { entry.task.lastAt = now(); if (entry.task.lastAt - lastSaveAt >= 60_000) { lastSaveAt = entry.task.lastAt; savedSoon(true); } } entry.release?.(); entry.release = undefined; entry.authorize = undefined; entry.fence=undefined;entry.navigation=undefined;entry.exemptOpen=undefined;entry.mutationLease=false;entry.effect=undefined; entry.busy = false; }
+      } finally {
+        cancel.abort();
+        // Remove call-only authority on every outcome, and fence the extension before another call can start.
+        const readOrigins = [...(entry.readL1 ?? [])]; entry.readL1?.clear();
+        for (const origin of readOrigins) {
+          try { policy.setSiteAccess(entry.context, origin, entry.taskL1.has(origin) ? 'allow' : entry.sites[origin] ?? 'ask'); } catch { /* the policy may have ended */ }
+        }
+        try { if (readOrigins.length) await rebind(entry); }
+        finally { if (entry.task) { entry.task.lastAt = now(); if (entry.task.lastAt - lastSaveAt >= 60_000) { lastSaveAt = entry.task.lastAt; savedSoon(true); } } entry.release?.(); entry.release = undefined; entry.authorize = undefined; entry.fence=undefined;entry.navigation=undefined;entry.exemptOpen=undefined;entry.mutationLease=false;entry.effect=undefined; entry.busy = false; }
+      }
       } finally { markOutsideSeen(entry, () => options.ownerInstruction?.({ ...entry.context }), startedUnder); }
     },
     status() { return { profiles: broker.profiles(), bindings: [...entries.values()].map(entry => ({ ...entry.context, state: online(entry) ? entry.state : entry.state === 'stopped' ? 'stopped' : 'offline', ...(entry.pausedReason && entry.state === 'paused' ? { pausedReason: entry.pausedReason, ...(entry.pausedReason === 'handoff' ? { handoff: true } : {}) } : {}), ...(entry.lowered?.length ? { sitesLowered: true } : {}), ...(entry.outcomeUnknown && entry.state !== 'stopped' ? { outcomeUnknown: true } : {}), ...(entry.state === 'stopped' || entry.retired || (entry.taskEnded && !entry.task) ? { taskEnded: true, ...(entry.taskEndReason ? { taskEndReason: entry.taskEndReason } : {}) } : {}), sites: { ...entry.sites } })) }; },
@@ -1521,6 +1578,7 @@ export async function createBrowserExtensionService(options: {
       for (const entry of entries.values()) {
         if (entry.context.botId !== botId) continue;
         entry.revision++; entry.siteEpoch++; entry.task?.chats.clear(); touched.push(entry);
+        if (change) entry.executor?.invalidateReadOrigin(change.origin);
         if (change && change.rule !== 'allow') {
           dropGrants(entry, change.origin);
           if (change.rule === 'never') entry.sites[change.origin] = 'never';
@@ -1543,6 +1601,7 @@ export async function createBrowserExtensionService(options: {
       const o = change.origin, raised: Entry[] = [];
       for (const entry of entries.values()) {
         if (entry.context.botId !== botId || entry.context.profileId !== change.profileId) continue;
+        entry.executor?.invalidateReadOrigin(o);
         if (entry.state !== 'active' || !entry.task || !online(entry) || entry.retired || entry.setOwed !== undefined || routineOf(entry)) continue;
         if (entry.sites[o] === 'never') continue;
         const hadL1 = entry.taskL1.has(o);
@@ -1580,6 +1639,10 @@ export async function createBrowserExtensionService(options: {
       return [...new Set(taken)];
     },
     async expireTasks() { for (const entry of entries.values()) await expireDue(entry).catch(() => {}); },
+    stoppedByExtension(bindingId: string): boolean {
+      const entry = entries.get(bindingId);
+      return entry?.state === 'stopped' && entry.runtimeState === 'stopped';
+    },
     async stop(bindingId: string) {
       const entry = entryFor(bindingId); const already = entry.state === 'stopped' && entry.runtimeState === 'stopped';
       // Round 10 (R10-03): the extension is fenced FIRST, before any file is written. Stop is never delayed by a disk write.

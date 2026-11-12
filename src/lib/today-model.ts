@@ -26,6 +26,8 @@
 //   routinesRanToday(runs, now)            completed runs today (the lead line's `ran`)
 //   doneToday(runs, botNames, now)         Done today rows: title = routine name, failed and missed first
 import { t } from "@/lib/i18n";
+import { isCloudHome } from "@/lib/cloud-workspace";
+import { FLUX_NOT_READY_COPY } from "../../shared/provider-error";
 import type { Connectivity } from "@/lib/connectivity";
 import type { Routine, RoutineRun } from "@/lib/routines";
 import type { EngineHealthRow, FluxHealthState, HealthLevel, TodayTag, TodayTone } from "@/components/shell/shell-contract";
@@ -128,7 +130,7 @@ export function greetingFor(now: Date, ownerName: string): string {
 export function engineTag(input: Pick<TodayInput, "engine" | "flux" | "connectivity">): TodayTagModel | null {
   if (input.flux === "allowance-used-up") return { key: "engine", tone: "bad", text: t("ux.l2a.tag.fluxUsedUp"), action: "flux" };
   if (input.connectivity === "offline") return { key: "engine", tone: "warn", text: t("ux.l2a.tag.offline") };
-  if (input.flux === "key-problem") return { key: "engine", tone: "bad", text: t("ux.l2a.tag.fluxKey"), action: "flux" };
+  if (input.flux === "key-problem") return { key: "engine", tone: "bad", text: isCloudHome() ? FLUX_NOT_READY_COPY : t("ux.l2a.tag.fluxKey"), ...(isCloudHome() ? {} : { action: "flux" as const }) };
   const engine = input.engine;
   if (!engine) return null;
   const name = engine.label;

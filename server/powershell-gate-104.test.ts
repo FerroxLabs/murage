@@ -28,6 +28,7 @@ import {
 import { classifyStopLine, type StopLinePlace } from "./stop-line.ts";
 import { grantRequestFor } from "./approval-grant-request.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { expectNoLimitsOwnerOutcome } from "./testing/no-limits-1019.ts";
 
 const ASK: AutoApprover = {};
 const AUTO: AutoApprover = { autoApprove: true };
@@ -285,8 +286,12 @@ describe("108 wrapped payload guard equivalence", () => {
           call: { toolCall: { name: "shell", input: { command: wrapped } }, engine: "codex" as const, commandShell: "pwsh" as const },
           stopLine: classifyStopLine("PowerShell", { command: wrapped }, wrapped, win()) };
         const verdict = autoVerdict(level, "shell", wrapped, context);
-        if (payload.includes("id_rsa") || payload.includes("PAGER=") || payload.startsWith("rm") && !level.noLimits) expect(verdict.approve).toBeNull();
-        expect(autoVerdict(level, "shell", wrapped, { ...context, call: { ...context.call, truncated: true } }).approve).toBeNull();
+        // NOLIM 1.0.19: a key read and a pin override are deny rows, not wipe rows: the owner's No limits turn runs them (Full access cards)
+        if (payload.includes("id_rsa") || payload.includes("PAGER=")) { if (level.noLimits) expect(verdict.approve).toBeTruthy(); else expect(verdict.approve).toBeNull(); }
+        if (payload.startsWith("rm") && !level.noLimits) expect(verdict.approve).toBeNull();
+        const cut = autoVerdict(level, "shell", wrapped, { ...context, call: { ...context.call, truncated: true } });
+        // NOLIM 1.0.19: a cut call is not a wipe row: No limits runs it unless the text names a wipe (the rm payload)
+        if (level.noLimits) expectNoLimitsOwnerOutcome(cut, wrapped, null); else expect(cut.approve).toBeNull();
         expect(autoVerdict(level, "shell", wrapped, { ...context, question: true }).approve).toBeNull();
       }
     }

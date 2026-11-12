@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import type { CommsBus } from "./comms-visibility.ts";
 import { closeDatabase, database } from "./database.ts";
+import { stopWalMaintenance } from "./wal-maintenance.ts";
 import {
   DUE_PARKED_BATCH, PENDING_SQL, _drainingCount, _delegationPassLooked, _delegationQueueWrites, _loadPending, _pendingCount, _resetPending, _simulateRestart, discardDelegations,
   dropUnreachableDelegations, findDelegationReceipt, forgetDelegationsForThreads, hasActiveDelegationWork, pendingDelegationInfo, pendingThreads, queueDelegation, reconcileStartedDelegations, releaseParkedDelegations,
@@ -101,17 +102,28 @@ describe("a. one timer pass and its async drains do work that follows the due it
     const now = seedLegacy(threads, perThread, due, liveSender ? "sender" : "sender-not-listed");
     expect(pendingRows()).toBe(pending);
     const db = database();
+    // b58975657: the WAL is now checkpointed PASSIVE by a worker thread on its own pace; a checkpoint inside the measured pass restarts the log and
+    // makes its file size under-count the pages written. This test measures the pass's own write footprint, so the worker is parked for it.
+    await stopWalMaintenance(1_000, 1_000);
     db.exec("PRAGMA wal_checkpoint(TRUNCATE); PRAGMA wal_autocheckpoint=0");
-    const b = bus(liveSender), approvalBus = { store: b.store, broadcast: () => {} } as never;
-    resetWork(); counting = true;
-    const writesBefore = _delegationQueueWrites(), walBefore = walBytes(), ioBefore = processWriteBytes();
-    for (const thread of releaseParkedDelegations(() => false, now)) drainDelegations(b, approvalBus, thread, () => {});
-    await until(() => _drainingCount() === 0);                              // the async continuations of every drain have finished
-    await tick(); await tick();
-    counting = false;
-    const result: Measured = { pending, looked: _delegationPassLooked(), queueWrites: _delegationQueueWrites() - writesBefore, rowsWritten: work.rowsWritten, bytesWritten: work.bytesWritten, rowsRead: work.rowsRead,
-      statements: work.statements, processBytes: processWriteBytes() - ioBefore, walDelta: walBytes() - walBefore, jsonFile: existsSync(join(DATA_DIR, "delegations.json")) };
-    return result;
+    // The integrated PASSIVE worker can reset the WAL during the async drains.
+    // Keep a real reader on the initial snapshot: every measured frame must remain
+    // in the WAL, so background checkpointing cannot hide any of this pass's writes.
+    const reader = new DatabaseSync(join(DATA_DIR, "messages.db"), { readOnly: true });
+    reader.exec("BEGIN");
+    reader.prepare("SELECT COUNT(*) FROM pending_delegations").get();
+    try {
+      const b = bus(liveSender), approvalBus = { store: b.store, broadcast: () => {} } as never;
+      resetWork(); counting = true;
+      const writesBefore = _delegationQueueWrites(), walBefore = walBytes(), ioBefore = processWriteBytes();
+      for (const thread of releaseParkedDelegations(() => false, now)) drainDelegations(b, approvalBus, thread, () => {});
+      await until(() => _drainingCount() === 0);                              // the async continuations of every drain have finished
+      await tick(); await tick();
+      counting = false;
+      const result: Measured = { pending, looked: _delegationPassLooked(), queueWrites: _delegationQueueWrites() - writesBefore, rowsWritten: work.rowsWritten, bytesWritten: work.bytesWritten, rowsRead: work.rowsRead,
+        statements: work.statements, processBytes: processWriteBytes() - ioBefore, walDelta: walBytes() - walBefore, jsonFile: existsSync(join(DATA_DIR, "delegations.json")) };
+      return result;
+    } finally { reader.close(); }
   }
 
   for (const pending of [1_000, 100_000]) {

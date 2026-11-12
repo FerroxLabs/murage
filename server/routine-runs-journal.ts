@@ -70,32 +70,34 @@ export function routinesCommit(doc: unknown): number | undefined {
 interface FileState { lines: number; live: number; clean: boolean }
 interface Parsed { runs: Map<string, Record<string, unknown>>; routines: Map<string, { routine: Record<string, unknown>; gen: string }>; lines: number; clean: boolean; discarded: number; maxTag: number }
 
-function parseJournal(text: string, committed: number | undefined): Parsed {
+function parseJournal(text: string, committed: number | undefined, strict = false): Parsed {
   const runs = new Map<string, Record<string, unknown>>();
   const routines = new Map<string, { routine: Record<string, unknown>; gen: string }>();
   let lines = 0, discarded = 0, maxTag = 0;
   for (const line of text.split("\n")) {
     if (!line) continue;
     let value: Record<string, unknown> | null;
-    try { value = JSON.parse(line) as Record<string, unknown> | null; } catch { continue; /* a torn final line: ignored */ }
-    if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+    try { value = JSON.parse(line) as Record<string, unknown> | null; } catch (error) { if (strict) throw error; continue; /* a torn final line: ignored */ }
+    if (!value || typeof value !== "object" || Array.isArray(value)) { if (strict) throw new Error("Invalid routine journal line"); continue; }
     lines += 1;
     const tag = value.$c;
     if (tag !== undefined) {
-      if (!Number.isSafeInteger(tag)) { discarded += 1; continue; }
+      if (!Number.isSafeInteger(tag)) { if (strict) throw new Error("Invalid routine journal commit"); discarded += 1; continue; }
       maxTag = Math.max(maxTag, tag as number);
       if (committed !== undefined && (tag as number) > committed) { discarded += 1; continue; }
     }
     const { $c: _tag, ...rest } = value;
     const state = rest.$routine as Record<string, unknown> | null | undefined;
     if (state !== undefined) {
-      if (!state || typeof state !== "object" || Array.isArray(state) || typeof state.id !== "string" || typeof rest.$gen !== "string") continue;
+      if (!state || typeof state !== "object" || Array.isArray(state) || typeof state.id !== "string" || typeof rest.$gen !== "string") { if (strict) throw new Error("Invalid routine journal state"); continue; }
+      if (strict && rest.$runs !== undefined && (!Array.isArray(rest.$runs) || rest.$runs.some(run => !run || typeof run !== "object" || Array.isArray(run) || typeof run.id !== "string"))) throw new Error("Invalid routine journal runs");
       routines.set(state.id, { routine: state, gen: rest.$gen });
       if (Array.isArray(rest.$runs)) for (const run of rest.$runs as Array<Record<string, unknown> | null>) if (run && typeof run === "object" && typeof run.id === "string") runs.set(run.id, run);
       continue;
     }
     if (typeof rest.$del === "string") runs.delete(rest.$del);
     else if (typeof rest.id === "string") runs.set(rest.id, rest);
+    else if (strict) throw new Error("Invalid routine journal run");
   }
   return { runs, routines, lines, clean: text === "" || text.endsWith("\n"), discarded, maxTag };
 }
@@ -110,6 +112,22 @@ export function readRoutineRuns(dataDir: string, committed?: number): unknown[] 
   const all: unknown[] = [];
   for (const name of journalNames(dir)) {
     try { all.push(...[...parseJournal(readFileSync(join(dir, name), "utf8"), committed).runs.values()].map(run => rebaseAttachmentRecord(run))); } catch { /* unreadable file: skipped */ }
+  }
+  return all;
+}
+
+/** Fail-closed authority read. The caller supplies checked, bounded IO; every
+ * directory, file and parse error propagates. Parse the same bytes once, with
+ * the ordinary commit/tombstone/state-run semantics, without repairing disk.
+ * The supplied list may treat an absent journal directory as empty. */
+export function readRoutineRunsStrict(dataDir: string, committed: number | undefined, io: {
+  list: (dir: string) => string[];
+  read: (file: string) => string;
+}): unknown[] {
+  const dir = routineRunsDir(dataDir), all: unknown[] = [];
+  for (const name of io.list(dir).filter(name => name.endsWith(".jsonl")).sort()) {
+    const parsed = parseJournal(io.read(join(dir, name)), committed, true);
+    for (const run of parsed.runs.values()) all.push(rebaseAttachmentRecord(run));
   }
   return all;
 }

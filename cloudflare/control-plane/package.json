@@ -22,6 +22,9 @@
     "types:check": "wrangler types --check --config wrangler.jsonc worker-configuration.d.ts",
     "dry-run": "wrangler deploy --dry-run --config wrangler.jsonc",
     "check-deploy": "node scripts/check-deploy.mjs wrangler.jsonc",
-    "deploy:staging": "node scripts/deploy.mjs staging"
+    "check-deploy:dark": "node scripts/check-deploy.mjs --dark wrangler.jsonc",
+    "deploy:staging": "node scripts/deploy.mjs staging",
+    "deploy:production": "node scripts/deploy.mjs production",
+    "deploy:production:dark": "node scripts/deploy.mjs production --dark"
   }
 }

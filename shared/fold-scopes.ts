@@ -43,6 +43,9 @@ export interface CardClass {
    *  reader hold Approve all may take. "unreadable-held": it hit; `ruleHeld` says what. Absent: never in bulk. */
   rule?: "unreadable" | "unreadable-held";
   ruleHeld?: "sensitive" | "destructive" | "hiding" | "stop";
+  /** NOLIM 1.0.19 (R7): who started the work and whether a wipe (N2) is why the card stays, written once at open by the No limits
+   *  finalizer; absent on a card opened at any other level and on a legacy card (approved one by one). */
+  noLimits?: { initiator: "owner" | "owner-channel" | "routine" | "other" | "unproven"; n2: boolean };
   /** which standing-key fields the server put on the card */
   keys: CardKeyField[];
 }

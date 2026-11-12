@@ -18,8 +18,10 @@ function migrated() {
   const db = new DatabaseSync(":memory:");
   for (const f of files.filter((f) => num(f) <= 101)) db.exec(sql(new URL(f, dir)));
   db.exec(sql(new URL("0101-populated.sql", fixtures)));
-  const pending = files.filter((f) => num(f) > 101); // applied in staging/prod order; 0107 is also covered by test-node/door-v2-migration.test.mjs
-  assert.deepEqual(pending.map(num), [102, 103, 105, 106, 107, 109]); // 0104 reserved, never present; 0108 reserved; 0107 door v2; 0109 lane H1
+  // This populated-fixture proof targets the 0102–0125 release; later schemas are exercised by the Worker migration setup.
+  // Both 0111 files are independent: nullable account issuer and provision lease token.
+  const pending = files.filter((f) => num(f) > 101 && num(f) <= 125); // applied in staging/prod order; 0107 is also covered by test-node/door-v2-migration.test.mjs
+  assert.deepEqual(pending.map(num), [102, 103, 105, 106, 107, 109, 110, 111, 111, 119, 121, 122, 123, 124, 125]); // 0125 dispatch review (image_dispatch_auth rebuilt, image_policy trust sets); 0124 image dispatch auth; 0123 readiness valid_until; 0122 image readiness; 0121 image recheck and policy epoch; 0119 access events; 0111 provision lease token; 0110 warm pool; 0104 reserved, never present; 0108 reserved; 0107 door v2; 0109 lane H1
   for (const f of pending) {
     db.exec(`BEGIN; ${sql(new URL(f, dir))}; COMMIT;`); // one transaction each, as D1 applies a migration
     if (num(f) === 105) db.exec(sql(new URL("0105-disputes.sql", fixtures)));
@@ -246,7 +248,7 @@ test("INTEGRATED-15 migration delta: customer_owners is backfilled from every ow
     ('customer_previous:home-p15:cus_p15','{"homeId":"home-p15","customerId":"cus_p15"}'), ('customer_previous:home-q15:cus_q15','not json'),
     ('customer_orphan:home-o15:att_1','{"homeId":"home-o15","customerId":"cus_o15"}'), ('tax_customer:home-t15:key_1','{"homeId":"home-t15","customerId":"cus_t15"}'),
     ('tax_customer:home-t15:key_2','{"homeId":"home-t15"}'), ('customer_orphan:home-n15:att_2','{"homeId":"home-n15","customerId":null}'), ('other:x','{"customerId":"cus_x"}')`);
-  for (const f of files.filter((f) => num(f) > 101)) {
+  for (const f of files.filter((f) => num(f) > 101 && num(f) <= 125)) {
     db.exec(`BEGIN; ${sql(new URL(f, dir))}; COMMIT;`);
     if (num(f) === 105) db.exec(sql(new URL("0105-disputes.sql", fixtures)));
   }
@@ -271,7 +273,7 @@ test("H3 (Astra H2 #2) 0109 supersedes every open operator claim of an invoice-b
   const raw = new DatabaseSync(":memory:");
   for (const f of files.filter((f) => num(f) <= 101)) raw.exec(sql(new URL(f, dir)));
   raw.exec(sql(new URL("0101-populated.sql", fixtures)));
-  for (const f of files.filter((f) => num(f) > 101)) {
+  for (const f of files.filter((f) => num(f) > 101 && num(f) <= 125)) {
     if (num(f) === 109) {
       // A live 0106-era operator claim on an invoice-backed grant (pending its receipt), opened just before the fence cutover.
       raw.exec(`INSERT INTO flux_grant_dispatches (dispatch_id,grant_id,kind,revision,target_microcents,claimed_at,expires_at,by,adjustment_ref)
@@ -300,7 +302,7 @@ test("H4 (Astra H3 #7, reachable with Flux off) 0109 never drops a PENDING recei
   const raw = new DatabaseSync(":memory:");
   for (const f of files.filter((f) => num(f) <= 101)) raw.exec(sql(new URL(f, dir)));
   raw.exec(sql(new URL("0101-populated.sql", fixtures)));
-  for (const f of files.filter((f) => num(f) > 101)) {
+  for (const f of files.filter((f) => num(f) > 101 && num(f) <= 125)) {
     if (num(f) === 109) {
       // 1. A 0106-era operator claim REMOVED g8's credit by hand (lost dispute, fully returned): its receipt (Flux holds 0) awaits verification.
       raw.exec(`INSERT INTO flux_grant_dispatches (dispatch_id,grant_id,kind,revision,target_microcents,claimed_at,expires_at,by,adjustment_ref,

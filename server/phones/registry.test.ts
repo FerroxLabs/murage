@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { removeTempDirSync } from "../testing/cleanup.ts";
 import { PhoneRegistry, PhoneRevocations, initializePhones } from "./registry.ts";
 
 const fx = JSON.parse(readFileSync(new URL("../../apps/mobile/contract/phone-jobs.json", import.meta.url), "utf8"));
@@ -134,5 +135,120 @@ describe("PhoneRevocations", () => {
     const names = (db.prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name").all() as { name: string }[]).map((r) => r.name);
     expect(names).toContain("phone_registrations");
     expect(names).toContain("phone_revocations");
+    expect(names).toContain("phone_ask_optins");
+  });
+
+  it("keeps the ask opt-in across re-registration, survives a reopen of the file, and never shows it in the registration", () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-registry-optin-"));
+    const file = join(dir, "m.db");
+    const db = new DatabaseSync(file);
+    initializePhones(db);
+    const reg = new PhoneRegistry(db, () => 1000);
+    expect(reg.deviceIdOptedIn(A)).toBe(false);
+    reg.put(A, fx.registration.valid);
+    reg.setDeviceIdOptIn(A, true);
+    reg.put(A, fx.registration.valid);
+    expect(reg.deviceIdOptedIn(A)).toBe(true);
+    expect(Object.keys(reg.get(A)!)).not.toContain("deviceIdOptIn");
+    db.close();
+    const again = new DatabaseSync(file);
+    expect(new PhoneRegistry(again, () => 1000).deviceIdOptedIn(A)).toBe(true);
+    again.close();
+    removeTempDirSync(dir);
+  });
+
+  it("keeps the ask opt-in when the server restarts between the mint and the registration", () => {
+    const dir = mkdtempSync(join(tmpdir(), "murage-registry-optin2-"));
+    const file = join(dir, "m.db");
+    const db = new DatabaseSync(file);
+    initializePhones(db);
+    new PhoneRegistry(db, () => 1000).setDeviceIdOptIn(A, true);
+    db.close();
+    const again = new DatabaseSync(file);
+    initializePhones(again);
+    const fresh = new PhoneRegistry(again, () => 1000);
+    expect(fresh.put(A, fx.registration.valid).ok).toBe(true);
+    expect(fresh.deviceIdOptedIn(A)).toBe(true);
+    expect(Object.keys(fresh.get(A)!)).not.toContain("deviceIdOptIn");
+    again.close();
+    removeTempDirSync(dir);
+  });
+
+  describe("upgrade from a database that stored the opt-in inside the registration", () => {
+    // A registration body exactly as the earlier build wrote it: the registration plus a boolean deviceIdOptIn.
+    const legacyDb = (file: string, rows: Array<[string, Record<string, unknown> | string]>): void => {
+      const seed = new DatabaseSync(file);
+      seed.exec("CREATE TABLE phone_registrations (device_id TEXT PRIMARY KEY, body TEXT NOT NULL, updated_at INTEGER NOT NULL)");
+      rows.forEach(([id, extra], i) => seed.prepare("INSERT INTO phone_registrations VALUES (?, ?, ?)").run(id, typeof extra === "string" ? extra : JSON.stringify({ ...fx.registration.valid, ...extra }), 10 + i));
+      seed.close();
+    };
+    const C = "33333333-3333-4333-8333-333333333333";
+    const D = "44444444-4444-4444-8444-444444444444";
+
+    it("backfills stored booleans, then list, re-register and restart keep the state and never leak the old field", () => {
+      const dir = mkdtempSync(join(tmpdir(), "murage-registry-upgrade-"));
+      const file = join(dir, "m.db");
+      legacyDb(file, [[A, { deviceIdOptIn: true }], [B, { deviceIdOptIn: false }], [C, {}], [D, { deviceIdOptIn: "yes" }]]);
+      let db = new DatabaseSync(file);
+      initializePhones(db);
+      let reg = new PhoneRegistry(db, () => 2000);
+      expect([A, B, C, D].map((id) => reg.deviceIdOptIn(id))).toEqual([true, false, undefined, undefined]);
+      for (const p of reg.list()) expect(Object.keys(p)).not.toContain("deviceIdOptIn");
+      expect(Object.keys(reg.get(A)!)).not.toContain("deviceIdOptIn");
+      // re-register: the table keeps the state the body no longer carries
+      for (const id of [A, B, C, D]) expect(reg.put(id, fx.registration.valid).ok).toBe(true);
+      expect([A, B, C, D].map((id) => reg.deviceIdOptIn(id))).toEqual([true, false, undefined, undefined]);
+      // restart: initializePhones runs again over the rewritten bodies and changes nothing
+      db.close();
+      db = new DatabaseSync(file);
+      initializePhones(db);
+      reg = new PhoneRegistry(db, () => 3000);
+      expect([A, B, C, D].map((id) => reg.deviceIdOptIn(id))).toEqual([true, false, undefined, undefined]);
+      for (const p of reg.list()) expect(Object.keys(p)).not.toContain("deviceIdOptIn");
+      db.close();
+      removeTempDirSync(dir);
+    });
+
+    it("never overwrites a newer table row with the older stored boolean, on the first start or any later one", () => {
+      const dir = mkdtempSync(join(tmpdir(), "murage-registry-upgrade2-"));
+      const file = join(dir, "m.db");
+      legacyDb(file, [[A, { deviceIdOptIn: false }], [B, { deviceIdOptIn: true }]]);
+      let db = new DatabaseSync(file);
+      initializePhones(db);
+      const reg = new PhoneRegistry(db, () => 2000);
+      reg.setDeviceIdOptIn(A, true); // a mint after the upgrade
+      db.close();
+      db = new DatabaseSync(file);
+      initializePhones(db); // the body of A still says false
+      const again = new PhoneRegistry(db, () => 3000);
+      expect(again.deviceIdOptIn(A)).toBe(true);
+      expect(again.deviceIdOptIn(B)).toBe(true);
+      db.close();
+      removeTempDirSync(dir);
+    });
+
+    it("an unreadable stored body is skipped and does not stop the upgrade", () => {
+      const dir = mkdtempSync(join(tmpdir(), "murage-registry-upgrade3-"));
+      const file = join(dir, "m.db");
+      legacyDb(file, [[C, "{not json"], [A, { deviceIdOptIn: true }]]);
+      const db = new DatabaseSync(file);
+      initializePhones(db);
+      const reg = new PhoneRegistry(db, () => 2000);
+      expect(reg.deviceIdOptIn(A)).toBe(true);
+      expect(reg.deviceIdOptIn(C)).toBeUndefined();
+      db.close();
+      removeTempDirSync(dir);
+    });
+  });
+
+  it("a phone that registers first and mints later, or never opts in, reads as expected", () => {
+    const { reg } = mem();
+    reg.put(A, fx.registration.valid);
+    expect(reg.deviceIdOptedIn(A)).toBe(false);
+    reg.setDeviceIdOptIn(A, true);
+    expect(reg.deviceIdOptedIn(A)).toBe(true);
+    reg.put(B, fx.registration.valid);
+    reg.setDeviceIdOptIn(B, false);
+    expect(reg.deviceIdOptedIn(B)).toBe(false);
   });
 });

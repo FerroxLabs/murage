@@ -210,7 +210,7 @@ describe("alerts where the engine does not auto-answer (Windows)", () => {
 describe("closing the engine child", () => {
   it("does not wait for a daemon that still holds the stdio pipes", async () => {
     // the child exits at once; a grandchild keeps its inherited stdout open for 30 s, like the engine's daemon
-    const script = `require("node:child_process").spawn(process.execPath,["-e","setTimeout(()=>{},30000)"],{stdio:["ignore","inherit","inherit"],detached:true}).unref();process.stdin.on("data",()=>{});process.stdin.on("end",()=>process.exit(0));`;
+    const script = `require("node:child_process").spawn(process.execPath,["-e","setTimeout(()=>{},30000)"],{windowsHide:true,stdio:["ignore","inherit","inherit"],detached:true}).unref();process.stdin.on("data",()=>{});process.stdin.on("end",()=>process.exit(0));`;
     const client = startHeadlessEngine({ command: process.execPath, args: ["-e", script], env: {} });
     const started = Date.now();
     await client.close();

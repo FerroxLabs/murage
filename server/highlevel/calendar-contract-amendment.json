@@ -1,0 +1,35 @@
+{
+  "job": "afix3-hlf4",
+  "authorization": {
+    "authority": "MAIN",
+    "ruling": "2026-11-11 06:25Z",
+    "rule": "Shared or frozen contract changes are allowed only if purely ADDITIVE (new optional fields or functions, no changed signature or behavior for existing callers). Revert any NON-additive change to C2- or S0-owned files. If the feature truly needs one, stop with OPEN naming the exact hunk."
+  },
+  "status": "ADDITIVE_OPT_IN",
+  "base": "5335e063229be5fd9408f7c9a21bb7811dd6731f",
+  "reviewedTip": "0bac544ebb443ecc4513237d9e2e75a3097a8acf",
+  "additiveChanges": [
+    "New calendar-management.ts helper, manifest rows, optional blockSelector and opt-in host/resolver/listing functions alongside all frozen contracts",
+    "New operation-extension.ts optional support keyed by opted-in row and exact frozen request identity; legacy requests have no extension",
+    "HeldRequest.freeze implementation invokes draft binding only for an opted-in row; no existing method signature changes",
+    "Client held transport supports a qualified extension endpoint only on that exact opted-in frozen request; default resolver behavior is unchanged",
+    "Host adds review references, pre-send revalidation and deletion confirmation only through optional extension callbacks",
+    "New loadWriteRecoveryForSpec helper validates opt-in recovery declarations; original loadWriteRecovery behavior is preserved",
+    "Returned-identity preparation consults an optional per-request schema without replacing frozen identity policies"
+  ],
+  "restoredFiles": [
+    "server/highlevel/f01-contract.test.ts",
+    "server/highlevel/f02-contract.test.ts",
+    "server/highlevel/frozen-contract.json",
+    "server/highlevel/frozen-f02-contract.json",
+    "server/highlevel/operations/manifest-data.json",
+    "server/highlevel/operations/registry.completeness.test.ts",
+    "server/highlevel/operations/returned-identity-policy.json",
+    "server/highlevel/operations/returned-identity-schemas.ts",
+    "server/highlevel/operations/schemas/calendars.ts",
+    "server/highlevel/provider-manifest.json"
+  ],
+  "openHunks": [],
+  "recovery": "Calendar recovery with no qualified bounded selector retains no read target and settles unknown with zero lookup reads and zero resends. Calendar creation never scans the location calendar collection.",
+  "verification": "Base and final unchanged calendar tests compared by exact names; new opt-in tests, typecheck, isolated fixture and source mutants are recorded in afix3-hlf4/DONE."
+}

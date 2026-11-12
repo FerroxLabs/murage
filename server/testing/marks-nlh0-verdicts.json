@@ -136,7 +136,7 @@
 "D2-a|{\"id\":\"owner\",\"autoApprove\":true,\"fullAccess\":true,\"noLimits\":true}|{\"routineLevel\":true,\"routineCarveOut\":true,\"automated\":true}": "{\"approve\":null,\"note\":\"This points a program Murage does not know as read-only at your whole home folder. Murage always asks before a command like this, at every access level.\",\"rule\":\"protected-path\",\"source\":\"always-ask\"}",
 "D2-a|{\"id\":\"owner\",\"autoApprove\":true,\"fullAccess\":true,\"noLimits\":true}|{\"unattended\":true}": "{\"approve\":null,\"note\":\"Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.\",\"reader\":\"held\",\"rule\":\"unreadable\",\"source\":\"always-ask\"}",
 "D2-b|/": "\"root\"",
-"D2-b|/Volumes/Scratch": "\"volume\"",
+"D2-b|/Volumes/Fixture": "\"volume\"",
 "D2-b|/dev/null": "null",
 "D2-b|/etc/cron.d/pwn": "\"system\"",
 "D2-b|/home/tester": "\"home\"",

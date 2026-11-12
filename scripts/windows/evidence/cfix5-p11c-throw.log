@@ -1,0 +1,6 @@
+PASS witness throw : TimeoutSeconds 60; prelaunch CIM blocked past 150 seconds
+PASS witness throw : name removal precedes enumeration
+PASS witness throw : enumeration failure fails closed
+PASS witness throw : finally writes exact task and actionable removal command
+PASS successful cleanup publishes bounded diff after exact-name removal
+PASS earlier launcher exception still writes actionable FAIL after successful cleanup

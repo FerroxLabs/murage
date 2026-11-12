@@ -8,6 +8,7 @@ import {
   cleanupNames,
   shouldSkipCleanup,
 } from "./dictation-cleanup.ts";
+import { namesForDoor, targetForDoor } from "./cleanup-names.ts";
 import type { VoiceEndpoint } from "./voice-routes.ts";
 
 const endpoint: VoiceEndpoint = {
@@ -63,16 +64,56 @@ describe("the personal dictionary", () => {
     expect(names.filter((n) => n.toLowerCase() === "murage")).toHaveLength(1);
   });
 
-  it("appears in the request the model gets", async () => {
+  it("only mentioned names appear in the request the model gets", async () => {
     const fetchImpl = vi.fn(async () => reply(CLEAN));
     await cleanDictation(RAW, { endpoint, target: "Ada", names: ["Ada", "Launch Room", "Fuigo"], fetchImpl: fetchImpl as never });
     const body = JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, { body: string }])[1].body);
     const system = body.messages[0].content as string;
-    expect(system).toContain("Ada");
-    expect(system).toContain("Launch Room");
+    expect(system).not.toContain("Ada");
+    expect(system).not.toContain("Launch Room");
     expect(system).toContain("Fuigo");
     expect(body.messages[1]).toEqual({ role: "user", content: RAW });
     expect(body.model).toBe("claude-haiku-4-5");
+  });
+});
+
+describe("model request name minimisation", () => {
+  const workspace = {
+    bots: [{ id: "a", name: "Ada", threadId: "a" }, { id: "b", name: "Beatrice", threadId: "b" }],
+    groups: [{ id: "r", name: "Launch Room", threadId: "r" }, { id: "p", name: "Private Plans", threadId: "p" }],
+  };
+
+  it.each([
+    ["um ask ADA about the report today", "Ada"],
+    ["um ask launch room about the report today", "Launch Room"],
+    ["um ask adaline about the report today", null],
+    ["um ask éAda and Adaé about the report today", null],
+  ])("sends only whole names in the raw transcript: %s", async (raw, mentioned) => {
+    const fetchImpl = vi.fn(async () => reply(raw));
+    await cleanDictation(raw, {
+      endpoint,
+      target: targetForDoor("desktop", workspace as never, { botId: "b" }),
+      names: namesForDoor("desktop", workspace as never),
+      fetchImpl: fetchImpl as never,
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    const body = JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, { body: string }])[1].body);
+    const system = body.messages[0].content as string;
+    for (const name of ["Ada", "Beatrice", "Launch Room", "Private Plans"]) {
+      expect(system.includes(name), name).toBe(name === mentioned);
+    }
+    for (const name of ["Murage", "Flux", "Fuigo"]) expect(system).toContain(name);
+    expect(body.messages[1]).toEqual({ role: "user", content: raw });
+    expect(system).not.toContain("named Beatrice");
+  });
+
+  it("keeps a target name only when the transcript mentions it", async () => {
+    const raw = "um please ask BEATRICE about the report";
+    const fetchImpl = vi.fn(async () => reply(raw));
+    await cleanDictation(raw, { endpoint, target: "Beatrice", names: ["Beatrice", "Private Plans"], fetchImpl: fetchImpl as never });
+    const body = JSON.parse((fetchImpl.mock.calls[0] as unknown as [string, { body: string }])[1].body);
+    expect(body.messages[0].content).toContain("named Beatrice");
+    expect(body.messages[0].content).not.toContain("Private Plans");
   });
 });
 

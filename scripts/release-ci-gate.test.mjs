@@ -120,12 +120,18 @@ describe("release.yml wiring", () => {
     expect(step.env.CI_WAIVER).toBe("${{ github.event_name == 'workflow_dispatch' && inputs.ci_waiver || '' }}");
     expect(Object.keys(release.jobs["ci-gate"].outputs)).toEqual(expect.arrayContaining(["waived", "waiver_path", "waiver_run", "waiver_approval"]));
   });
-  it("assemble writes the waiver into the draft notes before uploading", () => {
+  it("stage hands the CI waiver to assemble before notes and upload", () => {
+    const stage = release.jobs.stage.steps;
+    const record = stage.find(s => s.name === 'Retain the CI review record for the sole release writer');
+    expect(record.env.WAIVER_PATH).toBe('${{ needs.ci-gate.outputs.waiver_path }}');
+    expect(record.env.SHA).toBe('${{ needs.prepare.outputs.sha }}');
+    expect(record.run).toContain('review.json');
+    expect(stage.some(s => s.with?.name === 'release-ci-review-${{ github.run_attempt }}')).toBe(true);
     const steps = release.jobs.assemble.steps;
-    const record = steps.findIndex(s => s.if === "needs.ci-gate.outputs.waived == 'true'");
-    expect(record).toBeGreaterThan(-1);
-    expect(steps[record].run).toContain("release-notes.md");
-    expect(record).toBeLessThan(steps.findIndex(s => s.id === "upload"));
+    const notes = steps.findIndex(s => s.run === 'node scripts/release-guard.mjs notes-file');
+    expect(steps[notes].env.REVIEW_FILE).toBe('release-review/review.json');
+    expect(steps.findIndex(s => s.run === 'node scripts/release-guard.mjs download')).toBeLessThan(notes);
+    expect(notes).toBeLessThan(steps.findIndex(s => s.id === 'upload'));
   });
   it("the Windows job fetches verified Node headers before packaging", () => {
     const steps = release.jobs.windows.steps;
@@ -195,18 +201,18 @@ describe("the gate waits for a running nightly", () => {
 describe("release.yml: builds run beside CI, the draft waits for the gate", () => {
   const release = parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", ".github", "workflows", "release.yml"), "utf8"));
   const needs = job => [release.jobs[job].needs].flat();
-  it("builds need only prepare (mac-x64 also mac) and never ci-gate", () => {
-    expect(needs("mac")).toEqual(["prepare"]);
-    expect(needs("windows")).toEqual(["prepare"]);
-    expect(needs("linux")).toEqual(["prepare"]);
-    expect(needs("mac-x64")).toEqual(["prepare", "mac"]);
+  it("builds need prepare and its probe (mac-x64 also mac), and run beside CI", () => {
+    expect(needs("mac")).toEqual(["prepare", "preflight"]);
+    expect(needs("windows")).toEqual(["prepare", "preflight"]);
+    expect(needs("linux")).toEqual(["prepare", "preflight"]);
+    expect(needs("mac-x64")).toEqual(["prepare", "preflight", "mac"]);
   });
-  it("only prepare's deleted preflight probe and assemble hold the release token, and assemble needs the gate and every build", () => {
-    expect(needs("assemble")).toEqual(expect.arrayContaining(["prepare", "ci-gate", "mac", "mac-x64", "windows", "linux"]));
+  it("only assemble holds the release token and waits for verified stage", () => {
+    expect(needs("assemble")).toEqual(["prepare"]);
+    expect(needs("stage")).toEqual(expect.arrayContaining(["prepare", "ci-gate", "mac", "mac-x64", "windows", "linux"]));
+    expect(release.jobs.assemble.steps.some(s => s.run === "node scripts/release-guard.mjs wait-stage")).toBe(true);
     const writers = Object.entries(release.jobs).filter(([, job]) => JSON.stringify(job).includes("RELEASES_PAT")).map(([name]) => name);
-    // prepare only reads plus creates and at once deletes a throwaway draft (a token probe, no tag);
-    // every real draft, upload and publish step lives in assemble, behind ci-gate.
-    expect(writers).toEqual(["prepare", "assemble"]);
+    expect(writers).toEqual(["assemble"]);
     expect(release.jobs.assemble.if).not.toMatch(/always\(\)/);
   });
   it("the gate can wait out a 4 h CI", () => {

@@ -22,6 +22,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AlwaysAskRule } from "./always-ask.ts";
 import type { AutoContext } from "./auto-approve.ts";
 import { nlh0 } from "./testing/marks-nlh0.ts";
+import { expectNoLimitsOwnerOutcome } from "./testing/no-limits-1019.ts";
 
 // The test setup gives each file a home folder under the temp folder, which
 // makes the temp folder the folder that holds the home folders, and the
@@ -1777,7 +1778,10 @@ describe("always ask, at every access level", () => {
       routineLevel: true,
       routineAllow: ["delete:~"],
     };
-    expect(autoVerdict(bot, "Bash", command, context)).toMatchObject({ approve: null, source: "always-ask" });
+    // NOLIM 1.0.19: no grant, allowance or excuse answers it for work another person started (stored origin other) ...
+    expect(autoVerdict(bot, "Bash", command, { ...context, fullAccessOrigin: "other" })).toMatchObject({ approve: null, source: "always-ask" });
+    // ... and for the owner's own routine only the wipe list still asks; every other row runs (Sean's policy flip)
+    expectNoLimitsOwnerOutcome(autoVerdict(bot, "Bash", command, { ...context, fullAccessOrigin: "routine", automated: true }), command, ASKS.find(([text]) => text === command)?.[1]);
   });
 
   it("keeps the plain words: no dash-pause punctuation and no 'safe'", () => {

@@ -187,6 +187,7 @@ export interface Routine {
    * current level can lower it (server/routine-permissions.ts). Older files
    * receive a ceiling on load. */
   permissionMode?: RoutinePermissionMode;
+  permissionExplicit?: boolean;
   /** "Always allow for this routine": exact-command and stop-line keys the
    * owner allowed from a card in one of this routine's runs. Only granted
    * through the desktop from a pending card, removable in the editor, and
@@ -367,6 +368,11 @@ export const EVENT_EXTENSION = 4;
 export const EVENT_FULL_ACCESS_LIMIT = 16;
 /** The most hand-offs or new bots one run can ever do, however many times the owner allows more. */
 export const EVENT_MAX_LIMIT = 64;
+/** No limits runaway ceiling; lower permission levels retain EVENT_MAX_LIMIT. */
+export const EVENT_NO_LIMITS_CEILING = 4096;
+// Only identical text exchanged by the same two bots shares a loop key.
+// Distinct jobs keep the generous per-run ceiling, regardless of recipient.
+export const EVENT_NO_LIMITS_PAIR_REPEATS = 8;
 /** Why a run's ledger was closed, so the bot can be told the true reason. */
 export type EventBudgetClosedReason = "connection" | "stopped" | "watch";
 export interface EventActionBudget {
@@ -374,7 +380,7 @@ export interface EventActionBudget {
   version: 2;
   limits: { create: number; handoff: number };
   /** `receipt` is what the admitted action actually produced (the delegation id, the new bot's id), so the same action asked again returns it instead of doing the work twice. */
-  admissions: Array<{ id: string; kind: "create" | "handoff"; receipt?: string }>;
+  admissions: Array<{ id: string; kind: "create" | "handoff"; receipt?: string; pair?: string }>;
   /** Kinds the owner answered "Not now" to: no more actions of that kind in this run, and no further cards for it. */
   declined?: Array<"create" | "handoff">;
   closed: boolean;
@@ -384,9 +390,11 @@ export type EventAdmission =
   | { ok: true }
   | { ok: false; reason: "limit"; kind: "create" | "handoff"; used: number; limit: number }
   | { ok: false; reason: "closed"; closedReason?: EventBudgetClosedReason }
-  | { ok: false; reason: "unavailable" };
+  | { ok: false; reason: "unavailable" }
+  | { ok: false; reason: "loop" }
+  | { ok: false; reason: "ceiling" };
 const eventAdmissionId = z.string().min(1).max(200).regex(/^[^\x00-\x1f\x7f]+$/);
-const eventAdmissionList = z.array(z.object({ id: eventAdmissionId, kind: z.enum(["create", "handoff"]), receipt: z.string().min(1).max(200).optional() }).strict());
+const eventAdmissionList = z.array(z.object({ id: eventAdmissionId, kind: z.enum(["create", "handoff"]), receipt: z.string().min(1).max(200).optional(), pair: z.string().min(1).max(500).optional() }).strict());
 // Older runs stored the declined request keys ("handoff:<hash>"); they load as the kind they belonged to.
 const eventDeclinedList = z.array(z.string().min(1).max(200)).max(EVENT_MAX_LIMIT * 2);
 function declinedKinds(marks: string[]): Array<"create" | "handoff"> {
@@ -403,8 +411,8 @@ const eventActionBudgetV1 = z.object({
   .transform((value): EventActionBudget => ({ ...value, version: 2 }));
 const eventActionBudgetV2 = z.object({
   version: z.literal(2),
-  limits: z.object({ create: z.number().int().min(EVENT_BASE_LIMIT).max(EVENT_MAX_LIMIT), handoff: z.number().int().min(EVENT_BASE_LIMIT).max(EVENT_MAX_LIMIT) }).strict(),
-  admissions: eventAdmissionList.max(EVENT_MAX_LIMIT * 2), declined: eventDeclinedList.optional(), closed: z.boolean(),
+  limits: z.object({ create: z.number().int().min(EVENT_BASE_LIMIT).max(EVENT_NO_LIMITS_CEILING), handoff: z.number().int().min(EVENT_BASE_LIMIT).max(EVENT_NO_LIMITS_CEILING) }).strict(),
+  admissions: eventAdmissionList.max(EVENT_NO_LIMITS_CEILING * 2), declined: eventDeclinedList.optional(), closed: z.boolean(),
   closedReason: z.enum(["connection", "stopped", "watch"]).optional(),
 }).strict().refine(value => uniqueAdmissions(value)
   && value.admissions.filter(item => item.kind === "create").length <= value.limits.create
@@ -528,6 +536,8 @@ export interface RoutineManagerOptions {
   appRunStore?: AppEventRunStore;
   /** The bot's current level when a routine's ceiling is pinned. */
   botMode?: (botId: string) => RoutinePermissionMode | undefined;
+  /** Capability switch: a disabled channel never admits a provider turn. */
+  channelMessagesEnabled?: (botId: string) => boolean;
   /** Host evaluator must validate the retained receipt, exact candidate and current source authority. */
   validateInstructionPromotion?: (routine: Readonly<Routine>, proposal: Readonly<RoutineInstructionPromotion>) => boolean;
   validateInstructionEvidence?: (context: Pick<Routine, "botId" | "groupId" | "target">, evidence: NonNullable<RoutineInstructionRevision["evidence"]>) => boolean;
@@ -592,11 +602,11 @@ export interface RoutineManagerOptions {
   /** Keyed frames only: every payload on this bus is `{ kind, … }`, which
    * is what lets the server number and replay them. */
   emit?: (payload: Record<string, unknown>) => void;
-  botState: (botId: string) => "ready" | "busy" | "missing";
+  botState: (botId: string) => "ready" | "busy" | "missing" | "staged";
   /** A shared channel conversation can be busy with other work while its bot
    * still has a free thread slot; its next message waits for the conversation. */
   threadBusy?: (botId: string, threadId: string) => boolean;
-  goalState?: (groupId: string, coordinatorBotId: string) => "ready" | "busy" | "missing";
+  goalState?: (groupId: string, coordinatorBotId: string) => "ready" | "busy" | "missing" | "staged";
   createTask: (botId: string, title: string, activate?: boolean) => { threadId: string } | null;
   /** Does this bot still have this conversation? A routine's own
    * conversation is reused only while it does. Without it, every run gets a
@@ -1090,6 +1100,54 @@ export class RoutineManager {
   private runsRaw: RoutineRun[] = [];
   private routinesView: Routine[] = this.routinesRaw;
   private runsView: RoutineRun[] = this.runsRaw;
+  /** Live thread identity in list order. Maintained on writes, so a conversation lookup never walks history. */
+  private runSlots = new WeakMap<RoutineRun, Set<number>>();
+  private runThreadSlots = new Map<number, { run: RoutineRun; threadId?: string }>();
+  private liveThreadSlots = new Map<string, Map<number, RoutineRun>>();
+  private firstThreadRun = new Map<string, { index: number; run: RoutineRun }>();
+
+  private setRunThreadSlot(index: number, run?: RoutineRun): void {
+    const previous = this.runThreadSlots.get(index);
+    const threadId = run?.threadId !== undefined && isLive(run.status) ? run.threadId : undefined;
+    if (previous?.run === run && previous?.threadId === threadId) return;
+    if (previous) {
+      this.runSlots.get(previous.run)?.delete(index);
+      this.runThreadSlots.delete(index);
+      if (previous.threadId !== undefined) {
+        const slots = this.liveThreadSlots.get(previous.threadId)!;
+        slots.delete(index);
+        if (!slots.size) {
+          this.liveThreadSlots.delete(previous.threadId);
+          this.firstThreadRun.delete(previous.threadId);
+        } else if (this.firstThreadRun.get(previous.threadId)?.index === index) {
+          // Only live candidates for this same thread participate; terminal history is never visited.
+          let first = Infinity;
+          for (const slot of slots.keys()) if (slot < first) first = slot;
+          this.firstThreadRun.set(previous.threadId, { index: first, run: slots.get(first)! });
+        }
+      }
+    }
+    if (!run) return;
+    let positions = this.runSlots.get(run);
+    if (!positions) this.runSlots.set(run, positions = new Set());
+    positions.add(index);
+    this.runThreadSlots.set(index, { run, threadId });
+    if (threadId !== undefined) {
+      let slots = this.liveThreadSlots.get(threadId);
+      if (!slots) this.liveThreadSlots.set(threadId, slots = new Map());
+      slots.set(index, run);
+      if (index < (this.firstThreadRun.get(threadId)?.index ?? Infinity)) this.firstThreadRun.set(threadId, { index, run });
+    }
+  }
+
+  /** Whole-list changes happen at load, rollback, and history trim, never on a thread lookup. */
+  private rebuildRunThreads(): void {
+    this.runSlots = new WeakMap();
+    this.runThreadSlots.clear();
+    this.liveThreadSlots.clear();
+    this.firstThreadRun.clear();
+    for (let index = 0; index < this.runsRaw.length; index++) this.setRunThreadSlot(index, this.runsRaw[index]);
+  }
   /** Set when a whole list was replaced or an element was put in raw: the next sweep walks the list once. */
   private walkRoutines = true;
   private walkRuns = true;
@@ -1103,15 +1161,36 @@ export class RoutineManager {
   private get runs(): RoutineRun[] { return this.runsView; }
   /** F2: moves whenever the whole run list is replaced (a load, a commitMutation rollback): run objects held from before are stale. */
   private runsGeneration = 0;
-  private set runs(list: RoutineRun[]) { this.runsGeneration++; this.runsRaw = list; this.runsView = this.watchList(list, "runs"); this.walkRuns = true; this.fullSave = true; }
+  private set runs(list: RoutineRun[]) {
+    this.runsGeneration++;
+    this.runsRaw = list.map(run => this.trackRun(run));
+    this.runsView = this.watchList(this.runsRaw, "runs");
+    this.rebuildRunThreads();
+    this.walkRuns = true;
+    this.fullSave = true;
+  }
   private watchList<T extends object>(list: T[], kind: "routines" | "runs"): T[] {
     const isIndex = (key: PropertyKey) => typeof key === "string" && key !== "length" && /^\d+$/.test(key);
     return new Proxy(list, {
       set: (target, key, value, receiver) => {
-        if (isIndex(key)) { if (kind === "runs") this.joinedRuns.push(value as unknown as RoutineRun); else { this.fullSave = true; this.walkRoutines = true; } }
-        return Reflect.set(target, key, value, receiver);
+        const oldLength = target.length;
+        if (isIndex(key)) {
+          if (kind === "runs") { value = this.trackRun(value as unknown as RoutineRun); this.joinedRuns.push(value); }
+          else { this.fullSave = true; this.walkRoutines = true; }
+        }
+        const done = Reflect.set(target, key, value, receiver);
+        if (done && kind === "runs") {
+          if (isIndex(key)) this.setRunThreadSlot(Number(key), value);
+          else if (key === "length") for (let index = target.length; index < oldLength; index++) this.setRunThreadSlot(index);
+        }
+        return done;
       },
-      deleteProperty: (target, key) => { if (isIndex(key)) this.fullSave = true; return Reflect.deleteProperty(target, key); },
+      deleteProperty: (target, key) => {
+        if (isIndex(key)) this.fullSave = true;
+        const done = Reflect.deleteProperty(target, key);
+        if (done && kind === "runs" && isIndex(key)) this.setRunThreadSlot(Number(key));
+        return done;
+      },
     });
   }
   private routineRequestReceipts: RoutineRequestReceipt[] = [];
@@ -1202,7 +1281,8 @@ export class RoutineManager {
               overlap: routine.overlap === "queue" ? "queue" : undefined,
               deliverTo: routine.deliverTo === "list" ? "list" : undefined,
               carryLastReport: routine.carryLastReport === true ? true : undefined,
-              permissionMode: loadRoutinePermissionMode(routine.permissionMode) ?? this.options.botMode?.(routine.botId) ?? "ask",
+              permissionMode: loadRoutinePermissionMode(routine.permissionMode),
+              permissionExplicit: routine.permissionExplicit ?? (routine.permissionMode !== undefined && routine.permissionMode !== "ask" && routine.permissionMode !== "auto"),
               alwaysAllow: routineGrantKeys(countRefusedGrants(routine.alwaysAllow)),
               skippedRuns: Number.isSafeInteger(routine.skippedRuns) && routine.skippedRuns! > 0 ? routine.skippedRuns : undefined,
               lastSkippedAt: Number.isSafeInteger(routine.lastSkippedAt) && routine.lastSkippedAt! >= 0 && routine.lastSkippedAt! <= MAX_DATE_MS ? routine.lastSkippedAt : undefined,
@@ -1217,7 +1297,7 @@ export class RoutineManager {
               catch { return this.keepUnloaded(routine, "watch"); }
             }
             if (loaded.timeoutMinutes === undefined) delete loaded.timeoutMinutes;
-            if (loaded.permissionMode !== routine.permissionMode) prePin = original;
+            if (loaded.permissionMode !== routine.permissionMode || loaded.permissionExplicit !== routine.permissionExplicit) prePin = original;
             return [loaded];
           })
         : [];
@@ -1366,6 +1446,11 @@ export class RoutineManager {
 
   listRoutines(): Routine[] {
     return this.routines.map((routine) => this.routineWithHealth(routine));
+  }
+
+  /** Approval copy needs only the stored name, without deriving health from retained runs. */
+  routineName(id: string): string | undefined {
+    return this.routines.find((routine) => routine.id === id)?.name;
   }
 
   /** Each routine's name, bot and whether it is on: no run history is read (a turn's working context lists them). */
@@ -1543,6 +1628,11 @@ export class RoutineManager {
     this.commitMutation(() => { this.routineRequestReceipts[index] = { ...this.routineRequestReceipts[index]!, undoneAt: at }; });
   }
 
+  /** One detached snapshot for startup classification and atomic bulk cleanup. */
+  routineRequestReceiptSnapshot(): RoutineRequestReceipt[] {
+    return plainCopy(this.routineRequestReceipts);
+  }
+
   /** Undo of a routine change (SL-J J2): restore `before` and stamp the
    * receipt in ONE routines.json write, only while the routine's `updatedAt`
    * is still the one the change left. Never rebuilds an inverse from the
@@ -1615,14 +1705,18 @@ export class RoutineManager {
   }
 
   /** The stored ceiling for scheduled and manual work, including room goals. */
-  routineRunForThread(threadId: string): { runId: string; routineId: string; botId: string; permissionMode?: RoutinePermissionMode; alwaysAllow: string[] } | null {
-    const run = this.runs.find((candidate) => candidate.threadId === threadId && isLive(candidate.status));
+  inheritAllPermissions(): void {
+    this.commitMutation(()=>{this.routines=this.routines.map(routine=>({...routine,permissionMode:undefined,permissionExplicit:false}));});
+  }
+
+  routineRunForThread(threadId: string, includeMetadata = false): { runId: string; routineId: string; botId: string; updatedAt?: number; triggerSource?: "schedule" | "manual"; permissionMode?: RoutinePermissionMode; permissionExplicit?:boolean; alwaysAllow: string[] } | null {
+    const run = this.firstThreadRun.get(threadId)?.run;
     if (!run) return null;
     const trigger = run.triggerSource ?? (run.manual ? "manual" : "schedule");
     if (trigger !== "schedule" && trigger !== "manual") return null;
     const routine = this.routines.find((candidate) => candidate.id === run.routineId);
     if (!routine) return null;
-    return { runId: run.id, routineId: routine.id, botId: run.botId, ...(routine.permissionMode ? { permissionMode: routine.permissionMode } : {}), alwaysAllow: [...(routine.alwaysAllow ?? [])] };
+    return { permissionExplicit:routine.permissionExplicit, runId: run.id, routineId: routine.id, botId: run.botId, ...(includeMetadata ? { updatedAt: routine.updatedAt, triggerSource: trigger } : {}), ...(routine.permissionMode ? { permissionMode: routine.permissionMode } : {}), alwaysAllow: [...(routine.alwaysAllow ?? [])] };
   }
 
   /** The routine whose own conversation this is (Routine.threadId), with
@@ -1695,7 +1789,7 @@ export class RoutineManager {
 
   /** `appEventSetup`: only the owner-reviewed connected-app setup (a later slice) creates an app_event routine. A chat card,
    * a bot tool or the public calendar API cannot, so a routine started from outside is never made without that review. */
-  create(input: RoutineInput, request?: RoutineRequestCommitFor<"create">, internal?: { appEventSetup: true }): Routine {
+  create(input: RoutineInput, request?: RoutineRequestCommitFor<"create">, internal?: { appEventSetup?: true }): Routine {
     if ((input.schedule as { type?: unknown } | undefined)?.type === "app_event" && internal?.appEventSetup !== true) {
       throw new Error("Connected-app routines are set up from the app's own review");
     }
@@ -1719,7 +1813,8 @@ export class RoutineManager {
     const routine: Routine = {
       id: randomUUID(),
       ...clean,
-      permissionMode: clean.permissionMode ?? this.options.botMode?.(clean.botId) ?? "ask",
+      permissionMode: clean.permissionMode,
+      permissionExplicit: clean.permissionMode !== undefined,
       // Only a confirmed chat card supplies `request`; the public calendar
       // API cannot choose an arbitrary transcript as a reporting target.
       sourceThreadId: request?.threadId,
@@ -1773,7 +1868,8 @@ export class RoutineManager {
       permissionMode: Object.hasOwn(patch, "permissionMode") ? patch.permissionMode : routine.permissionMode,
       deliverTo: Object.hasOwn(patch, "deliverTo") ? patch.deliverTo : routine.deliverTo,
     });
-    clean.permissionMode ??= this.options.botMode?.(clean.botId) ?? "ask";
+    // Missing is live inheritance, never a copied level.
+    const permissionExplicit = Object.hasOwn(patch,"permissionMode") ? clean.permissionMode !== undefined : routine.permissionExplicit;
     // A connected-app routine keeps its kind and its trigger for life; nothing else becomes one (section 4.1). A different
     // trigger is a new setup: delete this routine and set the new one up.
     if ((routine.schedule.type === "app_event") !== (clean.schedule.type === "app_event")) throw new Error("A routine cannot switch between a schedule and a connected-app trigger");
@@ -1805,6 +1901,7 @@ export class RoutineManager {
         routine.instructionHistory = retainRoutineInstructions(routine);
       }
       Object.assign(routine, clean, {
+        permissionExplicit,
         nextRunAt: !clean.enabled ? null : keepsCursor ? routine.nextRunAt : this.initialOccurrence(clean.schedule, now),
         // `updatedAt` doubles as the optimistic revision on durable routine
         // confirmation cards. Keep it monotonic even for two writes in one ms.
@@ -1813,6 +1910,7 @@ export class RoutineManager {
       if (Object.hasOwn(patch, "timeoutMinutes") && patch.timeoutMinutes == null) {
         delete routine.timeoutMinutes;
       }
+      if (Object.hasOwn(patch,"permissionMode") && clean.permissionMode === undefined) delete routine.permissionMode;
       // Object.assign cannot remove a key, and skip is stored as absence.
       if (clean.overlap !== "queue") delete routine.overlap;
       if (clean.deliverTo !== "list") delete routine.deliverTo;
@@ -2103,6 +2201,10 @@ export class RoutineManager {
       attachments: cloneAttachments(attachments),
       createdAt: this.now(),
     };
+    if (run.triggerSource === "channel" && this.options.channelMessagesEnabled?.(run.botId) === false) {
+      run.status = "completed"; run.finishedAt = this.now();
+      run.output = "Channel messages are off. Turn them on in Settings > Bot permissions > Channel messages.";
+    }
     run.event = routineEventForRun(run);
     run.eventBudget = newEventActionBudget();
     this.commitMutation(() => { this.runs.push(this.trackRun(run)); });
@@ -2126,7 +2228,7 @@ export class RoutineManager {
   /** Charge before the caller performs external work. Uncertain work is not
    * refunded. A missing/evicted/legacy ledger never resets its allocation.
    * The same admission id is charged once, so a retry of one hand-off is free. */
-  admitEventActionDetailed(eventId: string, admissionId: string, kind: "create" | "handoff"): EventAdmission {
+  admitEventActionDetailed(eventId: string, admissionId: string, kind: "create" | "handoff", noLimits?: { pair?: string }): EventAdmission {
     if (!eventAdmissionId.safeParse(admissionId).success || !["create", "handoff"].includes(kind)) return { ok: false, reason: "unavailable" };
     const run = this.runs.find(item => item.id === eventId && item.event?.id === eventId);
     const budget = run?.eventBudget;
@@ -2135,8 +2237,14 @@ export class RoutineManager {
     const prior = budget.admissions.find(item => item.id === admissionId);
     if (prior) return prior.kind === kind ? { ok: true } : { ok: false, reason: "unavailable" };
     const used = budget.admissions.filter(item => item.kind === kind).length;
-    if (used >= budget.limits[kind]) return { ok: false, reason: "limit", kind, used, limit: budget.limits[kind] };
-    this.commitMutation(() => { budget.admissions.push({ id: admissionId, kind }); });
+    if (noLimits) {
+      if (used >= EVENT_NO_LIMITS_CEILING) return { ok: false, reason: "ceiling" };
+      if (kind === "handoff" && noLimits.pair && budget.admissions.filter(item => item.kind === kind && item.pair === noLimits.pair).length >= EVENT_NO_LIMITS_PAIR_REPEATS) return { ok: false, reason: "loop" };
+    } else if (used >= Math.min(budget.limits[kind], EVENT_MAX_LIMIT)) return { ok: false, reason: "limit", kind, used, limit: Math.min(budget.limits[kind], EVENT_MAX_LIMIT) };
+    this.commitMutation(() => {
+      if (noLimits) budget.limits[kind] = Math.max(budget.limits[kind], used + 1);
+      budget.admissions.push({ id: admissionId, kind, ...(noLimits?.pair ? { pair: noLimits.pair } : {}) });
+    });
     return { ok: true };
   }
 
@@ -2684,6 +2792,11 @@ export class RoutineManager {
           this.failRun(run, "Channel binding changed; review it in Murage."); continue;
         }
         if(run.triggerSource==="channel"){try{if(!run.humanPrincipal)throw new Error("HUMAN_LINK_REQUIRED");assertHumanPrincipal(run.humanPrincipal);}catch(error){this.failRun(run,error instanceof Error?error.message:String(error));continue;}}
+        if (run.triggerSource === "channel" && this.options.channelMessagesEnabled?.(run.botId) === false) {
+          run.status = "completed"; run.finishedAt = this.now();
+          run.output = "Channel messages are off. Turn them on in Settings > Bot permissions > Channel messages.";
+          this.save({ runs: [run] }); this.emitRun(run); continue;
+        }
         const sharedChannel = run.triggerSource === "channel" && run.target === "bot" && !!this.options.channelThread;
         // Channel messages share history: dispatch the oldest queued message
         // first, even though detached routine jobs retain their existing order.
@@ -2757,6 +2870,11 @@ export class RoutineManager {
         // admission is unchanged; this only holds the run before it.
         const sameRoutineWorking = triggerSource === "schedule" && liveRoutines.has(run.routineId);
         const state = sameRoutineWorking ? "busy" : this.targetState(run);
+        if (state === "staged") {
+          const note = 'This routine waits until you review its bot.';
+          if (run.error !== note) { run.error = note; this.emitRun(run); this.save({ runs: [run] }); }
+          continue;
+        }
         if (state === "busy") continue;
         if (state === "missing") {
           this.failRun(run, this.missingTargetMessage(run.target));
@@ -3492,7 +3610,7 @@ export class RoutineManager {
     }
   }
 
-  private targetState(target: Pick<RoutineRun, "target" | "groupId" | "botId">): "ready" | "busy" | "missing" {
+  private targetState(target: Pick<RoutineRun, "target" | "groupId" | "botId">): "ready" | "busy" | "missing" | "staged" {
     if (target.target === "room-goal") {
       if (!target.groupId || !this.options.goalState) return "missing";
       return this.options.goalState(target.groupId, target.botId);
@@ -3792,8 +3910,8 @@ export class RoutineManager {
       if ((routine.schedule as { type?: unknown } | undefined)?.type === "app_event") throw new Error("A package cannot bring a connected-app routine; set it up from the app's own review");
       ids.add(routine.id);
     }
-    // An imported routine arrives with its ceiling pinned: imported bots start at Ask, so does the routine.
-    const next = [...this.routines, ...additions.map(routine => routine.permissionMode ? routine : { ...routine, permissionMode: "ask" as const })];
+    // An omitted level remains omitted so the routine follows its owner bot.
+    const next = [...this.routines, ...additions];
     // The bytes take their own generation, and publish records it, so correctness never rests on diskIsOurs() failing:
     // every state line written before this file is spent, and the routines folded into `next` are the whole state.
     const stateGeneration = randomUUID();
@@ -3847,6 +3965,7 @@ export class RoutineManager {
       excess -= 1;
     }
     for (const run of removed) { this.dirtyRuns.delete(run); this.liveDispatch.delete(run.id); }
+    if (removed.length) this.rebuildRunThreads();
     this.sweep(removed.length);
     try {
       if (this.fullSave || this.pendingCommit !== null || this.generation === undefined || !this.diskIsOurs()) this.saveFull();
@@ -3872,7 +3991,11 @@ export class RoutineManager {
 
   private trackRun(run: RoutineRun): RoutineRun {
     if (isTracked(run)) return run;
-    const tracked: RoutineRun = track(run, () => { this.dirtyRuns.add(tracked); this.runRevision++; });
+    const tracked: RoutineRun = track(run, () => {
+      this.dirtyRuns.add(tracked);
+      this.runRevision++;
+      for (const index of [...(this.runSlots.get(tracked) ?? [])]) this.setRunThreadSlot(index, tracked);
+    });
     return tracked;
   }
 

@@ -1,3 +1,4 @@
+import { fluxRouteFor } from "../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -450,11 +451,8 @@ export function fluxHeaderRefusal(engine: DriverKind, decision: FluxMemoryDecisi
 
 /** Whether a URL is a Flux Router host (so the memory headers belong on it). */
 export function isFluxUrl(url: string | URL | undefined | null): boolean {
-  if (!url) return false;
-  try {
-    const host = new URL(String(url)).hostname.toLowerCase().replace(/\.$/, "");
-    return host === "api.fluxrouter.ai" || host.endsWith(".fluxrouter.ai");
-  } catch { return false; }
+  return fluxRouteFor(url).routed;
+
 }
 
 // ----------------------------------------------------------- call sites ----

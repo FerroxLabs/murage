@@ -1,0 +1,57 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/connected-app-health.test.ts (24 tests | 1 failed) 277ms
+     ✓ flips Gmail to needs-reconnect while Calendar stays active 40ms
+     ✓ keeps the failed account when inventory says connected:false 8ms
+     ✓ learns an expired account from inventory without a tool call 5ms
+     ✓ a healthy second account or a newly added account cannot erase the expired account 6ms
+     ✓ clears when a call to that app succeeds 7ms
+     ✓ clears when the person signs in again (a new account) 6ms
+     ✓ is not set by an ordinary tool error, a lookup, or a broker that is dark 11ms
+     ✓ marks the one app that failed when a call touches two 4ms
+     ✓ never removes the active account before the new sign-in is active, then retires exactly that one 115ms
+     ✓ a mark made before any inventory was held still clears when a new account signs in 7ms
+     ✓ names the app by its own curated label, letters, digits and spaces only, whatever the catalog says 7ms
+     ✓ names the app that needs reconnecting, and differs from the unreachable line 4ms
+     ✓ names several apps and follows the copy rules 2ms
+     ✓ reads a single-tool error answer and an event stream 2ms
+     ✓ reads success and ordinary errors as not an authorization failure 1ms
+     ✓ does not read a 403, forbidden or a missing scope as a sign-in failure: signing in again would not change it 1ms
+     ✓ reads a row only for an app the request named, at the answer's own level 1ms
+     ✓ reads the broker's structured signal, never free words in a message 1ms
+     ✓ ignores another request's frame 1ms
+   ✓ P1-1 ACTIVE inventory cannot hide a known expired grant 3ms
+   ✓ P1-2 verified same-owner proactive renewal keeps UUID and cooldown 7ms
+   ✓ P1-3 reconnecting A never implicates healthy B 7ms
+   ✓ P1-3 success clears only its account and preserves the other incident UUID 7ms
+   × P2-5 one inventory check writes once at 10 and 1000 connectors; unchanged writes zero 14ms
+ ✓ server/connector-health-store.test.ts (3 tests) 18ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connected-app-health.test.ts > P2-5 one inventory check writes once at 10 and 1000 connectors; unchanged writes zero
+AssertionError: initial 1000: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ server/connected-app-health.test.ts:415:40
+    413|     const stop = connectorHealthStore().onChange(() => writes++);
+    414|     await connectedServices(cfg(), { fresh: true });
+    415|     expect(writes, `initial ${count}`).toBe(1);
+       |                                        ^
+    416|     writes = 0;
+    417|     await connectedServices(cfg(), { fresh: true });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 26 passed (27)
+   Start at  03:13:19
+   Duration  5.43s (transform 3.33s, setup 4.75s, import 160ms, tests 295ms, environment 0ms)
+

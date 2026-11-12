@@ -9,7 +9,7 @@ import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // "reuse" that quietly respawned, or a "close" that left a process behind,
 // fails here.
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, chmodSync, existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -63,7 +63,7 @@ const SESSION = "fake-acp-session";
  *  succeeds on one, so the state decides. */
 const zombie = (pid: number) => {
   try {
-    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z");
+    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { windowsHide: true, encoding: "utf8" }).trim().startsWith("Z");
   } catch {
     return false;
   }
@@ -267,6 +267,153 @@ describe.skipIf(process.platform === "win32")("ACP process pool (fake CLI)", () 
     // nothing any test started may outlive the instance
     await until(() => pids.every((pid) => !alive(pid)), "every engine process to exit");
     await removeTempDir(scratch);
+  });
+
+  it("c11-review-4 parked process keeps its markers until reset teardown", async () => {
+    const log = join(scratch, "catalog.jsonl");
+    const driver = createAcpDriver({ ...POOL_SUPPORT, mcpReadyNotification: undefined, mcpListedWait: true });
+    instance = await driver.create({ instanceId: "marker-lifetime", displayName: "Fixture", enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false }, environment: { FAKE_ACP_MODE: "c11-budget", FAKE_C11_LOG: log,
+        FAKE_C11_SPEC: JSON.stringify({ catalogs: { agents: ["served"] }, native: 11, limit: 100 }) } });
+    recorder = recordEvents(instance.adapter);
+    expect((await turn({ text: "park", integrations: agents() })).done).toMatchObject({ ok: true });
+    const markers = readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line)).filter(row => row.event === "catalog").map(row => row.marker);
+    expect(markers).toHaveLength(1);
+    expect(markers.every(path => existsSync(path))).toBe(true);
+    expect(alive(spawns()[0]!)).toBe(true);
+    await instance.adapter.resetSession!("t-pool");
+    await expect.poll(() => markers.filter(path => existsSync(path))).toEqual([]);
+  });
+
+  it("c11-review-6 recomputes a budget replacement contract before parking and adoption", async () => {
+    const { REQUIRED_CONTROLS } = await import("./opencode-tool-budget.ts");
+    const log = join(scratch, "budget.jsonl"), key = randomUUID().replaceAll("-", "").repeat(2);
+    const seen: string[] = [];
+    let extra: Record<string, string> = {};
+    const driver = createAcpDriver({ ...POOL_SUPPORT, mcpReadyNotification: undefined, mcpListedWait: true,
+      toolBudget: { routeKey: () => key }, models: { default: "opencode/mock", options: [] },
+      transformEnv: env => { env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: { "*": "ask", ...extra } }); },
+      spawnFingerprint: env => { seen.push(env.OPENCODE_CONFIG_CONTENT!); return env.OPENCODE_CONFIG_CONTENT!; } });
+    instance = await driver.create({ instanceId: key, displayName: "Fixture", enabled: true, config: { cli: FAKE_CLI, fullAuto: false },
+      environment: { FAKE_ACP_MODE: "c11-budget", FAKE_C11_LOG: log, FAKE_C11_SPEC: JSON.stringify({ native: 11, limit: 40, awaitCatalogExit: true,
+        catalogs: { agents: REQUIRED_CONTROLS.filter(n => n !== "project_propose"), murage_connectors: Array.from({ length: 25 }, (_, i) => `tool${i}`) } }) } });
+    recorder = recordEvents(instance.adapter);
+    const integration = { ...agents(), composio: { command: process.execPath, args: ["fixture-only"], env: {} } };
+    expect((await turn({ text: "replace within this turn", integrations: integration })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(2);
+    const rows = () => readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line));
+    const replacement = rows().filter(row => row.event === "spawn")[1].overlay;
+    expect(replacement.permission["murage_connectors_*"]).toBe("deny");
+    expect(JSON.parse(seen.at(-1)!)).toEqual(replacement);
+    expect((await turn({ text: "adopt matching replacement", resumeCursor: "c11-session", integrations: integration })).done).toMatchObject({ ok: true });
+    expect(spawns(), infoLines.join("\n")).toHaveLength(2);
+    extra = { unused_tool: "deny" };
+    expect((await turn({ text: "different final contract", resumeCursor: "c11-session", integrations: integration })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(3);
+    extra = {};
+    expect((await turn({ text: "empty extra restrictions", resumeCursor: "c11-session", integrations: integration })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(4);
+    expect(rows().filter(row => row.event === "prompt").map(row => row.count)).toEqual([51, 36, 36, 36, 36]);
+  });
+
+  /** C11 note 3.1 section 6.4: one spawnArgs per spawn. The launch computes argv once for the cold spawn; every other spawn
+   * (budget replace, replaceReused) recomputes it from the env as it is then, whatever process the turn started on. */
+  const argvRig = (extra: Partial<AcpSupport> = {}, extraArgv?: (priorCalls: number) => string[]) => {
+    const calls: Array<{ env: Record<string, string | undefined>; argv: string[] }> = [];
+    const spawnArgs: AcpSupport["spawnArgs"] = (_config, turn, ctx) => {
+      // argv rides the spawn contract, so it must be a pure function of the env it was computed from
+      const argv = ["agent", "--cfg", createHash("sha256").update(ctx?.env?.OPENCODE_CONFIG_CONTENT ?? "").digest("hex").slice(0, 12), ...(turn.model ? ["-m", turn.model] : []), ...(extraArgv?.(calls.length) ?? []), "stdio"];
+      calls.push({ env: { ...(ctx?.env ?? {}) }, argv });
+      return argv;
+    };
+    return { calls, support: { ...POOL_SUPPORT, spawnArgs, ...extra } as AcpSupport };
+  };
+
+  it("S-1 an adopted pooled process that the engine's lowered limit then replaces gets argv recomputed from the post-budget env", async () => {
+    const { REQUIRED_CONTROLS } = await import("./opencode-tool-budget.ts");
+    const log = join(scratch, "s1.jsonl"), key = randomUUID().replaceAll("-", "").repeat(2);
+    const { calls, support } = argvRig({ mcpReadyNotification: undefined, mcpListedWait: true, toolBudget: { routeKey: () => key }, models: { default: "opencode/mock", options: [] },
+      transformEnv: env => { env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: { "*": "ask" } }); } });
+    instance = await createAcpDriver(support).create({ instanceId: key, displayName: "Fixture", enabled: true, config: { cli: FAKE_CLI, fullAuto: false },
+      environment: { FAKE_ACP_MODE: "c11-budget", FAKE_C11_LOG: log, FAKE_C11_SPEC: JSON.stringify({ native: 11, limit: 40, limitAfterPrompt: 34, awaitCatalogExit: true,
+        catalogs: { agents: REQUIRED_CONTROLS.filter(n => n !== "project_propose"), murage_connectors: Array.from({ length: 25 }, (_, i) => `tool${i}`) } }) } });
+    recorder = recordEvents(instance.adapter);
+    const integration = { ...agents(), composio: { command: process.execPath, args: ["fixture-only"], env: {} } };
+    const rows = () => readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line));
+    const overlays = () => rows().filter(row => row.event === "spawn").map(row => row.overlay);
+    expect((await turn({ text: "first turn replaces within the turn", integrations: integration })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(2);
+    expect(calls).toHaveLength(2);
+    // turn 2 adopts the parked replacement; the engine, now refusing a lower limit, makes the budget replace it again
+    expect((await turn({ text: "adopt, then the lowered limit replaces it", resumeCursor: "c11-session", integrations: integration })).done, infoLines.join("\n")).toMatchObject({ ok: true });
+    expect(spawns(), infoLines.join("\n")).toHaveLength(3);
+    const [, second, third] = overlays();
+    expect(third, JSON.stringify([second, third])).not.toEqual(second);
+    // calls: turn 1 launch, turn 1 replacement, turn 2 launch (adopted process: its argv never spawned), the replacement of the adopted process
+    expect(calls).toHaveLength(4);
+    expect(JSON.parse(calls[3]!.env.OPENCODE_CONFIG_CONTENT!)).toEqual(third);
+    // and the process that was spawned carries that call's argv, not the launch-time one
+    const spawnedArgv = rows().filter(row => row.event === "spawn").map(row => row.argv);
+    expect(spawnedArgv[2]).toEqual(calls[3]!.argv);
+    expect(spawnedArgv[2]).not.toEqual(calls[2]!.argv);
+    expect(JSON.parse(calls[2]!.env.OPENCODE_CONFIG_CONTENT!)).toEqual(second);
+  });
+
+  it("S-2 adopt, then the engine refuses the live load, then replaceReused: argv is recomputed for the replacement", async () => {
+    process.env.FAKE_ACP_REJECT_LIVE_LOAD = "1";
+    // the first two calls (turn 1's launch, turn 2's launch) agree, so the parked process is adopted; the third is the replacement's own
+    const { calls, support } = argvRig({}, priorCalls => priorCalls >= 2 ? ["--replacement"] : []);
+    await create(createAcpDriver(support));
+    await turn({ text: "one", integrations: agents() });
+    expect(calls).toHaveLength(1);
+    const { done } = await turn({ text: "two", resumeCursor: SESSION, integrations: agents() });
+    expect(done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(2);
+    // turn 1 launch, turn 2 launch (the adopted process: its argv never spawned), and the replacement's own
+    expect(calls, infoLines.join("\n") + JSON.stringify(calls.map(c=>c.argv))).toHaveLength(3);
+    expect(rpc().filter(entry => entry.method === "initialize").map(entry => entry.pid)).toEqual(spawns());
+    // the process that was spawned carries the RECOMPUTED argv (the third call's), not turn 2's launch argv
+    const initialized = rpc().filter(entry => entry.method === "initialize") as Array<{ argv?: string[] }>;
+    expect(initialized.map(entry => entry.argv)).toEqual([calls[0]!.argv, calls[2]!.argv]);
+    expect(calls[2]!.argv).toContain("--replacement");
+    expect(calls[1]!.argv).not.toContain("--replacement");
+  });
+
+  it("S-3 guard: a cold launch calls spawnArgs once, and a cold launch followed by a budget replace calls it twice", async () => {
+    const { REQUIRED_CONTROLS } = await import("./opencode-tool-budget.ts");
+    const log = join(scratch, "s3.jsonl"), key = randomUUID().replaceAll("-", "").repeat(2);
+    const { calls, support } = argvRig({ mcpReadyNotification: undefined, mcpListedWait: true, toolBudget: { routeKey: () => key }, models: { default: "opencode/mock", options: [] },
+      transformEnv: env => { env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ permission: { "*": "ask" } }); } });
+    instance = await createAcpDriver(support).create({ instanceId: key, displayName: "Fixture", enabled: true, config: { cli: FAKE_CLI, fullAuto: false },
+      environment: { FAKE_ACP_MODE: "c11-budget", FAKE_C11_LOG: log, FAKE_C11_SPEC: JSON.stringify({ native: 11, limit: 40, awaitCatalogExit: true,
+        catalogs: { agents: REQUIRED_CONTROLS.filter(n => n !== "project_propose"), murage_connectors: Array.from({ length: 25 }, (_, i) => `tool${i}`) } }) } });
+    recorder = recordEvents(instance.adapter);
+    const integration = { ...agents(), composio: { command: process.execPath, args: ["fixture-only"], env: {} } };
+    expect((await turn({ text: "replace within this turn", integrations: integration })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(2);
+    expect(calls).toHaveLength(2);
+  });
+
+  it("c11-pool-contract rejects a parked restriction set for changed and empty sets", async () => {
+    const { applyOpenCodeTurnPermission, applyToolCatalogDenies } = await import("./opencode-go.ts");
+    let restrictions: Array<readonly [string, "deny"]> = [["alpha_a", "deny"]];
+    const seen: string[] = [];
+    const driver = createAcpDriver({ ...POOL_SUPPORT, driverKind: "c11Pool", transformEnv: env => { applyOpenCodeTurnPermission(env); applyToolCatalogDenies(env, restrictions); }, spawnFingerprint: env => { seen.push(env.OPENCODE_CONFIG_CONTENT!); return env.OPENCODE_CONFIG_CONTENT!; } });
+    await create(driver);
+    expect((await turn({ text: "D1" })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(1);
+    restrictions = [["alpha_b", "deny"]];
+    expect((await turn({ text: "D2", resumeCursor: SESSION })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(2);
+    restrictions = [];
+    expect((await turn({ text: "empty", resumeCursor: SESSION })).done).toMatchObject({ ok: true });
+    expect(spawns()).toHaveLength(3);
+    const permissions = [...new Set(seen)].map(value => JSON.parse(value).permission);
+    expect(permissions).toHaveLength(3);
+    expect(permissions[0].alpha_a).toBe("deny");
+    expect(permissions[1].alpha_b).toBe("deny");
+    expect(permissions[1].alpha_a).toBeUndefined();
+    expect(permissions[2].alpha_a).toBeUndefined(); expect(permissions[2].alpha_b).toBeUndefined();
   });
 
   it("reuses one process across two turns: one spawn, one handshake, the new tokens over session/load", async () => {

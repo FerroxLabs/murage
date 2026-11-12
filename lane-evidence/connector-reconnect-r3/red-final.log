@@ -1,0 +1,886 @@
+
+ RUN  v4.1.12 /work
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1e success re-reads ACTIVE, clears only that account and its unverified state
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1f failed inventory retains incident and renders unverified copy
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1g Flux kind=auth is an outage and still re-reads inventory
+connected apps: gmail needs reconnecting: HTTP 401
+
+ × server/connector-reconnect-r3-preflight.test.ts > R1a failed probe still awaits EXPIRED inventory 44ms
+   → expected undefined to deeply equal [ { id: 'A', alias: 'work' } ]
+ × server/connector-reconnect-r3-preflight.test.ts > R1b failed probe still awaits EXPIRED inventory 6ms
+   → expected undefined to deeply equal [ { id: 'A', alias: 'work' } ]
+ × server/connector-reconnect-r3-preflight.test.ts > R1c ACTIVE uncertainty is unverified 4ms
+   → expected undefined to be 'unverified' // Object.is equality
+ × server/connector-reconnect-r3-preflight.test.ts > R1d ACTIVE uncertainty is unverified 8ms
+   → expected undefined to be 'unverified' // Object.is equality
+ × server/connector-reconnect-r3-preflight.test.ts > R1e success re-reads ACTIVE, clears only that account and its unverified state 23ms
+   → expected +0 to be 1 // Object.is equality
+ × server/connector-reconnect-r3-preflight.test.ts > R1f failed inventory retains incident and renders unverified copy 9ms
+   → expected undefined to be 'unverified' // Object.is equality
+ × server/connector-reconnect-r3-preflight.test.ts > R1g Flux kind=auth is an outage and still re-reads inventory 8ms
+   → expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+ × server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after transport 1006ms
+   → expected +0 to be 1 // Object.is equality
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after brokerAuth
+connected apps: gmail needs reconnecting: HTTP 401
+
+ × server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after http 1007ms
+   → expected +0 to be 1 // Object.is equality
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after brokerAuth 60ms
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after upstreamAuth
+connected apps: gmail needs reconnecting: HTTP 401
+
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after upstreamAuth 59ms
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after toolError 59ms
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1 unknown keeps an existing incident; alias change preserves unverified
+connected apps: gmail needs reconnecting: HTTP 401
+
+ × server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after ok 1006ms
+   → expected +0 to be 1 // Object.is equality
+ × server/connector-reconnect-r3-preflight.test.ts > R1 unknown keeps an existing incident; alias change preserves unverified 17ms
+   → expected undefined to be 'unverified' // Object.is equality
+ × server/connector-reconnect-r3-preflight.test.ts > R1 removal between probe and refresh blocks that ID on scheduled dispatch 10ms
+   → expected undefined to deeply equal [ 'A' ]
+ × server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=false) cannot replace post-probe EXPIRED inventory 1061ms
+   → expected 1 to be 2 // Object.is equality
+stderr | server/connector-reconnect-r3-preflight.test.ts > R3d preflight response.error.status 403 with ACTIVE creates an incident
+connected apps: gmail needs reconnecting: HTTP 403
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R3e row-level Flux auth never creates an incident
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R1f late timed-out inventory cannot clear or create incidents
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope kind is an outage
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-kind is an outage
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope error-kind is an outage
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-error-kind is an outage
+connected apps: gmail needs reconnecting: HTTP 401
+
+ × server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=true) cannot replace post-probe EXPIRED inventory 1061ms
+   → expected 1 to be 2 // Object.is equality
+ ✓ server/connector-reconnect-r3-preflight.test.ts > R3d preflight response.error.status 403 with ACTIVE creates an incident 9ms
+ × server/connector-reconnect-r3-preflight.test.ts > R3e row-level Flux auth never creates an incident 11ms
+   → expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+ × server/connector-reconnect-r3-preflight.test.ts > R1f late timed-out inventory cannot clear or create incidents 16ms
+   → expected +0 to be 1 // Object.is equality
+ × server/connector-reconnect-r3-preflight.test.ts > R1 durable unknown survives reopening and a status change clears it 11ms
+   → expected undefined to be defined
+ × server/connector-reconnect-r3-preflight.test.ts > R1e healthy recovery clears a durable unknown check 9ms
+   → expected undefined to be 'unverified' // Object.is equality
+ × server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope kind is an outage 9ms
+   → expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+ × server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-kind is an outage 10ms
+   → expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+ × server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope error-kind is an outage 10ms
+   → expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+ × server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-error-kind is an outage 8ms
+   → expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+ × server/connector-reconnect-r3-preflight.test.ts > R3 broker diagnostic in a failed row only suppresses reconnect 5ms
+   → expected +0 to be 1 // Object.is equality
+ × server/connector-reconnect-r3-schedule.test.ts > R4a three monitor ticks without routines only refresh inventory 63ms
+   → expected false to be true // Object.is equality
+ × server/connector-reconnect-r3-schedule.test.ts > R4b disabled=false or outside lookahead=30 has no reads 26ms
+   → expected false to be true // Object.is equality
+stderr | server/connector-reconnect-r3-schedule.test.ts > R4 dispatch uses reactive failure when an earlier successful probe still consumes the budget
+connected apps: gmail needs reconnecting: HTTP 401
+
+ × server/connector-reconnect-r3-schedule.test.ts > R4b disabled=true or outside lookahead=61 has no reads 14ms
+   → expected false to be true // Object.is equality
+ × server/connector-reconnect-r3-schedule.test.ts > R4c learned gmail due in 30 minutes reads each gmail account once, never slack 33ms
+   → expected false to be true // Object.is equality
+ × server/connector-reconnect-r3-schedule.test.ts > R4d first scheduled dispatch preflights at runtime and learns toolkit 22ms
+   → expected false to be true // Object.is equality
+ × server/connector-reconnect-r3-schedule.test.ts > R4 retention unions real dispatches, reloads, scopes owner and revision, deletes stale learning 13ms
+   → expected undefined to be defined
+ × server/connector-reconnect-r3-schedule.test.ts > R4 bounded best effort: tick phase, restart budget, newly enabled and overdue runs 19ms
+   → expected false to be true // Object.is equality
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4d control: dispatch preflights even without any learned routine 4ms
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4 dispatch uses reactive failure when an earlier successful probe still consumes the budget 11ms
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2b direct provider preserves B account for attribution and guard
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2c unknown account never creates or blocks an incident
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2d unknown account never creates or blocks an incident
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch same creates no incident
+connected apps: gmail needs reconnecting: HTTP 401
+
+ × server/connector-reconnect-r3-attribution.test.ts > R2a wrapped multi attributes A failure and B success separately 35ms
+   → expected [] to deeply equal [ 'A' ]
+ × server/connector-reconnect-r3-attribution.test.ts > R2b direct provider preserves B account for attribution and guard 13ms
+   → expected [] to deeply equal [ 'B' ]
+ × server/connector-reconnect-r3-attribution.test.ts > R2c unknown account never creates or blocks an incident 10ms
+   → expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+ × server/connector-reconnect-r3-attribution.test.ts > R2d unknown account never creates or blocks an incident 8ms
+   → expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+ × server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard 9ms
+   → expected undefined to be type of 'function'
+ × server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order false 7ms
+   → expected [] to deeply equal [ 'A' ]
+ × server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order true 5ms
+   → expected [] to deeply equal [ 'A' ]
+ × server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch same creates no incident 10ms
+   → expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+ ✓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch mixed creates no incident 12ms
+ × server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch missing-index creates no incident 12ms
+   → expected +0 to be 1 // Object.is equality
+ × server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch malformed creates no incident 10ms
+   → expected +0 to be 1 // Object.is equality
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > flips Gmail to needs-reconnect while Calendar stays active
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > keeps the failed account when inventory says connected:false
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > learns an expired account from inventory without a tool call
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > a healthy second account or a newly added account cannot erase the expired account
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > clears when a call to that app succeeds
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > clears when the person signs in again (a new account)
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > is not set by an ordinary tool error, a lookup, or a broker that is dark
+ ↓ server/connected-app-health.test.ts > one app's authorization failure > marks the one app that failed when a call touches two
+ ↓ server/connected-app-health.test.ts > signing in again > never removes the active account before the new sign-in is active, then retires exactly that one
+ ↓ server/connected-app-health.test.ts > signing in again > a mark made before any inventory was held still clears when a new account signs in
+ ↓ server/connected-app-health.test.ts > what the bot is told > names the app by its own curated label, letters, digits and spaces only, whatever the catalog says
+ ↓ server/connected-app-health.test.ts > what the bot is told > names the app that needs reconnecting, and differs from the unreachable line
+ ↓ server/connected-app-health.test.ts > what the bot is told > names several apps and follows the copy rules
+ ↓ server/connected-app-health.test.ts > reading an app's answer > reads a single-tool error answer and an event stream
+ ↓ server/connected-app-health.test.ts > reading an app's answer > reads success and ordinary errors as not an authorization failure
+ ↓ server/connected-app-health.test.ts > reading an app's answer > does not read a 403, forbidden or a missing scope as a sign-in failure: signing in again would not change it
+ ↓ server/connected-app-health.test.ts > reading an app's answer > reads a row only for an app the request named, at the answer's own level
+ ↓ server/connected-app-health.test.ts > reading an app's answer > reads the broker's structured signal, never free words in a message
+ ↓ server/connected-app-health.test.ts > reading an app's answer > ignores another request's frame
+ ↓ server/connected-app-health.test.ts > P1-1 ACTIVE inventory cannot hide a known expired grant
+ ↓ server/connected-app-health.test.ts > P1-2 verified same-owner proactive renewal keeps UUID and cooldown
+ ↓ server/connected-app-health.test.ts > P1-3 reconnecting A never implicates healthy B
+ ↓ server/connected-app-health.test.ts > P1-3 success clears only its account and preserves the other incident UUID
+ ↓ server/connected-app-health.test.ts > P2-5 one inventory check writes once at 10 and 1000 connectors; unchanged writes zero
+ ↓ server/connected-app-health.test.ts > P1-1 idle Buffer probe detects an ACTIVE revoked grant without an expiry field
+ ↓ server/connected-app-health.test.ts > P1-3 mixed results for two accounts of one app mark only the failed row
+ ↓ server/connected-app-health.test.ts > an account in cooldown cannot inherit another account's delivery receipt
+ × server/connected-app-health.test.ts > R3 structured status contract > R3a status 500 with item 401 prose cannot impersonate auth 31ms
+   → expected 1 to be +0 // Object.is equality
+ × server/connected-app-health.test.ts > R3 structured status contract > R3b prose-only 401 with ACTIVE is clean, EXPIRED inventory creates incident 20ms
+   → expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+ × server/connected-app-health.test.ts > R3 structured status contract > R3c status_code 401 alone is a failed row even without a failure flag 2ms
+   → expected undefined to be 401 // Object.is equality
+ × server/connected-app-health.test.ts > R3 structured status contract > R3d nested error status 403 is exact and never accepts prose status 2ms
+   → expected 1 to be +0 // Object.is equality
+ × server/connected-app-health.test.ts > R3 structured status contract > R3e parsed kind auth suppresses account auth without the Flux sentence 2ms
+   → expected false to be true // Object.is equality
+ × server/connected-app-health.test.ts > R3 structured status contract > R3f brokerAuthOf handles error data and parsed envelopes; never scans app data 3ms
+   → expected undefined to be type of 'function'
+ × server/connected-app-health.test.ts > R3 structured status contract > R3g code 401 and deep data are not HTTP status; status parsing is strict 2ms
+   → expected 1 to be +0 // Object.is equality
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 47 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connected-app-health.test.ts > R3 structured status contract > R3a status 500 with item 401 prose cannot impersonate auth
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ server/connected-app-health.test.ts:468:106
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/47]⎯
+
+ FAIL  server/connected-app-health.test.ts > R3 structured status contract > R3b prose-only 401 with ACTIVE is clean, EXPIRED inventory creates incident
+AssertionError: expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "accounts": [
++       {
++         "alias": "work",
++         "id": "ca_gmail1",
++       },
++     ],
++     "label": "Gmail",
++     "slug": "gmail",
++   },
++ ]
+
+ ❯ server/connected-app-health.test.ts:472:75
+    470|   it("R3b prose-only 401 with ACTIVE is clean, EXPIRED inventory creat…
+    471|     await connectedServices(cfg(),{fresh:true}); rows=[{tool_slug:"GMA…
+    472|     await call("GMAIL_FETCH_EMAILS"); expect(appsNeedingReconnect(cfg(…
+       |                                                                           ^
+    473|     accounts.gmail![0]!.status="EXPIRED"; await call("GMAIL_FETCH_EMAI…
+    474|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/47]⎯
+
+ FAIL  server/connected-app-health.test.ts > R3 structured status contract > R3c status_code 401 alone is a failed row even without a failure flag
+AssertionError: expected undefined to be 401 // Object.is equality
+
+- Expected:
+401
+
++ Received:
+undefined
+
+ ❯ server/connected-app-health.test.ts:477:85
+    475|   it("R3c status_code 401 alone is a failed row even without a failure…
+    476|     const bytes=new TextEncoder().encode(JSON.stringify({id:1,result:{…
+    477|     expect(readAppAnswer(["GMAIL_FETCH_EMAILS"],1,bytes,0).authStatus.…
+       |                                                                                     ^
+    478|   });
+    479|   it("R3d nested error status 403 is exact and never accepts prose sta…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/47]⎯
+
+ FAIL  server/connected-app-health.test.ts > R3 structured status contract > R3d nested error status 403 is exact and never accepts prose status
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ server/connected-app-health.test.ts:481:66
+    479|   it("R3d nested error status 403 is exact and never accepts prose sta…
+    480|     expect(reading({error:{status:"403"}}).authStatus.get("gmail")).to…
+    481|     expect(reading({status:"401 Unauthorized"}).authStatus.size).toBe(…
+       |                                                                  ^
+    482|   });
+    483|   it("R3e parsed kind auth suppresses account auth without the Flux se…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/47]⎯
+
+ FAIL  server/connected-app-health.test.ts > R3 structured status contract > R3e parsed kind auth suppresses account auth without the Flux sentence
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ server/connected-app-health.test.ts:484:79
+    482|   });
+    483|   it("R3e parsed kind auth suppresses account auth without the Flux se…
+    484|     const result=reading({kind:"auth",status:401}); expect(result.brok…
+       |                                                                               ^
+    485|   });
+    486|   it("R3f brokerAuthOf handles error data and parsed envelopes; never …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/47]⎯
+
+ FAIL  server/connected-app-health.test.ts > R3 structured status contract > R3f brokerAuthOf handles error data and parsed envelopes; never scans app data
+AssertionError: expected undefined to be type of 'function'
+
+Expected: "function"
+Received: "undefined"
+
+ ❯ server/connected-app-health.test.ts:488:77
+    486|   it("R3f brokerAuthOf handles error data and parsed envelopes; never …
+    487|     expect(reading(null,{data:{kind:"auth",status:401}}).brokerAuth).t…
+    488|     const brokerAuthOf=(r3Health as any).brokerAuthOf; expect(brokerAu…
+       |                                                                             ^
+    489|     expect(brokerAuthOf({error:{data:{kind:"auth"}}})).toBe(true);
+    490|     expect(brokerAuthOf({result:{content:[{text:JSON.stringify({error:…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/47]⎯
+
+ FAIL  server/connected-app-health.test.ts > R3 structured status contract > R3g code 401 and deep data are not HTTP status; status parsing is strict
+AssertionError: expected 1 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ server/connected-app-health.test.ts:494:49
+    492|   });
+    493|   it("R3g code 401 and deep data are not HTTP status; status parsing i…
+    494|     expect(reading({code:401}).authStatus.size).toBe(0);
+       |                                                 ^
+    495|     const status=(r3Health as any).structuredStatus; expect(status).to…
+    496|     for(const value of ["401 Unauthorized","item 401"," 401",401.1,99,…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/47]⎯
+
+ FAIL  server/connector-reconnect-r3-attribution.test.ts > R2a wrapped multi attributes A failure and B success separately
+AssertionError: expected [] to deeply equal [ 'A' ]
+
+- Expected
++ Received
+
+- [
+-   "A",
+- ]
++ []
+
+ ❯ server/connector-reconnect-r3-attribution.test.ts:45:20
+     43|   reply={data:{results:[{index:0,tool_slug:"GMAIL_FETCH_EMAILS",status…
+     44|   await dispatch("USE_TOOL",{tool_name:"COMPOSIO_MULTI_EXECUTE_TOOL",t…
+     45|   expect(marked()).toEqual(["A"]); reply={successful:true}; await disp…
+       |                    ^
+     46| });
+     47| it("R2b direct provider preserves B account for attribution and guard"…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[8/47]⎯
+
+ FAIL  server/connector-reconnect-r3-attribution.test.ts > R2b direct provider preserves B account for attribution and guard
+AssertionError: expected [] to deeply equal [ 'B' ]
+
+- Expected
++ Received
+
+- [
+-   "B",
+- ]
++ []
+
+ ❯ server/connector-reconnect-r3-attribution.test.ts:48:83
+     46| });
+     47| it("R2b direct provider preserves B account for attribution and guard"…
+     48|   probe="upstreamAuth"; await dispatch(undefined,{account:"B"}); expec…
+       |                                                                                   ^
+     49|   await dispatch(undefined,{account:"B"}); expect(calls).toHaveLength(…
+     50|   probe="ok"; await dispatch(undefined,{account:"A"}); expect(calls).t…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[9/47]⎯
+
+ FAIL  server/connector-reconnect-r3-attribution.test.ts > R2c unknown account never creates or blocks an incident
+ FAIL  server/connector-reconnect-r3-attribution.test.ts > R2d unknown account never creates or blocks an incident
+AssertionError: expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "accounts": [],
++     "label": "Gmail",
++     "slug": "gmail",
++   },
++ ]
+
+ ❯ server/connector-reconnect-r3-attribution.test.ts:53:130
+     51| });
+     52| it.each([["R2c",{}],["R2d",{account:"Z"}]])("%s unknown account never …
+     53|   probe="upstreamAuth"; await dispatch(undefined,args); expect(marked(…
+       |                                                                                                                                  ^
+     54|   probe="ok"; await dispatch(undefined,{account:"A"}); await dispatch(…
+     55| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[10/47]⎯
+
+ FAIL  server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard
+AssertionError: expected undefined to be type of 'function'
+
+Expected: "function"
+Received: "undefined"
+
+ ❯ server/connector-reconnect-r3-attribution.test.ts:57:78
+     55| });
+     56| it("R2e six call shapes use the same normalized rows in requirements, …
+     57|   const normalize=(callsModule as any).normalizedCallRows; expect(norm…
+       |                                                                              ^
+     58|   for(const [name,args] of [
+     59|     ["GMAIL_FETCH_EMAILS",{account:"B"}], ["USE_TOOL",{toolName:"GMAIL…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[11/47]⎯
+
+ FAIL  server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order false
+ FAIL  server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order true
+AssertionError: expected [] to deeply equal [ 'A' ]
+
+- Expected
++ Received
+
+- [
+-   "A",
+- ]
++ []
+
+ ❯ server/connector-reconnect-r3-attribution.test.ts:76:72
+     74|   if(reverse) results.reverse();
+     75|   reply={data:{results:results.map((r,index)=>({...r,index}))}};
+     76|   await dispatch("COMPOSIO_MULTI_EXECUTE_TOOL",args); expect(marked())…
+       |                                                                        ^
+     77| });
+     78| it.each(["same","mixed","missing-index","malformed"])("R2 unattributed…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[12/47]⎯
+
+ FAIL  server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch same creates no incident
+AssertionError: expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "accounts": [],
++     "label": "Gmail",
++     "slug": "gmail",
++   },
++ ]
+
+ ❯ server/connector-reconnect-r3-attribution.test.ts:83:46
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[13/47]⎯
+
+ FAIL  server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch missing-index creates no incident
+ FAIL  server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch malformed creates no incident
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ server/connector-reconnect-r3-attribution.test.ts:83:73
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[14/47]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1a failed probe still awaits EXPIRED inventory
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1b failed probe still awaits EXPIRED inventory
+AssertionError: expected undefined to deeply equal [ { id: 'A', alias: 'work' } ]
+
+- Expected:
+[
+  {
+    "alias": "work",
+    "id": "A",
+  },
+]
+
++ Received:
+undefined
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:45:59
+     43| it.each([["R1a","transport"],["R1b","http"]])("%s failed probe still a…
+     44|   probe=mode!; afterProbe=()=>{accounts.gmail![0]!.status="EXPIRED";};…
+     45|   expect(composio.appsNeedingReconnect(cfg)[0]?.accounts).toEqual([{id…
+       |                                                           ^
+     46| });
+     47| it.each([["R1c","timeout"],["R1d","toolError"]])("%s ACTIVE uncertaint…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[15/47]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1c ACTIVE uncertainty is unverified
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1d ACTIVE uncertainty is unverified
+AssertionError: expected undefined to be 'unverified' // Object.is equality
+
+- Expected:
+"unverified"
+
++ Received:
+undefined
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:48:65
+     46| });
+     47| it.each([["R1c","timeout"],["R1d","toolError"]])("%s ACTIVE uncertaint…
+     48|   probe=mode!; await check(); expect((await card()).checkState).toBe("…
+       |                                                                 ^
+     49| });
+     50| it("R1e success re-reads ACTIVE, clears only that account and its unve…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[16/47]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1e success re-reads ACTIVE, clears only that account and its unverified state
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:51:50
+     49| });
+     50| it("R1e success re-reads ACTIVE, clears only that account and its unve…
+     51|   await incident(); await check(); expect(reads).toBe(1); expect(compo…
+       |                                                  ^
+     52| });
+     53| it("R1f failed inventory retains incident and renders unverified copy"…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[17/47]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1f failed inventory retains incident and renders unverified copy
+AssertionError: expected undefined to be 'unverified' // Object.is equality
+
+- Expected:
+"unverified"
+
++ Received:
+undefined
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:56:37
+     54|   await incident(); const before=composio.reconnectIncidents(cfg)[0]!.…
+     55|   afterProbe=()=>{inventoryFailure=true;}; await check();
+     56|   expect((await card()).checkState).toBe("unverified"); expect(composi…
+       |                                     ^
+     57|   const panel=readFileSync(new URL("../src/components/PluginsPanel.tsx…
+     58|   expect(panel).toContain('t("connectorHealth.unverified", { app: card…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[18/47]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1g Flux kind=auth is an outage and still re-reads inventory
+AssertionError: expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "accounts": [
++       {
++         "alias": "work",
++         "id": "A",
++       },
++     ],
++     "label": "Gmail",
++     "slug": "gmail",
++   },
++ ]
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:64:81
+     62| });
+     63| it("R1g Flux kind=auth is an outage and still re-reads inventory",asyn…
+     64|   probe="brokerAuth"; await check(); expect(composio.appsNeedingReconn…
+       |                                                                                 ^
+     65| });
+     66| it.each(["transport","http","brokerAuth","upstreamAuth","toolError","o…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[19/47]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after transport
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after http
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1h exactly one awaited inventory GET after ok
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:70:44
+     68|   afterProbe=()=>{holdInventory=new Promise<void>(resolve=>{release=re…
+     69|   const checking=check().then(()=>{resolved=true;});
+     70|   try { await vi.waitFor(()=>expect(reads).toBe(1)); expect(completed)…
+       |                                            ^
+     71|   finally { release?.(); await checking; }
+     72|   expect(completed).toBe(1); expect(reads).toBe(1);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[20/47]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1 unknown keeps an existing incident; alias change preserves unverified
+AssertionError: expected undefined to be 'unverified' // Object.is equality
+
+- Expected:
+"unverified"
+
++ Received:
+undefined
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:75:149
+     73| });
+     74| it("R1 unknown keeps an existing incident; alias change preserves unve…
+     75|   await incident(); probe="toolError"; await check(); expect(composio.…
+       |                                                                                                                                                     ^
+     76|   accounts.gmail![0]!.alias="changed"; await composio.connectedInvento…
+     77| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[21/47]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1 removal between probe and refresh blocks that ID on scheduled dispatch
+AssertionError: expected undefined to deeply equal [ 'A' ]
+
+- Expected:
+[
+  "A",
+]
+
++ Received:
+undefined
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:82:72
+     80|   accounts.gmail!.push({id:"B",status:"ACTIVE"}); await composio.conne…
+     81|   afterProbe=()=>{accounts.gmail=accounts.gmail!.filter(a=>a.id!=="A")…
+     82|   expect(composio.appsNeedingReconnect(cfg)[0]?.accounts.map(a=>a.id))…
+       |                                                                        ^
+     83|   const count=calls.length; await dispatch(undefined,{account:"A"},{sc…
+     84|   await dispatch(undefined,{account:"B"},{scheduled:true}); expect(cal…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[22/47]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=false) cannot replace post-probe EXPIRED inventory
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1h held pre-probe ACTIVE fetch (fresh=true) cannot replace post-probe EXPIRED inventory
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:93:44
+     91|   // Cached inventory lets the probe start while the older fetch remai…
+     92|   const checking=check();
+     93|   try { await vi.waitFor(()=>expect(reads).toBe(2)); await checking; }…
+       |                                            ^
+     94|   expect(composio.appsNeedingReconnect(cfg)[0]?.accounts.map(a=>a.id))…
+     95| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[23/47]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R3e row-level Flux auth never creates an incident
+AssertionError: expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "accounts": [
++       {
++         "alias": "work",
++         "id": "A",
++       },
++     ],
++     "label": "Gmail",
++     "slug": "gmail",
++   },
++ ]
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:102:46
+    100| it("R3e row-level Flux auth never creates an incident",async()=>{
+    101|   reply={data:{results:[{index:0,tool_slug:"GMAIL_GET_PROFILE",success…
+    102|   expect(composio.appsNeedingReconnect(cfg)).toEqual([]); expect(reads…
+       |                                              ^
+    103| });
+    104|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[24/47]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1f late timed-out inventory cannot clear or create incidents
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:111:17
+    109|   afterProbe=()=>{accounts.gmail![0]!.status="EXPIRED";holdInventory=n…
+    110|   const checking=check(); await vi.advanceTimersByTimeAsync(0);
+    111|   expect(reads).toBe(1); await vi.advanceTimersByTimeAsync(5_001); awa…
+       |                 ^
+    112|   expect((await card()).checkState).toBe("unverified");
+    113|   expect(composio.reconnectIncidents(cfg)[0]?.incidentId).toBe(before);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[25/47]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1 durable unknown survives reopening and a status change clears it
+AssertionError: expected undefined to be defined
+ ❯ server/connector-reconnect-r3-preflight.test.ts:122:31
+    120|   const {ConnectorHealthStore}=await import("./connector-health-store.…
+    121|   const reopened=new ConnectorHealthStore(`${DATA_DIR}/connector-healt…
+    122|   expect(reopened.unverified).toBeDefined(); expect(Object.keys(reopen…
+       |                               ^
+    123|   accounts.gmail![0]!.status="EXPIRED"; await composio.connectedInvent…
+    124|   expect((await card()).checkState).toBeUndefined(); expect((await car…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[26/47]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R1e healthy recovery clears a durable unknown check
+AssertionError: expected undefined to be 'unverified' // Object.is equality
+
+- Expected:
+"unverified"
+
++ Received:
+undefined
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:128:69
+    126|
+    127| it("R1e healthy recovery clears a durable unknown check",async()=>{
+    128|   probe="toolError";await check();expect((await card()).checkState).to…
+       |                                                                     ^
+    129|   clock+=4_000_000;probe="ok";await check();expect((await card()).chec…
+    130| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[27/47]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope kind is an outage
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-kind is an outage
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope error-kind is an outage
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R3e broker auth row envelope response-error-kind is an outage
+AssertionError: expected [ { slug: 'gmail', …(2) } ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "accounts": [
++       {
++         "alias": "work",
++         "id": "A",
++       },
++     ],
++     "label": "Gmail",
++     "slug": "gmail",
++   },
++ ]
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:135:46
+    133|   const row=mode==="kind"?inner:mode==="response-kind"?{response:inner…
+    134|   reply={data:{results:[{index:0,tool_slug:"GMAIL_GET_PROFILE",success…
+    135|   expect(composio.appsNeedingReconnect(cfg)).toEqual([]);expect(reads)…
+       |                                              ^
+    136| });
+    137|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[28/47]⎯
+
+ FAIL  server/connector-reconnect-r3-preflight.test.ts > R3 broker diagnostic in a failed row only suppresses reconnect
+AssertionError: expected +0 to be 1 // Object.is equality
+
+- Expected
++ Received
+
+- 1
++ 0
+
+ ❯ server/connector-reconnect-r3-preflight.test.ts:140:72
+    138| it("R3 broker diagnostic in a failed row only suppresses reconnect",as…
+    139|   reply={results:[{index:0,tool_slug:"GMAIL_GET_PROFILE",successful:fa…
+    140|   expect(composio.appsNeedingReconnect(cfg)).toEqual([]);expect(reads)…
+       |                                                                        ^
+    141| });
+    142|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[29/47]⎯
+
+ FAIL  server/connector-reconnect-r3-schedule.test.ts > R4a three monitor ticks without routines only refresh inventory
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tick server/connector-reconnect-r3-schedule.test.ts:54:61
+
+ ❯ server/connector-reconnect-r3-schedule.test.ts:57:39
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[30/47]⎯
+
+ FAIL  server/connector-reconnect-r3-schedule.test.ts > R4b disabled=false or outside lookahead=30 has no reads
+ FAIL  server/connector-reconnect-r3-schedule.test.ts > R4b disabled=true or outside lookahead=61 has no reads
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tick server/connector-reconnect-r3-schedule.test.ts:54:61
+
+ ❯ server/connector-reconnect-r3-schedule.test.ts:61:85
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[31/47]⎯
+
+ FAIL  server/connector-reconnect-r3-schedule.test.ts > R4c learned gmail due in 30 minutes reads each gmail account once, never slack
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tick server/connector-reconnect-r3-schedule.test.ts:54:61
+
+ ❯ server/connector-reconnect-r3-schedule.test.ts:66:85
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[32/47]⎯
+
+ FAIL  server/connector-reconnect-r3-schedule.test.ts > R4d first scheduled dispatch preflights at runtime and learns toolkit
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tick server/connector-reconnect-r3-schedule.test.ts:54:61
+
+ ❯ server/connector-reconnect-r3-schedule.test.ts:71:3
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[33/47]⎯
+
+ FAIL  server/connector-reconnect-r3-schedule.test.ts > R4 retention unions real dispatches, reloads, scopes owner and revision, deletes stale learning
+AssertionError: expected undefined to be defined
+ ❯ server/connector-reconnect-r3-schedule.test.ts:84:43
+     82|   await dispatch("SLACK_TEST_AUTH",{account:"S"},{scheduled:true,routi…
+     83|   const ledger=new ConnectorHealthStore(join(DATA_DIR,"connector-healt…
+     84|   expect((ledger as any).routineToolkits).toBeDefined();
+       |                                           ^
+     85|   const record=Object.values((ledger as any).routineToolkits)[0] as an…
+     86|   expect(record.slugs).toEqual(["gmail","slack"]);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[34/47]⎯
+
+ FAIL  server/connector-reconnect-r3-schedule.test.ts > R4 bounded best effort: tick phase, restart budget, newly enabled and overdue runs
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ tick server/connector-reconnect-r3-schedule.test.ts:54:61
+
+ ❯ server/connector-reconnect-r3-schedule.test.ts:103:77
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[35/47]⎯
+
+
+ Test Files  4 failed (4)
+      Tests  47 failed | 7 passed | 27 skipped (81)
+   Start at  05:02:55
+   Duration  19.01s (transform 7.85s, setup 11.09s, import 1.30s, tests 5.97s, environment 0ms)
+
+JSON report written to /work/lane-evidence/connector-reconnect-r3/red-final.json

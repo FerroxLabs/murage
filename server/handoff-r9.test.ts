@@ -244,7 +244,7 @@ describe("R9-02: a turn's transcript check costs its window, not the history", (
     // the direct turn judges only the newest text lines of the branch, read from the line index in a doubling window (turnctx), never the active path.
     // The widening loop is turnReplayInputs (memory/turn-replay-inputs.ts, the one call the lineage warmer's confirm makes too); the turn calls it.
     const inputs = readFileSync(new URL("./memory/turn-replay-inputs.ts", import.meta.url), "utf8");
-    expect(inputs).toMatch(/store\.activeTextLines\(threadId, window - headSlot\)[^]*?botMessages\(database\(\), botViewer\(botId\), threadId, branchTail\.messages\)/);
+    expect(inputs).toMatch(/store\.activeTextLines\(threadId, window - headSlot\)[^]*?botMessages\(database\(\), botViewer\(botId\), threadId, branchTail\.messages\.slice\(start, start \+ REPLAY_SLICE_LINES\)\)/);
     expect(index).toMatch(/turnReplayInputs\(\{ store, threadId, botId: bot\.id,/);
     // the window bound stays the whole window: the direct turn passes no headSlot (the helper reads it as 0), and the helper defaults it to 0
     // (Astra and Fable seat 10, 912a1ac78: the moved guard must pin headSlot)

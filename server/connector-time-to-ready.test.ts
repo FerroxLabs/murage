@@ -131,6 +131,7 @@ afterAll(async () => {
 async function timeToReady(): Promise<{ initializeMs: number; readyMs: number; tools: string[] }> {
   const started = Date.now();
   const child = spawn(process.execPath, ["--experimental-strip-types", ENTRY], {
+    windowsHide: true,
     env: { ...process.env, MURAGE_CONNECTOR_UPSTREAM_URL: `${harnessUrl}/api/internal/connectors/mcp`, MURAGE_CONNECTOR_UPSTREAM_HEADERS: "{}", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: mkdtempSync(join(tmpdir(), "ttr-cache-")) },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -157,7 +158,7 @@ async function timeToReady(): Promise<{ initializeMs: number; readyMs: number; t
 describe("connected apps time to ready under CPU load", () => {
   for (const busyLoops of [2, 4]) {
     it(`answers initialize at once and is ready within its budgets (${busyLoops} busy loops)`, { timeout: 90_000, ...windowsPerfBudget() }, async () => {
-      for (let i = 0; i < busyLoops; i++) loops.push(spawn(process.execPath, ["-e", "for(;;){}"], { stdio: "ignore" }));
+      for (let i = 0; i < busyLoops; i++) loops.push(spawn(process.execPath, ["-e", "for(;;){}"], { windowsHide: true, stdio: "ignore" }));
       try {
         await freshApp();
         toolsListDelayMs = BROKER_TOOLS_LIST_MS;
@@ -193,6 +194,7 @@ describe("connected apps time to ready under CPU load", () => {
 async function mountAndWatch(watchMs: number): Promise<{ first: any; changedAtMs: number | null; relisted: any }> {
   const started = Date.now();
   const child = spawn(process.execPath, ["--experimental-strip-types", ENTRY], {
+    windowsHide: true,
     env: { ...process.env, MURAGE_CONNECTORS_TOKEN: "turn-token", MURAGE_CONNECTOR_UPSTREAM_URL: `${harnessUrl}/api/internal/connectors/mcp`, MURAGE_CONNECTOR_UPSTREAM_HEADERS: "{}", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: mkdtempSync(join(tmpdir(), "ttr-cache-")) },
     stdio: ["pipe", "pipe", "pipe"],
   });

@@ -1,9 +1,13 @@
+import { withHideInherit } from "../../../shared/win-hide-child-process.mjs";
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 import { OpenCodeDestinationResolver } from "../../opencode-destination.ts";
 import { typedOpenCodeModel } from "../../../shared/opencode-model-id.ts";
 import { declareTypedOpenCodeModel } from "./opencode-typed-model.ts";
+import { applyCatalogRestrictions, routeKey, type Restriction } from "./opencode-tool-budget.ts";
 // The maintained OpenCode CLI through its ACP stdio interface. OpenCode is
 // the harness; Zen, Go, OpenRouter, and user-configured/local providers are
 // models discovered from that harness rather than separate Murage drivers.
+import { assertFluxNotPaused } from "../../cloud-home/flux-home-gate.ts";
 import { memoDeps, pathExists, readText } from "../isolation-cache.ts";
 import { currentScopeHome, engineConfigInvalid, registerScopeReconstructor, scopedCliHome, scopedCliHomeRoot, type ScopedCliHomeSpec } from "../scoped-cli-home.ts";
 import { execFile } from "node:child_process";
@@ -186,7 +190,7 @@ export function parseOpenCodeModelsOutput(stdout: string): ModelCatalog | null {
     const raw = jsonLines.join("\n").trim();
     if (raw) {
       try {
-        const parsed = JSON.parse(raw) as unknown;
+        const parsed = registerBusyloopPayloadSite("read", JSON.parse(raw)) as unknown;
         if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
           record = parsed as Record<string, unknown>;
         }
@@ -337,6 +341,7 @@ export const stripForeignProviderKeys = (env: Record<string, string | undefined>
     // The launcher renders the Flux provider table into opencode.json and hands the key to
     // OpenCode only in OPENCODE_AUTH_CONTENT, never in a file (CLOUD-ENGINES-DESIGN.md r2 H1).
     const key = fluxKey();
+    if (key) assertFluxNotPaused();
     if (key) cloudTurnRender(env, "route", { provider: OPENCODE_FLUX_PROVIDER, baseUrl: FLUX_OPENAI_BASE, model: FLUX_MODELS[0].id,
       models: FLUX_MODELS.map(tier => tier.id), apiKey: key, label: "Flux Router" });
   }
@@ -455,7 +460,7 @@ function hasStoredOpenCodeAuth(env: Record<string, string | undefined>) {
   }
   return candidates.some((raw) => {
     try {
-      return usableAuthEntry(JSON.parse(raw) as Record<string, unknown>);
+      return usableAuthEntry(registerBusyloopPayloadSite("read", JSON.parse(raw)) as Record<string, unknown>);
     } catch {
       return false;
     }
@@ -591,7 +596,7 @@ function scanOwnerOpenCodeMcpNames(files: string[]): string[] {
   const names = new Set<string>();
   for (const file of files) {
     let mcp: unknown;
-    try { mcp = (JSON.parse(jsoncToJson(readText(file))) as { mcp?: unknown } | null)?.mcp; } catch { continue; }
+    try { mcp = (registerBusyloopPayloadSite("read", JSON.parse(jsoncToJson(readText(file)))) as { mcp?: unknown } | null)?.mcp; } catch { continue; }
     if (mcp && typeof mcp === "object" && !Array.isArray(mcp)) for (const name of Object.keys(mcp)) names.add(name);
   }
   return [...names].sort();
@@ -617,7 +622,7 @@ export function isolateOpenCodeFromPersonalSetup(env: Record<string, string | un
   if (!names.length) return;
   let base: Record<string, unknown> = {};
   try {
-    const parsed = env.OPENCODE_CONFIG_CONTENT?.trim() ? JSON.parse(env.OPENCODE_CONFIG_CONTENT) as unknown : {};
+    const parsed = env.OPENCODE_CONFIG_CONTENT?.trim() ? registerBusyloopPayloadSite("read", JSON.parse(env.OPENCODE_CONFIG_CONTENT)) as unknown : {};
     if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) base = parsed as Record<string, unknown>;
   } catch { /* an unparseable overlay is replaced, as opencodeConfigOverlay does */ }
   const mcp = base.mcp && typeof base.mcp === "object" && !Array.isArray(base.mcp) ? base.mcp as Record<string, unknown> : {};
@@ -650,6 +655,8 @@ export function openCodeTurnPermission(): Record<string, unknown> {
   return {
     "*": "ask",
     ...Object.fromEntries(OPENCODE_ASKED_TOOLS.map((tool) => [tool, "ask"])),
+    // Native page fetching has a separate lossy transport. Route pages to web_read.
+    webfetch: "deny",
     read,
     glob: "allow",
     grep: "allow",
@@ -667,7 +674,7 @@ export function applyOpenCodeTurnPermission(env: Record<string, string | undefin
   const raw = env.OPENCODE_CONFIG_CONTENT?.trim();
   if (raw) {
     try {
-      const parsed = JSON.parse(raw) as unknown;
+      const parsed = registerBusyloopPayloadSite("read", JSON.parse(raw)) as unknown;
       if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) base = parsed as Record<string, unknown>;
     } catch { /* an unparseable overlay is replaced, as opencodeConfigOverlay does */ }
   }
@@ -678,6 +685,31 @@ export function applyOpenCodeTurnPermission(env: Record<string, string | undefin
   // on `build`, never on an agent of the owner's own config.
   const agent = Object.fromEntries(OPENCODE_AGENTS.map((name) => [name, { permission }]));
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({ ...base, permission, agent, default_agent: "build" });
+}
+
+/** Append catalog permissions from an immutable baseline on every revision. */
+export function applyToolCatalogDenies(env: Record<string, string | undefined>, restrictions: readonly Restriction[], base?: Record<string, unknown>): void {
+  const overlay = base ?? JSON.parse(env.OPENCODE_CONFIG_CONTENT ?? "{}");
+  env.OPENCODE_CONFIG_CONTENT = JSON.stringify(applyCatalogRestrictions(overlay, restrictions));
+}
+
+export function openCodeBudgetRoute(env: Record<string, string | undefined>, config: { cli: string }, version: string, model: string): string | undefined {
+  if (!version) return;
+  const launch = resolveCli(config.cli, [], envSearchPath(env));
+  let executable = launch.command;
+  if (!isAbsolute(executable)) {
+    for (const directory of (envSearchPath(env) ?? "/usr/bin:/bin").split(delimiter)) {
+      const candidate = resolve(directory || ".", executable);
+      try { accessSync(candidate, fsConstants.X_OK); if (statSync(candidate).isFile()) { executable = realpathSync(candidate); break; } } catch { /* next PATH entry */ }
+    }
+  } else { try { executable = realpathSync(executable); } catch { return; } }
+  let auth: Buffer | undefined;
+  for (const path of storedAuthPaths(env)) {
+    if (!existsSync(path)) continue;
+    try { if (!statSync(path).isFile() || statSync(path).size > 1024 * 1024) return; auth = readFileSync(path); } catch { return; }
+    break;
+  }
+  return routeKey({ executable, version, model, env, auth });
 }
 
 /** OpenCode's own agents: `build` (the default), `plan`, and the subagents it starts. */
@@ -737,7 +769,7 @@ function rebaseOpenCodeReferences(references: unknown, sourceDir: string): unkno
 /** The owner's config file without the keys above and with config-relative references rebased to `sourceDir`; null for text that cannot be read as a JSON or JSONC object. */
 export function filterOpenCodeConfigFile(text: string, sourceDir: string): string | null {
   try {
-    const parsed: unknown = JSON.parse(jsoncToJson(rebaseOpenCodeFileRefs(text, sourceDir)));
+    const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(jsoncToJson(rebaseOpenCodeFileRefs(text, sourceDir))));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const rest = { ...(parsed as Record<string, unknown>) };
     for (const key of OPENCODE_PERSONAL_CONFIG_KEYS) delete rest[key];
@@ -801,7 +833,7 @@ function runGit(folder: string, args: string[]): Promise<void> {
   env.GIT_CONFIG_GLOBAL = join(folder, ".no-global-config");
   env.GIT_CEILING_DIRECTORIES = dirname(folder);
   return new Promise((resolveGit, rejectGit) => {
-    execFile("git", ["-C", folder, ...args], { cwd: folder, env, timeout: 10_000, windowsHide: true }, (error) => (error ? rejectGit(error) : resolveGit()));
+    execFile("git", ["-C", folder, ...args], withHideInherit({ cwd: folder, env, timeout: 10_000, windowsHide: true }), (error) => (error ? rejectGit(error) : resolveGit()));
   });
 }
 
@@ -840,6 +872,9 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => {
   // OpenCode starts every ACP mount it is handed, even one its config disables
   // (isolateOpenCodeFromPersonalSetup, rig 1.15.11 and 1.18.35), with no readiness signal.
   mcpListedWait: true,
+  spawnNeedsCliVersion: true,
+  scopeVersionRequired: false,
+  toolBudget: { routeKey: openCodeBudgetRoute },
   // Keep the historical driver kind so existing bots and instance config do
   // not break; only the product name/catalog expand from Go to OpenCode.
   displayName: "OpenCode",
@@ -954,7 +989,7 @@ const support = (loadCatalog: OpenCodeCatalogLoader): AcpSupport => {
     // The merges build new catalogs; the source of the CLI list is carried over.
     return listed.source ? { ...merged, source: listed.source } : merged;
   },
-  spawnFingerprint: (_env, config) => `opencode-catalog#${openCodeCatalogRevision(config.cli)}`,
+  spawnFingerprint: (env, config) => `opencode-catalog#${openCodeCatalogRevision(config.cli)}#${createHash("sha256").update(env.OPENCODE_CONFIG_CONTENT ?? "").digest("hex")}`,
   buildPromptText: (turn) => turn.system ? `${turn.system}\n\n${turn.text}` : turn.text,
 });
 };

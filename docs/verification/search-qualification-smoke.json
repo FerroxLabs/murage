@@ -1,0 +1,307 @@
+{
+  "schema": 1,
+  "scope": "synthetic harness smoke; no release qualification",
+  "base": "102c9a79f6e3a564257f5f689aa8d528f427c5d5",
+  "fullTypecheck": "passed",
+  "harnessTypecheck": "passed",
+  "macosWorkflowYaml": "parsed; never dispatched",
+  "defaultVitestSelection": "qualification files excluded",
+  "legs": {
+    "q1-103k": {
+      "normal": {
+        "activeTests": 1,
+        "passed": 0,
+        "failed": 1,
+        "failedBars": [
+          "event-loop"
+        ],
+        "injectedBar": null,
+        "injectionComputedPass": null,
+        "raw": {
+          "n": 120,
+          "owner": {
+            "n": 232,
+            "p99": 7.9986599999992904,
+            "max": 25.704789000000346
+          },
+          "eventLoop": {
+            "p99": 20.791295,
+            "max": 60.522495,
+            "eld250": 0,
+            "samples": 1092
+          },
+          "rebuildMs": 285.6691410000003,
+          "mainFTSStatements": 0
+        }
+      },
+      "deliberateFailure": {
+        "activeTests": 1,
+        "passed": 0,
+        "failed": 1,
+        "failedBars": [
+          "main-fts",
+          "event-loop"
+        ],
+        "injectedBar": "main-fts",
+        "injectionComputedPass": false,
+        "raw": {
+          "n": 120,
+          "owner": {
+            "n": 232,
+            "p99": 8.735661999999138,
+            "max": 10.375255999999354
+          },
+          "eventLoop": {
+            "p99": 21.364735,
+            "max": 62.193663,
+            "eld250": 0,
+            "samples": 1078
+          },
+          "rebuildMs": 307.7227899999998,
+          "mainFTSStatements": 2
+        }
+      }
+    },
+    "q1-1m": {
+      "normal": {
+        "activeTests": 1,
+        "passed": 0,
+        "failed": 1,
+        "failedBars": [
+          "event-loop"
+        ],
+        "injectedBar": null,
+        "injectionComputedPass": null,
+        "raw": {
+          "n": 120,
+          "owner": {
+            "n": 232,
+            "p99": 7.917697999999291,
+            "max": 23.92350099999976
+          },
+          "eventLoop": {
+            "p99": 22.200319,
+            "max": 55.574527,
+            "eld250": 0,
+            "samples": 1068
+          },
+          "rebuildMs": 284.450370999999,
+          "mainFTSStatements": 0
+        }
+      },
+      "deliberateFailure": {
+        "activeTests": 1,
+        "passed": 0,
+        "failed": 1,
+        "failedBars": [
+          "main-fts",
+          "event-loop"
+        ],
+        "injectedBar": "main-fts",
+        "injectionComputedPass": false,
+        "raw": {
+          "n": 120,
+          "owner": {
+            "n": 232,
+            "p99": 7.118532000000414,
+            "max": 23.523286999999982
+          },
+          "eventLoop": {
+            "p99": 22.249471,
+            "max": 51.216383,
+            "eld250": 0,
+            "samples": 1075
+          },
+          "rebuildMs": 282.80345699999816,
+          "mainFTSStatements": 2
+        }
+      }
+    },
+    "q2-diskfull": {
+      "normal": {
+        "activeTests": 1,
+        "passed": 0,
+        "failed": 1,
+        "failedBars": [
+          "atomic-owner"
+        ],
+        "injectedBar": null,
+        "injectionComputedPass": null,
+        "raw": {
+          "integrityChecks": {
+            "messages": true,
+            "search": true
+          },
+          "expected": {
+            "count": 35,
+            "hash": "93ba14a10ddef1c2df3d303589ceef21729555f2a61b95be32b33673ab46e46d"
+          },
+          "atFull": {
+            "count": 35,
+            "hash": "93ba14a10ddef1c2df3d303589ceef21729555f2a61b95be32b33673ab46e46d"
+          },
+          "after": {
+            "count": 35,
+            "hash": "93ba14a10ddef1c2df3d303589ceef21729555f2a61b95be32b33673ab46e46d"
+          },
+          "committed": 3,
+          "rejected": 197,
+          "maskedFull": 198,
+          "spaceRecoveryMs": 64.45721799999956
+        }
+      },
+      "deliberateFailure": {
+        "activeTests": 1,
+        "passed": 0,
+        "failed": 1,
+        "failedBars": [
+          "atomic-owner",
+          "integrity"
+        ],
+        "injectedBar": "integrity",
+        "injectionComputedPass": false,
+        "raw": {
+          "integrityChecks": {
+            "messages": true,
+            "search": false
+          },
+          "expected": {
+            "count": 35,
+            "hash": "93ba14a10ddef1c2df3d303589ceef21729555f2a61b95be32b33673ab46e46d"
+          },
+          "atFull": {
+            "count": 35,
+            "hash": "93ba14a10ddef1c2df3d303589ceef21729555f2a61b95be32b33673ab46e46d"
+          },
+          "after": {
+            "count": 35,
+            "hash": "93ba14a10ddef1c2df3d303589ceef21729555f2a61b95be32b33673ab46e46d"
+          },
+          "committed": 3,
+          "rejected": 197,
+          "maskedFull": 198,
+          "spaceRecoveryMs": 85.43681600000127
+        }
+      }
+    },
+    "q3-copy": {
+      "normal": {
+        "activeTests": 1,
+        "passed": 1,
+        "failed": 0,
+        "failedBars": [],
+        "injectedBar": null,
+        "injectionComputedPass": null,
+        "raw": {
+          "n": 64,
+          "owner": {
+            "n": 100,
+            "p99": 3.381793000000471,
+            "max": 3.4317989999999554
+          },
+          "rebuildMs": 76.97840200000064,
+          "rebuildStart": {
+            "builtCursor": "65",
+            "indexedRows": 0
+          },
+          "duringBuild": {
+            "n": 2,
+            "p99": 11.49670800000058,
+            "max": 11.49670800000058
+          }
+        }
+      },
+      "deliberateFailure": {
+        "activeTests": 1,
+        "passed": 0,
+        "failed": 1,
+        "failedBars": [
+          "rebuild-owner",
+          "parity"
+        ],
+        "injectedBar": "parity",
+        "injectionComputedPass": false,
+        "raw": {
+          "n": 64,
+          "owner": {
+            "n": 100,
+            "p99": 2.74643499999911,
+            "max": 2.932585000000472
+          },
+          "rebuildMs": 111.78581800000029,
+          "rebuildStart": {
+            "builtCursor": "65",
+            "indexedRows": 0
+          },
+          "duringBuild": {
+            "n": 2,
+            "p99": 22.82379200000014,
+            "max": 22.82379200000014
+          }
+        }
+      }
+    },
+    "rig-smoke": {
+      "normal": {
+        "activeTests": 1,
+        "passed": 1,
+        "failed": 0,
+        "failedBars": [],
+        "injectedBar": null,
+        "injectionComputedPass": null,
+        "raw": {
+          "newFails": [],
+          "mergedCases": {
+            "C16": false,
+            "C18": false
+          }
+        }
+      },
+      "deliberateFailure": {
+        "activeTests": 1,
+        "passed": 0,
+        "failed": 1,
+        "failedBars": [
+          "new-fails"
+        ],
+        "injectedBar": "new-fails",
+        "injectionComputedPass": false,
+        "raw": {
+          "newFails": [
+            "server/synthetic.test.ts :: regression"
+          ],
+          "mergedCases": {
+            "C16": false,
+            "C18": false
+          }
+        }
+      }
+    }
+  },
+  "legacyReferenceSmoke": {
+    "base": "b4dc27ea9",
+    "n": 120,
+    "shadowBytes": 32768,
+    "pass": {
+      "legacy": true
+    }
+  },
+  "leakGuard": {
+    "version": 2,
+    "patternsCompiled": 32,
+    "addedLineMatches": 0,
+    "wholeIndexMatches": 583,
+    "wholeBaseMatches": 583,
+    "newWholeMatches": 0
+  },
+  "reviewBase": "da2ca6b8b23f69e2340b7a97cc7a007fa771ace3",
+  "reviewRegressions": {
+    "redBehaviour": 7,
+    "greenPassed": 7,
+    "greenFailed": 0,
+    "evidence": "evidence/r4/afix-red and evidence/afix/green-final.json",
+    "mutantsKilled": 9,
+    "mutantEvidence": "evidence/r4/afix-mutants"
+  },
+  "englishInventory": "search-qualification-english.json"
+}

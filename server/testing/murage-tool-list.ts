@@ -11,6 +11,7 @@ export function murageToolList(server: "agents" | "memory", role: "lead" | "memb
   if (result) return result;
   result = new Promise((resolve, reject) => {
     const child = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL(`../drivers/${server}-proxy.ts`, import.meta.url))], {
+      windowsHide: true,
       env: { ELECTRON_RUN_AS_NODE: "1", MURAGE_PROJECT_ROLE: role }, stdio: ["pipe", "pipe", "ignore"],
     });
     let buffer = "", answered = false;

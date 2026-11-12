@@ -213,7 +213,7 @@ export type PkexecRun = (file: string, args: string[], tarDirectory: string) => 
 const runPkexec: PkexecRun = (file, args, tarDirectory) => new Promise((done) => {
   let stderr = "", settled = false;
   const finish = (code: number | null) => { if (!settled) { settled = true; done({ code, stderr }); } };
-  const child = spawn(file, args, { stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
+  const child = spawn(file, [...args], { stdio: ["pipe", "ignore", "pipe"], windowsHide: true });
   const tar = spawn(TAR, ["-C", tarDirectory, "-cf", "-", "."], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   const timer = setTimeout(() => { child.kill("SIGKILL"); tar.kill("SIGKILL"); }, 10 * 60_000);
   child.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk).slice(-4096); });

@@ -60,13 +60,13 @@ async function enterBrowser(codeProof?:"email"):Promise<Device> {
 beforeAll(async()=>{const instrumentationSource="const path=await import('node:path'),url=await import('node:url');const controlFixture=await import(url.pathToFileURL(path.join(process.cwd(),'server/cloud-home/control-state-verification.fixture.mjs')).href);controlFixture.installVerificationControl("+JSON.stringify(origin)+","+JSON.stringify(cpKeyPem)+");";fixture=await launchVerificationServer({},undefined,{cloud:{publicOrigin:origin,bootstrapSecret:secret},instrumentationSource,readyTimeoutMs:60_000});environmentId=(await api("GET","/.well-known/murage/environment")).body.environmentId;owner=await pair("owner-desktop");phone=await pair("owner-phone",owner);browser=await enterBrowser("email");chatBrowser=await enterBrowser();},90_000);
 afterAll(async()=>{await fixture?.close();});
 
-it.each(["/api/chats", "/api/search?view=chats&q=preview"])("C2 audience at %s admits owner actions and refuses remembered browsers", async path => {
-  for (const device of [owner, phone]) {
+it.each(["/api/chats", "/api/search?view=chats&q=preview"])("C2 audience at %s admits owner actions and the owner browser, refuses a chat-only browser", async path => {
+  for (const device of [owner, phone, browser]) {
     const answer = await api("GET", path, undefined, device);
     expect(answer.status).toBe(200);
     expect(answer.body.gen).toMatchObject({ epoch: expect.any(String), rev: expect.any(Number) });
   }
-  for (const device of [browser, chatBrowser]) {
+  for (const device of [chatBrowser]) {
     const answer = await api("GET", path, undefined, device);
     expect(answer.status).toBe(404);
     expect(answer.body.gen).toBeUndefined();
@@ -79,9 +79,10 @@ it("C2 Cloud audience matrix agrees across both routes, hello, live and replay",
   const { bumpChatsGen, readChatsGen } = await import("./thread-summary.ts");
   const passkey = await enterBrowser("email");
   const db = new DatabaseSync(join(fixture.info.dataDir,"messages.db"));
+  db.exec("PRAGMA busy_timeout=10000"); // the home's own writers (WAL worker, heartbeats) hold the lock for moments; this side connection waits its turn
   db.prepare("UPDATE cloud_browser_factors SET kind='passkey', expiresAt=NULL WHERE device=?").run(passkey.deviceId);
   const barrierBot=(await api("POST","/api/bots",{name:"Audience barrier"},owner)).body.bot;
-  const rows = [[owner,true],[phone,true],[passkey,true],[browser,false],[chatBrowser,false]] as const;
+  const rows = [[owner,true],[phone,true],[passkey,true],[browser,true],[chatBrowser,false]] as const;
   try {
     for (const [device,admitted] of rows) {
       const headers:Record<string,string> = {host:"home.example.test",origin,...(device.cookie ? {cookie:device.cookie} : {authorization:`Bearer ${device.accessToken}`})};
@@ -121,12 +122,14 @@ describe("cloud sign-in at the actual HTTP dispatcher",()=>{
   expect((await api("POST",path,body,owner,signed)).status).toBe(201);
   expect((await api("POST",path,body,owner,signed)).status).toBe(403);
  });
- it("an owner-factor browser gets the owner's conversation, companion, Inbox and Settings reads; a bare door browser gets no Inbox; phone and browser cannot write credentials",async()=>{
+ it("an owner-factor browser gets the owner's conversation, companion, Inbox and Settings reads; a bare door browser gets no Inbox; the phone cannot write credentials and the browser reaches the credential routes",async()=>{
   for(const path of ["/api/config","/api/bots","/api/inbox","/api/decisions","/api/about-me","/api/house-rules"])expect((await api("GET",path,undefined,browser)).status,path).toBe(200);
   expect((await api("GET","/api/inbox",undefined,phone)).status).toBe(200);
   // No owner factor: the door browser is chat-level and the Inbox stays unavailable, by status and by body.
   expect(await api("GET","/api/inbox",undefined,chatBrowser)).toMatchObject({status:404,body:{error:"Inbox is unavailable."}});
-  for(const d of [phone,browser])expect((await api("POST","/api/provider-connections",{},d)).status).toBe(403);
+  expect((await api("POST","/api/provider-connections",{},phone)).status).toBe(403);
+  // DESIGN 3.1: an owner browser may keep provider keys without a code, so route policy admits it; the bare path has no handler, hence 404.
+  expect((await api("POST","/api/provider-connections",{},browser)).status).toBe(404);
  });
  it("a phone's unsent image upload is shown to the phone but not to a remembered-owner browser",async()=>{
   const png=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==","base64");
@@ -144,7 +147,7 @@ describe("cloud sign-in at the actual HTTP dispatcher",()=>{
   expect((await api("PATCH",path,body,owner)).status).toBe(403);
   expect((await api("PATCH",path,body,owner,{"x-murage-step-up":await step(owner,"PATCH",path,body)})).status).toBe(200);
  });
- it("folder decisions read on the owner's desktop and refuse the phone and a remembered-owner browser, at the real dispatcher (FUIGO-TRUST-V2 S7)",async()=>{
+ it("folder decisions read on the owner's desktop and refuse the phone and ask the owner browser for a code, at the real dispatcher (FUIGO-TRUST-V2 S7)",async()=>{
   const folder=encodeURIComponent(fixture.info.dataDir),read=`/api/folder-trust?folder=${folder}`,refused={status:403,body:{error:cloudHomeCopy.phoneCredential}};
   const before=await api("GET",read,undefined,owner);expect(before.status).toBe(200);expect(Array.isArray(before.body.records)).toBe(true);
   expect(await api("GET",read,undefined,phone)).toMatchObject(refused);
@@ -152,7 +155,11 @@ describe("cloud sign-in at the actual HTTP dispatcher",()=>{
    expect(await api(method,path,body,phone)).toMatchObject(refused);
    expect(await api(method,path,body,phone,{"x-murage-step-up":await step(phone,method,path,body)})).toMatchObject(refused);
   }
-  expect((await api("GET",read,undefined,browser)).status).toBe(403);
+  // The owner's browser reads the list; a Forget or a Trust asks for the emailed code (a code-needed answer, not a hard deny).
+  expect((await api("GET",read,undefined,browser)).status).toBe(200);
+  for(const [method,path,body] of [["POST","/api/folder-trust",{bot:"fixture",thread:"fixture"}],["DELETE",`/api/folder-trust?key=${folder}`,{}]] as const){
+   const noCode=await api(method,path,body,browser);expect(noCode.status).toBe(403);expect(noCode.body).toMatchObject({code:"email_code",label:"folder_trust"});expect(noCode.body.error).not.toBe(cloudHomeCopy.phoneCredential);
+  }
   expect((await api("GET",read,undefined,owner)).body.records).toEqual(before.body.records);
  });
  it("bare loopback and forged desktop headers have service authority only",async()=>{expect(await api("GET","/api/health")).toMatchObject({status:200,body:{role:"home"}});expect((await api("GET","/api/decisions",undefined,undefined,{host:"127.0.0.1","x-murage-surface":"desktop","x-murage-surface-secret":"fake"})).status).toBe(403);expect((await api("GET","/api/desktop-secret",undefined,owner)).status).toBe(403);});
@@ -181,12 +188,12 @@ describe("cloud sign-in at the actual HTTP dispatcher",()=>{
   expect((await attempt(()=>({pairHoldId:a,pairHoldProof:pairHoldProof(a,{deviceKeyDigest:pairDeviceDigest(first)})}),other)).body.error).toBe(cloudHomeCopy.pairHoldRequired);
  });
  it("a session alone cannot satisfy step-up or add a device",async()=>{expect((await api("PATCH","/api/config",{},owner)).body.error).toBe("step-up required");const k=keys(),body={account:"fixture-owner",scope:"owner-desktop",publicKey:k.key.publicKey.export({type:"spki",format:"pem"}).toString(),assertionKey:k.factor.publicKey.export({type:"spki",format:"pem"}).toString(),timestamp:Date.now()/1000,nonce:randomUUID()};expect((await api("POST","/api/cloud/pairing",body,owner,{"x-murage-signature":createHmac("sha256",secret).update(JSON.stringify(body)).digest("hex")})).body.error).toBe("step-up required");});
- it("sets the routine time zone from owner desktop or phone, rejects browser and invalid zones without step-up",async()=>{
+ it("sets the routine time zone from owner desktop, phone or remembered-owner browser (DESIGN onboarding row), rejects invalid zones without step-up",async()=>{
   expect(await api("PUT","/api/owner/timezone",{timeZone:"Europe/London"},owner)).toMatchObject({status:200,body:{timeZone:"Europe/London"}});
   expect(await api("PUT","/api/owner/timezone",{timeZone:"Asia/Bangkok"},phone)).toMatchObject({status:200,body:{timeZone:"Asia/Bangkok"}});
-  expect((await api("PUT","/api/owner/timezone",{timeZone:"UTC"},browser)).status).toBe(403);
+  expect(await api("PUT","/api/owner/timezone",{timeZone:"UTC"},browser)).toMatchObject({status:200,body:{timeZone:"UTC"}});
   expect((await api("PUT","/api/owner/timezone",{timeZone:"fixture/invalid"},owner)).status).toBe(400);
-  expect(JSON.parse(readFileSync(`${fixture.info.dataDir}/owner.json`,"utf8")).owner.timeZone).toBe("Asia/Bangkok");
+  expect(JSON.parse(readFileSync(`${fixture.info.dataDir}/owner.json`,"utf8")).owner.timeZone).toBe("UTC");
  });
  it("uses the required paired-device and phone credential refusal copy",async()=>{
   expect((await api("GET","/api/decisions")).body.error).toBe(cloudHomeCopy.pairedDeviceRequired);

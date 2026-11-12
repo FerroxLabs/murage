@@ -25,6 +25,8 @@ async function turn(model: string, selectedRoute?: ReturnType<typeof route>) {
   expect(plan.ok?.env.OPENCODE_DISABLE_PROJECT_CONFIG).toBe("1");
   return { result, plan: plan.ok };
 }
+// The driver always sets a permission and agent overlay since ENGINES-C11 (0058cec1b); what these routes must not carry is a provider or a Flux header.
+const noProviderOverlay = (content: string | undefined) => { if (content !== undefined) { expect(content).not.toMatch(/x-flux|"provider"|fluxrouter/) ; expect(JSON.parse(content)).not.toHaveProperty("provider"); } };
 it("(a) refuses a local-host Flux alias before handing a launch to the launcher", async () => {
   const out = await turn("host/m", route("host", "https://api.fluxrouter.ai/v1"));
   expect(out.result).toBe("refuse-alias"); expect(out.plan).toBeUndefined();
@@ -33,7 +35,7 @@ it("(b) renders the non-Flux local route without Flux headers", async () => {
   const out = await turn("host/m", route("host", "https://fixture.example/v1"));
   expect(out.result).toBe("other");
   expect(JSON.stringify(out.plan?.files)).toContain("fixture.example");
-  expect(out.plan?.env.OPENCODE_CONFIG_CONTENT).toBeUndefined();
+  noProviderOverlay(out.plan?.env.OPENCODE_CONFIG_CONTENT);
 });
 it("(c) the connector route and memory-off overlay reach the launcher config", async () => {
   const out = await turn("flux/m", route("flux", "https://api.fluxrouter.ai/v1"));
@@ -47,7 +49,7 @@ it("(d) the launcher continues to refuse debug config", () => {
 });
 it.each([true, false])("(e) a native model carries no headers, connector route present=%s", async present => {
   const out = await turn("opencode/native", present ? route("flux", "https://api.fluxrouter.ai/v1") : undefined);
-  expect(out.result).toBe("other"); expect(out.plan?.env.OPENCODE_CONFIG_CONTENT).toBeUndefined();
+  expect(out.result).toBe("other"); noProviderOverlay(out.plan?.env.OPENCODE_CONFIG_CONTENT);
 });
 it("the launcher refuses a typed URL overlay and excludes a planted home config", async () => {
   const home = rig.home("opencodeGo"); mkdirSync(join(home, ".config/opencode"), { recursive: true });

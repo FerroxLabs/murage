@@ -8,6 +8,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { ensureDirs } from "./config.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { recordEvents } from "./testing/events.ts";
 import type { InstanceConfigMap, ProviderInstance } from "./contracts.ts";
@@ -248,6 +249,8 @@ describe("the 0.1.61 upgrade pin (O12)", () => {
   });
 
   it("ACCEPTANCE: an upgraded sticky flux-ceo bot still runs flux-ceo (fake home)", async () => {
+    // Match app startup: the canonical writer owns native, whose data parent must exist.
+    ensureDirs();
     const { home, root, env } = fakeHome({
       rootModel: "openrouter/root-model",
       sticky: "flux-ceo",
@@ -270,13 +273,14 @@ describe("the 0.1.61 upgrade pin (O12)", () => {
     instance = await HermesAgentDriver.create({
       instanceId: "hermes",
       displayName: "Hermes",
-      environment: { HOME: home, FAKE_ACP_DUMP: dump },
+      environment: { HOME: home, FAKE_ACP_DUMP: dump, FAKE_ACP_TEXT_ONLY: "1" },
       enabled: true,
       config: { cli: FAKE_ACP, fullAuto: true, ...config },
     });
     const recorder = recordEvents(instance.adapter);
     await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-sticky", text: "who are you", model: HERMES_CONFIG_MODEL_ID });
-    await recorder.until((event) => event.type === "turn.completed");
+    expect(await recorder.until((event) => event.type === "turn.completed")).toMatchObject({ ok: true });
+    expect(recorder.events.filter((event) => event.type === "runtime.error")).toEqual([]);
     recorder.stop();
     const { argv } = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[] };
     expect(argv).toEqual(["-p", "flux-ceo", "acp"]);

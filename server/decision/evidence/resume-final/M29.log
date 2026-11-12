@@ -1,0 +1,35 @@
+COMMAND node_modules/.bin/vitest run server/decision/routine-policy.test.ts -t M29
+
+ RUN  v4.1.12 /work
+
+ ❯ server/decision/routine-policy.test.ts (5 tests | 1 failed | 4 skipped) 12ms
+   × R4b R4c M29 owner routines override captured ceiling only while bot is unlimited; draft stays Ask 9ms
+   ↓ A7a core validates exact routine run source, bot and generation
+   ↓ A7a core validates exact routine wake source, bot and generation
+   ↓ A7a core validates exact routine peer source, bot and generation
+   ↓ A7a core validates exact routine project-room source, bot and generation
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 skipped (5)
+   Start at  08:17:08
+   Duration  4.40s (transform 3.39s, setup 4.03s, import 248ms, tests 12ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/routine-policy.test.ts > R4b R4c M29 owner routines override captured ceiling only while bot is unlimited; draft stays Ask
+AssertionError: expected 'auto' to be 'unlimited' // Object.is equality
+
+Expected: "unlimited"
+Received: "auto"
+
+ ❯ server/decision/routine-policy.test.ts:5:54
+      3| import {fixture,d,baseCard} from './fixture.ts';
+      4| it('R4b R4c M29 owner routines override captured ceiling only while bo…
+      5|  expect(ownerRoutineLevel('unlimited','auto',false)).toBe('unlimited')…
+       |                                                      ^
+      6| });
+      7| it.each(['run','wake','peer','project-room'] as const)('A7a core valid…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

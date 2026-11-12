@@ -1,0 +1,6 @@
+RED allow-breakaway (assertion failure, exit 1)
+RED delete-unprefixed-task (assertion failure, exit 1)
+RED desktop-https-dispatch (assertion failure, exit 1)
+RED finalize-inside-child (assertion failure, exit 1)
+RED preserve-running-wrapper (assertion failure, exit 1)
+RED native-outside-job (assertion failure, exit 1)

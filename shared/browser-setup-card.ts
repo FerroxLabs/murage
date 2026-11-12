@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 export type BrowserSetupCardData = {
+  browserChoice?: {mode:'builtin'|'chrome-extension'|'chrome-direct';profile?:string;browser?:'chrome'|'edge'|'brave';baseRevision:number;disclosureKey:string;lines:string[];copy?:import('./browser-copy.ts').BrowserCopy[]};
+  selectionRevision?:number;
+  selectedMode?:'builtin'|'chrome-extension'|'chrome-direct';
   requestKey: string; botId: string; threadId: string; ownerMessageId: string;
   decision?: "accepted" | "declined";
   profileId?: string;
@@ -7,6 +10,7 @@ export type BrowserSetupCardData = {
   browser?: "chrome" | "edge" | "brave";
   /** Pre-accepted from a connection the owner made before: Not now stays available. */
   remembered?: true;
+  queuedAcceptance?: boolean;
   continueRequested?: boolean;
   resumed?: boolean;
   error?: string;

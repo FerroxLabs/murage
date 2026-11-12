@@ -1,4 +1,5 @@
-import { lstatSync, renameSync } from "node:fs";
+import { join } from "node:path";
+import { lstatSync, renameSync, rmSync } from "node:fs";
 import { acquireDataDirLease } from "./data-dir-lease.mjs";
 
 export class DataDirMigrationError extends Error {
@@ -49,6 +50,9 @@ export function migrateLegacyDataDirectory({ dataDir, legacyDataDir, enabled }) 
         current.dev !== original.dev || current.ino !== original.ino) {
       throw new DataDirMigrationError(legacyDataDir, "invalid-shape");
     }
+    // Both leases exclude a running server. Remove derived postings before publishing the new root.
+    // Doing this before rename keeps a failed cleanup retryable at the legacy path.
+    for (const name of ["search.db-wal", "search.db-shm", "search.db"]) rmSync(join(legacyDataDir, name), { force: true });
     renameSync(legacyDataDir, dataDir);
   } catch (error) {
     failure = error instanceof DataDirMigrationError

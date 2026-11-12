@@ -1,0 +1,11 @@
+--- server/connected-app-health.ts
++++ server/connected-app-health.ts
+@@ -156,7 +156,7 @@
+     const results = [...(Array.isArray(row.results) ? row.results : []), ...(Array.isArray(obj(row.data)?.results) ? obj(row.data)!.results as Json[] : [])];
+     return (slugOfRow(row) ? [row, ...results] : results).some(value => {
+       const result = obj(value);
+-      return !!result && slugOfRow(result) !== null && rowBrokerAuth(result);
++      return false;
+     });
+   });
+ }

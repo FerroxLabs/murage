@@ -1,18 +1,33 @@
+import { seedCopyIntents } from "./testing/fts-copy-fixture.ts";
+import { trigramQuery } from "./message-search-index.ts";
+import { Worker } from "node:worker_threads";
+import { spawn } from "node:child_process";
+import { createDataWriterGate, stopDataWriters } from "./data-writers.ts";
+import { removeMessageSearchFiles, settleFtsCopy } from "./settle-copy.ts";
+import type { MemoryDowngradeTarget } from "./memory/schema.ts";
+import { downgradeInstallationMemorySchema } from "./installation-memory-downgrade.ts";
+import { classifyDataDirEntry } from "./data-dir-inventory.ts";
+import { stageInstallationState } from "./installation-state-snapshot.ts";
+import * as downgrade from "./installation-app-schema-downgrade.ts";
+import { ADDED_TABLE_LIFECYCLE } from "./added-table-lifecycle.ts";
+import { RESTORE_NOT_PENDING_WORK } from "./restore-fence.ts";
 import { DEFAULT_MEMORY_LEARNING_V1 } from "./memory/learning-policy.ts";
 import { DatabaseSync } from "node:sqlite";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, rmSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { acquireDataDirLease } from "../electron/data-dir-lease.mjs";
 import { initializeArtifacts } from "./artifacts.ts";
 import { initializeInbox } from "./inbox.ts";
 import { initializeMessageTables } from "./message-tables.ts";
 import { initializeImageLibrary, initializeImageOperations } from "./image-operations-schema.ts";
 import { initializeThreadSnooze } from "./thread-snooze.ts";
+import { initializeHighLevelThreadMarks } from "./highlevel/thread-marks.ts";
 import { initializeMobilePush } from "./mobile-push-store.ts";
 import { initializeSharedRequestProvenance } from "./shared-provenance-schema.ts";
 import { initializePendingDelegations } from "./pending-delegations-schema.ts";
+import { initializeDelegationPacks } from "./delegation-pack/schema.ts";
 import { inspectInstallationDatabase, snapshotInstallationDatabase, withOfflineInstallation, type OfflineInstallation } from "./installation-database-snapshot.ts";
 import { MEMORY_SCHEMA_VERSION,MEMORY_SCHEMA_V2,MEMORY_SCHEMA_V3,migrateMemorySchema } from "./memory/schema.ts";
 import { pauseRestoredMemory } from "./memory/restore.ts";
@@ -21,6 +36,21 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
+
+it("preserves HighLevel conversation marks in a snapshot and accepts older archives without them", async () => {
+  const marked = fixture();
+  initializeHighLevelThreadMarks(marked.db);
+  marked.db.prepare("INSERT INTO highlevel_thread_marks VALUES (?, ?)").run("t", 1);
+  expect(await snapshotInstallationDatabase(marked.data, marked.target)).toMatchObject({ status: "copied" });
+  const copy = new DatabaseSync(marked.target);
+  try { expect(copy.prepare("SELECT marked_at FROM highlevel_thread_marks WHERE thread_id='t'").get()?.marked_at).toBe(1); }
+  finally { copy.close(); }
+  const older = fixture();
+  expect(inspectInstallationDatabase(older.db)).toMatchObject({ messages: 1, threads: 1 });
+  const altered = fixture();
+  altered.db.exec("CREATE TABLE highlevel_thread_marks(thread_id TEXT PRIMARY KEY, marked_at TEXT)");
+  expect(() => inspectInstallationDatabase(altered.db)).toThrow();
+});
 /** An installation database with the transcript tables the harness itself
  * creates (server/message-tables.ts), or the DDL an older release wrote. */
 function fixture(transcriptDdl?: string) {
@@ -449,6 +479,18 @@ it("accepts shared_request_provenance with rows, snapshots it, and still accepts
   expect(() => inspectInstallationDatabase(hostile.db)).toThrow();
 });
 
+it.each(["source", "destination"])("T-SCHEMA-SNAPSHOT: accepts delegation packs and older archives; rejects a changed %s index", column => {
+  const older = fixture();
+  expect(inspectInstallationDatabase(older.db)).toMatchObject({ messages: 1, threads: 1 });
+  const fresh = fixture();
+  initializeDelegationPacks(fresh.db);
+  fresh.db.exec("INSERT INTO delegation_packs(id,delegation_id,source_thread_id,source_bot_id,target_bot_id,refs,cut_at,created_at) VALUES('pack','job','source','sable','ember','[\"line\"]',1,1)");
+  expect(inspectInstallationDatabase(fresh.db)).toMatchObject({ messages: 1, threads: 1 });
+  // Only the index's indexed column changes; the accepted table and row stay identical.
+  fresh.db.exec(`DROP INDEX delegation_packs_${column}; CREATE INDEX delegation_packs_${column} ON delegation_packs(target_bot_id)`);
+  expect(() => inspectInstallationDatabase(fresh.db)).toThrow(expect.objectContaining({ code: "DATABASE_SCHEMA_UNSUPPORTED" }));
+});
+
 // Astra r20 (e): the queue table is part of the reference schema; an older archive without it, and without the owed-set index, still passes.
 it("accepts the pending_delegations table with its indexes, accepts an older archive without it, and rejects a tampered pd_due", () => {
   const fresh = fixture();
@@ -503,4 +545,255 @@ it("bot email (section 7): payloads and events are emptied in the staged copy, b
   const fidelity = readFileSync(join(import.meta.dirname, "installation-fidelity-snapshot.ts"), "utf8");
   expect(fidelity).toContain('file.path!=="messages.db"');
   expect(fidelity).toContain('path==="messages.db"?join(stage.directory,"state",file.path)');
+});
+
+it("T-COPY-SNAPSHOT: staged database drops retired postings before publication", async () => {
+  const f = fixture();
+  f.db.exec("CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none); ALTER TABLE messages_fts RENAME TO messages_fts_retired; CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none); INSERT INTO messages_fts_retired(rowid,t) VALUES(9999999,'qzxretiredcanary')");
+  seedCopyIntents(f.db);
+  expect(await snapshotInstallationDatabase(f.data, f.target)).toMatchObject({ status: "copied" });
+  const copy = new DatabaseSync(f.target, { readOnly: true });
+  try { expect(copy.prepare("SELECT * FROM search_intents").all()).toEqual([]); expect(copy.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'messages_fts_retired%'").all()).toEqual([]); }
+  finally { copy.close(); }
+  expect(readFileSync(f.target).includes(Buffer.from("qzx"))).toBe(false);
+});
+
+
+describe("separate search file lifecycle", () => {
+
+  const roots: string[] = [];
+  const ddl = "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(t, tokenize='trigram', content='', contentless_delete=1, detail=none)";
+  const retired = Array.from({ length: 8 }, (_, i) => `messages_fts_retired${i ? `_${i + 1}` : ""}`);
+  const family = ["search.db", "search.db-wal", "search.db-shm"];
+  function fixture() {
+    const root = mkdtempSync(join(tmpdir(), "murage-search-life-")); roots.push(root);
+    const data = join(root, "data"); mkdirSync(data);
+    return { root, data, file: join(data, "messages.db") };
+  }
+  function init(db: DatabaseSync) {
+    initializeMessageTables(db);
+    db.exec("CREATE TABLE IF NOT EXISTS search_intents(seq INTEGER PRIMARY KEY AUTOINCREMENT, nonce INTEGER NOT NULL, rowid INTEGER, thread_key TEXT, CHECK ((rowid IS NULL) <> (thread_key IS NULL)), CHECK (thread_key IS NULL OR length(CAST(thread_key AS BLOB)) <= 72))");
+  }
+  afterEach(() => { vi.restoreAllMocks(); for (const root of roots.splice(0)) removeTempDirSync(root); });
+
+  it.each(family)("T-INVENTORY / M19: %s is excluded from every backup policy", name => {
+    expect(classifyDataDirEntry(name)).toMatchObject({ backup: "excluded" });
+  });
+
+  it("T-SNAPSHOT-SIDECAR: search files may vanish or appear during staging", async () => {
+    const f = fixture(); writeFileSync(join(f.data, "config.json"), "{}");
+    const db = new DatabaseSync(f.file); init(db); db.close();
+    for (const name of family) writeFileSync(join(f.data, name), "derived-only");
+    const original = DatabaseSync.prototype.prepare;
+    let changed = false;
+    vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (this: DatabaseSync, sql: string) {
+      if (!changed && sql.includes("sqlite_schema")) {
+        changed = true; for (const name of family) rmSync(join(f.data, name), { force: true });
+      }
+      return original.call(this, sql);
+    });
+    const stage = await stageInstallationState(f.data, f.root);
+    expect(changed).toBe(true);
+    expect(stage.manifest.files.some(file => family.includes(file.path))).toBe(false);
+  });
+
+  it.each(["legacy", "partial", "recreated", "none"])("T-ARCHIVE-STATES: inspect %s without trusting unregistered schema", state => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      init(db); db.exec(ddl);
+      if (state !== "legacy") db.exec("ALTER TABLE messages_fts RENAME TO messages_fts_retired");
+      if (state === "partial") db.exec("DELETE FROM messages_fts_retired WHERE rowid=1");
+      if (state === "recreated") { db.exec(ddl); for (const name of retired.slice(1)) { db.exec(`ALTER TABLE messages_fts RENAME TO "${name}"`); db.exec(ddl); } }
+      if (state === "none") db.exec("DROP TABLE messages_fts_retired");
+      expect(() => inspectInstallationDatabase(db)).not.toThrow();
+    } finally { db.close(); }
+  });
+
+  it("T-LIFECYCLE: queue and every retired table/shadow have explicit lifecycle and restore classifications", () => {
+    for (const name of ["search_intents", ...retired.flatMap(name => [name, ...["_data", "_idx", "_docsize", "_config"].map(s => name + s)])]) {
+      expect(downgrade.APP_SCHEMA_102_ADDITIONS.tables, name).toContain(name);
+      expect(ADDED_TABLE_LIFECYCLE[name], name).toBeDefined();
+      expect(RESTORE_NOT_PENDING_WORK[name], name).toBeDefined();
+    }
+  });
+
+  it.each(["snapshot", "damaged-export", "project-migration", "memory-safety", "restore"])("T-COPY %s: removes every retired index and deleted trigram residue before publication", caller => {
+    const f = fixture(), db = new DatabaseSync(f.file);
+    try {
+      init(db); seedCopyIntents(db); db.exec(ddl);
+      for (const name of retired) {
+        db.exec("INSERT INTO messages_fts(rowid,t) VALUES(1,'zqxcanarytrigram')");
+        db.exec(`ALTER TABLE messages_fts RENAME TO "${name}"`); db.exec(ddl);
+      }
+    } finally { db.close(); }
+    settleFtsCopy(f.file, { check: true });
+    const copy = new DatabaseSync(f.file, { readOnly: true });
+    try {
+      expect(copy.prepare("SELECT * FROM search_intents").all(), caller).toEqual([]);
+      expect(copy.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'messages_fts_retired%'").all(), caller).toEqual([]);
+      expect(copy.prepare("PRAGMA quick_check").get()).toEqual({ quick_check: "ok" });
+    } finally { copy.close(); }
+    expect(readFileSync(f.file).includes(Buffer.from("zqx"))).toBe(false);
+  });
+
+  it("T-DOWNGRADE-CLEAN: offline app downgrade removes search queue and all retired slots idempotently", () => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      init(db); db.exec(ddl);
+      for (const name of retired) { db.exec(`ALTER TABLE messages_fts RENAME TO "${name}"`); db.exec(ddl); }
+      downgrade.downgradeApplicationSchemaTo101(db, fixture().data);
+      expect(db.prepare("SELECT name FROM sqlite_schema WHERE name='search_intents' OR name LIKE 'messages_fts_retired%'").all()).toEqual([]);
+      expect(() => downgrade.downgradeApplicationSchemaTo101(db, fixture().data)).not.toThrow();
+    } finally { db.close(); }
+  });
+
+  it.each([1,2,3,4,5,6,7,8,9,10,11,12,13] as MemoryDowngradeTarget[])("T-DOWNGRADE-ROUNDTRIP to %i: remove derived files and tables before publishing success", target => {
+    const f = fixture(), db = new DatabaseSync(f.file);
+    try { init(db); migrateMemorySchema(db, "off"); db.exec(ddl); db.exec("ALTER TABLE messages_fts RENAME TO messages_fts_retired"); }
+    finally { db.close(); }
+    for (const name of family) writeFileSync(join(f.data, name), "derived search postings");
+    const run = () => downgradeInstallationMemorySchema(f.data, target, { testOnlyBefore102: true });
+    run();
+    for (const name of family) expect(existsSync(join(f.data, name)), name).toBe(false);
+    const result = new DatabaseSync(f.file, { readOnly: true });
+    try { expect(result.prepare("SELECT name FROM sqlite_schema WHERE name='search_intents' OR name LIKE 'messages_fts_retired%'").all()).toEqual([]); }
+    finally { result.close(); }
+    expect(run).not.toThrow();
+  });
+
+  // C16/C18 require B1's worker and lifecycle code together. The integration owner must
+  // set this to the merged SHA; standalone lifecycle evidence must report these as gated.
+  const mergedSha = process.env.MURAGE_TEST_FTS_MERGED_SHA;
+  it.skipIf(!mergedSha).each(["C16", "C18"])("%s (merged SHA gate): SIGKILL, capture stale state, then rebuild from live authority", async id => {
+    expect(mergedSha).toMatch(/^[a-f0-9]{40}$/);
+    const f = fixture(), backupFile = join(f.root, "own-backup.db");
+    const searchModule = new URL("./message-search-index.ts", import.meta.url).href;
+    const tablesModule = new URL("./message-tables.ts", import.meta.url).href;
+    const childSource = `
+      import { DatabaseSync, backup } from 'node:sqlite';
+      import * as api from ${JSON.stringify(searchModule)};
+      import { initializeMessageTables } from ${JSON.stringify(tablesModule)};
+      import { existsSync } from 'node:fs';
+      const file=${JSON.stringify(f.file)}, index=${JSON.stringify(join(f.data, "search.db"))};
+      const db=new DatabaseSync(file);
+      db.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0');
+      initializeMessageTables(db);
+      api.settleInheritedSearchMerge(db,true);
+      const wait=async(predicate)=>{const until=Date.now()+20000;while(Date.now()<until){if(predicate())return;await new Promise(r=>setTimeout(r,25));}throw Error('worker did not converge');};
+      const state=()=>{if(!existsSync(index))return null;let read;try{read=new DatabaseSync(index,{readOnly:true});return Object.fromEntries(read.prepare('SELECT k,v FROM search_state').all().map(r=>[r.k,r.v]));}catch{return null;}finally{read?.close();}};
+      if(process.env.FTS_PHASE==='seed'){
+        db.exec('BEGIN');
+        db.exec("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES('t','m',1,'owner','text','жжж','{}')");
+        api.syncMessageSearchRow(db,1,'жжж');db.exec('COMMIT');
+      }
+      api.startSearchIndex(db,file);
+      await wait(()=>{const s=state();return api.messageSearchIndexReady(db) && s && !s.built && s.owner===String(db.prepare("SELECT done FROM transcript_index_state WHERE name='search_owner'").get().done) && Number(s.applied_seq)>=Number(db.prepare('SELECT MAX(seq) AS n FROM search_intents').get().n);});
+      if(process.env.FTS_PHASE==='seed'){
+        await backup(db,${JSON.stringify(backupFile)});
+        db.exec('BEGIN');db.exec("UPDATE messages SET text='ффф' WHERE rowid=1");api.syncMessageSearchRow(db,1,'ффф');db.exec('COMMIT');
+        await wait(()=>Number(state()?.applied_seq)>=Number(db.prepare('SELECT MAX(seq) AS n FROM search_intents').get().n));
+      }
+      process.send({state:state()});
+      setInterval(()=>{},1000);
+    `;
+    const childFile = join(f.root, "search-life-child.mjs");
+    writeFileSync(childFile, childSource);
+    const crashAtReady = async (phase: string) => {
+      const child = spawn(process.execPath, [childFile], { windowsHide: true, stdio: ["ignore", "pipe", "pipe", "ipc"], env: { ...process.env, FTS_PHASE: phase } });
+      let stderr = ""; child.stderr!.on("data", part => { stderr += part; });
+      try {
+        const state = await new Promise<Record<string, string>>((resolve, reject) => {
+          const timer = setTimeout(() => reject(Error(`child barrier timed out: ${stderr}`)), 25000);
+          child.once("message", (message: any) => { clearTimeout(timer); resolve(message.state); });
+          child.once("exit", (code, signal) => { clearTimeout(timer); reject(Error(`child exited ${code}/${signal}: ${stderr}`)); });
+        });
+        const exited = new Promise<void>(resolve => child.once("exit", () => resolve()));
+        child.kill("SIGKILL"); await exited;
+        return state;
+      } finally { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }
+    };
+    const before = await crashAtReady("seed");
+    // Capture both database families and the published backup BEFORE opening any of them.
+    // Single Unicode trigrams stay contiguous in FTS leaf blocks (long words are prefix-compressed).
+    const capture = (phase: string) => {
+      const directory = join(f.root, phase); mkdirSync(directory);
+      const raw = Object.fromEntries(["messages.db", "messages.db-wal", "search.db", "search.db-wal"].map(name => {
+        const path = join(f.data, name), bytes = existsSync(path) ? readFileSync(path) : Buffer.alloc(0);
+        if (bytes.length) writeFileSync(join(directory, name), bytes);
+        return [name, bytes];
+      }));
+      copyFileSync(backupFile, join(directory, "own-backup.db"));
+      return { directory, raw };
+    };
+    const staleCapture = capture("stale-capture");
+    expect(staleCapture.raw["messages.db-wal"].includes(Buffer.from("ффф"))).toBe(true);
+    expect(Buffer.concat([staleCapture.raw["search.db"], staleCapture.raw["search.db-wal"]]).includes(Buffer.from("ффф"))).toBe(true);
+    const inspectSearch = (directory: string, stale: boolean) => {
+      const db = new DatabaseSync(join(directory, "search.db"), { readOnly: true });
+      try {
+        expect(db.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?").all(trigramQuery("ффф"))).toEqual(stale ? [{ rowid: 1 }] : []);
+        const blocks = db.prepare("SELECT block FROM messages_fts_data").all();
+        expect(blocks.some(row => row.block instanceof Uint8Array && Buffer.from(row.block).includes(Buffer.from("ффф")))).toBe(stale);
+        if (!stale) {
+          const expectedRowid = id === "C16" ? 1 : 2;
+          expect(db.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?").all(trigramQuery("жжж"))).toEqual([{ rowid: expectedRowid }]);
+          expect(db.prepare("SELECT rowid FROM docs").all()).toEqual([{ rowid: expectedRowid }]);
+        }
+      } finally { db.close(); }
+    };
+    inspectSearch(staleCapture.directory, true);
+    const published = new DatabaseSync(join(staleCapture.directory, "own-backup.db"), { readOnly: true });
+    try {
+      expect(published.prepare("SELECT rowid,text FROM messages").all()).toEqual([{ rowid: 1, text: "жжж" }]);
+      expect(String(published.prepare("SELECT done FROM transcript_index_state WHERE name='search_owner'").get()?.done)).toBe(before.owner);
+      expect(Number(published.prepare("SELECT MAX(seq) AS seq FROM search_intents").get()?.seq)).toBeLessThan(Number(before.seen_seq));
+    }
+    finally { published.close(); }
+    expect(readFileSync(join(staleCapture.directory, "own-backup.db")).includes(Buffer.from("ффф"))).toBe(false);
+    if (id === "C16") {
+      for (const suffix of ["-wal","-shm"]) rmSync(f.file+suffix,{force:true});
+      copyFileSync(backupFile,f.file);
+    } else {
+      // Frozen 1.0.18 contract: recreates the in-file FTS and writes no intents.
+      const older = new DatabaseSync(f.file);
+      try { older.exec(ddl); older.exec("DELETE FROM messages WHERE rowid=1; INSERT INTO messages(rowid,thread_id,id,at,role,kind,text,json) VALUES(2,'t','new',2,'owner','text','жжж','{}')"); }
+      finally { older.close(); }
+    }
+    // Assert the actual mismatch at the activation barrier, independently of the repaired state.
+    const barrier = capture("activation-capture");
+    inspectSearch(barrier.directory, true);
+    const authority = new DatabaseSync(join(barrier.directory, "messages.db"), { readOnly: true });
+    try {
+      expect(authority.prepare("SELECT rowid,text FROM messages").all()).toEqual([{ rowid: id === "C16" ? 1 : 2, text: "жжж" }]);
+      expect(String(authority.prepare("SELECT done FROM transcript_index_state WHERE name='search_owner'").get()?.done)).toBe(before.owner);
+      const newest = Number(authority.prepare("SELECT MAX(seq) AS seq FROM search_intents").get()?.seq);
+      if (id === "C16") expect(newest).toBeLessThan(Number(before.seen_seq));
+      else expect(newest).toBe(Number(before.seen_seq)); // the old writer emitted no intents
+    }
+    finally { authority.close(); }
+    const after = await crashAtReady("resume");
+    const repaired = capture("repaired-capture");
+    expect(after.index_id).not.toBe(before.index_id);
+    // Check saved bytes before SQLite recovery/checkpoint can hide a stale frame or free-page residue.
+    for (const name of ["search.db", "search.db-wal"]) expect(repaired.raw[name].includes(Buffer.from("ффф")), name).toBe(false);
+    inspectSearch(repaired.directory, false);
+  }, 65000);
+
+  it.skipIf(!mergedSha)("T-WIPE-LIVE / M32 (merged SHA gate): join a live recreating worker before deletion and lease release", async () => {
+    const f = fixture();
+    const worker = new Worker(`const {parentPort,workerData}=require('node:worker_threads');const fs=require('node:fs');const path=require('node:path');const tick=()=>{for(const name of ['search.db','search.db-wal','search.db-shm'])fs.writeFileSync(path.join(workerData,name),'postings');};tick();const timer=setInterval(tick,5);parentPort.postMessage('ready');parentPort.on('message',()=>setTimeout(()=>{clearInterval(timer);process.exit(0);},80));`, { eval:true, workerData:f.data });
+    let exited = false, released = false;
+    const exit = new Promise<boolean>(resolve => worker.once("exit", () => { exited = true; resolve(true); }));
+    try {
+      await new Promise<void>(resolve => worker.once("message", () => resolve()));
+      const stops = { closeDatabase() {}, stopEngineHistory: async () => true, stopWalMaintenance: async () => true,
+        stopSearchIndex() { worker.postMessage("stop"); return exit; } };
+      const gate = createDataWriterGate(() => stopDataWriters(stops), () => { released = true; });
+      expect(await gate.stop()).toBe(true);
+      expect(exited).toBe(true); expect(released).toBe(true);
+      removeMessageSearchFiles(f.data);
+      await new Promise(resolve => setTimeout(resolve,30));
+      for (const name of family) expect(existsSync(join(f.data,name)),name).toBe(false);
+    } finally { await worker.terminate(); }
+  });
 });

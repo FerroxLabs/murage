@@ -38,7 +38,7 @@ posixOnly("attachment reads through the server", () => {
     const outside = join(fixture.info.dataDir, "outside.png");
     writeFileSync(outside, PNG);
     symlinkSync(outside, join(folder, `${uuid(1)}.png`));
-    execFileSync("mkfifo", [join(folder, `${uuid(2)}.png`)]);
+    execFileSync("mkfifo", [join(folder, `${uuid(2)}.png`)], { windowsHide: true });
     writeFileSync(join(folder, `${uuid(3)}.png`), PNG);
     linkSync(join(folder, `${uuid(3)}.png`), join(fixture.info.dataDir, "second-link.png"));
     for (const n of [1, 2, 3, 4]) {
@@ -68,12 +68,12 @@ posixOnly("attachment reads through the server", () => {
 
   it("an upload retry onto a FIFO answers 409 at once, four in parallel, and a normal upload still completes", async () => {
     const id = uuid(5);
-    execFileSync("mkfifo", [join(folder, `${id}.png`)]);
+    execFileSync("mkfifo", [join(folder, `${id}.png`)], { windowsHide: true });
     const retries = await within(5000, Promise.all(Array.from({ length: 4 }, () =>
       fetch(`${fixture.info.url}/api/attachments?uploadId=${id}`, { method: "POST", headers: { ...headers, "content-type": "image/png" }, body: PNG }))));
     for (const retry of retries) { expect(retry.status).toBe(409); await retry.text(); }
     const fileId = uuid(6);
-    execFileSync("mkfifo", [join(folder, `${fileId}.txt`)]);
+    execFileSync("mkfifo", [join(folder, `${fileId}.txt`)], { windowsHide: true });
     const file = await within(5000, fetch(`${fixture.info.url}/api/files?name=a.txt&uploadId=${fileId}`, { method: "POST", headers: { ...headers, "content-type": "text/plain" }, body: "hello" }));
     expect(file.status).toBe(409); await file.text();
     const normal = await fetch(`${fixture.info.url}/api/attachments?uploadId=${uuid(7)}`, { method: "POST", headers: { ...headers, "content-type": "image/png" }, body: PNG });

@@ -10,7 +10,7 @@ import { revokeAllDisclosures } from "./memory/revocation.ts";
 
 export const WORKSPACE_OWNER = "workspace-owner";
 export type HumanPrincipal = Readonly<{ personId: string; bindingId: string; revision: number }>;
-export type VerifiedHumanOrigin = { platform: "slack" | "discord" | "telegram" | "whatsapp"; connectionId: string; authorityId: string; userId: string };
+export type VerifiedHumanOrigin = { platform: "slack" | "discord" | "telegram" | "whatsapp" | "signal"; connectionId: string; authorityId: string; userId: string };
 /** What the channel calls the sender. Kept so lessons can be kept away from customer turns that name a person (bot learning, R3-04). Not an identity: never compared, never grants anything. */
 export type SenderDisplay = { name?: string; username?: string };
 type Binding = { id: string; origin: VerifiedHumanOrigin; personId: string | null; revision: number; active: boolean; display?: SenderDisplay };
@@ -83,9 +83,8 @@ export function linkHumanBinding(ticket: object, input: { bindingId: string; exp
     if (input.personId?.startsWith("whatsapp-group:")) throw new Error("HUMAN_GROUP_IMMUTABLE");
     let personId: string | null = null;
     if (input.as === "owner") {
-      // WhatsApp: the owner is the linked number and nothing else (design 5.1). A contact or group binding names a
-      // different userId than the linking authority, so the server refuses it here whatever the caller asked for.
-      if (value.origin.platform === "whatsapp" && value.origin.userId !== value.origin.authorityId) throw new Error("HUMAN_OWNER_INELIGIBLE");
+      // WhatsApp and Signal owners must be the account that linked the device.
+      if ((value.origin.platform === "whatsapp" || value.origin.platform === "signal") && value.origin.userId !== value.origin.authorityId) throw new Error("HUMAN_OWNER_INELIGIBLE");
       personId = WORKSPACE_OWNER;
     }
     if (input.as === "person") {
@@ -283,4 +282,12 @@ export function knownHumanNames(db: DatabaseSync = database()): string[] {
     if (display?.username) out.add(display.username);
   }
   return [...out];
+}
+
+/** Bounded all-local Signal authority inventory for custody replacement/replay. */
+export function signalHumanBindings(ticket: object) {
+  requireMemoryOwner(ticket);
+  const rows=database().prepare("SELECT intent FROM memory_scope_bindings WHERE subject_type='human-binding' AND json_extract(intent,'$.origin.platform')='signal' LIMIT 4097").all();
+  if(rows.length>4096)throw new Error("Signal authority inventory is full");
+  return rows.map(row=>JSON.parse(String(row.intent)) as Binding);
 }

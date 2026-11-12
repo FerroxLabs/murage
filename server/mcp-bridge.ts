@@ -1,3 +1,7 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
+import { createMcpCatalogWriter } from "./mcp-listed.ts";
+import { bridgeBusyFrame, createBridgeIds, spliceTopLevelId, topLevelIdText } from "./mcp-bridge-ids.ts";
+export { bridgeBusyFrame } from "./mcp-bridge-ids.ts";
 // The one transparent stdio bridge behind both MCP entry points
 // (container-mcp.ts for the Local VM, vps-container-mcp.ts for the BYO VPS).
 // It defines no tools. MCP ping is answered locally because the bundled
@@ -71,11 +75,11 @@ export interface BridgeLiveness {
  * connection it is diagnosing. */
 export function runLivenessProbe(probe: BridgeLiveness, timeoutMs = PROBE_TIMEOUT_MS): Promise<boolean> {
   return new Promise((resolve) => {
-    const child = spawn(probe.command, probe.args, {
+    const child = spawn(probe.command, [...probe.args], withHideInherit({
       shell: false,
       env: { ...process.env, PATH: augmentedPath() },
       stdio: ["ignore", "ignore", "ignore"],
-    });
+    }));
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       resolve(false);
@@ -160,6 +164,10 @@ export interface BridgeOptions {
   /** Enables the who-is-driving gate: the harness's loopback control
    * endpoint plus its per-boot token. Absent → fully transparent bridge. */
   gate?: { url: string; token: string | (() => string) };
+  /** The most requests allowed to wait at once (default MAX_BRIDGE_IN_FLIGHT). A test seam for the cap. */
+  maxInFlight?: number;
+  childEnv?: NodeJS.ProcessEnv;
+  observeTools?: (tools:unknown[],replace:boolean)=>Promise<void>;
 }
 
 /** Collect a byte stream into complete newline-terminated lines. MCP's
@@ -341,11 +349,11 @@ export function runMcpBridge(options: BridgeOptions): void {
   // started by a plain spawn; resolve it the way every engine launch does
   // (OpenMausBot #2055, Apache-2.0). Identity on other systems.
   const resolved = resolveCliSpawn(options.command, options.args);
-  const child = spawn(resolved.command, resolved.args, {
+  const child = spawn(resolved.command, [...resolved.args], withHideInherit({
     shell: false,
-    env: { ...process.env, PATH: augmentedPath() },
+    env: options.childEnv ?? { ...process.env, PATH: augmentedPath() },
     stdio: ["pipe", "pipe", "pipe"],
-  });
+  }));
 
   // docker may exit before it drains stdin; pipe() leaves this error unhandled.
   child.stdin.on("error", () => {});
@@ -353,7 +361,44 @@ export function runMcpBridge(options: BridgeOptions): void {
 
   const client = options.gate
     ? createControlClient({ url: options.gate.url, token: options.gate.token }) : null;
-  const answer = (line: string) => writeMcpLine(process.stdout, line);
+  const catalog = createMcpCatalogWriter(process.env, process.stdout);
+  // The child never sees an engine request id (C11 note 3.1 section 6): every request goes on under a bridge id, and an
+  // answer is delivered only through the handle of the live entry that issued that exact id, once, with the engine's id put back.
+  const toolLists = createToolListNormalizer();
+  const effectLists = new Map<string|number,boolean>();
+  const ids = createBridgeIds({
+    ...(options.maxInFlight !== undefined ? { cap: options.maxInFlight } : {}),
+    onRetire: (entry, how) => {
+      toolLists.forget(entry.bridgeId);
+      if (how === "revoked") process.stderr.write(`${options.label} bridge revoked an answer that was waiting to be written\n`);
+    },
+  });
+  const maxInFlight = options.maxInFlight;
+  const shapeOf = (line: string): { key?: string; request: boolean; response: boolean; value?: any } => {
+    try {
+      const value = JSON.parse(line);
+      if (value === null || typeof value !== "object" || Array.isArray(value)) return { request: false, response: false };
+      const key = ids.engineKeyOf(value.id);
+      const hasMethod = typeof value.method === "string";
+      return { key, request: hasMethod && key !== undefined, response: !hasMethod && key !== undefined, value };
+    } catch { return { request: false, response: false }; }
+  };
+  const droppedLine = () => process.stderr.write(`${options.label} bridge dropped a response that answers no waiting request\n`);
+  // Every frame to the engine goes through the writer. A response leaves through the handle of its live entry; anything else is a plain send.
+  const answer = (line: string): Promise<void> => {
+    const { response, value } = shapeOf(line);
+    if (response) {
+      const taken = ids.take(value.id);
+      if (taken.kind === "live") {
+        const { entry } = taken;
+        const out = spliceTopLevelId(line, entry.engineIdRaw) ?? line;
+        // A settled id is gone from the normalizer too, whatever shape the answer had (Astra 19f M1): nothing may outlive its entry.
+        return entry.req.respond(out, undefined, { stillWanted: () => entry.state === "claimed" }).finally(() => { toolLists.forget(entry.bridgeId); ids.settle(entry); });
+      }
+      if (taken.kind === "retired" || taken.collides) { droppedLine(); return Promise.resolve(); }
+    }
+    return catalog.send(line);
+  };
   const transportFailed = (error: Error) => {
     process.stderr.write(`${options.label} bridge stream failed: ${error.message}\n`);
     process.exitCode = 1;
@@ -361,7 +406,6 @@ export function runMcpBridge(options: BridgeOptions): void {
     detach();
     child.kill("SIGKILL");
   };
-  const toolLists = createToolListNormalizer();
   const intercept = createMcpBridgeInterceptor({
     answer,
     forward: async (line) => {
@@ -371,6 +415,9 @@ export function runMcpBridge(options: BridgeOptions): void {
         // Docker may close stdin before consuming a request. Stop feeding it,
         // but let its close event report the actual transport exit status.
         if ((error as NodeJS.ErrnoException).code !== "EPIPE") throw error;
+        // The request never reached the server: no response is owed, and the child's close ends the process.
+        const { request, value } = shapeOf(line);
+        if (request && typeof value.id === "string") ids.retire(value.id);
         detach();
       }
     },
@@ -387,11 +434,46 @@ export function runMcpBridge(options: BridgeOptions): void {
       }
       : {}),
   });
-  const detach = pipeMcpLines(process.stdin, (line) => {
+  const detach = pipeMcpLines(process.stdin, async (original) => {
+    // 1. The catalog observer stays keyed on the engine's id.
+    const req = catalog.observeRequest(original);
+    const { key, request, value } = shapeOf(original);
+    let line = original;
+    if (request && key !== undefined) {
+      // 2. A request goes on under a bridge id. At the cap it is answered busy through its own tracked entry, and the next
+      // engine line is not read until that answer is written or revoked, so there is never more than one busy entry.
+      const raw = topLevelIdText(original);
+      const issued = raw === undefined ? undefined : ids.issue(key, raw, req);
+      if (issued && !issued.admitted) {
+        const { entry } = issued;
+        await req.respond(bridgeBusyFrame(value.id, maxInFlight), () => bridgeBusyFrame(value.id, maxInFlight), { stillWanted: () => entry.state === "claimed" })
+          .finally(() => ids.settle(entry));
+        return;
+      }
+      const spliced = issued?.admitted ? spliceTopLevelId(original, JSON.stringify(issued.bridgeId)) : undefined;
+      if (issued?.admitted && spliced === undefined) ids.retire(issued.bridgeId);
+      if (spliced !== undefined) line = spliced;
+    } else if (value?.method === "notifications/cancelled" && ids.engineKeyOf(value.params?.requestId) !== undefined) {
+      // 3. A cancel names the child's id for the request, or nothing live: then it is dropped.
+      const bid = ids.cancelByEngine(ids.engineKeyOf(value.params.requestId)!);
+      if (bid === undefined) return;
+      line = JSON.stringify({ ...value, params: { ...value.params, requestId: bid } });
+    }
+    // 4. The normalizer's pending set is keyed on bridge ids, which is what the child echoes.
+    await req.published;
     toolLists.observeRequest(line);
+    if(options.observeTools){const frame=shapeOf(line).value;if(frame?.method==='tools/list'&&frame.id!==undefined)effectLists.set(frame.id,!frame.params?.cursor);}
     return intercept(line);
   }, () => child.stdin.end(), transportFailed);
-  pipeMcpLines(child.stdout, (line) => answer(textOnlyErrorResultLine(toolLists.rewriteResponse(line))), () => {}, transportFailed);
+  // The write of a child answer is not awaited before the next child line is read (the writer's own order is unchanged).
+  pipeMcpLines(child.stdout, (line) => {
+    if(!options.observeTools){answer(textOnlyErrorResultLine(toolLists.rewriteResponse(line))).catch(transportFailed);return;}
+    return (async()=>{
+      const frame=shapeOf(line).value,replace=effectLists.get(frame?.id);
+      if(replace!==undefined){effectLists.delete(frame.id);if(Array.isArray(frame.result?.tools))await options.observeTools!(frame.result.tools,replace);}
+      await answer(textOnlyErrorResultLine(toolLists.rewriteResponse(line)));
+    })();
+  }, () => {}, transportFailed);
 
   let watchdog: WatchdogHandle | null = null;
   if (options.liveness) {

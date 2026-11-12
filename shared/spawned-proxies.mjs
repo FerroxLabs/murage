@@ -28,6 +28,7 @@ export const SPAWNED_PROXY_FILES = Object.freeze({
   dweb: "drivers/dweb-proxy",
   connectors: "connector-proxy",
   remoteMcp: "drivers/remote-mcp-proxy",
+  wipeMcp: "mcp-wipe-proxy",
   phone: "drivers/phone-proxy",
   // The owner's-phone tools (calendar, reminders, ...) reached through the harness, not ADB (1.0.9 phone tools). Not the "phone" proxy above.
   phoneJobs: "drivers/phone-jobs-proxy",

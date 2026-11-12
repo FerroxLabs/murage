@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 // Gemini CLI harness support — Google's `gemini` CLI over ACP stdio
 // (`gemini --acp`). Rides the generic runtime in acp/core.ts.
 //
@@ -43,7 +44,7 @@ const AUTH_PREFERENCE = ["gemini-api-key", "oauth-personal", "vertex-ai"];
  * truthful answer for an engine that would fail its first turn anyway. */
 function liveOauthCredential(): boolean {
   try {
-    const creds = JSON.parse(readFileSync(join(homedir(), ".gemini", "oauth_creds.json"), "utf8")) as {
+    const creds = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(join(homedir(), ".gemini", "oauth_creds.json"), "utf8"))) as {
       access_token?: unknown;
       refresh_token?: unknown;
       expiry_date?: unknown;
@@ -106,14 +107,14 @@ const support: AcpSupport = {
 
   // --acp is the stable Gemini CLI surface. --experimental-acp remains an
   // alias for older releases, but using it now emits a deprecation warning.
-  spawnArgs: (_config, turn) => ["--acp", ...(turn.model ? ["-m", turn.model] : [])],
+  spawnArgs: (_config, turn) => ["--acp", ...(turn.noLimits ? ["--approval-mode", "default"] : []), ...(turn.model ? ["-m", turn.model] : [])],
   credentialEnv: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
   // The owner's personal MCP servers, hooks, skills, agents, policies, extensions
   // and instruction files stay out of bot turns (see gemini-isolation.ts).
   transformEnv: (env) => isolateGeminiFromPersonalSetup(env),
   // A turn's own bot gets its own scope (the shared one above serves probes with no bot).
   scopeKind: "gemini",
-  applyMountEnv: (env, { botId }) => isolateGeminiFromPersonalSetup(env, botId, true),
+  applyMountEnv: (env, { botId, noLimits }) => isolateGeminiFromPersonalSetup(env, botId, true, noLimits),
   scopeRoot: (env) => env.GEMINI_CLI_HOME,
 
   pickAuthMethod: (methods) => {

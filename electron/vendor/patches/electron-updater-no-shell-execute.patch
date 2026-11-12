@@ -1,0 +1,91 @@
+--- a/electron/vendor/electron-updater.cjs
++++ b/electron/vendor/electron-updater.cjs
+@@ -1,3 +1,4 @@
++// Murage vendor patch: electron/vendor/patches/electron-updater-no-shell-execute.patch
+ "use strict";
+ const { withHideInherit } = require("../../shared/win-hide-child-process.mjs");
+ var __getOwnPropNames = Object.getOwnPropertyNames;
+@@ -14702,15 +14703,23 @@
+       quitAndInstall(isSilent = false, isForceRunAfter = false) {
+         this._logger.info(`Install on explicit quitAndInstall`);
+         const isInstalled = this.install(isSilent, isSilent ? isForceRunAfter : this.autoRunAppAfterInstall);
+-        if (isInstalled) {
+-          setImmediate(() => {
+-            require("electron").autoUpdater.emit("before-quit-for-update");
+-            this.app.murageShutdownCause = "automatic";
+-            this.app.quit();
+-          });
+-        } else {
+-          this.quitAndInstallCalled = false;
+-        }
++        // NSIS resolves only after the hidden spawn succeeds. Other installers
++        // retain their synchronous result and quit timing.
++        const finish = (installed) => {
++          if (installed) {
++            setImmediate(() => {
++              require("electron").autoUpdater.emit("before-quit-for-update");
++              this.app.murageShutdownCause = "automatic";
++              this.app.quit();
++            });
++          } else {
++            this.quitAndInstallCalled = false;
++          }
++        };
++        if (isInstalled && typeof isInstalled.then === "function") {
++          return isInstalled.then(finish);
++        }
++        finish(isInstalled);
+       }
+       executeDownload(taskOptions) {
+         return super.executeDownload({
+@@ -15674,7 +15683,7 @@
+         }
+         return await this._verifyUpdateCodeSignature(Array.isArray(publisherName) ? publisherName : [publisherName], tempUpdateFile);
+       }
+-      doInstall(options) {
++      async doInstall(options) {
+         const installerPath = this.installerPath;
+         if (installerPath == null) {
+           this.dispatchError(new Error("No update filepath provided, can't quit and install"));
+@@ -15694,26 +15703,22 @@
+         if (packagePath != null) {
+           args.push(`--package-file=${packagePath}`);
+         }
+-        const callUsingElevation = () => {
+-          this.spawnLog(path2.join(process.resourcesPath, "elevate.exe"), [installerPath].concat(args)).catch((e) => this.dispatchError(e));
+-        };
+-        if (options.isAdminRightsRequired) {
+-          this._logger.info("isAdminRightsRequired is set to true, run installer using elevate.exe");
+-          callUsingElevation();
++        try {
++          if (options.isAdminRightsRequired) {
++            await this.spawnLog(path2.join(process.resourcesPath, "elevate.exe"), [installerPath].concat(args));
++          } else {
++            await this.spawnLog(installerPath, args);
++          }
+           return true;
+-        }
+-        this.spawnLog(installerPath, args).catch((e) => {
+-          const errorCode = e.code;
+-          this._logger.info(`Cannot run installer: error code: ${errorCode}, error message: "${e.message}", will be executed again using elevate if EACCES, and will try to use electron.shell.openItem if ENOENT`);
+-          if (errorCode === "UNKNOWN" || errorCode === "EACCES") {
+-            callUsingElevation();
+-          } else if (errorCode === "ENOENT") {
+-            require("electron").shell.openPath(installerPath).catch((err) => this.dispatchError(err));
+-          } else {
+-            this.dispatchError(e);
+-          }
+-        });
+-        return true;
++        } catch (cause) {
++          // Never hand executables to ShellExecute or try another launch route.
++          // Keep the staged download and current install intact for a retry.
++          this.quitAndInstallCalled = false;
++          this.dispatchError(Object.assign(new Error("Couldn't start the update installer. Murage stays on the current version.", { cause }), {
++            code: "ERR_MURAGE_INSTALLER_START"
++          }));
++          return false;
++        }
+       }
+       async differentialDownloadWebPackage(downloadUpdateOptions, packageInfo, packagePath, provider) {
+         if (packageInfo.blockMapSize == null) {

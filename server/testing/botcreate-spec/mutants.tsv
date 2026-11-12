@@ -1,0 +1,82 @@
+id	file	old	new
+drop-uncertain-H1	settle.py	    if t.get("interj_uncertain", 0) > 0:              # Astra r3.2 H1: core.ts:5029-5030 moves pending -> uncertain\n        return False\n	
+split-gate-from-invariant-H2	gate.py	        if origin == "content" and p is None:	        if origin == "content" and p is None and ctx["live_read"] is not None:
+over-strict-1018-floor	gate.py	        p = match_pass(ctx["passes"], gen, tool, action["digest"])\n	        if ctx["live_read"] is not None and ctx["origin"] != "content":\n            return ("refuse", "OUTSIDE_WRITE_REFUSAL")\n        p = match_pass(ctx["passes"], gen, tool, action["digest"])\n
+over-strict-no-null-claude	settle.py	"claude": frozenset({None, "end_turn"})	"claude": frozenset({"end_turn"})
+over-strict-codex-reads-arg-A1	settle.py	    ev.update(extra)                                  # Fable A1: extra.stopReason wins\n	    ev = {**extra, **ev}\n
+d5-fallback-no-phone-sheet-A4	gate.py	    "phone-app": frozenset({"bot-review-phone@1"}),\n	
+g-claude-site	settle.py	        if t["site"] != "result":                     # claude.ts:5538 only; :5531 steer timer, :5058 cap etc. never\n            return False\n	
+g-claude-subtype-A3	settle.py	        if t.get("subtype") != "success":             # Fable A3\n            return False\n	
+g-claude-steer	settle.py	        if t.get("steer_ever_waited"):                # steerFollowUp armed this turn\n            return False\n	
+g-claude-bg-row	settle.py	        if t.get("bg_ever_held") and HELPER_ROW["claude"] not in rows:   # bg.waiting entered, no row\n            return False\n	
+g-codex-stop	settle.py	        if t.get("stop_requested"):\n            return False\n	
+g-codex-helpers-held	settle.py	            if t.get("helpers_ever_held"):            # holdForHelpers entered this turn\n                return False\n	
+g-codex-helper-row	settle.py	            return HELPER_ROW["codex"] in rows	            return True
+g-codex-site	settle.py	        return False                                  # :1996 grace, :2011 cap, :2353 close-held, cancels	        return True
+g-acp-cancel	settle.py	    if t.get("cancel_requested"):\n        return False\n	
+g-acp-accepted	settle.py	    if t.get("interj_accepted"):\n        return False\n	
+g-acp-pending	settle.py	    if t.get("interj_pending", 0) > 0:\n        return False\n	
+g-acp-helper-row	settle.py	        return HELPER_ROW["acp"] in rows	        return True
+g-acp-site-grace	settle.py	    return False                                      # :4104 fallback grace	    return True                                      # :4104 fallback grace
+g-a2-readsComplete-in-extra	settle.py	        ev = {"ok": True, "stopReason": "cancelled"}\n	        ev = {"ok": True, "stopReason": "cancelled", **({"readsComplete": True} if complete else {})}\n
+g-term-ok	settle.py	    if ev.get("ok") is not True:\n        return False\n	
+g-term-readsComplete	settle.py	    if ev.get("readsComplete") is not True:\n        return False\n	
+g-term-stopset	settle.py	    if ev.get("stopReason") not in ENGINE_FINAL_STOP[fam]:\n        return False\n	
+g-cwd-holds-P4	settle.py	    return bool(inside_entry)	    return bool(inside_entry or holds_entry_below)
+g-settle-once	settle.py	        if r.settled:\n            return None\n	
+g-q4-reverse-map	settle.py	        return self.by_ptid.get(ptid)\n	        return [g for g, r in self.rows.items() if r.thread == thread and not r.settled][-1]\n
+g-hmark	settle.py	        if r is not None and not r.settled:\n            r.marked = True\n            r.mark_sources.add(src)\n            r.helper_read = True\n	
+g-settle-abnormal	settle.py	    if row.abnormal:\n        return "unsettled"\n    if not terminal_clean	    if not terminal_clean
+g-settle-terminal	settle.py	    if not terminal_clean(row.driver, ev):\n        return "unsettled"\n	
+g-settle-unclassified	settle.py	    if row.unclassified > 0:\n        return "outside"\n	
+g-settle-ledger-marked	settle.py	    if row.marked and not helper_waived:\n        return "outside"\n	
+g-settle-live-Q4	settle.py	    if live_read is not None and not helper_waived:   # Fable Q4: turnOutsideRead re-verified at settle\n        return "outside"\n	
+g-settle-origin	settle.py	    if row.origin not in ("own", "reached"):\n        return "content"\n	
+g-settle-origin-live-A5	settle.py	    if row.origin not in ("own", "reached"):	    if live_origin not in ("own", "reached"):
+g-settle-evidence	settle.py	    if row.driver not in SETTLE_EVIDENCE_DRIVERS:\n        return "unsettled"\n	
+g-write-rev	settle.py	    if rev_at_write != rev_now:\n        return "review"\n	
+g-surface-fixed-first	gate.py	    if via in FIXED_SURFACES:\n        return via\n	
+g-surface-body-honoured	gate.py	    via = ident.get("via")\n	    if ident.get("body", {}).get("surface"):\n        return ident["body"]["surface"]\n    via = ident.get("via")\n
+g-surface-cloud-phone-is-desktop	gate.py	    if ident.get("cloud") and ident.get("scope") == "owner-phone":\n        return "cloud-phone"\n	    if ident.get("cloud") and ident.get("scope") == "owner-phone":\n        return "cloud-desktop"\n
+g-desktop-authority	gate.py	    return surface in DESKTOP\n	    return True\n
+g-seen-desktop	gate.py	    if not desktop_authority(surface):\n        return False\n    if seen is None	    if seen is None
+g-seen-present	gate.py	    if seen is None:\n        return False\n    if seen.get("renderer") not in CARD	    if seen is None:\n        return True\n    if seen.get("renderer") not in CARD
+g-seen-renderer	gate.py	    if seen.get("renderer") not in CARD_RENDERERS:\n        return False\n	
+g-seen-digest	gate.py	    if seen.get("digest") != card["specDigest"]:\n        return False\n	
+g-mint-behavior	gate.py	    if behavior != "allow":\n        return None\n	
+g-mint-question	gate.py	    if surface == "question":\n        return None\n	
+g-mint-cut	gate.py	    if card.get("cut"):\n        return None\n	
+g-auto-no-mint	gate.py	    """NOLIM source=auto / policy allow (index.ts:9819) and the other automatic respondToRequest allows."""\n    return None\n	    """NOLIM source=auto / policy allow (index.ts:9819) and the other automatic respondToRequest allows."""\n    return mint(card, "computer", {"renderer": "bot-card@1", "digest": card["specDigest"]}, "allow")\n
+g-pass-single-use	gate.py	        p["consumed"] = True                          # synchronously, before any await\n	
+g-pass-gen	gate.py	        if p["consumed"] or gen not in p["gens"] or p["tool"] != tool:	        if p["consumed"] or p["tool"] != tool:
+g-pass-digest	gate.py	        if p["digest"] != digest:\n            continue\n	
+g-commit-content	gate.py	    if origin == "content":\n        return "content"\n	
+g-commit-live	gate.py	    if live_read is not None:\n        return "outside"\n    if not driver_ok	    if not driver_ok
+g-commit-evidence	gate.py	    if not driver_ok:\n        return "unsettled"\n	
+g-commit-row	gate.py	    if row is None:\n        return "unsettled"\n	
+g-commit-late-M2	gate.py	    if row.settled:                                   # Fable M2 late write\n        return "unsettled"\n	
+g-commit-abnormal	gate.py	    if row.abnormal:\n        return "unsettled"\n	
+g-commit-marked	gate.py	    if row.marked:\n        return "outside"\n    return "turn-open"	    return "turn-open"
+g-authz-first	gate.py	        if ctx.get("authz"):                          # 7.3: a pass never satisfies authorization / state checks\n            return ("refuse", ctx["authz"])\n        p = match_pass(ctx["passes"], gen, tool, action["digest"])\n	        p = match_pass(ctx["passes"], gen, tool, action["digest"])\n        if ctx.get("authz"):\n            return ("refuse", ctx["authz"])\n
+g-authz	gate.py	        if ctx.get("authz"):                          # 7.3: a pass never satisfies authorization / state checks\n            return ("refuse", ctx["authz"])\n	
+g-content-floor	gate.py	        if origin == "content" and p is None:        # content_floor (I11), every BOT_MANAGEMENT tool, marked or not\n	        if False:\n
+g-c11	gate.py	"C11" if minted else "C5"	"C5"
+g-archive-runs	gate.py	        if tool == "archive_bot":\n            return ("run", None)\n	
+g-owner-seen-required	gate.py	        if p is not None and p["ownerSeen"] and p["eff"] == action["eff"]:	        if p is not None and p["eff"] == action["eff"]:
+g-pass-eff	gate.py	        if p is not None and p["ownerSeen"] and p["eff"] == action["eff"]:	        if p is not None and p["ownerSeen"]:
+g-review-surface	gate.py	        if surface not in REVIEW_RENDERERS:\n            return ("403", "C13")\n	        if surface not in REVIEW_RENDERERS:\n            surface = "phone-app"\n
+g-review-renderer	gate.py	        if seen is None or seen.get("renderer") not in REVIEW_RENDERERS[surface]:	        if seen is None:
+g-review-seen	gate.py	        if seen is None or seen.get("renderer") not in REVIEW_RENDERERS[surface]:\n            return ("409", "changed")\n        if seen.get("digest") != ctx["live_digest"]:	        if seen is not None and seen.get("renderer") not in REVIEW_RENDERERS[surface]:\n            return ("409", "changed")\n        if seen is not None and seen.get("digest") != ctx["live_digest"]:
+g-review-digest	gate.py	        if seen.get("digest") != ctx["live_digest"]:\n            return ("409", "changed")\n	
+g-grant-engine	gate.py	        if route == "engine":                         # D4, D6, G1/G2/G3/G12: never from an engine-callable route\n            return ("no-write", None)\n	
+g-grant-settle-ok	gate.py	            return ("write", None) if ctx.get("settle_ok") else ("no-write", None)	            return ("write", None)
+g-grant-settings	gate.py	            if allowed is not None and surface not in allowed:\n                return ("no-write", None)\n	
+g-grant-standing-desktop	gate.py	            if sink in STANDING and not desktop_authority(surface):   # 8.2\n                return ("once", None)\n	
+g-setup-clean	gate.py	        resolve = (ctx["verdict"] == "clean" and e["option"]	        resolve = (e["option"]
+g-setup-option-captured-A5	gate.py	ctx["verdict"] == "clean" and e["option"] and ctx["option_now"]	ctx["verdict"] == "clean" and ctx["option_now"]
+g-setup-option-now	gate.py	e["option"] and ctx["option_now"] and ctx["card_open"]	e["option"] and ctx["card_open"]
+g-setup-card-open	gate.py	 and ctx["option_now"] and ctx["card_open"])	 and ctx["option_now"])
+g-setup-push-A5	gate.py	        return ("keep", "push" if e["push_suppressed"] and ctx["card_open"] else None)	        return ("keep", None)
+g-tool-allow-for-task-D4	gate.py	            return ("confirm-on-card", None)	            return ("granted", None)
+waive-any-helper-mark	settle.py	    helper_waived = (row.mark_sources == {"helper"} and not row.helper_read\n                     and live_read in (None, "helper")\n                     and helper.get("name") == HELPER_ROW[fam]\n                     and helper.get("site") == HELPER_SITE[fam]\n                     and helper.get("recorded") is True\n                     and helper.get("readsComplete") is True\n                     and helper.get("outsideRead") is False\n                     and helper.get("interrupted") is False)\n	    helper_waived = "helper" in row.mark_sources\n
+never-waive-helper-mark	settle.py	    helper_waived = (row.mark_sources == {"helper"} and not row.helper_read\n                     and live_read in (None, "helper")\n                     and helper.get("name") == HELPER_ROW[fam]\n                     and helper.get("site") == HELPER_SITE[fam]\n                     and helper.get("recorded") is True\n                     and helper.get("readsComplete") is True\n                     and helper.get("outsideRead") is False\n                     and helper.get("interrupted") is False)\n	    helper_waived = False\n

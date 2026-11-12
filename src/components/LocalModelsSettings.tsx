@@ -345,9 +345,9 @@ export function LocalModelsSettings() {
   };
 
   const servers = snapshot?.servers ?? [];
-  return <section ref={root} id="local-models" aria-labelledby="local-models-heading" className="min-w-0 rounded-xl border border-hairline/40 p-4">
+  return <section ref={root} id="local-models" aria-labelledby="local-models-title" className="min-w-0 rounded-xl border border-hairline/40 p-4">
     <div className="flex flex-wrap items-center justify-between gap-2">
-      <h3 id="local-models-heading" className="text-[15px] font-medium text-ink">{LOCAL_MODELS_TITLE}</h3>
+      <h3 id="local-models-title" className="text-[15px] font-medium text-ink">{LOCAL_MODELS_TITLE}</h3>
       <button type="button" disabled={loading} onClick={() => void reload()} aria-label={`Check for ${LOCAL_MODELS_TITLE.toLowerCase()} again`} className={button}>
         <RefreshCw size={13} className={loading ? "animate-spin" : ""} aria-hidden />
       </button>

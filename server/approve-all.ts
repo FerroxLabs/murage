@@ -84,6 +84,9 @@ export const BULK_REASON: Readonly<Record<CardReason, BulkReasonKey | null>> = {
   "task-allowance": "held",
 };
 
+/** NOLIM R7: the classes whose owner cards Approve all admits under No limits (the held and sensitive classes), N2 apart. */
+const NO_LIMITS_BULK: ReadonlySet<string> = new Set(["always-ask", "destructive-guard", "sensitive-guard", "prompt-guard", "outside-turn", "unread-call", "no-grant"]);
+
 export type BulkVerdict = { ok: true } | { ok: false; reasonKey: BulkReasonKey };
 const no = (reasonKey: BulkReasonKey): BulkVerdict => ({ ok: false, reasonKey });
 function stopNo(value: unknown): BulkVerdict {
@@ -103,6 +106,7 @@ export function bulkEligibility(card: unknown, requestId: string): BulkVerdict {
   // questions, folder trust, intake, setup and other cards that are not a tool approval
   if (has(c, "questions") || has(c, "folderTrust") || has(c, "intake") || has(c, "setup") || has(c, "answerAsSend")) return no("not-approval");
   if (has(c, "routineRequest")) return no("routine");
+  if (has(c, "botReviewId")) return no("needs-look");
   if (has(c, "skillRequest")) return no("needs-look");
   if (typeof c.tool !== "string" || !c.tool) return no("not-approval");
   if (/^(?:image|publish|limit|email)-/.test(requestId)) return no("needs-look");
@@ -119,15 +123,21 @@ export function bulkEligibility(card: unknown, requestId: string): BulkVerdict {
   if (!cls || typeof cls !== "object" || Array.isArray(cls)) return no("held");
   const k = cls as Record<string, unknown>;
   if (typeof k.reason !== "string" || !Object.prototype.hasOwnProperty.call(BULK_REASON, k.reason)) return no("held");
+  // NOLIM 1.0.19 (R7): under No limits the finalizer wrote the card's N2 class and initiator at open (cardClass.noLimits). A wipe
+  // (n2) never goes in bulk, the same predicate in preview and apply; the owner's own held and sensitive cards do. A card with
+  // no such record (legacy) is approved one by one.
+  const nl = k.noLimits && typeof k.noLimits === "object" && !Array.isArray(k.noLimits) ? k.noLimits as Record<string, unknown> : undefined;
+  if (nl?.n2 === true) return no("always-ask"); // M-bulk
+  const nlOwner = nl !== undefined && nl.n2 === false && (nl.initiator === "owner" || nl.initiator === "owner-channel" || nl.initiator === "routine") && NO_LIMITS_BULK.has(k.reason);
   // APPROVALS-SIMPLE-1018 section 4 (Astra r1 H2): no early ok. The one always-ask card that walks on is an `unreadable`
   // hit whose open-time hard read came back clear; a held read stays with what it hit; every wipe rule stays.
   const reader = k.reason === "always-ask" && k.rule === "unreadable";
-  if (k.reason === "always-ask" && !reader) {
+  if (!nlOwner && k.reason === "always-ask" && !reader) {
     if (k.rule === "unreadable-held") return k.stop !== undefined ? stopNo(k.stop) : k.ruleHeld === "sensitive" ? no("sensitive") : k.ruleHeld === "destructive" ? no("delete") : no("held");
     return no("always-ask");
   }
   if (k.stop !== undefined) return stopNo(k.stop);
-  const byReason = reader ? null : BULK_REASON[k.reason as CardReason];
+  const byReason = nlOwner || reader ? null : BULK_REASON[k.reason as CardReason];
   if (byReason !== null) return no(byReason);
   // a webhook, a group or someone else's message stays out even when its origin reads `routine`
   if (k.unattended !== false) return no("unattended");
@@ -135,7 +145,7 @@ export function bulkEligibility(card: unknown, requestId: string): BulkVerdict {
   // the owner's own turn, the owner's own DM to the bot, or the owner's attended routine run (Astra r1 H6)
   if (k.origin !== "owner" && k.origin !== "owner-channel" && k.origin !== "routine") return no("origin");
   // the reader's own hold note ("Auto mode couldn't answer this one") is that admitted hold; any other stays
-  if (has(c, "held") && !reader) return no("held");
+  if (has(c, "held") && !reader && !nlOwner) return no("held");
   return { ok: true };
 }
 
@@ -145,7 +155,7 @@ export function bulkKindKey(tool: string): BulkKind {
 }
 
 /** The special cards Approve all never answers, in respondToCard's own branch order (design 6.2). */
-export const BULK_SPECIAL_KINDS = ["limit", "email", "question", "skill", "routine", "peer", "extension", "host-consent"] as const;
+export const BULK_SPECIAL_KINDS = ["highlevel", "limit", "email", "question", "skill", "routine", "peer", "extension", "host-consent"] as const;
 export type BulkSpecialKind = (typeof BULK_SPECIAL_KINDS)[number];
 /** One read-only probe per special kind: each is the live predicate that kind's own branch in respondToCard tests. */
 export type BulkSpecialProbes = { readonly [K in BulkSpecialKind]: () => boolean };

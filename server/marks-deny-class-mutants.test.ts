@@ -4,6 +4,7 @@ import { alwaysAskCommand as alwaysAskRaw, alwaysAskRoutineCommand as routineRaw
 import { autoVerdict, type AutoContext } from "./auto-approve.ts";
 import { withoutDoubts } from "./shell/marks.ts";
 import { nlh0, ownerMarks } from "./testing/marks-nlh0.ts";
+import { expectNoLimitsOwnerOutcome } from "./testing/no-limits-1019.ts";
 
 // MARKS R1 (MurageMain 11-08, G1): the mutant witnesses state the owner clean No limits strict read, so each call runs under ownerMarks;
 // every other level and origin reads as NLH0 (the raw "non-owner reads as NLH0" row at the end of this file).
@@ -22,7 +23,7 @@ const cases = [
   ["M-opaque-write-intent", `perl -e 'open(my $f, ">", "/etc/cron.d/pwn")'`, "unknown-target"],
   ["M-incomplete-expression", `python3 -c 'open("/et"+"c/cron.d/pwn","w").write("x")'`, "unknown-target"],
   ["M-incomplete-native", `python3 -c '__import__("ct"+"ypes").CDLL(None).syscall(87, b"/etc/passwd")'`, "protected-path"],
-  ["M-equivalence-only", "zorbwipe /Volumes/Scratch", "protected-path"],
+  ["M-equivalence-only", "zorbwipe /Volumes/Fixture", "protected-path"],
   ["M-9H-sed-position", "sed -n '1w /etc/cron.d/pwn' notes.txt", "protected-path"],
   ["M-9H-awk-position", `awk "BEGIN{print \\"x\\" > '/etc/cron.d/pwn'}"`, "protected-path"],
   ["M-9H-ruby-inplace", `ruby -i -e 'puts "x"' /etc/cron.d/pwn`, "protected-path"],
@@ -36,13 +37,15 @@ it.each(cases)("%s", (_id, command, rule) => {
 });
 // MurageMain 11-08 FULLDENY-DEV ruling: ordinary device sinks exempt (1.0.17 parity); raw devices stay system
 it("M-system-subtree-holes", () => { for (const path of ["/usr/local/bin/x", "/dev/null", "/opt/x"]) nlh0(`M-system-subtree-holes|${path}`, protectedClassRaw(path)); for (const path of ["/usr/local/bin/x", "/dev/sda", "/dev/mem", "/opt/x"]) expect(protectedClass(path)).toBe("system"); });
-it("M-home-volume-overreach", () => { for (const path of ["/home/tester/out", "/Volumes/Scratch/out"]) expect(protectedClass(path)).toBeNull(); });
+it("M-home-volume-overreach", () => { for (const path of ["/home/tester/out", "/Volumes/Fixture/out"]) expect(protectedClass(path)).toBeNull(); });
 it("M-runtime-target-bypass", () => expect(alwaysAskRoutineCommand('rm -rf "$OUT"', "/w", undefined, undefined, { runtimePaths: { OUT: "/etc/cron.d/pwn" } }).hit).toMatchObject({ classification: "deny", rule: "protected-path" }));
 it("M-cwd-default", () => expect(withoutDoubts(() => alwaysAskCommand("touch out", "relative"))).toMatchObject({ classification: "deny", rule: "unknown-target" }));
 for (const name of ["M-inner-unseen-discard", "M-script-after-waiver"]) it(name, () => {
   const ctx = { fullAccessOrigin: "owner", ownerStarted: true, commandCwd: "/w", stopLine: null, outsideRead: null,
     call: { toolCall: { input: { command: "bash /etc/tool.sh" } } } } as unknown as AutoContext;
-  expect(autoVerdict({ id: "owner", autoApprove: true, fullAccess: true, noLimits: true }, "wrapper", "bash ./build.sh", ctx)).toMatchObject({ approve: null, classification: "deny", rule: "protected-path" });
+  // NOLIM 1.0.19: the reader still reads the inner deny (checked below); the owner's No limits turn runs a non-wipe row
+  expect(alwaysAskCommand("bash /etc/tool.sh", "/w")).toMatchObject({ classification: "deny", rule: "protected-path" });
+  expectNoLimitsOwnerOutcome(autoVerdict({ id: "owner", autoApprove: true, fullAccess: true, noLimits: true }, "wrapper", "bash ./build.sh", ctx), "bash /etc/tool.sh", "protected-path", name);
 });
 it("M-interpreter-consume", () => expect(withoutDoubts(() => alwaysAskCommand("perl -W /etc/tool.pl", "/w"))).toMatchObject({ classification: "ask", reason: "ambiguous-interpreter", couldNotRead: true }));
 it("M-D4-waiver", () => {

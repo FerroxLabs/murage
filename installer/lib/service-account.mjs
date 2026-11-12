@@ -146,7 +146,7 @@ export function chooseServiceUser({ flag = null, euid = null, sudoUser, invoking
 export function lookupAccount(name, { run = spawnSync, current } = {}) {
   if (!isAccountName(name)) throw new ServiceAccountRefused("BAD_ACCOUNT_NAME", "that is not a valid account name");
   const call = (cmd, args) => {
-    const r = run(cmd, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+    const r = run(cmd, [...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
     return (r?.status ?? 1) === 0 ? String(r.stdout ?? "").trim() : null;
   };
 

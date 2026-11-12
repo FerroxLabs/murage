@@ -1,0 +1,162 @@
+[
+  {
+    "fixture": {
+      "url": "http://127.0.0.1:20069",
+      "pid": 658,
+      "dataDir": "/tmp/murage-verify-data-jcdS4w",
+      "logPath": "/tmp/murage-verification-evidence/server-1794368815173-647.log"
+    }
+  },
+  {
+    "passiveIncident": {
+      "slug": "buffer",
+      "label": "Buffer",
+      "accounts": [
+        {
+          "id": "buffer-a",
+          "alias": "work"
+        }
+      ],
+      "incidentId": "608539a6-1fa0-4469-9378-89f35afc2e69"
+    },
+    "probes": 1
+  },
+  {
+    "scheduledFailure": {
+      "id": "3b1a7738-e303-4c28-825b-69b5ed823e72",
+      "routineId": "fef95fee-a0c8-4be1-9b56-8601f394177e",
+      "routineName": "Check Buffer queue",
+      "prompt": "Check the Buffer queue without publishing anything.",
+      "instructionRevision": "2a8f1cd181271b494f615f5372e0ed8382b4587a6ff223fbe691a90adc2c8038",
+      "durationMinutes": 30,
+      "attachments": [],
+      "target": "bot",
+      "botId": "b60743d1-70d3-4e16-851d-50df08172830",
+      "runOn": "ember",
+      "scheduledFor": 1794368832353,
+      "dueAt": 1794368832353,
+      "status": "failed",
+      "manual": false,
+      "triggerSource": "schedule",
+      "createdAt": 1794368838329,
+      "delivery": {
+        "state": "sent",
+        "threadId": "2b179743-5372-4092-bdb8-150bca7cf97f"
+      },
+      "event": {
+        "version": 1,
+        "id": "3b1a7738-e303-4c28-825b-69b5ed823e72",
+        "definitionId": "fef95fee-a0c8-4be1-9b56-8601f394177e",
+        "receivedAt": 1794368838329,
+        "budgetId": "3b1a7738-e303-4c28-825b-69b5ed823e72",
+        "source": "schedule",
+        "origin": {
+          "kind": "local-schedule"
+        }
+      },
+      "eventBudget": {
+        "version": 2,
+        "limits": {
+          "create": 4,
+          "handoff": 4
+        },
+        "admissions": [],
+        "closed": false
+      },
+      "threadId": "b5708bbe-f2bf-42e1-8402-446b62e03b9a",
+      "startedAt": 1794368868335,
+      "slotAt": 1794368862262,
+      "procedureBundleId": "560ba5b958edf0e06cd1fea2f27b82bc9e65729e49b6a3aeed21de888d79f734",
+      "output": "custom tool failed: Buffer sign-in expired. Sign in again.",
+      "cost": 0,
+      "error": "end_turn",
+      "finishedAt": 1794368869002
+    },
+    "messages": {
+      "messages": [
+        {
+          "id": "765bb9e8-d2ad-4c3b-8251-bd9b551187a9",
+          "at": 1794368868337,
+          "parentId": null,
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Scheduled run: Check Buffer queue",
+            "ok": true
+          },
+          "murageLine": true,
+          "seq": 1
+        },
+        {
+          "id": "bc4a80c6-e08d-4a4b-8bbe-9331758a4501",
+          "at": 1794368868351,
+          "parentId": "765bb9e8-d2ad-4c3b-8251-bd9b551187a9",
+          "role": "user",
+          "kind": "text",
+          "text": "Check the Buffer queue without publishing anything.",
+          "attachments": [],
+          "routineRunPrompt": {
+            "trigger": "schedule",
+            "routineName": "Check Buffer queue"
+          },
+          "automation": {
+            "kind": "schedule",
+            "routineId": "fef95fee-a0c8-4be1-9b56-8601f394177e"
+          },
+          "dispatchedIn": "10fc9ee4-1629-471e-865c-ec1357832761",
+          "seq": 2
+        },
+        {
+          "id": "ev-73cd519ffed6e1e1547eabfdf59775e4",
+          "at": 1794368868970,
+          "parentId": "bc4a80c6-e08d-4a4b-8bbe-9331758a4501",
+          "role": "bot",
+          "kind": "activity",
+          "tool": {
+            "name": "Connected app: Buffer list posts",
+            "action": {
+              "name": "mcp__murage_connectors__BUFFER_LIST_POSTS",
+              "classes": [],
+              "outcome": "failed"
+            },
+            "ok": false,
+            "spoken": "using a tool"
+          },
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "turnId": "10fc9ee4-1629-471e-865c-ec1357832761",
+          "provenance": "provider",
+          "speechGenerationId": "beabc52c-61e0-49f3-8dba-5563a7efe761",
+          "seq": 3
+        },
+        {
+          "id": "ev-ac14a7ef3d65c4a67cccd2ddcea92e1d",
+          "at": 1794368868989,
+          "parentId": "ev-73cd519ffed6e1e1547eabfdf59775e4",
+          "role": "bot",
+          "kind": "text",
+          "text": "custom tool failed: Buffer sign-in expired. Sign in again.",
+          "turnId": "10fc9ee4-1629-471e-865c-ec1357832761",
+          "engine": {
+            "instanceId": "verification",
+            "driverKind": "claudeAgent",
+            "model": "claude-sonnet-5-5",
+            "capabilityHash": "8d4f3775b454603cf7507c1189af68ad644d1d16648e0db8963cf748c2e8b084"
+          },
+          "provenance": "provider",
+          "speechGenerationId": "beabc52c-61e0-49f3-8dba-5563a7efe761",
+          "turnTerminal": true,
+          "seq": 4
+        }
+      ],
+      "hasMore": false,
+      "newestSeq": 4
+    },
+    "failedCalls": 1,
+    "completedCalls": 0
+  }
+]

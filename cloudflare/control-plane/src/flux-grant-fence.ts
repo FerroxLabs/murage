@@ -22,7 +22,28 @@ const NOW = "CAST(ROUND((julianday('now') - 2440587.5) * 86400000) AS INTEGER)";
 
 export type FenceOp = "grant" | "reverse" | "target" | "operator";
 export interface FenceClaim { grantId: string; token: string; epoch: number }
+/** Why an allocation was refused, as decided by the allocation's own batch: "superseded" (a later logical revision, or the guard failed), "owner_lost"
+ *  (the claim no longer owns the grant), "account_disputed" (a credit grant while the owner's account has an open dispute: a HOLD, never a failed try). */
+export type AllocationRefusal = "superseded" | "owner_lost" | "account_disputed";
+/** Out-parameter of allocateFenceRevision: filled with null (allocated) or the refusal reason. */
+export interface AllocationDecision { refusal?: AllocationRefusal | null }
 export type FenceOutcome = "applied" | "superseded" | "mismatch" | "unknown" | "refused";
+
+/** DISPUTE-FENCE-ACCOUNT: the ops that put a NEW credit grant into an account. Only these are refused while the owner's account has an open
+ *  email-proof dispute. A reversal only takes credit away. A reversal TARGET and an operator adjustment are accounting corrections and are NOT choked
+ *  EVEN THOUGH THEY CAN RESTORE CREDIT (a lower cumulative target gives value back: the automatic coverage reconciler does it, b5-billing.ts; an
+ *  operator's claim restores a failed refund): this is an explicit exception, because they only correct a grant that was already made and paid, and
+ *  stopping them would leave the books wrong. This leaf carries its own copy of the two predicates (flux-dispute-fence.ts re-exports them) because
+ *  it imports nothing. */
+export const CREDIT_RAISING_OPS: readonly FenceOp[] = ["grant"];
+/** True (as SQL) while the account `owner` (a placeholder or a column) has an open dispute. */
+export const accountDisputeOpenSql = (owner: string) =>
+  `EXISTS (SELECT 1 FROM flux_account_dispute fad WHERE fad.account_id=${owner} AND fad.open=1)`;
+/** The same for the owner of the home `home` (an SQL expression). */
+export const homeDisputeOpenSql = (home: string) =>
+  `EXISTS (SELECT 1 FROM flux_account_dispute fad JOIN cloud_homes fch ON fch.owner_id=fad.account_id WHERE fch.id=${home} AND fad.open=1)`;
+/** The home a fence row serves: the caller's (?6 in allocateFenceRevision) else the one the row was claimed for. */
+const GRANT_HOME = "COALESCE(?6,(SELECT fh.home_id FROM flux_grant_fence fh WHERE fh.grant_id=?2))";
 
 /** How long an automatic owner (a B4 dispatch, a B5 ask) holds a grant: longer than any request may be in flight (timeouts are 10-15 s). */
 export const FENCE_TTL_MS = 5 * 60_000;
@@ -48,24 +69,35 @@ export async function claimGrantFence(db: D1Database, a: { grantId: string; kind
  *  revision): refused unless it holds at the instant the revision is taken. The journal row (outcome NULL) is written in the same batch,
  *  BEFORE any I/O: it is the durable mark of a revision that may have been dispatched (F4 discovers it once its owner is gone). */
 export async function allocateFenceRevision(db: D1Database, c: FenceClaim, a: { op: FenceOp; bodySha?: string | null; floor?: number; logical?: number;
-  guard?: { sql: string; binds: unknown[] } }): Promise<number | null> {
-  const res = await db.batch<{ next_revision: number }>([
+  guard?: { sql: string; binds: unknown[] }; homeId?: string; decision?: AllocationDecision }): Promise<number | null> {
+  // DISPUTE-FENCE-ACCOUNT, THE CHOKE POINT FOR CREDIT GRANTS: B4 and B5 grants, top-ups included, are all sent through fencedMutation, which
+  // allocates here. A credit-raising op is refused INSIDE this statement while the home's owner has an open dispute (the grant stays owed).
+  const raising = CREDIT_RAISING_OPS.includes(a.op);
+  const res = await db.batch<Record<string, number>>([
     db.prepare(`UPDATE flux_grant_fence SET next_revision=MAX(next_revision,applied_revision,?1-1)+1,state_seq=state_seq+1,updated_at=${NOW}
       WHERE grant_id=?2 AND owner_token=?3 AND epoch=?4 AND owner_expires_at>${NOW}
         AND (?5 IS NULL OR NOT EXISTS (SELECT 1 FROM flux_grant_revisions v WHERE v.grant_id=?2 AND v.logical_revision>?5))
+        ${raising ? `AND NOT ${homeDisputeOpenSql(GRANT_HOME)}` : ""}
         ${a.guard ? `AND (${a.guard.sql})` : ""} RETURNING next_revision`)
-      .bind(a.floor ?? 0, c.grantId, c.token, c.epoch, a.logical ?? null, ...(a.guard?.binds ?? [])),
+      .bind(a.floor ?? 0, c.grantId, c.token, c.epoch, a.logical ?? null, ...(raising ? [a.homeId ?? null] : []), ...(a.guard?.binds ?? [])),
     db.prepare(`INSERT INTO flux_grant_revisions (grant_id,revision,epoch,op,body_sha256,logical_revision,allocated_at)
       SELECT grant_id,next_revision,epoch,?1,?2,?6,${NOW} FROM flux_grant_fence WHERE grant_id=?3 AND owner_token=?4 AND epoch=?5 AND changes()=1`)
       .bind(a.op, a.bodySha ?? null, c.grantId, c.token, c.epoch, a.logical ?? null),
+    // Opus L2: WHY the allocation above was refused is read in this SAME batch (one transaction), right after the refusing statement, not by a later
+    // re-read: a clear that lands a moment afterwards cannot turn a dispute refusal into an ordinary one. After a refusal the INSERT above wrote
+    // nothing, so changes() is 0 here exactly when the allocation was refused. `held`: the claim still owns the grant; `disputed`: a dispute was
+    // open at that instant (a credit-raising op only).
+    db.prepare(`SELECT CASE WHEN changes()=0 THEN 1 ELSE 0 END AS refused,
+        EXISTS (SELECT 1 FROM flux_grant_fence WHERE grant_id=?1 AND owner_token=?2 AND epoch=?3 AND owner_expires_at>${NOW}) AS held,
+        ${raising ? homeDisputeOpenSql("COALESCE(?4,(SELECT fh.home_id FROM flux_grant_fence fh WHERE fh.grant_id=?1))") : "0"} AS disputed`)
+      .bind(c.grantId, c.token, c.epoch, ...(raising ? [a.homeId ?? null] : [])),
   ]);
-  return res[0].results[0]?.next_revision ?? null;
-}
-
-/** H2: why an allocation was refused while the caller still holds its claim: "superseded" (a later logical revision, or the guard failed),
- *  else "owner_lost". */
-export async function allocationRefusal(db: D1Database, c: FenceClaim): Promise<"superseded" | "owner_lost"> {
-  return (await fenceHeld(db, c)) ? "superseded" : "owner_lost";
+  const revision = res[0].results[0]?.next_revision ?? null;
+  if (a.decision) {
+    const d = res[2]?.results[0];
+    a.decision.refusal = revision !== null ? null : !d || d.held !== 1 ? "owner_lost" : d.disputed === 1 ? "account_disputed" : "superseded";
+  }
+  return revision;
 }
 
 /** H2: a revision allocated but never sent (the caller failed before the request left): journaled as not_sent, so F4 never reads it back. */

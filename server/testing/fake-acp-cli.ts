@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// @ts-expect-error The isolated replay harness is JavaScript test support.
+import { replayBrowserRead } from "../../scripts/web-read-replay/run.mjs";
 // Fake of an ACP (Agent Client Protocol) CLI's stdio surface, for driver
 // tests of acp/core.ts + its harness shims (grok, gemini). Speaks JSON-RPC
 // 2.0 over stdin/stdout: answers initialize / authenticate / session/new /
@@ -310,12 +312,15 @@ import { execFileSync, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { once } from "node:events";
+import { createInterface } from "node:readline";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fixtureCredentialFingerprint } from "./fixture-dump.ts";
 import { logProposalTurn, proposalFrom, proposalReply, proposeThroughMcp } from "./fake-mcp-propose.ts";
 import { fakeReviewByTool, fakeReviewReply, fakeReviewToolArgs } from "./fake-review.ts";
+import { replayWebRead, replayCommands } from "./fake-web-read.ts";
 import { callFirstCustomTool, customToolReply, customToolServer } from "./fake-custom-tool.ts";
+import { fixtureRequested } from "./fixture-request.ts";
 
 const mode = process.env.FAKE_ACP_MODE ?? "happy";
 // Separate cages may both call their engine PID 2. Files and session identities
@@ -477,7 +482,7 @@ const dumpEnv = Object.fromEntries(
     "GITHUB_TOKEN",
     ...dumpCredentials,
     // engine isolation switches (no secret): compat cells, memory, discovery off
-    ...Object.keys(process.env).filter((key) => /^(?:GROK|FUIGO)_[A-Z]+_[A-Z]+_ENABLED$|^(?:GROK|FUIGO)_MEMORY$|^OPENCODE_DISABLE_|^OPENCODE_PURE$|^(?:GEMINI_CLI|QWEN_CODE)_SYSTEM_SETTINGS_PATH$|^GEMINI_CLI_HOME$|^GROK_HOME$|^OPENCODE_CONFIG_DIR$|^FACTORY_HOME_OVERRIDE$/.test(key)),
+    ...Object.keys(process.env).filter((key) => /^(?:GROK|FUIGO)_[A-Z]+_[A-Z]+_ENABLED$|^(?:GROK|FUIGO)_MEMORY$|^OPENCODE_DISABLE_|^OPENCODE_PURE$|^(?:GEMINI_CLI|QWEN_CODE)_SYSTEM_SETTINGS_PATH$|^GEMINI_CLI_HOME$|^GEMINI_SANDBOX$|^GROK_HOME$|^OPENCODE_CONFIG_DIR$|^FACTORY_HOME_OVERRIDE$/.test(key)),
   ].flatMap((key) => (process.env[key] === undefined ? [] : [[key, dumpCredentials.has(key) ? fixtureCredentialFingerprint(process.env[key]!) : process.env[key]]] as const)),
 );
 // Folder-trust readers must see a complete snapshot at each publication.
@@ -565,18 +570,7 @@ const out = (obj: unknown) => {
 const FIXTURE_FRAME_LIMIT = 32 * 1024 * 1024;
 const fixtureOversizeText = () => "é".repeat(FIXTURE_FRAME_LIMIT / 2 + 512);
 const fixtureLargeImageBase64 = () => Buffer.alloc(10 * 1024 * 1024, 7).toString("base64");
-// Markers count only on the prompt's last line (the current request): the
-// harness replays earlier messages into a fresh process's prompt, and an old
-// marker there must not re-trigger a fixture on a later, ordinary turn.
-// A room turn's prompt is the room transcript followed by the harness's
-// "(Reply to the conversation above as NAME.)" trailer, so its current request
-// is the last transcript line before that trailer.
-const ROOM_REPLY_TRAILER = /^\(Reply to the conversation above as .+\.\)$/;
-const fixtureRequested = (text: string, marker: string) => {
-  const lines = text.trimEnd().split("\n");
-  if (lines.length > 1 && ROOM_REPLY_TRAILER.test(lines.at(-1) ?? "")) { lines.pop(); while (lines.length > 1 && !lines.at(-1)?.trim()) lines.pop(); }
-  return (lines.pop() ?? "").includes(marker);
-};
+// Markers count only on the prompt's last line (fixture-request.ts): old replayed markers must not re-trigger a fixture.
 const result = (id: unknown, res: unknown) => out({ jsonrpc: "2.0", id, result: res });
 
 // Fuigo 1.0.36+ launch policy (see FUIGO_POLICY_PATH above). Returns the error record, or null when the bytes match.
@@ -608,7 +602,7 @@ function sessionPolicy(msg: any): { _meta?: Record<string, unknown> } | true {
 // or session/load, so before any prompt: a load's history replay, or a tool frame an engine sends before it is asked.
 const preFrames = (sid: unknown) => {
   for (const frame of JSON.parse(process.env.FAKE_ACP_PRE_FRAMES ?? "[]")) {
-    out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: sid, update: frame.update, ...(frame.meta ? { _meta: frame.meta } : {}) } });
+    out({ jsonrpc: "2.0", method: frame.rail ?? "session/update", params: { sessionId: sid, update: frame.update, ...(frame.meta ? { _meta: frame.meta } : {}) } });
   }
 };
 /** A test's own gate: `then` runs once the file exists. */
@@ -829,9 +823,9 @@ const fakeWorkspaceKey = (): string => {
   const cwd = process.cwd();
   const canonical = (path: string) => { try { return realpathSync.native(path); } catch { return path; } };
   try {
-    const top = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
-    const common = resolve(cwd, execFileSync("git", ["rev-parse", "--git-common-dir"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
-    const gitDir = resolve(cwd, execFileSync("git", ["rev-parse", "--git-dir"], { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+    const top = execFileSync("git", ["rev-parse", "--show-toplevel"], { windowsHide: true, cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    const common = resolve(cwd, execFileSync("git", ["rev-parse", "--git-common-dir"], { windowsHide: true, cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
+    const gitDir = resolve(cwd, execFileSync("git", ["rev-parse", "--git-dir"], { windowsHide: true, cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim());
     if (top && realpathSync.native(common) !== realpathSync.native(gitDir) && basename(common) === ".git") return realpathSync.native(dirname(common));
     return top ? realpathSync.native(top) : canonical(cwd);
   } catch {
@@ -885,8 +879,8 @@ const startMcpChild = (servers: unknown) => {
   mcpChild?.kill("SIGKILL");
   const first = Array.isArray(servers) ? servers[0] as { command?: unknown; args?: unknown } | undefined : undefined;
   mcpChild = typeof first?.command === "string"
-    ? spawn(first.command, Array.isArray(first.args) ? first.args.map(String) : [], { stdio: "ignore" })
-    : spawn("sleep", ["300"], { stdio: "ignore" });
+    ? spawn(first.command, Array.isArray(first.args) ? first.args.map(String) : [], { windowsHide: true, stdio: "ignore" })
+    : spawn("sleep", ["300"], { windowsHide: true, stdio: "ignore" });
   appendFileSync(log, `${mcpChild.pid}\n`);
 };
 /** The server names the last session/new or session/load carried (FAKE_ACP_MCP_LIST "all:<status>"). */
@@ -944,7 +938,7 @@ function connectMcpServers(servers: unknown): void {
       if (typeof entry?.command !== "string") continue;
       const env = { ...process.env };
       for (const { name, value } of entry.env ?? []) env[name] = value;
-      const child = spawn(entry.command, entry.args ?? [], { env, stdio: ["pipe", "pipe", "ignore"] });
+      const child = spawn(entry.command, entry.args ?? [], { windowsHide: true, env, stdio: ["pipe", "pipe", "ignore"] });
       connectedMcp.push(child);
       child.on("error", () => undefined);
       child.stdin.on("error", () => undefined);
@@ -996,7 +990,7 @@ function driveMcp(entry: McpEntry, calls: Array<{ name: string; args: (prev: str
   return new Promise((resolve, reject) => {
     const env = { ...process.env };
     for (const { name, value } of entry.env ?? []) env[name] = value;
-    const child = spawn(entry.command, entry.args ?? [], { env, stdio: ["pipe", "pipe", "inherit"] });
+    const child = spawn(entry.command, entry.args ?? [], { windowsHide: true, env, stdio: ["pipe", "pipe", "inherit"] });
     child.on("error", reject);
     // FAKE_ACP_MCP_TIMEOUT_MS: the engine gives up on a tool call that long
     // after it started (the tool's own connection closes), as a real engine's
@@ -1060,6 +1054,9 @@ function playReasoningTurn() {
 
 function playTurn() {
   out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: "hello from fake acp" } } } });
+  // Permission-routing fixtures ask before any execution; the generic tool row is unrelated to that request.
+  // A text answer needs no tool. Permission fixtures can request a tool later.
+  if (process.env.FAKE_ACP_TEXT_ONLY === "1") return;
   // FAKE_ACP_TOOL_KIND: the ACP kind of this scripted tool row. Unset, the row has no kind (ACP reads it as `other`), which
   // the NOLIMITS-MEANS-IT outside mark (M2) rightly reads as an outside tool; a suite that needs a clean owner turn names a
   // local kind (`think`).
@@ -1255,6 +1252,45 @@ function scheduleLateFrames(sessionId: unknown) {
   }, ms);
 }
 
+// C11's ACP fixture consumes real paginated MCP responses. Only the MCP
+// responder owns publication, using the same flushed-output observer as proxies.
+const c11Served = new Map<string, string[]>();
+/** Prompts this fake process has served: `limitAfterPrompt` (c11-budget spec) lowers the engine's tool limit once it has served one. */
+let c11Prompts = 0;
+const c11Dirty: Array<() => Promise<void>> = [];
+async function c11List(server: any, spec: any) {
+  const names = spec.catalogs[server.name];
+  const env = Object.fromEntries(server.env.map((e: any) => [e.name, e.value]));
+  if (!Array.isArray(names)) { // Explicit legacy/unknown fixture, never exact zero.
+    writeFileSync(env.MURAGE_MCP_LISTED_FILE, String(Date.now())); return;
+  }
+  const child = spawn(process.execPath, [new URL("./fake-c11-mcp.mjs", import.meta.url).pathname], {
+    env: { ...process.env, ...env, FIXTURE_TOOLS: JSON.stringify(names), FIXTURE_RESOURCES: spec.resources ? "1" : "0" },
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+  let id = 0;
+  const pending = new Map<number, (value: any) => void>();
+  const lines = createInterface({ input: child.stdout });
+  lines.on("line", line => { const value = JSON.parse(line); pending.get(value.id)?.(value.result); pending.delete(value.id); });
+  const request = (method: string, params: object = {}) => new Promise<any>(resolve => {
+    pending.set(++id, resolve); child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+  });
+  try {
+    await request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "c11-acp", version: "1" } });
+    const served: string[] = []; let cursor: string | undefined;
+    do {
+      const page = await request("tools/list", cursor ? { cursor } : {});
+      served.push(...page.tools.map((tool: any) => tool.name)); cursor = page.nextCursor;
+    } while (cursor);
+    c11Served.set(server.name, [...new Set(served)]);
+    appendFileSync(process.env.FAKE_C11_LOG!, JSON.stringify({ launchId, event: "catalog", server: server.name, marker: env.MURAGE_MCP_LISTED_FILE, names: served }) + "\n");
+    if (spec.dirtyAfterOutput) c11Dirty.push(async () => { await request("fixture/dirty"); child.stdin.end(); });
+  } finally { if (!spec.dirtyAfterOutput) {
+    const closed = spec.awaitCatalogExit ? new Promise<void>(resolve => child.once("close", () => resolve())) : undefined;
+    child.stdin.end(); await closed;
+  } }
+}
+
 function handle(msg: any) {
   if (mode === "fuigo-script" && msg.id !== undefined && !msg.method && scriptRequestIds.has(msg.id)) {
     scriptRequestIds.delete(msg.id);
@@ -1319,6 +1355,7 @@ function handle(msg: any) {
     const agentsToken = agentsTokenOf(msg.params?.mcpServers);
     appendFileSync(process.env.FAKE_ACP_RPC_LOG, JSON.stringify({
       pid: process.pid, method: msg.method,
+      ...(msg.method === "initialize" ? { argv: process.argv.slice(2) } : {}),
       ...(msg.params?._meta?.noReplay === true ? { noReplay: true } : {}),
       ...(agentsToken !== undefined ? { agentsToken } : {}),
     }) + "\n");
@@ -1334,6 +1371,71 @@ function handle(msg: any) {
   }
   if (mode === "unknown-rpc-error" && msg.method === "session/prompt") {
     out({ jsonrpc: "2.0", id: -999, error: { code: -32603, message: "fake-secret-canary", data: { http_status: 500 } } });
+  }
+
+  if (mode === "c11-budget") {
+    const spec = JSON.parse(process.env.FAKE_C11_SPEC ?? "{}");
+    if (spec.catalogVariants || spec.resourceVariants) {
+      const prior = existsSync(process.env.FAKE_C11_LOG!) ? readFileSync(process.env.FAKE_C11_LOG!, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)).filter(row => row.event === "spawn") : [];
+      const own = prior.findIndex(row => row.launchId === launchId), ordinal = own < 0 ? prior.length : own;
+      if (spec.catalogVariants) spec.catalogs = spec.catalogVariants[Math.min(ordinal, spec.catalogVariants.length - 1)];
+      if (spec.resourceVariants) spec.resources = spec.resourceVariants[Math.min(ordinal, spec.resourceVariants.length - 1)];
+    }
+    const log = (value: unknown) => appendFileSync(process.env.FAKE_C11_LOG!, JSON.stringify({ launchId, ...value as object }) + "\n");
+    if (msg.method === "initialize" && spec.initialGate && !existsSync(spec.initialGate)) { writeFileSync(spec.initialGate + ".waiting", ""); whenFile(spec.initialGate, () => handle(msg)); return; }
+    if (msg.method === "initialize" && spec.recoveryGate && existsSync(process.env.FAKE_C11_LOG!) && readFileSync(process.env.FAKE_C11_LOG!, "utf8").includes('"event":"prompt"') && !existsSync(spec.recoveryGate)) {
+      writeFileSync(spec.recoveryGate + ".waiting", ""); whenFile(spec.recoveryGate, () => handle(msg)); return;
+    }
+    if (msg.method === "initialize" && spec.crashReplacement && existsSync(process.env.FAKE_C11_LOG!) && readFileSync(process.env.FAKE_C11_LOG!, "utf8").includes('"event":"prompt"')) { log({ event: "replacement-crash" }); process.exit(3); }
+    if (msg.method === "initialize") log({ event: "spawn", overlay: JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? "{}"), argv: process.argv.slice(2) });
+    if (msg.method === "session/load" && spec.loadGate && !existsSync(spec.loadGate)) {
+      writeFileSync(spec.loadGate + ".waiting", ""); whenFile(spec.loadGate, () => handle(msg)); return;
+    }
+    if (msg.method === "session/new" || msg.method === "session/load") {
+      const servers = msg.params.mcpServers ?? [];
+      log({ event: msg.method, sessionId: msg.params.sessionId, servers: servers.map((s: any) => s.name) });
+      if (msg.method === "session/load" && spec.loadNull) { result(msg.id, null); return; }
+      if (msg.method === "session/load" && spec.loadError) { out({ jsonrpc: "2.0", id: msg.id, error: spec.loadError }); return; }
+      const listings: Promise<void>[] = [];
+      for (const server of servers) {
+        const path = server.env.find((e: any) => e.name === "MURAGE_MCP_LISTED_FILE")?.value;
+        if (!path) continue;
+        const publish = () => { const listed = c11List(server, spec).catch(error => { process.stderr.write(String(error)); process.exit(3); }); listings.push(listed); };
+        if (spec.skipMarker === server.name) continue;
+        if (spec.markerGate && server.name === spec.heldMount && !existsSync(spec.markerGate)) {
+          writeFileSync(spec.markerGate + ".waiting", ""); whenFile(spec.markerGate, publish);
+        } else publish();
+      }
+      const sessionReady = () => result(msg.id, { sessionId: msg.params.sessionId ?? "c11-session" });
+      if (spec.awaitCatalogExit) void Promise.all(listings).then(sessionReady); else sessionReady();
+      return;
+    }
+    if (msg.method === "session/prompt") {
+      const permission = JSON.parse(process.env.OPENCODE_CONFIG_CONTENT ?? "{}").permission ?? {};
+      const ids = Array.from(c11Served).flatMap(([server, names]) => names.map(name => `${server}_${name}`.replace(/[^a-zA-Z0-9_-]/g, "_")));
+      const visible = ids.filter(id => {
+        let action = "ask";
+        for (const [pattern, rule] of Object.entries(permission)) {
+          const regex = new RegExp("^" + pattern.split("*").map(part => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*") + "$");
+          if (regex.test(id) && typeof rule === "string") action = rule;
+        }
+        return action !== "deny";
+      });
+      const count = visible.length + spec.native;
+      const limit = spec.limitAfterPrompt && c11Prompts > 0 ? spec.limitAfterPrompt : spec.limit;
+      c11Prompts++;
+      log({ event: "prompt", count, visible, prompt: msg.params.prompt });
+      if (spec.output) out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params.sessionId, ...(spec.replay ? { _meta: { isReplay: true } } : {}), update: spec.output } });
+      const finish = () => {
+      if (count > limit || spec.forceReject) out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: { errorName: "APIError", message: `tools: array too long. Expected an array with maximum length ${limit}, but got ${count}.` } } });
+      else { out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Fixture complete" } } } }); result(msg.id, { stopReason: "end_turn" }); }
+      };
+      if (spec.dirtyAfterOutput) void Promise.all(c11Dirty.map(change => change())).then(finish);
+      else if (spec.promptGate && readFileSync(process.env.FAKE_C11_LOG!, "utf8").split('"event":"prompt"').length > 2 && !existsSync(spec.promptGate)) {
+        writeFileSync(spec.promptGate + ".waiting", ""); whenFile(spec.promptGate, finish);
+      } else finish();
+      return;
+    }
   }
 
   switch (msg.method) {
@@ -1363,6 +1465,11 @@ function handle(msg: any) {
       result(msg.id, {});
       break;
     case "session/new": {
+      // N5: persistent engine-home witness, enabled only by this isolated fixture.
+      if (process.env.FAKE_ACP_HOME_SESSION === "1" && process.env.FUIGO_HOME) {
+        mkdirSync(join(process.env.FUIGO_HOME, "sessions"), { recursive: true });
+        writeFileSync(join(process.env.FUIGO_HOME, "sessions", "fake-session"), "Full access history");
+      }
       if (process.env.FAKE_ACP_NEW_ERROR) {
         out({ jsonrpc: "2.0", id: msg.id, error: JSON.parse(process.env.FAKE_ACP_NEW_ERROR) });
         break;
@@ -1452,6 +1559,10 @@ function handle(msg: any) {
       break;
     }
     case "session/load": {
+      if (process.env.FAKE_ACP_HOME_SESSION === "1" && (!process.env.FUIGO_HOME || !existsSync(join(process.env.FUIGO_HOME, "sessions", "fake-session")))) {
+        out({ jsonrpc: "2.0", id: msg.id, error: { code: -32001, message: "session history missing from engine home" } });
+        break;
+      }
       const loadPolicy = sessionPolicy(msg);
       if (loadPolicy === true) break;
       const resident = liveSession !== null && msg.params?.sessionId === liveSession;
@@ -1597,6 +1708,34 @@ function handle(msg: any) {
       // FAKE_CUSTOM_TOOL_SERVER (fake-custom-tool.ts): call the first tool of
       // that owner server, started from the session's mcpServers entry.
       const customPrompt = (Array.isArray(msg.params?.prompt) ? msg.params.prompt : []).map((part: { text?: unknown }) => String(part?.text ?? "")).join("\n");
+      const browserReplay = customPrompt.includes("__fixture_browser_read__:");
+      const webReplay = /__fixture_(?:web|browser)_read__:(http:\/\/127\.0\.0\.1:\d+\/sales)/.exec(customPrompt);
+      if (webReplay) {
+        void (async () => {
+          const update = (value: object) => out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params.sessionId, update: value } });
+          let seq = 0;
+          try {
+            const servers: McpEntry[] = JSON.parse(liveServers ?? "[]");
+            const entry = servers.find(s => s.name === (browserReplay ? "browser" : "agents")); if (!entry) throw Error("Replay tool mount missing");
+            await (browserReplay ? replayBrowserRead : replayWebRead)({ command: entry.command, args: entry.args ?? [], env: Object.fromEntries((entry.env ?? []).map(e => [e.name, e.value])) }, webReplay[1], (input: any, output: unknown) => {
+              const toolCallId = `web-${++seq}`;
+              update({ sessionUpdate: "tool_call", toolCallId, title: browserReplay ? `browser__${input.name}` : "agents__web_read", kind: "fetch", status: "in_progress", rawInput: input });
+              update({ sessionUpdate: "tool_call_update", toolCallId, status: "completed", rawOutput: output });
+            });
+            await replayCommands(customPrompt, async (command, i) => {
+              const answer: any = await new Promise(resolve => {
+                proposalAsks.set(9700 + i, resolve);
+                out({ jsonrpc: "2.0", id: 9700 + i, method: "session/request_permission", params: { sessionId: msg.params.sessionId,
+                  toolCall: { toolCallId: `shell-${i}`, title: command, kind: "execute", rawInput: { command } },
+                  options: [{ optionId: "allow-once", kind: "allow_once" }, { optionId: "reject", kind: "reject_once" }] } });
+              });
+              if (answer?.outcome?.optionId !== "allow-once") throw Error("Replay shell refused");
+            }, (command, output, i) => update({ sessionUpdate: "tool_call", toolCallId: `shell-${i}`, title: command, kind: "execute", status: "completed", rawInput: { command }, rawOutput: output }));
+            update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Replay completed" } });
+          } catch (error) { update({ sessionUpdate: "agent_message_chunk", content: { type: "text", text: `Replay failed: ${String(error)}` } }); }
+          result(msg.id, { stopReason: "end_turn" });
+        })(); return;
+      }
       const customServer = customToolServer(customPrompt);
       if (customServer) {
         let servers: McpEntry[] = [];
@@ -1899,6 +2038,16 @@ function handle(msg: any) {
         out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: { http_status: 402, body } } });
         return;
       }
+      if (mode === "flux-budget" || mode === "flux-hold") {
+        // A Cloud model-credits refusal as a router sends it: budget used (with the reset instant) or a service hold (header only).
+        // Held back a moment: the test switches the home role on while this waits (the role is read when the answer arrives).
+        setTimeout(() => out({ jsonrpc: "2.0", id: msg.id, error: { code: -32603, message: "Internal error", data: {
+          http_status: 402,
+          message: "Your credit balance is exhausted. key fk_id_fake manage at https://fluxrouter.ai/home/keys?token=fake-secret-canary",
+          ...(mode === "flux-budget" ? { provider_specific_fields: { error: "key_budget_reached", resets_at: "2030-03-05T00:00:00Z" } } : { headers: { "x-flux-hold-reason": "billing" } }),
+        } } }), 700);
+        return;
+      }
       if (["payment-required:missing","payment-required:private","payment-required:flux-url"].includes(mode)) {
         out({ jsonrpc:"2.0", id:msg.id, error:{code:-32603,message:"Internal error",data:{http_status:402,
           ...(mode==="payment-required:missing"?{}:{message:mode==="payment-required:flux-url"?"Account access unavailable. https://fluxrouter.ai/home/billing?token=fake-secret-canary":"private response fake-secret-canary https://billing.invalid/private"}),
@@ -2109,14 +2258,14 @@ function handle(msg: any) {
         out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "a shell will start later" } } } });
         complete();
         setTimeout(() => {
-          const later = spawn("sleep", ["30"], { stdio: "ignore" });
+          const later = spawn("sleep", ["30"], { windowsHide: true, stdio: "ignore" });
           if (process.env.FAKE_ACP_CHILD_PID_FILE) writeFileSync(process.env.FAKE_ACP_CHILD_PID_FILE, String(later.pid));
         }, Number(process.env.FAKE_ACP_CHILD_DELAY_MS) || 800);
         return;
       }
       if (fixtureRequested(promptText, "__fixture_child_after_turn__")) {
         // a shell a tool started during the turn and left running past end_turn
-        const leftover = spawn("sleep", ["30"], { stdio: "ignore" });
+        const leftover = spawn("sleep", ["30"], { windowsHide: true, stdio: "ignore" });
         if (process.env.FAKE_ACP_CHILD_PID_FILE) writeFileSync(process.env.FAKE_ACP_CHILD_PID_FILE, String(leftover.pid));
         out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "left a shell running" } } } });
         complete();
@@ -2180,8 +2329,8 @@ function handle(msg: any) {
             out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: proposalReply(promptText) } } } });
             return;
           }
-          // an engine that searches the web on its own, no ask (not on Fuigo or Grok Build, where it stops the turn)
-          if (!agentsMcp) out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "tool_call", toolCallId: "t-search", title: "Web search", kind: "search", status: "completed", rawInput: { query: "quarterly report" } } } });
+          // Optional unapproved search: tripwire engines must reject it; ordinary proposal fixtures omit it.
+          if (!agentsMcp && process.env.FAKE_ACP_PROPOSE_NO_UNASKED !== "1") out({ jsonrpc: "2.0", method: "session/update", params: { sessionId: msg.params?.sessionId, update: { sessionUpdate: "tool_call", toolCallId: "t-search", title: "Web search", kind: "search", status: "completed", rawInput: { query: "quarterly report" } } } });
           out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: proposalReply(promptText) } } } });
           complete();
         });
@@ -2366,6 +2515,16 @@ function handle(msg: any) {
           });
         return;
       }
+      if (mode === "delegate-staged-review" && agentsMcp) {
+        if (promptText.includes('SEED_ROUTINE_REVIEW') && !promptText.includes('Hand Run task to staged B.')) { out({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'agent_message_chunk', content: { text: 'Routine seed complete.' } } } }); complete(); return; }
+        const target = JSON.parse(readFileSync(process.env.FAKE_BOTCREATE_TARGET_FILE!, 'utf8')).id;
+        void driveMcp(agentsMcp, [{ name: 'delegate_bot', args: () => ({ bot_id: target, message: 'CFIX_ROUTINE_PEER Run task' }) }]).then(async reply => {
+          out({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'agent_message_chunk', content: { text: reply } } } });
+          while (!existsSync(process.env.FAKE_BOTCREATE_GATE!)) await new Promise(resolve => setTimeout(resolve, 50));
+          complete();
+        }).catch(error => { out({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'agent_message_chunk', content: { text: String(error) } } } }); complete(); });
+        return;
+      }
       if (mode === "create-peer" && agentsMcp) {
         // a refused create surfaces its own words, not the empty delegate that follows it
         let createdReply = "";
@@ -2373,22 +2532,31 @@ function handle(msg: any) {
           {
             name: "create_bot",
             args: () => ({
-              name: "Pixel",
+              name: process.env.FAKE_BOTCREATE_NAME || "Pixel",
               role: "Product designer",
               instructions: "Design and review the user experience.",
             }),
           },
           {
-            name: "delegate_bot",
+            name: process.env.FAKE_BOTCREATE_TOOL || "delegate_bot",
             args: (created) => ({
               bot_id: /id: ([\w-]+)/.exec(createdReply = created)?.[1] ?? "",
               message: "Review the new onboarding flow.",
               reason: "design review",
             }),
           },
+          ...(process.env.FAKE_BOTCREATE_TWO === '1' ? [{
+            name: 'delegate_bot',
+            args: () => ({ bot_id: /id: ([\w-]+)/.exec(createdReply)?.[1] ?? '', message: 'Review the second onboarding flow.', reason: 'second review' }),
+          }] : []),
         ])
-          .then((reply) => {
+          .then(async (reply) => {
             out({ jsonrpc: "2.0", method: "session/update", params: { update: { sessionUpdate: "agent_message_chunk", content: { text: /id: [\w-]+/.test(createdReply) ? `team created: ${reply}` : `create error: ${createdReply}` } } } });
+            const gate = process.env.FAKE_BOTCREATE_GATE;
+            while (gate && !existsSync(gate)) await new Promise(resolve => setTimeout(resolve, 50));
+            if (process.env.FAKE_BOTCREATE_OUTSIDE === '1') {
+              out({ jsonrpc: '2.0', method: 'session/update', params: { update: { sessionUpdate: 'tool_call', toolCallId: 'outside-after-hold', title: 'mcp__fixture__read_page', status: 'completed' } } });
+            }
             complete();
           })
           .catch((e) => {

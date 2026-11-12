@@ -1,0 +1,27 @@
+[
+  {
+    "file": "server/highlevel/operations/registry.ts",
+    "before": "export interface OperationRunContext {\n    readonly locationId: string;\n    readonly prepared?: PreparedUpload;\n    readonly approvalContext?: RequestApprovalContext;\n}",
+    "after": "export interface OperationRunContext {\n    readonly locationId: string;\n    readonly companyId?: string;\n    readonly prepared?: PreparedUpload;\n    readonly approvalContext?: RequestApprovalContext;\n}"
+  },
+  {
+    "file": "server/highlevel/held-request.ts",
+    "before": "export interface FrozenRequest {\n    readonly operation: OperationId;\n    readonly method: HighLevelMethod;\n    readonly path: string;\n    readonly resource: string;\n    readonly query: readonly (readonly [\n        string,\n        string\n    ])[];\n    readonly bodyKind: \"none\" | \"json\" | \"multipart\";\n    readonly contentType: string | null;\n    readonly bodySha256: string;\n    readonly upload: FrozenUploadRef | null;\n    readonly requestDigest: string;\n}",
+    "after": "export interface FrozenRequest {\n    readonly completionKind?: 'private_generated_password_v1';\n    readonly operation: OperationId;\n    readonly method: HighLevelMethod;\n    readonly path: string;\n    readonly resource: string;\n    readonly query: readonly (readonly [\n        string,\n        string\n    ])[];\n    readonly bodyKind: \"none\" | \"json\" | \"multipart\";\n    readonly contentType: string | null;\n    readonly bodySha256: string;\n    readonly upload: FrozenUploadRef | null;\n    readonly requestDigest: string;\n}"
+  },
+  {
+    "file": "server/highlevel/actions.ts",
+    "before": "export interface ActionBinding {\n    approvalContextDigest?: string;\n    kind: \"read\" | \"change\";\n    operation: OperationId;\n    resource: string;\n    risk: Risk;\n    escalation: Escalation;\n    basis: ApprovalBasis;\n    requestDigest: string;\n    bodySha256: string;\n    upload: {\n        name: string;\n        size: number;\n        sha256: string;\n    } | null;\n}",
+    "after": "export interface ActionBinding {\n    approvalContextDigest?: string;\n    completionKind?: 'private_generated_password_v1';\n    kind: \"read\" | \"change\";\n    operation: OperationId;\n    resource: string;\n    risk: Risk;\n    escalation: Escalation;\n    basis: ApprovalBasis;\n    requestDigest: string;\n    bodySha256: string;\n    upload: {\n        name: string;\n        size: number;\n        sha256: string;\n    } | null;\n}"
+  },
+  {
+    "file": "server/highlevel/operations/schemas/common.ts",
+    "before": "6d973fce0b70045d29f56d51000534a187131af60704a6be7767735421aecd44",
+    "after": "02a1eb703770a9c63c217a66ac29bdd07dfb3d675599a575c9b310222acb73ca"
+  },
+  {
+    "file": "server/highlevel/operations/schemas/users.ts",
+    "before": "af4806d12bb88c9c86480c84de906ac8a99c1e3e7334b82fb42516a64ed6db8a",
+    "after": "ce6023bbd399d1936c23edb7a7222e22c9ae00ce490fda9aec2457b310ee556b"
+  }
+]

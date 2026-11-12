@@ -86,5 +86,6 @@ export const COMPOSED_ACTIVE_SOURCE = String.raw`function(){const dom=(${NATIVE_
 /** An expression: is `url` the destination of a link the current page presents? */
 export const presentedLinkExpression = (url: string) => `(() => {const dom=(${NATIVE_DOM_SOURCE})();return dom.query(document,'a[href],area[href]').some(a=>a.href===${JSON.stringify(url)});})()`;
 /** An expression returning one slice of the page's HTML, so a large page crosses the wire in pieces. */
-export const htmlSliceExpression = (from: number, to: number) => `document.documentElement.outerHTML.slice(${from},${to})`;
-export const HTML_LENGTH_EXPRESSION = "document.documentElement.outerHTML.length";
+export const htmlSliceExpression = (from: number, to: number) => `globalThis.__murageSavedReadHtml.slice(${from},${to})`;
+export const HTML_LENGTH_EXPRESSION = "(() => { globalThis.__murageSavedReadHtml = document.documentElement.outerHTML; return globalThis.__murageSavedReadHtml.length; })()";
+export const HTML_RELEASE_EXPRESSION = "delete globalThis.__murageSavedReadHtml";

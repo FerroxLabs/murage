@@ -1,0 +1,1 @@
+MAIN 21:16Z: spec moved to A2.2 (see refusal-contract-A2.1.md A2.2 delta; spec d38a0661, tsv 951a3b87). Port A2.2, not v21.

@@ -1,3 +1,4 @@
+import { cancelOpenRecords } from './decision/records.ts';
 import { resetThreadSummaries, remintChatsGen } from "./thread-summary.ts";
 import { repairRestoredSharing, validateSharingPaused, validateSharingStructure } from "./sharing-restore.ts";
 import { endAllLivePairedRequests } from "./handoff-pair.ts";
@@ -47,7 +48,7 @@ const MAX_JSON_BYTES = 64 * 1024 ** 2;
 // does not install (credentials, device pairings, script-access grants, runtime
 // state, unknown leftovers) is left out and listed below instead: never
 // installed, never a reason to fail the whole restore, and still in the backup file.
-const RESTORE_MARKERS = new Set<string>([RESTORE_REVIEW_FILE, RESTORED_CONNECTIONS_FILE, "recovery-quarantine"]);
+const RESTORE_MARKERS = new Set<string>([RESTORE_REVIEW_FILE, RESTORED_CONNECTIONS_FILE, "restore-provenance.json", "recovery-quarantine"]);
 const restoreMarker = (path: string): boolean => RESTORE_MARKERS.has(path.split("/")[0]!.toLowerCase());
 const terminal = new Set(["completed", "failed", "cancelled", "missed", "blocked", "limit"]);
 
@@ -367,8 +368,10 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
       // A Murage for Chrome setup card would continue the owner's old request
       // on the next settled turn; it expires like any other waiting card.
       if (object(message.card) && object(message.card.browserSetup) && message.card.browserSetup.resumed !== true) {
-        message.card = { ...message.card, answered: "Expired after restore", dismissed: true,
-          browserSetup: { ...message.card.browserSetup, continueRequested: false, error: "This was waiting when the backup was made. Ask again." } };
+        // The binding survives restore. Retire the presentation using terminal
+        // fields and put the explanation in display data; action fields stay frozen.
+        message.card = { ...message.card, answered: message.card.answered || "Expired after restore", dismissed: true,
+          orphaned: true, detail: "This was waiting when the backup was made. Ask again." };
       }
       for (const key of ["connector", "mcpSignIn", "secret"]) if (object(message[key])) message[key] = { ...message[key], dismissed: true, resumed: false };
       if (object(message.goalRun) && message.goalRun.status === "working") message.goalRun = { ...message.goalRun, status: "blocked", detail: "Restored work requires outcome review before a fresh run" };
@@ -417,6 +420,8 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
         modifications.push(...reconcileTeamJournalFiles(state, db, sharingBots as unknown as BotRecord[], sharingGroups as unknown as GroupRecord[]).map(action => ({ component: "bots.json/groups.json", action })));
         validateSharingPaused(sharingBots, sharingGroups, db);
         db.exec("BEGIN IMMEDIATE");
+        cancelOpenRecords(db, "Cancelled (restore)");
+        db.exec("DROP TABLE IF EXISTS restore_boot_wait; DROP TABLE IF EXISTS restore_job_marks");
         const update = db.prepare("UPDATE messages SET json=? WHERE thread_id=? AND id=?");
         for (const row of db.prepare("SELECT thread_id,id,json FROM messages").iterate()) {
           if (typeof row.json !== "string" || Buffer.byteLength(row.json) > MAX_JSON_BYTES) fail("INVALID_RESTORE_MESSAGE");
@@ -426,6 +431,8 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
           const encoded = storedJson(after as unknown as Message);
           if (encoded !== row.json) update.run(encoded, row.thread_id, row.id);
         }
+        // A restored conversation starts without earlier loans, including packs whose queue rows already settled.
+        if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='delegation_packs'").get()) db.exec("DELETE FROM delegation_packs");
         // Handoffs queued in the backup never run after a restore: kept as evidence beside the other quarantined files, then removed from the table.
         if (db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE type='table' AND name='pending_delegations'").get()) {
           const evidence = queuedDelegationsByThread(db), queued = Object.values(evidence).flat();
@@ -450,6 +457,10 @@ export async function prepareInstallationRestore(archive: string, outputParent: 
         const emailBindings = prepareRestoredEmail(db);
         if (emailBindings) modifications.push({ component: "messages.db", action: `${emailBindings} bot email address${emailBindings === 1 ? "" : "es"} will reconnect when you choose Reconnect email` });
         resetThreadSummaries(db);
+        // The candidate may be our own older backup. Rotate before COMMIT so an old search.db
+        // cannot be trusted even when its owner was copied from this installation.
+        db.exec("CREATE TABLE IF NOT EXISTS transcript_index_state(name TEXT PRIMARY KEY, done INTEGER NOT NULL, cursor INTEGER NOT NULL, skipped INTEGER NOT NULL) WITHOUT ROWID");
+        db.prepare("INSERT OR REPLACE INTO transcript_index_state(name,done,cursor,skipped) VALUES('search_owner',?,0,0)").run(randomUUID());
         db.exec("COMMIT");
       } catch (error) { try { db.exec("ROLLBACK"); } catch { /* already rolled back */ } throw error; }
       finally { db.close(); }

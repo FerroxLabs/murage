@@ -1,5 +1,7 @@
+import "../../shared/win-hide-child-process.mjs";
 // Offline helpers: no runtime configuration, Store or provider imports.
 import { existsSync, lstatSync } from "node:fs";
+import { mergeDestinationHighLevelMarks } from "../highlevel/thread-marks-restore.ts";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { migrateMemorySchema, validateMemorySchema } from "./schema.ts";
@@ -19,11 +21,13 @@ export { RECORD_TOMBSTONE_AFFECTED, RECORD_TOMBSTONE_REVOCATION_SCAN_TAIL };
 export function mergeOriginalMemoryDeletions(original: string, candidate: string) {
   const review=readRestoreReview(candidate);
   if(review?.version!==1||review.status!=="review-required"||!Array.isArray(review.modifications))throw new Error("INVALID_RESTORE_MEMORY_REVIEW");
+  const marksRetained=mergeDestinationHighLevelMarks(original,candidate);
   const result=mergeDestinationMemoryDeletions(original,candidate);
   // A connected-app action the original left unresolved keeps blocking its repeat in the restored installation.
   const ledger=mergeDestinationConnectedLedger(original,candidate);
   detachRestoredLedgerAccounts(candidate);
   const modifications=[...review.modifications,{component:"messages.db",action:`Current original memory ledger: ${result.history}; ${result.merged} tombstones retained before selection`},
+    ...(marksRetained?[{component:"messages.db",action:`${marksRetained} permanent HighLevel conversation marks retained before selection`}]:[]),
     ...(ledger.merged?[{component:"connected-app-ledger.db",action:`${ledger.merged} connected app records from the original installation kept, still marked as possibly sent`}]:[])];
   writeFileAtomic(join(candidate,RESTORE_REVIEW_FILE),JSON.stringify({...review,modifications})+"\n",{mode:0o600});
   return result;
@@ -175,8 +179,9 @@ export function mergeDestinationMemoryDeletions(destination: string, candidate: 
   if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1)throw new Error("UNSAFE_MEMORY_LEDGER");
   let rows: Array<Record<string,unknown>>, denyRows: Array<Record<string,unknown>> = [], identity:string, epoch:number;
   // A damaged or newer-schema destination is exactly the case the app tells
-  // people to restore for (audit A-2): the restore goes ahead, and the review
-  // says the destination's deletion ledger could not be read.
+  // people to restore for (audit A-2): memory salvage may proceed, and the review
+  // records that its deletion ledger could not be read. Installation replacement
+  // separately requires preservation of permanent HighLevel marks.
   try {
     const source=new DatabaseSync(original,{readOnly:true});
     try {

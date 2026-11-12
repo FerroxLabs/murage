@@ -98,6 +98,7 @@ posixOnly("AMEND-13 Rule 81: the grant routes", () => {
       messages: [{ ...card("set", { allowKeys: ACTIONS }), from: { botId: "a13-set-bot", name: "Dax", color: "purple" } }],
     }));
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

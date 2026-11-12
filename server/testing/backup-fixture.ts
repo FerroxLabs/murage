@@ -21,8 +21,8 @@ export function testAgeKeys(){
   const keygen=join(directory,"age-keygen");
   const pin=backupAgePinForTarget(process.platform,process.arch);
   if(!pin||createHash("sha256").update(readFileSync(keygen)).digest("hex")!==pin.keygenSha256)throw Error("Unverified fixture key generator");
-  const identity=execFileSync(keygen,[],{encoding:"utf8",env:{PATH:""},stdio:["ignore","pipe","pipe"],maxBuffer:4096});
-  const recipient=execFileSync(keygen,["-y"],{input:identity,encoding:"utf8",env:{PATH:""},stdio:["pipe","pipe","pipe"],maxBuffer:4096}).trim();
+  const identity=execFileSync(keygen,[],{ windowsHide: true,encoding:"utf8",env:{PATH:""},stdio:["ignore","pipe","pipe"],maxBuffer:4096});
+  const recipient=execFileSync(keygen,["-y"],{ windowsHide: true,input:identity,encoding:"utf8",env:{PATH:""},stdio:["pipe","pipe","pipe"],maxBuffer:4096}).trim();
   return{ageExecutable:join(directory,"age"),identity,recipient};
 }
 export function backupFixture(){

@@ -4,15 +4,16 @@
 //
 // A stale allowlist entry (file no longer contains a recursive delete) fails
 // too, so the list can only shrink honestly.
-import { execFileSync } from "node:child_process";
+import { gitFixture } from "./git-fixture.mjs";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
 
 import { VITEST_INCLUDE } from "./test-file-scope.ts";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const repository = gitFixture();
+const ROOT = repository.root;
+afterAll(() => repository.dispose());
 
 const SCANNED = /\.(?:ts|tsx|mjs|cjs|js|sh|yml|yaml|ps1|nsh|nsi|py)$/;
 const SKIPPED_PREFIX = ["node_modules/", "electron/vendor/", "docs/"];
@@ -28,12 +29,70 @@ const NOT_A_DELETE = /\b(?:mkdirSync|mkdir|readdirSync|readdir|cpSync|cp|copySyn
  * entry only with a reason a reviewer can check against the file.
  */
 const ALLOWLIST: Record<string, string> = {
+  "evidence/redsp5/mutations.mjs": "The temp-teardown mutant is a source string written only into the runner-owned disposable Git fixture; the driver never executes a raw delete, and disposes its fixture through gitFixture safeWipeSync",
+
+  "evidence/bld4-toolid-s4a/amended-fuzzer.py": "Lines 102 and 105 construct JSON/JS refusal-probe payload strings; this fuzzer emits inputs for permission evaluation and never executes those payloads.",
+
+  "evidence/bld4-toolid-s4a/prior-fuzzer.py": "Lines 102 and 105 construct JSON/JS refusal-probe payload strings; this historical fuzzer emits evaluator inputs and never executes their delete text.",
+
+  "evidence/bld6-toolid-s4a/base-app-action-grant.test.ts": "Historical test snapshot: all five delete strings are approval subjects or tool-call inputs inspected by pure permission verdict assertions, never executed.",
+
+  "evidence/bld6-toolid-s4a/base-auto-approve.ts": "The single scan hit is rm syntax quoted in a block comment explaining lexical recognition; it is not an executable delete.",
+
+  "evidence/bld6-toolid-s4a/base-routine-permissions.test.ts": "Historical permission test snapshot: the seven delete strings are arguments to pure autoVerdict tests, never shell commands that run.",
+
+  "evidence/bld7-toolid-s4b/base-auto-approve.ts": "The single scan hit is rm syntax quoted in a block comment explaining lexical recognition; it is not an executable delete.",
+
+  "scripts/base-toolid-r13b.ts": "The commands array and ambiguous tool-call object contain refusal-probe text passed only to permission verdict functions; neither is executed.",
+
+  "scripts/fuzz-toolid-r13.py": "Lines 115 and 118 construct refusal-probe payload strings in generated JSON; this fuzzer does not execute a shell or the generated payload.",
+
+  "scripts/no-limits-live/run.mjs": "The wipe-home scenario constructs a command solely for its isolated fixture home created by the launcher; the scenario requires disposable fixture ownership and never selects the operator home. This classification does not change that command or its permission rules.",
+
+  "scripts/no-limits-live/self-test.mjs": "Both delete strings are ledger observations or probe definitions fed to the pure ledger oracle, never executed.",
+
+  "server/no-limits-javascript.ts": "The three delete spellings are synthetic shell twins emitted by the static JavaScript permission reader for classification; this module never runs the twins.",
+
+  "server/no-limits-python.ts": "The three delete spellings are synthetic shell twins emitted by the static Python permission reader for classification; this module never runs the twins.",
+
+  "server/testing/fixtures/no-limits-r12/judge.py": "The six delete spellings are lexical shell twins emitted by the isolated static judge; it classifies source text and never executes those twins.",
+
+  "scripts/probes/native-deny/fixture.mjs": "Standalone fake-engine probe fixtures remove only their private mkdtemp root: exposed fixtures require the captured parent, basename, device, inode and owner marker to match and reject root or marker symlinks; construction failures remove only the unexposed fresh root",
+  "scripts/windows/scan-native.mjs": "scanPowerShell finally removes only the winscen-parser- directory created by mkdtempSync in that same call; root is const, is never supplied by the scanned source, and contains only disposable parser inputs",
+  "scripts/anchored-read-resource.mjs": "Packaged native proof removes only its const murage-anchored-package- mkdtemp tree, constructed inside the disposable target process; no configured path or app data is accepted",
+  "scripts/prove-anchored-read.mjs": "Native proof removes only its const murage-anchored-native- mkdtemp root, created before the probes; every fixture and hardlink is inside that root",
+  "server/browser-window-chrome.ts": "Deletes only linux-check- or download- mkdtemp scratch directories it created under its private browser-window cache; work is cleared after rename to a verified version, never an existing browser profile or installation root",
+  "src/e2e/phone-ui-1019.human.spec.ts": "rm -rf is text in a seeded approval-card subtitle; the spec never executes it and fixture cleanup is owned by the isolated launcher",
+
+  "server/drivers/acp/copilot-mcp-config.ts": "private constructor receives only its own murage-copilot-mcp- mkdtemp directory; orphan reclaim requires fixed prefix, same-uid non-link directory and owner file, checked inode, dead owner PID and no live argv user, then rechecks directory identity",
+  "server/drivers/acp/copilot.ts": "removes only a validated session id under Copilot session-state whose workspace.yaml confirms both this discovery client and the discovery temporary cwd, after the discovery process stops; other sessions remain",
+  "server/drivers/acp/custom-model-catalog.ts": "model discovery removes only its const murage-acp-models- mkdtemp workspace; finally verifies its captured temporary parent and fixed basename prefix, never a caller-supplied path",
+  "electron/attention-main.node-test.mjs": "Run rm -rf is an approval title passed to the mocked attention surface to check redaction; no shell executes it",
+  "scripts/bundle-dbus-next.mjs": "build-only: finally removes the const murage-dbus-next- mkdtemp directory created for the pinned npm install; no caller supplies the path",
+  "scripts/smoothness/smooth-config.mjs": "STOP_COMMANDS and WIPE_COMMANDS are refusal probes submitted to the isolated smoothness fixture; this module only defines strings, never executes a delete",
+  "scripts/smoothness/run-container.sh": "container entry: removes only /tmp/smooth-ctl/prompts, the fake prompt dumps inside the disposable container; the mounted data and evidence are retained for the host keeper",
+  "scripts/smoothness/keep-logs.mjs": "keep removes only its private .keep-<validated run id> stage: either its own mkdtemp or an empty real directory checked against the canonical archive root and run-specific prefix; input and archive roots cannot overlap",
+  "scripts/smoothness/keep-logs.sh": "EXIT cleanup removes only the stage returned by mktemp -d under the archive root with a validated run id; never the input logs or archive root",
+  "scripts/smoothness/stage-keeper.sh": "removes its own murage-keeper mktemp stage (checked disjoint from replacement roots) and mktemp trash folders holding a detached lane lock; lock detachment requires matching owner/transaction under the persistent mutex, never deletes lane data",
+  "scripts/smoothness/follow-run.sh": "disposable smoothness rig: removes only the lane's data copy after reacquiring its lock, verifying the exact run/container/owner identity, proving the captured container stopped, preserving logs and removing that container; verifies run identity again before deleting",
+  "scripts/smoothness/hz-smooth.sh": "rig launcher: local deletes remove only its murage-launch mktemp stage; SSH deletes replace children of the dedicated smooth-<validated label>/src and its data copy only after the staged keeper preserves evidence and grants lane ownership; the pristine source is only copied",
+  "scripts/smoothness/real-smooth.sh": "dedicated engine-user rig, refuses root: clears only its canonical lane's data copy and output children after keeper preservation and matching lane ownership; final cleanup removes that copy and prompt dumps only after logs are kept, never the signed-in engine home",
   "server/drivers/muse-code.ts": "refreshModels removes only its const murage-muse-models- mkdtemp folder; finally rechecks the temp parent and basename prefix; production never imports the test-only wipe helper",
   "server/testing/fake-muse-cli.ts": "'rm -rf build' is an approval-request subject sent by the fake engine, never executed",
   "server/testing/safe-wipe.mjs": "the helper itself: rmSync/rm run only after assertSafeToWipe admits the path",
   "server/testing/cleanup.ts": "removeTempDir calls assertSafeToWipe before its rmSync retry loop",
   "server/browser-sandbox-linux-engine.ts": "LINUX_ENGINE_ENABLE_SCRIPT, run as root by the Linux Enable browser step (27fd46da6), removes only its own staging copy, its .copy-* leftovers and superseded Chrome version folders under the fixed root-owned LINUX_ENGINE_ROOT; never a data directory, and safe-wipe would refuse a path outside temp",
   "scripts/check-addon-msvc-headers.sh": "a POSIX sh dev check (dc5f1f10c): rm -rf only of the mktemp -d object folder it made at the top; scripts/safe-wipe.sh is Bash and cannot be sourced from sh",
+  "deploy/cloud-home/image-disk-check.sh": "runs on the throwaway rescue server only: rm -rf of the mktemp -d work folder it created itself, never an image path",
+  "deploy/cloud-home/qualify/murage-control-sandbox-proof.sh": "a test: runs only as root inside the disposable container its header names (the tree is mounted read-only), resetting that container's own fixed /etc/murage-home, /run/murage-control, /var/lib/murage-control, /var/lib/murage-home and /work before each proof step; it never runs on a customer home or a developer machine",
+  "deploy/cloud-home/qualify/slot-sandbox-run.sh": "a test: runs only as root inside the throwaway container its header names, removing that container's own /opt/murage and /opt/murage-releases layout before rebuilding it; it never runs on a customer home",
+  "deploy/cloud-home/sign-image.sh": "runs on the operator machine at exit: rm -rf of its own mktemp -d work folder WORK, never a customer path; it is only ever run with --dry-run in tests",
+  "deploy/cloud-home/qualify/sign-image-test/boot-closure-test.sh": "a test: the EXIT trap removes the mktemp -d folder T the script made",
+  "deploy/cloud-home/qualify/sign-image-test/dry-run-test.sh": "a test: removes the mktemp -d folder T and the mock state and log files inside it",
+  "deploy/cloud-home/qualify/sign-image-test/release-check-test.sh": "a test: removes the mktemp -d folder tmp and directories of fake image roots it built inside it",
+  "deploy/cloud-home/finalize-customer-image.sh": "line 17 runs as root once, on the Cloud home image builder VM that becomes the customer snapshot (never on this machine or a customer's data): it removes only the fixed sshd_config, sshd_config.d, /root/.ssh and ssh_host_* paths after openssh-server is purged, with no variable in the path; safe-wipe would refuse paths outside temp",
+  "scripts/cloud-home-release.sh": "the EXIT trap removes only `work`, the directory mktemp -d made a few lines above in the same script; it is never reassigned and never comes from an argument or the environment",
+  "scripts/cloud-home-sign.sh": "the EXIT trap removes only `work`, the private mktemp -d folder (under TMPDIR or /tmp) made a few lines above that holds the public key and signature scratch; it is never reassigned and never comes from an argument",
   "server/testing/link-removal.fixture.cjs": "run only by link-removal.electron.test.ts on paths inside the mkdtemp folder it is given (argv[3]): it records what the runtime's own rmSync does to a junction there",
   "server/testing/link-removal-native.fixture.cjs": "run only by link-removal.native.test.ts on paths inside the mkdtemp folder it is given (argv[4]): its rmSync calls go through the installed handle-based remove, on a tree it made there",
   "scripts/scale/hz-vitest.sh": "cleanup() runs `rm -rf -- \"${dir:?}\"` on the build host rig over ssh (never on this machine): dir is $H/vitest-<label> under the rig's own scratch root, set non-empty by ${dir:?}, and holds only the git-archive copy the same script just made",
@@ -120,6 +179,7 @@ const ALLOWLIST: Record<string, string> = {
   "server/store.ts": "removes a deleted bot's workspace and skill-state subdirectories under DATA_DIR",
   "electron/compile-cache.mjs": "pruneStaleCaches removes sibling cache directories of other app versions inside the app's own <userData>/compile-cache root, never the kept one or the root itself",
   "server/channels/whatsapp/core/auth-store.ts": "wipeAuthDir removes the children of the WhatsApp auth directory after lstat proves it is a real directory (a symlinked directory is refused); never the directory itself or a parent",
+  "server/channels/signal/wipe.ts": "production unlink removes only signal/auth, or signal plus channels/signal/<id>, below realpath(DATA_DIR); validates the connection id and every ancestor before deleting, rejects symlink ancestors, removes leaf links themselves, preserves the revocation marker and other connections; never DATA_DIR or a parent (wipe.test.ts covers scopes, traversal and links)",
   "server/channels/whatsapp/wipe.ts": "removes only the fixed WhatsApp paths of one connection (whatsapp/auth, whatsapp/media/<id>, <id>.-prefixed journals, channels/whatsapp/<id>) under DATA_DIR after assertInside rejects any escape or symlink ancestor; the connection id matches [a-zA-Z0-9-]{1,100}; never DATA_DIR or a parent",
   "server/drivers/turn-credentials.ts": "dispose removes the murage-cred- mkdtemp directory createTurnCredentialStore made, held in a const never reassigned",
   "server/fuigo-turn-logs.ts": "removes <home>/logs of a finished turn (a symlink is unlinked, never followed) and kept turn-log directories directly inside the turn-log root it owns; never the home or the root",
@@ -157,17 +217,8 @@ const ALLOWLIST: Record<string, string> = {
 // VITEST_INCLUDE (the files that run under server/testing/setup.ts and its installSafeWipeGuard) lives in test-file-scope.ts,
 // where temp-cleanup-guard.test.ts reads the same list.
 
-/** The tracked files. With no .git (a copy made for a container run) the listing saved beside this test is read instead:
- * `git ls-files -z > server/testing/.git-ls-files.fixture` in a checkout makes it. It is never committed. */
-const tracked = (): string[] => {
-  let listing: string;
-  try {
-    listing = execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
-  } catch {
-    listing = readFileSync(join(ROOT, "server/testing/.git-ls-files.fixture"), "utf8");
-  }
-  return listing.split("\0").filter(Boolean);
-};
+/** Index the source snapshot in a disposable repository; never depend on runner Git metadata. */
+const tracked = (): string[] => repository.git("ls-files", "-z").split("\0").filter(Boolean);
 
 /** A JS/TS recursive delete whose options object spans lines. */
 const JS_DELETE_MULTILINE = /\b(?:rmSync|rm|rmdirSync|rmdir)\s*\((?:[^;()]|\([^;()]*\))*?\brecursive\s*:\s*true/g;

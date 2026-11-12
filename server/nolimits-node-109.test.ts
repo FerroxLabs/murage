@@ -74,6 +74,15 @@ const verdict = (level: Level, cmd: string, at: At = {}, proof: object = OWNER_T
   });
 };
 const read = (cmd: string, at: At = {}) => alwaysAskCommand(cmd, at.cwd ?? CWD, "command", undefined, undefined, at.home === null ? undefined : at.home ?? HOME, options(at));
+const { expectNoLimitsOwnerOutcome } = await import("./testing/no-limits-1019.ts");
+/** NOLIM 1.0.19 (Sean 2026-11-10): the owner's No limits turn (OWNER_TURN) runs what the reader names unless it is a wipe row (or the wipe
+ * proxy reads a delete word in the text); this cell asserts on the reader's own rule through the shared helper. Ask, Auto and Full
+ * access keep the card. */
+const heldAt = (level: Level, cmd: string, at: At, label: string) => {
+  const v = verdict(level, cmd, at);
+  if (level === "No limits") expectNoLimitsOwnerOutcome(v, cmd, read(cmd, at)?.rule, label); else expect(v.approve, label).toBeNull();
+};
+const noLimitsCell = (cmd: string, at: At = {}) => expectNoLimitsOwnerOutcome(verdict("No limits", cmd, at), cmd, read(cmd, at)?.rule, `No limits: ${cmd}`);
 /** Runs at Full access and No limits, asks at Ask and Auto. */
 function runs(cmd: string, at: At = {}): void {
   expect(read(cmd, at), cmd).toMatchObject({ rule: "unreadable", unseenScript: true });
@@ -102,7 +111,10 @@ function asks(cmd: string, why: string | undefined, at: At = {}): void {
   } else {
     expect(hit?.unseenWhy, cmd).toBe(why);
   }
-  for (const level of ALL) expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
+  for (const level of ALL) {
+    if (level === "No limits") { noLimitsCell(cmd, at); continue; }
+    expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
+  }
 }
 // MARKS r9 R2: probe (fix4, known cwd) of each command below -> still a card at all four levels, but the new reader's own
 // rule/doubt answers before the named unseen reason, so the old why (dot-dot, cd-form, windows-path, device, windows-link,
@@ -245,7 +257,10 @@ describe("section 6: the allow table for Bruce's command family (shape stub)", (
     const hit = read(cmd, at);
     expect(hit, cmd).not.toBeNull();
     expect(hit?.unseenScript, cmd).toBeUndefined();
-    for (const level of ALL) expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
+    for (const level of ALL) {
+      if (level === "No limits") { noLimitsCell(cmd, at); continue; }
+      expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
+    }
   });
 
   it.each([
@@ -258,17 +273,17 @@ describe("section 6: the allow table for Bruce's command family (shape stub)", (
   ])("never-list: `%s` holds as %s at every level", (cmd, rule) => {
     expect(read(cmd, at)).toMatchObject({ rule });
     expect(read(cmd, at)?.unseenScript).toBeUndefined();
-    for (const level of ALL) expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
+    for (const level of ALL) heldAt(level, cmd, at, `${level}: ${cmd}`);
   });
 
   it("each named reason puts its fix on the card", () => {
     const hit = read("node ./runner | head", at)!;
     expect(alwaysAskNote(hit)).toContain("node ./tool.mjs");
-    expect(verdict("No limits", "node ./runner | head", at).note).toContain("extension included");
+    expect(verdict("Ask", "node ./runner | head", at).note).toContain("extension included"); // NOLIM 1.0.19: the owner's No limits turn runs it, with no card to carry a note
   });
 
   it("a command relayed to the owner's own computer asks (R7)", () => {
-    for (const level of ALL) expect(verdict(level, SEAN, { ...at, scope: "local-computer" }).approve, level).toBeNull();
+    for (const level of ALL) heldAt(level, SEAN, { ...at, scope: "local-computer" }, level);
   });
 });
 
@@ -363,7 +378,7 @@ describe("Git Bash on Windows: only spellings no layer rewrites or looks up (sec
     for (const cwd of ["C:\\work.", "C:\\work ", "/c/work"]) {
       const hit = read("node ./tvcall.mjs", { ...at, cwd });
       expect(hit?.unseenScript, cwd).toBeUndefined();
-      for (const level of ALL) expect(verdict(level, "node ./tvcall.mjs", { ...at, cwd }).approve, `${level}: ${cwd}`).toBeNull();
+      for (const level of ALL) heldAt(level, "node ./tvcall.mjs", { ...at, cwd }, `${level}: ${cwd}`);
     }
   });
 
@@ -400,7 +415,7 @@ describe.skipIf(process.platform === "win32")("on disk (section 9): the exact fi
   symlinkSync(join(work, "gone.mjs"), join(work, "dangling.mjs"));
   symlinkSync("/dev", join(work, "devlink"));
   let fifo = false;
-  try { execFileSync("mkfifo", [join(work, "feed.mjs")]); symlinkSync(join(work, "feed.mjs"), join(work, "feedlink.mjs")); fifo = true; } catch { /* no mkfifo: those rows are skipped */ }
+  try { execFileSync("mkfifo", [join(work, "feed.mjs")], { windowsHide: true }); symlinkSync(join(work, "feed.mjs"), join(work, "feedlink.mjs")); fifo = true; } catch { /* no mkfifo: those rows are skipped */ }
   const at = { cwd: work, home };
 
   it("an ordinary file, or a link to one, runs", () => {
@@ -418,7 +433,7 @@ describe.skipIf(process.platform === "win32")("on disk (section 9): the exact fi
       const why = read(cmd, at)?.unseenWhy;
       if (why === undefined) expect(read(cmd, at), cmd).toMatchObject({ rule: "unreadable", doubt: "value-path" });
       else expect(["device", "file-missing", "not-regular"], cmd).toContain(why);
-      for (const level of ALL) expect(verdict(level, cmd, at).approve, `${level}: ${cmd}`).toBeNull();
+      for (const level of ALL) heldAt(level, cmd, at, `${level}: ${cmd}`);
     }
   });
   it("a FIFO, or a link to one, asks", () => {
@@ -453,7 +468,7 @@ describe.skipIf(process.platform === "win32")("on disk (section 9): the exact fi
     asks("bash ~\\/x.sh", "tilde-escape", at);
   });
   it("a relayed command asks at every level", () => {
-    for (const level of ALL) expect(verdict(level, "node tool.mjs", { ...at, scope: "local-computer" }).approve, level).toBeNull();
+    for (const level of ALL) heldAt(level, "node tool.mjs", { ...at, scope: "local-computer" }, level);
   });
   it("a folder with a backslash in its name is checked as itself, never as `/` (Astra r7)", () => {
     // `a\b` is one folder name on POSIX; `a/b/run.sh` is an ordinary decoy
@@ -462,7 +477,7 @@ describe.skipIf(process.platform === "win32")("on disk (section 9): the exact fi
     writeFileSync(join(work, "a", "b", "run.sh"), inert);
     asks("bash ./run.sh", "file-missing", { ...at, cwd: odd });
     if (fifo) {
-      execFileSync("mkfifo", [join(odd, "run.sh")]);
+      execFileSync("mkfifo", [join(odd, "run.sh")], { windowsHide: true });
       asks("bash ./run.sh", "not-regular", { ...at, cwd: odd });
     }
     writeFileSync(join(odd, "tool.mjs"), inert);
@@ -523,7 +538,7 @@ describe("environment pins (R6)", async () => {
   });
   it("a text that names CDPATH or SHELLOPTS holds", () => {
     for (const cmd of ["CDPATH=/dev cd fd && bash ./0", "export CDPATH=/dev; cd ./fd && bash ./0", "export SHELLOPTS=physical; node x.mjs"]) {
-      for (const level of ALL) expect(verdict(level, cmd, { fs: STUB }).approve, `${level}: ${cmd}`).toBeNull();
+      for (const level of ALL) heldAt(level, cmd, { fs: STUB }, `${level}: ${cmd}`);
     }
   });
 });
@@ -555,8 +570,12 @@ describe("a verdict that fails asks, never drops the request", () => {
 describe("MARKS r13 owner-started proof (fail-closed)", () => {
   it("an unseen script runs at No limits on an owner-started turn and asks without the proof", () => {
     expect(verdict("No limits", "bash ./build.sh", { fs: STUB }).approve).toBeTruthy();
-    for (const missing of [{}, { fullAccessOrigin: "owner", ownerStarted: true }, { ownerStarted: false, fullAccessOrigin: "owner" }, { ownerStarted: true, fullAccessOrigin: "other" }]) {
+    // NOLIM 1.0.19: the finalizer reads the stored origin, not ownerStarted or outsideRead: only an unproven or another origin keeps the card
+    for (const missing of [{}]) {
       expect(verdict("No limits", "bash ./build.sh", { fs: STUB }, missing).approve).toBeNull();
+    }
+    for (const stored of [{ownerStarted:true,fullAccessOrigin:"other"}, { fullAccessOrigin: "owner", ownerStarted: true }, { ownerStarted: false, fullAccessOrigin: "owner" }]) {
+      expect(verdict("No limits", "bash ./build.sh", { fs: STUB }, stored).approve).toBeTruthy();
     }
   });
 });

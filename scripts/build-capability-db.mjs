@@ -27,6 +27,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildInventory } from "./build-capabilities.mjs";
+import { readPartitions } from "./locale-partitions.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFileSync(join(root, path), "utf8").replace(/\r\n/g, "\n");
@@ -141,22 +142,49 @@ async function loadSources(srcDir) {
  * Each valid path records its owner, so an entry's path must match the thing
  * its anchor names, not just a label that exists somewhere. */
 export function buildNavigation() {
-  const en = JSON.parse(read("src/locales/en.json"));
+  const { main: en } = readPartitions();
   const pagesSource = read("src/lib/settings-pages.ts");
   const pages = new Map();
   const pagesStart = pagesSource.indexOf("export const SECTION_PAGES");
   const pagesEnd = pagesSource.indexOf("];", pagesStart);
-  for (const match of pagesSource.slice(pagesStart, pagesEnd).matchAll(/\{ id: "([A-Za-z]+)", group: "[a-z]+"(, desktopOnly: true)? \}/g)) {
+  for (const match of pagesSource.slice(pagesStart, pagesEnd).matchAll(/\{ id: "([A-Za-z]+)", group: "[A-Za-z]+"([^}]*?) \}/g)) {
     const label = en[`settings.page.${match[1]}`];
     if (!label) throw new Error(`settings page ${match[1]} has no settings.page.${match[1]} label`);
-    pages.set(match[1], { id: match[1], label, desktopOnly: Boolean(match[2]) });
+    pages.set(match[1], { id: match[1], label, desktopOnly: /desktopOnly: true/.test(match[2]) });
   }
   const cards = new Map();
   const registry = read("src/lib/settings-card-registry.ts");
+  // Match cardLabel's source-owned overrides before the legacy locale key.
+  // Keep this a static reader: an unknown expression must fail, never invent a label.
+  const namesBlock = /^const CARD_NAMES[^\n]* = \{([\s\S]*?)\n\};/m.exec(registry)?.[1];
+  if (!namesBlock) throw new Error("settings-card-registry.ts: cannot read CARD_NAMES");
+  const names = new Map();
+  for (const [, id, expression] of namesBlock.matchAll(/^ {2}"([^"]+)": \(\) => (.*),$/gm)) {
+    const localized = /^t\("([^"]+)"\)$/.exec(expression);
+    const shared = /^([A-Z_]+)\.([A-Za-z]+)$/.exec(expression);
+    let label;
+    if (localized) label = en[localized[1]];
+    else if (/^"(?:[^"\\]|\\.)*"$/.test(expression)) label = JSON.parse(expression);
+    else if (shared) {
+      const [, symbol, field] = shared;
+      const imported = new RegExp(`import \\{ ${symbol} \\} from "([^"]+)"`).exec(registry)?.[1];
+      if (imported) {
+        const source = read(relative(root, resolve(root, "src/lib", `${imported}.ts`)));
+        const start = source.indexOf(`export const ${symbol} =`);
+        if (start >= 0) {
+          const literal = new RegExp(`\\b${field}:\\s*("(?:[^"\\\\]|\\\\.)*")`).exec(source.slice(start))?.[1];
+          if (literal) label = JSON.parse(literal);
+        }
+      }
+    }
+    if (!label) throw new Error(`settings card ${id} has an unreadable CARD_NAMES label`);
+    names.set(id, label);
+  }
   for (const match of registry.matchAll(/^ {2}card\("([a-z0-9-]+)", "([A-Za-z]+)", "([a-z0-9-]+)", \{([^\n]*)\}\),$/gm)) {
     const [, slug, page, anchor, spec] = match;
-    const id = `${page}.${slug}`;
-    const label = en[`settings.l1.card.${id}`];
+    const idSection = /idSection: "([A-Za-z]+)"/.exec(spec)?.[1] ?? page;
+    const id = `${idSection}.${slug}`;
+    const label = names.get(id) ?? en[`settings.l1.card.${id}`];
     if (!label) throw new Error(`settings card ${id} has no settings.l1.card.${id} label`);
     cards.set(`${page}/${slug}`, { id, page, anchor, label, advanced: /advanced: true/.test(spec), surface: /surface: "any"/.test(spec) ? "any" : "desktop" });
   }

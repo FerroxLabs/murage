@@ -1,0 +1,88 @@
+{
+  "version": "1.0.43",
+  "status": "filled",
+  "source": "48d6f8e3c862c1a63043b44eb83a3615f0c3b8b8",
+  "registry": "https://registry.npmjs.org",
+  "verificationBasis": "Exact-version npm integrity, shasum and package identity verified; three reviewed executable digests matched. No native execution; release qualification remains owed.",
+  "installScriptsExecuted": false,
+  "nativeExecutablesRun": false,
+  "packages": [
+    {
+      "target": "wrapper",
+      "name": "fuigo",
+      "version": "1.0.43",
+      "tarball": "https://registry.npmjs.org/fuigo/-/fuigo-1.0.43.tgz",
+      "tarballSha256": "54c8c8bae0294c3179429e992660f3ad36f045244f5795ae9b8828ded1c5f39d",
+      "integrity": "sha512-kC07lieNm9SOd5vapsIYfvUwTSBS/Fo51IfDjaul0TEjxweZGKVw1EwvIFJGsukhroF+7dF+Ga0pXiRp5uHPPg==",
+      "shasum": "44d676d05df716242c845a4965190377269e7cf1",
+      "optionalDependencies": {
+        "@fuigo/darwin-arm64": "1.0.43",
+        "@fuigo/darwin-x64": "1.0.43",
+        "@fuigo/linux-arm64": "1.0.43",
+        "@fuigo/linux-x64": "1.0.43",
+        "@fuigo/win32-arm64": "1.0.43",
+        "@fuigo/win32-x64": "1.0.43"
+      }
+    },
+    {
+      "target": "darwin-arm64",
+      "name": "@fuigo/darwin-arm64",
+      "version": "1.0.43",
+      "tarball": "https://registry.npmjs.org/@fuigo/darwin-arm64/-/darwin-arm64-1.0.43.tgz",
+      "tarballSha256": "820b41761792ecd4e706318339fc756ba11c0b9827c29a6839a662d39211b480",
+      "integrity": "sha512-Z8tUmcwykMszfDrrLeWlEUUtgW+urXuS9FR1xzfPNQejP3Br2gIsH+LvCy0uYgD1VCxk15s22TYOQ10QLZYeXA==",
+      "shasum": "6cfd010cc154592603df8ed406154ebe50f53ac2",
+      "binarySha256": "b5ea4aecd27b0e913026086e5ab5cac103c8fbfbb9ca26c24ce6117e19620091"
+    },
+    {
+      "target": "darwin-x64",
+      "name": "@fuigo/darwin-x64",
+      "version": "1.0.43",
+      "tarball": "https://registry.npmjs.org/@fuigo/darwin-x64/-/darwin-x64-1.0.43.tgz",
+      "tarballSha256": "f6542623d00d16fd0800abba7a5e70a2e924f69a8008bfa558257c0ef8ff6f85",
+      "integrity": "sha512-JOTO38TqQ4cBbxMExqmS+SjlhBqrMxa93NhezAUdjCNVZk+NrQehBTCdcL5NIoLzJeOWd8weNF4xFhNivqxRUw==",
+      "shasum": "617000c6786942ec7376cc99703efefe5167ffbe",
+      "binarySha256": "3dbdcd2d99a65889524b6b77295b4f2a87d9cfd5db50b66fd421fa4f5cc80e4a"
+    },
+    {
+      "target": "linux-arm64",
+      "name": "@fuigo/linux-arm64",
+      "version": "1.0.43",
+      "tarball": "https://registry.npmjs.org/@fuigo/linux-arm64/-/linux-arm64-1.0.43.tgz",
+      "tarballSha256": "fb28ae482cb11b0899d8200a7133857526473d583a24d79e96443099ef901139",
+      "integrity": "sha512-qAu76YcAAcLuNKvpQyD/4bwVDyGP5bP8Hlql2TLIYeZXdqPdrTu7y1ZRrVOO/5sgrJjYEfumBA2SSzP5gyqwrg==",
+      "shasum": "43e4061031940d5ce90b726f5f2c1742d1eac0ba",
+      "binarySha256": "1f83ffb549ab08e9668841e3d1aec0a70335187a6340687a2a3872353cffafae"
+    },
+    {
+      "target": "linux-x64",
+      "name": "@fuigo/linux-x64",
+      "version": "1.0.43",
+      "tarball": "https://registry.npmjs.org/@fuigo/linux-x64/-/linux-x64-1.0.43.tgz",
+      "tarballSha256": "3d0d0932ed82e9ca497fb504f2aa87f2a9caa08f387277257d27772064497eb5",
+      "integrity": "sha512-uj7IMKMu7VT48EdmIBh4JCtr1nU7F8ISQMuA0dMZRGlM8Od+D139g6TkBfG1m6xOeS8SrB0RvtBVvFe5maqm3Q==",
+      "shasum": "f1c5b1e8d456e37b54e76d592e0b42e74b781a74",
+      "binarySha256": "d62ea93bc75ed09693e1b085b320c5656bd96429511d5d2f494886ca909861a1"
+    },
+    {
+      "target": "win32-arm64",
+      "name": "@fuigo/win32-arm64",
+      "version": "1.0.43",
+      "tarball": "https://registry.npmjs.org/@fuigo/win32-arm64/-/win32-arm64-1.0.43.tgz",
+      "tarballSha256": "01883dbb7a504ecf268746a6651f6b0c62294d61123627486b2dadc7611000ea",
+      "integrity": "sha512-X/svuEJT/sZuiiSr3x1F4/IHAbkNY8aiKmLbjSz9+QGqkmU1hNCwZPDE1TVnirnDHqLfnwguIzjVKZiKX1ed8g==",
+      "shasum": "868f9779ec6a8e5ec0771d2985196db7b71f1f48",
+      "binarySha256": "9e01826db39082ee3d9dccd024563beef49eaaff0663ff288be6053de28dfc0e"
+    },
+    {
+      "target": "win32-x64",
+      "name": "@fuigo/win32-x64",
+      "version": "1.0.43",
+      "tarball": "https://registry.npmjs.org/@fuigo/win32-x64/-/win32-x64-1.0.43.tgz",
+      "tarballSha256": "329627e2f0503a09dd661b66de189dc805c45409d5f2cc3b70aee1d1b21272f0",
+      "integrity": "sha512-QEJi++aFRCNNHXI8Z7O+jZuUOJNAIWfvtJ9puhl/MOZC5vQ8U0RawqFg1IZTNQtpke1v3QMTgxeWIILlRtmVrw==",
+      "shasum": "5f52a5028e14920a8da2018348440441faa13af8",
+      "binarySha256": "f837e817a71acce83d17542a84ad9e9fc5d8215e995ff45ae9c0ccd0b215bfdd"
+    }
+  ]
+}

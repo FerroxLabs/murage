@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -26,6 +27,8 @@
 // Scopes of bots that are gone are retired (retireScopes): unused for a long
 // time, or beyond a count limit, never one used in the last day, and a login
 // file created only inside a retiring scope is moved into the real folder first.
+import { noteHookRepairFailure } from "../hook-repair-notice.ts";
+import { engineHookRepairFailureLine } from "../../shared/provider-error.ts";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, rmdirSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -214,7 +217,7 @@ function readMarkerState(root: string): MarkerState {
     return (error as NodeJS.ErrnoException).code === "ENOENT" || (error as NodeJS.ErrnoException).code === "ENOTDIR" ? { kind: "missing" } : { kind: "unreadable" };
   }
   try {
-    const parsed: unknown = JSON.parse(text);
+    const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(text));
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? { kind: "ok", marker: parsed as ScopeMarker } : { kind: "unreadable" };
   } catch { return { kind: "unreadable" }; }
 }
@@ -267,7 +270,7 @@ function acquireLease(root: string): boolean {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") return false;
       try {
-        const held = JSON.parse(readFileSync(file, "utf8")) as Partial<ProcessRecord>;
+        const held = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(file, "utf8"))) as Partial<ProcessRecord>;
         if (typeof held.pid === "number" && processRunning({ pid: held.pid, id: typeof held.id === "string" ? held.id : null })) return false;
         unlinkSync(file); // its holder is provably gone
       } catch { return false; } // unreadable or racing: in doubt, skip
@@ -281,7 +284,7 @@ function releaseLease(root: string): void {
 /** True while another live process holds the prune lease on this scope. */
 function leaseHeldByOther(root: string): boolean {
   try {
-    const held = JSON.parse(readFileSync(scopeLockPath(root), "utf8")) as Partial<ProcessRecord>;
+    const held = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(scopeLockPath(root), "utf8"))) as Partial<ProcessRecord>;
     return typeof held.pid === "number" && held.pid !== process.pid && processRunning({ pid: held.pid, id: typeof held.id === "string" ? held.id : null });
   } catch { return false; }
 }
@@ -357,7 +360,7 @@ const UNAVAILABLE_MESSAGE = "This bot's engine could not be set up in its own fo
  *   config-invalid    the owner's settings file a generated copy is made from cannot be read (the copy is removed, the turn rejected)
  *   login-link-lost   a hardlinked login is no longer the same file as the owner's (nothing is repaired)
  */
-export type ScopeFailureCode = "busy" | "unavailable" | "update-required" | "symlink-required" | "login-link-lost" | "config-invalid";
+export type ScopeFailureCode = "busy" | "unavailable" | "update-required" | "symlink-required" | "login-link-lost" | "config-invalid" | "hook-repair-failed";
 /** A bot turn's own engine folder could not be set up; the turn is rejected before any spawn. */
 export class ScopeUnavailableError extends Error {
   readonly code: ScopeFailureCode;
@@ -373,14 +376,23 @@ export class ScopeUnavailableError extends Error {
     if (options?.engine) this.engine = options.engine;
   }
 }
+/** A canonical safety file could not be restored. Never downgraded to a tool-less launch. */
+export class HookRepairFailed extends ScopeUnavailableError {
+  constructor(engine: string, cause?: unknown) {
+    super(engineHookRepairFailureLine(engine), false, { code: "hook-repair-failed", engine, cause });
+    noteHookRepairFailure(engine);
+  }
+}
+
 /** The structured tag the chat words in the owner's language (shared/provider-error.ts LOCAL_SETUP_FAILURES). */
-export function scopeLocalFailureOf(error: ScopeUnavailableError): "engine-folder-busy" | "engine-folder-unavailable" | "engine-update-required" | "engine-symlink-required" | "engine-login-link-lost" | "engine-config-invalid" {
+export function scopeLocalFailureOf(error: ScopeUnavailableError): "engine-folder-busy" | "engine-folder-unavailable" | "engine-update-required" | "engine-symlink-required" | "engine-login-link-lost" | "engine-config-invalid" | "engine-hook-repair-failed" {
   switch (error.code) {
     case "busy": return "engine-folder-busy";
     case "update-required": return "engine-update-required";
     case "symlink-required": return "engine-symlink-required";
     case "login-link-lost": return "engine-login-link-lost";
     case "config-invalid": return "engine-config-invalid";
+    case "hook-repair-failed": return "engine-hook-repair-failed";
     default: return "engine-folder-unavailable";
   }
 }
@@ -697,7 +709,7 @@ function scopeSession(spec: ScopedCliHomeSpec, now: number, resolveGeneration: b
       // Once the scope has moved to a later generation, generation 0's login is the preserved older copy: never linked or touched here.
       if (generation > 0) { shareMode[name] = prior === "hardlink" || prior === "symlink" || prior === "absent" ? prior : "symlink"; continue; }
       // Already there: our link, or a login the engine wrote in the scope (handed to the owner's folder when the scope retires, never overwriting theirs).
-      if (present(scoped) || established) {
+      if (present(scoped) || (established && Array.isArray(earlier?.share) && earlier.share.includes(name))) {
         // An established generation with a missing login is not repaired here: the launch check (verifyScopeLogins) starts a new generation.
         shareMode[name] = prior === "hardlink" || prior === "symlink" || prior === "absent" ? prior : "symlink";
         continue;

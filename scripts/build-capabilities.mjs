@@ -121,9 +121,14 @@ const ROUTE_TERMS = {
   "calendar-calls": "calls",
   // /api/chats: the All chats page and the bot chat pop-up list (1.0.6 chats slice 1, 47456b4dd)
   chats: "chats",
+  // /api/move-in/found and /api/move-in/grok: first-run move-in from another app on this computer (FR19c)
+  "move-in": "moving in from another app",
   "cli-candidates": "engines",
   "cli-test": "engines",
   connectors: "connected apps",
+  // c9f99951c2: owner reconnect dialog; incidents are part of connected apps.
+  "connector-incidents": "connected apps",
+  signal: "Signal",
   decisions: "decisions",
   discord: "Discord",
   "engine-setup-check": "engines",
@@ -153,6 +158,8 @@ const ROUTE_TERMS = {
   phones: "phone tools",
   // Settings > Usage shows the plan use last reported by an engine.
   "plan-usage": "usage",
+  // Desktop Permissions controls for the No limits inheritance choice.
+  permissions: "permissions",
   projects: "projects",
   "provider-connections": "engines",
   "routine-runs": "routines",
@@ -178,6 +185,10 @@ const ROUTE_TERMS = {
   whatsapp: "WhatsApp",
 };
 const ROUTE_PLUMBING = new Set([
+  // Signal activation is held behind the reviewed G0 prerequisite; no released Settings surface yet.
+  "signal",
+  // Owner-authenticated prepared-context inspection; no standalone navigation surface.
+  "delegation-packs",
   "announcements", "automation-admission", "config", "desktop", "desktop-secret", "deletion-preview", "deletions", "diagnostics",
   "engine-signin-probe", "engine-signin-recipe", "events", "health", "hermes", "instances", "internal", "no-limits", "owner-prefs", "presence", "restore-holds", "setup", "shared-results", "spend", "subscribe", "terms",
 ]);

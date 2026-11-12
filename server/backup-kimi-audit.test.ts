@@ -23,7 +23,7 @@ const selection = { scope: "application-data", credentialPolicy: "preserve-in-en
 it.skipIf(process.platform === "win32" || !process.env.MURAGE_BACKUP_TEST_AGE_DIR)("a skipped item named ..\\plug or \\ and a bot named with a bell still report a good backup", async () => {
   const f = backupFixture(), keys = testAgeKeys();
   const desk = join(f.data, "workspaces", "bot"); mkdirSync(desk, { recursive: true });
-  execFileSync("mkfifo", [join(desk, "..\\plug")]);
+  execFileSync("mkfifo", [join(desk, "..\\plug")], { windowsHide: true });
   writeFileSync(join(desk, "\\"), "x"); chmodSync(join(desk, "\\"), 0o000);
   const bots = JSON.parse(readFileSync(join(f.data, "bots.json"), "utf8")); bots[0].name = "Be\u0007ll"; writeFileSync(join(f.data, "bots.json"), JSON.stringify(bots));
   try {

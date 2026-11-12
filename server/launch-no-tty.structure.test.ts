@@ -28,21 +28,43 @@ vi.mock("node:child_process", async (original) => {
     execFile: (...args: unknown[]) => { calls.execFile.push(args); return fakeChild(); },
   };
 });
+// This suite changes process.platform after startup; use the Windows inheritance seam explicitly.
+vi.mock("../shared/win-hide-child-process.mjs", () => ({ withHideInherit: <T,>(options: T) => options }));
 vi.mock("./env-path.ts", async (original) => ({
   ...(await original<typeof import("./env-path.ts")>()),
   resolveCliSpawn: (command: string, args: string[]) => ({ command, args }),
 }));
 
-const { execCli, spawnCli } = await import("./procs.ts");
+const { execCli, spawnCli, engineExecutableDeps } = await import("./procs.ts");
 
 const server = dirname(fileURLToPath(import.meta.url));
 
 /** Modules that may start a process themselves, and why they are not an engine launch or an engine probe. */
 const ALLOWLIST: Record<string, string> = {
+  // Reviewed Signal and journal additions; these start no model engine (see evidence/redsp1/README.md).
+  "index.ts": "Signal Show folder owner action opens Explorer, open or xdg-open with a folder argument and a five-second deadline (bb56d5a32b), never an engine",
+  "channels/signal/process-host.ts": "starts the pinned Signal Java runtime for its bounded JSON-RPC transport (1911eb43c7), never a model engine",
+  "channels/signal/runtime-integrity.mjs": "verifies the pinned Signal runtime's platform signatures before Java can start (1911eb43c7), never an engine",
+  "channels/signal/storage.ts": "reads the Signal storage tree's owner, ACL and link attributes before its transport starts (1911eb43c7), never an engine",
+  "highlevel/approval-journal-storage.ts": "checks the approval journal's local durable filesystem and volume (c9186f2d38), never an engine",
+  "highlevel/returned-identities.mutants.mjs": "isolated regression mutation runner for returned identity slots (032a7cd02a), not imported by the server and never an engine",
+  "native-deny/fix-mutants.mjs": "isolated regression mutation runner for source reader and path placement assertions (8b36fd2b25), not imported by the server and never an engine",
+  "browser-daemon-identity.ts": "bounded operating-system process identity probes, never an engine",
+  "browser-direct-readiness.ts": "bounded Chrome process and TCP readiness probes, never an engine",
+  "browser-open-chrome.ts": "opens the owner Chrome window on an explicit owner request, with stdin ignored and detached",
+  "browser-owned-close.ts": "ownership-checked browser native launcher cleanup, never an engine turn",
+  "browser-setup-preflight.ts": "bounded host network and AppArmor readiness checks, never an engine",
+  "browser-window-chrome.ts": "downloaded browser package verification and extraction tools, never an engine",
+  "test-support/restore-path-scan.ts": "test-only Python AST read of local launcher source through a fixed program and stdin; never imported by the server or used to start an engine",
+  "cloud-data-ops-lock.ts": "Cloud restore flock probe and lock acquisition with fixed arguments, ignored stdio and a five-second deadline; no engine process",
+  "hook-canon.ts": "Windows fsutil read of a hook ancestor reparse point by absolute system path, never an engine",
+  "static-ui-setup-page.ts": "bounded Windows tasklist probe of installer presence, never an engine",
+
   "procs.ts": "the shared launcher itself (spawnCli, execCli) and its taskkill stop route",
   "job-launcher.ts": "the Windows job launcher procs.ts starts (U24): it starts the engine CLI itself, inside the engine's job, with the stdio pipes it inherited from spawnCli",
   "env-path.ts": "the owner's own login capture (Rule 74a, Murage's process, stdin closed); its Fuigo --version read is an engine probe and starts a session of its own (asserted below)",
   "drivers/process-tree.ts": "non-engine helper: ps and PowerShell process listing",
+  "drivers/antigravity-relay.ts": "non-engine helper: lsattr read of a Cloud home folder, stdin closed, no network (the relay hook check)",
   "drivers/process-identity.ts": "non-engine helper: ps start-time read of a known pid",
   "drivers/warm-pool.ts": "non-engine helper: ps and vm_stat memory reads",
   "drivers/claude.ts": "git rev-parse of the session folder with stdin ignored and no network",
@@ -175,7 +197,7 @@ describe("engine processes have no controlling terminal (Rule 74c launch clause)
 
   it("the Fuigo --version read in the resolver starts a session of its own on posix, a hidden console on win32", () => {
     const text = readFileSync(join(server, "env-path.ts"), "utf8");
-    const call = /spawnSync\(absolute, \["--version"\], \{([\s\S]*?)\}\);/.exec(text);
+    const call = /spawnSync\(absolute, \["--version"\], withHideInherit\(\{([\s\S]*?)\}\)\);/.exec(text);
     expect(call, "the Fuigo --version spawnSync").not.toBeNull();
     expect(call![1]).toMatch(/windowsHide: true/);
     expect(call![1]).toMatch(/\.\.\.\(process\.platform === "win32" \? \{\} : \{ detached: true \}\)/);
@@ -189,6 +211,7 @@ describe("engine processes have no controlling terminal (Rule 74c launch clause)
     const onPlatform = (platform: NodeJS.Platform) => Object.defineProperty(process, "platform", { value: platform, configurable: true });
     afterEach(() => {
       onPlatform(realPlatform);
+      vi.restoreAllMocks();
       calls.spawn.length = 0;
       calls.execFile.length = 0;
     });
@@ -220,6 +243,7 @@ describe("engine processes have no controlling terminal (Rule 74c launch clause)
 
     it("win32: spawnCli hides its console, all stdio piped, never detached", () => {
       onPlatform("win32");
+      vi.spyOn(engineExecutableDeps, "executable").mockReturnValue(true);
       spawnCli("engine", ["--x"], { cwd: fixtureBotFolder(), stdio: ["pipe", "pipe", "pipe"], env: {}, detached: true });
       expect(spawnOptions()).toMatchObject({ windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
       expect(spawnOptions().detached).toBeUndefined();
@@ -230,6 +254,7 @@ describe("engine processes have no controlling terminal (Rule 74c launch clause)
 
     it("win32: execCli hides its console and is never detached", () => {
       onPlatform("win32");
+      vi.spyOn(engineExecutableDeps, "executable").mockReturnValue(true);
       execCli("engine", ["--version"], { timeout: 1000, env: {} }, () => {});
       expect(execOptions()).toMatchObject({ windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
       expect(execOptions().detached).toBeUndefined();

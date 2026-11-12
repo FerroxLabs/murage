@@ -2,11 +2,23 @@
 // tests are mostly about the cases where the answer is "stay quiet".
 import { describe, expect, it } from "vitest";
 
+import { applyNotificationPreferences } from "../shared/notification-preferences.ts";
 import { buildNotification, summarize } from "./notify.ts";
 
 const bot = { id: "bot-1", name: "Scout", threadId: "thread-1" };
 
 describe("buildNotification", () => {
+  it("names the connector and preserves opaque incident identity under privacy, mute and quiet hours", () => {
+    const frame = buildNotification("connector-reconnect", bot, "thread-1", "Buffer", { deliveryId: "incident", requestId: "incident", reconnect: { slug: "buffer", accountId: "account" } })!;
+    expect(frame.title).toBe("Buffer needs you to sign in again");
+    expect(buildNotification("connector-reconnect", { ...bot, notifications: false }, "thread-1", "Buffer")).toBeNull();
+    const now = new Date("2026-01-01T12:00:00Z");
+    expect(applyNotificationPreferences(frame, { failures: false }, now)).toBeNull();
+    expect(applyNotificationPreferences(frame, { quietHours: { enabled: true, start: "11:00", end: "13:00", timeZone: "UTC" } }, now)).toBeNull();
+    const privateFrame = applyNotificationPreferences(frame, { previewContent: false }, now);
+    expect(privateFrame).toMatchObject({ deliveryId: "incident", requestId: "incident", privatePreview: true });
+    expect(JSON.stringify(privateFrame)).not.toMatch(/Buffer|buffer|account/);
+  });
   it("carries exact approval request and card identity without deriving it from copy", () => {
     expect(buildNotification("approval", bot, "detached", "same text", { requestId: "request-1", messageId: "card-1", requestTurnId: "turn-1" })).toMatchObject({ threadId: "detached", requestId: "request-1", messageId: "card-1", requestTurnId: "turn-1" });
   });
@@ -69,4 +81,12 @@ describe("summarize", () => {
     expect(long.endsWith("…")).toBe(true);
     expect(summarize("short")).toBe("short");
   });
+});
+
+it("uses the owner's chosen language for connector alerts", async () => {
+  const { setChannelReplyLanguage } = await import("./channels/reply-text.ts");
+  try {
+    setChannelReplyLanguage(() => "es");
+    expect(buildNotification("connector-reconnect", bot, "thread-1", "Buffer")?.title).toBe("Necesitas volver a iniciar sesión en Buffer");
+  } finally { setChannelReplyLanguage(() => "en"); }
 });

@@ -1,3 +1,4 @@
+import {confirmedBrowserFields} from './testing/browser-choice.ts';
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -6,6 +7,7 @@ import { launchVerificationServer, type VerificationServer } from "../scripts/co
 let fixture: VerificationServer, headers: Record<string, string>;
 interface ApiBody { browserProfiles: Array<{ id: string; name: string; partitionId?: string }>; secret: string; bot: { id: string }; error: string }
 const api = async (method: string, path: string, body?: unknown) => {
+  if(method==='PATCH'&&path.startsWith('/api/bots/')&&body&&typeof body==='object')body=await confirmedBrowserFields(fixture.info.url,headers,path,body as Record<string,unknown>);
   const response = await fetch(fixture.info.url + path, { method, headers: { ...headers, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: response.status, body: await response.json() as ApiBody };
 };

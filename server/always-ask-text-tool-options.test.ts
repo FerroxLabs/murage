@@ -75,15 +75,15 @@ const AWK_ASKS: string[] = [
   "awk -F: -v OFS=/ '{print $1,$2}'",
 ];
 
-const HELD: Array<[cmd: string, rule: string]> = [
+const HELD: Array<[cmd: string, rule: string, protectedWrite?: boolean]> = [
   // options that take a path keep being read, glued or separate
-  ["sort -o /etc list.txt", "protected-path"],
-  ["sort -o/etc list.txt", "protected-path"],
-  ["sort -t/ -o /usr list.txt", "protected-path"],
-  ["sort -t/ -o/usr list.txt", "protected-path"],
-  ["sort --output=/usr list.txt", "protected-path"],
-  ["sort --output /usr list.txt", "protected-path"],
-  ["sort -T / list.txt", "protected-path"],
+  ["sort -o /etc list.txt", "protected-path", true],
+  ["sort -o/etc list.txt", "protected-path", true],
+  ["sort -t/ -o /usr list.txt", "protected-path", true],
+  ["sort -t/ -o/usr list.txt", "protected-path", true],
+  ["sort --output=/usr list.txt", "protected-path", true],
+  ["sort --output /usr list.txt", "protected-path", true],
+  ["sort -T / list.txt", "protected-path", true],
   ["awk -f/usr list.txt", "protected-path"],
   ["awk -F/ -f /usr list.txt", "protected-path"],
   ["awk --file=/usr list.txt", "protected-path"],
@@ -107,7 +107,7 @@ const HELD: Array<[cmd: string, rule: string]> = [
   ["awk -v OFS=/home/tester 'BEGIN { system(\"rm -rf \" OFS) }'", "protected-path"],
   ["awk -v RS=/home/tester 'BEGIN { system(\"rm -rf \" RS) }'", "protected-path"],
   ["awk -F/usr '{ print | \"sh\" }' list.txt", "protected-path"],
-  ["awk -v OFS=/usr '{ print > OFS }' list.txt", "protected-path"],
+  ["awk -v OFS=/usr '{ print > OFS }' list.txt", "protected-path", true],
   ["awk -F/usr 'BEGIN { getline < FS }'", "protected-path"],
   ["awk -F/usr -e 'BEGIN { print }'", "protected-path"],
   ["awk -F/usr -f prog.awk list.txt", "protected-path"],
@@ -141,9 +141,10 @@ describe("a text tool's separator is not a path", () => {
   it.each(AWK_ASKS)("%s asks: awk's separator is read as a path", (cmd) => {
     expectProtectedPath(cmd, "/work/project"); // MARKS r12 re-baseline (MurageMain 11-07 item 1): the doubt-free read names it; strict read and every level still card
   });
-  it.each(HELD)("%s still asks (%s)", (cmd, rule) => {
+  it.each(HELD)("%s still asks (%s)", (cmd, rule, protectedWrite) => {
     // MARKS r12 re-baseline (MurageMain 11-07 item 1): the doubt-free read names it; strict read and every level still card
-    if (rule === "protected-path") return expectProtectedPath(cmd, "/work/project");
+    // S1-B3 RULING (MAIN 2026-11-11 09:30Z): sort output and temporary-directory writes keep their protected-target card.
+    if (rule === "protected-path") return expectProtectedPath(cmd, "/work/project", undefined, protectedWrite);
     expect(alwaysAskCommand(cmd, "/work/project")?.rule ?? null).toBe(rule);
   });
   it("a redirect from tr still asks", () => {

@@ -135,6 +135,7 @@ describe.skipIf(process.platform === "win32")("Full access", () => {
       }),
     );
     child = spawn(process.execPath, ["--import", IDLE_LOAD_PRELOAD, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

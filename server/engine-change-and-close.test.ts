@@ -76,6 +76,7 @@ describe("an engine change or an app close around a run waiting for the person",
     stderr = "";
     desktopHeaders = DESKTOP_HEADERS;
     child = spawn(process.execPath, [...(packaged ? ["--import", PARENT_PORT_PRELUDE] : []), join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

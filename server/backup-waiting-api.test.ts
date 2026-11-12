@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
@@ -61,7 +61,8 @@ async function makeBot(name: string) {
 
 let serverPort = 0;
 async function startServer() {
-  child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+  child = spawn(process.execPath, ["--import", pathToFileURL(join(home, "fake-engine-setup.mjs")).href, join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -70,6 +71,7 @@ async function startServer() {
       MURAGE_PORT: String(serverPort),
       MURAGE_WEBHOOK_PORT: String(serverPort + 1),
       MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
+      NODE_ENV: "test",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -94,6 +96,9 @@ describe.skipIf(process.platform === "win32")("a backup held up by a card waitin
     chmodSync(FAKE_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "murage-backup-waiting-"));
     expect(home.startsWith(tmpdir())).toBe(true);
+    // A process-local symbol cannot survive spawn(): the server child needs the fake-engine override (no shipped bwrap on a Linux
+    // test box; server/host-power.ts HOST_POWER_TEST_UNWRAPPED), as server/routine-approval-hold-api.test.ts does.
+    writeFileSync(join(home, "fake-engine-setup.mjs"), "globalThis[Symbol.for('murage.hostPower.testUnwrapped')] = true;\n");
     mkdirSync(join(home, ".murage"), { recursive: true });
     writeFileSync(join(home, ".murage", "config.json"), JSON.stringify({
       instances: {

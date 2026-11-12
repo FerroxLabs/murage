@@ -25,6 +25,8 @@ export interface SensitivePathRow {
   /** Claude `permissions.ask` Read rules for this row: in-project rows
    * relative, home rows as `~/`. */
   read: readonly string[];
+  /** Additional named leaves/roots for unknown-cwd writes; never a filesystem scan. */
+  cwdSuffixes?: readonly string[];
   /** Claude `permissions.ask` Bash text rules for the same names. */
   bash: readonly string[];
 }
@@ -38,6 +40,7 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   },
   {
     id: "ssh",
+    cwdSuffixes: ["*id_rsa*", "*id_ed25519*", "*authorized_keys*"],
     re: /\.ssh[\\/]|id_rsa|id_ed25519|authorized_keys/i,
     read: ["~/.ssh/**"],
     bash: ["*.ssh/*", "*id_rsa*", "*id_ed25519*", "*authorized_keys*"],
@@ -81,6 +84,7 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   // Rule 35: the Windows spellings, rows of their own.
   {
     id: "windows-credential-files",
+    cwdSuffixes: ["application_default_credentials.json"],
     // 1.0.10 fix round (Grok High): gcloud's POSIX folder too, and its application default credentials by name
     re: /(^|[\s\\/"'])_(netrc|npmrc)\b|\.azure[\\/]|appdata[\\/]roaming[\\/](?:gcloud|npm[\\/]etc)[\\/]|[\\/]npm[\\/]etc[\\/]npmrc\b|\.config[\\/]gcloud(?:[\\/]|$|["'\s])|application_default_credentials\.json|[\\/]login data\b/i,
     read: ["~/_netrc", "~/_npmrc", "~/.azure/**", "~/AppData/Roaming/gcloud/**", "~/.config/gcloud/**", "~/AppData/Roaming/npm/etc/**", "**/Login Data"],
@@ -135,11 +139,18 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     read: ["**/murage-exec*/**", "**/murage-exec*"],
     bash: ["*murage-exec*"],
   },
+  {
+    id: "murage-copilot-mcp",
+    re: /murage-copilot-mcp(-[0-9A-Za-z]+)?([\\/]|$|["'\s])/i,
+    read: ["**/murage-copilot-mcp*/**", "**/murage-copilot-mcp*"],
+    bash: ["*murage-copilot-mcp*"],
+  },
   // 1.0.3 (hook self-guard): the hook programs Murage writes for an engine and
   // the folders they live in (DATA_DIR/native/antigravity-relay, -ask, -scope
   // and codex-scope). The engine re-reads them on every call, so a write to one
   // would replace the guard that judges every later call.
   // 1.0.10: native/hermes-ask (the Hermes ask hook and its overlay config): a bot editing the overlay could remove Murage's ask hook.
+  // No limits: no card; hook-canon.ts checks and restores these files before every use.
   {
     id: "murage-engine-hooks",
     re: /(?<![\w.-])(?:(?:antigravity-(?:relay|ask|scope)|codex-scope|hermes-ask)[. ]*(?:[\\/:]|$|["'\s;|&)>`])|murage-agy-relay|murage-hook\.(?:mjs|cmd|env)\b|ask-hook-[\w.-]*\.cjs\b)/i,
@@ -160,6 +171,7 @@ export const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   // `plugins::$DATA`): Win32 reads those as the folder (lanes/release103/SG-WIN-PATHTRICKS.md), so the row does too.
   {
     id: "agy-workspace-hooks",
+    cwdSuffixes: [".agents", ".agent", "_agents", "_agent"],
     re: /(?<![\w.-])[._]agents?[\\/](?:hooks\.json|plugins\.json|(?:plugins|agents)[. ]*(?:[\\/:]|$|["'\s;|&)>`]))|(?<=^|[\s"'=\\/])[._]agents?(?:\/|\\(?!["']))(?=$|["'\s;|&)>])|(?<=^|[\s=\\/])\.agents?(?=$|[\r\n"']|[ \t]*[;|&>)])|(?<=(?:^|[\s=])["'])\.agents?(?=["'](?:$|[\r\n]|[ \t]*(?:[;|>]|&&)))|(?<=\(["'])\.agents?(?=["']\))|(?<=[ \t=]["'])_agents?(?=["'](?:$|[\r\n]|[ \t]*(?:[;|>]|&&)))|(?<=^|[\s=\\/])_agents?(?=$|[\r\n"']|[ \t]*(?:[;|>]|&&))|(?<=["'])[._]agents?["'][ \t]*,[ \t]*["'](?:hooks\.json|plugins\.json|plugins|agents)["']/i,
     ancestor: /(?<![\w.-])[._]agents?[\\/](?:hooks\.json|plugins\.json|(?:plugins|agents)[. ]*(?:[\\/:]|$|["'\s;|&)>`]))/i,
     read: [".agents/hooks.json", ".agent/hooks.json", "_agents/hooks.json", "_agent/hooks.json", ".agents/plugins.json", ".agent/plugins.json", "_agents/plugins.json", "_agent/plugins.json", ".agents/plugins/**", ".agent/plugins/**", "_agents/plugins/**", "_agent/plugins/**", ".agents/agents/**", ".agent/agents/**", "_agents/agents/**", "_agent/agents/**"],

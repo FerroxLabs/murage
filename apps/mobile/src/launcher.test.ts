@@ -7,7 +7,7 @@ import { createLauncher, type Draft } from "./launcher";
 import type { Action, Screen, View } from "./screens";
 import type { Closed, MurageShellPlugin, SavedWorkspace, ShellState } from "./shell-types";
 
-const MAC: SavedWorkspace = { origin: "https://mac.tailnet123.ts.net", name: "Sean's Mac", lastConnected: 1 };
+const MAC: SavedWorkspace = { origin: "https://mac.tail000000.ts.net", name: "Sean's Mac", lastConnected: 1 };
 const SECRET = "Zq9_credential-NEVER-SHOWN";
 const LINK = `${MAC.origin}/enter#${SECRET}`;
 
@@ -192,7 +192,7 @@ describe("a refused pairing code (1.0.16 F1)", () => {
     await h.tap("Yes, let's connect");
     await h.tap("I see the code, scan it");
     await h.tap("Type the code instead");
-    await h.tap("Connect", { address: "mac.tailnet123.ts.net", code: "123456" });
+    await h.tap("Connect", { address: "mac.tail000000.ts.net", code: "123456" });
     return h;
   }
 
@@ -290,7 +290,7 @@ describe("pairing and opening", () => {
     await h.tap("Connect", { address: "https//mac", code: "123456" });
     expect(h.screen()).toEqual({ kind: "type", error: COPY.badAddress });
     expect(h.drafts[h.drafts.length - 1]).toEqual({ address: "https//mac" });
-    await h.tap("Connect", { address: "mac.tailnet123.ts.net", code: "123 456" });
+    await h.tap("Connect", { address: "mac.tail000000.ts.net", code: "123 456" });
     expect(h.shell.opens).toEqual([{ origin: MAC.origin, credential: "123456" }]);
     expect(JSON.stringify(h.drafts)).not.toContain("123");
   });
@@ -756,7 +756,7 @@ describe("first run (2026-09-27 first-run spec)", () => {
     await h.tap("I see the code, scan it");
     await h.tap("Type the code instead");
     h.shell.queue.open!.push(fail("unreachable"));
-    await h.tap("Connect", { address: "mac.tailnet123.ts.net", code: "123456" });
+    await h.tap("Connect", { address: "mac.tail000000.ts.net", code: "123456" });
     expect(h.screen()).toEqual({ kind: "pairUnreachable", origin: MAC.origin });
     expect(h.view().title).toBe("Turn on Tailscale");
   });

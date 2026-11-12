@@ -1,3 +1,4 @@
+import { registerBusyloopRequestSite, fluxRouteFor } from "../../../shared/flux-route.ts";
 import type { Writable } from "node:stream";
 import type { RuntimeEvent, RuntimeEventListener } from "../../contracts.ts";
 
@@ -37,7 +38,7 @@ export class ApprovalNoLongerOpenError extends Error {
 }
 
 /** A false write() return means backpressure, not failure. Only its callback confirms delivery. */
-export function writeAcpResponse(stream: Writable | null | undefined, obj: unknown, done: ApprovalWriteCallback): void {
+export function writeAcpResponse(stream: Writable | null | undefined, obj: unknown, done: ApprovalWriteCallback, requestUrl?: string): void {
   if (!stream || stream.destroyed || stream.writableEnded || !stream.writable) {
     done(Object.assign(new Error("Engine input is closed"), { code: "ERR_STREAM_DESTROYED" }), false);
     return;
@@ -48,7 +49,7 @@ export function writeAcpResponse(stream: Writable | null | undefined, obj: unkno
     reported = true;
     done(error, accepted);
   };
-  try { stream.write(JSON.stringify(obj) + "\n", error => report(error, true)); }
+  try { registerBusyloopRequestSite(fluxRouteFor(requestUrl), stream.write(JSON.stringify(obj) + "\n", error => report(error, true))); }
   catch (error) { report(error instanceof Error ? error : new Error("Write failed"), false); }
 }
 

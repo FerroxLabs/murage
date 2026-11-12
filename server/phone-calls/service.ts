@@ -52,6 +52,24 @@ const ISO = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{
 const REFERENCE = /^[A-Za-z0-9-]{1,32}$/;
 const OUTCOMES = new Set(["done", "not_done", "no_answer", "voicemail", "busy", "failed"]);
 const REASONS = new Set(["closed", "fully_booked", "needs_owner", "refused", "other"]);
+const OWNER_REFRESH_DEADLINE_MS = 2000;
+
+/** The adapter need not support cancellation. Stop waiting at the owner deadline and
+ * discard its late answer before any caller can change rows or revision bookkeeping. */
+async function ownerRequest<T>(request: () => T | Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return request();
+  signal.throwIfAborted();
+  let abort!: () => void;
+  const expired = new Promise<never>((_resolve, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener("abort", abort, { once: true });
+  });
+  try {
+    const value = await Promise.race([request(), expired]);
+    signal.throwIfAborted();
+    return value;
+  } finally { signal.removeEventListener("abort", abort); }
+}
 
 function mapStatus(vendor: string | undefined, endedReason: string | undefined): CallRow["status"] {
   if (endedReason === "scheduled-call-deleted") return "cancelled";
@@ -72,6 +90,8 @@ export class PhoneCallService {
   private readonly rows: CallStore;
   /** Revisions a call is being started on right now: pinned before the vendor is asked, released once the row is stored. */
   private readonly starting = new Map<number, number>();
+  private readonly releasing = new Set<number>();
+  private ownerRefresh: Promise<void> | undefined;
   // No parameter properties: the server runs under Node type stripping (strip-only mode), which refuses them at startup.
   constructor(adapter: PhoneAdapter, revisions: RevisionStore, appLanguage: () => string, log: PhoneLog = () => {}, rows: CallStore = new MemoryCallStore()) {
     this.adapter = adapter; this.revisions = revisions; this.appLanguage = appLanguage; this.log = log; this.rows = rows;
@@ -101,9 +121,14 @@ export class PhoneCallService {
     return rev.number;
   }
 
-  async releaseOldAssistants(): Promise<void> {
+  async releaseOldAssistants(signal?: AbortSignal): Promise<void> {
     for (const r of this.revisions.releasable(this.revisionsInUse())) {
-      try { await this.adapter.deleteAssistant(r.assistantId as string); this.revisions.forget(r.number); } catch { /* retried on next release */ }
+      if (signal?.aborted) return;
+      if (this.releasing.has(r.number)) continue;
+      this.releasing.add(r.number);
+      try { await ownerRequest(() => this.adapter.deleteAssistant(r.assistantId as string), signal); this.revisions.forget(r.number); }
+      catch { /* Keep the revision eligible for a later cleanup attempt. */ }
+      finally { this.releasing.delete(r.number); }
     }
   }
 
@@ -123,6 +148,7 @@ export class PhoneCallService {
         && row.when === (typeof args.when === "string" ? args.when : undefined)
         && (typeof args.language !== "string" || row.language === args.language);
       const fresh = this.rows.get(row.id) ?? row;
+      if (fresh.status === "ended" || fresh.status === "cancelled") await this.releaseOldAssistants();
       if (fresh.status === "abandoned") { await this.reconcileAbandoned(); return { ok: false, error: "abandoned" }; }
       return sameRequest && fresh.vendorId ? { ok: true, value: engineResult(fresh) } : { ok: false, error: "not_confirmed" };
     }
@@ -172,19 +198,20 @@ export class PhoneCallService {
   }
 
   /** Refresh from the vendor and return only the section-4 fields. */
-  async result(args: Record<string, unknown>): Promise<ToolOutcome> {
+  async result(args: Record<string, unknown>, signal?: AbortSignal): Promise<ToolOutcome> {
     const row = typeof args.call === "string" ? this.rows.get(args.call) : undefined;
     if (!row) return { ok: false, error: "not_found" };
-    if (row.status === "abandoned") { await this.reconcileAbandoned(); return { ok: false, error: "abandoned" }; }
+    if (row.status === "abandoned") { await this.reconcileAbandoned(signal); return { ok: false, error: "abandoned" }; }
     if (row.status === "uncertain") {
-      try { const found = await this.adapter.reconcile?.(row.id); if (found) this.mergeLatest(row, found, true); } catch { /* retained */ }
+      try { const found = await ownerRequest(() => this.adapter.reconcile?.(row.id), signal); if (found) this.mergeLatest(row, found, true); } catch { /* retained */ }
       const fresh = this.rows.get(row.id) ?? row;
-      if (fresh.status === "abandoned") { await this.reconcileAbandoned(); return { ok: false, error: "abandoned" }; }
+      if (fresh.status === "ended" || fresh.status === "cancelled") await this.releaseOldAssistants(signal);
+      if (fresh.status === "abandoned") { await this.reconcileAbandoned(signal); return { ok: false, error: "abandoned" }; }
       return fresh.vendorId ? { ok: true, value: engineResult(fresh) } : { ok: false, error: "not_confirmed" };
     }
     if (row.status === "cancelled") return { ok: true, value: engineResult(row) };
     let projected: ProjectedCall;
-    try { projected = await this.adapter.result(row.vendorId); } catch (err) {
+    try { projected = await ownerRequest(() => this.adapter.result(row.vendorId), signal); } catch (err) {
       const code = err instanceof PhoneCallError ? err.code : "vendor_unreachable";
       this.log({ call: row.id, http: err instanceof PhoneCallError ? err.httpStatus : undefined, code });
       return { ok: false, error: code };
@@ -193,6 +220,7 @@ export class PhoneCallService {
     const fresh = this.rows.get(row.id) ?? row;
     this.absorb(fresh, projected);
     this.rows.put(fresh);
+    if (fresh.status === "ended" || fresh.status === "cancelled") await this.releaseOldAssistants(signal);
     return { ok: true, value: engineResult(fresh) };
   }
 
@@ -234,6 +262,37 @@ export class PhoneCallService {
     this.rows.put(final);
     await this.releaseOldAssistants();
     return final.status;
+  }
+
+  /** Owner reads refresh at most the 50 displayed calls, with four vendor reads in flight.
+   * Concurrent owner requests share a pass with a two-second application deadline,
+   * including cleanup. Expiry returns cached cards and leaves the next poll free to retry.
+   */
+  async refreshOwnerCalls(): Promise<void> {
+    if (this.ownerRefresh) return this.ownerRefresh;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), OWNER_REFRESH_DEADLINE_MS);
+    const refresh = this.refreshOwnerCallsOnce(controller.signal).finally(() => {
+      clearTimeout(timer);
+      if (this.ownerRefresh === refresh) this.ownerRefresh = undefined;
+    });
+    this.ownerRefresh = refresh;
+    return refresh;
+  }
+
+  private async refreshOwnerCallsOnce(signal: AbortSignal): Promise<void> {
+    // Retry deletions left by earlier terminal updates, even if every card is terminal now.
+    await this.releaseOldAssistants(signal);
+    await this.reconcileAbandoned(signal);
+    // Analysis can arrive after the first ended response. Incomplete ended cards remain
+    // eligible within the same read/concurrency limits; cancelled and abandoned rows do not.
+    const pending = this.rows.recent(50).filter(row =>
+      row.status === "uncertain" || row.status === "scheduled" || row.status === "ringing" || row.status === "in_progress"
+      || (row.status === "ended" && (!row.transcript || !row.structured?.outcome)));
+    const refresh = async () => {
+      for (let row = pending.shift(); row && !signal.aborted; row = pending.shift()) await this.result({ call: row.id }, signal);
+    };
+    await Promise.all(Array.from({ length: Math.min(4, pending.length) }, refresh));
   }
 
   /** Owner UI: the latest calls as owner cards (newest first). Never handed to an engine. */
@@ -279,17 +338,18 @@ export class PhoneCallService {
    * Claim the DELETE durably before awaiting it: a lost DELETE response must never cause a second send.
    * Only reconcile(operation id) may identify an abandoned call; a late create response is not enough.
    */
-  async reconcileAbandoned(): Promise<void> {
+  async reconcileAbandoned(signal?: AbortSignal): Promise<void> {
     for (const previous of this.rows.abandoned()) {
+      if (signal?.aborted) return;
       try {
-        const found = previous.vendorId ? { vendorId: previous.vendorId } : await this.adapter.reconcile?.(previous.id);
+        const found = previous.vendorId ? { vendorId: previous.vendorId } : await ownerRequest(() => this.adapter.reconcile?.(previous.id), signal);
         const row = this.rows.get(previous.id);
         if (!found?.vendorId || !row || row.status !== "abandoned" || row.abandonCancel) continue;
         row.vendorId = found.vendorId;
         row.abandonCancel = "attempted";
         this.rows.put(row);
-        try { await this.adapter.cancel(found.vendorId); row.abandonCancel = "confirmed"; }
-        catch { row.abandonCancel = "failed"; }
+        try { await ownerRequest(() => this.adapter.cancel(found.vendorId), signal); row.abandonCancel = "confirmed"; }
+        catch { if (signal?.aborted) return; row.abandonCancel = "failed"; }
         this.rows.put(row);
       } catch { /* Discovery remains pending; a persisted attempt is never repeated. */ }
     }

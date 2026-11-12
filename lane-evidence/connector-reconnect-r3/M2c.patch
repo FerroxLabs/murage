@@ -1,0 +1,10 @@
+--- server/composio.ts
++++ server/composio.ts
+@@ -1756,6 +1756,7 @@
+   const owner = inventoryOwner(cfg);
+   // Scan-only requirements do not establish response row correspondence.
+   if (!owner || !call.complete) return;
++  if (call.rows.length > 1) { const whole = readAppAnswer(call.rows.map(r=>r.tool), request.id, bytes); for (const [slug,cause] of whole.failed) noteNeedsReconnect(cfg,slug,cause,[]); }
+   const outcomes = new Map<string, { slug: string; account: { id: string; alias?: string }; failed?: string; ok: boolean; unknown: boolean }>();
+   for (const row of call.rows) {
+     const reading = readAppAnswer([row.tool], request.id, bytes, call.rows.length > 1 ? row.index : undefined);

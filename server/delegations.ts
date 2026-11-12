@@ -1,4 +1,5 @@
-import { threadHumanPrincipal } from "./human-principals.ts";
+import { isWorkspaceOwner, threadHumanPrincipal } from "./human-principals.ts";
+import { type HeldPeerAuthority } from './held-peer-authority.ts';
 import { askerCancelled, handoffRequest, isTerminalRoomRequestState, type RoomRequest, completeRequest, requeueRequest } from "./room-requests.ts";
 import { awaitWriterGate, database, isDatabaseBusy, onDatabaseClose, transaction } from "./database.ts";
 import { isNoSpaceError } from "./disk-space.ts";
@@ -7,8 +8,11 @@ import { registerLegacyDelegationParser, importLegacyDelegations, delegationTurn
 import { _forgetInFlight, dispatchHandoff } from "./handoff-dispatch.ts";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { botDeleted, onOwnerDeletion, ownerDeletedThread } from "./owner-deletions.ts";
-import { defaultThreadId, audienceTask, authorizeWork, issueWorkAudience, issueExecutionAudience, validExecutionAudience } from "./execution-audience.ts";
-import { storedMessage } from "./message-db.ts";
+import { defaultThreadId, audienceTask, authorizeWork, issueWorkAudience, issueExecutionAudience, validExecutionAudience, threadPartition } from "./execution-audience.ts";
+import { storedMessage, readActiveLeafOrNewest, topRowsOnBranch } from "./message-db.ts";
+import { LINE_TEXT } from "./branch-index.ts";
+import { PACK_LENT_MAX, type PackAuthority } from "./delegation-pack/types.ts";
+import { observeLine } from "./observe.ts";
 import { endAllLivePairedRequests, endLiveRequestsOfThread } from "./handoff-pair.ts";
 import type { ExecutionAudience } from "./work-admission.ts";
 // Async peer handoff (delegate_bot).
@@ -256,7 +260,7 @@ function stmts(): Statements {
       byThreadTail: db.prepare("SELECT id FROM pending_delegations INDEXED BY pd_thread_own WHERE source_thread_id=? AND phase<>'started' AND origin<>'shared' AND rowid>? ORDER BY rowid LIMIT ?"),
       sharedOfThread: db.prepare(PENDING_SQL.sharedOfThread),
       countThread: db.prepare("SELECT COUNT(*) AS n FROM pending_delegations WHERE source_thread_id=? AND phase<>'started'"),
-      insert: db.prepare("INSERT INTO pending_delegations(id, source_thread_id, to_bot_id, from_bot_id, phase, retry_at, item, origin, turn_key, target_thread_id) VALUES(?,?,?,?,?,?,?,?,?,?)"),
+      insert: db.prepare("INSERT INTO pending_delegations(id, source_thread_id, to_bot_id, from_bot_id, phase, retry_at, item, origin, turn_key, target_thread_id, owner_rooted) VALUES(?,?,?,?,?,?,?,?,?,?,?)"),
       update: db.prepare("UPDATE pending_delegations SET phase=?, retry_at=?, item=? WHERE id=? AND phase<>'started'"),
       remove: db.prepare("DELETE FROM pending_delegations WHERE id=?"),
       removeStarted: db.prepare("DELETE FROM pending_delegations WHERE id=? AND phase='started' AND started_at IS NOT NULL"),
@@ -656,7 +660,16 @@ export const DELEGATION_STOP_FAILED = "DELEGATION_STOP_FAILED: the handoff could
 export function forgetDelegationsForThreads(threadIds: readonly string[]): void {
   const gone = new Set(threadIds);
   if (gone.size) {
-    try { transaction(() => { const forget = stmts().removeThread; for (const threadId of gone) { persistWrites++; endLiveRequestsOfThread(database(), threadId, "source-deleted"); forget.run(threadId); } }, { op: "delegation-forget" }); }
+    try { transaction(() => {
+      const forget = stmts().removeThread;
+      const packs = database().prepare("DELETE FROM delegation_packs WHERE source_thread_id=? OR destination_thread_id=?");
+      for (const threadId of gone) {
+        persistWrites++;
+        endLiveRequestsOfThread(database(), threadId, "source-deleted");
+        forget.run(threadId);
+        packs.run(threadId, threadId);
+      }
+    }, { op: "delegation-forget" }); }
     catch (error) { console.error("delegations: could not forget a deleted conversation's handoffs", error); }
   }
   const kept = receipts.filter((receipt) => !gone.has(receipt.sourceThreadId));
@@ -1157,6 +1170,32 @@ export function pendingDelegationSnapshot(options: { activeOnly?: boolean; phase
  * thing standing between a confused bot and a fan-out of real turns. */
 const MAX_QUEUED_PER_THREAD = MAX_HANDOFFS_PER_TURN;
 
+let unrecordedPacks = 0;
+/** Runs inside the enqueue transaction. Destination eligibility waits for the actual, bound destination at render. */
+function enqueuePack(bus: CommsBus, from: BotRecord, item: DelegationItem, source: string, id: string, origin: DelegationOrigin, authority?: PackAuthority): void {
+  if (!authority || authority.fromBotId !== from.id || authority.fromThreadId !== source
+    || item.notOwnerAudience || item.unattended || item.routineAuthority || origin === "shared") return;
+  try {
+    const bot = bus.store.bot(from.id);
+    if (!bot || !(bot.threadId === source || bot.tasks?.some(task => task.threadId === source))) return;
+    if (bus.store.groups.some(room => room.threadId === source || room.tasks?.some(task => task.threadId === source))) return;
+    if (bus.store.bots.some(other => other.id !== bot.id && (other.threadId === source || other.tasks?.some(task => task.threadId === source)))) return;
+    if (!isWorkspaceOwner(threadHumanPrincipal(source))) return;
+    if (bot.partitionedAt !== undefined && threadPartition(bot, source).kind === "isolated") return;
+    if (database().prepare("SELECT 1 FROM memory_scope_bindings b, json_each(b.intent, '$.excludedThreadIds') e WHERE b.id='memory-owner-settings' AND e.value=?").get(source)) return;
+    const cutAt = Date.now();
+    const refs = topRowsOnBranch(source, readActiveLeafOrNewest(source), LINE_TEXT, PACK_LENT_MAX, row => row.at <= cutAt)
+      .rows.map(row => row.message.id);
+    // A failed optional insert rolls back its own savepoint, keeping the accepted note and queue together.
+    transaction(db => {
+      db.prepare("INSERT INTO delegation_packs (id, delegation_id, source_thread_id, source_bot_id, target_bot_id, destination_thread_id, refs, cut_at, created_at) VALUES (?, ?, ?, ?, ?, NULL, ?, ?, ?)")
+        .run(newId(), id, source, from.id, item.toBotId, JSON.stringify(refs), cutAt, cutAt);
+    }, { op: "delegation-pack-enqueue" });
+  } catch {
+    observeLine(`[deleg.pack.unrecorded] count=${++unrecordedPacks}`);
+  }
+}
+
 /** Validate and enqueue a delegation. Pushes a "Delegated to @B: reason"
  * chip to the source thread so the user can see what was queued. */
 export function queueDelegation(
@@ -1165,6 +1204,8 @@ export function queueDelegation(
   item: DelegationItem,
   maxDepth: number,
   sourceThreadId = defaultThreadId(from),
+  authority?: PackAuthority,
+  held?: HeldPeerAuthority,
 ): QueuedDelegation {
   if (item.eventId !== undefined && !validEventId(item.eventId)) throw new Error("Invalid delegation event identity");
   if (item.toBotId === from.id) return { result: "self" };
@@ -1177,10 +1218,18 @@ export function queueDelegation(
   // making the caller wait. Without a cap, one turn can queue unboundedly
   // and fan out into as many real turns on the next settle.
   if (queuedCount(sourceThreadId) >= MAX_QUEUED_PER_THREAD) return { result: "too_many" };
-  const id = newId();
-  const executionAudience = issueWorkAudience(from.id, item.toBotId, sourceThreadId, item.executionAudience ?? issueExecutionAudience(from.id, sourceThreadId, id), id, item.notOwnerAudience !== true);
+  const id = held?.handoffId ?? newId();
+  if (held) {
+    const prior = handoffRow(id), receipt = findDelegationReceipt(id);
+    if (prior || receipt) {
+      if ((prior && (prior.source_thread_id !== sourceThreadId || prior.to_bot_id !== item.toBotId || prior.from_bot_id !== from.id))
+        || (receipt && (receipt.sourceThreadId !== sourceThreadId || receipt.toBotId !== item.toBotId))) throw new Error('This held work no longer matches its request.');
+      return { result: 'ok', id };
+    }
+  }
+  const executionAudience = issueWorkAudience(from.id, item.toBotId, sourceThreadId, held ? held.executionAudience : item.executionAudience ?? issueExecutionAudience(from.id, sourceThreadId, id), id, item.notOwnerAudience !== true);
   if (executionAudience && !validExecutionAudience(executionAudience)) throw new Error("Invalid execution audience");
-  const senderTurnId = bus.turnOf?.(sourceThreadId) ?? null;
+  const senderTurnId = held ? held.source.providerTurnId : bus.turnOf?.(sourceThreadId) ?? null;
   // U4 S3: checked again before the row is written, whoever called: only a value that passes is ever stored, shown or briefed
   const doneWhen = (() => { const read = readDoneWhen(item.doneWhen); return read.ok ? read.value : undefined; })();
   const { doneWhen: _unchecked, ...rest } = item;
@@ -1190,7 +1239,11 @@ export function queueDelegation(
   let inserting = false;
   try {
     transaction(() => {
-      const origin: DelegationOrigin = bus.prepareDelegation?.(from.id, target.id, sourceThreadId, item.message, id) ?? "owner";
+      const origin: DelegationOrigin = bus.prepareDelegation?.(from.id, target.id, sourceThreadId, item.message, id, held) ?? "owner";
+      // L5b-1's boundary mints this separate proof from turnInputOf for the authenticated generation.
+      // Rooting does not depend on whether a context pack can be recorded or rendered.
+      const ownerRooted = origin === "owner" && authority !== undefined
+        && authority.fromBotId === from.id && authority.fromThreadId === sourceThreadId;
       // Shared work already names the conversation it runs in when it is queued; the row stores that destination from the start (the other origins
       // resolve theirs once, at their first admission, and store it then: server/handoff-dispatch.ts).
       const destination = origin === "shared" ? handoffRequest(database(), id)?.targetThreadId ?? null : null;
@@ -1198,7 +1251,8 @@ export function queueDelegation(
       queued.sourceMessageId = bus.store.appendMessage(sourceThreadId, messagedRow(from, target, senderTurnId ?? undefined)).id;
       inserting = true;
       persistWrites++;
-      stmts().insert.run(id, sourceThreadId, queued.toBotId, from.id, "fresh", null, itemJson(queued), origin, delegationTurnKey(id), destination);
+      stmts().insert.run(id, sourceThreadId, queued.toBotId, from.id, "fresh", null, itemJson(queued), origin, delegationTurnKey(id), destination, ownerRooted ? 1 : 0);
+      enqueuePack(bus, from, queued, sourceThreadId, id, origin, authority);
     }, { op: "delegation-queue" });
   } catch (error) {
     if (inserting) throw new Error("DELEGATION_PERSISTENCE_FAILED: the handoff was not accepted");

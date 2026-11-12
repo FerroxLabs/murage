@@ -1,3 +1,4 @@
+import { toolBudgetLabel } from "@/lib/tool-budget-copy";
 import { useId, type ReactNode } from "react";
 import { AlertTriangle, Hourglass, MonitorX, RefreshCw, Settings2 } from "lucide-react";
 import { isWordedLocalFailure, classifyLocalResourceConflict, classifyLocalSetupFailure, engineErrorCategory, type LocalResourceConflict, type LocalSetupFailure } from "../../shared/provider-error";
@@ -39,7 +40,7 @@ export function RuntimeErrorCard({ message: rawMessage, details, errorKind, loca
   // The sentence names Retry only when this card shows that button (below).
   const canRetry = !!onRetry && !setup && !safetyBlocked;
   const coded = setup ? undefined : describeTurnError(message, botName, { canRetry });
-  const plain = (!setup && botName ? plainEngineError(message, botName) : undefined) ?? coded?.text;
+  const plain = toolBudgetLabel(message) ?? (!setup && botName ? plainEngineError(message, botName) : undefined) ?? coded?.text;
   const diagnostic = plain && details && !details.includes(message) ? `${message}\n${details}` : details || message;
   return <div className="flex justify-start">
     <section role="alert" aria-labelledby={titleId} className="w-full max-w-[42rem] rounded-xl border border-danger/30 bg-card p-4 text-ink shadow-sm sm:p-5">

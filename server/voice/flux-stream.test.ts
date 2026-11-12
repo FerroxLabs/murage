@@ -1,8 +1,21 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { scriptedProvider } from "../../tools/flux-stream-sim/providers/scripted.ts";
 import { createSimServer } from "../../tools/flux-stream-sim/server.ts";
 import { FluxStreamRefused, failureForClose, fluxStreamBase, openFluxStream } from "./flux-stream.ts";
+import { installFluxStartGate } from "../flux-start-gate.ts";
+
+// Count construction while retaining the real transport to the loopback fake.
+const sockets = vi.hoisted(() => ({ created: 0 }));
+vi.mock("ws", async importOriginal => {
+  const actual = await importOriginal<typeof import("ws")>();
+  return { ...actual, default: new Proxy(actual.default, {
+    construct(target, args) {
+      sockets.created++;
+      return Reflect.construct(target, args);
+    },
+  }) };
+});
 
 let sim: Awaited<ReturnType<typeof createSimServer>>;
 beforeAll(async () => {
@@ -46,6 +59,31 @@ describe("openFluxStream", () => {
     const pending = openFluxStream({ key: "sim_key", query: new URLSearchParams(), env: { MURAGE_FLUX_STREAM_API: "ws://127.0.0.1:9/v1" } as NodeJS.ProcessEnv, signal: abort.signal });
     abort.abort();
     await expect(pending).rejects.toMatchObject({ message: "aborted" });
+  });
+
+  it("abort during admission opens no socket, even when admission later succeeds", async () => {
+    const abort = new AbortController();
+    let release!: () => void;
+    let entered!: () => void;
+    const admitted = new Promise<void>(resolve => { release = resolve; });
+    const checking = new Promise<void>(resolve => { entered = resolve; });
+    installFluxStartGate({ authorizeFluxDispatch: async () => { entered(); await admitted; } } as never);
+    const before = sockets.created;
+    const pending = openFluxStream({ key: "sim_key", query: new URLSearchParams(), env: env(), signal: abort.signal });
+    // Attach the rejection observer before releasing the controlled gate.
+    const rejected = expect(pending).rejects.toMatchObject({ message: "aborted" });
+    try {
+      await checking;
+      expect(sockets.created).toBe(before);
+      abort.abort();
+      release();
+      await rejected;
+      expect(sockets.created).toBe(before);
+    } finally {
+      release();
+      installFluxStartGate(null);
+      await pending.then(stream => stream.close(), () => undefined);
+    }
   });
 
   it("refuses a cleartext ws:// base to a remote host before connecting, and never sends the key", async () => {

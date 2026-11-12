@@ -64,6 +64,7 @@ describe.skipIf(process.platform === "win32")("Astra a13 r4: Always allow on a c
       },
     }));
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

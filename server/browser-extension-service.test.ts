@@ -2,7 +2,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import {fixture as decisionFixture,d} from './decision/fixture.ts';
 import { createBrowserExtensionService } from './browser-extension-service.ts';
+import { BrowserExtensionExecutor } from './browser-extension-executor.ts';
+import type { WebDocuments } from './web-documents.ts';
 import type { BrowserExtensionCommand, BrowserExtensionResponse, BrowserExtensionHello } from '../shared/browser-extension-protocol.ts';
 import { privateTestDirectory } from "./testing/private-test-dir.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
@@ -21,7 +24,7 @@ const cleanup: string[] = [];
 // A service saves its state in the background; stop each one (and wait for its last save) before its folder is removed.
 const services: { close(): Promise<void> }[] = [];
 afterEach(async () => { for (const service of services.splice(0)) await service.close().catch(() => {}); for (const directory of cleanup.splice(0)) await removeTempDir(directory); });
-async function fixture(extraOptions: Record<string, unknown> = {}) {
+async function fixture(extraOptions: Record<string, unknown> = {}, frameReply?: () => unknown) {
   const { root: directoryRoot, directory } = await privateTestDirectory(path.resolve('.service-')); cleanup.push(directoryRoot);
   const stateFile = path.join(directory, 'state.json');
   const bindings = new Map<string, { generation: number; state: string; tabs: {tabId:number;navigationEpoch:number;origin:string;url:string}[] }>();
@@ -41,6 +44,7 @@ async function fixture(extraOptions: Record<string, unknown> = {}) {
       if (command.operation === 'stop' || command.operation === 'pause') { b.generation++; b.state = command.operation === 'stop' ? 'stopped' : 'paused'; }
       if (command.operation === 'cdp') {
         const { method, params } = command.params as any; let value: any = {};
+        if (method === 'Murage.getAllFrames') value = frameReply ? frameReply() : { frames: [{ frameId: 0, parentFrameId: -1, url: b.tabs[0].url }] };
         if (method === 'Page.getFrameTree') value = { frameTree: { frame: { id: 'frame', loaderId: 'L' } } };
         if (method === 'Page.createIsolatedWorld') value = { executionContextId: 7 };
         if (method === 'DOM.getDocument') value = { root: { nodeType: 9, children: [] } };
@@ -70,6 +74,27 @@ async function fixture(extraOptions: Record<string, unknown> = {}) {
   return { service, binding, calls, bindings, options, cards, setEngineReply: (fn: typeof engineReply) => { engineReply = fn; }, onCdp: (hook: typeof onCdp) => { onCdp = hook; }, offline: () => { connected = false; }, denySite: () => { consent = false; }, setApproval: (fn: typeof approve) => { approve = fn; } };
 }
 describe('browser extension service using fake broker', () => {
+  it.each([
+    { name: 'same-origin frame', url: 'https://fixture.test/widget', locked: false },
+    { name: 'cross-site frame absent from the CDP tree', url: 'https://other.test/widget', locked: true },
+    { name: 'unreadable frame origin', url: 'data:text/html,private', locked: true },
+  ])('checks the extension frame listing for a $name', async ({ url, locked }) => {
+    const f = await fixture({}, () => ({ frames: [
+      { frameId: 0, parentFrameId: -1, url: 'https://fixture.test/' },
+      { frameId: 9, parentFrameId: 0, url },
+    ] }));
+    const read = f.service.dispatch(f.binding.bindingId, 'agent_browser_snapshot', {}, () => true);
+    if (locked) {
+      await expect(read).rejects.toThrow('YOUR TURN');
+      expect(f.service.status().bindings.find(binding => binding.bindingId === f.binding.bindingId)?.state).toBe('paused');
+      expect(f.calls.some(call => call.params.method === 'Accessibility.getFullAXTree')).toBe(false);
+    } else {
+      await expect(read).resolves.toBeDefined();
+      expect(f.calls.some(call => call.params.method === 'Accessibility.getFullAXTree')).toBe(true);
+    }
+    expect(f.calls.some(call => call.operation === 'cdp' && call.params.method === 'Murage.getAllFrames')).toBe(true);
+  });
+
   it('asks site before any CDP observation and remembers allowed reads', async () => {
     const f = await fixture(); await f.service.dispatch(f.binding.bindingId, 'agent_browser_snapshot', {}, () => true);
     expect(f.service.taskInfo(f.binding.bindingId)?.sites.map(site => site.origin)).toContain('https://fixture.test'); // T20: Allow for this task, not remembered
@@ -406,6 +431,7 @@ describe('SABLE-B test 23: wouldCard false => no card, no site card, no action c
         let result: any = b;
         if (command.operation === 'cdp') {
           const { method, params } = command.params as any; let value: any = {};
+          if (method === 'Murage.getAllFrames') value = { frames: [{ frameId: 0, parentFrameId: -1, url: b.tabs[0].url }] };
           if (method === 'Page.getFrameTree') value = { frameTree: { frame: { id: 'frame', loaderId: 'L' } } };
           if (method === 'Page.createIsolatedWorld') value = { executionContextId: 7 };
           if (method === 'DOM.getDocument') value = { root: { nodeType: 9, children: [] } };
@@ -493,4 +519,58 @@ describe('SABLE-B test 23: wouldCard false => no card, no site card, no action c
       for (const grant of ['autoL1', 'taskL1', 'always'] as const) for (const combo of product(grant, op, false)) await step(directory, n++, combo);
     }, 120_000);
   }
+});
+it('S3 release distinguishes an acknowledged Stop from a local offline stop',async()=>{
+ const online=await fixture();await online.service.stop(online.binding.bindingId);expect(online.service.stoppedByExtension(online.binding.bindingId)).toBe(true);
+ const offline=await fixture();offline.offline();await offline.service.stop(offline.binding.bindingId);expect(offline.service.stoppedByExtension(offline.binding.bindingId)).toBe(false);
+});
+
+it.each(['settings', 'panel'] as const)('G-WEB saved-origin invalidation through %s', async path => {
+  const f = await fixture();
+  let documents!: WebDocuments;
+  const original = BrowserExtensionExecutor.prototype.tools;
+  const spy = vi.spyOn(BrowserExtensionExecutor.prototype, 'tools').mockImplementation(function(this: BrowserExtensionExecutor) {
+    documents = (this as unknown as { readDocuments: WebDocuments }).readDocuments;
+    return original.call(this);
+  });
+  try { f.service.tools(f.binding.bindingId, () => true); } finally { spy.mockRestore(); }
+  const a = documents.save('browser', 'Saved A tail', 'https://a.test/page');
+  const b = documents.save('browser', 'Saved B tail', 'https://b.test/page');
+  const changed = path === 'settings' ? f.service.settingsChanged('bot', { origin: 'https://a.test', rule: 'never' })
+    : f.service.setSiteAccess(f.binding.bindingId, 'https://a.test', 'never');
+  // Invalidation is synchronous, before bind/persist has finished.
+  expect(() => documents.read('browser', { handle: a.handle })).toThrow('missing');
+  expect(documents.read('browser', { handle: b.handle }).text).toBe('Saved B tail');
+  await changed;
+});
+
+describe('H5 No limits uses central authority before saved browser denials',()=>{
+ it.each(['unlimited','full'] as const)('saved Never on a mutation at %s',async level=>{
+  const owner=decisionFixture(level);
+  d.installProvenanceReader({turnGenerationFor:()=> 'g',provenance:()=>({generation:'g',botId:'bot',threadId:'thread',principal:'owner',roomOwnerOnly:true,at:1,initiator:{k:'owner-typed'}}),live:()=>({botId:'bot',turnId:'turn',providerInstanceId:'p',principal:'owner',owner:true,level})});
+  const proof={botId:'bot',threadId:'thread',generation:'g'};
+  const claim=d.installClaimVerifier(value=>value===proof?proof:undefined)(proof)!;
+  const f=await fixture({authorityFor:()=>({claim,proof,identity:{threadId:'thread',generation:'g'}})});
+  await f.service.setSiteAccess(f.binding.bindingId,'https://fixture.test','never');
+  const action=f.service.dispatch(f.binding.bindingId,'agent_browser_click',{selector:'button'},()=>true);
+  if(level==='unlimited'){
+   await expect(action).resolves.toBeDefined();expect(f.calls.some(call=>call.params.method==='Input.dispatchMouseEvent')).toBe(true);
+  }else {await expect(action).rejects.toThrow('site_denied');expect(f.calls.some(call=>call.params.method==='Input.dispatchMouseEvent')).toBe(false);}
+  owner.dispose();
+ });
+});
+
+it('EARLY-BROWSER saved owner Never runs at No limits and leaves the stored rule intact',async()=>{
+ const owner=decisionFixture('unlimited');
+ d.installProvenanceReader({turnGenerationFor:()=> 'g',provenance:()=>({generation:'g',botId:'bot',threadId:'thread',principal:'owner',roomOwnerOnly:true,at:1,initiator:{k:'owner-typed'}}),live:()=>({botId:'bot',turnId:'turn',providerInstanceId:'p',principal:'owner',owner:true,level:'unlimited'})});
+ const proof={botId:'bot',threadId:'thread',generation:'g'},claim=d.installClaimVerifier(value=>value===proof?proof:undefined)(proof)!;
+ const askSite=vi.fn(async()=> 'allow' as const),askAction=vi.fn(async()=>true);
+ const f=await fixture({authorityFor:()=>({claim,proof,identity:{threadId:'thread',generation:'g'}}),askSite,askAction});
+ try{
+  await f.service.setSiteAccess(f.binding.bindingId,'https://fixture.test','never');
+  await expect(f.service.dispatch(f.binding.bindingId,'agent_browser_click',{selector:'button'},()=>true)).resolves.toBeDefined();
+  expect(askSite).toHaveBeenCalled();expect(askAction).toHaveBeenCalled();expect(d.openApprovals('thread')).toHaveLength(0);
+  expect(f.calls.some(call=>call.params.method==='Input.dispatchMouseEvent')).toBe(true);
+  expect(f.service.status().bindings[0].sites['https://fixture.test']).toBe('never');
+ }finally{owner.dispose();}
 });

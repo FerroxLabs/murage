@@ -28,7 +28,7 @@ it("excludes unlisted fields and fingerprints asserted credentials",()=>{
 it("the ACP fake fingerprints credentials and keeps unlisted fields out of its dump",()=>{
  const dir=mkdtempSync(join(tmpdir(),"murage-acp-dump-")),dump=join(dir,"dump.json");
  try{
-  execFileSync(process.execPath,[fileURLToPath(new URL("./fake-acp-cli.ts", import.meta.url)),"--version"],{encoding:"utf8",timeout:5_000,
+  execFileSync(process.execPath,[fileURLToPath(new URL("./fake-acp-cli.ts", import.meta.url)),"--version"],{ windowsHide: true,encoding:"utf8",timeout:5_000,
    env:{PATH:process.env.PATH,HOME:dir,FAKE_ACP_DUMP:dump,OPENAI_API_KEY:"synthetic-openai-secret",MY_AGENT_TOKEN:"synthetic-agent-secret",PF_UNLISTED_SECRET:"fixture-canary"}});
   const text=readFileSync(dump,"utf8"),env=JSON.parse(text).env;
   expect(text.includes("synthetic-openai-secret")||text.includes("synthetic-agent-secret")||text.includes("fixture-canary")).toBe(false);
@@ -44,7 +44,7 @@ it("the ACP fake fingerprints credential-named MCP env in its dump, its mcp file
  const input=[{jsonrpc:"2.0",id:1,method:"initialize",params:{}},{jsonrpc:"2.0",id:2,method:"session/new",params:{cwd:dir,mcpServers:servers("synthetic-comms-one")}},
   {jsonrpc:"2.0",id:3,method:"session/load",params:{sessionId:"fake-acp-session",cwd:dir,mcpServers:servers("synthetic-comms-two")}}].map(line=>JSON.stringify(line)).join("\n")+"\n";
  try{
-  spawnSync(process.execPath,[fileURLToPath(new URL("./fake-acp-cli.ts", import.meta.url))],{input,encoding:"utf8",timeout:5_000,
+  spawnSync(process.execPath,[fileURLToPath(new URL("./fake-acp-cli.ts", import.meta.url))],{ windowsHide: true,input,encoding:"utf8",timeout:5_000,
    env:{PATH:process.env.PATH,HOME:dir,FAKE_ACP_DUMP:dump,FAKE_ACP_RPC_LOG:log}});
   const texts=[readFileSync(dump,"utf8"),readFileSync(`${dump}.mcp.json`,"utf8"),readFileSync(log,"utf8")];
   for(const text of texts)expect(["synthetic-comms-one","synthetic-comms-two","synthetic-notes-secret"].some(secret=>text.includes(secret))).toBe(false);
@@ -61,7 +61,7 @@ it("the ACP fake fingerprints credential-named MCP env in its dump, its mcp file
 it("the Claude fake's probe log holds only the pinned names, never an inherited credential",()=>{
  const dir=mkdtempSync(join(tmpdir(),"murage-claude-probe-log-")),log=join(dir,"probes.jsonl");
  try{
-  for(const args of [["--version"],["auth","status"]])execFileSync(process.execPath,[fileURLToPath(new URL("./fake-claude-cli.ts", import.meta.url)),...args],{encoding:"utf8",timeout:5_000,
+  for(const args of [["--version"],["auth","status"]])execFileSync(process.execPath,[fileURLToPath(new URL("./fake-claude-cli.ts", import.meta.url)),...args],{ windowsHide: true,encoding:"utf8",timeout:5_000,
    env:{PATH:process.env.PATH,HOME:dir,FAKE_CLAUDE_PROBE_LOG:log,PAGER:"cat",GIT_EDITOR:"probe-editor",ANTHROPIC_API_KEY:"synthetic-anthropic-secret",CLAUDE_CODE_OAUTH_TOKEN:"synthetic-oauth-secret",PF_UNLISTED_SECRET:"fixture-canary"}});
   const text=readFileSync(log,"utf8"),lines=text.trim().split("\n").map(line=>JSON.parse(line));
   expect(["synthetic-anthropic-secret","synthetic-oauth-secret","fixture-canary"].some(secret=>text.includes(secret))).toBe(false);

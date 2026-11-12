@@ -85,7 +85,7 @@ describe("section 4: the open-time hard read for an unreadable card", () => {
     expect(alwaysAskUnreadableReason(PETRA, CWD)).toMatch(/^opaque: (?:Doubt\(value-path\)|a script file the reader does not see)$/);
     expect(unreadableHardRead(PETRA)).toBeNull();
     expect(verdict("Full access", PETRA).approve).toBeFalsy();
-    expect(verdict("No limits", PETRA).approve).toBeFalsy();
+    expect(verdict("No limits", PETRA).approve).toBeTruthy(); // NOLIM 1.0.19: the owner's No limits turn runs it
   });
   it.each([
     ["eval \"$X\"", "hiding"],
@@ -199,7 +199,9 @@ describe("section 1: the card's `wants`, the bot's own one line", () => {
 describe("MARKS r13 owner-started proof (fail-closed)", () => {
   it("an unseen script runs at No limits on an owner-started turn and asks without the proof", () => {
     expect(verdict("No limits", "bash ./build.sh").approve).toBeTruthy();
-    for (const missing of [{}, { fullAccessOrigin: "owner", ownerStarted: true }, { ownerStarted: false, fullAccessOrigin: "owner" }, { ownerStarted: true, fullAccessOrigin: "other" }]) {
+    // NOLIM 1.0.19: the stored origin decides, not the clean flag: owner runs either way; a missing or other origin still asks
+    for (const stored of [{ fullAccessOrigin: "owner", ownerStarted: true }, { ownerStarted: false, fullAccessOrigin: "owner" }]) expect(verdict("No limits", "bash ./build.sh", stored).approve).toBeTruthy();
+    for (const missing of [{}, { ownerStarted: true, fullAccessOrigin: "other" }]) {
       expect(verdict("No limits", "bash ./build.sh", missing).approve).toBeNull();
     }
   });

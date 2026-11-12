@@ -5,8 +5,8 @@ import { ProcedureEvaluationAdmissions } from "./ProcedureEvaluationAdmissions";
 import type { ProcedureEvolutionStatus } from "@/lib/procedure-evaluation-admissions";
 import { MemoryEvolutionControls } from "./MemoryEvolutionControls";
 import type { MemoryEvolutionStatus } from "@/lib/memory-evolution-controls";
-import { Suspense, useCallback, useEffect, useRef, useState } from "react";
-import { InAdvanced, Switch } from "./SettingsPrimitives";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { InAdvanced, Part, Switch } from "./SettingsPrimitives";
 import { useAction } from "@/lib/use-action";
 import { ActionButton, ActionStatus } from "./ActionButton";
 import { api, useStore } from "@/state/store";
@@ -99,7 +99,21 @@ export function memoryModeDescription(ctx: MachineContext, status: Pick<MemorySt
   return settingsDescription(ctx, { mode: status.storedMode ?? status.mode, held: status.held, capture: status.capture, recall: status.recall });
 }
 
-export function MemorySettings({ botId, onNavigate, compact = false, onStatusChange, sharedStatus, onMutation, refreshToken }: { botId?: string; onNavigate?: () => void; compact?: boolean; onStatusChange?: (status: MemoryStatus) => void; sharedStatus?: MemoryStatus; onMutation?: () => void; refreshToken?: number }) {
+/** The people card hosts the complete browser, after the learning cards.
+ * Both browser searches and existing people links open it; keep it open after landing. */
+export function MemoryBrowser({ anchor, children, collapsible = true }: { anchor?: string | null; children: ReactNode; collapsible?: boolean }) {
+  const targeted = ["memory-browser-heading", "memory.browser", "memory-people-heading", "memory.people"].includes(anchor ?? "");
+  const [open, setOpen] = useState(targeted);
+  useLayoutEffect(() => { if (targeted) setOpen(true); }, [targeted]);
+  if (!collapsible) return <>{children}</>;
+  return <section id="memory-browser-heading" data-setting-control="memory-browser-heading" tabIndex={-1} aria-label={t("memorySettings.openMemory")}>
+    <Disclosure label={t("memorySettings.openMemory")} open={open || targeted} onOpenChange={setOpen}>
+      <div className="space-y-4 pt-3">{children}</div>
+    </Disclosure>
+  </section>;
+}
+
+export function MemorySettings({ botId, onNavigate, compact = false, onStatusChange, sharedStatus, onMutation, refreshToken, cards = false }: { cards?: boolean; botId?: string; onNavigate?: () => void; compact?: boolean; onStatusChange?: (status: MemoryStatus) => void; sharedStatus?: MemoryStatus; onMutation?: () => void; refreshToken?: number }) {
   const desktop = useDesktopSurface();
   const upgradeContext = useUpgradeContext();
   const { state, dispatch } = useStore();
@@ -194,7 +208,7 @@ export function MemorySettings({ botId, onNavigate, compact = false, onStatusCha
   const firstToken = useRef(true);
   useEffect(() => {
     if (firstToken.current) { firstToken.current = false; return; }
-    if (desktop === true) void loadRecords(undefined, applied.current).catch(() => undefined);
+    if (desktop === true) void Promise.all([loadRecords(undefined, applied.current), ...(botId ? [] : [loadPeople()])]).catch(() => undefined);
   }, [refreshToken]);
   useEffect(() => {
     if (status?.model.state !== "downloading" && !(status?.model.bundled && status.model.state === "unverified") && status?.semantic?.state !== "indexing") return;
@@ -276,25 +290,36 @@ export function MemorySettings({ botId, onNavigate, compact = false, onStatusCha
   const folderMemoryUsed = folderMemoryInUse(status?.scopes ?? []);
   if (desktop !== true) return <section className="rounded-xl bg-card p-4"><h2 className="text-[15px] font-medium">{t("memorySettings.managed")}</h2><p role="status" className="mt-2 text-[13px] text-ink-secondary">{desktop === undefined ? t("memorySettings.checkingAccess") : t("memorySettings.desktopOnly")}</p></section>;
   const workspacePage = !compact && !botId;
-  return <section aria-label={botId ? t("memorySettings.botMemory") : t("memorySettings.workspaceMemory")} className={`min-w-0 space-y-4 text-ink ${compact ? "p-3" : "rounded-xl bg-card p-4"}`} data-testid="memory-settings" data-compact={compact || undefined}>
+  const ownOverview = !workspacePage || !sharedStatus;
+  return <section aria-label={botId ? t("memorySettings.botMemory") : t("memorySettings.workspaceMemory")} className={`min-w-0 space-y-4 text-ink ${compact ? "p-3" : cards ? "" : "rounded-xl bg-card p-4"}`} data-testid="memory-settings" data-compact={compact || undefined}>
+    <Part id="memory.overview">
+    {ownOverview && <>
     <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-[16px] font-medium">{botId ? t("memorySettings.botMemory") : t("memorySettings.workspaceMemory")}</h2><button className={memoryButtonClass} disabled={acting} onClick={() => void run(async () => { await Promise.all([loadStatus(), loadRecords(), ...(botId ? [] : [loadPeople()])]); return t("memorySettings.upToDate"); })}>{acting ? t("memorySettings.working") : t("memorySettings.refresh")}</button></div>
     {!compact && <p className="text-[13px] text-ink-secondary">{t("memorySettings.subtitle")}</p>}
-    {botId
-      ? <NeedsYou subject={{ kind: "bot", id: botId, name: state.bots.find(bot => bot.id === botId)?.name ?? t("memorySettings.yourBot") }} />
-      : waiting.subjects.filter(item => item.waiting > 0 || item.later > 0).map(item => <NeedsYou key={`${item.kind}:${item.id}`} subject={{ kind: item.kind, id: item.id, name: item.name || (item.kind === "bot" ? state.bots.find(bot => bot.id === item.id)?.name : state.groups.find(group => group.id === item.id)?.name) || t("memorySettings.sharedNotes") }} />)}
+    </>}
+    </Part>
     {error && <p role="alert" className="break-words text-[13px] text-danger">{error}</p>}
     {status && <>
       {!workspacePage && <MemoryHealth status={status} />}
-      <MemoryUpgradeDetail />
-      {workspacePage && <InAdvanced><div id="memory-storage-heading"><MemoryStorageReclaim /></div></InAdvanced>}
-      {!botId && people && <div id="memory-people-heading" data-setting-control="memory-people-heading"><MemoryPeople people={people} audiences={audiences} disabled={false} onLink={changePerson} onShare={sharePerson} onRefresh={loadPeople} /></div>}
+      {workspacePage && <InAdvanced part="memory.health"><div id="memory-storage-heading"><MemoryStorageReclaim /></div></InAdvanced>}
+      <Part id="memory.overview">
+      {ownOverview && <>
       {compact ? <p role="status" className="text-[13px] text-ink-secondary">{memoryModeDescription(upgradeContext, status)}{status.mode !== "active" && <>{" "}{t("memorySettings.savedRecordsRemain")}</>}{status.workerError ? <>{" "}{t("memorySettings.processingAttention")}</> : status.runtime?.indexing ? <>{" "}{t("memorySettings.indexUpdating")}</> : ""}</p> : <>
       <p className="text-[12px] text-ink-secondary">{botId ? `${t(records.length === 1 ? "memorySettings.pageOne" : "memorySettings.pageOther", { n: records.length })}${cursor ? ` ${t("memorySettings.moreAvailable")}` : ""}` : t(status.records.active === 1 && !status.recordsMore?.active ? "memorySettings.savedOne" : "memorySettings.savedOther", { count: countText(status.records.active, status.recordsMore?.active), waiting: waiting.total })}{" "}{t("memorySettings.workspaceMode", { mode: status.mode === "active" ? t("memorySettings.mode.active") : status.mode === "capture" ? t("memorySettings.mode.capture") : status.mode === "paused" ? t("memorySettings.mode.paused") : t("memorySettings.mode.off") })}</p>
       <p className="text-[12px] text-ink-secondary">{memoryModeDescription(upgradeContext, status)} {status.semantic ? semanticPhrase(status.semantic) : status.mode === "active" && status.model.state !== "ready" ? t("memorySettings.keywordOnly") : status.model.state === "ready" ? status.model.bundled ? t("memorySettings.smartReady") : t("memorySettings.semanticReady") : t("memorySettings.modelNotReady")} {status.workerError ? t("memorySettings.processingAttention") : status.runtime?.indexing ? t("memorySettings.indexUpdating") : ""}</p>
       </>}
       {status.workerError && <p role="status" className="text-[13px] text-ink-secondary">{workerSentence(status.workerError)}</p>}
       {!compact && botId && <div className="space-y-2 text-[13px]"><p className="text-ink-secondary">{t("memorySettings.botNote")}</p><button type="button" className={memoryButtonClass} onClick={() => { onNavigate?.(); dispatch({ type: "toggleAppSettings", open: true, section: "memory" }); }}>{t("memorySettings.openWorkspace")}</button></div>}
+      </>}
       {!compact && status.mode === "off" && <div className="space-y-2 rounded-lg border border-hairline/50 p-3 text-[13px]"><p>{t("memorySettings.off.note")}</p><button type="button" className={memoryButtonClass} disabled={acting} onClick={() => go({ action: "enable-and-import" }, t("memorySettings.off.enabled"))}>{acting ? t("memorySettings.working") : t("memorySettings.off.button")}</button></div>}
+      </Part>
+      <Part id="memory.people">
+      <MemoryBrowser anchor={state.appSettingsAnchor} collapsible={workspacePage && !cards}>
+      <MemoryUpgradeDetail />
+      {botId
+        ? <NeedsYou subject={{ kind: "bot", id: botId, name: state.bots.find(bot => bot.id === botId)?.name ?? t("memorySettings.yourBot") }} />
+        : waiting.subjects.filter(item => item.waiting > 0 || item.later > 0).map(item => <NeedsYou key={`${item.kind}:${item.id}`} subject={{ kind: item.kind, id: item.id, name: item.name || (item.kind === "bot" ? state.bots.find(bot => bot.id === item.id)?.name : state.groups.find(group => group.id === item.id)?.name) || t("memorySettings.sharedNotes") }} />)}
+      {!botId && people && <div data-setting-control="memory-people-heading"><MemoryPeople people={people} audiences={audiences} disabled={false} onLink={changePerson} onShare={sharePerson} onRefresh={loadPeople} /></div>}
       <nav aria-label={t("memorySettings.viewsLabel")} className="flex flex-wrap gap-2">{([["search", t("memorySettings.search")], ["important", t("memorySettings.important")], ["recent", t("memorySettings.recent")], ["review", t("memorySettings.waitingView")]] as const).map(([value, label]) => <button key={value} type="button" disabled={acting} aria-label={value === "search" ? t("memorySettings.searchView") : label} aria-pressed={view === value} className={`${memoryButtonClass} ${view === value ? "border-focus bg-inset" : ""}`} onClick={() => void run(async () => { setView(value); setRecordState(""); setInspection(null); await loadRecords(undefined, { query, scopeId, recordState: "", view: value }); if (value === "review") await loadConflicts(); })}>{label}</button>)}</nav>
       <form className="grid min-w-0 gap-3" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 15rem), 1fr))" }} onSubmit={event => { event.preventDefault(); setInspection(null); void run(() => loadRecords(undefined, { query, scopeId, recordState, view })); }}>
         <label className="col-span-full block min-w-0 space-y-1 text-[13px]">{t("memorySettings.searchMemory")}<input className={memoryInputClass} value={query} maxLength={4096} onChange={event => setQuery(event.target.value)} /></label>
@@ -317,10 +342,15 @@ export function MemorySettings({ botId, onNavigate, compact = false, onStatusCha
 
       {compact && <div className="space-y-2 border-t border-hairline/40 pt-3 text-[13px]"><p className="text-ink-secondary">{t("memorySettings.compactNote")}</p><button type="button" className={memoryButtonClass} onClick={() => { onNavigate?.(); dispatch({ type: "toggleAppSettings", open: true, section: "memory" }); }}>{t("memorySettings.openWorkspace")}</button></div>}
       {!compact && status.retention && <p className="text-[12px] text-ink-secondary">{t("memorySettings.retention")}</p>}
-      {workspacePage && <InAdvanced>
+      </MemoryBrowser>
+      </Part>
+      {workspacePage && <>
+        <InAdvanced part="memory.procedures">
         <MemoryEvolutionControls status={status.evolution??null} disabled={acting} onRefresh={loadStatus}/>
         <MemoryEvolutionControls kind="classification" status={status.classificationEvolution??null} disabled={acting} onRefresh={loadStatus}/>
         <ProcedureEvaluationAdmissions status={status.procedureEvolution??null} disabled={acting} onRefresh={loadStatus}/>
+        </InAdvanced>
+        <InAdvanced part="memory.reindex">
         {!status.model.bundled && <section aria-label={t("memorySettings.model.title")} className="rounded-lg border border-hairline/40 p-3 text-[13px]"><h3 className="text-[14px] font-medium">{t("memorySettings.model.title")}</h3>
           <p className="mt-1" data-testid="memory-model-status">{({ missing: t("memorySettings.model.missing"), unverified: t("memorySettings.model.unverified"), downloading: t("memorySettings.model.downloading", { percent: status.model.totalBytes > 0 ? Math.round(100 * status.model.bytesDownloaded / status.model.totalBytes) : 0 }), ready: t("memorySettings.model.ready"), failed: t("memorySettings.model.failed") } as const)[status.model.state]}</p>
           {status.model.state === "downloading" && <progress data-testid="memory-model-progress" aria-label={t("memorySettings.model.progress")} className="h-2 w-full accent-accent" max={100} value={status.model.totalBytes > 0 ? Math.round(100 * status.model.bytesDownloaded / status.model.totalBytes) : 0} />}
@@ -329,13 +359,19 @@ export function MemorySettings({ botId, onNavigate, compact = false, onStatusCha
           {status.model.error && <p role="alert" className="text-danger">{modelSentence(status.model.error)}</p>}
           <div className="mt-2"><ActionButton action={download} className={memoryButtonClass} blocked={status.model.state === "downloading" || status.model.state === "ready" || acting}>{t("memorySettings.download.button")}</ActionButton></div>
           <p className="mt-1 text-[12px] text-ink-secondary">{t("memorySettings.model.downloadNote")}</p></section>}
+        </InAdvanced>
+        <InAdvanced part="memory.health">
         <MemoryHealth status={status} open />
-        <section aria-labelledby="memory-reindex-heading" className="rounded-lg border border-hairline/40 p-3 text-[13px]"><h3 id="memory-reindex-heading" className="text-[14px] font-medium">{t("settings.reindex.title")}</h3>
+        </InAdvanced>
+        <InAdvanced part="memory.reindex">
+        <section aria-labelledby="memory-reindex-title" className="rounded-lg border border-hairline/40 p-3 text-[13px]"><h3 id="memory-reindex-title" className="text-[14px] font-medium">{t("settings.reindex.title")}</h3>
           <p className="mt-1 text-[12px] text-ink-secondary">{t("settings.reindex.note")}</p>
           {status.semantic && <p role="status" data-testid="memory-reindex-progress" className="mt-1">{semanticPhrase(status.semantic)}</p>}
           {status.mode === "off" && <p className="mt-1 text-ink-secondary">{t("settings.reindex.off")}</p>}
           {status.mode !== "off" && status.model.state !== "ready" && <p className="mt-1 text-ink-secondary">{t("settings.reindex.modelNotReady")}</p>}
           <div className="mt-2"><ActionButton data-setting-control="memory-reindex-heading" action={rebuild} className={memoryButtonClass} blocked={acting || status.mode === "off" || status.model.state !== "ready" || status.semantic?.state === "indexing"}>{t("settings.reindex.button")}</ActionButton></div></section>
+        </InAdvanced>
+        <InAdvanced part="memory.health">
         <section aria-label={t("memorySettings.excluded.title")} className="rounded-lg border border-hairline/40 p-3">
           <h3 className="text-[14px] font-medium">{t("memorySettings.excluded.title")}</h3>
           <form className="mt-3 space-y-3" onSubmit={event => { event.preventDefault(); go({ action: "configure", excludedThreadIds: excluded }, t("memorySettings.excluded.saved")); }}>
@@ -347,17 +383,27 @@ export function MemorySettings({ botId, onNavigate, compact = false, onStatusCha
           <div className="mt-4 space-y-2 text-[12px] text-ink-secondary"><h4 className="text-[13px] font-medium text-ink">{t("memorySettings.backlog.title")}</h4><p>{t("memorySettings.backlog", { pending: countText(status.backlog.pending, status.backlog.more?.pending), leased: countText(status.backlog.leased, status.backlog.more?.leased), deferred: countText(status.backlog.deferred, status.backlog.more?.deferred), failed: countText(status.backlog.failed, status.backlog.more?.failed) })}</p>{status.backlog.oldestQueuedAt !== null && <p>{t("memorySettings.oldestQueued", { date: new Date(status.backlog.oldestQueuedAt).toLocaleString() })}</p>}<p>{t("memorySettings.deletionPending", { count: countText(status.deletion.pending, status.deletion.more) })}</p>{status.workerError && <p role="status">{workerSentence(status.workerError)}</p>}
           </div>
         </section>
-        <section aria-label={t("memorySettings.audienceAccess")} className="rounded-lg border border-hairline/40 p-3"><h3 id="memory-audience-heading" className="text-[14px] font-medium">{folderMemoryUsed ? t("memorySettings.audienceAccessFolder") : t("memorySettings.audienceAccess")}</h3><p className="mt-1 text-[12px] text-ink-secondary">{t("memorySettings.access.note")}</p><fieldset className="mt-3 space-y-3" disabled={acting}><legend className="sr-only">{t("memorySettings.access.legend")}</legend>
+        </InAdvanced>
+        <InAdvanced part="memory.audience">
+        <section aria-label={t("memorySettings.audienceAccess")} className="rounded-lg border border-hairline/40 p-3"><h3 id="memory-audience-title" className="text-[14px] font-medium">{folderMemoryUsed ? t("memorySettings.audienceAccessFolder") : t("memorySettings.audienceAccess")}</h3><p className="mt-1 text-[12px] text-ink-secondary">{t("memorySettings.access.note")}</p><fieldset className="mt-3 space-y-3" disabled={acting}><legend className="sr-only">{t("memorySettings.access.legend")}</legend>
           <label className="block space-y-1 text-[13px]">{t("memorySettings.access.allowFor")}<select data-setting-control="memory-audience-heading" className={memoryInputClass} value={subject} onChange={event => setSubject(event.target.value)}><option value="">{t("memorySettings.access.chooseSubject")}</option>{subjects.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>
           <form className="space-y-2" onSubmit={event => { event.preventDefault(); go({ action: "bind", scopeId: bindingScope, ...subjectFields() }, t("memorySettings.access.saved")); }}><label className="block space-y-1 text-[13px]">{t("memorySettings.access.shared")}<select className={memoryInputClass} value={bindingScope} onChange={event => setBindingScope(event.target.value)}><option value="">{t("memorySettings.access.chooseAudience")}</option>{status.scopes.filter(scope => ["project", "team", "workspace", "preferences", "room"].includes(scope.kind)).map(scope => <option key={scope.id} value={scope.id}>{memoryAudienceLabel(scope)}</option>)}</select></label><button className={memoryButtonClass} disabled={!subject || !bindingScope}>{acting ? t("memorySettings.working") : t("memorySettings.access.grant")}</button></form>
           {/* Folder memory (the "project" scope kind) is not a channel project; shown only where it is already used (plan 3.8, PM5). */}
           {folderMemoryUsed && <form className="space-y-2" onSubmit={event => { event.preventDefault(); go({ action: "project", path: projectPath, ...subjectFields() }, t("memorySettings.access.folderCreated")); }}><label className="block space-y-1 text-[13px]">{t("memorySettings.access.folder")}<input className={memoryInputClass} value={projectPath} onChange={event => setProjectPath(event.target.value)} placeholder={t("memorySettings.access.folderPlaceholder")} /></label><button className={memoryButtonClass} disabled={!subject || !projectPath.trim()}>{acting ? t("memorySettings.working") : t("memorySettings.access.addFolder")}</button></form>}
         </fieldset></section>
-      </InAdvanced>}
+        </InAdvanced>
+      </>}
+      <Part id="memory.overview">
       {status?.pastChats?.running && <p role="status" className="flex items-center gap-2 text-[12px] text-ink-secondary" data-testid="memory-past-chats"><span aria-hidden="true" className="inline-block h-2 w-2 shrink-0 rounded-full bg-accent motion-safe:animate-pulse" />Reading past conversations: {status.pastChats.threadsDone.toLocaleString()} of {status.pastChats.threads.toLocaleString()} read, {status.pastChats.messagesQueued >= 1000 ? "1,000+" : status.pastChats.messagesQueued.toLocaleString()} messages queued. Chat works meanwhile.</p>}
+      </Part>
+      <Part id="memory.connection">
       {fluxMemory?.keyPresent && <div className="rounded-lg border border-hairline/40 p-3 text-[13px]"><div className="flex items-start justify-between gap-3"><span id="memory-use-flux">Use Flux memory. Flux Router remembers what you tell your bots in your own Flux conversations and brings it back when it helps, so they keep up with you from one chat to the next. With each of those turns Murage also sends a short copy of what it recalls, so the right details are there even when Flux has nothing to add. Murage's own memory keeps working either way. Switch this off any time: from your next message, Flux stops saving and adding memory, and Murage carries your memory on its own.</span><Switch aria-labelledby="memory-use-flux" checked={fluxMemory.external} onClick={toggleFluxMemory} /></div>{fluxMemory.last && <p className="mt-2 text-[12px] text-ink-secondary">Last Flux turn: {fluxMemory.last.text}</p>}</div>}
+      </Part>
+      <Part id="memory.how-it-learns">
       {workspacePage && <LearnAboutMe desktop={desktop} memoryActive={status.mode === "active"} request={request} />}
-      {!compact && <section aria-label={t("memorySettings.import.title")} className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 id="memory-import-heading" className="text-[14px] font-medium">{t("memorySettings.import.title")}</h3><p className="text-[13px] text-ink-secondary">{t("memorySettings.import.subtitle")}</p></div><button type="button" data-setting-control="memory-import-heading" className={memoryButtonClass} aria-expanded={importOpen} aria-controls="memory-import-panel" onClick={() => setImportOpen(!importOpen)}>{importOpen ? t("memorySettings.import.hide") : t("memorySettings.import.title")}</button></div>
+      </Part>
+      <Part id="memory.import">
+      {!compact && <section aria-label={t("memorySettings.import.title")} className="space-y-3"><div className="flex flex-wrap items-center justify-between gap-3"><div><h3 id="memory-import-title" className="text-[14px] font-medium">{t("memorySettings.import.title")}</h3><p className="text-[13px] text-ink-secondary">{t("memorySettings.import.subtitle")}</p></div><button type="button" data-setting-control="memory-import-heading" className={memoryButtonClass} aria-expanded={importOpen} aria-controls="memory-import-panel" onClick={() => setImportOpen(!importOpen)}>{importOpen ? t("memorySettings.import.hide") : t("memorySettings.import.title")}</button></div>
         <div id="memory-import-panel" hidden={!importOpen} className="space-y-3 rounded-lg border border-hairline/40 p-3"><p className="text-[12px] text-ink-secondary">{t("memorySettings.import.previewNote")}</p>
         <MemoryNotebookPicker botId={botId} onPreview={setPreview} />
         <div className="flex items-start justify-between gap-3 text-[13px]"><span id="memory-track-imports">{t("memorySettings.import.track")}</span><Switch aria-labelledby="memory-track-imports" checked={trackImports} onClick={() => setTrackImports(!trackImports)} /></div>
@@ -373,6 +419,7 @@ export function MemorySettings({ botId, onNavigate, compact = false, onStatusCha
         </form>
         {preview && <section aria-label={t("memorySettings.import.previewLabel")} className="space-y-2">{preview.items.map(item => <div key={item.path} className="rounded-lg border border-hairline/40 p-3"><p className="break-all text-[12px]">{item.path}</p><p className="text-[12px] text-ink-secondary">{item.scopeLabel} · {item.alreadyImported ? t("memorySettings.import.already") : t("memorySettings.import.new")}</p><p className="mt-2 whitespace-pre-wrap break-words text-[13px]">{item.text}</p></div>)}<p className="text-[12px] text-ink-secondary">{t("memorySettings.import.expires", { date: new Date(preview.expiresAt).toLocaleString() })}</p><button className={memoryButtonClass} disabled={preview.expiresAt <= Date.now() || acting} onClick={() => void run(async () => { const result = await request({ action: "import-commit", previewId: preview.previewId, track: trackImports }); if (!mounted.current) return; setPreview(null); await Promise.all([loadStatus(), loadRecords()]); return t("memorySettings.import.result", { imported: result.imported, skipped: result.skipped, originals: result.originals }); })}>{acting ? t("memorySettings.working") : t("memorySettings.import.commit")}</button></section>}
       </div></section>}
+      </Part>
     </>}
     <div className="sticky bottom-3 z-10 rounded-lg bg-card/95 px-1"><ActionStatus action={doing} /></div>
   </section>;

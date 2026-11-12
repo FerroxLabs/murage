@@ -55,8 +55,10 @@ export const engineText = (prompt: BuiltPrompt): string => prompt.text;
  * right before each engine write, a relaunch's write included). Server plumbing that routes a turn to one adapter.sendTurn (project usage,
  * shared owner usage) takes this; sendBuiltTurn is this plus the send. */
 export function fencedTurnInput(input: BuiltSendTurnInput, fence: EngineFence): SendTurnInput {
-  const { prompt, beforeSubmit, ...rest } = input;
-  return { ...rest, text: engineText(prompt), beforeSubmit: () => { assertEngineInput(fence, prompt); beforeSubmit?.(); } };
+  const { prompt, beforeSubmit, beforePrepare, ...rest } = input;
+  return { ...rest, text: engineText(prompt),
+    beforePrepare: () => { assertEngineInput(fence, prompt); if (beforePrepare) beforePrepare(); else beforeSubmit?.(); },
+    beforeSubmit: () => { assertEngineInput(fence, prompt); beforeSubmit?.(); } };
 }
 
 /** Send a turn: the fence runs before the caller's own beforeSubmit, before every engine write of the turn. */

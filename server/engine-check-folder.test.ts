@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import * as procs from "./procs.ts";
 import { aclWritersOutside, checkEngineReply, ENGINE_CHECK_FOLDER_FAILURE, engineCheckBasePath, engineCheckFolder, engineCheckHost, EngineCheckFolderError, isEngineCheckFolder, type EngineCheckFs } from "./engine-reply-check.ts";
 
 const uid = typeof process.getuid === "function" ? process.getuid() : 1000;
@@ -26,7 +27,53 @@ beforeEach(() => {
   root = join(scratch, "sys-tmp"); home = join(scratch, "home"); dataDir = join(home, ".murage");
   for (const dir of [root, home, dataDir]) mkdirSync(dir, { recursive: true });
 });
-afterEach(() => { vi.restoreAllMocks(); removeTempDirSync(scratch); });
+afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); removeTempDirSync(scratch); });
+
+describe("Windows owner fixed probe", () => {
+  const sid = "S-1-5-21-7";
+  const success = () => ({ pid: 123, output: [], stdout: Buffer.from(`${sid}\r\n`), stderr: Buffer.alloc(0), status: 0, signal: null });
+
+  it.each([
+    "C:\\ProgramData\\Murage\\engine-check\\run",
+    "C:\\owner's folder\\[literal]",
+    'C:\\owner"; Write-Output INJECTED; #',
+    "C:\\owner$(Write-Output INJECTED)`\nnext",
+  ])("passes %j only through the environment, with fixed command text", (folder) => {
+    vi.stubEnv("SystemRoot", "C:\\Windows");
+    const run = vi.spyOn(procs, "execCliSync").mockReturnValue(success());
+    expect(engineCheckHost.owner(folder)).toBe(sid);
+    expect(run).toHaveBeenCalledExactlyOnceWith(
+      "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", "(Get-Acl -LiteralPath $env:MURAGE_CHECK_PATH).GetOwner([System.Security.Principal.SecurityIdentifier]).Value"],
+      { windowsHide: true, timeout: 20_000, maxBuffer: 1024 * 1024, env: { ...process.env, MURAGE_CHECK_PATH: folder } },
+    );
+  });
+
+  it.each([
+    { status: 1 },
+    { status: null },
+    { error: Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }) },
+    { stdout: Buffer.from("not a SID") },
+    { stdout: Buffer.from(`${sid}\nINJECTED`) },
+  ])("refuses an unsuccessful or malformed owner probe: %j", (failure) => {
+    vi.stubEnv("SystemRoot", "C:\\Windows");
+    vi.spyOn(procs, "execCliSync").mockReturnValue({ ...success(), ...failure });
+    expect(engineCheckHost.owner("C:\\folder")).toBeNull();
+  });
+
+  it("refuses an unpinned executable without launching a probe", () => {
+    vi.stubEnv("SystemRoot", "relative");
+    const run = vi.spyOn(procs, "execCliSync");
+    expect(engineCheckHost.owner("C:\\folder")).toBeNull();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("treats a thrown launch failure as unreadable ownership", () => {
+    vi.stubEnv("SystemRoot", "C:\\Windows");
+    vi.spyOn(procs, "execCliSync").mockImplementation(() => { throw new Error("launch failed"); });
+    expect(engineCheckHost.owner("C:\\folder")).toBeNull();
+  });
+});
 
 describe("where the check folder is", () => {
   it("is a fixed system path per platform and never follows TMPDIR or TEMP", () => {

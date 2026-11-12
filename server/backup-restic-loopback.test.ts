@@ -90,7 +90,7 @@ describe.skipIf(!qualified)("pinned restic over loopback S3",()=>{
   it("another client's exclusive maintenance lock is reported as locked and never removed",async()=>{
     const f=await connected(),receipt=f.receipt();
     const env={HOME:f.root,PATH:"",TMPDIR:f.root,RESTIC_REPOSITORY:`s3:${f.s3.endpoint}/${f.s3.bucket}/${f.prefix}`,AWS_DEFAULT_REGION:f.s3.region,AWS_ACCESS_KEY_ID:f.s3.accessKeyId,AWS_SECRET_ACCESS_KEY:f.s3.secretAccessKey};
-    const other=spawn(tool!,["--cacert",f.s3.caFile,"--no-cache","-o","s3.bucket-lookup=path","prune"],{cwd:f.root,env,stdio:["pipe","ignore","ignore"]});
+    const other=spawn(tool!,["--cacert",f.s3.caFile,"--no-cache","-o","s3.bucket-lookup=path","prune"],{ windowsHide: true,cwd:f.root,env,stdio:["pipe","ignore","ignore"]});
     const closed=new Promise(resolve=>other.once("close",resolve));
     cleanups.push(async()=>{if(other.exitCode===null&&other.signalCode===null){other.kill("SIGCONT");other.kill("SIGKILL");}await closed;});
     other.stdin.on("error",()=>{});other.stdin.end(f.password+"\n");

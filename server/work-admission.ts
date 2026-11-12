@@ -88,7 +88,7 @@ export type RefusalReason =
   | "project_card_cap" | "install_card_cap" | "writer_root_busy" | "budget_reached"
   | "autonomy_off" | "project_paused" | "plan_not_approved" | "root_cap" | "deadlock"
   | "shared_paused" | "sharing_removed" | "team_deleted" | "binding_mismatch" | "archived"
-  | "dependency" | "not_reachable" | "shared_team_cap" | "shared_total_cap" | "restore_review" | "stagger";
+  | "dependency" | "not_reachable" | "shared_team_cap" | "shared_total_cap" | "restore_review" | "stagger" | "spend_limit";
 
 export interface AdmissionClaim {
   readonly id: string;
@@ -142,6 +142,8 @@ export interface WorkAdmissionDeps {
   askWouldDeadlock(fromBotId: string, toBotId: string): boolean;
   /** Membership, canReach/messageAllow, contact-bound threads, archived desks. */
   reachable(input: AdmissionInput): boolean;
+  /** UX-L2C-PAUSE: holds on Flux work (the owner is NOT exempt). Null when the pause is off or the work is not on Flux. */
+  spendHold?(input: AdmissionInput): { line: string } | null;
   authorize?(input: AdmissionInput): { ok: true } | { ok: false; reason: RefusalReason; retryable: boolean };
   dependencyOpen(workItemId: string): boolean;
   /** Take the root's writer claim now; the release, or null when held. */
@@ -223,6 +225,9 @@ export function createWorkAdmission(deps: WorkAdmissionDeps): WorkAdmission {
         return refuse("root_cap", `Paused: ${ROOT_CAP_WAKES} team steps since your last message. Say continue.`);
       }
     }
+    // 5a. spend limit: Flux work only, owner included (the project budget step below exempts owners; this one does not)
+    const spend = deps.spendHold?.(input);
+    if (spend) return refuse("spend_limit", spend.line, ownerDirect ? "never" : "queue");
     // 6. that exact thread
     if (deps.threadRunning(input.botId, input.threadId) || live((claim) => claim.threadId === input.threadId && claim.botId === input.botId).length) {
       return refuse("thread_running", `${name(input.botId)} is already working here`);

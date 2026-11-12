@@ -101,6 +101,7 @@ async function bootServer(homeDir: string, port: number): Promise<{ child: Child
       return originalFetch(input, init);
     };`, { mode: 0o600 });
   const proc = spawn(process.execPath, ["--import", pathToFileURL(instrumentation).href, join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -400,7 +401,7 @@ posixOnly("folder trust through the harness (Fuigo on the fake ACP CLI)", () => 
   // must the picker note and the turn
   it("(2b) a bot in a linked git worktree runs under the main checkout's standalone grant: the picker says upstream, no card, no --trust, no chip, AGENTS.md read", async () => {
     const git = (cwd: string, ...args: string[]) =>
-      execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_CONFIG_NOSYSTEM: "1", HOME: home } });
+      execFileSync("git", args, { windowsHide: true, cwd, stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_CONFIG_NOSYSTEM: "1", HOME: home } });
     const main = join(home, "main-checkout");
     mkdirSync(main, { recursive: true });
     git(main, "init", "-q", ".");

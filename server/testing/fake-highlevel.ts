@@ -6,13 +6,36 @@
 // fetch. Each script matches a method and a path pattern and answers once (or always); an unscripted call is recorded
 // and answered 418, so a test can assert that nothing it did not expect was sent. Canned shapes follow OpenMausBot
 // server/testing/fake-highlevel.ts, including the noise fields the real API adds.
-import { HIGHLEVEL_TOOL_NAMES, HIGHLEVEL_TOOLKIT, type HighLevelCeiling, type NativeGrant } from "../../shared/highlevel.ts";
+import type { RpcApprovalJournal, RpcApprovalBinding } from "../highlevel/rpc-approval-replay.ts";
+import { randomUUID } from "node:crypto";
+import type { ApprovalIdempotencyRecord, ApprovalOutcome } from "../highlevel/approval-idempotency.ts";
+import { HIGHLEVEL_TOOL_NAMES, HIGHLEVEL_TOOLKIT, HIGHLEVEL_FAMILIES, LEGACY_TOOL_TO_OPERATION, type Family, type FamilyLevel, type OperationId, type HighLevelCeiling, type NativeGrant } from "../../shared/highlevel.ts";
 import { accessRoleBinding } from "../bot-access-role.ts";
 import { InternalCapabilities, type InternalCapability } from "../internal-capabilities.ts";
 import type { HighLevelAccessBot } from "../highlevel/access.ts";
 import { HighLevelActions, type ActionReview } from "../highlevel/actions.ts";
 import { HighLevelClient, type HighLevelConnectionView, type HighLevelLease, type HighLevelLeaseRequest, type HighLevelLeaseSource } from "../highlevel/client.ts";
 import { HighLevelHost, HighLevelTurnSignals } from "../highlevel/host.ts";
+
+/** Test-only adapter; runtime construction always supplies durable file journals. */
+function memoryApprovalJournal(): RpcApprovalJournal {
+  const bindings = new Map<string, RpcApprovalBinding>();
+  const rows = new Map<string, ApprovalIdempotencyRecord>();
+  return {
+    key: randomUUID(),
+    getRpc: id => { const row = bindings.get(id); return row && structuredClone(row); },
+    bindRpc: binding => { if (bindings.has(binding.rpcId)) return false; bindings.set(binding.rpcId, structuredClone(binding)); return true; },
+    get: id => { const row = rows.get(id); return row && structuredClone(row); },
+    claim(id, requestDigest) { if (rows.has(id)) return false; rows.set(id, { approvalId: id, requestDigest, state: 'pending' }); return true; },
+    settle(id, requestDigest, outcome) {
+      const row = rows.get(id);
+      if (!row || row.requestDigest !== requestDigest) throw new Error('Approval binding');
+      if (row.state !== 'pending') return row.state === 'applied' ? { status: 'applied', result: structuredClone(row.result) } : { status: 'conflict', reason: row.reason };
+      rows.set(id, outcome.status === 'applied' ? { approvalId: id, requestDigest, state: 'applied', result: structuredClone(outcome.result) } : { approvalId: id, requestDigest, state: 'conflict', reason: outcome.reason });
+      return structuredClone(outcome) as ApprovalOutcome;
+    },
+  };
+}
 
 export type FakeReply =
   | { status: number; body?: unknown; headers?: Record<string, string>; bytes?: number }
@@ -97,7 +120,7 @@ export const RAW_CONTACT = (id: string, extra: Record<string, unknown> = {}) => 
   emailLowerCase: "ada@fixture.test", phone: "+15550001234", companyName: "Analytical Engines", tags: ["vip", "newsletter"], source: "web form",
   assignedTo: "user_1", dateAdded: "2026-01-02T03:04:05.000Z", dateUpdated: "2026-02-03T04:05:06.000Z", address1: "1 Engine Row", city: "London", country: "GB",
   dnd: false, dndSettings: { Email: { status: "inactive" } }, type: "lead", attributionSource: { url: "https://x.test", ip: "10.0.0.1" },
-  customFields: [{ id: "cf_lead", value: "Referral" }],
+  customFields: [{ id: "cf_lead", value: "Referral" }], followers: [],
   ...extra,
 });
 
@@ -107,6 +130,7 @@ export function scriptCrm(fake: FakeHighLevel): FakeHighLevel {
     .always("POST", /^\/contacts\/search$/u, { status: 200, body: { contacts: [RAW_CONTACT("contact_1")], total: 1 } })
     .always("GET", /^\/locations\/[^/]+\/customFields$/u, { status: 200, body: { customFields: [{ id: "cf_lead", name: "Lead source", fieldKey: "contact.lead_source", dataType: "TEXT" }] } })
     .always("GET", /^\/contacts\/[^/]+\/notes$/u, { status: 200, body: { notes: [{ id: "note_1", body: "Called back" }] } })
+    .always("GET", /^\/contacts\/[^/]+\/tasks$/u, { status: 200, body: { tasks: [], total: 0 } })
     .always("POST", /^\/contacts\/[^/]+\/notes$/u, { status: 201, body: { note: { id: "note_new", body: "fixture" } } })
     .always("POST", /^\/contacts\/[^/]+\/tags$/u, { status: 201, body: { tags: ["vip", "fixture"] } })
     .always("GET", /^\/contacts\/[^/]+$/u, { status: 200, body: { contact: RAW_CONTACT("contact_1") } })
@@ -183,7 +207,7 @@ export const FAKE_CONNECTION_ID = "hl_conn_1";
 /** A HighLevel host wired to FakeHighLevel and FakeLeaseSource, with one live owner turn (bot_1, thread_1, gen_1).
  * Sleeps are manual when `manualSleep`: they wait until release() (or Stop) so a test can act mid-wait. stop() does
  * what index.ts revokeInternalGeneration does for HighLevel: revoke the turn's capability and fire its signal. */
-export function highLevelHarness(options: { manualSleep?: boolean; ceiling?: HighLevelCeiling; deadlineMs?: number; tokenExpiresInMs?: number } = {}) {
+export function highLevelHarness(options: { manualSleep?: boolean; ceiling?: HighLevelCeiling; deadlineMs?: number; tokenExpiresInMs?: number; legacy?: boolean } = {}) {
   let now = 1_800_000_000_000;
   const clock = () => now;
   const sleeps: Array<{ ms: number; release: () => void }> = [];
@@ -198,7 +222,13 @@ export function highLevelHarness(options: { manualSleep?: boolean; ceiling?: Hig
   const bot: HighLevelAccessBot = { id: "bot_1", name: "Sales bot", composio: true };
   const grant = (ceiling: HighLevelCeiling = options.ceiling ?? "propose", accountId = FAKE_CONNECTION_ID): NativeGrant =>
     ({ toolkit: HIGHLEVEL_TOOLKIT, accountId, tools: [...HIGHLEVEL_TOOL_NAMES], botId: bot.id, revision: 1, ceiling });
-  const saveAccess = (grants = [grant()], revision = 1) => { bot.highlevelAccess = { revision, roleBinding: accessRoleBinding(bot), grants }; };
+  const saveAccess = (grants = [grant()], revision = 1) => { bot.highlevelAccess = {
+    ...(options.legacy ? {} : { grantsVersion: 2 }), revision, roleBinding: accessRoleBinding(bot),
+    grants: options.legacy ? grants : grants.map(row => ({ ...row,
+      families: Object.fromEntries(HIGHLEVEL_FAMILIES.map(family => [family, row.ceiling === "propose" ? "change" : "read"])) as Record<Family, FamilyLevel>,
+      operations: Object.fromEntries(HIGHLEVEL_FAMILIES.map(family => [family, row.tools.map(tool => LEGACY_TOOL_TO_OPERATION[tool]!).filter(op => op.startsWith(family + "."))])) as Record<Family, OperationId[]>,
+    })),
+  }; };
   saveAccess();
   const leases = new FakeLeaseSource({ now: clock });
   leases.add({ connectionId: FAKE_CONNECTION_ID }, { expiresInMs: options.tokenExpiresInMs });
@@ -206,7 +236,8 @@ export function highLevelHarness(options: { manualSleep?: boolean; ceiling?: Hig
   const client = new HighLevelClient({ leases, fetch: api.fetch, now: clock, sleep, deadlineMs: options.deadlineMs ?? 50 });
   const actions = new HighLevelActions({ now: clock });
   const reviews: ActionReview[] = [];
-  const host = new HighLevelHost({ capabilities, signals, bot: (id) => (id === bot.id ? bot : undefined), leases, client, actions, onReview: (_claim, review) => { reviews.push(review); } });
+  const approvalJournal = memoryApprovalJournal(), callJournal = memoryApprovalJournal();
+  const host = new HighLevelHost({ capabilities, signals, bot: (id) => (id === bot.id ? bot : undefined), leases, client, actions, approvalJournal, callJournal, onReview: (_claim, review) => { reviews.push(review); } });
   const turn = (generation = "gen_1", extra: Partial<InternalCapability> = {}, threadId = "thread_1"): InternalCapability => {
     capabilities.begin(bot.id, threadId, generation);
     const token = capabilities.mint({ botId: bot.id, threadId, generation, kind: "highlevel", depth: 0, skillAuthoring: false, ...extra });
@@ -216,7 +247,7 @@ export function highLevelHarness(options: { manualSleep?: boolean; ceiling?: Hig
   return {
     get now() { return now; }, advance: (ms: number) => { now += ms; },
     sleeps, releaseSleeps: () => { for (const entry of sleeps.splice(0)) entry.release(); },
-    capabilities, signals, bot, grant, saveAccess, leases, api, client, actions, reviews, host, claim, turn,
+    capabilities, signals, bot, grant, saveAccess, leases, api, client, actions, approvalJournal, callJournal, reviews, host, claim, turn,
     stop: (generation = claim.generation, threadId = "thread_1") => { capabilities.revokeGeneration(threadId, generation); signals.turnEnded(generation); },
     /** Releases manual sleeps until `promise` settles (bounded). */
     settle: async <T>(promise: Promise<T>): Promise<T> => {

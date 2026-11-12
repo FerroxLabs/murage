@@ -1,6 +1,6 @@
 # OPENAI-TOOLS-109: real tools for the OpenAI-chat engines
 
-Status: DRAFT r5, 2026-10-28 (Astra r1 + r2 + r3 REVISE and Grok r5 REVISE folded, see 13 and "Changes in rev 3" / "Changes in rev 4" / "Changes in rev 5" at the end). Lane `fix/109-openai-tools`, worktree `/Volumes/Scratch/work/wt-109-openai-tools`,
+Status: DRAFT r5, 2026-10-28 (Astra r1 + r2 + r3 REVISE and Grok r5 REVISE folded, see 13 and "Changes in rev 3" / "Changes in rev 4" / "Changes in rev 5" at the end). Lane `fix/109-openai-tools`, worktree `/mnt/Fixture/ExampleWorkspace/wt-109-openai-tools`,
 base `dev/int/108` = `d4192c1625b51e20bea3b7f4251ba9c5417bacc8`. Security lane: tools mean approvals, the stop line and secrets.
 
 ## 0. The gap

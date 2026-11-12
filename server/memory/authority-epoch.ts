@@ -20,6 +20,7 @@ import { withoutDroppedTableTriggers } from "./read-time-retired.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { ancestryUnrepaired, connectionId, database } from "../database.ts";
 import { databaseStamp } from "./replay-lineage.ts";
+import { NOISY_SYSTEM_SUBJECTS } from "./noisy-subjects.ts";
 
 // n moves for every revocation-relevant write; hard moves for all of them except the SOFT ones below, which are also logged by id
 // (authority_soft) so a session hold can tell whether the change touched anything it holds (disclosures.ts continuationMemoryRevoked).
@@ -31,22 +32,25 @@ function trigger(name: string, event: string, table: string, when?: string, body
   return `CREATE TEMP TRIGGER IF NOT EXISTS authority_${name} AFTER ${event} ON main.${table}${when ? ` WHEN ${when}` : ""} BEGIN ${body}; END;`;
 }
 const ALL_EVENTS = ["INSERT", "UPDATE", "DELETE"] as const;
-function writes(table: string, events: readonly string[] = ALL_EVENTS, when?: string): string[] {
-  return events.map(event => trigger(`${table}_${event[0].toLowerCase()}`, event, table, when));
+function writes(table: string, events: readonly string[] = ALL_EVENTS, when?: string, body?: string): string[] {
+  return events.map(event => trigger(`${table}_${event[0].toLowerCase()}`, event, table, when, body));
 }
-/** Rows of memory_scope_bindings that background work rewrites all the time and that grant or remove nothing:
- * counters, cursors, intents of queued jobs. Every other binding (a person, a human thread, an exclusion, the
- * roster, a bot grant, the owner's settings) moves the epoch when it is written. */
-export const NOISY_SYSTEM_SUBJECTS: readonly string[] = [
-  "observability", "reveal-capture", "reveal-scan", "procedure-review", "procedure-review-pending", "pip-stance", "pip-render",
-  "pip-reflect", "pip-coverage", "consolidation-pending", "consolidation", "consolidation-skip-due", "consolidation-skip-cursor", "parked-sweep", "parked-reconcile", "origin-backfill",
-  "memory-shape-check", "gepa-job", "continuity-budget", "extract-budget", "learning-spend", "memory-status-snapshot", "notebook-migration",
-  // The roster binding is rewritten on every save that adds a bot, a task or a room (a widening: nothing a hold rests on changes); what a
-  // save WITHDRAWS is bumped by policy.ts itself (thread dependencies on a conversation removal, hard on a container removal, the policy revision on an audience change). A notebook
-  // link records what was imported and when it was last looked at; a changed import's own revoke moves the epoch, a first import nothing.
-  "roster", "notebook-link", "thread-deletion-clock",
-];
-const NOISY = (row: "NEW" | "OLD") => `${row}.subject_type='system' AND ${row}.subject_id IN (${NOISY_SYSTEM_SUBJECTS.map(subject => `'${subject}'`).join(",")})`;
+const deniedScope = (scope: string) => `EXISTS (SELECT 1 FROM main.memory_deny WHERE kind='scope' AND id=${scope})`;
+const scopeChange = (scope: string) => `${SOFT_BUMP}; ${softLog("'scope:'||COALESCE(" + scope + ",'?')")}`;
+// Blanking already denied material adds no restriction outside that scope. Unknown targets and moves between scopes stay hard.
+const deniedCleanup = (scope: string, when = deniedScope(scope)) => `${scopeChange(scope)}; UPDATE authority_epoch SET hard=hard+1 WHERE NOT (${when})`;
+const TOMBSTONE_SCOPE = "CASE NEW.target_type WHEN 'record' THEN (SELECT scope_id FROM main.memory_records WHERE id=NEW.target_id LIMIT 1) WHEN 'source' THEN (SELECT scope_id FROM main.memory_sources WHERE id=NEW.target_id) WHEN 'import' THEN NEW.target_id END";
+// A tombstone without a revision ends every version: a record id ever moved to another scope must keep the hard fallback.
+const TOMBSTONE_DENIED = `${deniedScope(`(${TOMBSTONE_SCOPE})`)} AND (NEW.target_type!='record' OR NOT EXISTS (SELECT 1 FROM main.memory_records WHERE id=NEW.target_id AND scope_id IS NOT (${TOMBSTONE_SCOPE})))`;
+const WITHDRAW_DENIED_BINDING = `OLD.scope_id IS NEW.scope_id AND OLD.subject_type IS NEW.subject_type AND OLD.subject_id IS NEW.subject_id AND NEW.subject_type IN ('bot','person') AND NEW.state='revoked' AND ${deniedScope("NEW.scope_id")}`;
+export { NOISY_SYSTEM_SUBJECTS };
+// A bot cleanup may outlive the inline slice. Its queue row grants nothing and the scopes it walks are already denied;
+// advancing or removing that cursor adds no restriction. Other jobs and unreadable/undenied scope lists keep the hard fallback.
+const BOT_CLEANUP = (row: "NEW" | "OLD") => `${row}.subject_id='memory-revocation' AND COALESCE(CASE WHEN json_valid(${row}.intent) THEN
+  json_extract(${row}.intent,'$.v')=2 AND json_type(${row}.intent,'$.phases')='array'
+  AND json_extract(${row}.intent,'$.cause')='bot-deletion' AND json_type(${row}.intent,'$.scopes')='array'
+  AND NOT EXISTS (SELECT 1 FROM json_each(${row}.intent,'$.scopes') s WHERE NOT EXISTS (SELECT 1 FROM main.memory_deny d WHERE d.kind='scope' AND d.id=s.value)) ELSE 0 END,0)`;
+const NOISY = (row: "NEW" | "OLD") => `${row}.subject_type='system' AND (${row}.subject_id IN (${NOISY_SYSTEM_SUBJECTS.map(subject => `'${subject}'`).join(",")}) OR (${BOT_CLEANUP(row)}))`;
 // A thread's checkpoint rolls to a new version on every captured message and the old version is archived; a receipt that cites
 // the old version still holds (bundle.ts supersededThreadCheckpoint), so that one transition is not a revocation.
 // A candidate becoming active only adds to what a session may be shown (a receipt can cite no candidate, and every writer that ends receipts
@@ -68,14 +72,14 @@ const GROWN_SUCCESSOR = "EXISTS (SELECT 1 FROM main.memory_disclosures s WHERE s
 // is not, so it counts.
 const REBOUND = "OLD.native_session IS NOT NEW.native_session AND (OLD.native_session IS NOT NULL OR NEW.native_session IS NULL OR NEW.rowid < COALESCE((SELECT max(x.rowid) FROM main.memory_disclosures x WHERE x.thread_id=NEW.thread_id AND x.driver_instance=NEW.driver_instance AND x.native_session=NEW.native_session),0))";
 const TRIGGERS: string[] = [
-  // Thread deny insertion/removal logs its dependency; arbitrary edits and scope denial keep the hard fallback.
+  // Deny insertion/removal logs its thread or scope dependency; arbitrary edits keep the hard fallback.
   ...ALL_EVENTS.map(event => trigger(`memory_deny_${event[0].toLowerCase()}`, event, "memory_deny", undefined,
-    event === "UPDATE" ? `${BUMP}` : `${SOFT_BUMP}; ${softLog("'thread:'||" + (event === "INSERT" ? "NEW" : "OLD") + ".id")}; UPDATE authority_epoch SET hard=hard+1 WHERE ${event === "INSERT" ? "NEW" : "OLD"}.kind!='thread'`)),
-  ...writes("memory_records", ["UPDATE"], RECORD_CHANGED),
+    event === "UPDATE" ? `${BUMP}` : `${SOFT_BUMP}; ${softLog((event === "INSERT" ? "NEW" : "OLD") + ".kind||':'||" + (event === "INSERT" ? "NEW" : "OLD") + ".id")}`)),
+  ...writes("memory_records", ["UPDATE"], RECORD_CHANGED, deniedCleanup("OLD.scope_id", `OLD.scope_id IS NEW.scope_id AND ${deniedScope("OLD.scope_id")}`)),
   trigger("memory_records_soft", "UPDATE", "memory_records", RECORD_ACTIVATED, `${SOFT_BUMP}; ${softLog("'record:'||NEW.id")}`), ...writes("memory_records", ["DELETE"]),
   // A source's new revision or content, and a source joining the active branch (retired to active), are SOFT: they take nothing away from a
   // session that was already checked unless the session holds that source (or a record resting on it); the id is logged so the hold can ask.
-  trigger("memory_sources_u", "UPDATE", "memory_sources", `(${SOURCE_CHANGED}) AND NOT (${SOFT_SOURCE})`),
+  trigger("memory_sources_u", "UPDATE", "memory_sources", `(${SOURCE_CHANGED}) AND NOT (${SOFT_SOURCE})`, deniedCleanup("OLD.scope_id", `OLD.scope_id IS NEW.scope_id AND ${deniedScope("OLD.scope_id")}`)),
   trigger("memory_sources_soft", "UPDATE", "memory_sources", `(${SOURCE_CHANGED}) AND ${SOFT_SOURCE}`, `${SOFT_BUMP}; ${softLog("NEW.id")}`),
   ...writes("memory_sources", ["DELETE"]),
   trigger("memory_source_versions_u", "UPDATE", "memory_source_versions", "OLD.source_id IS NOT NEW.source_id OR OLD.revision IS NOT NEW.revision OR OLD.content_hash IS NOT NEW.content_hash"),
@@ -83,12 +87,13 @@ const TRIGGERS: string[] = [
   ...writes("memory_source_versions", ["DELETE"]),
   ...writes("memory_evidence", ["UPDATE", "DELETE"]),
   ...writes("memory_derivations", ["UPDATE", "DELETE"]),
-  ...writes("memory_tombstones"),
+  trigger("memory_tombstones_i", "INSERT", "memory_tombstones", undefined, deniedCleanup(`(${TOMBSTONE_SCOPE})`, TOMBSTONE_DENIED)),
+  ...writes("memory_tombstones", ["UPDATE", "DELETE"]),
   // (a trigger of the schema rewrites a record's details whenever its state changes; the state change is what counts)
   ...writes("memory_record_details", ["UPDATE"], "OLD.partition IS NOT NEW.partition"), ...writes("memory_record_details", ["DELETE"]),
   ...writes("memory_scopes", ["UPDATE", "DELETE"]),
   trigger("bindings_i", "INSERT", "memory_scope_bindings", `NOT (${NOISY("NEW")})`),
-  trigger("bindings_u", "UPDATE", "memory_scope_bindings", `NOT (${NOISY("NEW")}) OR NOT (${NOISY("OLD")})`),
+  trigger("bindings_u", "UPDATE", "memory_scope_bindings", `NOT (${NOISY("NEW")}) OR NOT (${NOISY("OLD")})`, deniedCleanup("NEW.scope_id", WITHDRAW_DENIED_BINDING)),
   trigger("bindings_d", "DELETE", "memory_scope_bindings", `NOT (${NOISY("OLD")})`),
   // A receipt matters when it is revoked or its contents change; becoming delivered, or getting its session bound, does not.
   ...writes("memory_disclosures", ["UPDATE"], "OLD.thread_id IS NOT NEW.thread_id OR OLD.driver_instance IS NOT NEW.driver_instance OR (" + REBOUND + ") OR OLD.record_versions IS NOT NEW.record_versions OR OLD.source_versions IS NOT NEW.source_versions OR OLD.policy_revision IS NOT NEW.policy_revision OR OLD.deletion_epoch IS NOT NEW.deletion_epoch"),
@@ -151,11 +156,18 @@ export function authorityEpochInstalled(): boolean { return install(database());
 export function bumpAuthorityHard(db: DatabaseSync): void { bumpLearningFence(db); if (install(db)) db.exec(BUMP); }
 /** A roster removal logs its thread so unrelated cached sessions keep their proof. */
 export function bumpAuthorityThreads(db: DatabaseSync, threads: readonly string[]): void {
+  bumpAuthorityDependencies(db, threads.map(thread => `thread:${thread}`));
+}
+/** Roster container removals name their notebook dependencies as well as their conversations. */
+export function bumpAuthorityScopes(db: DatabaseSync, scopes: readonly string[]): void {
+  bumpAuthorityDependencies(db, scopes.map(scope => `scope:${scope}`));
+}
+function bumpAuthorityDependencies(db: DatabaseSync, ids: readonly string[]): void {
   bumpLearningFence(db);
   if (!install(db)) return;
   db.exec(SOFT_BUMP);
   const insert = db.prepare("INSERT INTO temp.authority_soft(id) VALUES(?)");
-  for (const thread of threads) insert.run(`thread:${thread}`);
+  for (const id of ids) insert.run(id);
   db.exec(`DELETE FROM temp.authority_soft WHERE seq<(SELECT max(seq) FROM temp.authority_soft)-${SOFT_LOG_MAX}`);
 }
 /** The learning send counter (learning-send.ts) for the same withdrawals: the roster is a quiet binding there too, so its removals move the

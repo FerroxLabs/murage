@@ -21,11 +21,17 @@ describe("extension browser assignment persistence",()=>{
   it("leaves old single legacy route unchanged and defaults new bots to isolated",()=>{
     const ids=records([{useMyChrome:true},{}]);const loaded=fresh();expect(loaded.bot(ids[0])?.useMyChrome).toBe(true);expect(loaded.bot(ids[0])?.browserTransport).toBeUndefined();expect(loaded.bot(ids[1])?.useMyChrome).toBeUndefined();
   });
-  it("normalizes invalid extension fields without creating inspect fallback",()=>{
-    const ids=records([{useMyChrome:true,browserTransport:"evil"},{useMyChrome:true,browserTransport:"extension",browserExtensionProfileId:"../profile"},{useMyChrome:true,browserTransport:"extension",browserExtensionProfileId:42},{useMyChrome:true,browserExtensionProfileId:"profile_A"},{useMyChrome:"true",browserTransport:"extension"},{useMyChrome:true}]);
-    const loaded=fresh();expect(ids.map(id=>loaded.bot(id)?.useMyChrome)).toEqual([undefined,undefined,undefined,undefined,undefined,true]);expect(loaded.bot(ids[0])?.browserTransport).toBeUndefined();expect(loaded.bot(ids[1])?.browserTransport).toBe("extension");expect(loaded.bot(ids[1])?.browserExtensionProfileId).toBeUndefined();expect(disk().slice(0,5).every((bot:{useMyChrome?:true})=>bot.useMyChrome===undefined)).toBe(true);
+  it("leaves ambiguous records unchanged while recognizing an otherwise valid legacy direct choice",()=>{
+    const rows=[{useMyChrome:true,browserTransport:'evil'},{useMyChrome:true,browserTransport:'extension',browserExtensionProfileId:'../profile'},{useMyChrome:true,browserTransport:'extension',browserExtensionProfileId:42},{useMyChrome:true,browserExtensionProfileId:'profile_A'},{useMyChrome:'true',browserTransport:'extension'},{useMyChrome:true}];
+    const ids=records(rows),loaded=fresh();for(const index of [0,1,2])expect(loaded.bot(ids[index])).toMatchObject(rows[index]);expect(loaded.bot(ids[3])?.browserMode).toBe('chrome-direct');expect(loaded.bot(ids[5])?.browserMode).toBe('builtin');
+    // EP section 5 preserves the old sanitizer's authority rules; the
+    // integration ruling requires exact boolean true even in hand-edited data.
+    expect(loaded.bot(ids[4])?.browserMode).toBe('builtin');
+    expect(loaded.bot(ids[4])).not.toHaveProperty('useMyChrome');
+    expect(fresh().bot(ids[4])).not.toHaveProperty('useMyChrome');
+    expect(disk().find((bot:{id:string})=>bot.id===ids[4])).not.toHaveProperty('useMyChrome');
   });
-  it("persists normal patchBot extension assignment across reload",()=>{
-    const [id]=records([{}]);const store=fresh();store.patchBot(id,{useMyChrome:true,browserTransport:"extension",browserExtensionProfileId:"profile-7"});expect(fresh().bot(id)).toMatchObject({useMyChrome:true,browserTransport:"extension",browserExtensionProfileId:"profile-7"});
+  it("persists a committed browser selection across reload",()=>{
+    const [id]=records([{}]);const store=fresh();store.commitBrowserChoice(id,{browserMode:"chrome-extension",useMyChrome:true,browserTransport:"extension",browserExtensionProfileId:"profile-7",selectionRevision:1,browserSelectionRevision:1},store.chromeDirectReservation);expect(fresh().bot(id)).toMatchObject({useMyChrome:true,browserTransport:"extension",browserExtensionProfileId:"profile-7"});
   });
 });

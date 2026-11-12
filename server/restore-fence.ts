@@ -1,3 +1,4 @@
+import { RETIRED_SEARCH_OBJECTS } from "./settle-copy.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -121,6 +122,8 @@ export const RESTORE_NOT_PENDING_WORK: Readonly<Record<string, string>> = Object
   owner_deleted_threads: "a deletion record",
   meta: "key/value settings",
   messages_fts: "search index, rebuilt",
+  search_intents: "search queue, rebuilt",
+  ...Object.fromEntries(RETIRED_SEARCH_OBJECTS.map(name => [name, "retired search index, removed from restored copies"])),
   inbox_raw: "the Inbox projection (inbox.ts), derived from messages by triggers: a restore empties it and it is rebuilt on first open",
   inbox_items: "the Inbox projection (inbox.ts), derived from messages by triggers: a restore empties it and it is rebuilt on first open",
   thread_key: "the branch and line index's record of how far each thread's fill has got (branch-store.ts): derived from messages, so a restore leaves it to be filled again per thread",

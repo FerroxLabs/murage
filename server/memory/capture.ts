@@ -25,8 +25,11 @@ import { hasWritetime } from "./revoke-marker.ts";
 import { FIRST_LSN } from "./lineage-types.ts";
 import { writeCaptureLineage } from "./lineage-write.ts";
 import { startBranchChange } from "./branch-change.ts";
+import { branchOracle, threadKey } from "../branch-index.ts";
+import { queueFrontFill, threadIsReady } from "../branch-fill.ts";
 import { threadExcluded, noteThreadDeletion } from "./deny.ts";
 import { noteTurnCaptureJob } from "./turn-capture-jobs.ts";
+import { requiredIndexRebuildPending } from "./optional-index.ts";
 import { looksLikeExport } from "../../shared/learn-about-me/detect.ts";
 
 function enabled(db: DatabaseSync) { const mode = db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode as string | undefined; return memoryCaptures(mode, memoryGate(db, "capture") === "ok" ? null : "held"); }
@@ -39,11 +42,13 @@ export function captureScopeId(db: DatabaseSync, threadId: string) {
   const id = randomUUID(); db.prepare("INSERT INTO memory_scopes VALUES(?,?,?,'[]',0)").run(id,kind,owner); return id;
 }
 
-export function captureSource(db: DatabaseSync, source: {id: string; threadId: string; messageId?: string; turnId?: string; parentId?: string | null; kind: string; speaker: string; outcome: string; text: string; origin?: {kind:string;channel?:string;connectionId?:string;webhookId?:string;routineId?:string}; engine?: {instanceId:string;model:string;capabilityHash:string}; actionCheck?: Message["actionCheck"]; excluded?: string; externalContent?: "email"; occurredAt?: number; actorId?: string; artifactIds?: string[]; action?: { label: string; reportedOutcome: "completed" | "failed"; detail?: string; verification: "tool-reported" }}) {
+export function captureSource(db: DatabaseSync, source: {id: string; threadId: string; messageId?: string; turnId?: string; parentId?: string | null; kind: string; speaker: string; outcome: string; text: string; origin?: {kind:string;channel?:string;connectionId?:string;webhookId?:string;routineId?:string}; engine?: {instanceId:string;model:string;capabilityHash:string}; actionCheck?: Message["actionCheck"]; excluded?: string; externalContent?: "email"; occurredAt?: number; actorId?: string; artifactIds?: string[]; action?: { label: string; reportedOutcome: "completed" | "failed"; detail?: string; verification: "tool-reported" }}, state: "active" | "retired" = "active") {
   if (!enabled(db)||threadExcluded(db,source.threadId)) return;
   // Keep failed outcomes as procedure-learning evidence, never recall work.
   const failedTool = (source.kind === "tool-outcome" || source.kind === "activity") && source.outcome === "failed";
   const text = redactSecretsInText(source.text);
+  if (deferEvidenceCapture(db, {...source, text, ...(source.action ? {action: {...source.action,
+    label: redactSecretsInText(source.action.label), ...(source.action.detail ? {detail: redactSecretsInText(source.action.detail)} : {})}} : {})})) return;
   // A tool outcome with no text (captureMessage: a row that was only the tool's name) has nothing to capture: its job is born complete.
   const emptyTool = (source.kind === "tool-outcome" || source.kind === "activity") && !text.trim();
   const content = {text,kind:source.kind,speaker:source.speaker,outcome:source.outcome,
@@ -61,6 +66,9 @@ export function captureSource(db: DatabaseSync, source: {id: string; threadId: s
   if (db.prepare("SELECT 1 FROM memory_deny WHERE (kind='thread' AND id=?) OR (kind='scope' AND id=?)").get(source.threadId,scope)) return;
   const previous = db.prepare("SELECT revision,content_hash,state FROM memory_sources WHERE id=?").get(source.id);
   if (previous?.state === "deleted") return;
+  // Idle replay can discover an already captured source has left the branch, even when its content did not change.
+  if (state === "retired" && previous && previous.state !== state)
+    db.prepare("UPDATE memory_sources SET state='retired' WHERE id=?").run(source.id);
   if (previous?.content_hash === hash) {
     // Metadata changes do not enqueue extraction or duplicate captured text.
     const version = db.prepare("SELECT payload FROM memory_source_versions WHERE source_id=? AND revision=?").get(source.id,previous.revision);
@@ -77,7 +85,7 @@ export function captureSource(db: DatabaseSync, source: {id: string; threadId: s
   db.exec("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1");
   db.prepare(`INSERT INTO memory_sources VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
     revision=excluded.revision,content_hash=excluded.content_hash,outcome=excluded.outcome,kind=excluded.kind,state=excluded.state,branch_id=excluded.branch_id`)
-    .run(source.id,scope,source.threadId,source.messageId??null,source.turnId??null,revision,hash,source.kind,source.speaker,source.outcome,source.parentId??null,source.excluded?"retired":"active");
+    .run(source.id,scope,source.threadId,source.messageId??null,source.turnId??null,revision,hash,source.kind,source.speaker,source.outcome,source.parentId??null,source.excluded?"retired":state);
   db.prepare("INSERT INTO memory_source_versions VALUES(?,?,?,?,?)").run(source.id,revision,hash,payload,Date.now());
   // the line -> source edge the marker follows when the line is revoked (DESIGN-WRITETIME 2.6)
   if(source.messageId){writeCaptureLineage(db,{threadId:source.threadId,messageId:source.messageId},source.id);
@@ -174,8 +182,88 @@ function answersExportPaste(db: DatabaseSync, threadId: string, message: Message
   return row?.excluded === "export-paste";
 }
 
+/** Missing evidence child index: the parent INSERT's implicit FK lookup cannot be capped in SQL.
+ * Inspect a fixed recent rowid window instead, and leave capture in a durable queue if evidence exists.
+ * Messages remain authoritative; replay reads their current content, so edits/deletions cannot resurrect old text. */
+export const EVIDENCE_FALLBACK_CAP = 128;
+/** Counts only the bounded degraded reads, for the operation-count verification hook. */
+export const evidenceFallbackStats = { lookups: 0, rows: 0 };
+const replayingEvidenceCapture = new WeakMap<DatabaseSync, string>();
+function evidenceCaptureSequence(db: DatabaseSync, source: Parameters<typeof captureSource>[1]): number {
+  const message = source.messageId ? db.prepare("SELECT seq,rowid AS position FROM messages WHERE thread_id=? AND id=?").get(source.threadId, source.messageId) : undefined;
+  return message ? Number(message.seq ?? message.position) : Number.MAX_SAFE_INTEGER;
+}
+function deferEvidenceCapture(db: DatabaseSync, source: Parameters<typeof captureSource>[1]): boolean {
+  const missingIndex = requiredIndexRebuildPending(db, "memory_evidence_source_version");
+  // Keep a conversation ordered across repair and partial replay, including new messages and patches.
+  // Only the entry currently replaying may bypass its own conversation's queue.
+  if (!missingIndex && (replayingEvidenceCapture.get(db) === source.id || !db.prepare(
+    "SELECT 1 FROM memory_capture_deferred WHERE json_extract(source,'$.threadId')=? LIMIT 1").get(source.threadId))) return false;
+  if (missingIndex) {
+    const newest = Number(db.prepare("SELECT max(rowid) AS n FROM memory_evidence").get()?.n ?? 0);
+    const recent = db.prepare("SELECT rowid FROM memory_evidence WHERE rowid>? AND rowid<=? LIMIT ?")
+      .all(Math.max(0, newest - EVIDENCE_FALLBACK_CAP), newest, EVIDENCE_FALLBACK_CAP);
+    evidenceFallbackStats.lookups++;evidenceFallbackStats.rows += recent.length;
+  }
+  db.prepare("INSERT INTO memory_capture_deferred(source_id,source) VALUES(?,?) ON CONFLICT(source_id) DO UPDATE SET source=excluded.source")
+    .run(source.id, JSON.stringify({...(source.messageId ? {id: source.id, threadId: source.threadId, messageId: source.messageId} : source),
+      sequence: evidenceCaptureSequence(db, source)}));
+  return true;
+}
+/** One bounded idle replay, after the required index exists. Messages are re-read rather than replaying obsolete text.
+ * Call only with no live turn: a deferred working settlement then belongs to an interrupted process. */
+export function drainDeferredEvidenceCaptures(db: DatabaseSync): number {
+  if (!enabled(db) || requiredIndexRebuildPending(db, "memory_evidence_source_version")) return 0;
+  // Sequence survives replacement. The queue index delivers just this slice, without probing/sorting the backlog.
+  const rows = db.prepare(`SELECT q.source_id,q.source FROM memory_capture_deferred q
+    ORDER BY json_extract(q.source,'$.threadId'), json_extract(q.source,'$.sequence'), q.source_id LIMIT 16`).all();
+  // Older queues lack sequence metadata. NULL sorts first within each conversation: fill at most this slice,
+  // then re-read in order on the next idle pass. No source is replayed ahead of an unsequenced prompt.
+  const legacy = rows.filter(row => JSON.parse(String(row.source)).sequence === undefined);
+  if (legacy.length) {
+    for (const row of legacy) {
+      const source = JSON.parse(String(row.source)) as Parameters<typeof captureSource>[1];
+      db.prepare("UPDATE memory_capture_deferred SET source=json_set(source,'$.sequence',?) WHERE source_id=?")
+        .run(evidenceCaptureSequence(db, source), row.source_id!);
+    }
+    return 0;
+  }
+  let done = 0;
+  for (const row of rows) {
+    const source = JSON.parse(String(row.source)) as Parameters<typeof captureSource>[1];
+    db.exec("SAVEPOINT evidence_capture_replay");
+    try {
+      replayingEvidenceCapture.set(db, source.id);
+      if (source.messageId) {
+        const message = db.prepare("SELECT rowid AS position,seq,json FROM messages WHERE thread_id=? AND id=?").get(source.threadId, source.messageId);
+        if (message) {
+          // A branch change may have completed while this source was still queued. Judge the CURRENT head before creating it.
+          // An unfinished branch index is unknown: keep this and later entries queued until its sliced fill completes.
+          if (!threadIsReady(db, source.threadId)) {
+            queueFrontFill(db, source.threadId);db.exec("RELEASE evidence_capture_replay");break;
+          }
+          const leaf = db.prepare("SELECT m.rowid AS position FROM thread_state t JOIN messages m ON m.thread_id=t.thread_id AND m.id=t.active_leaf_id WHERE t.thread_id=?").get(source.threadId);
+          const tk = threadKey(db, source.threadId);
+          const state = tk && branchOracle(db, tk, leaf ? Number(leaf.position) : null)(Number(message.position)) ? "active" : "retired";
+          captureMessage(db, source.threadId, rowToMessage({ seq: message.seq as number | null, json: String(message.json) }), state);
+          if (state === "retired") parkRetiredThreadJobs(db, source.threadId, [source.messageId]);
+        }
+      } else {
+        if (source.kind === "turn" && source.outcome === "working") {
+          source.outcome = "interrupted";source.text = "Turn interrupted by process restart.";
+        }
+        captureSource(db, source);
+      }
+      db.prepare("DELETE FROM memory_capture_deferred WHERE source_id=?").run(row.source_id!);
+      db.exec("RELEASE evidence_capture_replay");done++;
+    } catch (error) { db.exec("ROLLBACK TO evidence_capture_replay; RELEASE evidence_capture_replay");throw error; }
+    finally { replayingEvidenceCapture.delete(db); }
+  }
+  return done;
+}
+
 /** Only folded message fields are accepted; raw provider envelopes never enter here. */
-export function captureMessage(db: DatabaseSync, threadId: string, message: Message) {
+export function captureMessage(db: DatabaseSync, threadId: string, message: Message, state: "active" | "retired" = "active") {
   if (!enabled(db)) return;
   // A Murage-voice row (murage-voice.ts) is never a source: no Murage line reaches memory from 1.0.3 on (LINEAGE-DESIGN-S6 rule 22).
   if (isMurageVoice(message)) return;
@@ -213,7 +301,7 @@ export function captureMessage(db: DatabaseSync, threadId: string, message: Mess
     // a reply written after reading mail carries that origin: automatic learning holds it for the owner (5.4)
     ...(message.externalContent==="email"?{externalContent:"email" as const}:{}),
     ...(tool&&!leftOut?{action:{label:message.tool!.name,reportedOutcome:message.tool!.ok?"completed" as const:"failed" as const,detail:message.tool!.errorDetails??message.text,verification:"tool-reported" as const}}:{}),
-    ...(leftOut?{excluded:leftOut}:!userText&&!finalText&&!tool?{excluded:`unsupported-${message.kind}`}:{})});
+    ...(leftOut?{excluded:leftOut}:!userText&&!finalText&&!tool?{excluded:`unsupported-${message.kind}`}:{})}, state);
 }
 
 /** Runs only on an actual branch change, not every ordinary append. `fromLeafId`
@@ -271,18 +359,19 @@ export function captureThreadDeletion(db: DatabaseSync, threadId: string) {
 }
 
 /** Bot notebooks, including every composite partition, share deletion semantics. The commit writes one deny row per scope (every
- * reader refuses its sources and records from here on), the epoch and policy bump and the bindings' revoke; its sources and
- * records are tombstoned, ended and blanked by the durable job's scope phase, then every receipt made before the commit ends. */
+ * reader refuses its sources and records from here on) and revokes the bindings. The background publication fence advances;
+ * foreground watermarks stay current for unrelated readers. The durable scope job blanks the deleted material and ends dependent receipts. */
 export function captureBotDeletion(db: DatabaseSync, botId: string): void {
   const scopes = db.prepare("SELECT id FROM memory_scopes WHERE kind='bot' AND (owner_key=? OR substr(owner_key,1,?)=?)").all(botId,botId.length+1,botId+"#").map(row=>String(row.id));
   if (!scopes.length) return;
   const encoded = JSON.stringify(scopes);
-  db.exec("UPDATE memory_meta SET deletion_epoch=deletion_epoch+1,policy_revision=policy_revision+1 WHERE id=1");
+  // The same conservative background fence as conversation deletion, without invalidating unrelated foreground sends.
+  noteThreadDeletion(db);
   const epoch = Number(db.prepare("SELECT deletion_epoch FROM memory_meta WHERE id=1").get()!.deletion_epoch);
   const deny = db.prepare("INSERT OR IGNORE INTO memory_deny(kind,id,epoch,created_at) VALUES('scope',?,?,?)");
   for (const scope of scopes) deny.run(scope, epoch, Date.now());
   db.prepare("UPDATE memory_scope_bindings SET state='revoked' WHERE scope_id IN (SELECT value FROM json_each(?)) AND NOT (subject_type='system' AND subject_id=?)").run(encoded, REVOCATION_JOB_SUBJECT);
   // write-time: the bot's scopes' records walked by the marker (its conversations are deleted, each its own thread revoke)
   const revokeId = commitRevoke(db, { kind: "bot", botId, threadIds: [], cause: "delete-bot" });
-  applyForgetTombstones(db, { sources: [], records: [] }, { job: { scopes, cause: "bot-deletion", ...(revokeId ? { revokeId } : {}) }, before: ["scope"], tail: "all" });
+  applyForgetTombstones(db, { sources: [], records: [] }, { job: { scopes, cause: "bot-deletion", ...(revokeId ? { revokeId } : {}) }, before: ["scope"] });
 }

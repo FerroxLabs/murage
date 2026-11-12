@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // PATH augmentation for GUI launches — the fix for "CLI not found" when
 // the app is opened from Finder (issues #8, #12).
 //
@@ -356,7 +357,7 @@ function runCapture(shell: string): Promise<{ env: Record<string, string> } | { 
   if (process.platform === "win32") {
     // reached only with a named shell (tests): Windows has no terminal job control, and detached would open a console
     return new Promise((resolve) => {
-      const child = execFile(shell, ["-l", "-i", "-c", script], { timeout: CAPTURE_MS, maxBuffer: CAPTURE_BYTES, encoding: "utf8", env }, (error, stdout) => {
+      const child = execFile(shell, ["-l", "-i", "-c", script], withHideInherit({ timeout: CAPTURE_MS, maxBuffer: CAPTURE_BYTES, encoding: "utf8", env }), (error, stdout) => {
         if (error) return resolve({ cause: error.killed ? "it took too long" : `the shell exited with ${String((error as { code?: unknown }).code ?? "an error")}` });
         const read = readCapture(stdout, mark);
         resolve(read ? { env: read } : { cause: "its output could not be read whole" });
@@ -387,7 +388,7 @@ function runCapture(shell: string): Promise<{ env: Record<string, string> } | { 
     };
     const timer = setTimeout(() => { killGroup(); settle({ cause: "it took too long" }); }, CAPTURE_MS);
     try {
-      child = spawn(shell, ["-l", "-i", "-c", script], { detached: true, stdio: ["ignore", "pipe", "pipe"], env });
+      child = spawn(shell, ["-l", "-i", "-c", script], withHideInherit({ detached: true, stdio: ["ignore", "pipe", "pipe"], env }));
     } catch (error) {
       settle({ cause: `the shell exited with ${String((error as { code?: unknown }).code ?? "an error")}` });
       return;
@@ -871,9 +872,9 @@ function fuigoVersion(binary: string): number[] | null {
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
     // An engine probe (Rule 74c launch clause): posix, a session of its own, so neither the binary nor a descendant has
     // a controlling terminal; win32, a hidden console, never detached. stdin is a pipe closed at once.
-    const result = spawnSync(absolute, ["--version"], {
+    const result = spawnSync(absolute, ["--version"], withHideInherit({
       env, encoding: "utf8", timeout: 3000, windowsHide: true, maxBuffer: 16 * 1024, input: "", stdio: ["pipe", "pipe", "pipe"], ...(process.platform === "win32" ? {} : { detached: true }),
-    });
+    }));
     const match = !result.error && result.status === 0
       ? /\bfuigo\s+(\d+)\.(\d+)\.(\d+)\b/i.exec(`${result.stdout}\n${result.stderr}`)
       : null;

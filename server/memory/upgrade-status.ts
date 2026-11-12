@@ -14,7 +14,7 @@ import { isDiskFullError, MemoryMigrationError, type MemoryMigrationPhase } from
 import type { StartupStorageEvent } from "./root-set-compaction.ts";
 import type { RevocationIndexEvent } from "./revocation-index.ts";
 import { startBlockingHeartbeat, type BlockingHeartbeat, type BlockingStep } from "./blocking-heartbeat.ts";
-import { blockedUpgradeState, startingUnknownState, type UpgradeProgress, type UpgradeProgressTracker } from "./upgrade-progress.ts";
+import { blockedUpgradeState, nextUpgradeSeq, startingUnknownState, type UpgradeProgress, type UpgradeProgressTracker } from "./upgrade-progress.ts";
 import type { UpgradeState } from "../../shared/upgrade-contract.mjs";
 import type { ProgressBoard } from "./upgrade-health.ts";
 
@@ -107,9 +107,9 @@ export function memoryUpgradeReporter(dataDir: string, partialNameOf: (path: str
     },
     /** A stretch of the upgrade whose statements cannot report (they block the server thread): the note is kept moving by a heartbeat
      * thread until `end()`. */
-    blocking(first: BlockingStep, from?: number, intervalMs?: number, phase = "migrating"): BlockingHeartbeat {
+    blocking(first: BlockingStep, from?: number, intervalMs?: number, phase = "migrating", contractPhase?: "indexing"): BlockingHeartbeat {
       const base = { v: 1, state: "upgrading", phase, ...(from !== undefined ? { from } : {}), pid: process.pid, startedAt };
-      const beat = startBlockingHeartbeat(join(dataDir, MEMORY_UPGRADE_STATUS_FILE), base, first, intervalMs, 0, board?.shared, board?.counts);
+      const beat = startBlockingHeartbeat(join(dataDir, MEMORY_UPGRADE_STATUS_FILE), base, first, intervalMs, 0, board?.shared, board?.counts, contractPhase, contractPhase ? nextUpgradeSeq() : undefined);
       const order = ["tables", "indexes", "backfill", "validating", "committing"];
       const move = (step: BlockingStep) => { tracker?.update("migrating", Math.max(0, order.indexOf(step)), order.length); publish(); };
       move(first);

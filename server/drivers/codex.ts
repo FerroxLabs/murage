@@ -1,3 +1,18 @@
+import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
+import { guardEngineRelease, nativeReleaseHeld } from '../decision/provider-release.ts';
+import { deliverNative, type NativeAskSlot, type AskMode } from './native-ask.ts';
+import { recordPostureAck } from './posture-tap.ts';
+import { RequestTransport } from './request-transport.ts';
+import { PostureBarrier, POSTURE_CONTINUATION } from "./posture-barrier.ts";
+import { withRequestDelivery } from "./request-delivery.ts";
+import { approvalDecision } from "../approval-decision.ts";
+import { HOOK_CHECK_DENIED, checkHookCanon, checkAllHookCanon, ownHookCanon, releaseHookCanon } from "../hook-safety.ts";
+import { HelperReadEvidence } from './helper-read-evidence.ts';
+import { complete_flag } from '../turn-settle.ts';
+import { NotModelRequest } from "../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite, fluxRouteFor, registerBusyloopRequestSite } from "../../shared/flux-route.ts";
+import { gatewayBusyLine } from "../limit-continuation.ts";
+import { isTerminal as isFluxTerminal } from "../../shared/flux-busyloop.ts";
 import { recordOutsideInstallChange } from "../outside-wire.ts";
 import { cliFluxBudget } from "./cli-flux-budget.ts";
 import { nativeTurnModel } from "../default-engine.ts";
@@ -5,6 +20,7 @@ import { cloudTurnBot, cloudTurnEnvironment, cloudTurnRender, cloudTurnRenderCon
 import { botFolderOrThrow } from "../bot-folder.ts";
 import { queryCloudBotState, type CloudLauncherSpawn } from "../cloud-home/bot-state.ts";
 import { cloudMcpStanza } from "../cloud-home/engine-render.ts";
+import { cloudEngineSignedInSomewhere } from "../cloud-home/signin-status.ts";
 import { CODEX_TOOL_SURFACE, renderMurageTurn } from "../murage-tool-surface.ts";
 import { notePromptSent } from "../turn-hold.ts";
 import { markTurnOutside } from "../email/external-marks.ts";
@@ -100,6 +116,8 @@ import { CODEX_BUILTIN_COMMANDS, normalizeEngineCommands } from "../engine-comma
 import { engineClosedLine, plainDuration } from "./stop-copy.ts";
 import { createStopGate, GateStopped, type Classify, type GateEntry } from "./stop-gate.ts";
 import { providerCloseDeadlineMs } from "./child-teardown.ts";
+import { cloudHomeCopy } from "../cloud-home/copy.ts";
+import { assertFinalEngineEnv, assertNoFluxInSignInArgs, scrubFluxFromSignInEnv } from "../cloud-home/engine-flux-guard.ts";
 import { boundedToolInput, codexApprovalText } from "../approval-text.ts";
 import { EngineStderrCapture } from "./acp/core.ts";
 import { backgroundCapNote, backgroundWaitCapMs, SubtaskTracker } from "../subtasks.ts";
@@ -148,7 +166,8 @@ type AskFinish = ((
   answers?: QuestionAnswer[],
   /** Rule 72 / 73d: the verdict's narrowing denial (`source: "narrow"`) or its narrowed call (`updatedInput`). */
   extra?: { source?: unknown; updatedInput?: unknown },
-) => void) & {
+  mode?: AskMode,
+) => Promise<boolean>) & {
   /** A hook ask's identity for the one 3-strike counter of narrowing denials (server/narrow-denials.ts). */
   narrowKey?: { tool: string; text: string };
 };
@@ -194,6 +213,7 @@ interface Retained {
   detachIdle: () => void;
   /** The Rule 68 socket of this process, live as long as the process is. */
   hookGate?: CodexHookGate;
+  hookToken?: string;
   /** The Rule 74 map this process was handed, with the shell form its checks run. */
   handed?: HandedEnv;
   /** The SessionStart proof of this process (Rule 68c): carried to the next turn while valid under the same hook configuration;
@@ -277,11 +297,12 @@ export const CODEX_MURAGE_MCP_STARTUP_TIMEOUT_SEC = 20;
 const MCP_ENV_LAUNCHER_MARK = "murage-env-launch";
 /** Runs as `node -e`: restores each aliased variable under the server's own name for the real command, then runs it. */
 const MCP_ENV_LAUNCHER = [
+  windowsHidePrelude,
   'const cp=require("node:child_process");const a=process.argv;const i=a.indexOf("murage-env-launch");',
   'const map=JSON.parse(a[i+1]);const cmd=a[i+2];const args=a.slice(i+3);const env={...process.env};delete env.ELECTRON_RUN_AS_NODE;',
   'for(const[k,v]of Object.entries(map)){env[k]=env[v];delete env[v];}',
   'const q=(x)=>\'"\'+String(x).replace(/"/g,\'\\\\"\')+\'"\';',
-  'const run=(sh)=>{const c=sh?cp.spawn([cmd,...args].map(q).join(" "),{stdio:"inherit",env,shell:true}):cp.spawn(cmd,args,{stdio:"inherit",env});',
+  'const run=(sh)=>{const c=sh?cp.spawn([cmd,...args].map(q).join(" "),withHideInherit({stdio:"inherit",env,shell:true})):cp.spawn(cmd,args,withHideInherit({stdio:"inherit",env}));',
   'c.on("error",(e)=>{if(!sh&&process.platform==="win32"&&e.code==="ENOENT")return run(true);console.error(e.message);process.exit(127);});',
   'c.on("exit",(code,sig)=>process.exit(code??(sig?1:0)));',
   'for(const s of["SIGTERM","SIGINT"])process.on(s,()=>c.kill(s));};run(false);',
@@ -323,6 +344,8 @@ function mountMcpServer(
     aliases[key] = alias;
   }
   const wrapped = Object.keys(aliases).length > 0;
+  // Use the packaged GUI-subsystem executable in node mode on Windows; a
+  // separate console node.exe would itself flash before the hidden child runs.
   appServerArgs.push(
     "-c", `${prefix}.command=${JSON.stringify(wrapped ? process.execPath : server.command)}`,
     "-c", `${prefix}.args=${JSON.stringify(wrapped ? ["-e", MCP_ENV_LAUNCHER, MCP_ENV_LAUNCHER_MARK, JSON.stringify(aliases), server.command, ...server.args] : server.args)}`,
@@ -509,6 +532,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       }
     };
     await refreshModels();
+    const answerTransport = new RequestTransport();
     const listeners = new Set<RuntimeEventListener>();
     interface Turn {
       /** "asked": interruptTurn, stopAll, a takeover: the turn ends as Stop. "closing": dispose (quit, restart, reload): the
@@ -516,6 +540,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       stop: (why: "asked" | "closing") => Promise<boolean>;
       turnId: string;
       asks: Map<string, AskFinish>;
+      onPostureChange?: () => Promise<void>;
     }
     const active = new Map<string, Turn>();
     // Rule 72: the one counter of narrowing denials; Rule 67: the incident line the bot's next Codex turn carries.
@@ -607,10 +632,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // The connection's one splitter now feeds this handler.
       r.conn.onLine = (line) => {
         let msg: any;
-        try { msg = JSON.parse(line); } catch { return; }
+        try { msg = registerBusyloopPayloadSite("read", JSON.parse(line)); } catch { return; }
         if (msg?.id === undefined || typeof msg.method !== "string") return;
         try {
-          r.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, ...idleRefusal(msg.method) }) + "\n");
+          NotModelRequest("Codex initialization, thread setup, skills catalog, interrupt or permission reply; no turn/start is submitted", r.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: msg.id, ...idleRefusal(msg.method) }) + "\n"));
         } catch {}
         void closeRetained(threadId, "permission ask while idle", r);
       };
@@ -645,8 +670,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     });
     /** STOP-NONACP-DISPOSE: the one stop gate. Every turn ends only through `entry.finish` and starts only through `entry.markStarted`. */
     const gate = createStopGate({ engineName: ENGINE, emit: (event) => emit(event as unknown as RuntimeEvent), base });
-    /** sendTurn has no verdict-catch of its own: a launch error with no mark stays an error. */
-    const classifyTurn: Classify = () => null;
+    /** sendTurn has no verdict-catch of its own: a launch error with no mark stays an error, except Cloud's final-boundary Flux refusal,
+     *  which is customer copy and ends the turn as itself (the gate still lets an asked Stop or a dispose win). */
+    const classifyTurn: Classify = (error) =>
+      error instanceof Error && error.message === cloudHomeCopy.signInEnginesNoFlux ? { ok: false, stopReason: "rpc_error", error: error.message } : null;
 
     const backgroundThreads = new Set<string>();
     /** The spawn inputs of each thread's last user turn, memory only (never written to
@@ -743,11 +770,22 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
 
       // Murage's Full access still stops before deleting outside its folder, paying and messaging someone
       // new (see the approval notes below): under it a fullAuto instance asks (`untrusted`).
-      const enforceApproval = turn.stopLine === true || (turn.routeAsks === true && config.fullAuto);
-      // One policy for thread/start, thread/resume and the Cloud render of a resumed thread.
+      const approvalNow = () => { const level = turn.permissionNow?.() ?? turn; return level.stopLine === true || (level.routeAsks === true && config.fullAuto); };
+      // Local start/resume share the current policy; Cloud retains the RC policy below No limits.
+      const policy = () => codexTurnPolicy(codexVersion || undefined, { proposalOnly: turn.proposalOnly === true, fullAuto: config.fullAuto, noLimits: (turn.permissionNow?.() ?? turn).noLimits === true, enforceApproval: approvalNow() });
       const codexPolicy: CloudCodexPolicy = {
-        approval: enforceApproval ? "untrusted" : config.fullAuto ? "never" : "on-request",
-        sandbox: turn.proposalOnly ? "read-only" : config.fullAuto ? "danger-full-access" : "workspace-write",
+        get approval() {
+          if((turn.permissionNow?.()??turn).noLimits!==true)return approvalNow()?"untrusted":config.fullAuto?"never":"on-request";
+          const value = policy().approvalPolicy;
+          if (value === "onRequest") return "on-request";
+          if (value === "untrusted" || value === "on-request" || value === "never") return value;
+          throw new Error(`Unsupported Codex approval policy: ${value}`);
+        },
+        get sandbox() {
+          const value = policy().sandbox.replace(/[A-Z]/g, char => `-${char.toLowerCase()}`);
+          if (value === "read-only" || value === "workspace-write" || value === "danger-full-access") return value;
+          throw new Error(`Unsupported Codex sandbox policy: ${value}`);
+        },
       };
       // B13: a slow hook handshake gets ONE relaunch of the app-server; a second slow one ends the turn with a clear line, so the
       // whole wait stays near 2 minutes (two 60 s handshake deadlines and one backoff), never three.
@@ -831,7 +869,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // three provider tables declared once in argv (flux-routing.ts), so the
         // shared app-server is never recycled for an audience change; the warm
         // key below carries the choice so a change still re-evaluates the thread.
-        const budgetRoute = turn.providerRoute ? (turn.providerRoute.preset === "flux" ? { key: turn.providerRoute.apiKey, baseUrl: turn.providerRoute.baseUrl } : null) : flux?.applied ? { key: env[FLUX_CODEX_ENV_KEY] ?? "", baseUrl: FLUX_RESPONSES_BASE } : null;
+        const requestUrl = turn.providerRoute?.baseUrl ?? (flux?.applied ? FLUX_RESPONSES_BASE : env.OPENAI_BASE_URL);
+        const budgetRoute = fluxRouteFor(requestUrl).routed ? { key: turn.providerRoute?.apiKey ?? env[FLUX_CODEX_ENV_KEY] ?? "", baseUrl: requestUrl! } : null;
         const fluxMemory = fluxMemoryDecision(fluxMemoryContextForTurn(turn));
         const fluxProvider = codexFluxProviderFor(fluxMemory);
         const providerBinding = turn.providerRoute ? applyProviderRoute(DRIVER_KIND, env, turn.providerRoute) : null;
@@ -877,11 +916,17 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // floor, exactly as the spec says to. Only set for a Flux turn.
           ...(flux?.applied ? ["-c", `model_context_window=${FLUX_CONTEXT_FLOOR}`] : []),
           ...CODEX_TOOL_SURFACE_ARGS,
+          // Codex exposes search and page-open as one native tool. With the
+          // Murage mount, use web_search for snippets and web_read for pages.
+          ...(turn.integrations?.agents ? ["-c", 'web_search="disabled"'] : []),
           // Codex's own memories (distilled from past sessions into ~/.codex/memories) cross bots and
           // people; what a bot remembers is Murage's to fence.
           "-c", "features.memories=false",
           ...(turn.proposalOnly ? CODEX_PROPOSAL_ARGS : []),
         ];
+        // Cloud home: Codex runs only on the ChatGPT sign-in. No Flux key or address in its env or config args.
+        scrubFluxFromSignInEnv(DRIVER_KIND, env);
+        assertNoFluxInSignInArgs(DRIVER_KIND, appServerArgs);
         // Servers are collected first: per-turn secrets leave their env for the
         // process's credential file before anything reaches argv or env.
         const mounts: Array<{ name: string; server: StdioMcpServer; preApproved: boolean; mountId: string }> = [];
@@ -933,6 +978,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         // native HighLevel (HL-S2): pre-approved (OWN_UNASKED); the host grant and Murage's own review card are the gate.
         if (turn.integrations?.highlevel) {
+          // All family tools reach the host; only it may authorize an operation or send reviewed values.
           mount("highlevel", turn.integrations.highlevel, true, "own:highlevel");
         }
         // A custom server named like one in the owner's own config.toml would
@@ -1239,9 +1285,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         const spawnArgs = cred ? bindCredentialPathInArgs(appServerArgs, cred.path) : appServerArgs;
         // Rule 68: one socket per app-server process; the files of the gate are written into the scope for every gated turn (hooks.json
-        // never changes, so its trust holds; the env file carries this turn's token).
+        // never changes, so its trust holds; the env file carries this process's token).
         const gated = gatePlan.mode === "gated" && scopedHome !== null; // a gated plan always has its scope (thrown above otherwise)
-        const hookToken = newHookToken();
+        const hookToken = reuse?.hookToken ?? newHookToken();
+        let hookGeneration: number | undefined;
         let hookGate: CodexHookGate | undefined = reuse?.hookGate;
         if (gated && !sweptScopes.has(scopedHome!)) { sweptScopes.add(scopedHome!); sweepHookEnv(scopedHome!); }
         if (gated && !hookGate) {
@@ -1251,9 +1298,24 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         // STOP-NONACP: a Stop that landed while the hook gate was listening (or during a relaunch's setup awaits) spawns nothing
         if (stopRequested) { if (!reuse) { hookGate?.close(); hookGate?.release(); } endStoppedLaunch(); return; }
-        // 03-1: this process's own env file, named in its environment; a reused process rewrites only its own
-        const hookFiles = gated && hookGate ? writeHookFiles(scopedHome!, hookGate.path, hookToken, hookGate.envPath!) : null;
-        if (hookFiles && !reuse) env[HOOK_ENV_VAR] = hookFiles.envFile;
+        // The process's env bytes and expected hash stay fixed across kept turns; each turn rechecks its own
+        let hookFiles: ReturnType<typeof writeHookFiles> | null;
+        try {
+          hookFiles = gated && hookGate ? writeHookFiles(scopedHome!, hookGate.path, hookToken, hookGate.envPath!, undefined, hookGate.canon) : null;
+        } catch (error) {
+          hookGate?.disarm();
+          if (reuse) { reuse.proof?.void(); await gate.step(entry, closeProcess(reuse, threadId, "hook repair failed")); }
+          else { hookGate?.close(); hookGate?.release(); cred?.dispose(); }
+          if (error instanceof ScopeUnavailableError) {
+            if (active.get(threadId) === slot) active.delete(threadId);
+            entry.finish({ ok: false, stopReason: "scope_unavailable", error: { message: error.message, localFailure: scopeLocalFailureOf(error), ...(error.engine ? { localFailureEngine: error.engine } : {}) } });
+            endPrewarm(); forgetPrewarm();
+            return;
+          }
+          throw error;
+        }
+        if (hookFiles && hookGate) { const old = hookGate.canon; hookGate.canon = hookFiles.canon; if (old !== hookFiles.canon) releaseHookCanon(old); }
+        if (hookFiles && !reuse) { env[HOOK_ENV_VAR] = hookFiles.envFile; env.MURAGE_CODEX_HOOK_ENV_SHA256 = hookFiles.envHash; }
         // HOOK-LIVENESS-COLD-START: the runtime's first start runs beside Codex's own start and handshake; turn/start waits for it
         if (hookFiles) void warmHookRunner();
         // Windows: the hooks.json command is `<system cmd.exe> /d /v:off /c %MURAGE_CODEX_HOOK%` (codex-hook.ts), the same in cmd and
@@ -1279,6 +1341,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // digest), so its PATH is noted for this thread as a spawn's is
           if (reuse) { child = reuse.child; noteEnginePath(threadId, enginePathFromEnv(env)); }
           else {
+            // Final boundary (B4 hole 6): MCP mounting copied server env into `env`; refuse a Flux key now, not before.
+            assertFinalEngineEnv(DRIVER_KIND, env, spawnArgs);
             const launchCli = engineLaunchFile(config.cli, launchPath);
             // STOP-NONACP-DISPOSE R3: the gate is read in the same tick as the spawn; the entry is live from here
             child = gate.launch(entry, () => spawnCli(launchCli, spawnArgs, {
@@ -1310,7 +1374,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             ? { subjectKey: `codex:${instanceId}:${turn.warmIdentity?.botId ?? "owner"}`, credentialRevision: digest({ home: env.CODEX_HOME ?? null }).slice(0, 16) }
             : null;
           const account = new CodexAccountChannel({
-            write: (line) => { child.stdin.write(line); },
+            write: (line) => { NotModelRequest("CodexAccountChannel account and plan-usage queries; no turn is started", child.stdin.write(line)); },
             binding: planBinding,
             leanRead: codexPlanUsageLeanRead(codexVersion || undefined),
           });
@@ -1350,10 +1414,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // Sub agents (Codex "collab" tool calls) are other threads on this
       // app-server. They keep running, and keep asking, after the parent's
       // turn/completed, so the turn is held until they finish.
+      const helperReads = new HelperReadEvidence();
       const helpers = {
         tracker: new SubtaskTracker(),
         open: new Set<string>(),
         tools: new Map<string, number>(),
+        turns: new Map<string, string>(),
         holding: false,
         woken: false,
         cap: undefined as ReturnType<typeof setTimeout> | undefined,
@@ -1392,12 +1458,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       let earlyToolActivity = false;
       const rpcPending = new Map<number, { resolve: (v: any) => void; reject: (e: Error) => void }>();
 
-      const send = (obj: unknown) => {
+      const send = (obj: unknown): Promise<boolean> => {
         const line = JSON.stringify(obj);
-        try {
-          child.stdin.write(line + "\n");
-        } catch {}
-        appendNative(threadId, { dir: "out", source: "codex.app-server", msg: obj }, { rawChars: line.length });
+        appendNative(threadId, { dir: 'out', source: 'codex.app-server', msg: obj }, { rawChars: line.length });
+        return new Promise(resolve => {
+          try { registerBusyloopRequestSite(fluxRouteFor(requestUrl), child.stdin.write(line + '\n', error => resolve(!error))); }
+          catch { resolve(false); }
+        });
       };
       const request = (method: string, params: unknown, timeoutMs = 60_000, onResult?: (v: any) => void) =>
         new Promise<any>((resolve, reject) => {
@@ -1427,7 +1494,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               reject(e);
             },
           });
-          send({ jsonrpc: "2.0", id, method, params });
+          registerBusyloopRequestSite(fluxRouteFor(requestUrl), send({ jsonrpc: "2.0", id, method, params }));
         });
 
       let stopping: Promise<boolean> | undefined;
@@ -1452,7 +1519,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // Astra r2 #1: the turn's authority is revoked before the kill is awaited, so a held or failed kill leaves no allow path. The hook
         // gate is disarmed (a decision still in flight replies deny, a new delivery is refused), every open ask is denied, and approval
         // requests that arrive from here on are refused (handleServerRequest reads stopRequested).
-        hookGate?.disarm(hookToken);
+        hookGate?.disarm(hookGeneration);
         for (const finish of [...asks.values()]) finish("deny", "Murage: the turn ended", "system");
         const stopped = await gate.cleanupStep(entry, terminate());
         // CLOSE-STOP-1014: on Windows the empty job confirms the tree gone before the root's close lands, and the close handler is
@@ -1470,7 +1537,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // CLOSE-STOP-1014: a stop-caused end is the owner's Stop only when someone asked (stopAsked); a stop only dispose made is the
       // engine closing, ended as ACP ends it: one engine-closed error, then ok:false "exit_before_result".
       const stopEnd = (): [boolean, string] => stopAsked ? [true, "cancelled"] : [false, "exit_before_result"];
-      const settle = async (ok: boolean, stopReason: string | null): Promise<void> => {
+      const settle = async (ok: boolean, stopReason: string | null, terminalSite?: "turn_completed" | "held_done"): Promise<void> => {
         if (state.settled) return;
         settleEntered = true;
         if (stopWins(stopReason)) [ok, stopReason] = stopEnd();
@@ -1485,6 +1552,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           if (stopWins(stopReason)) [ok, stopReason] = stopEnd();
           else if (!live) return;
         }
+        // Capture before cleanup calls stop(); disposal is not a user interruption.
+        const readsComplete = terminalSite !== undefined && complete_flag('codex', { site: terminalSite, stop_requested: stopRequested, helpers_ever_held: helpers.holding }, new Set(['codex-helpers']));
+        const helperRow = terminalSite === 'held_done' ? helperReads.terminal('codex-helpers', terminalSite, stopRequested) : undefined;
         state.settled = true;
         // the one engine-closed line of a turn only dispose stopped is the gate's: finish emits it with the turn's end
         if (accepted) reuseStats.settled({ threadId, background: turn.background === true });
@@ -1493,7 +1563,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         for (const subtask of helpers.tracker.endAll(false)) emit({ ...base(threadId, turnId), type: "turn.subtask", subtask, subtasks: helpers.tracker.snapshot() });
         earlyNotifications.length = 0;
         earlyNotificationBytes = 0;
-        hookGate?.disarm(hookToken);
+        hookGate?.disarm(hookGeneration);
         narrowDenials.endTurn(turnId);
         const approvalsOpen = asks.size;
         for (const finish of [...asks.values()]) finish("deny", "Murage: the turn ended", "system");
@@ -1521,6 +1591,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // a refusal, a gate incident and a shutdown that did not confirm are the turn's own end under any Stop (Verdict.final)
           entry.finish({
             ok,
+            ...(readsComplete ? { readsComplete: true as const } : {}),
+            ...(helperRow ? { helperRow } : {}),
             stopReason: stopReason ?? "",
             ...(incidentRaised || refusal.refused || stopReason === "shutdown_timeout" ? { final: true as const } : {}),
             extra: { ...(stopReason === null ? { stopReason: null } : {}), ...(state.usage ? { usage: state.usage } : {}) },
@@ -1567,7 +1639,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const kept: Retained = {
           child, warm, cred, conn, codexThreadId: codexThreadId!, closing: false, bot: turn.warmIdentity?.botId ?? null,
           detachIdle: () => {},
-          ...(hookGate ? { hookGate } : {}), handed, ...(proof ? { proof } : {}),
+          ...(hookGate ? { hookGate, hookToken } : {}), handed, ...(proof ? { proof } : {}),
         };
         if (turn.prewarm) { kept.spare = startingSpares.get(threadId); kept.spare?.parked(); }
         attachIdle(threadId, kept);
@@ -1615,14 +1687,47 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const fileChangePaths = new Map<string, string[]>();
       // and what each one changes, so its approval can be judged whole
       const fileChangeItems = new Map<string, unknown>();
-      const autoAccept = config.fullAuto && !enforceApproval;
+      const autoAccept = () => config.fullAuto && !approvalNow();
       // Spelled for the installed Codex (0.56..0.66 take camelCase), read when the request is written: the
       // version is probed inside launchAttempt, after this line runs. An unprobed version gets the current spelling.
-      const policy = () => codexTurnPolicy(codexVersion || undefined, { proposalOnly: turn.proposalOnly === true, fullAuto: config.fullAuto, enforceApproval });
+      const postureBarrier = new PostureBarrier();
+      let appliedPolicy = policy();
+      let switchingPosture = false;
+      let waitingPostureBoundary = false;
+      const onPostureChange = async () => {
+        if (state.settled || stopRequested || JSON.stringify(appliedPolicy) === JSON.stringify(policy())) return;
+        waitingPostureBoundary = true;
+        await postureBarrier.change(async () => {
+          if (state.settled || stopRequested || !codexThreadId || !codexTurnId) return;
+          switchingPosture = true;
+          waitingPostureBoundary = false;
+          try {
+            await request("turn/interrupt", { threadId: codexThreadId, turnId: codexTurnId }, 3_000);
+            for (const finish of [...asks.values()]) finish("deny", "Continued at the new level", "system", undefined, undefined, "retire");
+            const next = policy();
+            turn.beforeSubmit?.();
+            codexTurnId = null; awaitingTurnStart = true;
+            await request("turn/start", { threadId: codexThreadId, ...next,
+              input: [{ type: "text", text: POSTURE_CONTINUATION }] }, turnStartTimeoutMs(), started => {
+              if (!started?.turn?.id) throw new Error("Codex did not acknowledge the changed permission level.");
+              codexTurnId = started.turn.id; awaitingTurnStart = false;
+              appliedPolicy = next; switchingPosture = false;
+              recordPostureAck('codex', instanceId, threadId, turnId, turn.permissionNow?.() ?? turn, 'turn/start');
+              const buffered = earlyNotifications.splice(0); earlyNotificationBytes = 0;
+              for (const notification of buffered) {
+                if (abandoned || state.settled) break;
+                handleNotification(notification);
+              }
+            });
+          } finally { switchingPosture = false; }
+        });
+      };
       // ---- Rules 67 and 68: the PreToolUse gate -----------------------------------------------------------------------------------
       // A hook delivery becomes an ordinary ask through the same request.opened path the approval requests use; Murage's answer goes
       // back to the script as allow or deny. The table of what was answered is what the tripwire and the approval path read.
       const hookTable = new HookDecisionTable();
+      const hookReleases = new Map<string,string>();
+      const releaseAllowed=(requestId:string,updatedInput?:unknown,replay?:{tool:string;input:unknown}) => (turn.permissionNow?.()??turn).noLimits!==true || answerTransport.guardRelease(threadId,requestId,()=>guardEngineRelease({threadId,turnId,requestId,providerInstanceId:instanceId},updatedInput,replay));
       // Rules 67 and 68c: this turn's one refusal state (turn-refusal.ts). A kept process's valid proof under the same hook
       // configuration starts it proven; every allow, card answer and clean end below asks it first.
       const refusal = new TurnRefusal({ ...(proof ? { proof } : {}), ...(gated ? { hookConfig: hookConfigOf(scopedHome!) } : {}) });
@@ -1643,7 +1748,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const refused = new ScopeUnavailableError(refusal.cause!, false, { engine: ENGINE });
         if (!state.settled && !abandoned) emit({ ...base(threadId, turnId), type: "runtime.error", message: refused.message, localFailure: scopeLocalFailureOf(refused), localFailureEngine: ENGINE });
         void (async () => {
-          if (codexThreadId && codexTurnId) await request("turn/interrupt", { threadId: codexThreadId, turnId: codexTurnId }, 3_000).catch(() => {});
+          if (codexThreadId && codexTurnId) await NotModelRequest("Codex initialization, thread setup, skills catalog, interrupt or permission reply; no turn/start is submitted", request("turn/interrupt", { threadId: codexThreadId, turnId: codexTurnId }, 3_000)).catch(() => {});
           if (state.settled || abandoned) return;
           await settle(false, "scope_unavailable");
         })();
@@ -1670,16 +1775,23 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const execEnv = route.tool === "shell" ? await execEnvNow(threadId, shellForm, handed, askCwd) : execEnvHanded(handed, askCwd, shellForm);
         const toolInput = delivery.tool_input !== null && typeof delivery.tool_input === "object" && route.tool !== "shell" && route.tool !== "edit" ? boundedToolInput(delivery.tool_input) : undefined;
         return new Promise<HookAnswer>((resolveAnswer) => {
-          const finish: AskFinish = (behavior, message, source = "user", _answers, extra) => {
+          const slot: NativeAskSlot = { closed: false };
+          const finish: AskFinish = (behavior, message, source = "user", _answers, extra, mode = source === 'user' ? 'answer' : 'retire') => {
             behavior = refusal.verdict(behavior);
-            if (!asks.delete(requestId)) return;
-            askClosed();
-            timer.clear();
             const rewritten = extra?.updatedInput && typeof extra.updatedInput === "object" && !Array.isArray(extra.updatedInput) ? (extra.updatedInput as Record<string, unknown>) : undefined;
-            resolveAnswer(behavior === "allow"
-              ? refusal.allow({ decision: "allow", ...(rewritten ? { updatedInput: rewritten } : {}) })
-              : { decision: "deny", reason: (refusal.cause ?? message?.trim()) || "Murage did not allow this call" });
-            emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior, source });
+            const response = behavior === 'allow'
+              ? refusal.allow({ decision: 'allow' as const, ...(rewritten ? { updatedInput: rewritten } : {}) })
+              : { decision: 'deny' as const, reason: (refusal.cause ?? message?.trim()) || 'Murage did not allow this call' };
+            // The hook resolves once; a failed onTransport means its connection is gone.
+            return deliverNative(slot, mode, JSON.stringify(response), () => new Promise<boolean>(resolve => {
+              resolveAnswer({ ...response, onTransport: resolve });
+            }), () => false, accepted => {
+              if(accepted&&behavior==='allow'&&typeof delivery.tool_use_id==='string')hookReleases.set(delivery.tool_use_id,requestId);
+              asks.delete(requestId); askClosed(); timer.clear();
+              answerTransport.confirm(threadId, requestId, Promise.resolve(accepted));
+              emit({ ...base(threadId, turnId), type: 'request.resolved', requestId,
+                behavior: accepted ? behavior : 'deny', source: accepted ? source : 'unavailable' });
+            }, () => behavior!=='allow'||releaseAllowed(requestId,rewritten));
           };
           finish.narrowKey = { tool: route.tool, text: JSON.stringify(route.toolCall.input ?? route.summary) };
           // The hook's own timeout is the ask bound plus 30 s and the script gives up at the bound: a card cannot outlive the hook.
@@ -1690,6 +1802,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           emit({
             ...base(threadId, turnId),
             type: "request.opened",
+            executionCwd: turn.cwd,
             requestId,
             toolEngine: "codex" as const,
             ...(mcpMountRecords ? { mcpMounts: mcpMountRecords } : {}),
@@ -1708,8 +1821,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         });
       };
       const onPreTool = async (delivery: HookDelivery): Promise<HookAnswer> => {
+        if (!refusal.refused && !checkHookCanon(hookGate?.canon, "V-C2", ENGINE)) return { decision: "deny", reason: HOOK_CHECK_DENIED };
         // Rule 68c: no call is answered before the SessionStart proof, and none after a refusal; unproven, it is denied and the turn is refused.
-        const proven = !refusal.refused && (refusal.hookLive || await proveLiveness());
+        const proven = !refusal.refused && checkHookCanon(hookGate?.canon, "V-C2", ENGINE) && (refusal.hookLive || await proveLiveness());
         const toolUseId = typeof delivery.tool_use_id === "string" ? delivery.tool_use_id : "";
         const hookTurnId = typeof delivery.turn_id === "string" ? delivery.turn_id : undefined;
         const name = typeof delivery.tool_name === "string" ? delivery.tool_name : undefined;
@@ -1717,7 +1831,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           hookTable.record({ toolUseId, ...(hookTurnId ? { turnId: hookTurnId } : {}), decision: "deny", final: true, ...(name ? { name } : {}) });
           return { decision: "deny", reason: refusal.cause ?? `${ENGINE}'s pre-execution hook did not start.` };
         }
-        const route = routeDelivery(delivery, { mounts: mcpMountRecords, project: botFolderOrThrow(turn) });
+        if (hookTurnId && codexTurnId && hookTurnId !== codexTurnId && ![...helpers.turns.values()].includes(hookTurnId)) {
+          hookTable.record({ toolUseId, turnId: hookTurnId, decision: "deny", final: true, ...(name ? { name } : {}) });
+          return { decision: "deny", reason: "a delivery from an earlier turn" };
+        }
+        const route = routeDelivery(delivery, { mounts: mcpMountRecords, project: botFolderOrThrow(turn), noLimits: (turn.permissionNow?.() ?? turn).noLimits });
         const issue = (decision: "allow" | "deny", final: boolean, more: { command?: string; cwd?: string; destinations?: string[] } = {}) =>
           hookTable.record({ toolUseId, ...(hookTurnId ? { turnId: hookTurnId } : {}), decision, final, ...(name ? { name } : {}), ...more });
         if (route.route === "deny") { issue("deny", true); return { decision: "deny", reason: route.reason }; }
@@ -1738,10 +1856,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       };
       /** Rule 67: Codex ran a call no allowing hook decision covers. The turn is stopped, the line is shown and carried to the next turn. */
       let incidentRaised = false;
-      const incident = (command: string) => {
+      const incident = (command: string, repair = false) => {
+        if (!repair && approvalDecision(threadId, "shell", {command}, true).verdict === "run") return;
         if (state.settled || incidentRaised) return;
         incidentRaised = true;
-        const line = tripwireLine(command);
+        const line = repair ? HOOK_CHECK_DENIED : tripwireLine(command);
         // the turn is refused with the line, and the process's proof is void: its next turn runs the Rule 68 handshake again
         refusal.refuse(line);
         proof?.void();
@@ -1751,13 +1870,14 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         emit({ ...base(threadId, turnId), type: "runtime.error", message: line });
         // the interrupt is asked for first (the turn stops at once on a build that honours it), and the process goes with the turn
         void (async () => {
-          if (codexThreadId && codexTurnId) await request("turn/interrupt", { threadId: codexThreadId, turnId: codexTurnId }, 3_000).catch(() => {});
+          if (codexThreadId && codexTurnId) await NotModelRequest("Codex initialization, thread setup, skills catalog, interrupt or permission reply; no turn/start is submitted", request("turn/interrupt", { threadId: codexThreadId, turnId: codexTurnId }, 3_000)).catch(() => {});
           await settle(false, "gate_incident");
         })();
       };
       /** CARDS-WAIT-CODEX-1013: the barrier for a model that ended its turn under an open card (a cell it yielded itself). The call dies
        *  with the turn, so the turn waits here for the owner, then goes on with the answer. Bounded by cards: a Stop with none ends. */
       const onStop = async (): Promise<HookStopAnswer> => {
+        if (!checkHookCanon(hookGate?.canon, "V-C2", ENGINE)) return { decision: "block", reason: HOOK_CHECK_DENIED };
         if (asks.size === 0) return { decision: "end" };
         stopHolds++;
         try {
@@ -1767,9 +1887,15 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         resumedAtStop = true;
         return { decision: "block", reason: CARD_ANSWERED_NOTE };
       };
-      if (hookGate) hookGate.arm({ token: hookToken, onSession: () => sessionSeen?.(), onPreTool, onStop });
-      const handleServerRequest = (msg: any) => {
-        if (refusal.refused || stopRequested) return send({ jsonrpc: "2.0", id: msg.id, ...idleRefusal(String(msg.method)) });
+      if (hookGate?.canon) ownHookCanon(hookGate.canon, { engine: ENGINE, revoke: () => { refusal.refuse(HOOK_CHECK_DENIED); proof?.void(); }, stop: () => incident(HOOK_CHECK_DENIED, true) });
+      if (hookGate) hookGeneration = hookGate.arm({ token: hookToken, onSession: () => { if (!checkHookCanon(hookGate?.canon, "V-C2", ENGINE)) return false; sessionSeen?.(); }, onPreTool, onStop });
+      const handleServerRequest = async (msg: any) => {
+        if (postureBarrier.changing) {
+          const requestTurn = msg.params?.turnId ?? codexTurnId;
+          try { await postureBarrier.wait(); } catch { return send({ jsonrpc: "2.0", id: msg.id, ...idleRefusal(String(msg.method)) }); }
+          if (requestTurn !== codexTurnId) return NotModelRequest("Codex permission reply; no turn/start", send({ jsonrpc: "2.0", id: msg.id, ...idleRefusal(String(msg.method)) }));
+        }
+        if (refusal.refused || stopRequested) return NotModelRequest("Codex permission reply; no turn/start", send({ jsonrpc: "2.0", id: msg.id, ...idleRefusal(String(msg.method)) }));
         const method = msg.method as string;
         const params = msg.params ?? {};
         const legacy = method === "execCommandApproval" || method === "applyPatchApproval";
@@ -1808,23 +1934,43 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const approvalItem = String(params.itemId ?? params.callId ?? params.call_id ?? "");
         const issuedHere = !isQuestion && approvalItem ? hookTable.get(approvalItem) : undefined;
         if (issuedHere?.final) {
-          const accept = issuedHere.decision === "allow";
-          return send({
+          let accept = issuedHere.decision === "allow";
+          if(accept&&(turn.permissionNow?.()??turn).noLimits===true){
+            const requestId=hookReleases.get(approvalItem);
+            const replay=tool==='edit'?{tool:'edit',input:{fileChanges:params.fileChanges??fileChangeItems.get(approvalItem),cwd:typeof params.cwd==='string'?params.cwd:botFolderOrThrow(turn)}}:tool==='shell'?{tool:'shell',input:{command:params.command,cwd:typeof params.cwd==='string'?params.cwd:botFolderOrThrow(turn)}}: {tool:mcpCallName,input:params?._meta?.tool_params};
+            if(!requestId)return send({jsonrpc:"2.0",id:msg.id,result:isMcpElicitation?{action:"decline"}:{decision:legacy?"denied":"decline"}});
+            if(!releaseAllowed(requestId,undefined,replay)){
+              if(!nativeReleaseHeld({threadId,turnId,requestId,providerInstanceId:instanceId}))return send({jsonrpc:'2.0',id:msg.id,result:isMcpElicitation?{action:'decline'}:{decision:legacy?'denied':'decline'}});
+              // The successful hook is already closed. Keep this actual native
+              // RPC waiting on the refreshed card, using a fresh receipt epoch.
+              if(!answerTransport.reopen(threadId,requestId))return false;
+              const slot:NativeAskSlot={closed:false};
+              asks.set(requestId,(behavior,_message,source='user',_answers,extra,mode=source==='user'?'answer':'retire')=>{
+                const frame={jsonrpc:'2.0',id:msg.id,result:isMcpElicitation?{action:behavior==='allow'?'accept':'decline',...(behavior==='allow'?{content:{}}:{})}:{decision:behavior==='allow'?(legacy?'approved':'accept'):legacy?'denied':'decline'}};
+                return deliverNative(slot,mode,JSON.stringify(frame),()=>send(frame),()=>child.stdin.writable&&!child.stdin.destroyed,accepted=>{
+                  asks.delete(requestId);askClosed();answerTransport.confirm(threadId,requestId,Promise.resolve(accepted));
+                  emit({...base(threadId,turnId),type:'request.resolved',requestId,behavior:accepted?behavior:'deny',source:accepted?source:'unavailable'});
+                },()=>behavior!=='allow'||releaseAllowed(requestId,extra?.updatedInput,replay));
+              });
+              return false;
+            }
+          }
+          return NotModelRequest("Codex initialization, thread setup, skills catalog, interrupt or permission reply; no turn/start is submitted", send({
             jsonrpc: "2.0",
             id: msg.id,
             result: isMcpElicitation
               ? { action: accept ? "accept" : "decline", ...(accept ? { content: {} } : {}) }
               : { decision: accept ? (legacy ? "approved" : "accept") : legacy ? "denied" : "decline" },
-          });
+          }));
         }
-        if (autoAccept && !isQuestion) {
-          return send({
+        if (autoAccept() && !isQuestion) {
+          return NotModelRequest("Codex permission reply; no turn/start", send({
             jsonrpc: "2.0",
             id: msg.id,
             result: isMcpElicitation
               ? { action: "accept", content: {} }
               : { decision: legacy ? "approved" : "accept" },
-          });
+          }));
         }
         // Engine-controlled input becomes a card only once it is bounded and
         // well formed. A question the owner cannot be shown is answered at
@@ -1842,11 +1988,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               type: "runtime.error",
               message: `${ENGINE} asked a question Murage could not show (${normalized.error}); it was told nobody answered`,
             });
-            return send({
+            return NotModelRequest("Codex initialization, thread setup, skills catalog, interrupt or permission reply; no turn/start is submitted", send({
               jsonrpc: "2.0",
               id: msg.id,
               result: isUserInput ? { answers: {} } : { action: "cancel" },
-            });
+            }));
           }
           questions = normalized.questions;
         }
@@ -1887,39 +2033,26 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             : target?.summary ?? tool;
         // the first question's labels keep voice and older clients working
         const choices = questions ? questions[0]!.options.map((option) => option.label) : undefined;
-        const finish: AskFinish = (behavior, _message, source = "user", answers) => {
+        const actualNativeInput=isMcpElicitation?params?._meta?.tool_params:tool==='edit'?nativeEdit?.toolCall?.input:{command:params.command,...(typeof params.cwd==='string'?{cwd:params.cwd}:{})};
+        const slot: NativeAskSlot = { closed: false };
+        const finish: AskFinish = (behavior, _message, source = "user", answers, _extra, mode = source === 'user' ? 'answer' : 'retire') => {
           behavior = refusal.verdict(behavior);
-          if (!asks.delete(requestId)) return;
-          askClosed();
-          timer?.clear();
-          if (questions) {
-            // Only the owner's validated answers reach Codex. A skip, the
-            // timeout or the turn ending is the honest no-answer — empty
-            // answer arrays, or an elicitation decline/cancel — never a
-            // sentence presented as the owner's.
-            const answered = behavior === "answer" && answers?.length ? answers : null;
-            send({
-              jsonrpc: "2.0",
-              id: msg.id,
-              result: isUserInput
-                ? { answers: answered ? toCodexAnswers(questions, answered) : codexNoAnswers(questions) }
-                : answered
-                  ? { action: "accept", content: toElicitationContent(params.requestedSchema, questions, answered) }
-                  : { action: source === "user" ? "decline" : "cancel" },
-            });
-            emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior: answered ? "answer" : "deny", source });
-            return;
-          }
-          send({
-            jsonrpc: "2.0",
-            id: msg.id,
-            result: isMcpElicitation
-              ? behavior === "allow"
-                ? { action: "accept", content: {} }
-                : { action: "decline" }
-              : { decision: behavior === "allow" ? (legacy ? "approved" : "accept") : legacy ? "denied" : "decline" },
-          });
-          emit({ ...base(threadId, turnId), type: "request.resolved", requestId, behavior, source });
+          const answered = questions && behavior === 'answer' && answers?.length ? answers : null;
+          const frame = { jsonrpc: '2.0', id: msg.id, result: questions
+            ? isUserInput
+              ? { answers: answered ? toCodexAnswers(questions, answered) : codexNoAnswers(questions) }
+              : answered ? { action: 'accept', content: toElicitationContent(params.requestedSchema, questions, answered) }
+                : { action: source === 'user' ? 'decline' : 'cancel' }
+            : isMcpElicitation ? { action: behavior === 'allow' ? 'accept' : 'decline', ...(behavior === 'allow' ? { content: {} } : {}) }
+              : { decision: behavior === 'allow' ? (legacy ? 'approved' : 'accept') : legacy ? 'denied' : 'decline' } };
+          return deliverNative(slot, mode, JSON.stringify(frame), () => send(frame),
+            () => !child.stdin.destroyed && child.stdin.writable, accepted => {
+              asks.delete(requestId); askClosed(); timer?.clear();
+              answerTransport.confirm(threadId, requestId, Promise.resolve(accepted));
+              emit({ ...base(threadId, turnId), type: 'request.resolved', requestId,
+                behavior: accepted ? questions ? answered ? 'answer' : 'deny' : behavior : 'deny',
+                source: accepted ? source : 'unavailable' });
+            },()=>behavior!=='allow'||releaseAllowed(requestId,actualNativeInput));
         };
         // A card waits until answered or the turn stops. Only a question on a
         // turn nobody is at takes the 30 minute note (contracts: unattendedAskNote).
@@ -1932,6 +2065,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const openCard = (execEnv?: ExecEnv) => emit({
           ...base(threadId, turnId),
           type: "request.opened",
+          executionCwd: turn.cwd,
           requestId,
           toolEngine: "codex" as const,
           ...(mcpMountRecords ? { mcpMounts: mcpMountRecords } : {}),
@@ -1968,11 +2102,13 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (subtask) emit({ ...base(threadId, turnId), type: "turn.subtask", subtask, subtasks: helpers.tracker.snapshot() });
       };
       const noteHelperState = (id: string, status: unknown, label?: string) => {
+        if (!helpers.tracker.has(id)) helperReads.spawn(id);
         emitSubtask(helpers.tracker.start(id, label ?? "Helper"));
         if (status === "pendingInit" || status === "running") {
           helpers.open.add(id);
           emitSubtask(helpers.tracker.progress(id, { toolCount: helpers.tools.get(id) ?? 0 }));
         } else if (status === "completed" || status === "errored" || status === "interrupted" || status === "shutdown" || status === "notFound") {
+          helperReads.finish(id, status === 'completed');
           helpers.open.delete(id);
           emitSubtask(helpers.tracker.end(id, status === "completed"));
         }
@@ -1991,7 +2127,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (!helpers.holding || state.settled || helpers.open.size > 0) return;
         // CARDS-WAIT-CODEX-1013: a card waits for the owner, whoever asked (askClosed comes back here)
         if (asks.size > 0 || stopHolds > 0 || resumedAtStop) return;
-        if (helpers.woken) { void settle(true, null); return; }
+        if (helpers.woken) { void settle(true, null, "held_done"); return; }
         if (helpers.grace) return;
         helpers.grace = setTimeout(() => { helpers.grace = undefined; if (helpers.open.size === 0 && !helpers.woken && asks.size === 0 && stopHolds === 0 && !resumedAtStop) void settle(true, null); }, HELPER_WAKE_GRACE_MS);
         helpers.grace.unref?.();
@@ -2024,15 +2160,34 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // A helper's own thread: progress and its end are the helper's, never the turn's.
         if (typeof p.threadId === "string" && p.threadId !== codexThreadId && helpers.tracker.has(p.threadId)) {
           // NOLIMITS v1 V8 + F7: a helper's own thread is not seen in full; any of its notifications marks the parent turn, settled or not
-          markTurnOutside(threadId, "helper");
+          const lifecycle = msg.method === 'turn/started' || msg.method === 'turn/completed';
+          markTurnOutside(threadId, "helper", undefined, undefined, 'codex-helper-rail', lifecycle);
+          if (!lifecycle) helperReads.read();
           // v1 V4 (b): a helper can write where no rule names; its turn spans every root
           spanTurn(threadId);
           if (state.settled) return;
+          if (msg.method === "turn/started" && typeof p.turn?.id === "string") helpers.turns.set(p.threadId, p.turn.id);
+          if (["item/started", "item/completed"].includes(msg.method) && ["commandExecution", "mcpToolCall", "fileChange", "webSearch"].includes(p.item?.type)) {
+            const ok = checkHookCanon(hookGate?.canon, "V-C3", ENGINE);
+            if (msg.method === "item/completed") checkAllHookCanon("V-C3");
+            if (!ok) { incident(HOOK_CHECK_DENIED, true); return; }
+          }
+          if (hookGate && msg.method === "item/started" && ["commandExecution", "fileChange", "mcpToolCall"].includes(p.item?.type)) {
+            const matched = hookTable.match(p.item, typeof p.turnId === "string" ? p.turnId : undefined);
+            if (refusal.refused || !refusal.hookLive || !matched.ok) {
+              incident(matched.ok ? String(p.item.command ?? p.item.tool ?? p.item.type) : matched.command);
+              return;
+            }
+          }
           if (msg.method === "item/started" && ["commandExecution", "mcpToolCall", "fileChange", "webSearch"].includes(p.item?.type)) {
             const count = (helpers.tools.get(p.threadId) ?? 0) + 1;
             helpers.tools.set(p.threadId, count);
             emitSubtask(helpers.tracker.progress(p.threadId, { toolCount: count }));
           } else if (msg.method === "turn/completed") {
+            helpers.turns.delete(p.threadId);
+            if (!Array.isArray(p.turn?.items)) helperReads.unknown();
+            else if (p.turn.items.some((item: any) => !['agentMessage', 'reasoning'].includes(item?.type))) helperReads.read();
+            helperReads.finish(p.threadId, p.turn?.status === 'completed');
             helpers.open.delete(p.threadId);
             emitSubtask(helpers.tracker.end(p.threadId, p.turn?.status === "completed"));
             settleHeld();
@@ -2098,6 +2253,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             break;
           }
           case "item/started": {
+            if (["commandExecution", "mcpToolCall", "fileChange", "webSearch"].includes(p.item?.type) && !checkHookCanon(hookGate?.canon, "V-C3", ENGINE)) { incident(HOOK_CHECK_DENIED, true); return; }
             refusal.noteStarted();
             const item = p.item ?? {};
             noteCollabItem(item);
@@ -2139,6 +2295,12 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             break;
           }
           case "item/completed": {
+            postureBarrier.boundary();
+            if (["commandExecution", "mcpToolCall", "fileChange", "webSearch"].includes(p.item?.type)) {
+              const ok = checkHookCanon(hookGate?.canon, "V-C3", ENGINE);
+              checkAllHookCanon("V-C3");
+              if (!ok) { incident(HOOK_CHECK_DENIED, true); return; }
+            }
             const item = p.item ?? {};
             noteCollabItem(item);
             if (item.type === "exitedReviewMode") {
@@ -2249,32 +2411,35 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             break;
           }
           case "turn/completed": {
+            if (switchingPosture) break;
+            if (waitingPostureBoundary) { postureBarrier.boundary(); break; }
             const t = p.turn ?? {};
             resumedAtStop = false;
             // STOP1: an end Codex reports after the person's Stop (a clean end the Stop's own deny let it reach, an
             // interrupted or failed end while it dies) is that Stop: no error card, and settle ends it as cancelled.
             if (stopRequested) { void settle(true, "cancelled"); break; }
-            const providerError = t.status === "failed" ? cliFluxBudget(t.error, budgetRoute) : undefined;
-            const terminalMessage = typeof t.error?.message === "string" ? t.error.message.slice(0, 400) : providerError ? "This Flux key has reached its budget." : undefined;
+            const providerError = t.status === "failed" ? cliFluxBudget(registerBusyloopPayloadSite("classify", t.error), budgetRoute) : undefined;
+            const terminalMessage = typeof t.error?.message === "string" ? t.error.message.slice(0, 400) : providerError?.fluxDecision ? gatewayBusyLine("Flux", providerError.fluxDecision.reason === "other" ? "busy" : providerError.fluxDecision.reason) : providerError ? "This Flux key has reached its budget." : undefined;
             if (t.status === "failed" && terminalMessage && (terminalMessage !== lastProviderError || (providerError && !reportedBudget))) {
-              emit({ ...base(threadId, turnId), type: "runtime.error", message: terminalMessage, providerError });
+              emit({ ...base(threadId, turnId), type: "runtime.error", message: terminalMessage, providerError, ...(providerError?.fluxDecision ? {fluxDecision:providerError.fluxDecision,httpStatus:providerError.httpStatus,gatewayResetsAt:providerError.fluxResetsAt} : {}) });
             }
             if (t.status === "completed" && !stopRequested && helpers.open.size > 0) { holdForHelpers(); break; }
-            if (helpers.holding && t.status === "completed") { void settle(true, null); break; }
-            settle(t.status === "completed", t.status === "completed" ? null : (t.error?.message ?? t.status ?? "failed"));
+            if (helpers.holding && t.status === "completed") { void settle(true, null, "held_done"); break; }
+            settle(t.status === "completed", t.status === "completed" ? null : (t.error?.message ?? t.status ?? "failed"), "turn_completed");
             break;
           }
           case "error":
             // shape drift: 0.144 sends {message}, 0.139 nests it under
             // {error:{message}} — surface either (agentcal armor)
             {
-              const providerError = !stopRequested ? cliFluxBudget(p, budgetRoute) : undefined;
-              const message = p.message ?? p.error?.message ?? (providerError ? "This Flux key has reached its budget." : undefined);
+              const providerError = !stopRequested ? cliFluxBudget(registerBusyloopPayloadSite("classify", p), budgetRoute) : undefined;
+              const message = p.message ?? p.error?.message ?? (providerError?.fluxDecision ? gatewayBusyLine("Flux", providerError.fluxDecision.reason === "other" ? "busy" : providerError.fluxDecision.reason) : providerError ? "This Flux key has reached its budget." : undefined);
               // a provider error while a stopped process dies is part of the Stop, not an error card (STOP1)
               if (message && !stopRequested) {
                 lastProviderError = String(message).slice(0, 400);
                 reportedBudget ||= Boolean(providerError);
-                emit({ ...base(threadId, turnId), type: "runtime.error", message: lastProviderError, providerError });
+                emit({ ...base(threadId, turnId), type: "runtime.error", message: lastProviderError, providerError, ...(providerError?.fluxDecision ? {fluxDecision:providerError.fluxDecision,httpStatus:providerError.httpStatus,gatewayResetsAt:providerError.fluxResetsAt} : {}) });
+                if (isFluxTerminal(providerError?.fluxDecision)) void settle(false, "flux_refusal");
               }
             }
             break;
@@ -2295,7 +2460,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (!line.trim()) return;
         let msg: any;
         try {
-          msg = JSON.parse(line);
+          msg = registerBusyloopPayloadSite("read", JSON.parse(line));
         } catch {
           return;
         }
@@ -2391,7 +2556,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
       });
 
-      active.set(threadId, { stop, turnId, asks });
+      active.set(threadId, { stop, turnId, asks, onPostureChange });
       // Relaunching the app-server is still the same logical turn. Keep the
       // active process current on every attempt, but announce the turn once (markStarted is once-only).
       entry.markStarted();
@@ -2458,9 +2623,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // this turn goes straight to turn/start.
           codexThreadId = reuse.codexThreadId;
         } else {
-          await gate.step(entry, request("initialize", { clientInfo: { name: "murage", version: "1" } }));
+          await gate.step(entry, NotModelRequest("Codex initialization, thread setup, skills catalog, interrupt or permission reply; no turn/start is submitted", request("initialize", { clientInfo: { name: "murage", version: "1" } })));
           if (cancelledBeforeStart()) return;
-          send({ jsonrpc: "2.0", method: "initialized", params: {} });
+          NotModelRequest("Codex initialization, thread setup, skills catalog, interrupt or permission reply; no turn/start is submitted", send({ jsonrpc: "2.0", method: "initialized", params: {} }));
           // the handshake is done: this process may now answer plan usage reads (idempotent; released when it exits)
           conn.account.ready();
         }
@@ -2531,11 +2696,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             // one spelled for the installed Codex (gated: on-request behind the gate; legacy: the policy the driver always sent); a
             // Cloud home names the same codexPolicy the launcher renders as the effective one.
             const resumePolicy = process.env.MURAGE_CLOUD_ROLE === "home" ? { sandbox: codexPolicy.sandbox, approvalPolicy: codexPolicy.approval } : policy();
-            resumed = await gate.step(entry, request("thread/resume", {
+            resumed = await gate.step(entry, NotModelRequest("Codex initialization, thread setup, skills catalog, interrupt or permission reply; no turn/start is submitted", request("thread/resume", {
               threadId: cursor, ...resumePolicy, ...threadConfig,
               ...(selection.model ? { model: selection.model } : {}),
               ...(selection.modelProvider ? { modelProvider: selection.modelProvider } : {}),
-            }));
+            })));
             if (cancelledBeforeStart()) return;
             codexThreadId = resumed?.thread?.id ?? cursor;
             if (typeof resumed?.thread?.path === "string") rolloutPaths.set(codexThreadId!, { path: resumed.thread.path, roots: rolloutRoots(env) });
@@ -2575,7 +2740,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // new thread needs the catalog default (including a saved CLI choice).
           if (!selection.model && !providerBinding) Object.assign(selection, decodeCodexSelection(launchModel));
           if (fluxSelected) logFluxMemoryHeaders(DRIVER_KIND, fluxMemory);
-          const started = await gate.step(entry, request("thread/start", {
+          const started = await gate.step(entry, NotModelRequest("Codex initialization, thread setup, skills catalog, interrupt or permission reply; no turn/start is submitted", request("thread/start", {
             cwd: botFolderOrThrow(turn),
             model: selection.model,
             ...(selection.modelProvider ? { modelProvider: selection.modelProvider } : {}),
@@ -2583,7 +2748,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             ...threadConfig,
             // the Chief's proposal turn leaves no session in the owner's Codex home
             ephemeral: turn.proposalOnly === true,
-          }));
+          })));
           codexThreadId = started?.thread?.id ?? null;
           if (codexThreadId && typeof started?.thread?.path === "string") rolloutPaths.set(codexThreadId, { path: started.thread.path, roots: rolloutRoots(env) });
           startedModel = started?.model ?? null;
@@ -2607,7 +2772,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             if (!(await stop("asked"))) {
               // Not confirmed closed: the child stays owned, in the stuck-process registry,
               // which Stop, dispose and the next dispatch of this thread retry and wait on.
-              stuck.set({ child, warm, cred, conn, codexThreadId, closing: true, detachIdle: () => {}, ...(hookGate ? { hookGate } : {}) }, threadId);
+              stuck.set({ child, warm, cred, conn, codexThreadId, closing: true, detachIdle: () => {}, ...(hookGate ? { hookGate, hookToken } : {}) }, threadId);
               console.warn(`codex close thread=${threadId} confirmed=false reason=credential clear failed`);
             }
             if (active.get(threadId)?.stop === stop) active.delete(threadId);
@@ -2629,7 +2794,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           ? result.data.flatMap((entry: any) => Array.isArray(entry?.skills) ? entry.skills : [])
             .filter((skill: any) => skill && skill.enabled !== false && typeof skill.name === "string")
           : null;
-        const skills = request("skills/list", { cwds: [botFolderOrThrow(turn)] }, 10_000, (result) => {
+        const skills = NotModelRequest("Codex initialization, thread setup, skills catalog, interrupt or permission reply; no turn/start is submitted", request("skills/list", { cwds: [botFolderOrThrow(turn)] }, 10_000, (result) => {
           // Publish an accepted response while its frame is being handled:
           // completion later in the same read may settle before Promise jobs.
           const found = listedSkills(result);
@@ -2645,7 +2810,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
               })),
             ]),
           });
-        }).then(listedSkills, () => null);
+        })).then(listedSkills, () => null);
         // A command turn becomes the app-server call it names: /review is
         // review/start (inline, on this thread), /compact is
         // thread/compact/start, and a skill is turn/start carrying the skill
@@ -2709,6 +2874,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           if (handedBack && !state.settled) void settle(false, "submission_refused");
           return;
         }
+        appliedPolicy = policy();
         awaitingTurnStart = true;
         turnStartSent = true;
         const rollout = rolloutPaths.get(codexThreadId);
@@ -2721,7 +2887,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // The turn is written to the engine: the memory worker's hold for it ends (turn-hold.ts).
         queueMicrotask(() => notePromptSent(turn.threadId));
         // STOP-NONACP-DISPOSE R3: the gate is read in the same tick as the write; a retained process goes live here, not at its adoption
-        await gate.step(entry, gate.launch(entry, () => request(method, commandParams ?? {
+        await gate.step(entry, gate.launch(entry, () => request(method, registerBusyloopRequestSite(fluxRouteFor(requestUrl), commandParams ?? {
           threadId: codexThreadId,
           // `{type:"image", url}` is the app-server's own UserInput variant,
           // read out of codex-cli 0.154.0's generated protocol schema
@@ -2751,9 +2917,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // a gated turn names its policy every time; below the retirement a resumed thread keeps the policy it started with, so the stop
           // line holds on this turn only by naming it
           // (a Cloud home names codexPolicy's approval, as its thread/start and the launcher's render do)
-          ...(process.env.MURAGE_CLOUD_ROLE === "home" ? (enforceApproval ? { approvalPolicy: codexPolicy.approval } : {})
-            : gatePlan.mode === "gated" || enforceApproval ? { approvalPolicy: policy().approvalPolicy } : {}),
-        }, turnStartTimeoutMs(), (result) => {
+          ...(process.env.MURAGE_CLOUD_ROLE === "home" ? (approvalNow() ? { approvalPolicy: codexPolicy.approval } : {})
+            : gatePlan.mode === "gated" || approvalNow() ? { approvalPolicy: policy().approvalPolicy } : {}),
+        }), turnStartTimeoutMs(), (result) => {
           // compaction answers `{}`; its first notification names the turn
           if (adoptFirstTurn) return;
           awaitingTurnStart = false;
@@ -2800,6 +2966,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         const failure = e instanceof Error ? e : { text: String(e) };
         const message = e instanceof Error ? e.message : String(e);
         const needsAuth = /(?:\b401\b|unauthorized|missing bearer|authentication required)/i.test(message);
+        const providerError = cliFluxBudget(registerBusyloopPayloadSite("classify", e), budgetRoute);
+        const decision = providerError?.fluxDecision;
         const verdict = classifyError(failure);
         // A Stop already asked for wins over whatever the handshake reported:
         // never announce or run a relaunch after it, and settle as the user's
@@ -2810,8 +2978,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         }
         // B13: once a slow handshake has had its relaunch, nothing relaunches past the startup cap
         const pastStartupCap = slowHandshakeRelaunched && Date.now() >= startupCapAt;
-        if (!state.settled && ownsProcess && !turn.prewarm && !needsAuth && !submitted && verdict.transient && attempt < RETRY_MAX_ATTEMPTS - 1 && state.sawStreamDelta === false && !pastStartupCap) {
-          const delayMs = computeBackoff(attempt);
+        if (!state.settled && ownsProcess && !turn.prewarm && (!needsAuth || decision) && !submitted && (decision ? !isFluxTerminal(decision) && decision.action !== "PASS" : verdict.transient) && attempt < (decision?.action === "RETRY_ONCE" ? 1 : RETRY_MAX_ATTEMPTS - 1) && state.sawStreamDelta === false && !pastStartupCap) {
+          const delayMs = decision ? (typeof decision.wait === "number" ? decision.wait * 1000 : Math.min(20_000, 5_000 * 2 ** attempt)) : computeBackoff(attempt);
           attempt++;
           emit({
             ...base(threadId, turnId),
@@ -2832,8 +3000,9 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             ...base(threadId, turnId),
             type: "runtime.error",
             message: earlyToolActivity ? `${message} ${CODEX_TOOL_MAY_HAVE_RUN}` : message,
-            providerError: cliFluxBudget(e, budgetRoute),
-            ...(needsAuth ? { setup: true } : {}),
+            providerError,
+            ...(decision ? {fluxDecision:decision,httpStatus:providerError?.httpStatus,gatewayResetsAt:providerError?.fluxResetsAt} : {}),
+            ...(needsAuth && !decision ? { setup: true } : {}),
           });
           settle(false, needsAuth ? "auth_required" : "rpc_error");
         }
@@ -2846,6 +3015,11 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     return { turnId };
   };
   const sendTurn = (turn: SendTurnInput) => {
+    // Cloud home: Codex runs only on the customer's own ChatGPT sign-in. A Flux route is refused here, in plain words, before anything
+    // starts and before any gate entry (a refusal thrown later, inside the launch, would end the turn with no message at all).
+    if (process.env.MURAGE_CLOUD_ROLE === "home" && (turn.providerRoute?.preset === "flux" || (!turn.providerRoute && fluxIdIsRoutable(turn.model, DRIVER_KIND)))) {
+      return Promise.reject(new Error(cloudHomeCopy.signInEnginesNoFlux));
+    }
     const turnId = newId();
     const entry = gate.enter(turn.threadId, { turnId });
     return gate.run(entry, () => sendTurnBody(turn, entry, turnId), classifyTurn);
@@ -2895,10 +3069,15 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     });
     // childEnv drops OPENAI_API_KEY; desktop billing follows the verified CLI login mode. On a home
     // the launcher knows whether an API key (C store) or a ChatGPT sign-in pays for the turns.
+    // On a home the probe above runs outside any bot's sign-in store, so it reads "not signed in" even when
+    // bots are signed in: ask the launcher whether the owner signed Codex in anywhere on this home (F4 C2).
+    // Off a home this reads undefined, so the desktop keeps its own reading (authUnverified when unread).
+    const signedInOnHome = (await cloudEngineSignedInSomewhere(DRIVER_KIND)) === true;
+    if (signedInOnHome) return { state: "available", version, authenticated: true, setUpOnHome: true, billing: await codexCloudBilling() };
     return { state: "available", version, ...(authenticated === undefined ? { authUnverified: true as const } : { authenticated }), ...(process.env.MURAGE_CLOUD_ROLE === "home" ? { billing: await codexCloudBilling() } : mode === "subscription" || mode === "metered" ? { billing: mode } : {}) };
   };
 
-  return withCliMemoryLearning({
+  return withRequestDelivery(withCliMemoryLearning({
     instanceId,
     driverKind: DRIVER_KIND,
     displayName: input.displayName,
@@ -2952,6 +3131,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (!active.has(threadId) && (!(await closeRetained(threadId, "stop")) || !(await retryStuck(threadId)))) throw new Error("codex shutdown is still pending; the process remains owned");
         if (await active.get(threadId)?.stop("asked") === false) throw new Error("codex shutdown is still pending; the process remains owned");
       },
+      onPostureChange: async (threadId) => { await active.get(threadId)?.onPostureChange?.(); },
       respondToRequest: async (threadId, requestId, decision) => {
         const turn = active.get(threadId);
         const finish = turn?.asks.get(requestId);
@@ -2959,7 +3139,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // Rule 72: the third identical narrowing denial in a turn is not delivered; the ask stays pending as the owner's card.
         const extra = decision as { source?: unknown; updatedInput?: unknown };
         if (extra.source === "narrow" && decision.behavior === "deny" && finish.narrowKey && narrowDenials.raiseCard(turn!.turnId, finish.narrowKey.tool, finish.narrowKey.text)) return "card" as never;
-        finish(decision.behavior, decision.message, "user", decision.answers, extra);
+        if (!(await finish(decision.behavior, decision.message, "user", decision.answers, extra))) return "unavailable";
         return decision.behavior === "allow" ? "allowed-once" : decision.behavior === "answer" ? "answered" : "rejected";
       },
       hasSession: (threadId) => active.has(threadId),
@@ -2998,6 +3178,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       if (stopped.includes(false)) throw new Error("codex shutdown is still pending; listeners remain attached");
       listeners.clear();
     },
-  });
+  }), answerTransport);
 },
 };

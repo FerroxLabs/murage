@@ -1,0 +1,8 @@
+{
+  "version": 2,
+  "addedLineMatches": 0,
+  "result": "PASS",
+  "guardSha256": "4f02023f3f43c1703177b6648bcb513f8d63531adc9b7d96549727e1b38fd9e1",
+  "patternsSha256": "062a8d4d1b44bb1bb8711faabaf0ef5b953dce4c1f3e3da86214c84f8ecf6ca3",
+  "exclusionsAdded": false
+}

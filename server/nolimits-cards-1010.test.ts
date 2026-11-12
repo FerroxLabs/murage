@@ -6,7 +6,7 @@
 // lines (23:12:49Z sensitive-guard, 23:13:24Z unreadable, 23:13:59Z
 // unattended-block) and the 10-30 sweep (truncated Write and the connected-apps
 // workbench, the owner's channel DMs). Every row of the design's section 3 still
-// cards. Fixture strings are inert data, never executed.
+// cards unless superseded by Sean’s 2026-11-12 wipe-only ruling below. Fixture strings are inert data, never executed.
 import { posix } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -36,7 +36,7 @@ const ORIGINS = {
   owner: {} as AutoContext,
   routine: { routineLevel: true, automated: true } as AutoContext,
   "owner-channel": { unattended: true, automated: true, channelOwner: true } as AutoContext,
-  webhook: { unattended: true, automated: true } as AutoContext,
+  webhook: { unattended: true, automated: true, noLimitsOrigin: "webhook" } as AutoContext,
   group: { unattended: true, automated: true, fullAccessOrigin: "other" } as AutoContext,
 } as const;
 type Origin = keyof typeof ORIGINS;
@@ -61,15 +61,31 @@ const holds = (level: Level, cmd: string, at: At = {}) => {
   return v;
 };
 
+const { expectNoLimitsOwnerOutcome } = await import("./testing/no-limits-1019.ts");
+const { alwaysAskCommand } = await import("./always-ask.ts");
+const OWNER_PROVEN = { fullAccessOrigin: "owner", ownerStarted: true } as AutoContext;
+/** NOLIM 1.0.19 (Sean 2026-11-10): the owner's No limits turn, proven by a routine level or by the stored owner origin, runs what the
+ * reader names unless it is a wipe row; the old rows asserted a card. An owner turn with no stored origin is unproven and keeps
+ * today's card (the `holds` calls with the default origin below). */
+const noLimitsRuns = (cmd: string, at: At = {}) => {
+  const rule = alwaysAskCommand(cmd, CWD, "command", at.tool === "PowerShell" ? "pwsh" : undefined)?.rule;
+  for (const proven of [{ origin: "routine" as Origin }, { extra: OWNER_PROVEN }]) {
+    expectNoLimitsOwnerOutcome(verdict("No limits", cmd, { ...at, ...proven }), cmd, rule, `No limits ${proven.origin ?? "owner (stored)"}: ${cmd}`);
+  }
+};
+
 const SWEEP = `ls ~/.mybot/ | head -50; grep -ril "higgsfield generate\\|soul" ~/.mybot/*.md ~/.mybot/routines 2>/dev/null | head; higgsfield --help 2>&1 | head -40`;
 
 describe("1D is cut from 1.0.10 (to 1.0.11): a glob in a home dot folder holds as in 1.0.9", () => {
   it("the sweep command and its glob still hold, on a routine run and the owner's turn, at Full access and No limits", () => {
     for (const origin of ["routine", "owner"] as const) {
-      expect(holds("No limits", SWEEP, { origin }).source).toBe("sensitive-guard");
       expect(holds("Full access", SWEEP, { origin }).source).toBe("sensitive-guard");
-      expect(holds("No limits", "cat ~/.mybot/*.json", { origin }).source).toBe("sensitive-guard");
     }
+    // an unproven owner turn (no stored origin) keeps the card; a proven owner turn and a routine run run it
+    expect(holds("No limits", SWEEP).source).toBe("sensitive-guard");
+    expect(holds("No limits", "cat ~/.mybot/*.json").source).toBe("sensitive-guard");
+    noLimitsRuns(SWEEP);
+    noLimitsRuns("cat ~/.mybot/*.json");
   });
 
   it("a key folder's glob holds", () => {
@@ -80,12 +96,17 @@ describe("1D is cut from 1.0.10 (to 1.0.11): a glob in a home dot folder holds a
 describe("1B is cut from 1.0.10: a residual reader failure holds as in 1.0.9", () => {
   const RESIDUAL = `ls ~/Documents/x && echo "done`;
   it("holds at every level, on a routine run and the owner's turn", () => {
-    for (const level of ["Ask", "Auto", "Full access", "No limits"] as const) {
+    for (const level of ["Ask", "Auto", "Full access"] as const) {
       for (const origin of ["routine", "owner"] as const) expect(holds(level, RESIDUAL, { origin })).toMatchObject({ source: "always-ask", rule: "unreadable" });
     }
+    // No limits: unreadable is not a wipe row: an unproven owner turn keeps the card, the proven owner and a routine run run it
+    expect(holds("No limits", RESIDUAL)).toMatchObject({ source: "always-ask", rule: "unreadable" });
+    noLimitsRuns(RESIDUAL);
   });
-  it("Astra B1: two scripts before a broken quote hold at No limits", () => {
-    for (const origin of ["routine", "owner"] as const) expect(holds("No limits", "bash stage.sh\nbash run.sh\necho \"", { origin }).source).toBe("always-ask");
+  it("Astra B1: two scripts before a broken quote hold at No limits only on an unproven turn", () => {
+    const cmd = "bash stage.sh\nbash run.sh\necho \"";
+    expect(holds("No limits", cmd).source).toBe("always-ask");
+    noLimitsRuns(cmd);
   });
 });
 
@@ -169,8 +190,10 @@ describe("10-30: truncated calls (1C, narrowed by A3)", () => {
   it("a cut Write whose path was read whole passes at No limits on a routine run", () => {
     expect(autoVerdict(NO_LIMITS, "Write", `${CWD}/brief.md`, { ...write(`${CWD}/brief.md`), ...ORIGINS.routine }).approve).toBeTruthy();
   });
-  it("a cut Write that names a key file holds", () => {
-    expect(autoVerdict(NO_LIMITS, "Write", `${HOME}/.ssh/id_rsa`, { ...write(`${HOME}/.ssh/id_rsa`), ...ORIGINS.routine }).approve).toBeNull();
+  it("a cut Write that names a key file holds off an unproven turn, and runs on a routine run (not a wipe row)", () => {
+    expect(autoVerdict(NO_LIMITS, "Write", `${HOME}/.ssh/id_rsa`, write(`${HOME}/.ssh/id_rsa`)).approve).toBeNull();
+    expect(autoVerdict(NO_LIMITS, "Write", `${HOME}/.ssh/id_rsa`, { ...write(`${HOME}/.ssh/id_rsa`), ...ORIGINS.routine }).approve).toBeTruthy();
+    expect(autoVerdict(FULL, "Write", `${HOME}/.ssh/id_rsa`, { ...write(`${HOME}/.ssh/id_rsa`), ...ORIGINS.routine }).approve).toBeNull();
   });
   it("the own connected-apps workbench passes at No limits", () => {
     expect(autoVerdict(NO_LIMITS, "other", "Run code", { call: WORKBENCH, inputCut: true, stopLine: null, ...ORIGINS.routine }).approve).toBeTruthy();
@@ -178,17 +201,22 @@ describe("10-30: truncated calls (1C, narrowed by A3)", () => {
   it("Ask and Auto keep the cut hold", () => {
     expect(autoVerdict(AUTO, "Write", `${CWD}/brief.md`, write(`${CWD}/brief.md`)).approve).toBeNull();
   });
-  it("a cut shell command holds", () => {
+  it("a cut shell command holds off an unproven turn, and runs on a routine run (not a wipe row)", () => {
     const cmd = "ls ~/Documents/x";
-    const v = autoVerdict(NO_LIMITS, "Bash", cmd, { commandText: cmd, stopLine: null, inputCut: true, call: { engine: "claude", truncated: true, toolCall: { name: "Bash", input: { command: cmd } } }, ...ORIGINS.routine });
-    expect(v.approve).toBeNull();
+    const cut = { commandText: cmd, stopLine: null, inputCut: true, call: { engine: "claude" as const, truncated: true, toolCall: { name: "Bash", input: { command: cmd } } } };
+    expect(autoVerdict(NO_LIMITS, "Bash", cmd, cut).approve).toBeNull();
+    expect(autoVerdict(NO_LIMITS, "Bash", cmd, { ...cut, ...ORIGINS.routine }).approve).toBeTruthy();
+    expect(autoVerdict(FULL, "Bash", cmd, { ...cut, ...ORIGINS.routine }).approve).toBeNull();
   });
   it("arguments past the key guard's scan hold at every level", () => {
     const deep: Record<string, unknown> = {};
     let at = deep;
     for (let k = 0; k < 80; k++) { const next: Record<string, unknown> = {}; at.x = next; at = next; }
-    const v = autoVerdict(NO_LIMITS, "Write", `${CWD}/brief.md`, { call: { engine: "claude", toolCall: { name: "Write", input: { file_path: `${CWD}/brief.md`, content: "x", deep } } }, stopLine: null, ...ORIGINS.routine });
-    expect(v.approve).toBeNull();
+    const deepCall = { call: { engine: "claude" as const, toolCall: { name: "Write", input: { file_path: `${CWD}/brief.md`, content: "x", deep } } }, stopLine: null };
+    expect(autoVerdict(NO_LIMITS, "Write", `${CWD}/brief.md`, deepCall).approve).toBeNull(); // unproven turn
+    expect(autoVerdict(FULL, "Write", `${CWD}/brief.md`, { ...deepCall, ...ORIGINS.routine }).approve).toBeNull();
+    // NOLIM 1.0.19: past the scan is not a wipe row: the owner's routine run runs it
+    expect(autoVerdict(NO_LIMITS, "Write", `${CWD}/brief.md`, { ...deepCall, ...ORIGINS.routine }).approve).toBeTruthy();
   });
 });
 
@@ -206,22 +234,25 @@ describe("what still cards at No limits (section 3)", () => {
     const cmd = `python3 -c 'import shutil; shutil.rmtree("${home}")'\n"`;
     for (const origin of ["owner", "routine"] as const) expect(holds("No limits", cmd, { origin }).source).toBe("always-ask");
   });
-  it("an unknown delete still cards at Full access and No limits (1B cut; the stop line marks it, A2)", () => {
-    // 1B is cut: a delete whose target a value holds is unreadable and holds at every level, before the stop line, as in
-    // 1.0.9; behind a stray quote too
+  it("an unknown delete keeps Full access and unproven cards; admitted No limits runs (Sean 11-12)", () => {
+    // Full access keeps its existing read. An unknown target alone is not a wipe at admitted No limits.
     const posixDelete = `rm -rf "$X"/sub`;
     for (const cmd of [posixDelete, `${posixDelete} "`]) {
-      for (const level of ["Full access", "No limits"] as const) {
-        for (const origin of ["owner", "routine"] as const) expect(holds(level, cmd, { origin }).source).toBe("always-ask");
-      }
+      for (const origin of ["owner", "routine"] as const) expect(holds("Full access", cmd, { origin }).source).toBe("always-ask");
+      expect(holds("No limits", cmd).source).toBe("always-ask");
+      noLimitsRuns(cmd);
     }
     const method = "Remove-Item ./scratch; (Get-Item $env:TARGET).Delete()";
     expect(classifyStopLine("PowerShell", { command: method }, "", place(CWD))).toMatchObject({ kind: "delete" });
     for (const level of ["Full access", "No limits"] as const) expect(holds(level, method, { tool: "PowerShell" }).source).toBe("always-ask");
+    noLimitsRuns(method,{tool:"PowerShell"});
   });
   it("the key guard, a stray quote included", () => {
+    // NOLIM 1.0.19: a key read is a deny row, not a wipe row: an unproven turn keeps the card, the owner's proven turn runs it
     for (const cmd of ["cat ~/.ssh/id_rsa", `cat ~/.ss"h/id_rsa`, "cat ~/.aws/cred*"]) {
-      for (const origin of ["owner", "routine"] as const) holds("No limits", cmd, { origin });
+      holds("No limits", cmd);
+      holds("Full access", cmd, { origin: "routine" });
+      noLimitsRuns(cmd);
     }
     // GrokBuild G2: a waived PowerShell text meets the key rows too
     holds("No limits", `Get-Content ~\\.ssh\\id_rs"a`, { tool: "PowerShell" });
@@ -230,9 +261,13 @@ describe("what still cards at No limits (section 3)", () => {
     holds("No limits", "bash wipe.sh && bash note.sh");
     holds("No limits", "pwsh -File wipe.ps1");
   });
-  it("a webhook, a group, an unconfirmed sender and an unproven turn still card", () => {
-    for (const origin of ["webhook", "group"] as const) expect(holds("No limits", "ls", { origin }).source).toBe("unattended-block");
-    expect(holds("No limits", "ls", { extra: { unattended: true, automated: true, fullAccessOrigin: "other" } }).source).toBe("unattended-block");
+  it("webhooks and guests on explicit No limits run wipe-only; unproven calls keep their card (Sean 11-12)", () => {
+    for (const origin of ["webhook", "group"] as const) {
+      passes("No limits", "ls", { origin });
+      expect(holds("No limits", "rm -rf ~", { origin }).source).toBe("always-ask");
+      expect(holds("Full access", "ls", { origin }).source).toBe("unattended-block");
+    }
+    expect(holds("No limits", "ls", { extra: { unattended: true, automated: true, fullAccessOrigin: "other",noLimitsOrigin:"unproven" } }).source).toBe("unattended-block");
   });
   it("the owner who turned the channel option off still cards on a channel DM", () => {
     expect(holds("No limits", "ls", { origin: "owner-channel", bot: { fullAccessChannelMessages: false } }).source).toBe("unattended-block");
@@ -262,8 +297,8 @@ describe("the asked line (r5)", () => {
   afterEach(() => vi.restoreAllMocks());
   it("names origin, unattended and the command class, and no command text", () => {
     const info = vi.spyOn(console, "info").mockImplementation(() => {});
-    holds("No limits", "echo secretvalue-31337", { origin: "webhook", bot: { id: "r5-bot" } });
-    autoVerdict({ ...NO_LIMITS, id: "r5-bot" }, "Read", "/tmp/secretpath-31337.md", { stopLine: null, ...ORIGINS.webhook });
+    holds("Full access", "echo secretvalue-31337", { origin: "webhook", bot: { id: "r5-bot" } });
+    autoVerdict({ ...FULL, id: "r5-bot" }, "Read", "/tmp/secretpath-31337.md", { stopLine: null, ...ORIGINS.webhook });
     const lines = info.mock.calls.map((call) => String(call[0])).filter((line) => line.startsWith("approvals: asked"));
     expect(lines.some((line) => /origin=other unattended=1 cmd=shell/.test(line))).toBe(true);
     expect(lines.some((line) => /tool=Read .*origin=other unattended=1 cmd=none/.test(line))).toBe(true);
@@ -302,17 +337,16 @@ describe("fix round: the stop line, the key guard's depth and gcloud", () => {
 
   it("nested substitutions past the reader's depth still hold at every level, as in 1.0.9 (the depth fallback went with 1B)", () => {
     const deep = "echo $(echo $(echo $(echo $(echo $(echo done)))))";
-    for (const origin of ["owner", "routine"] as const) {
-      expect(holds("No limits", deep, { origin }).source).toBe("sensitive-guard");
-      expect(holds("Full access", deep, { origin }).source).toBe("sensitive-guard");
-    }
+    for (const origin of ["owner", "routine"] as const) expect(holds("Full access", deep, { origin }).source).toBe("sensitive-guard");
+    expect(holds("No limits", deep).source).toBe("sensitive-guard"); // unproven turn
+    noLimitsRuns(deep); // NOLIM 1.0.19: not a wipe row
     holds("No limits", "echo $(echo $(echo $(echo $(echo $(cat ~/.ssh/id_rsa)))))");
   });
 
   it("gcloud's folder holds before expansion, in both shells, and its application default credentials by name (Grok High)", () => {
-    for (const origin of ["owner", "routine"] as const) {
-      expect(holds("No limits", "cat ~/.config/gcloud/*", { origin }).source).toBe("sensitive-guard");
-    }
+    expect(holds("No limits", "cat ~/.config/gcloud/*").source).toBe("sensitive-guard"); // unproven turn
+    expect(holds("Full access", "cat ~/.config/gcloud/*", { origin: "routine" }).source).toBe("sensitive-guard");
+    noLimitsRuns("cat ~/.config/gcloud/*"); // NOLIM 1.0.19: not a wipe row
     holds("No limits", "Get-Content ~\\.config\\gcloud\\*", { tool: "PowerShell" });
     holds("No limits", "cat ~/.cfgx/application_default_credentials.json");
   });

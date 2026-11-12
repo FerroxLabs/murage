@@ -40,7 +40,7 @@ function listener(path: string): Promise<{ server: Server; connections: () => nu
 
 /** One approve call through the proxy started on `brokerArg`; the permission JSON it answers and its stderr. */
 async function ask(brokerArg: string): Promise<{ answer: { behavior: string; message?: string }; stderr: string }> {
-  const child = spawn(process.execPath, [proxy, brokerArg], { stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [proxy, brokerArg], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
   cleanups.push(() => { try { child.kill(); } catch { /* gone */ } });
   let out = "", stderr = "";
   child.stderr.setEncoding("utf8").on("data", (d) => { stderr += d; });

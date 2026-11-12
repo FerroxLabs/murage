@@ -77,9 +77,14 @@ export async function awaitWriterGateForeground(site?: string): Promise<void> {
 const namedGateWaits = new Map<string, number>();
 /** True while the named gate is waiting out a hold: what a test reads to know a route has reached that gate and no other. */
 export function waitingAtWriterGate(site: string): boolean { return (namedGateWaits.get(site) ?? 0) > 0; }
-/** The request-level gate: an owner write ends the index build and waits (bounded) for the lock; GET, HEAD and OPTIONS (health, reads, static files) never wait. */
-export function gateWriteRequest(method: string | undefined): Promise<void> {
-  return method === "GET" || method === "HEAD" || method === "OPTIONS" ? Promise.resolve() : awaitWriterGateForeground();
+/** POST routes that only read: they never touch messages.db, so a writer hold has nothing to protect them from. Exact method+path, never a prefix. */
+const READ_ONLY_POSTS: ReadonlySet<string> = new Set(["POST /api/teams/export"]);
+/** The request-level gate: an owner write ends the index build and waits (bounded) for the lock; GET, HEAD and OPTIONS (health, reads, static files)
+ * and the listed read-only POSTs never wait. */
+export function gateWriteRequest(method: string | undefined, path?: string): Promise<void> {
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return Promise.resolve();
+  if (method === "POST" && path !== undefined && READ_ONLY_POSTS.has(`POST ${path}`)) return Promise.resolve();
+  return awaitWriterGateForeground();
 }
 /** Sets the lock wait of a handle (cached, so a repeat costs nothing). Callers that lower it restore DEFAULT_BUSY_MS in a finally. */
 export function setBusy(db: DatabaseSync, requested: number) {
@@ -128,6 +133,34 @@ export function beginBackground(db: DatabaseSync, op: string): void {
   }
   finally { try { setBusy(db, DEFAULT_BUSY_MS); } catch { /* handle closed */ } }
 }
+/** Foreground settlement shares the background lock ceiling, but keeps FULL durability. */
+export const SETTLE_LOCK_MS = BACKGROUND_BUSY_MS;
+
+/** The caller owns transaction cleanup, including when timeout restoration throws after BEGIN succeeded.
+ * A failed BEGIN keeps its original error even if restoring the usual timeout also fails. */
+export function beginBounded(db: DatabaseSync, op: string, waitMs: number): void {
+  const wholeMs = Math.floor(waitMs);
+  if (!(wholeMs >= 1)) throw new RangeError("beginBounded requires a wait allowance of at least 1 ms");
+  const boundedMs = Math.min(wholeMs, SETTLE_LOCK_MS);
+  let failed = false;
+  const started = performance.now();
+  try {
+    setBusy(db, boundedMs);
+    db.exec("BEGIN IMMEDIATE");
+  } catch (error) {
+    failed = true;
+    if (isDatabaseBusy(error)) {
+      const waited = performance.now() - started;
+      noteBusy(op, waited);
+      throw new DatabaseBusyError(op, waited);
+    }
+    throw error;
+  } finally {
+    try { setBusy(db, DEFAULT_BUSY_MS); }
+    catch (error) { if (!failed) throw error; }
+  }
+}
+
 /** An autocommit write of background work on a handle (a slice runner's progress mark): within BACKGROUND_BUSY_MS, then DatabaseBusyError
  * ("try later"); the handle's usual wait is back either way. */
 export function backgroundWrite<T>(db: DatabaseSync, op: string, run: () => T): T {

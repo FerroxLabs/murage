@@ -1,3 +1,6 @@
+import { inertBot } from './store.ts';
+import { ProducerApprovalQueue, producerBase, type ServiceAuthority, type OpenProducerRequest } from "./narrow-denials.ts";
+import { readApproval, type PendingQueueApproval, type ApprovalAnswer } from "./decision/index.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -70,7 +73,7 @@ const memoryOff = (db: DatabaseSync): Set<string> => new Set(db.prepare(
 export function shareMounts(db: DatabaseSync, roster: Roster, botId: string, threadId: string): GroupRecord | null {
   try {
     const bot = roster.bots.find(entry => entry.id === botId);
-    if (!bot || bot.draftOnly === true) return null;
+    if (!bot || inertBot(bot) || bot.draftOnly === true) return null;
     const group = shareRoomOf(roster, bot, threadId);
     if (!group || group.dm || group.hidden || !group.memberIds.includes(bot.id)) return null;
     const off = memoryOff(db);
@@ -155,9 +158,34 @@ export function recoverRoomShares(db: DatabaseSync, hasLine: (roomThreadId: stri
   db.prepare("UPDATE room_shares SET status='unavailable', excerpts='[]' WHERE status='pending'").run();
 }
 
-export type AskResult = { ok: true; share: RoomShare | null; toolText: string } | { ok: false; error: string };
+const shareExecutions=new Map<string,OpenProducerRequest>();
+const shareDatabases=new Map<string,DatabaseSync>();
+const roomShareResults=new Map<string,ShareOutcome>();
+const shareQueues=new WeakMap<DatabaseSync,ProducerApprovalQueue>();
+const shareDeliveries=new WeakMap<DatabaseSync,(item:PendingQueueApproval,answer:ApprovalAnswer)=>void>();
+export function roomShareApprovalQueue(db:DatabaseSync):ProducerApprovalQueue {
+ let queue=shareQueues.get(db);if(queue)return queue;
+ const accept=(item:PendingQueueApproval,answer:ApprovalAnswer)=>{
+  if(answer.behavior!=='allow'){db.prepare("UPDATE room_shares SET status='declined',excerpts='[]' WHERE id=? AND status='pending'").run(item.ref);return;}
+  const delivery=shareDeliveries.get(db);if(!delivery)throw new Error('approval-queue-delivery-unavailable');delivery(item,answer);
+ };
+ queue=new ProducerApprovalQueue('room-share',undefined,accept,accept);shareQueues.set(db,queue);return queue;
+}
+export function pendingRoomShareApprovals(db:DatabaseSync){return roomShareApprovalQueue(db).pendingApprovals();}
+export function installRoomShareApprovalDelivery(db:DatabaseSync,roster:()=>Roster,deps:ShareDeps,run:<T>(operation:()=>T)=>T):ProducerApprovalQueue {
+ shareDeliveries.set(db,(item,answer)=>{
+  const share=roomShare(db,item.ref);if(!share)throw new Error('approval-queue-conflict');
+  const input=answer.updatedInput??{nonce:share.nonce,digest:shareDigest(share),keep:share.excerpts.map(e=>e.messageId),origin:'desktop'};
+  const explicit=answer.updatedInput&&(input.origin==='desktop'||input.origin==='companion');
+  const result=releaseShare(db,roster(),deps,{id:share.id,origin:explicit?(input.origin==='companion'?'companion':'desktop'):'unproven',nonce:input.nonce,digest:input.digest,keep:input.keep,...(explicit?{}:{automatic:true as const})},run,Date.now());
+  if(!result.ok)throw new Error(result.error);
+  roomShareResults.set(share.id,result);if(roomShareResults.size>256)roomShareResults.delete(roomShareResults.keys().next().value!);
+ });return roomShareApprovalQueue(db);
+}
+export type AskResult = { ok: true; share: RoomShare | null; toolText: string; autoRun?: boolean } | { ok: false; error: string };
 /** The bot's call (2.2/2.3), or the owner's composer entry (8a.1, `byOwner`): mount re-checked, draft cap, picker, frozen row. */
-export function askOwnerToShare(db: DatabaseSync, roster: Roster, input: { botId: string; threadId: string; query: unknown; from: unknown }, now = Date.now()): AskResult {
+export function askOwnerToShare(db: DatabaseSync, roster: Roster, input: { authority?:ServiceAuthority; botId: string; threadId: string; query: unknown; from: unknown }, now = Date.now()): AskResult {
+  let autoRun=false;
   const room = shareMounts(db, roster, input.botId, input.threadId);
   if (!room) return { ok: false, error: SHARE_UNAVAILABLE };
   const query = typeof input.query === "string" ? input.query.trim() : "";
@@ -172,10 +200,20 @@ export function askOwnerToShare(db: DatabaseSync, roster: Roster, input: { botId
   const id = `rshare-${randomUUID()}`;
   const share: RoomShare = { id, botId: bot.id, roomId: room.id, roomThreadId: room.threadId, originThreadId: input.threadId, query, excerpts, excerptsHash: excerptsHashOf(excerpts),
     nonce: randomBytes(18).toString("base64url"), status: "pending", stableId: `rshare-line-${id.slice(7)}`, createdAt: now, expiresAt: now + SHARE_TTL_MS };
+  if(shareDatabases.size>=256)shareDatabases.delete(shareDatabases.keys().next().value!);
+  shareDatabases.set(id,db);
+  const queue=roomShareApprovalQueue(db);
+  const opened=queue.open({authority:input.authority,ref:id,tool:'ask_owner_to_share',input:{share},
+    action:{requestId:id,tool:'ask_owner_to_share',options:['Share',"Don't share"],share},
+    view:{title:shareAskRowText(bot.name),subtitle:query},base:producerBase(true)});
+  if(opened.outcome.kind==='refuse'){db.prepare("UPDATE room_shares SET status='unavailable' WHERE id=?").run(id);return {ok:false,error:opened.outcome.message};}
+  if(opened.outcome.kind!=='run')queue.stage(opened,opened.outcome.ref);
   db.prepare("INSERT INTO room_shares(id,bot_id,room_id,room_thread_id,origin_thread_id,query,excerpts,excerpts_hash,nonce,status,stable_id,created_at,expires_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
     .run(share.id, share.botId, share.roomId, share.roomThreadId, share.originThreadId, share.query, JSON.stringify(share.excerpts), share.excerptsHash, share.nonce, share.status,
       share.stableId, share.createdAt, share.expiresAt);
-  return { ok: true, share, toolText: SHARE_ASKED_LINE };
+  if(opened.outcome.kind==='run'){if(shareExecutions.size>=256)throw new Error('approval-queue-capacity');shareExecutions.set(id,opened);autoRun=true;}
+  else queue.presentNow(opened,opened.outcome.ref);
+  return { ok: true, share, toolText: SHARE_ASKED_LINE, autoRun };
 }
 
 /** 8a.3: the release proof binds the draft nonce, the room thread, the bot, the source ids and versions and the exact displayed bytes. */
@@ -184,7 +222,9 @@ export function shareDigest(share: Pick<RoomShare, "nonce" | "roomThreadId" | "b
 }
 /** The card body, for an owner session only (the route checks isOwnerOrigin). */
 export function shareCard(share: RoomShare, botName: string, sourceName: (threadId: string) => string) {
-  return { id: share.id, botId: share.botId, botName, roomId: share.roomId, query: share.query, status: share.status, expiresAt: share.expiresAt,
+  const db=shareDatabases.get(share.id), item=db&&roomShareApprovalQueue(db).pendingApprovals().find(item=>item.ref===share.id);
+  const record=item&&readApproval(item.approvalId);
+  return { ...(record?{approvalId:record.ref.approvalId,requestRef:record.requestId,actionHash:record.actionHash}:{}), id: share.id, botId: share.botId, botName, roomId: share.roomId, query: share.query, status: share.status, expiresAt: share.expiresAt,
     copy: SHARE_CARD_COPY, nonce: share.nonce, digest: shareDigest(share),
     excerpts: share.excerpts.map(e => ({ messageId: e.messageId, source: sourceName(e.threadId), text: e.text })) };
 }
@@ -200,8 +240,32 @@ export type ShareOutcome = { ok: true; status: "shared" | "unavailable"; line?: 
 /** 3.2 + 8a.3/8a.4: the owner's Share. `origin` must be an owner desktop/companion session (the route proves it). The kept ids must be a
  * subset of the frozen row; every kept excerpt is revalidated synchronously against the live line (still there, same text, `shown`). */
 export function shareRoomExcerpts(db: DatabaseSync, roster: Roster, deps: ShareDeps, input: { id: string; origin: MessageOrigin; nonce: unknown; digest: unknown; keep: unknown },
-  run: <T>(operation: () => T) => T, now = Date.now()): ShareOutcome {
+  run: <T>(operation: () => T) => T, _now = Date.now()): ShareOutcome {
   if (input.origin !== "desktop" && input.origin !== "companion") return { ok: false, status: 403, error: "Only you can share this, from Murage on your computer or phone." };
+  const queue=installRoomShareApprovalDelivery(db,()=>roster,deps,run);
+  const item=queue.pendingApprovals().find(item=>item.ref===input.id);
+  if(!item)return {ok:false,status:409,error:'This share request is no longer open.'};
+  const delivery=queue.answerNow(item.approvalId,{behavior:'allow',updatedInput:{nonce:input.nonce,digest:input.digest,keep:input.keep,origin:input.origin}});
+  if(delivery.state==='failed')return {ok:false,status:409,error:'This share request is no longer open.'};
+  return roomShareResults.get(input.id)??{ok:true,status:'unavailable'};
+
+}
+/** A requested share authorized by the bound turn's final decision. No owner
+ * click is invented; the released quotation is attributed to the bot. */
+export function shareRequestedExcerpts(db: DatabaseSync, roster: Roster, deps: ShareDeps, share: RoomShare, run: <T>(operation: () => T) => T): ShareOutcome {
+  const request=shareExecutions.get(share.id);
+  if(!request)return {ok:false,status:403,error:'Share needs approval.'};
+  const queue=installRoomShareApprovalDelivery(db,()=>roster,deps,run);
+  const result=queue.executeNow(request,call=>{
+    const frozen=(call.input as {share:RoomShare}).share;
+    return releaseShare(db,roster,deps,{id:frozen.id,origin:'unproven',nonce:frozen.nonce,digest:shareDigest(frozen),keep:frozen.excerpts.map(e=>e.messageId),automatic:true},run,Date.now());
+  });
+  shareExecutions.delete(share.id);
+  if(result.kind==='executed')return result.value;
+  if(result.kind==='refuse')return {ok:false,status:403,error:result.message};
+  queue.presentNow(request,result.ref);return {ok:false,status:409,error:'Share needs approval.'};
+}
+function releaseShare(db: DatabaseSync, roster: Roster, deps: ShareDeps, input: {id:string;origin:MessageOrigin;nonce:unknown;digest:unknown;keep:unknown;automatic?:true}, run:<T>(operation:()=>T)=>T, now:number): ShareOutcome {
   expireRoomShares(db, now);
   const share = roomShare(db, input.id);
   if (!share || share.status !== "pending") return { ok: false, status: 409, error: "This share request is no longer open." };
@@ -236,7 +300,7 @@ export function shareRoomExcerpts(db: DatabaseSync, roster: Roster, deps: ShareD
     }
     if (new Set(kept.map(e => e.threadId)).size !== 1) return unavailable();
     const source = kept[0]!.threadId;
-    const line: Omit<Message, "id" | "at"> = { role: "user", kind: "text", text, origin: input.origin,
+    const line: Omit<Message, "id" | "at"> = { role: input.automatic ? "bot" : "user", kind: "text", text, origin: input.origin,
       copyOf: { threadId: source, messageIds: kept.map(e => e.messageId) }, sharedFrom: { botId: share.botId, shareId: share.id } };
     const refs: LineageRef[] = [{ kind: "prefix", threadId: source, shown: kept.map(e => e.messageId) }];
     const written = deps.append(share.roomThreadId, line, share.stableId, () => {
@@ -249,7 +313,8 @@ export function shareRoomExcerpts(db: DatabaseSync, roster: Roster, deps: ShareD
 /** 3.3: Don't share. Returns true when the row moved (the caller writes the room note once). */
 export function declineRoomShare(db: DatabaseSync, id: string, origin: MessageOrigin): boolean {
   if (origin !== "desktop" && origin !== "companion") return false;
-  return db.prepare("UPDATE room_shares SET status='declined', excerpts='[]' WHERE id=? AND status='pending'").run(id).changes === 1;
+  const queue=roomShareApprovalQueue(db),item=queue.pendingApprovals().find(item=>item.ref===id);
+  return !!item&&queue.answerNow(item.approvalId,{behavior:'deny'}).state!=='failed';
 }
 /** Stop/delete of the bot or the room. */
 export function dropRoomShares(db: DatabaseSync, match: { botId?: string; roomId?: string }): void {

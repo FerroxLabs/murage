@@ -155,7 +155,9 @@ describe("PIP kind list", () => {
       // +3 MEM-QUEUED-LEARNING-FENCE (r1 H1): the send gate re-checks each held `current` row by id and version (state, latest
       // version, and the text only to compare its digest under the write lock); point lookups; nothing read goes to a model or the owner
       "memory/learning-send.ts": 3,
-      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 12, "memory/owner-tail-index.ts": 3, "memory/record-keys.ts": 5, "memory/procedure-review.ts": 3,
+      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 12, "memory/owner-tail-index.ts": 3, "memory/record-keys.ts": 6, "memory/procedure-review.ts": 3,
+      // record-keys +1 (682a98a44a): the bounded predecessor probe reads a creation time and age key, no text;
+      // this is administrative key allocation, never a model or owner record reader.
       // record-keys +1 (io-hotpath): the rebuild start log reads max(rowid) only, an administrative count with no row, kind or text
       // owner-list +1 (1.0.15 MEMORY-TOOL-NAME-JUNK d57c1ba33, kept by review 676d6223a): visibleKeys looks up, by primary key, the unpinned
       // `source` keys of the browse slice it already holds; the statement names kind='source' AND assertion='tool-observation' and returns

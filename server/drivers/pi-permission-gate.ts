@@ -31,6 +31,14 @@ import { lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { posix, win32 } from "node:path";
 
+// @inline begin shared/flux-route.ts:registerBusyloopPayloadSite
+// Keep the source inventory's pure identity marker without a Murage import.
+function registerBusyloopPayloadSite<T>(kind: "read" | "classify", payload: T): T {
+  void kind;
+  return payload;
+}
+// @inline end shared/flux-route.ts:registerBusyloopPayloadSite
+
 // @inline begin shared/scan-limits.ts
 const GATE_MESSAGE_BYTES = 16 * 1024 * 1024;
 const WALK_CACHE_MS = 10_000;
@@ -159,11 +167,18 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     read: ["**/murage-exec*/**", "**/murage-exec*"],
     bash: ["*murage-exec*"],
   },
+  {
+    id: "murage-copilot-mcp",
+    re: /murage-copilot-mcp(-[0-9A-Za-z]+)?([\\/]|$|["'\s])/i,
+    read: ["**/murage-copilot-mcp*/**", "**/murage-copilot-mcp*"],
+    bash: ["*murage-copilot-mcp*"],
+  },
   // 1.0.3 (hook self-guard): the hook programs Murage writes for an engine and
   // the folders they live in (DATA_DIR/native/antigravity-relay, -ask, -scope
   // and codex-scope). The engine re-reads them on every call, so a write to one
   // would replace the guard that judges every later call.
   // 1.0.10: native/hermes-ask (the Hermes ask hook and its overlay config): a bot editing the overlay could remove Murage's ask hook.
+  // No limits: no card; hook-canon.ts checks and restores these files before every use.
   {
     id: "murage-engine-hooks",
     re: /(?<![\w.-])(?:(?:antigravity-(?:relay|ask|scope)|codex-scope|hermes-ask)[. ]*(?:[\\/:]|$|["'\s;|&)>`])|murage-agy-relay|murage-hook\.(?:mjs|cmd|env)\b|ask-hook-[\w.-]*\.cjs\b)/i,
@@ -846,12 +861,9 @@ export const GATE_UNASKED: ReadonlyArray<readonly [string, readonly string[]]> =
     "phone_contacts_search", "phone_contacts_get", "phone_location_get",
     "phone_alarm_set", "phone_timer_set", "phone_text_compose", "phone_call_dial",
   ]],
-  // native HighLevel, read only (a test pins them to HIGHLEVEL_READ_TOOL_NAMES and HIGHLEVEL_HELPER_NAMES through OWN_UNASKED)
+  // Family calls always reach the HighLevel host for operation-level grant and approval checks.
   ["own:highlevel", [
-    "HIGHLEVEL_SEARCH_CONTACTS", "HIGHLEVEL_GET_CONTACT", "HIGHLEVEL_LIST_NOTES", "HIGHLEVEL_LIST_TASKS",
-    "HIGHLEVEL_LIST_PIPELINES", "HIGHLEVEL_SEARCH_OPPORTUNITIES", "HIGHLEVEL_GET_OPPORTUNITY", "HIGHLEVEL_SEARCH_CONVERSATIONS",
-    "HIGHLEVEL_READ_CONVERSATION", "HIGHLEVEL_LIST_CALENDARS", "HIGHLEVEL_LIST_EVENTS", "HIGHLEVEL_GET_LOCATION",
-    "HIGHLEVEL_LIST_CONNECTIONS", "HIGHLEVEL_ACTION_STATUS",
+    "HIGHLEVEL_CONTACTS", "HIGHLEVEL_OPPORTUNITIES", "HIGHLEVEL_CONVERSATIONS", "HIGHLEVEL_CALENDARS", "HIGHLEVEL_AUTOMATIONS", "HIGHLEVEL_LOCATION", "HIGHLEVEL_USERS", "HIGHLEVEL_FORMS", "HIGHLEVEL_PAYMENTS", "HIGHLEVEL_SOCIAL", "HIGHLEVEL_BLOGS", "HIGHLEVEL_MEDIA", "HIGHLEVEL_DOCUMENTS", "HIGHLEVEL_FUNNELS", "HIGHLEVEL_COURSES", "HIGHLEVEL_SAAS", "HIGHLEVEL_SNAPSHOTS", "HIGHLEVEL_LIST_CONNECTIONS", "HIGHLEVEL_ACTION_STATUS"
   ]],
 ];
 function unaskedPair(mountId: string | undefined, tool: string): boolean {
@@ -1114,7 +1126,7 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
     staleNote = undefined;
     const answer = await ctx.ui.editor(`${PI_GATE_TITLE_PREFIX}${secret}`, piGateMessage(tool, isObject(event.input) ? event.input : undefined, entry, note, held));
     if (typeof answer !== "string" || !answer.trim()) return block(PI_GATE_NOT_ALLOWED);
-    const parsed: unknown = JSON.parse(answer);
+    const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(answer));
     if (!isObject(parsed)) return block(PI_GATE_NOT_ALLOWED);
     if (parsed.deny === true) return block(typeof parsed.reason === "string" && parsed.reason ? parsed.reason.slice(0, 2_000) : PI_GATE_NOT_ALLOWED);
     // NOLIMITS-MEANS-IT 3.4: the server never saw this call whole, so there is nothing to echo. Allow means run what is

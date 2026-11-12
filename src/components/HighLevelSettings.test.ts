@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { HIGHLEVEL_READ_TOOL_NAMES, HIGHLEVEL_TOOL_NAMES, HIGHLEVEL_WRITE_TOOLS, type HighLevelBotAccess } from "../../shared/highlevel";
+import { defaultHighLevelFamilies, type HighLevelBotAccess } from "../../shared/highlevel";
 import { highlevelGrantsFor, highlevelLevel, highlevelStatus, type HighLevelView } from "./HighLevelSettings";
 
 const connectionId = "hl_loc123";
@@ -11,13 +11,10 @@ const access = (ceiling: "read" | "propose", accountId = connectionId): HighLeve
 } as unknown as HighLevelBotAccess);
 const view = (patch: Partial<HighLevelView>): HighLevelView => ({ tokenSaved: true, connection: null, bots: [], ...patch });
 
-describe("HighLevel owner card (read only in HL-S2)", () => {
-  it("Can read grants only the twelve read tools; off sends no grants; no level grants a change", () => {
-    expect(HIGHLEVEL_READ_TOOL_NAMES).toHaveLength(12);
-    expect(HIGHLEVEL_READ_TOOL_NAMES.some((tool) => HIGHLEVEL_WRITE_TOOLS.has(tool))).toBe(false);
-    expect(HIGHLEVEL_READ_TOOL_NAMES.length + HIGHLEVEL_WRITE_TOOLS.size).toBe(HIGHLEVEL_TOOL_NAMES.length);
+describe("HighLevel owner card", () => {
+  it("Can look uses default family levels; off revokes the grant", () => {
     expect(highlevelGrantsFor("off", connectionId)).toEqual({ grants: [] });
-    expect(highlevelGrantsFor("read", connectionId)).toEqual({ grants: [{ connectionId, ceiling: "read", tools: [...HIGHLEVEL_READ_TOOL_NAMES] }] });
+    expect(highlevelGrantsFor("read", connectionId)).toEqual({ grants: [{ connectionId, families: defaultHighLevelFamilies() }] });
   });
 
   it("an older saved propose grant shows as Can read; another location shows as off", () => {
@@ -27,13 +24,12 @@ describe("HighLevel owner card (read only in HL-S2)", () => {
     expect(highlevelLevel(access("propose", "hl_other"), connectionId)).toBe("off");
   });
 
-  it("the card offers one switch per bot, Can read, and no change switch or approval copy", () => {
+  it("the card offers one change switch and keeps Full control in Advanced", () => {
     const source = readFileSync(new URL("./HighLevelSettings.tsx", import.meta.url), "utf8");
     expect(source.match(/<Switch\b/g)).toHaveLength(1);
-    expect(source).toContain('t("highlevel.canRead")');
-    expect(source).not.toMatch(/propose|canSuggest|approvalNote|HIGHLEVEL_WRITE_TOOLS|HIGHLEVEL_TOOL_NAMES/);
-    const en = JSON.parse(readFileSync(new URL("../locales/en.json", import.meta.url), "utf8")) as Record<string, string>;
-    for (const key of ["highlevel.canSuggest", "highlevel.canSuggestFor", "highlevel.approvalNote", "highlevel.held"]) expect(en[key]).toBeUndefined();
+    expect(source).toContain('t("highlevel.canChange")');
+    expect(source).toContain('t("highlevel.fullHelp")');
+    expect(source).toContain('advanced &&');
   });
 
   it("shows one plain status line for each state", () => {

@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // Native (un-normalized) protocol tee — the debugging trick from upstream's
 // EventNdjsonLogger and agentcal's onRaw: every provider-native message is
 // retained next to the canonical stream, within a bounded diagnostic window.
@@ -90,7 +91,7 @@ function capExisting(file: string): number {
       retained.push(marker("native_trace_record_omitted", { reason: "legacy record exceeds byte limit" }));
       continue;
     }
-    try { JSON.parse(record); retained.push(record + "\n"); }
+    try { registerBusyloopPayloadSite("read", JSON.parse(record)); retained.push(record + "\n"); }
     catch { /* A trailing partial legacy record is not valid NDJSON. */ }
   }
   const encoded = marker("native_trace_retention", { reason: "legacy trace exceeded segment limit", previousBytes: bytes }) + retained.join("");

@@ -64,7 +64,7 @@ async function startFixture(signal: AbortSignal, env: Record<string, string>): P
   writeFileSync(join(data, "config.json"), JSON.stringify({ engineDiscovery: "explicit", instances: { fixture: { driver: "claudeAgent", config: { cli: fakeCli } } } }));
   const port = await freePortBlock([0, 1]), secret = "7".repeat(64);
   const desktop = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret };
-  const child = spawn(process.execPath, [fileURLToPath(new URL("./index.ts", import.meta.url))], { cwd: fileURLToPath(new URL("..", import.meta.url)), env: {
+  const child = spawn(process.execPath, [fileURLToPath(new URL("./index.ts", import.meta.url))], { windowsHide: true, cwd: fileURLToPath(new URL("..", import.meta.url)), env: {
     HOME: root, USERPROFILE: root, PATH: process.env.PATH ?? "/usr/bin:/bin", MURAGE_DATA_DIR: data,
     MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: secret, FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: dump,
     ...env,

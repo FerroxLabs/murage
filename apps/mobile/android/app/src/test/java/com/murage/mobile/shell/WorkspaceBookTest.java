@@ -8,8 +8,8 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 public class WorkspaceBookTest {
-    private final WorkspaceOrigin mac = WorkspaceOrigin.parse("https://mac.tailnet123.ts.net");
-    private final WorkspaceOrigin server = WorkspaceOrigin.parse("https://server.tailnet123.ts.net");
+    private final WorkspaceOrigin mac = WorkspaceOrigin.parse("https://mac.tail000000.ts.net");
+    private final WorkspaceOrigin server = WorkspaceOrigin.parse("https://server.tail000000.ts.net");
 
     @Test public void signingInSavesNamesAndActivates() {
         WorkspaceBook book = new WorkspaceBook();
@@ -19,7 +19,7 @@ public class WorkspaceBookTest {
         book.signedIn(server, null, 3_000);
         assertEquals("Home server", book.entry(server).name);
         assertEquals(3_000, book.entry(server).lastConnected);
-        assertEquals("https://server.tailnet123.ts.net", book.active());
+        assertEquals("https://server.tail000000.ts.net", book.active());
     }
 
     @Test public void newestFirstRemovalAndTheLimit() {
@@ -29,7 +29,7 @@ public class WorkspaceBookTest {
         assertEquals(server.serialized(), book.sorted().get(0).origin);
         book.remove(server);
         assertNull(book.active());
-        for (int i = 0; i < 21; i++) book.signedIn(WorkspaceOrigin.parse("https://host" + i + ".tailnet123.ts.net"), null, 10_000 + i);
+        for (int i = 0; i < 21; i++) book.signedIn(WorkspaceOrigin.parse("https://host" + i + ".tail000000.ts.net"), null, 10_000 + i);
         assertEquals(20, book.sorted().size());
         assertNull(book.entry(mac));
     }
@@ -38,10 +38,10 @@ public class WorkspaceBookTest {
         assertEquals(0, WorkspaceBook.decode(null).sorted().size());
         assertEquals(0, WorkspaceBook.decode("garbage".getBytes(StandardCharsets.UTF_8)).sorted().size());
         String dirty = "{\"workspaces\":[{\"origin\":\"http://bad\",\"name\":\"x\",\"lastConnected\":1},"
-            + "{\"origin\":\"https://Mac.tailnet123.ts.net\",\"name\":\"Mac\",\"lastConnected\":2}],\"active\":\"http://bad\"}";
+            + "{\"origin\":\"https://Mac.tail000000.ts.net\",\"name\":\"Mac\",\"lastConnected\":2}],\"active\":\"http://bad\"}";
         WorkspaceBook book = WorkspaceBook.decode(dirty.getBytes(StandardCharsets.UTF_8));
         assertEquals(1, book.sorted().size());
-        assertEquals("https://mac.tailnet123.ts.net", book.sorted().get(0).origin);
+        assertEquals("https://mac.tail000000.ts.net", book.sorted().get(0).origin);
         assertNull(book.active());
         book.signedIn(mac, "Mac", 5);
         WorkspaceBook again = WorkspaceBook.decode(book.encode());
@@ -51,10 +51,10 @@ public class WorkspaceBookTest {
 
     /** The book keeps origin, name and time only: no credential, cookie or unknown field survives a round trip. */
     @Test public void neverPersistsCredentialsOrUnknownFields() throws Exception {
-        String stored = "{\"workspaces\":[{\"origin\":\"https://mac.tailnet123.ts.net\",\"name\":\"Mac\",\"lastConnected\":2,"
-            + "\"credential\":\"murage_pair_secret\",\"cookie\":\"murage_session=abc\"}],\"active\":\"https://mac.tailnet123.ts.net\",\"token\":\"murage_pair_secret\"}";
+        String stored = "{\"workspaces\":[{\"origin\":\"https://mac.tail000000.ts.net\",\"name\":\"Mac\",\"lastConnected\":2,"
+            + "\"credential\":\"murage_pair_secret\",\"cookie\":\"murage_session=abc\"}],\"active\":\"https://mac.tail000000.ts.net\",\"token\":\"murage_pair_secret\"}";
         WorkspaceBook book = WorkspaceBook.decode(stored.getBytes(StandardCharsets.UTF_8));
-        book.signedIn(WorkspaceOrigin.parse("https://server.tailnet123.ts.net/enter#murage_pair_other&installId=abcdefghijklmnop"), null, 3);
+        book.signedIn(WorkspaceOrigin.parse("https://server.tail000000.ts.net/enter#murage_pair_other&installId=abcdefghijklmnop"), null, 3);
         String encoded = new String(book.encode(), StandardCharsets.UTF_8);
         assertFalse(encoded, encoded.contains("murage_pair"));
         assertFalse(encoded, encoded.contains("murage_session"));
@@ -63,7 +63,7 @@ public class WorkspaceBookTest {
         assertEquals(2, json.length());
         JSONArray list = json.getJSONArray("workspaces");
         for (int i = 0; i < list.length(); i++) assertEquals(3, list.getJSONObject(i).length());
-        assertEquals("https://server.tailnet123.ts.net", book.active());
+        assertEquals("https://server.tail000000.ts.net", book.active());
     }
 
     /** Every row of contract/origins.json: a saved origin survives decoding only if it parses, and only in its clean form. */
@@ -84,14 +84,14 @@ public class WorkspaceBookTest {
 
     @Test public void decodingCleansNamesDuplicatesAndTheLimit() throws Exception {
         JSONArray list = new JSONArray();
-        list.put(new JSONObject().put("origin", "https://mac.tailnet123.ts.net").put("name", 7).put("lastConnected", 1));
-        list.put(new JSONObject().put("origin", "https://MAC.tailnet123.ts.net").put("name", "dup").put("lastConnected", 2));
-        list.put(new JSONObject().put("origin", "https://server.tailnet123.ts.net").put("name", "s".repeat(500)).put("lastConnected", 3));
-        for (int i = 0; i < 30; i++) list.put(new JSONObject().put("origin", "https://host" + i + ".tailnet123.ts.net").put("name", "h").put("lastConnected", 100 + i));
-        JSONObject stored = new JSONObject().put("workspaces", list).put("active", "https://MAC.tailnet123.ts.net");
+        list.put(new JSONObject().put("origin", "https://mac.tail000000.ts.net").put("name", 7).put("lastConnected", 1));
+        list.put(new JSONObject().put("origin", "https://MAC.tail000000.ts.net").put("name", "dup").put("lastConnected", 2));
+        list.put(new JSONObject().put("origin", "https://server.tail000000.ts.net").put("name", "s".repeat(500)).put("lastConnected", 3));
+        for (int i = 0; i < 30; i++) list.put(new JSONObject().put("origin", "https://host" + i + ".tail000000.ts.net").put("name", "h").put("lastConnected", 100 + i));
+        JSONObject stored = new JSONObject().put("workspaces", list).put("active", "https://MAC.tail000000.ts.net");
         WorkspaceBook book = WorkspaceBook.decode(stored.toString().getBytes(StandardCharsets.UTF_8));
         assertEquals(WorkspaceBook.LIMIT, book.sorted().size());
-        assertEquals("https://host29.tailnet123.ts.net", book.sorted().get(0).origin);
+        assertEquals("https://host29.tail000000.ts.net", book.sorted().get(0).origin);
         assertNull(book.entry(mac));
         // Like Swift, "active" must name a saved origin exactly.
         assertNull(book.active());
@@ -106,12 +106,12 @@ public class WorkspaceBookTest {
     /** The computer just signed in to is never the one evicted, even when its time is older than every other. */
     @Test public void signingInNeverEvictsTheNewEntry() {
         WorkspaceBook book = new WorkspaceBook();
-        for (int i = 0; i < WorkspaceBook.LIMIT; i++) book.signedIn(WorkspaceOrigin.parse("https://host" + i + ".tailnet123.ts.net"), null, 10_000 + i);
+        for (int i = 0; i < WorkspaceBook.LIMIT; i++) book.signedIn(WorkspaceOrigin.parse("https://host" + i + ".tail000000.ts.net"), null, 10_000 + i);
         book.signedIn(mac, null, 5);
         assertEquals(WorkspaceBook.LIMIT, book.sorted().size());
         assertNotNull(book.entry(mac));
         assertEquals(mac.serialized(), book.active());
-        assertNull(book.entry(WorkspaceOrigin.parse("https://host0.tailnet123.ts.net")));
+        assertNull(book.entry(WorkspaceOrigin.parse("https://host0.tail000000.ts.net")));
     }
 
     /** Use after pairing moves the time on; it never adds a computer, never changes the active one, never evicts. */
@@ -125,7 +125,7 @@ public class WorkspaceBookTest {
         assertEquals(mac.serialized(), book.sorted().get(0).origin);
         assertEquals(server.serialized(), book.active());
         WorkspaceBook full = new WorkspaceBook();
-        for (int i = 0; i < WorkspaceBook.LIMIT; i++) full.signedIn(WorkspaceOrigin.parse("https://host" + i + ".tailnet123.ts.net"), null, i);
+        for (int i = 0; i < WorkspaceBook.LIMIT; i++) full.signedIn(WorkspaceOrigin.parse("https://host" + i + ".tail000000.ts.net"), null, i);
         byte[] before = full.encode();
         assertFalse(full.touched(mac, 500_000)); // removed or never saved: nothing comes back
         assertArrayEquals(before, full.encode());
@@ -151,32 +151,32 @@ public class WorkspaceBookTest {
 
     /** lastConnected is an integer or it is 0: a string such as "1e3" or a fraction is not read as a time. */
     @Test public void decodingReadsOnlyIntegerTimes() throws Exception {
-        String stored = "{\"workspaces\":[{\"origin\":\"https://mac.tailnet123.ts.net\",\"lastConnected\":\"1e3\"},"
-            + "{\"origin\":\"https://server.tailnet123.ts.net\",\"lastConnected\":1.5},"
-            + "{\"origin\":\"https://host1.tailnet123.ts.net\",\"lastConnected\":1700000000000},"
-            + "{\"origin\":\"https://host2.tailnet123.ts.net\",\"lastConnected\":7}]}";
+        String stored = "{\"workspaces\":[{\"origin\":\"https://mac.tail000000.ts.net\",\"lastConnected\":\"1e3\"},"
+            + "{\"origin\":\"https://server.tail000000.ts.net\",\"lastConnected\":1.5},"
+            + "{\"origin\":\"https://host1.tail000000.ts.net\",\"lastConnected\":1700000000000},"
+            + "{\"origin\":\"https://host2.tail000000.ts.net\",\"lastConnected\":7}]}";
         WorkspaceBook book = WorkspaceBook.decode(stored.getBytes(StandardCharsets.UTF_8));
         assertEquals(0, book.entry(mac).lastConnected);
         assertEquals(0, book.entry(server).lastConnected);
-        assertEquals(1_700_000_000_000L, book.entry(WorkspaceOrigin.parse("https://host1.tailnet123.ts.net")).lastConnected);
-        assertEquals(7, book.entry(WorkspaceOrigin.parse("https://host2.tailnet123.ts.net")).lastConnected);
+        assertEquals(1_700_000_000_000L, book.entry(WorkspaceOrigin.parse("https://host1.tail000000.ts.net")).lastConnected);
+        assertEquals(7, book.entry(WorkspaceOrigin.parse("https://host2.tail000000.ts.net")).lastConnected);
     }
 
     /** P13 twin ruling: a duplicate origin keeps the first; at the cap, a tie drops the entry listed first among the oldest. */
     @Test public void decodingDuplicatesAndTies() throws Exception {
         JSONArray list = new JSONArray();
-        list.put(new JSONObject().put("origin", "https://mac.tailnet123.ts.net").put("name", "first").put("lastConnected", 1));
-        list.put(new JSONObject().put("origin", "https://mac.tailnet123.ts.net").put("name", "second").put("lastConnected", 9));
+        list.put(new JSONObject().put("origin", "https://mac.tail000000.ts.net").put("name", "first").put("lastConnected", 1));
+        list.put(new JSONObject().put("origin", "https://mac.tail000000.ts.net").put("name", "second").put("lastConnected", 9));
         assertEquals("first", decodeList(list).entry(mac).name);
         assertEquals(1, decodeList(list).entry(mac).lastConnected);
 
         JSONArray full = new JSONArray();
-        for (int i = 0; i <= WorkspaceBook.LIMIT; i++) full.put(new JSONObject().put("origin", "https://host" + i + ".tailnet123.ts.net").put("lastConnected", i < 3 ? 5 : 100 + i));
+        for (int i = 0; i <= WorkspaceBook.LIMIT; i++) full.put(new JSONObject().put("origin", "https://host" + i + ".tail000000.ts.net").put("lastConnected", i < 3 ? 5 : 100 + i));
         WorkspaceBook book = decodeList(full);
         assertEquals(WorkspaceBook.LIMIT, book.sorted().size());
-        assertNull(book.entry(WorkspaceOrigin.parse("https://host0.tailnet123.ts.net")));
-        assertNotNull(book.entry(WorkspaceOrigin.parse("https://host1.tailnet123.ts.net")));
-        assertNotNull(book.entry(WorkspaceOrigin.parse("https://host2.tailnet123.ts.net")));
+        assertNull(book.entry(WorkspaceOrigin.parse("https://host0.tail000000.ts.net")));
+        assertNotNull(book.entry(WorkspaceOrigin.parse("https://host1.tail000000.ts.net")));
+        assertNotNull(book.entry(WorkspaceOrigin.parse("https://host2.tail000000.ts.net")));
     }
 
     @Test public void entriesCannotBeChangedFromOutside() {

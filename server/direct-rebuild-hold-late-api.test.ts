@@ -18,7 +18,7 @@ import { launchVerificationServer, type VerificationServer } from "../scripts/co
 const LEGACY_JOBS = 122;
 const FIRST_LEGACY_ID = 720001;
 const HELD = ["rbroutine"] as const;
-const LATE = ["lbtwice", "lbrefuse", "lbqueue"] as const;
+const LATE = ["lbtwice", "lbrefuse", "lbqueue", "rblrej", "rblstop", "rblreport"] as const;
 let fixture: VerificationServer, headers: Record<string, string>;
 const raw = async (method: string, path: string, body?: unknown) => {
   const response = await fetch(`${fixture.info.url}${path}`, { method, headers: { "content-type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -48,6 +48,15 @@ const sends = (instance: string, threadId: string) => linesOf(`${instance}-dump`
 const interrupts = (instance: string, threadId: string) => linesOf(`${instance}-interrupts`).filter(line => line === threadId).length;
 /** Every rebuild the server started on the thread: one per refusal it logged, at a send or at a late write. */
 const rebuildsLogged = (threadId: string) => count(log(), `during dispatch on thread ${threadId}; re-preparing`) + count(log(), `at a late submission on thread ${threadId}; re-preparing`);
+
+const diagnostic = "Fixture rebuild refused before admission: " + "detail ".repeat(25) + "Action: reconnect the engine and send again.";
+const refusalFile = (threadId: string) => join(fixture.info.dataDir, `rebuild-refuse-${threadId}`);
+const armRefusal = (threadId: string, hold = false) => writeFileSync(refusalFile(threadId), JSON.stringify({ error: diagnostic, hold }));
+const events = (threadId: string) => {
+  const file = join(fixture.info.dataDir, "rebuild-events");
+  return existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)).filter(event => event.threadId === threadId) : [];
+};
+
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /** HOLD_PREFIX: each send waits, after its prompt was built and before the engine submits it, for its hold file (as in direct-rebuild-hold-api). */
@@ -85,7 +94,7 @@ const lateGates = (instance: string) => {
 type Gate = { pass(botId: string, threadId: string): Promise<void>; idle(): boolean };
 /** Lets sends through until the thread has `want` replies: a revoke still being walked may refuse a send once more, and its rebuild is let through too. */
 const passUntilReply = async (gate: Gate, botId: string, threadId: string, want: number) => {
-  for (let attempt = 0; attempt < 4 && await replies(threadId) < want; attempt++) {
+  for (let attempt = 0; attempt < 3 && await replies(threadId) < want; attempt++) {
     if (attempt) console.log(`[drain-v2 late test] ${threadId}: send refused again, rebuild ${attempt} let through`);
     await gate.pass(botId, threadId);
     await expect.poll(async () => await replies(threadId) >= want || !gate.idle(), { timeout: 60000 }).toBe(true);
@@ -127,26 +136,59 @@ const newBot = async (name: string, instanceId: string) => {
 };
 /** A turn refused at its late write: resolved once the server logged its first rebuild and the refused turn waits to be rebuilt. */
 const refuseLateAndWait = async (instance: string, gate: ReturnType<typeof lateGates>, botId: string, threadId: string, text: string) => {
-  const warned = count(log(), `context revoked at a late submission on thread ${threadId}; re-preparing (1 of 3)`);
+  const warned = count(log(), `context revoked at a late submission on thread ${threadId}; re-preparing (1 of 2)`);
   await api("POST", `/api/bots/${botId}/messages`, { threadId, text });
   await gate.pass(botId, `Revoke before the ${instance} write`);
-  await expect.poll(() => count(log(), `context revoked at a late submission on thread ${threadId}; re-preparing (1 of 3)`), { timeout: 30000 }).toBe(warned + 1);
+  await expect.poll(() => count(log(), `context revoked at a late submission on thread ${threadId}; re-preparing (1 of 2)`), { timeout: 30000 }).toBe(warned + 1);
 };
 
 describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a routine's refused turn and a turn refused at its late write keep their thread", () => {
   beforeAll(async () => {
     fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
       const fs=await import('node:fs'); const path=await import('node:path');
+      const {registerHooks}=await import('node:module');
+      globalThis.__rebuildLog=event=>fs.appendFileSync(path.join(process.env.MURAGE_DATA_DIR,'rebuild-events'),JSON.stringify(event)+'\\n');
+      globalThis.__rebuildRefusal=async threadId=>{
+        const flag=path.join(process.env.MURAGE_DATA_DIR,'rebuild-refuse-'+threadId);
+        if(!fs.existsSync(flag))return null;
+        const plan=JSON.parse(fs.readFileSync(flag,'utf8'));fs.rmSync(flag,{force:true});
+        fs.writeFileSync(flag+'.waiting','');
+        if(plan.hold)await new Promise(resolve=>{const timer=setInterval(()=>{if(!fs.existsSync(flag+'.released'))return;clearInterval(timer);resolve();},10);});
+        globalThis.__rebuildLog({kind:'refused',threadId});
+        return plan.error;
+      };
+      globalThis.__rebuildLateReport=async threadId=>{
+        const flag=path.join(process.env.MURAGE_DATA_DIR,'late-report-'+threadId);
+        if(!fs.existsSync(flag))return;
+        fs.writeFileSync(flag+'.waiting','');
+        await new Promise(resolve=>{const timer=setInterval(()=>{if(!fs.existsSync(flag+'.released'))return;clearInterval(timer);resolve();},10);});
+        globalThis.__rebuildLog({kind:'report-resumed',threadId});
+      };
+      registerHooks({load(url,context,next){
+        if(!url.endsWith('/server/index.ts'))return next(url,context);
+        let source=fs.readFileSync(new URL(url),'utf8');
+        const anchor='  const fluxRefusal = providerRoute ? null : fluxSelectionRefusal(model, instance.driverKind);';
+        if(!source.includes(anchor))throw Error('rebuild refusal anchor moved');
+        source=source.replace(anchor,'  const fluxRefusal = (opts?.rebuildOf !== undefined ? await globalThis.__rebuildRefusal(threadId) : null) ?? (providerRoute ? null : fluxSelectionRefusal(model, instance.driverKind));');
+        source=source.replace(/opts\\?\\.onDispatchError\\?\\.\\((message, Object.assign[^;\\n]+)\\);/g,'(globalThis.__rebuildLog({kind:"dispatch-error",threadId,message}), opts?.onDispatchError?.($1));');
+        source=source.replace(/opts\\?\\.onDispatchError\\?\\.\\(("turn stopped before dispatch",[^;\\n]+)\\);/g,'(globalThis.__rebuildLog({kind:"dispatch-stopped",threadId}), opts?.onDispatchError?.($1));');
+        source=source.replace('  directConversationGenerations.set(conversation, token.generation);','  globalThis.__rebuildLog({kind:"admitted",threadId:run.threadId,generation:run.generation});\\n  directConversationGenerations.set(conversation, token.generation);');
+        // A real Stop can land after the helper classified a rejection but before its caller resumes. Hold that promise boundary too.
+        if(source.includes('.then(outcome => {')) {
+          source=source.replace('.then(outcome => {','.then(async outcome => { await globalThis.__rebuildLateReport(threadId);');
+        } else {
+          const lateError='}, error => {\\n                  // a re-dispatch that could not even start';
+          if(!source.includes(lateError))throw Error('late rejection fixture anchor moved');
+          source=source.replace(lateError,'}, async error => { await globalThis.__rebuildLateReport(threadId);\\n                  // a re-dispatch that could not even start');
+        }
+        return {format:'module-typescript',shortCircuit:true,source};
+      }});
+
       const {BUILT_IN_DRIVERS}=await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/drivers/builtIn.ts")).href)});
       const {makeLateTerminalDriver}=await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/testing/fake-late-terminal-driver.ts")).href)});
       const runs=await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/independent-thread-runs.ts")).href)});
       const dir=process.env.MURAGE_DATA_DIR;
-      // The settle window these tests act in needs the refused turn to WAIT for the revoke walk. Since IO-IDLE-DRAIN r3.5 (a2aa1309e) a turn whose
-      // drain room comes only after the 5 s deadline rebuilds at once, and the stuck jobs below keep the runner spending the minute's budget, so the
-      // room is always that far out. Give both ledgers (the pace and the write budget) room inside the window: the stuck jobs still never finish, so
-      // settleRevokesForTurn spins to its full deadline, the case the fixture builds. No production guard moves; only this server process's limits do.
-      const budget=await import(${JSON.stringify(pathToFileURL(join(process.cwd(), "server/memory/revoke-budget.ts")).href)});
-      budget.REVOKE_PACE.bytesPerMinute=2**50; budget.REVOKE_WRITE_BUDGET.bytesPerMinute=2**50;
+      // Marker budgets stay unchanged. The fixture pause above, not queue progress, makes recovery observable.
       // REFUSE_REBUILD_START: once <dir>/refuse-rebuild-start names a thread, the next admission check of that thread's rebuild
       // (startTurnAdmitting) finds its held run gone, as when a Stop lands in the writer-gate wait before admission (DirectRebuildCancelled)
       const proto=runs.IndependentThreadRuns.prototype, rebuilding=proto.rebuilding;
@@ -181,6 +223,8 @@ describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a routine's re
       };
       BUILT_IN_DRIVERS.push(driver);
       const file=path.join(dir,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
+      // These lifecycle fixtures need no computer, including during creation: switching the default host off is itself an interrupt.
+      cfg.computer={...cfg.computer,defaultForNewBots:'off'};
       for(const name of ${JSON.stringify(HELD)})cfg.instances[name]={driver:'fakeLateTerminal',environment:{HOLD_PREFIX:name+'-hold-',INTERRUPTS:path.join(dir,name+'-interrupts'),FAKE_LATE_PLAIN_SESSION:'1',FAKE_LATE_MEMORY_MCP:'1',FAKE_LATE_DUMP:path.join(dir,name+'-dump')}};
       for(const name of ${JSON.stringify(LATE)})cfg.instances[name]={driver:'fakeLateTerminal',environment:{FAKE_LATE_HANDBACK:'1',FAKE_LATE_GATE_EACH:'1',FAKE_LATE_SESSION_GATE:path.join(dir,name+'-gate'),INTERRUPTS:path.join(dir,name+'-interrupts'),FAKE_LATE_DUMP:path.join(dir,name+'-dump'),...(name==='lbtwice'?{REDELIVER_REFUSED:'1'}:{})}};
       fs.writeFileSync(file,JSON.stringify(cfg));
@@ -188,7 +232,78 @@ describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a routine's re
     await login();
     await ensureLegacyJobs();
   }, 120000);
-  afterAll(async () => { await fixture?.close(); });
+  afterAll(async () => {
+    try {
+      if (fixture && process.env.REBUILD_REJECTION_EVIDENCE) {
+        const prefix = join(process.env.REBUILD_REJECTION_EVIDENCE, "late");
+        writeFileSync(prefix + "-fixture-info.json", JSON.stringify(fixture.info, null, 2));
+        writeFileSync(prefix + "-server.log", log());
+        const eventFile = join(fixture.info.dataDir, "rebuild-events");
+        writeFileSync(prefix + "-events.jsonl", existsSync(eventFile) ? readFileSync(eventFile) : "");
+        const bots = (await api("GET", "/api/bots?messages=0")).bots;
+        writeFileSync(prefix + "-conversations.json", JSON.stringify(await Promise.all(bots.map(async (bot: any) => ({ bot, messages: await messages(bot.threadId) }))), null, 2));
+      }
+    } finally { await fixture?.close(); }
+  });
+
+
+  it("a late-refused turn whose rebuild is refused before admission shows the card once, then frees the thread", async () => {
+    const gate = lateGates("rblrej");
+    const bot = await newBot("Late rebuild refused", "rblrej"), threadId = bot.threadId;
+    await refuseLateAndWait("rblrej", gate, bot.id, threadId, "late refusal before rejected rebuild");
+    armRefusal(threadId);
+    await expect.poll(async () => await taskBusy(bot.id, threadId), { timeout: 30000 }).toBe(false);
+    const errors = (await messages(threadId)).filter(message => String(message.tool?.name ?? "").startsWith("error:"));
+    expect(errors).toHaveLength(1);
+    expect(errors[0].tool.errorDetails).toContain("MEMORY_CONTEXT_REVOKED (submission_refused)");
+    expect(count(log(), `late re-dispatch failed on thread ${threadId}`)).toBe(1);
+    expect(sends("rblrej", threadId)).toBe(1);
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "after rejected late rebuild" })).queued).not.toBe(true);
+    await passUntilReply(asGate(gate), bot.id, threadId, 1);
+  }, 180000);
+
+  it("a Stop while a late rebuild is refused before admission adds no card", async () => {
+    const gate = lateGates("rblstop");
+    const bot = await newBot("Late rebuild stopped", "rblstop"), threadId = bot.threadId;
+    await refuseLateAndWait("rblstop", gate, bot.id, threadId, "late refusal before Stop");
+    armRefusal(threadId, true);
+    await expect.poll(() => existsSync(refusalFile(threadId) + ".waiting"), { timeout: 30000 }).toBe(true);
+    const before = errorLines(await messages(threadId));
+    await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
+    writeFileSync(refusalFile(threadId) + ".released", "");
+    await expect.poll(() => events(threadId).some(event => event.kind === "refused"), { timeout: 15000 }).toBe(true);
+    await sleep(1000);
+    expect(errorLines(await messages(threadId))).toEqual(before);
+    expect(count(log(), `late re-dispatch failed on thread ${threadId}`)).toBe(0);
+    expect(await taskBusy(bot.id, threadId)).toBe(false);
+    expect(sends("rblstop", threadId)).toBe(1);
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "after late rebuild Stop" })).queued).not.toBe(true);
+    await passUntilReply(asGate(gate), bot.id, threadId, 1);
+  }, 180000);
+
+
+  it("a Stop after a late rebuild rejects but before its report adds no card", async () => {
+    const gate = lateGates("rblreport");
+    const bot = await newBot("Stop before late report", "rblreport"), threadId = bot.threadId;
+    await refuseLateAndWait("rblreport", gate, bot.id, threadId, "late rejection before report Stop");
+    const flag = dataFile("late-report-" + threadId);
+    writeFileSync(flag, "");
+    armRefusal(threadId);
+    await expect.poll(() => existsSync(flag + ".waiting"), { timeout: 30000 }).toBe(true);
+    const before = errorLines(await messages(threadId));
+    await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
+    writeFileSync(flag + ".released", "");
+    await expect.poll(() => events(threadId).some(event => event.kind === "report-resumed"), { timeout: 15000 }).toBe(true);
+    await sleep(1000);
+    expect(errorLines(await messages(threadId))).toEqual(before);
+    expect(count(log(), `late re-dispatch failed on thread ${threadId}`)).toBe(0);
+    expect(await taskBusy(bot.id, threadId)).toBe(false);
+    expect(sends("rblreport", threadId)).toBe(1);
+    // Disarm the report barrier before the next ordinary turn.
+    writeFileSync(flag + ".released", "");
+    expect((await api("POST", `/api/bots/${bot.id}/messages`, { threadId, text: "after stopped late report" })).queued).not.toBe(true);
+    await passUntilReply(asGate(gate), bot.id, threadId, 1);
+  }, 180000);
 
   // Follow-up 1: a routine's Stop cancels the run before its interrupt, and cancelDirectTurnDispatch moved the held run to "stopping"; the
   // interrupt then asked the engine to stop a thread with no provider turn, and the thread read as working until the settle ended.
@@ -205,10 +320,10 @@ describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a routine's re
     await expect.poll(async () => (await runsOf()).every(run => run.status === "completed"), { timeout: 30000 }).toBe(true);
     await expect.poll(async () => await taskBusy(bot.id, threadId), { timeout: 15000 }).toBe(false);
     // the second run, in the same conversation, is refused at its send and waits to be rebuilt
-    const warned = count(log(), `context revoked during dispatch on thread ${threadId}; re-preparing (1 of 3)`);
+    const warned = count(log(), `context revoked during dispatch on thread ${threadId}; re-preparing (1 of 2)`);
     await api("POST", `/api/routines/${routine.id}/run`, {});
     await hold.pass(bot.id, threadId, "Revoke before the routine submission");
-    await expect.poll(() => count(log(), `context revoked during dispatch on thread ${threadId}; re-preparing (1 of 3)`), { timeout: 30000 }).toBe(warned + 1);
+    await expect.poll(() => count(log(), `context revoked during dispatch on thread ${threadId}; re-preparing (1 of 2)`), { timeout: 30000 }).toBe(warned + 1);
     const sent = sends("rbroutine", threadId), asked = interrupts("rbroutine", threadId);
     await sleep(500);
     expect(await taskBusy(bot.id, threadId)).toBe(true);
@@ -217,11 +332,11 @@ describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a routine's re
     // the Stop the conversation's own button sends: the routine branch of the thread interrupt
     const stoppedAt = Date.now();
     await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId });
-    // idle at once, well inside the settle the refused turn still waits for
+    // idle at once, well inside the fixture recovery pause the refused turn still waits for
     await expect.poll(async () => await taskBusy(bot.id, threadId), { timeout: 1500, interval: 100 }).toBe(false);
     expect(Date.now() - stoppedAt).toBeLessThan(2500);
     expect((await runsOf()).find(run => run.id === live!.id)?.status).toBe("cancelled");
-    // past the settle window: the rebuild never reached the engine, and the engine was never asked to stop this thread
+    // past the fixture recovery pause: the rebuild never reached the engine, and the engine was never asked to stop this thread
     await sleep(7000);
     expect(hold.idle()).toBe(true);
     expect(sends("rbroutine", threadId)).toBe(sent);
@@ -238,6 +353,8 @@ describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a routine's re
     const gate = lateGates("lbtwice");
     const bot = await newBot("Refused late, delivered twice", "lbtwice");
     const threadId = bot.threadId;
+    // a new bot defaults to this computer (a9e405c19) and newBot switches it off, which interrupts the idle thread once: that one is the baseline
+    const setupInterrupts = interrupts("lbtwice", threadId);
     await refuseLateAndWait("lbtwice", gate, bot.id, threadId, "the question refused at its late write");
     await expect.poll(() => linesOf("lbtwice-redelivered").length, { timeout: 10000 }).toBeGreaterThanOrEqual(1);
     // the redelivery released nothing: the thread still reads as working, and nothing new reached the engine in the wait
@@ -255,7 +372,7 @@ describe.skipIf(process.platform === "win32")("DELETION-DRAIN-V2: a routine's re
     const all = await messages(threadId);
     expect(all.filter(isReply)).toHaveLength(1);
     expect(errorLines(all)).toEqual([]);
-    expect(interrupts("lbtwice", threadId)).toBe(0);
+    expect(interrupts("lbtwice", threadId)).toBe(setupInterrupts);
   }, 180000);
 
   it("late write: a rebuild refused before its admission frees the thread quietly, and the send queued behind it then runs", async () => {

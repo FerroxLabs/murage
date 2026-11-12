@@ -1,3 +1,5 @@
+import { NotModelRequest } from "../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 import { probeFolder } from "../probe-folder.ts";
 // Windows only (see browser-beforeunload-guard.ts). The engine registers its init scripts on the page
 // that is active at launch, so a tab it opens later has none, and a beforeunload prompt there blocks
@@ -56,9 +58,9 @@ export async function startTargetGuard(url: string, source: string, trace?: (lin
     trace?.(`guard -> ${method}${sessionId ? ` [${sessionId.slice(0, 6)}]` : ""}`);
     const timer = setTimeout(() => { waiting.delete(id); resolve({ error: "timeout" }); }, STEP_TIMEOUT_MS);
     waiting.set(id, (message) => { clearTimeout(timer); resolve(message); });
-    socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }), (error) => {
+    NotModelRequest("Chrome DevTools target setup and navigation guard; no model inference", socket.send(JSON.stringify({ id, method, params, ...(sessionId ? { sessionId } : {}) }), (error) => {
       if (error) { clearTimeout(timer); waiting.delete(id); resolve({ error: String(error) }); }
-    });
+    }));
   });
   const done = new Set<string>();
   const watchers = new Map<string, Array<() => void>>();
@@ -68,7 +70,7 @@ export async function startTargetGuard(url: string, source: string, trace?: (lin
   socket.on("close", () => { live = false; for (const done of waiting.values()) done({ error: "closed" }); waiting.clear(); });
   socket.on("message", (data) => {
     let message: { id?: number; method?: string; params?: { sessionId?: string; waitingForDebugger?: boolean; targetInfo?: { type?: string; targetId?: string } }; error?: unknown };
-    try { message = JSON.parse(String(data)); } catch { return; }
+    try { message = registerBusyloopPayloadSite("read", JSON.parse(String(data))); } catch { return; }
     trace?.(`guard <- ${String(data).slice(0, 200)}`);
     if (typeof message.id === "number") { waiting.get(message.id)?.(message); waiting.delete(message.id); return; }
     if (message.method !== "Target.attachedToTarget" || !message.params?.sessionId) return;
@@ -77,14 +79,14 @@ export async function startTargetGuard(url: string, source: string, trace?: (lin
       // Everything auto-attached is paused, whatever its type, so it is always resumed. Commands on one
       // session run in order, so the resume does not wait for the script's reply.
       // The page agent only runs its new-document scripts once it is enabled on this session.
-      if (targetInfo?.type === "page") void send("Page.enable", {}, sessionId);
-      const added = targetInfo?.type === "page" ? send("Page.addScriptToEvaluateOnNewDocument", { source }, sessionId) : undefined;
-      const resumed = waitingForDebugger ? send("Runtime.runIfWaitingForDebugger", {}, sessionId) : undefined;
+      if (targetInfo?.type === "page") void NotModelRequest("Chrome DevTools target setup and navigation guard; no model inference", send("Page.enable", {}, sessionId));
+      const added = targetInfo?.type === "page" ? NotModelRequest("Chrome DevTools target setup and navigation guard; no model inference", send("Page.addScriptToEvaluateOnNewDocument", { source }, sessionId)) : undefined;
+      const resumed = waitingForDebugger ? NotModelRequest("Chrome DevTools target setup and navigation guard; no model inference", send("Runtime.runIfWaitingForDebugger", {}, sessionId)) : undefined;
       const [add] = await Promise.all([added, resumed]);
       if (targetInfo?.targetId && add && !add.error) markInstalled(targetInfo.targetId);
     })();
   });
-  const attached = await send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true });
+  const attached = await NotModelRequest("Chrome DevTools target setup and navigation guard; no model inference", send("Target.setAutoAttach", { autoAttach: true, waitForDebuggerOnStart: true, flatten: true }));
   if (attached.error) { socket.terminate(); throw new Error("target guard unavailable"); }
   return {
     close: () => { try { socket.terminate(); } catch { /* already closed */ } },

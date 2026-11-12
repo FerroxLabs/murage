@@ -381,7 +381,7 @@ it("T5: archiving a record cited by 50k or 500k receipts and a cold check of a 5
   expect(drained.maxBytes).toBeLessThanOrEqual(1024);
 }, 600_000);
 
-it("T5: a deleted bot's job ends the receipts made before its commit, never one made after it (A2#9)", async () => {
+it("T5: a deleted bot's job keeps unrelated receipts made before and after its commit", async () => {
   live();
   const db = database();
   ensureScope("bot", "gone");
@@ -397,7 +397,7 @@ it("T5: a deleted bot's job ends the receipts made before its commit, never one 
   wakeMemoryRevocation(database, { pauseMs: 1 });
   await memoryRevocationIdle();
   expect(db.prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get("r0002001")!.state).toBe("delivered");
-  expect(Number(db.prepare("SELECT count(*) AS n FROM memory_disclosures WHERE state='revoked'").get()!.n)).toBe(2_000);
+  expect(Number(db.prepare("SELECT count(*) AS n FROM memory_disclosures WHERE state='revoked'").get()!.n)).toBe(0);
 }, 300_000);
 
 // ---- T6: 100k vs 1M evidence rows: the lookups are filled in slices, each slice and the forget's commit bounded ----

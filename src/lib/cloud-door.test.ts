@@ -195,7 +195,7 @@ describe("entering with a ticket", () => {
   });
   it("maps the home's answers to coarse results", async () => {
     const cases: Array<[number, unknown, string]> = [
-      [403, { reason: "expired" }, "expired"], [429, {}, "expired"], [403, { reason: "too_many_devices" }, "too-many"],
+      [403, { reason: "expired" }, "expired"], [429, {}, "too-many-tries"], [403, { reason: "too_many_devices" }, "too-many"],
       [403, { reason: "hold_required" }, "hold"], [403, { reason: "refused" }, "failed"], [500, {}, "failed"],
     ];
     for (const [status, body, expected] of cases) {

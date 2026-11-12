@@ -16,14 +16,14 @@ describe("reconnect line in the chat", () => {
     expect(reconnectNotice([])).toBeNull();
   });
   it("names the app, singular and plural", () => {
-    expect(reconnectNotice([gmail])).toBe("Gmail needs reconnecting.");
-    expect(reconnectNotice([gmail, cal])).toBe("Gmail and Google Calendar need reconnecting.");
+    expect(reconnectNotice([gmail])).toBe("Gmail needs you to sign in again");
+    expect(reconnectNotice([gmail, cal])).toBe("Gmail needs you to sign in again. Google Calendar needs you to sign in again");
   });
   it("never authorizes from the chat line: Reconnect opens Connected apps (#758)", () => {
     const source = readFileSync(fileURLToPath(new URL("./ReconnectAppsBanner.tsx", import.meta.url)), "utf8");
     expect(source).not.toMatch(/\/authorize/);
     expect(source).not.toMatch(/openExternalPage/);
-    expect(source).toContain('dispatch({ type: "togglePlugins", open: true, surface: "apps" })');
+    expect(source).toContain('accountId: app.accounts[0]?.id');
   });
   it("follows the copy rules", () => {
     const source = readFileSync(fileURLToPath(new URL("./ReconnectAppsBanner.tsx", import.meta.url)), "utf8");
@@ -41,13 +41,13 @@ describe("the reconnect line as rendered", () => {
   });
   it("shows the notice and one plain Reconnect for one app", () => {
     const html = render([gmail]);
-    expect(html).toContain("Gmail needs reconnecting.");
+    expect(html).toContain("Gmail needs you to sign in again");
     expect(buttons(html).map((m) => m[1])).toEqual(["Reconnect"]);
     expect(html).toContain('aria-label="Reconnect Gmail"');
   });
   it("shows one named button per app when several need it", () => {
     const html = render([gmail, cal]);
-    expect(html).toContain("Gmail and Google Calendar need reconnecting.");
+    expect(html).toContain("Gmail needs you to sign in again. Google Calendar needs you to sign in again");
     expect(buttons(html).map((m) => m[1])).toEqual(["Reconnect Gmail", "Reconnect Google Calendar"]);
     expect(html).toContain('aria-label="Reconnect Gmail"');
     expect(html).toContain('aria-label="Reconnect Google Calendar"');
@@ -61,8 +61,10 @@ describe("the reconnect line as rendered", () => {
 
 describe("Connected apps panel Reconnect", () => {
   const panel = readFileSync(fileURLToPath(new URL("./PluginsPanel.tsx", import.meta.url)), "utf8");
-  it("renders the Reconnect button only for an active account whose app needs reconnecting, and names that account", () => {
-    expect(panel).toMatch(/const needsReconnect = active && serviceStatus\?\.needsReconnect === true;/);
+  it("renders Reconnect for the affected account only, including non-ACTIVE accounts", () => {
+    expect(panel).toMatch(/const needsReconnect = account\.needsReconnect === true \|\| !active;/);
+    expect(panel).toContain('!CONNECTOR_SAFE_READS[card.slug]');
+    expect(panel).toContain('Murage checks this app when it is used.');
     const at = panel.indexOf("data-connector-reconnect=");
     expect(at).toBeGreaterThan(0);
     const before = panel.slice(Math.max(0, at - 200), at);

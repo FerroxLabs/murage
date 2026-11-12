@@ -15,12 +15,14 @@
 // standing, and nothing sends anybody to Settings.
 
 import { LazyFirstRunPhoneCard } from "./FirstRunPhoneCardLazy";
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import { FIRST_RUN_COPY, stepHeadingFor } from "@/lib/first-run-copy";
 import { permissionModeOf } from "@/lib/permission-mode";
 import { inNativeShell } from "@/lib/native-shell";
 import { useDesktopSurface } from "@/lib/use-surface";
+import { isCloudHome } from "@/lib/cloud-workspace";
+import { uxCloud } from "@/lib/cloud-ux-copy";
 import { firstRunDetection, type FirstRunEngineRow } from "@/lib/first-run-detect";
 import type { Bot, Message } from "@/state/store";
 import { renderBriefHtml } from "../../shared/brief-html";
@@ -40,12 +42,18 @@ import {
   FirstRunLine,
   answerSetupStep,
   failureText,
+  skipSetupStep,
+  forgetSetupView,
+  useSetupReadGaveUp,
   useSetupView,
 } from "./FirstRunChrome";
 import { FirstRunFluxCard, FirstRunNoKeyCard } from "./FirstRunFluxCard";
 import { FirstRunHelloCard } from "./FirstRunHelloCard";
 import { FirstRunDoItCard, FirstRunJobsCard } from "./FirstRunJobsCard";
 import { FirstRunNextCard } from "./FirstRunNextCard";
+import { FirstRunNotifyCard } from "./FirstRunNotifyCard";
+import { FirstRunHireCard } from "./FirstRunHireCard";
+import { FirstRunMoveGrokCard } from "./FirstRunMoveGrokCard";
 import { SandboxedFrame } from "./SandboxedFrame";
 
 export function FirstRunCard({ bot, message }: { bot: Bot; message: Message }) {
@@ -68,6 +76,12 @@ export function FirstRunCard({ bot, message }: { bot: Bot; message: Message }) {
   // Not known yet is not the computer: a phone browser would otherwise show
   // the computer's controls for the moment the question takes.
   if (desktop === undefined) return null;
+  // A Cloud home has no engines of its own to look for and no Flux key to offer: those two cards are never drawn, and their
+  // steps are passed over by themselves so the flow goes straight on to the jobs.
+  if (isCloudHome()) {
+    const passed = CLOUD_PASSED_CARDS[card.variant];
+    if (passed !== undefined) return passed === "none" ? null : <CloudPassedStep step={passed} settled={settled} />;
+  }
   const heading = stepHeadingFor(card.variant);
   const body = firstRunCardBody(bot, message, card.variant, settled);
   if (!body) return null;
@@ -77,6 +91,91 @@ export function FirstRunCard({ bot, message }: { bot: Bot; message: Message }) {
       <FirstRunStepHeading>{heading}</FirstRunStepHeading>
       {body}
     </div>
+  );
+}
+
+/** Cards a Cloud home never draws: the step each one asks for, or "none" for a card that only reports. */
+const CLOUD_PASSED_CARDS: Partial<Record<SetupCardVariant, "detect" | "flux" | "none">> = {
+  found: "detect",
+  bare: "detect",
+  "signed-out": "detect",
+  key: "flux",
+  "no-key": "none",
+  "bare-needs-key": "none",
+  "sample-brief": "none",
+};
+
+/** Whether a Cloud home should pass this step over now: not once it is settled, not before the view has answered. The Flux
+ *  step is passed over unless it is already done or passed: a saved key whose payment was refused leaves it blocked, and a
+ *  Cloud customer is never held there (a real problem with credits is said later, in plain words, not by a card that is
+ *  never drawn). */
+export function cloudPassWanted(
+  step: "detect" | "flux",
+  view: { fluxReady: boolean; steps?: readonly { id: string; status: string }[] } | null,
+  settled: boolean,
+): boolean {
+  if (settled || view === null) return false;
+  if (step !== "flux") return true;
+  const status = view.steps?.find((row) => row.id === "flux")?.status;
+  return status !== "done" && status !== "skipped";
+}
+
+/** What a Cloud passed step shows, in one place so each state can be tested: every state that is not quiet is a visible
+ *  line with a working button. "passing" is quiet only while the pass is in flight, and a failed pass becomes "passFailed". */
+export type CloudPassState = "settled" | "passing" | "readFailed" | "passFailed";
+export function cloudPassState(input: { settled: boolean; view: unknown; readGaveUp: boolean; failure: string }): CloudPassState {
+  if (input.settled) return "settled";
+  if (input.failure) return "passFailed";
+  if (input.view === null && input.readGaveUp) return "readFailed";
+  return "passing";
+}
+
+/** The one call that passes a step over: `detect` is answered the way its own button answers it, `flux` is skipped. */
+export function passCloudStep(
+  step: "detect" | "flux",
+  deps: { answer: typeof answerSetupStep; skip: typeof skipSetupStep } = { answer: answerSetupStep, skip: skipSetupStep },
+): Promise<void> {
+  return step === "detect" ? deps.answer("detect", SETUP_DETECT_ANSWER) : deps.skip("flux");
+}
+
+/**
+ * Passes a step over for a Cloud home and draws nothing, unless that fails: then one plain line and a way to try again.
+ * `detect` is answered the way its own button answers it. `flux` is skipped only while no Flux key is saved; with a key the
+ * step finishes by itself.
+ */
+function CloudPassedStep({ step, settled }: { step: "detect" | "flux"; settled: boolean }) {
+  const { view } = useSetupView();
+  const readGaveUp = useSetupReadGaveUp();
+  const [failure, setFailure] = useState("");
+  const [tries, setTries] = useState(0);
+  const ready = cloudPassWanted(step, view, false);
+  useEffect(() => {
+    if (settled || !ready) return;
+    let live = true;
+    void passCloudStep(step).catch((cause) => {
+      if (live) setFailure(failureText(cause, uxCloud("ux.cloud.firstRun.stepFailed")));
+    });
+    return () => { live = false; };
+  }, [step, settled, ready, tries]);
+  const state = cloudPassState({ settled, view, readGaveUp, failure });
+  if (state === "readFailed") {
+    return (
+      <FirstRunBubble>
+        <FirstRunFailure message={uxCloud("ux.cloud.firstRun.stepFailed")} />
+        <button type="button" className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS} mt-2`} onClick={() => forgetSetupView()}>
+          {uxCloud("ux.cloud.firstRun.tryAgain")}
+        </button>
+      </FirstRunBubble>
+    );
+  }
+  if (state !== "passFailed") return null;
+  return (
+    <FirstRunBubble>
+      <FirstRunFailure message={failure} />
+      <button type="button" className={`${FIRST_RUN_PRIMARY} ${FIRST_RUN_FOCUS} mt-2`} onClick={() => { setFailure(""); setTries((n) => n + 1); }}>
+        {uxCloud("ux.cloud.firstRun.continue")}
+      </button>
+    </FirstRunBubble>
   );
 }
 
@@ -124,6 +223,12 @@ function firstRunCardBody(bot: Bot, message: Message, variant: SetupCardVariant,
       return <FirstRunJobsCard settled={settled} bot={bot} />;
     case "do-it":
       return <FirstRunDoItCard bot={bot} settled={settled} />;
+    case "notify":
+      return <FirstRunNotifyCard settled={settled} />;
+    case "hire":
+      return <FirstRunHireCard settled={settled} bot={bot} />;
+    case "move-grok":
+      return <FirstRunMoveGrokCard settled={settled} bot={bot} />;
     // ── PARKED, AND THEREFORE HISTORY. ───────────────────────────────────
     //
     // WHAT AN UPGRADING 0.1.57 INSTALL SEES, DECIDED. W16 re-cut six steps to

@@ -1,3 +1,4 @@
+import { prepareSourceNative } from "./native-preflight.mjs";
 import { firstSendRecorder, allEldWindows } from "./smooth-config.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -119,6 +120,7 @@ if (APP) Object.assign(R, { electronVersion: electronMetadata.version, electronV
 // RIG-SMOOTH-R2 v3 d2: the native files the server will use, by sha256, against the build under test. On Windows with real engines both
 // must be present and match, and the product's own resolver must land on the hashed helper, so a direct run cannot bypass the leg.
 try {
+  if (!APP) R.nativePreflight = await prepareSourceNative({ work: WORK, expectedSha256: process.env.SMOOTH_ENGINE_EXCLUSION_SHA256 });
   const plat = `${process.platform}-${process.arch}`, realWin = WIN && ENGINES === "real";
   const sha = f => existsSync(f) ? createHash("sha256").update(readFileSync(f)).digest("hex") : null;
   const check = (key, file, expected) => {
@@ -405,8 +407,8 @@ async function sse() {
           for (const w of waits) {
             if (e.threadId === w.threadId && e.type === "turn.started" && !e.turnId) w.journalTurn = e.turn;
             const m = matchTurnEvent(e, w);
-            if (m === "started" || m === "ended") { w.turnId = e.turnId; w.journalTurn = e.turn; }
-            if (m === "ended") { waits.delete(w); w.resolve({ type: e.type === "turn.completed" && e.ok === false ? "turn.failed" : e.type, at: performance.now(), turnId: e.turnId, ...keptTurnEnd(e, redact) }); }
+            if (m === "started" || m === "ended") { w.turnId = e.turnId; w.journalTurn = e.turn; w.attemptEnded = m === "ended"; if (m === "started") w.end = null; }
+            if (m === "ended") { w.before.add(e.turnId); w.end = { type: e.type === "turn.completed" && e.ok === false ? "turn.failed" : e.type, at: performance.now(), turnId: e.turnId, ...keptTurnEnd(e, redact) }; w.resolve(w.end); }
           }
           if (e.turnId) { if (!seenTurnIds.has(tid)) seenTurnIds.set(tid, new Set()); seenTurnIds.get(tid).add(e.turnId); }
         }
@@ -626,7 +628,7 @@ async function turn(botId, threadId, text, { timeout = TURN_TIMEOUT, wait = true
   const sinceAt = Date.now(), scenario = currentScenario;
   const keepFailure = result => keepFailedTurn(result, { botId, threadId, turnId: w.turnId, turn: w.journalTurn ?? requestId, mark, sinceAt, scenario });
   const requestId = `smooth-${randomBytes(12).toString("hex")}`;
-  const w = { threadId, requestId, before: new Set(seenTurnIds.get(threadId) ?? []), turnId: undefined };
+  const w = { threadId, requestId, logicalSend: true, before: new Set(seenTurnIds.get(threadId) ?? []), turnId: undefined };
   const ended = new Promise(resolve => { w.resolve = resolve; }); waits.add(w);
   activeEvidenceTurns.set(threadId, w);
   try {
@@ -635,25 +637,30 @@ async function turn(botId, threadId, text, { timeout = TURN_TIMEOUT, wait = true
   if (sent.status < 200 || sent.status >= 300) { waits.delete(w); return await keepFailure({ outcome: `send ${sent.status}`, acceptedMs: sent.ms, wall: sent.ms, failed: true, status: sent.status }); }
   const acceptedMs = Math.round(performance.now() - t0);
   let sseEnd = null; void ended.then(r => { sseEnd = r; });
-  let rec, traceDoneAt = null;
+  let rec, traceDoneAt = null, deadlineExpired = false;
   for (;;) {
     await sleep(250);
     rec = turnFromLog(logFrom(mark), threadId, ownedTraces);
+    sseEnd = w.end ?? sseEnd;
+    // A provider terminal can be an unwritten attempt. Keep this logical send's waiter through its retries;
+    // the thread must settle before its result allows scenario cleanup to send Stop.
+    const retryPending = rec.redispatched && (!rec.done || (await getBot(botId)).busy);
+    if (retryPending) { traceDoneAt = null; if (performance.now() - t0 > timeout + extraMs()) { deadlineExpired = true; break; } continue; }
     if (rec.done && traceDoneAt === null) traceDoneAt = performance.now();
     if (traceDoneAt !== null && (sseEnd || rec.redispatched || performance.now() - traceDoneAt > 5000)) break;
     if (sseEnd && performance.now() - sseEnd.at > 5000) break; // the thread's own end event is the authority when traces are shared by concurrent turns (S6) or absent (refused before dispatch)
-    if (performance.now() - t0 > timeout + extraMs()) break; // extraMs: time the owner spent on cards (S7), outside the turn's own clock
+    if (performance.now() - t0 > timeout + extraMs()) { deadlineExpired = true; break; } // extraMs: time the owner spent on cards (S7), outside the turn's own clock
   }
   waits.delete(w);
   // a timed-out turn is stopped and the bot waited idle before anything else goes to it: a message sent to a still-busy
   // engine is queued and starts the moment the old turn ends, so the next turn would measure the leftover one
-  const timeoutStop = traceDoneAt === null && !sseEnd ? await settleBot(botId, threadId) : undefined;
+  const timeoutStop = deadlineExpired || traceDoneAt === null && !sseEnd ? await settleBot(botId, threadId) : undefined;
   if (timeoutStop) { R.timeoutStops = (R.timeoutStops ?? 0) + 1; if (!timeoutStop.settled) note(`turn timeout: bot ${botId.slice(0, 8)} still busy ${timeoutStop.ms} ms after Stop`); }
-  for (const id of [rec.traceId, rec.redispatchTraceId]) if (id) ownedTraces.add(id);
-  const timedOut = traceDoneAt === null && !sseEnd;
+  for (const id of rec.traceIds ?? [rec.traceId, rec.redispatchTraceId]) if (id) ownedTraces.add(id);
+  const timedOut = deadlineExpired || traceDoneAt === null && !sseEnd;
   const sseOwn = Boolean(sseEnd && w.turnId !== undefined && sseEnd.turnId === w.turnId);
   const endAt = !rec.redispatched && sseOwn ? Math.min(sseEnd.at, traceDoneAt ?? Infinity) : (traceDoneAt ?? sseEnd?.at);
-  const outcome = timedOut ? "timeout" : sseEnd?.type === "turn.failed" ? "turn.failed" : ["completed", "ok"].includes(rec.outcome) ? "turn.completed" : rec.outcome ? `turn.${rec.outcome}` : sseEnd?.type ?? "turn.unknown";
+  const outcome = timedOut ? "timeout" : rec.redispatched && rec.done ? (["completed", "ok"].includes(rec.outcome) ? "turn.completed" : `turn.${rec.outcome ?? "unknown"}`) : sseEnd?.type === "turn.failed" ? "turn.failed" : ["completed", "ok"].includes(rec.outcome) ? "turn.completed" : rec.outcome ? `turn.${rec.outcome}` : sseEnd?.type ?? "turn.unknown";
   const result = { ...rec, ...keptTurnEnd(sseEnd, redact), ...(timeoutStop ? { timeoutStop } : {}), requestId, wall: Math.round((endAt ?? performance.now()) - t0), acceptedMs, outcome, failed: outcome !== "turn.completed" };
   return await keepFailure(result);
   } finally { activeEvidenceTurns.delete(threadId); waits.delete(w); }

@@ -274,6 +274,10 @@ posixOnly("share and ask, flags on, end to end (S44)", () => {
       expect((await ownerSend(queued, "second, queued")).status).toBe(202);
       release();
       await expect.poll(async () => (await userLines(queued.threadId)).length, { timeout: 30000 }).toBe(2);
+      // Appending the queued line precedes detached engine setup. Finish both
+      // turns before arming the shared one-shot limit flag for another bot.
+      await settle(queued.threadId, 2);
+      await expect.poll(async () => (await messages(queued.threadId)).filter((m) => m.role === "bot" && m.kind === "text" && m.text === "Ask reply").length, { timeout: 30000 }).toBe(2);
       await idle(queued.id);
       for (const line of await userLines(queued.threadId)) { expect(line.via).toBeUndefined(); expect(line.origin).not.toBe("unproven"); }
       expect(runs(queued.threadId).every((row) => row.phoneJobs === undefined)).toBe(true);

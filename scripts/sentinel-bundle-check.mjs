@@ -11,7 +11,7 @@
 //  - The host boundary may inline the producers, but never server startup, the database opener, drivers, memory or
 //    config, and no network module either.
 //  - Neither bundle may read a file from beside itself at run time that the package would not ship: the scanner entry
-//    is copied out of the app (to a versioned file in the Sentinel output root), so it has to be self-contained.
+//    is copied out of the app (to a versioned file in the Sentinel output root), so its only external dependency is the staged, content-addressed hide preload.
 
 export const SENTINEL_CLI_OUTPUT = "dist-server/sentinel/cli.js";
 export const HOST_BOUNDARY_OUTPUT = "dist-server/health/host-boundary.js";
@@ -21,7 +21,7 @@ const SERVER_STARTUP = [/^server\/index\.ts$/, /^server\/database\.ts$/, /^serve
 const RULES = Object.freeze({
   [SENTINEL_CLI_OUTPUT]: {
     forbiddenInputs: [...SERVER_STARTUP, /^server\/health\//, /(^|\/)node_modules\//],
-    allowedInputs: [/^server\/sentinel\//, /^shared\/health-protocol\.mjs$/],
+    allowedInputs: [/^server\/sentinel\//, /^shared\/health-protocol\.mjs$/, /^shared\/win-hide-child-process\.mjs$/],
   },
   [HOST_BOUNDARY_OUTPUT]: {
     forbiddenInputs: SERVER_STARTUP,
@@ -55,7 +55,7 @@ export function sentinelBundleProblems(metafile) {
       if (!entry.external) continue;
       const spec = normalize(entry.path);
       if (NETWORK_IMPORTS.some(pattern => pattern.test(spec))) problems.push(`${output}: imports network module ${spec}`);
-      else if (!/^node:/.test(spec) && output === SENTINEL_CLI_OUTPUT) problems.push(`${output}: imports non-built-in ${spec}`);
+      else if (!/^node:/.test(spec) && spec !== "murage:windows-hide" && output === SENTINEL_CLI_OUTPUT) problems.push(`${output}: imports non-built-in ${spec}`);
     }
   }
   return problems;

@@ -135,6 +135,7 @@ export function managedComposioChildEnvironment(
     "MURAGE_COMPOSIO_LEGACY_CLAIM",
     // The retired own key is never handed to the harness, whatever the launching shell exported.
     "COMPOSIO_API_KEY",
+    "MURAGE_FLUX_COMPOSIO_OWNER",
     "MURAGE_CONNECTED_APPS_OWN_KEY_RETIRED",
   ]) delete next[key];
   const access = managedComposioAccess(brokerUrl, credentials, { legacyUntil, now });
@@ -146,7 +147,10 @@ export function managedComposioChildEnvironment(
   if (flux) {
     next.MURAGE_FLUX_COMPOSIO_BROKER_URL = flux;
     const fluxAccess = fluxComposioAccess(flux, credentials);
-    if (fluxAccess) next.MURAGE_FLUX_COMPOSIO_BROKER_TOKEN = fluxAccess.token;
+    if (fluxAccess) {
+      next.MURAGE_FLUX_COMPOSIO_BROKER_TOKEN = fluxAccess.token;
+      if (/^[a-f0-9]{16}$/.test(credentials?.fluxComposioBrokerTokenKeyFingerprint ?? "")) next.MURAGE_FLUX_COMPOSIO_OWNER = credentials.fluxComposioBrokerTokenKeyFingerprint;
+    }
     if (credentials?.fluxComposioAccountKind === "personal" || credentials?.fluxComposioAccountKind === "shared") {
       next.MURAGE_FLUX_COMPOSIO_ACCOUNT_KIND = credentials.fluxComposioAccountKind;
     }

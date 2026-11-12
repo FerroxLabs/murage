@@ -16,6 +16,7 @@ import {
   CLASS_CLOUD_ONLY, CLASS_CLOUD_SAFE, CLASS_LOCAL_ONLY, CLOUD_ONLY_CHANNELS, CLOUD_ONLY_PREFIXES, CLOUD_REFUSED_PATTERNS, CLOUD_SAFE_CHANNELS,
   LOCAL_ONLY_CHANNELS, LOCAL_ONLY_PREFIXES, channelClass, isClassified, isCloudRefusedChannel,
 } from "./ipc-channel-classes.mjs";
+import { ATTENTION_CHANNELS } from "./attention-ipc.mjs";
 import { loadIpcInventory } from "./ipc-inventory-harness.mjs";
 import { installCloudHome } from "./cloud-home-window.mjs";
 import { CLOUD_WINDOW_IPC_REFUSAL, OWNED_MAIN_IPC_REFUSAL, createOwnedMainIpc, rendererOriginArguments } from "./main-ipc-trust.mjs";
@@ -61,7 +62,7 @@ test("every channel the preload can call has an explicit class, and none is buil
 
 test("only the known modules register IPC, so a new registrar cannot slip past the classes", () => {
   // cloud-home-engine-login.mjs (WP5) registers through the gate main.mjs hands it, only with the Cloud flag on; its channels are MAIN_ONLY_CLOUD_CHANNELS.
-  const KNOWN = new Set(["main.mjs", "cua.mjs", "updater.mjs", "android-device.mjs", "installation-recovery-window.mjs", "main-ipc-trust.mjs", "cloud-home-engine-login.mjs", "engine-login-local.mjs"]);
+  const KNOWN = new Set(["main.mjs", "cua.mjs", "updater.mjs", "android-device.mjs", "installation-recovery-window.mjs", "main-ipc-trust.mjs", "cloud-home-engine-login.mjs", "engine-login-local.mjs", "attention-ipc.mjs"]);
   const offenders = fs.readdirSync(electronDir)
     .filter((file) => /\.(mjs|cjs)$/.test(file) && !/\.(node-test|test|electron-smoke)\.mjs$/.test(file) && file !== "preload.cjs")
     .filter((file) => /\bipcMain\.(handle|on|once)\(/.test(read(file)) && !KNOWN.has(file));
@@ -75,22 +76,23 @@ test("only the known modules register IPC, so a new registrar cannot slip past t
 });
 
 test("the tables have no stale entries and no entry contradicts the refused list", () => {
-  for (const channel of [...LOCAL_ONLY_CHANNELS, ...CLOUD_SAFE_CHANNELS, ...CLOUD_ONLY_CHANNELS]) assert.ok(registered.has(channel), `${channel} is classified but not registered`);
+  assert.ok(read("browser-popout.mjs").includes(".send('cloud-home:browser-popout:state',"), "the classified push has a real sender");
+  for (const channel of [...LOCAL_ONLY_CHANNELS, ...CLOUD_SAFE_CHANNELS, ...CLOUD_ONLY_CHANNELS]) assert.ok(registered.has(channel) || channel === "cloud-home:browser-popout:state", `${channel} is classified but not registered`);
   for (const channel of [...CLOUD_SAFE_CHANNELS, ...CLOUD_ONLY_CHANNELS]) assert.equal(isCloudRefusedChannel(channel), false, `${channel} is cloud-reachable but on the refused list`);
   const all = [...LOCAL_ONLY_CHANNELS, ...CLOUD_SAFE_CHANNELS, ...CLOUD_ONLY_CHANNELS];
   assert.equal(new Set(all).size, all.length, "a channel is in one class only");
 });
 
-test("WP4: the cloud-home:* channels are exactly the pairing set (local-only, main window) plus reachable and disconnect-this (cloud-only), all registered ONLY with the flag on", () => {
+test("WP4: the cloud-home:* channels are exactly the pairing set (local-only, main window) plus reachable, disconnect-this and pop-out (cloud-only), all registered ONLY with the flag on", () => {
   // The WP5 engine sign-in relay (cloud-home:engine-login:*) is main-window only too; it is pinned by the flag-on test above.
   const cloudHome = (list) => list.filter((c) => c.startsWith("cloud-home:") && !c.startsWith("cloud-home:engine-login:"));
   assert.deepEqual(cloudHome([...inventory.handles, ...inventory.ons]), [], "flag off registers no cloud-home channel");
-  assert.deepEqual(cloudHome(flagOn.handles), ["cloud-home:connect-cancel", "cloud-home:connect-paste", "cloud-home:connect-start", "cloud-home:connect-status", "cloud-home:disconnect", "cloud-home:disconnect-this", "cloud-home:list-bots", "cloud-home:list-homes", "cloud-home:open", "cloud-home:reachable", "cloud-home:state"]);
+  assert.deepEqual(cloudHome(flagOn.handles), ["cloud-home:browser-popout:close", "cloud-home:browser-popout:open", "cloud-home:browser-popout:state-now", "cloud-home:connect-cancel", "cloud-home:connect-paste", "cloud-home:connect-start", "cloud-home:connect-status", "cloud-home:disconnect", "cloud-home:disconnect-this", "cloud-home:list-bots", "cloud-home:list-homes", "cloud-home:open", "cloud-home:reachable", "cloud-home:request-sign-in", "cloud-home:state"]);
   for (const channel of ["cloud-home:connect-cancel", "cloud-home:connect-paste", "cloud-home:connect-start", "cloud-home:connect-status", "cloud-home:disconnect", "cloud-home:list-bots", "cloud-home:list-homes", "cloud-home:open", "cloud-home:state"]) {
     assert.equal(channelClass(channel), CLASS_LOCAL_ONLY, `${channel}: pairing runs in the MAIN window, the Cloud window must never reach it`);
     assert.ok(LOCAL_ONLY_CHANNELS.includes(channel), `${channel} must be listed explicitly`);
   }
-  assert.deepEqual([...CLOUD_ONLY_CHANNELS], ["cloud-home:reachable", "cloud-home:disconnect-this"]);
+  assert.deepEqual([...CLOUD_ONLY_CHANNELS], ["cloud-home:browser-popout:open", "cloud-home:browser-popout:close", "cloud-home:browser-popout:state-now", "cloud-home:browser-popout:state", "cloud-home:request-sign-in", "cloud-home:reachable", "cloud-home:disconnect-this"]);
   assert.equal(channelClass("cloud-home:disconnect-this"), CLASS_CLOUD_ONLY);
   assert.equal(channelClass("cloud-home:reachable"), CLASS_CLOUD_ONLY);
   // every registered cloud-home channel is listed explicitly, so none falls to the cloud-only PREFIX by accident.
@@ -102,7 +104,7 @@ test("WP4: the Cloud window's own preload reaches only cloud-safe and cloud-only
   const channels = [...source.matchAll(/ipcRenderer\.(?:invoke|sendSync|send|on|removeListener)\("([^"]+)"/g)].map((m) => m[1]);
   assert.ok(channels.length >= 3);
   for (const channel of channels) {
-    if (channel === "approval-notification:open") continue; // main -> window push, not a request
+    if (channel === "approval-notification:open" || channel === "cloud-attention:show") continue; // main -> window push, not a request
     assert.notEqual(channelClass(channel), CLASS_LOCAL_ONLY, `${channel}: the Cloud preload must not call a local-only channel`);
   }
   assert.equal([...source.matchAll(/ipcRenderer\.(?:invoke|sendSync|send)\(\s*[^"\s)]/g)].length, 0, "channels are string literals");
@@ -116,7 +118,7 @@ test("WP4: the Cloud window's own preload reaches only cloud-safe and cloud-only
   };
   const ok = run(["electron", "--murage-cloud-home=h-abc"], { protocol: "murage-home:", hostname: "h-abc" });
   assert.equal(ok.exposed.key, "muragecloud");
-  assert.deepEqual(Object.keys(ok.exposed.value).sort(), ["approvalNotifications", "disconnectThisComputer", "homeId", "openExternal", "platform", "reachable", "setUnreadCount"]);
+  assert.deepEqual(Object.keys(ok.exposed.value).sort(), ["approvalNotifications", "attention", "browserPopout", "disconnectThisComputer", "homeId", "openExternal", "platform", "reachable", "requestSignIn", "setUnreadCount"]);
   for (const [label, argv, location] of [
     ["no argument", ["electron"], { protocol: "murage-home:", hostname: "h-abc" }],
     ["another home's host", ["electron", "--murage-cloud-home=h-abc"], { protocol: "murage-home:", hostname: "h-other" }],
@@ -128,7 +130,7 @@ test("WP4: the Cloud window's own preload reaches only cloud-safe and cloud-only
 test("class counts", () => {
   const counts = { [CLASS_LOCAL_ONLY]: 0, [CLASS_CLOUD_SAFE]: 0, [CLASS_CLOUD_ONLY]: 0 };
   for (const channel of registered) counts[channelClass(channel)]++;
-  assert.deepEqual(counts, { [CLASS_LOCAL_ONLY]: registered.size - CLOUD_SAFE_CHANNELS.length - CLOUD_ONLY_CHANNELS.length, [CLASS_CLOUD_SAFE]: CLOUD_SAFE_CHANNELS.length, [CLASS_CLOUD_ONLY]: CLOUD_ONLY_CHANNELS.length });
+  assert.deepEqual(counts, { [CLASS_LOCAL_ONLY]: registered.size - CLOUD_SAFE_CHANNELS.length - CLOUD_ONLY_CHANNELS.filter(channel => registered.has(channel)).length, [CLASS_CLOUD_SAFE]: CLOUD_SAFE_CHANNELS.length, [CLASS_CLOUD_ONLY]: CLOUD_ONLY_CHANNELS.filter(channel => registered.has(channel)).length });
   assert.equal(channelClass("not:registered"), CLASS_LOCAL_ONLY, "unknown fails closed");
   assert.equal(channelClass(undefined), CLASS_LOCAL_ONLY);
   assert.equal(channelClass("cloud-home:engine-login:open"), CLASS_CLOUD_ONLY);
@@ -309,18 +311,18 @@ test("flag off: the gate without `cloud` is the train's main-window-only gate", 
 
 test("main.mjs hands the gate the Cloud sender kind only when the flag installed the Cloud home", () => {
   const main = read("main.mjs");
-  assert.match(main, /const ipcMain = createOwnedMainIpc\(\{\s*ipcMain: electronIpcMain,\s*(?:\/\/[^\n]*\n\s*)*cloud: cloudHome \? \{ isCloudSender: \(event\) => cloudHome\.isCloudSender\(event\), classOf: channelClass,/);
+  assert.match(main, /const ipcMain = createOwnedMainIpc\(\{\s*ipcMain: electronIpcMain,\s*cloudPopout: \{ windowFor: sender => cloudHome\?\.browserPopouts\.windowFor\(sender\) \},\s*popout: \{ windowFor: sender => browserPopouts\.windowFor\(sender\), origin: \(\) => trustedRendererOrigin\(\) \},\s*(?:\/\/[^\n]*\n\s*)*cloud: cloudHome \? \{ isCloudSender: \(event\) => cloudHome\.isCloudSender\(event\), classOf: channelClass,/);
   assert.match(main, /\} : undefined,\s*isTrusted:/);
   assert.match(main, /const cloudHome = installCloudHome\(/);
   assert.ok(main.indexOf("const cloudHome = installCloudHome(") < main.indexOf("const ipcMain = createOwnedMainIpc("), "cloudHome exists before the gate is built");
 });
 
-test("flag off: the registered channel set is exactly cloud-v2/b3's (snapshot), and the flag adds only the engine sign-in relay", () => {
+test("flag off: the snapshot plus exactly the three S1 local handlers; flag on adds only Cloud handlers", () => {
   const snapshot = JSON.parse(read("ipc-channels.flag-off.snapshot.json"));
   assert.equal(snapshot.base, "cloud-v2/b3 @ 471d88479");
-  assert.deepEqual({ handles: inventory.handles, ons: inventory.ons }, { handles: snapshot.handles, ons: snapshot.ons });
+  assert.deepEqual({ handles: inventory.handles, ons: inventory.ons }, { handles: [...snapshot.handles, "browser-popout:close", "browser-popout:open", "browser-popout:state-now"].sort(), ons: snapshot.ons });
   const added = flagOn.handles.filter((c) => !inventory.handles.includes(c));
-  assert.deepEqual(added, ["cloud-home:connect-cancel", "cloud-home:connect-paste", "cloud-home:connect-start", "cloud-home:connect-status", "cloud-home:disconnect", "cloud-home:disconnect-this", "cloud-home:engine-login:input", "cloud-home:engine-login:open-link", "cloud-home:engine-login:start", "cloud-home:engine-login:stop", "cloud-home:list-bots", "cloud-home:list-homes", "cloud-home:open", "cloud-home:reachable", "cloud-home:state"], "flag on adds ONLY the WP4 cloud-home:* channels and the WP5 engine sign-in relay");
+  assert.deepEqual(added, ["cloud-home:browser-popout:close", "cloud-home:browser-popout:open", "cloud-home:browser-popout:state-now", "cloud-home:connect-cancel", "cloud-home:connect-paste", "cloud-home:connect-start", "cloud-home:connect-status", "cloud-home:disconnect", "cloud-home:disconnect-this", "cloud-home:engine-login:input", "cloud-home:engine-login:open-link", "cloud-home:engine-login:start", "cloud-home:engine-login:stop", "cloud-home:list-bots", "cloud-home:list-homes", "cloud-home:open", "cloud-home:reachable", "cloud-home:request-sign-in", "cloud-home:state"], "flag on adds ONLY the WP4 cloud-home:* channels and the WP5 engine sign-in relay plus A7 pop-outs");
   assert.deepEqual(flagOn.ons, inventory.ons, "flag on adds no listener channel");
   assert.deepEqual(inventory.handles.filter((c) => !flagOn.handles.includes(c)), [], "flag on removes nothing");
   for (const channel of added.filter((c) => c.startsWith("cloud-home:engine-login:"))) assert.equal(channelClass(channel), CLASS_LOCAL_ONLY, `${channel} is main-window only`);
@@ -351,4 +353,44 @@ test("if the Cloud-home window ever loads the shared preload it gets no bridge: 
 test("no flag: the same channels as flag on are registered, as stubs that refuse until Cloud is live", () => {
   assert.deepEqual(inertDefault.handles, flagOn.handles);
   assert.deepEqual(inertDefault.ons, flagOn.ons);
+});
+
+test("NOTIFY S3: the attention bridge is local-only, the two cloud-attention channels are cloud-safe, attention-window:* has its own gate", () => {
+  for (const channel of ["attention:hello", "attention:offer", "attention:visible", "attention:present", "attention:gone", "attention:freed"]) {
+    assert.ok(registered.has(channel), `${channel} is registered`);
+    assert.equal(channelClass(channel), CLASS_LOCAL_ONLY, `${channel}: the Cloud window must not reach the local bridge`);
+    assert.ok(LOCAL_ONLY_CHANNELS.includes(channel));
+  }
+  const cloudAttention = ["cloud-attention:hello", "cloud-attention:offer", "cloud-attention:visible", "cloud-attention:present", "cloud-attention:gone", "cloud-attention:freed"];
+  assert.deepEqual(CLOUD_SAFE_CHANNELS.filter((channel) => channel.includes("attention")), cloudAttention);
+  for (const channel of cloudAttention) {
+    assert.ok(registered.has(channel));
+    assert.equal(channelClass(channel), CLASS_CLOUD_SAFE);
+  }
+  for (const channel of ATTENTION_CHANNELS.all) {
+    assert.ok(isClassified(channel), `${channel} has a class`);
+    assert.equal(channelClass(channel), CLASS_LOCAL_ONLY, `${channel}: never from a Cloud window`);
+    assert.ok(!registered.has(channel), `${channel} is registered by the attention gate, not the owned-main gate`);
+  }
+  const main = read("main.mjs");
+  assert.match(main, /createAttentionSurfaces\(\{[^]*?ipcMain:electronIpcMain,/, "the attention gate registers on Electron's ipcMain, not the owned gate");
+  assert.match(read("attention-surfaces.mjs"), /createAttentionIpc\(\{ urlFor: loadUrlFor \}\)[^]*gate\.install\(ipcMain, host\)/, "one gate, installed once, with the host's handlers");
+  const gate = read("attention-ipc.mjs");
+  assert.ok(!gate.includes("createOwnedMainIpc") && !gate.includes("isOwnedMainSender"), "a separate gate, the owned-main gate untouched");
+});
+
+test("NOTIFY S3: both preloads carry routing ids only and every call is a literal channel", () => {
+  for (const [name, expected] of [["preload.cjs", ["attention:hello", "attention:offer", "attention:visible", "attention:present", "attention:gone"]], ["preload-cloud.cjs", ["cloud-attention:hello", "cloud-attention:offer", "cloud-attention:visible", "cloud-attention:present", "cloud-attention:gone"]]]) {
+    const source = read(name);
+    const channels = [...source.matchAll(/ipcRenderer\.invoke\("(c?[a-z-]*attention:[a-z]+)"/g)].map((m) => m[1]);
+    assert.deepEqual(channels, expected, name);
+  }
+});
+
+test('A7 Cloud pop-out family is explicitly Cloud-only',()=>{
+  for(const suffix of ['open','close','state-now','state']) {
+    const channel=`cloud-home:browser-popout:${suffix}`;
+    assert.ok(CLOUD_ONLY_CHANNELS.includes(channel),channel);
+    assert.equal(channelClass(channel),CLASS_CLOUD_ONLY);
+  }
 });

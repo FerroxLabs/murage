@@ -56,6 +56,8 @@ def request(current, operation, body=None):
         return wire_variant(value, "lease-")
     if operation == "heartbeat":
         return wire_variant({"wire": 1, "accepted": True}, "heartbeat-")
+    if operation == "flux/renewal-due":
+        return {"due": False}
     value = wire_variant(json.loads(json.dumps(inputs["desired"])), "desired-")
     if scenario == "desired-generation":
         value["generation"] += 1
@@ -78,7 +80,65 @@ def wire_variant(value, prefix):
         value["fakeOnly"] = True
     return value
 
+SUBKEY = "sk-flux-home-" + "S" * 40
+OP_ID = "renew:home-test:1:1"
+logs = []
+acks = {"fail": scenario == "renewal-ack-fails"}
+def request_with_renewal(current, operation, body=None):
+    if operation == "desired":
+        # The control plane's cue: flux_renewal_due is present only when its Flux routes run; the poller asks about renewal only on it.
+        value = request(current, operation, body)
+        return value if scenario == "renewal-flag-absent" else {**value, "flux_renewal_due": True}
+    if operation == "flux/subkey":
+        requests.append({"operation": operation, "body": body})
+        return {"key": SUBKEY, "generation": 2, "expiresAt": "2030-01-01T00:00:00Z", "capUsd": 5.0}
+    if operation == "flux/subkey/ack":
+        requests.append({"operation": operation, "body": body})
+        if acks["fail"]:
+            acks["fail"] = False
+            raise urllib.error.URLError("synthetic ack outage")
+        acks["done"] = True
+        return {"acked": True}
+    if operation == "flux/renewal-due":
+        if scenario == "renewal-flag-absent":
+            raise AssertionError("renewal-due asked although the control plane sent no flux_renewal_due")  # surfaces as the poller's renewal-unavailable log line
+        if scenario in ("renewal-ack-fails", "renewal-sealed") and acks.get("done"):
+            return {"due": False}  # acknowledged: the control plane moved the expiry
+        return {"due": False} if scenario == "renewal-not-due" else {"due": True, "op_id": OP_ID}
+    return request(current, operation, body)
+
 def poll():
+    if scenario.startswith("renewal-"):
+        import io, contextlib
+        err = io.StringIO()
+        owner = os.getuid()
+        group = os.getgid()
+        deliver = lambda b, r, op: module.deliver_flux_subkey(b, r, op, root + "/public/flux-subkey", owner, group)
+        if scenario == "renewal-bad-response":
+            deliver = lambda b, r, op: module.deliver_flux_subkey(b, lambda *_a: {"key": "sk-flux-PRIMARY" + "p" * 30, "generation": 1, "expiresAt": "x", "capUsd": 1}, op, root + "/public/flux-subkey", owner, group)
+        directory = root + "/public/flux-subkey"
+        options = {"pending_path": root + "/state/flux-ack-pending.json", "directory": directory, "owner_uid": owner, "owner_gid": group, "expected_uid": owner}
+        def once():
+            for name in ("wallMs", "bootMs", "monoMs"):
+                clock_value[name] += 1000
+            return module.poll_once(binding, context, request_with_renewal, clock, root + "/public", owner, deliver_fn=deliver, renewal_options=options)
+        def seal():
+            # What the supervisor does AFTER sealing the key: a 0640 receipt (its own file, group readable) with identifiers only.
+            handoff = json.load(open(directory + "/key.json"))
+            fd = os.open(directory + "/receipt.json", os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o640)
+            os.fchmod(fd, 0o640); os.write(fd, json.dumps({"op_id": handoff["op_id"], "generation": handoff["generation"]}).encode()); os.close(fd)
+        with contextlib.redirect_stderr(err):
+            snapshot = module.poll_once(binding, context, request_with_renewal, clock, root + "/public", owner, deliver_fn=deliver, renewal_options=options)
+            if scenario == "renewal-unsealed":
+                once(); once()   # no supervisor receipt: nothing may be acknowledged or minted again
+            if scenario in ("renewal-sealed", "renewal-ack-fails"):
+                seal()
+                snapshot = once()
+                if scenario == "renewal-ack-fails":
+                    snapshot = once()
+        logs.append(err.getvalue())
+        snapshots.append(snapshot)
+        return snapshot
     snapshot = module.poll_once(binding, context, request, clock, root + "/public", os.getuid())
     snapshots.append(snapshot)
     return snapshot
@@ -219,6 +279,20 @@ try:
 except Exception:
     refused = True
 
+extra = {}
+if scenario.startswith("renewal-"):
+    def tree(base):
+        rows = {}
+        for dirpath, dirnames, filenames in os.walk(base):
+            rows[os.path.relpath(dirpath, base)] = oct(os.stat(dirpath).st_mode & 0o777)
+            for f in filenames:
+                path = os.path.join(dirpath, f)
+                with open(path) as stream:
+                    rows[os.path.relpath(path, base)] = [oct(os.stat(path).st_mode & 0o777), stream.read()]
+        return rows
+    extra = {"tree": tree(root + "/public"), "logs": logs, "subkey": SUBKEY, "environ": repr(dict(os.environ))}
+    pending_path = root + "/state/flux-ack-pending.json"
+    extra["pending"] = [oct(os.stat(pending_path).st_mode & 0o777), open(pending_path).read()] if os.path.exists(pending_path) else None
 files = {}
 for name in ("state.json", "home-generation.json", "home-identity.json"):
     path = root + "/public/" + name
@@ -226,4 +300,4 @@ for name in ("state.json", "home-generation.json", "home-identity.json"):
         with open(path) as stream:
             files[name] = json.load(stream)
 print(json.dumps({"refused": refused, "requests": requests, "snapshots": snapshots,
-                  "files": files, "invalidated": context.get("invalidated", False), "publicationOrder": publication_order}))
+                  "files": files, "extra": extra, "invalidated": context.get("invalidated", False), "publicationOrder": publication_order}))

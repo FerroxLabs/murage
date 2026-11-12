@@ -47,7 +47,7 @@ assert plan["blobs"] == {"f0": "x", "seccomp": b"12345678"}, plan
 assert pasta_seen[0] == "/usr/bin/pasta" and pasta_seen[1][-2:] == ["--pasta-child", "/run/murage-turn/t-0123456789abcdef"], pasta_seen
 assert walked == [w for w in sys.argv[3].split(",") if w], walked
 print("engine group fixture passed")
-`, launcher, cwd, walked], { encoding: "utf8" });
+`, launcher, cwd, walked], { windowsHide: true, encoding: "utf8" });
 it("launch() makes the selected engine's group primary (murage-turn's group and the bwrap-gate group supplementary) and never re-groups the engine home", () => {
   expect(run("CWD", "CWD").trim()).toBe("engine group fixture passed");
 });

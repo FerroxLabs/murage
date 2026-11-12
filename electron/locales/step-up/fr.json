@@ -1,5 +1,5 @@
 {
-  "@source": "57c41d0f4509791921344f3d826b6015ceced077",
+  "@source": "500fec5c01dbd58f272383f9dc5a866d959cfd15",
   "label.cloudPairing": "Ajouter un nouvel appareil à ton foyer Cloud",
   "label.cloudDevicesAccount": "Modifier les appareils ou le compte de ton foyer Cloud",
   "label.modelSigninStart": "Démarrer une connexion de modèle sur ton foyer Cloud",
@@ -8,6 +8,7 @@
   "label.modelSigninRemove": "Supprimer une connexion de modèle de ton foyer Cloud",
   "label.ownServer": "Modifier le serveur que tes bots utilisent comme ordinateur",
   "label.engineLogin": "Te connecter à un moteur ou t'en déconnecter sur ton foyer Cloud",
+  "label.engineSigninCode": "Terminer une connexion à Antigravity pour un bot sur ta page d’accueil Cloud",
   "label.botCreate": "Créer un bot",
   "label.botDelete": "Supprimer un bot et ses conversations",
   "label.botSettings": "Modifier les réglages d'un bot",
@@ -59,6 +60,7 @@
   "label.localModels": "Modifier les modèles locaux",
   "label.claudeAccounts": "Modifier un compte Claude",
   "label.chatChannels": "Modifier une connexion Telegram, Slack ou Discord",
+  "label.signal": "Modifier la connexion Signal",
   "label.whatsapp": "Modifier la connexion WhatsApp",
   "label.memory": "Modifier la mémoire",
   "label.skillsCollection": "Modifier la collection de compétences",
@@ -131,5 +133,6 @@
   "dialog.close": "Fermer",
   "prepare.voiceFinishing": "Murage termine une réponse vocale.",
   "prepare.voiceFinishingDetail": "Réessaie dans environ {minutes} min. Tes discussions et tes souvenirs n'ont pas changé.",
-  "prepare.quit": "Quitter"
+  "prepare.quit": "Quitter",
+  "label.claudeCodeImport": "Importer les compétences et les serveurs d’outils de Claude Code"
 }

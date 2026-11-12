@@ -67,8 +67,9 @@ describe("Antigravity denied action with an empty reply", () => {
     expect(NOTE).not.toMatch(/—|\bsafe|\bunsafe|\bsafety|another engine/i);
   }, 10_000);
 
+  // Exercise the genuine hook refusal, not an unapproved DONE followed by a contradictory denied result.
   it("at Ask the line is the Ask stop's own note, once", async () => {
-    const { titles, texts } = await run({ FAKE_AGY_DENIED_COMMAND: "1" }, { askLevel: true });
+    const { titles, texts } = await run({ FAKE_AGY_DENIED_COMMAND: "1", FAKE_AGY_RUN_HOOKS: "1" }, { askLevel: true });
     expect(texts).toEqual([]);
     expect(titles).toEqual([ASK_STOP_NOTE]);
   }, 10_000);

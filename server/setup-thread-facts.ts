@@ -21,13 +21,16 @@ const ANSWER_SQL = `SELECT
   (SELECT 1 FROM setup_marks WHERE thread_id=?1 AND kind='reply' AND solid=1 LIMIT 1) AS answered`;
 /** A refusal counts only when it is newer than the newest settled reply. */
 const REFUSAL_SQL = `SELECT at, http_status, provider FROM setup_marks WHERE thread_id=? AND kind='refusal' AND at>? ORDER BY at DESC, source_row DESC LIMIT 1`;
+/** Whether the owner has written here, and whether anything has: the owner probe goes through messages_inbox (role,kind,thread_id), a seek, and the other through messages_thread. */
+const OWNER_SQL = `SELECT (SELECT 1 FROM messages WHERE role='user' AND kind='text' AND thread_id=?1 LIMIT 1) AS owner,
+  (SELECT 1 FROM messages WHERE thread_id=?1 LIMIT 1) AS anything`;
 /** A row of this conversation the fill has not projected yet: after its cursor, up to the high-water rowid (messages_thread, one seek). */
 const UNPROJECTED_SQL = `SELECT 1 FROM messages WHERE thread_id=? AND rowid>? AND rowid<=? LIMIT 1`;
 /** A row of this conversation the fill passed over because the slice budget could not admit it: a worker projects it. */
 const DEFERRED_SQL = `SELECT 1 FROM inbox_fill_deferred WHERE thread_id=? LIMIT 1`;
 /** The per-conversation completion marker the fill writes when it finishes a conversation ahead of the rest. */
 const COMPLETED_SQL = `SELECT done FROM inbox_projection_state WHERE name=?`;
-export const SETUP_FACT_STATEMENTS = { answer: ANSWER_SQL, refusal: REFUSAL_SQL, unprojected: UNPROJECTED_SQL, deferred: DEFERRED_SQL };
+export const SETUP_FACT_STATEMENTS = { answer: ANSWER_SQL, refusal: REFUSAL_SQL, owner: OWNER_SQL, unprojected: UNPROJECTED_SQL, deferred: DEFERRED_SQL };
 
 /** The facts of one conversation, straight from the database.
  *
@@ -58,7 +61,10 @@ function readFacts(db: DatabaseSync, threadId: string, statements: Prepared): Se
   const answer = statements.answer.get(threadId) as { answered_at: number | null; answered: number | null } | undefined;
   const answeredAt = typeof answer?.answered_at === "number" ? answer.answered_at : -1;
   const refusal = statements.refusal.get(threadId, answeredAt) as { at: number; http_status: unknown; provider: unknown } | undefined;
+  const spoke = statements.owner.get(threadId) as { owner: number | null; anything: number | null } | undefined;
   const facts: SetupThreadFacts = {
+    ownerSpoke: spoke?.owner === 1,
+    hasMessages: spoke?.anything === 1,
     answered: answer?.answered === 1,
     answeredAt,
     refusal: refusal ? { at: refusal.at, refusal: { httpStatus: refusal.http_status as number, ...(typeof refusal.provider === "string" && refusal.provider ? { provider: refusal.provider } : {}) } } : null,
@@ -71,11 +77,11 @@ function readFacts(db: DatabaseSync, threadId: string, statements: Prepared): Se
   return { ...facts, refusal: null, known: false };
 }
 
-interface Prepared { answer: StatementSync; refusal: StatementSync; unprojected: StatementSync; deferred: StatementSync; completed: StatementSync }
+interface Prepared { answer: StatementSync; owner: StatementSync; refusal: StatementSync; unprojected: StatementSync; deferred: StatementSync; completed: StatementSync }
 const statementCache = new WeakMap<DatabaseSync, Prepared>();
 function prepared(db: DatabaseSync): Prepared {
   let held = statementCache.get(db);
-  if (!held) { held = { answer: db.prepare(ANSWER_SQL), refusal: db.prepare(REFUSAL_SQL), unprojected: db.prepare(UNPROJECTED_SQL), deferred: db.prepare(DEFERRED_SQL), completed: db.prepare(COMPLETED_SQL) }; statementCache.set(db, held); }
+  if (!held) { held = { answer: db.prepare(ANSWER_SQL), owner: db.prepare(OWNER_SQL), refusal: db.prepare(REFUSAL_SQL), unprojected: db.prepare(UNPROJECTED_SQL), deferred: db.prepare(DEFERRED_SQL), completed: db.prepare(COMPLETED_SQL) }; statementCache.set(db, held); }
   return held;
 }
 

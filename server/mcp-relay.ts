@@ -1,3 +1,4 @@
+import { inertBot } from "./store.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 //
@@ -56,7 +57,7 @@ export function mcpRemoteAudienceRefusal(threadId: string, isOwner: (threadId: s
  * get the owner's own tool servers either. */
 export function mcpRemoteBotRefusal(bot: { hidden?: boolean; draftOnly?: true }, accessMode: "restricted" | "unrestricted"): string | null {
   if (bot.draftOnly === true) return MCP_REMOTE_DRAFT_ONLY_BOT;
-  return bot.hidden === true || accessMode === "restricted" ? MCP_REMOTE_RESTRICTED_BOT : null;
+  return inertBot(bot) || accessMode === "restricted" ? MCP_REMOTE_RESTRICTED_BOT : null;
 }
 
 /** The owner's own command and link servers are mounted for a bot only when the

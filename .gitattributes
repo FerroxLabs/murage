@@ -57,3 +57,9 @@
 /companion/test/push-door.test.ts export-ignore
 /server/browser-extension-paths.test.ts export-ignore
 /server/decider/room-routing.integration.test.ts export-ignore
+
+# Signal licence/POM inventory hashes the exact upstream bytes (including
+# CRLF and upstream whitespace). Preserve them on every release runner.
+/licenses/signal-runtime/** -text -whitespace
+# Test fixture only: a byte copy of the released 1.0.18 murage-control that deploy/cloud-home/murage-control_test.py replays. The image never reads it.
+/deploy/cloud-home/testdata export-ignore

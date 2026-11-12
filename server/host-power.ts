@@ -1,4 +1,5 @@
 import { botFolderOrThrow } from "./bot-folder.ts";
+import { redactSecretsInText } from "./redact.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -29,16 +30,18 @@ export const HOST_POWER_MESSAGE_LONG_TMPDIR = "Murage could not block shut down 
 /** Section 8: the owner-facing message for a wrapped turn that was not started because the block could not be applied. */
 export const HOST_POWER_MESSAGE = process.platform === "win32" ? HOST_POWER_MESSAGE_WINDOWS : HOST_POWER_MESSAGE_LINUX_MAC;
 
-/** Section 5: the profile text, fixed in the server. No path and no turn string. */
+/** Section 5: fixed version-1 SBPL, no path or turn string. Apple's WebKit macOS common.sb maps both
+ * IOKIT_OPEN_SERVICE and IOKIT_OPEN_USER_CLIENT to iokit-open unless USE(SANDBOX_VERSION_3).
+ * Naming the version-3 operations in a version-1 profile can refuse the entire launch on older macOS.
+ * https://github.com/apple-oss-distributions/WebKit/blob/main/Source/WebKit/Shared/Sandbox/macOS/common.sb */
 export const SEATBELT_POWER_PROFILE = `(version 1)
 (allow default)
 (deny mach-lookup
   (global-name "com.apple.logind")
   (global-name "com.apple.PowerManagement.control")
   (global-name "com.apple.iokit.powerdxpc"))
-(deny iokit-open-service
-  (iokit-registry-entry-class "IOPMrootDomain"))
-(deny iokit-open-user-client
+(deny iokit-open
+  (iokit-registry-entry-class "IOPMrootDomain")
   (iokit-user-client-class "RootDomainUserClient"))
 (deny appleevent-send
   (appleevent-destination "com.apple.loginwindow")
@@ -545,10 +548,37 @@ export const BWRAP_SECCOMP_FD = 3;
 
 /** Plan a wrapped launch on Linux or macOS (the caller checked the marker, the cloud launch and the docker server tool). A refusal
  *  is a pid-less EPOWER child; nothing is spawned. */
-export function planHostPower(command: string, args: string[], env: NodeJS.ProcessEnv | undefined, cwd: string | undefined): HostPowerPlan {
+const noLimitsMacSessions = new WeakMap<object, boolean>();
+const noLimitsPowerNoticed = new WeakSet<object>();
+/** A real wrapper refusal outranks a passing probe. The caller only records
+ * this after sandbox-exec itself refused, before the engine ran. */
+export function recordNoLimitsMacPowerRefusal(session: object, cause: string): void {
+  if (hostPowerPlatform() !== "darwin" || noLimitsMacSessions.get(session) === true) return;
+  noLimitsMacSessions.set(session, true);
+  const detail = redactSecretsInText(cause).replace(/[\r\n\x00-\x1f]+/g, " ").trim().slice(0, 500);
+  console.warn(`[host-power] No limits session runs without the macOS power block: ${detail || "sandbox-exec refused the launch"}`);
+}
+export function noLimitsPowerFallbackActive(session: object): boolean { return noLimitsMacSessions.get(session) === true; }
+export function takeNoLimitsPowerFallbackNotice(session: object): string | undefined {
+  if (!noLimitsPowerFallbackActive(session) || noLimitsPowerNoticed.has(session)) return;
+  noLimitsPowerNoticed.add(session);
+  return "This engine is running without Murage's shutdown and restart protection because macOS refused it.";
+}
+/** Probe once per driver session; an actual launch can still correct the result. */
+export function noLimitsMacPowerFallback(session: object): boolean {
+  const cached = noLimitsMacSessions.get(session);
+  if (cached !== undefined) return cached;
+  const result = hostPowerProbeDeps.runSync(hostPowerDeps.sandboxExec, ["-p", SEATBELT_POWER_PROFILE, "/usr/bin/true"]);
+  if (result.code !== 0) recordNoLimitsMacPowerRefusal(session, `profile probe exit ${String(result.code)}: ${result.stderr}`);
+  else noLimitsMacSessions.set(session, false);
+  return noLimitsPowerFallbackActive(session);
+}
+
+export function planHostPower(command: string, args: string[], env: NodeJS.ProcessEnv | undefined, cwd: string | undefined, noLimitsSession?: object): HostPowerPlan {
   cwd = botFolderOrThrow({ cwd });
   const platform = hostPowerPlatform();
   if (platform === "darwin") {
+    if (noLimitsSession && noLimitsMacPowerFallback(noLimitsSession)) return { kind: "unwrapped", reason: "No limits: macOS could not apply the power block" };
     const file = hostPowerDeps.sandboxExec;
     let present = false;
     try { present = statSync(file).isFile(); } catch { present = false; }
@@ -619,5 +649,11 @@ export function bwrapEarlyExitMessage(status: string, stderr: string, command: s
 /** macOS: sandbox-exec's own refusal, read from the first bytes of the wrapped child's stderr (sandbox-exec names itself). Linux
  *  does not read stderr: the bwrap stage is judged by its status fd (bwrapEngineStarted). */
 export function wrapperRefusalText(stderrPrefix: string): boolean {
-  return stderrPrefix.startsWith("sandbox-exec: ");
+  return stderrPrefix.startsWith("sandbox-exec: ") && !wrapperEngineMissingText(stderrPrefix);
+}
+
+/** sandbox-exec already applied its profile and failed at engine exec. This is installation/permissions,
+ * never a power-block rejection. No fallback is permitted for either stage. */
+export function wrapperEngineMissingText(stderrPrefix: string): boolean {
+  return /^sandbox-exec: execvp\(\) of .+ failed(?::|$)/.test(stderrPrefix);
 }

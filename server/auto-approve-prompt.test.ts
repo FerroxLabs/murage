@@ -20,6 +20,7 @@ let repo: string;
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "init.defaultBranch=main", ...args], {
+    windowsHide: true,
     cwd, env: { PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: "1" }, encoding: "utf8",
   }).trim();
 

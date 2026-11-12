@@ -419,7 +419,7 @@ function renamedWriter(file: string, row: string, go: string, ready: string): Ch
   const script = join(dir, "zzz-agent");
   writeFileSync(script, `const fs=require("fs");const fd=fs.openSync(${JSON.stringify(file)},"a");fs.writeFileSync(${JSON.stringify(ready)},"1");
 const t=setInterval(()=>{if(fs.existsSync(${JSON.stringify(go)})){clearInterval(t);fs.writeSync(fd,${JSON.stringify(row)});fs.writeFileSync(${JSON.stringify(go)}+".done","1");}},5);setTimeout(()=>{},120000);`);
-  const child = spawn(process.execPath, [script], { stdio: "ignore" });
+  const child = spawn(process.execPath, [script], { windowsHide: true, stdio: "ignore" });
   children.push(child);
   return child;
 }
@@ -431,14 +431,14 @@ describe.skipIf(!built || !posix)("real addon: writers() and a file a renamed wr
 
   it("writers() names a process with the file open for writing, by its identity, and not a reader, a zombie or this process", () => {
     const addon = loadExclusionAddon()!;
-    expect(addon.version()).toBe(10);
+    expect(addon.version()).toBe(11);
     const file = join(mkdtempSync(join(scratch, "w-")), "f.jsonl");
     writeFileSync(file, "x\n");
     const own = openSync(file, "a");
-    const writer = spawn("sh", ["-c", `exec 3>>"$F"; sleep 30`], { env: { ...process.env, F: file }, stdio: "ignore" });
-    const reader = spawn("sh", ["-c", `exec 3<"$F"; sleep 30`], { env: { ...process.env, F: file }, stdio: "ignore" });
+    const writer = spawn("sh", ["-c", `exec 3>>"$F"; sleep 30`], { windowsHide: true, env: { ...process.env, F: file }, stdio: "ignore" });
+    const reader = spawn("sh", ["-c", `exec 3<"$F"; sleep 30`], { windowsHide: true, env: { ...process.env, F: file }, stdio: "ignore" });
     // a zombie: the subshell exits and its parent (now `sleep`) never waits for it
-    const zombieParent = spawn("sh", ["-c", "(exit 0) & exec sleep 30"], { stdio: "ignore" });
+    const zombieParent = spawn("sh", ["-c", "(exit 0) & exec sleep 30"], { windowsHide: true, stdio: "ignore" });
     children.push(writer, reader, zombieParent);
     expect(waitFor(() => { const seen = addon.writers!([file]).writers.map((item) => item.pid); return seen.includes(writer.pid!); })).toBe(true);
     const seen = addon.writers!([join(scratch, "not-there"), file]);
@@ -446,7 +446,7 @@ describe.skipIf(!built || !posix)("real addon: writers() and a file a renamed wr
     expect(seen.writers.some((item) => item.pid === reader.pid)).toBe(false);
     expect(seen.writers.some((item) => item.pid === process.pid)).toBe(false);
     // the zombie is listed by processes() (as ps lists it) and is never a process whose files cannot be read
-    const ps = spawnSync("ps", ["-axo", "pid=,ppid=,stat="], { encoding: "utf8" }).stdout;
+    const ps = spawnSync("ps", ["-axo", "pid=,ppid=,stat="], { windowsHide: true, encoding: "utf8" }).stdout;
     const zombie = ps.split("\n").map((line) => line.trim().split(/\s+/)).find((cols) => Number(cols[1]) === zombieParent.pid && /^Z/.test(cols[2] ?? ""));
     if (zombie) {
       expect(addon.processes().some((item) => item.pid === Number(zombie[0]))).toBe(true);
@@ -477,10 +477,10 @@ describe.skipIf(!built || !posix)("real addon: writers() and a file a renamed wr
   });
 
   // PR_SET_DUMPABLE 0 (Linux): this user's process whose open files cannot be listed, as (sd-pam), ssh-agent or a keyring is on a desktop
-  const undumpable = process.platform === "linux" && spawnSync("python3", ["-V"]).status === 0;
+  const undumpable = process.platform === "linux" && spawnSync("python3", ["-V"], { windowsHide: true }).status === 0;
   const opaque = (file: string | null, ready: string): ChildProcess => {
     const open = file === null ? "" : `f=open(${JSON.stringify(file)},'a');`;
-    const child = spawn("python3", ["-c", `import ctypes,time;${open}ctypes.CDLL(None).prctl(4,0,0,0,0);open(${JSON.stringify(ready)},'w').close();time.sleep(60)`], { stdio: "ignore" });
+    const child = spawn("python3", ["-c", `import ctypes,time;${open}ctypes.CDLL(None).prctl(4,0,0,0,0);open(${JSON.stringify(ready)},'w').close();time.sleep(60)`], { windowsHide: true, stdio: "ignore" });
     children.push(child);
     return child;
   };

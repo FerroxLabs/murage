@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Cua-backed Local VM lifecycle and health checks.
 //
 // Murage owns only the sandbox boundary: image preparation, container
@@ -209,12 +210,12 @@ LABEL ${MANAGED_LABEL}="1" \\
  * status (the start-up engine snapshot scan reached it before listen). `exec` is a test seam. */
 export async function sh(cmd: string, args: string[], timeout = 8000, exec: typeof run = run): Promise<{ stdout: string }> {
   await nextTask();
-  const { stdout } = await exec(cmd, args, {
+  const { stdout } = await exec(cmd, [...args], withHideInherit({
     timeout,
     encoding: "utf8",
     maxBuffer: 16 * 1024 * 1024,
     env: { ...process.env, PATH: augmentedPath() },
-  });
+  }));
   return { stdout };
 }
 

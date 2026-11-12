@@ -581,6 +581,25 @@ describe("Store", () => {
     expect(saved.filter((bot) => bot.useMyChrome).map((bot) => bot.id)).toEqual([kept]);
   });
 
+  it("profile cleanup clears authoritative, queued and Switch back references across restart", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    store.commitBrowserChoice(bot.id, {browserMode:'builtin',browserProfile:'client',selectionRevision:3,
+      pendingBrowserChoice:{mode:'builtin',profile:'client',baseRevision:3,disclosureKey:'review'},
+      previousBrowserChoice:{mode:'builtin',profile:'client'}}, undefined);
+    store.clearBrowserProfile(bot.id, 'client');
+    const reloaded = new Store(selection).bot(bot.id)!;
+    expect(reloaded.browserProfile).toBeUndefined();
+    expect(reloaded.pendingBrowserChoice).toBeUndefined();
+    expect(reloaded.previousBrowserChoice).toBeUndefined();
+    expect(reloaded.selectionRevision).toBe(4);
+    const queued = store.createBot();
+    store.commitBrowserChoice(queued.id, {browserMode:'builtin',selectionRevision:0,
+      pendingBrowserChoice:{mode:'builtin',profile:'client',baseRevision:0,disclosureKey:'review'}}, undefined);
+    store.clearBrowserProfile(queued.id,'client');
+    expect(new Store(selection).bot(queued.id)?.pendingBrowserChoice).toBeUndefined();
+  });
+
   // The voice note round-trips like any other optional field, and has exactly
   // one shape for "none": absent. A blank one would otherwise put an empty
   // `Personality:` line in front of the model, and a hand-edited bots.json
@@ -1367,6 +1386,20 @@ describe("Store", () => {
       expect(new Store(selection).bot(doomed.id)).toBeTruthy();
       expect(store.messagesFor(doomed.threadId).map((m) => m.text)).toEqual(["still here"]);
       expect(existsSync(workspace)).toBe(true);
+    });
+
+    // Restore park T14 (r3.1 section 6 condition 3): a delete whose save fails never reaches the email commit, the park/gate is left as it was.
+    it("a saveBots that throws withdraws the email intent, never commits it, and surfaces the error", () => {
+      const store = new Store(selection);
+      const doomed = store.createBot({ name: "Doomed" }, { seedMessages: false });
+      const channel = store.createGroup("Seats", [doomed.id]);
+      const calls: string[] = [];
+      store.emailDeletion = { record: (id) => calls.push(`record:${id}`), withdraw: (id) => calls.push(`withdraw:${id}`), commit: (id) => calls.push(`commit:${id}`) };
+      vi.spyOn(store as unknown as { saveBots: () => void }, "saveBots").mockImplementation(() => { throw new Error("disk full"); });
+      expect(() => store.deleteBot(doomed.id, { emailConfirm: "tok" })).toThrow("disk full");
+      expect(calls).toEqual([`record:${doomed.id}`, `withdraw:${doomed.id}`]);
+      expect(store.bot(doomed.id)).toBeTruthy();
+      expect(store.group(channel.id)!.memberIds).toEqual([doomed.id]);
     });
 
     it("calls releaseBotState exactly once with the id, before the bot disappears", () => {

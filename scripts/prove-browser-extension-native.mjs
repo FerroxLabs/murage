@@ -20,7 +20,7 @@ const proveBrowser = () => process.env.MURAGE_PROVE_BROWSER_EXECUTABLE ? { execu
 const root = fileURLToPath(new URL('../', import.meta.url));
 const artifacts = path.join(root, 'artifacts/browser-extension'); await fs.mkdir(artifacts, { recursive: true });
 const run = await fs.mkdtemp(path.join(artifacts, 'native-'));
-const stateDir = await fs.mkdtemp('/Volumes/Scratch/bxn-'); await fs.chmod(stateDir, 0o700);
+const stateDir = await fs.mkdtemp('/Volumes/Fixture/bxn-'); await fs.chmod(stateDir, 0o700);
 const profile = path.join(run, 'profile'), fixtureHome = path.join(run, 'home'), temporary = path.join(run, 'tmp');
 for (const directory of [profile, fixtureHome, temporary]) await fs.mkdir(directory, { mode: 0o700 });
 const checks = [], eventErrors = []; let nativeDiagnostic;
@@ -100,3 +100,5 @@ finally {
   process.stdout.write(JSON.stringify({ status, nativeDiagnostic, checks, eventErrors, failure: failure?.message, receipt: path.join(run, 'receipt.json') }, null, 2) + '\n');
   if (status !== 'PASS') process.exitCode = 1;
 }
+
+// secret-scan: fixture (generic /Volumes/Fixture and /Users/fixture paths only; no host data)

@@ -157,7 +157,7 @@ export function qwenIsolationArgs(serverNames: readonly string[] | undefined, cl
   // "auto" mode Qwen's own classifier approves a shell command or a computer
   // click without asking Murage (qwen 0.25.3 ran them at Ask with no card), so
   // Murage's access level never applied.
-  return [...names.map((name) => `--allowed-mcp-server-names=${name}`), "-e", "none", "--exclude-tools=skill", "--approval-mode", "default"];
+  return [...names.map((name) => `--allowed-mcp-server-names=${name}`), "-e", "none", "--exclude-tools=skill", "--exclude-tools=web_fetch", "--approval-mode", "default"];
 }
 
 /** Throws the update-required error for a Qwen that is unknown or older than QWEN_ISOLATION_MIN. Also run when the turn's env is

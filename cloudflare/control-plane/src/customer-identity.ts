@@ -10,9 +10,13 @@
 // There is no switch to put Better Auth back on Cloud routes (the old CLOUD_LEGACY_CUSTOMER_AUTH is gone). The operator's
 // admin token and the machine and installation credentials are unchanged. The desktop does not use any Cloud route at
 // launch; POST /v1/pairing/desktop (pairing.ts) is kept for a future Cloud-home desktop feature.
-import { resolveCloudAccount, type CloudAccount, type CurrentSupabaseUser } from "./cloud-accounts";
+import { mappedRevision, resolveCloudAccount, resolveCloudAccountAdmitted, resolveCloudAccountReadOnly, type AdmittedIdentity, type CloudAccount, type CurrentSupabaseUser } from "./cloud-accounts";
 import { HTTPError } from "./http";
+import { isInviteGatedRoute } from "./purchase-bootstrap";
+import { salesMode } from "./b5-config";
+import { assertInvited } from "./sales-invite";
 import { trustedStepUpRequirement } from "./trusted-factors";
+import { isUpdatesMembersPath, isUpdatesMembersReadOnly } from "./updates-consent/paths";
 import {
   CLOCK_SKEW_SECONDS, isRedirect, JWKS_TIMEOUT_MS, JwksCache, JwksUnavailable, readSupabaseAuthConfig, stepUpRequirement, TokenRejected, UUID_RE, verifySupabaseToken,
   type StepUpRequirement, type SupabaseAuthConfig, type SupabaseClaims,
@@ -30,7 +34,12 @@ export interface CustomerSession {
   user: { id: string; email: string; name: string; emailVerified: boolean };
   session: { id: string };
   supabase: SupabaseClaims;
+  /** Set only on the read-only step-up state route: the token is verified but no Cloud account could be resolved without a write (an unknown
+   *  subject, a changed or conflicting address). `user` is then a placeholder that must never be used. */
+  unresolved?: true;
 }
+/** GET /v1/account/step-up/state: its identity is resolved read-only, never creating or reconciling an account (cloud-accounts.ts). */
+export const STEP_UP_STATE_PATH = "/v1/account/step-up/state";
 
 /** The Cloud customer routes. /v1/legal/disclosure is public; /v1/billing/webhook and snapshot-receipt are not customer routes. */
 export function isCloudCustomerPath(path: string): boolean {
@@ -50,12 +59,15 @@ export const DOOR_V1_STEP_UP_MAX_AGE_SECONDS = 300;
 export const DOOR_EMAIL_PROOF_METHODS: ReadonlySet<string> = new Set(["otp", "magiclink"]);
 /** Device management on My Cloud (3.2): the home's devices, through the CP's one HMAC call to the home (devices.ts). */
 export const DEVICES_ROUTE = /^\/v1\/homes\/([\w-]{1,128})\/devices$/;
+/** Owner routes of door device confirmation (device-join.ts): the live join of a home, a resend of its mail, a cancel. Sign-in only. */
+export const JOINS_ROUTE = /^\/v1\/homes\/([\w-]{1,128})\/joins$/;
+export const JOIN_ACTION_ROUTE = /^\/v1\/homes\/([\w-]{1,128})\/joins\/([\w-]{1,128})\/(resend|cancel)$/;
 export const DEVICE_REVOKE_ROUTE = /^\/v1\/homes\/([\w-]{1,128})\/devices\/([\w-]{1,128})\/revoke$/;
 
 /** The door's 15-minute reuse (CLOUD-DOOR-V2-DESIGN.md 3.4), bound to the account and THIS Supabase session: the freshest of (1) the
  *  session's amr entry with an emailed method (otp, magiclink) within 900 s (amr is session-level: the age is the sign-in's, never the
  *  token's; no amr contributes nothing) and (2) a CP emailed-code `granted` event in this session within 900 s, counted even when its own
- *  action later claimed it (the claim is a separate row). Null when neither. Used for the door ONLY (the gate's exemption names DOOR_ROUTE
+ *  action later claimed it (the claim is a separate row), the email proof's grant included (grantDoorFromEmailProof). Null when neither. Used for the door ONLY (the gate's exemption names DOOR_ROUTE
  *  and nothing else; door.ts stepUpAt checks it again). */
 export async function doorRecentProofAt(env: Env, session: CustomerSession, now: number): Promise<{ at: number; proof: "amr" | "granted" } | null> {
   const windowMs = DOOR_STEP_UP_MAX_AGE_SECONDS * 1000;
@@ -66,11 +78,37 @@ export async function doorRecentProofAt(env: Env, session: CustomerSession, now:
     if (DOOR_EMAIL_PROOF_METHODS.has(e.method) && fresh(at) && (!best || at > best.at)) best = { at, proof: "amr" };
   }
   if (session.supabase.sessionId) {
-    const row = await env.DB.prepare("SELECT MAX(at) AS at FROM cloud_stepup_events WHERE user_id=? AND session_id=? AND kind='granted' AND at>=?")
+    // A grant minted by the email proof (grantDoorFromEmailProof: challenge_id is its fp_ proof id) counts only while that proof still holds
+    // for the account's CURRENT address and revision, with no dispute open. A typed step-up code's grant (sc_ challenge) is unchanged.
+    const row = await env.DB.prepare(`SELECT MAX(e.at) AS at FROM cloud_stepup_events e WHERE e.user_id=? AND e.session_id=? AND e.kind='granted' AND e.at>=?
+        AND (e.challenge_id IS NULL OR substr(e.challenge_id,1,3)<>'fp_'
+          OR EXISTS (SELECT 1 FROM ${PROOF_GRANT_SQL} AND fp.id=e.challenge_id AND fp.account_id=e.user_id))`)
       .bind(session.user.id, session.supabase.sessionId, now - windowMs).first<{ at: number | null }>();
     if (typeof row?.at === "number" && fresh(row.at) && (!best || row.at > best.at)) best = { at: row.at, proof: "granted" };
   }
   return best;
+}
+/** The email proof that holds now (flux-email-proof.ts verifyProof stamped it): consumed, for the identity's current sub, address and
+ *  revision, the identity stamped for that address, and no dispute open. An address move (a new revision, the stamp cleared), a new
+ *  challenge (a new id) or a dispute ends it. Callers add their own `AND fp.id=... AND fp.account_id=...`. */
+const PROOF_GRANT_SQL = `flux_email_proof fp JOIN supabase_identities si ON si.user_id=fp.account_id AND si.sub=fp.sub
+  WHERE fp.consumed_at IS NOT NULL AND fp.email_revision=si.email_revision AND lower(trim(si.contact_email))=fp.address
+    AND si.email_verified_at IS NOT NULL AND si.email_verified_for=fp.address
+    AND NOT EXISTS (SELECT 1 FROM flux_email_proof_disputes fd WHERE fd.account_id=fp.account_id)`;
+const PROOF_ID_RE = /^fp_[0-9a-f]{32}$/;
+
+/** One code for a new buyer (MurageMain 11-04): the email proof's code, typed and stamped in THIS Supabase session, is also the door's second
+ *  step. It records the same `granted` event a typed step-up code records (step-up-email.ts verifyCode), so doorRecentProofAt and the gate's
+ *  door exemption honour it exactly like one, and only for the door: no other route reads `granted` events. Bound to the account, this
+ *  session (session_id), and the proof's address and revision (re-checked on every read, PROOF_GRANT_SQL); its time is the proof's own,
+ *  so it lasts the door's normal 900 s window. Called only on a "stamped" verify; true when the grant was recorded. */
+export async function grantDoorFromEmailProof(env: Env, session: CustomerSession, proofId: string): Promise<boolean> {
+  const sessionId = session.supabase.sessionId;
+  if (!sessionId || !session.user.id || session.unresolved || !PROOF_ID_RE.test(proofId)) return false;
+  const r = await env.DB.prepare(`INSERT INTO cloud_stepup_events (id,user_id,session_id,kind,intent_id,challenge_id,at)
+      SELECT ?,?,?,'granted',NULL,fp.id,fp.consumed_at FROM ${PROOF_GRANT_SQL} AND fp.id=? AND fp.account_id=? AND fp.sub=?`)
+    .bind(crypto.randomUUID(), session.user.id, sessionId, proofId, session.user.id, session.supabase.sub).run();
+  return r.meta.changes === 1;
 }
 /** DOOR_V2_REQUIRED (a CP var, default off; declared in door.ts): only exactly "1" turns it on ("v2 is the only door"). */
 export const doorV2Required = (env: { DOOR_V2_REQUIRED?: string }): boolean => env.DOOR_V2_REQUIRED === "1";
@@ -87,7 +125,9 @@ export const isFluxOwnerPath = (path: string): boolean => FLUX_OWNER.test(path);
  *  owner routes. A Better Auth session never authenticates on any of these. */
 export const isCloudScopePath = (path: string): boolean =>
   isCloudCustomerPath(path) || path === "/v1/homes" || HOME_PAIRING.test(path) || DOOR_ROUTE.test(path) || isFluxOwnerPath(path)
-    || DEVICES_ROUTE.test(path) || DEVICE_REVOKE_ROUTE.test(path);
+    || DEVICES_ROUTE.test(path) || DEVICE_REVOKE_ROUTE.test(path) || JOINS_ROUTE.test(path) || JOIN_ACTION_ROUTE.test(path)
+    // Updates consent members area (design v5.6.1 4.2): exactly GET/POST /v1/updates-consent and GET /v1/updates-consent/history.
+    || isUpdatesMembersPath(path);
 
 /** Customer actions that start or change charges, or can lose or leak data, need a fresh second factor, checked before any
  *  other work. Cancel and withdraw need sign-in only (Sean, 2026-10-10): leaving must be as easy as joining (click-to-cancel,
@@ -100,7 +140,7 @@ export const STEP_UP_ROUTES: ReadonlySet<string> = new Set([
   // second step (SPEC §5 item 8). Each handler checks again.
   "/v1/billing/checkout/resume", "/v1/account/plan", "/v1/account/export-request",
   "/v1/account/home/hold", "/v1/account/home/reset", "/v1/account/home/reset/undo", "/v1/account/home/logs/request",
-  "/v1/account/export/download",
+  "/v1/account/export/download", "/v1/account/export/key-confirm",
 ]);
 /** Routes with an id in the path that need the same fresh second factor: making a desktop pairing code (pairing.ts). */
 // "Keep my plan" is NOT here (owner rule, 2026-10-12, B5): a plain Keep restores the customer's own prior state, moves no money and
@@ -127,7 +167,13 @@ export const isTopupChange = (method: string, path: string) => method === "POST"
  *  needs sign-in only; a raise keeps the fresh second factor. The rule is fluxCapStepUpExempt (b4-flux.ts); setCap enforces it again. */
 export const isFluxCapChange = (method: string, path: string) => method === "POST" && /^\/v1\/homes\/[^/]+\/flux\/cap$/.test(path);
 
-interface Bound { resolve(): Promise<CustomerSession | null> }
+/** CH1-G (rules 12 and 13): what invite admission decided for this request, carried in the request's binding object (which every copy of the request
+ *  shares), never in a map keyed on a Request. `live` is Supabase's record read in THIS request, `rev` the mapping revision it was read against (null:
+ *  unmapped), and the address was invite-checked before anything was written. Step-up, the emailed-approval claim and the handlers read it. */
+export interface IdentityAdmission extends AdmittedIdentity { live: SupabaseUserRecord; invited: true }
+/** `gated`: this request MUST carry an admission (an invite-gated route in invite mode, with no test-supplied account resolver). A gated request with no admission
+ *  is a terminal 503 wherever it is consumed: it never resolves an account and never reads Supabase Auth on its own. */
+interface Bound { resolve(): Promise<CustomerSession | null>; admission: IdentityAdmission | null; gated: boolean }
 const bound = new WeakMap<Request, Bound>();
 
 /** The Supabase identity bound to this request, when the request is on a Cloud route (isCloudScopePath). */
@@ -235,7 +281,8 @@ export function createIdentity(deps: IdentityDependencies = {}) {
   const jwks = () => (cache ??= new JwksCache(deps.jwksFetch ?? ((input, init) => fetch(input, init)), now));
   const authFetch: typeof fetch = deps.authFetch ?? ((input, init) => fetch(input, init));
 
-  async function resolve(request: Request, env: Env): Promise<CustomerSession | null> {
+  /** The verified token's claims, READ-ONLY (no account lookup, no row written): null for no/other bearer or a rejected token. */
+  async function verifyClaims(request: Request, env: Env): Promise<{ config: SupabaseAuthConfig; claims: SupabaseClaims; token: string } | null> {
     const token = bearer(request);
     // No bearer, the operator's admin token, an installation token: not a Supabase customer.
     if (!token || !looksLikeJWT(token)) return null;
@@ -252,8 +299,37 @@ export function createIdentity(deps: IdentityDependencies = {}) {
       }
       throw e;
     }
+    return { config, claims, token };
+  }
+
+  /** One admission round: r0 (the mapping's revision), ONE live read (its id must be the token's subject), and the invite check of THAT address, all
+   *  read-only. Nothing is written before the check passes. */
+  async function admissionRound(env: Env, checked: { config: SupabaseAuthConfig; claims: SupabaseClaims; token: string }): Promise<IdentityAdmission> {
+    const rev = await mappedRevision(env.DB, checked.claims.sub);
+    const live = await currentSupabaseUser(checked.config, checked.token, authFetch);
+    if (live.id !== checked.claims.sub) throw new HTTPError(401, "unauthorized");
+    await assertInvited(env, async () => ({ email: live.email, emailVerified: true }));
+    return { live, rev, invited: true };
+  }
+
+  async function resolve(request: Request, env: Env): Promise<CustomerSession | null> {
+    const checked = await verifyClaims(request, env);
+    if (!checked) return null;
+    const { config, claims, token } = checked;
     const verified = config;
-    const account: CloudAccount = await resolveCloudAccount(env.DB, claims, now(), () => currentSupabaseUser(verified, token, authFetch));
+    const path = new URL(request.url).pathname;
+    if (request.method === "GET" && (path === STEP_UP_STATE_PATH || isUpdatesMembersReadOnly(request.method, path))) {
+      const found = await resolveCloudAccountReadOnly(env.DB, claims);
+      if (!found) return { user: { id: "", email: "", name: "", emailVerified: false }, session: { id: `supabase:${claims.sessionId}` }, supabase: claims, unresolved: true };
+      return { user: found, session: { id: `supabase:${claims.sessionId}` }, supabase: claims };
+    }
+    const b = bound.get(request);
+    // CH1-G (Astra r1 Low): explicit admission state. A gated request that was never admitted is refused here, before any read or write.
+    if (b?.gated && !b.admission) throw new HTTPError(503, "identity_busy");
+    // CH1-G: an invite-gated request resolves against the live identity its admission read, under the revision that read was made against.
+    const account: CloudAccount = b?.admission
+      ? await resolveCloudAccountAdmitted(env.DB, claims, now(), b.admission, async () => (b.admission = await admissionRound(env, checked)))
+      : await resolveCloudAccount(env.DB, claims, now(), () => currentSupabaseUser(verified, token, authFetch));
     return { user: account, session: { id: `supabase:${claims.sessionId}` }, supabase: claims };
   }
 
@@ -262,6 +338,10 @@ export function createIdentity(deps: IdentityDependencies = {}) {
     const token = bearer(request);
     const config = readSupabaseAuthConfig(env);
     if (!s || !token || !config) throw new HTTPError(401, "unauthorized");
+    // CH1-G rule 12: in an invite-gated request the one live read admission made is the only one (step-up, the approval claim). Without it: terminal 503.
+    const b = bound.get(request);
+    if (b?.gated && !b.admission) throw new HTTPError(503, "identity_busy");
+    if (b?.admission) return b.admission.live;
     const u = await currentSupabaseUser(config, token, authFetch);
     if (u.id !== s.supabase.sub) throw new HTTPError(401, "unauthorized");
     return u;
@@ -279,7 +359,10 @@ export function createIdentity(deps: IdentityDependencies = {}) {
     // saved token keeps its mfa_factor_id after the factor is removed. Asked only once every local check has passed.
     const currentFactors = async () => {
       let p = gateUser.get(request);
-      if (!p) { p = supabaseUser(request, env); gateUser.set(request, p); }
+      if (!p) {
+        p = supabaseUser(request, env);
+        gateUser.set(request, p);
+      }
       return (await p).factors;
     };
     // The route's window: the account-wide one, capped at 300 s on the door (stepUpMaxAgeFor). The refusal says which.
@@ -292,10 +375,13 @@ export function createIdentity(deps: IdentityDependencies = {}) {
   return {
     /** Binds lazy, memoized Supabase resolution to every Cloud-scope request, whatever its bearer: on these routes the
      *  account is the Supabase identity or nobody (a Better Auth bearer resolves to null). No-op off those routes. */
-    bind(request: Request, _env: Env) {
-      if (!isCloudScopePath(new URL(request.url).pathname)) return;
+    bind(request: Request, _env: Env, opts: { waiveAdmission?: boolean } = {}) {
+      const path = new URL(request.url).pathname;
+      if (!isCloudScopePath(path)) return;
       let memo: Promise<CustomerSession | null> | null = null;
-      bound.set(request, { resolve: () => (memo ??= resolve(request, _env)) });
+      // CH1-G: gated = this request must be admitted (invite mode on an invite-gated route). A caller that supplies its own account resolver (tests) waives it.
+      const gated = !opts.waiveAdmission && salesMode(_env) === "invite" && isInviteGatedRoute(request.method, path);
+      bound.set(request, { admission: null, gated, resolve: () => (memo ??= resolve(request, _env)) });
     },
     /** True when the bound customer proved a TRUSTED second factor within the window (trusted-factors.ts). */
     async stepUp(request: Request, env: Env): Promise<boolean> {
@@ -312,9 +398,21 @@ export function createIdentity(deps: IdentityDependencies = {}) {
     customer: async (request: Request): Promise<CustomerSession | null> => (await bound.get(request)?.resolve()) ?? null,
     config: (env: Env): SupabaseAuthConfig | null => { try { return readSupabaseAuthConfig(env); } catch { return null; } },
     now,
+    /** CH1-G: invite admission for an invite-gated request, run BEFORE the account is resolved. It reads the mapping revision, reads Supabase's current
+     *  confirmed address ONCE (on every such request, whatever the token's address says) and invite-checks THAT address, all read-only: an uninvited
+     *  caller is refused 403 not_invited with nothing written. The record is kept in the request's binding for resolve, the step-up gate and the handlers.
+     *  null: no verified Supabase token. */
+    async admit(request: Request, env: Env): Promise<IdentityAdmission | null> {
+      const checked = await verifyClaims(request, env);
+      const b = bound.get(request);
+      if (!checked || !b) return null;
+      return (b.admission = await admissionRound(env, checked));
+    },
     /** Supabase Auth's current record of this request's member (confirmed email, updated_at and MFA factors), asked
-     *  with the member's own token, fresh on every call. Throws HTTPError 401/503. */
+     *  with the member's own token, fresh on every call, except in an invite-gated request, which reuses its admission's read. Throws HTTPError 401/503. */
     supabaseUser,
   };
 }
 export type Identity = ReturnType<typeof createIdentity>;
+/** The invite decision admission made for this request (null: none, so a handler checks for itself). */
+export const inviteDecision = (request: Request): { invited: true } | null => bound.get(request)?.admission ?? null;

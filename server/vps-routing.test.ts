@@ -12,7 +12,7 @@
 // reply carries the FULL prompt and whose gate file gives a deterministic
 // busy window — no sleeps anywhere.
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -135,7 +135,7 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
   let acpDump: string;
   let dockerLog: string;
 
-  type ApiBody = Record<string, string | boolean | { instanceId: string; model: string } | { sshAlias: string }>;
+  type ApiBody = Record<string, string | boolean | null | { instanceId: string; model: string } | { sshAlias: string }>;
 
   const api = async (method: string, path: string, body?: ApiBody, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
@@ -187,14 +187,16 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
         instances: {
           vps: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: gateFile, FAKE_ACP_DUMP: acpDump },
+            environment: { FAKE_ACP_MODE: "echo-gated", FAKE_ACP_GATE_FILE: gateFile, FAKE_ACP_DUMP: acpDump, FAKE_ACP_PROMPT_DUMP: `${acpDump}.prompt.json` },
             config: { cli: FAKE_CLI, fullAuto: true },
           },
         },
       }),
     );
 
+    // S4 power: this fixture runs only the fake ACP fleet.
     const env: NodeJS.ProcessEnv = {
+      NODE_ENV: "test",
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(PORT),
@@ -205,7 +207,8 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, ["--import", "data:text/javascript,globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;", join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -240,14 +243,17 @@ posixOnly("VPS turn routing e2e (fake ACP fleet + fake docker over SSH)", () => 
         name: "Remote hand",
         modelSelection: { instanceId: "vps", model: "fake-model" },
       })).status).toBe(200);
-      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "vps" })).status).toBe(200);
-      // bot.computer stays unset — Auto, the mode that must never provision
+      expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "vps", computer: null })).status).toBe(200);
+      // a9e405c196: new bots default to Local. Explicitly restore Auto, which must never provision.
+      expect((await botById(bot.id)).computer).toBeUndefined();
 
       // The owner's own words: a computer rides only a turn that answers them
       // (0.1.61 lane dmowner), so the send carries the desktop proof.
       const sent = await api("POST", `/api/bots/${bot.id}/messages`, { text: "check the remote desktop" }, DESKTOP_HEADERS);
       expect(sent.status).toBe(202);
       await until(async () => (await botById(bot.id))?.busy === true, "the gated turn");
+      // Admission can be busy before routing claims the VPS; wait for the fake engine behind its closed gate.
+      await until(async () => existsSync(`${acpDump}.prompt.json`), "the claimed VPS turn");
 
       // the turn is claimed: the SSH alias cannot be swapped under it...
       const aliasChange = await desktopApi("PUT", "/api/config", { vps: { sshAlias: "other-vps" } });

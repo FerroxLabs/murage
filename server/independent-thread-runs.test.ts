@@ -1,3 +1,4 @@
+import { BrowserTurnExecution } from "./browser-turn-execution.ts";
 import { expect, it, vi } from "vitest";
 import { IndependentThreadRuns, requireDirectThreadTarget, RESOURCE_STILL_WAITING_MS, stillWaitingRemainingMs } from "./independent-thread-runs.ts";
 
@@ -343,38 +344,33 @@ it("ignores a partial release from a generation that has been replaced", () => {
   expect(runs.owns(current, "computer:bot:x")).toBe(true);
 });
 
-// ── D4: a holder waiting on the person does not block the bot ─────────────
-it("goes on without the browser instead of waiting behind a run that is waiting for the person", async () => {
+// CHANGED-EXPECTATIONS.md: Browser owner waits release execution (field item 4).
+it("gives a sibling the browser while its previous driver waits for the person", async () => {
   const runs = new IndependentThreadRuns<object>();
-  const waitingOnPerson = new Set<string>();
-  const policy = { resources: new Set(["browser:profile", "screen:bot:b"]), holderYields: (holder: { threadId: string }) => waitingOnPerson.has(holder.threadId) };
-  const routine = runs.admit("b", "routine", {}, ["browser:profile", "screen:bot:b"]);
-  waitingOnPerson.add("routine");
+  const execution = new BrowserTurnExecution(runs);
+  const resources = ["browser:profile", "screen:bot:b"];
+  const routine = runs.admit("b", "routine", {}, resources);
+  execution.register(routine, resources, resources);
+  execution.waiting(routine, "question", true);
   const chat = runs.admit("b", "chat", {}, ["workspace:/chat"]);
-  // At once, keeping what it already held.
-  await expect(runs.acquire(chat, ["browser:profile", "screen:bot:b"], undefined, undefined, policy)).resolves.toBe("yielded");
-  expect(runs.heldBy(chat)).toEqual(["workspace:/chat"]);
-  // The browser never had two drivers: the waiting run still owns it.
-  expect(runs.owns(routine, "browser:profile")).toBe(true);
-  expect(runs.owns(chat, "browser:profile")).toBe(false);
+  await expect(runs.acquire(chat, resources)).resolves.toBe(true);
+  expect(runs.heldBy(chat)).toEqual(["workspace:/chat", ...resources]);
+  expect(runs.owns(routine, "browser:profile")).toBe(false);
+  expect(runs.owns(chat, "browser:profile")).toBe(true);
 });
 
-it("still waits behind a working holder, and stops waiting once that holder starts waiting for the person", async () => {
+it("admits a queued sibling once the holder starts waiting for the person", async () => {
   const runs = new IndependentThreadRuns<object>();
-  const waitingOnPerson = new Set<string>();
-  const policy = { resources: new Set(["browser:profile"]), holderYields: (holder: { threadId: string }) => waitingOnPerson.has(holder.threadId) };
-  runs.admit("b", "routine", {}, ["browser:profile"]);
+  const execution = new BrowserTurnExecution(runs);
+  const routine = runs.admit("b", "routine", {}, ["browser:profile"]);
+  execution.register(routine, ["browser:profile"], ["browser:profile"]);
   const chat = runs.admit("b", "chat", {});
-  let result: unknown = "pending";
-  void runs.acquire(chat, ["browser:profile"], undefined, undefined, policy).then(value => { result = value; });
-  await Promise.resolve();
-  expect(result).toBe("pending");
+  const acquired = runs.acquire(chat, ["browser:profile"]);
   expect(runs.waiting(chat)).toBe(true);
-  waitingOnPerson.add("routine");
-  runs.recheck();
-  await Promise.resolve();
-  expect(result).toBe("yielded");
+  execution.waiting(routine, "question", true);
+  expect(await acquired).toBe(true);
   expect(runs.waiting(chat)).toBe(false);
+  expect(runs.owns(chat, "browser:profile")).toBe(true);
 });
 
 it("never yields a resource outside the policy: a needed screen is still waited for", async () => {
@@ -569,4 +565,86 @@ it("SL-L L3: after a yield the second wait's notice lands at +60 min from the fi
     await vi.advanceTimersByTimeAsync(30 * 60_000);
     expect(notices).toBe(1);
   } finally { vi.useRealTimers(); }
+});
+
+it("T5a release preserves its watch through drop and calls onReleased first, once", () => {
+  const runs = new IndependentThreadRuns<object>();
+  const owner = runs.admit("bot", "thread", {}, ["computer:host"]);
+  const events: string[] = [];
+  const released = vi.fn((thread: string, bot: string | undefined, generation: string) => {
+    expect([thread, bot, generation]).toEqual([owner.threadId, "bot", owner.generation]);
+    events.push("released");
+  });
+  runs.onReleased = released;
+  runs.watch(owner, () => { expect(runs.current(owner)).toBe(false); events.push("watch"); });
+  expect(runs.release(owner)).toBe(true);
+  expect(runs.release(owner)).toBe(false);
+  expect(runs.cancel(owner)).toBe(false);
+  expect(events).toEqual(["released", "watch"]);
+  expect(released).toHaveBeenCalledOnce();
+});
+
+it("T5a cancellation fires once without releasing leases or changing onReleased", () => {
+  const runs = new IndependentThreadRuns<object>();
+  const owner = runs.admit("bot", "thread", {}, ["computer:host"]);
+  const watch = vi.fn(); const released = vi.fn();
+  runs.onReleased = released;
+  runs.watch(owner, watch);
+  runs.cancel(owner); runs.cancel(owner);
+  expect(watch).toHaveBeenCalledOnce();
+  expect(released).not.toHaveBeenCalled();
+  expect(runs.owns(owner, "computer:host")).toBe(true);
+  const late = vi.fn();
+  runs.watch(owner, late);
+  runs.release(owner);
+  expect(watch).toHaveBeenCalledOnce(); expect(late).not.toHaveBeenCalled();
+  expect(released).toHaveBeenCalledOnce();
+});
+
+it.each([false, true])("T5a takeover removes the old watch without firing even if replacement fails (%s)", fail => {
+  const runs = new IndependentThreadRuns<object>();
+  const owner = runs.admit("bot", "thread", {});
+  runs.admit("other", "holder", {}, ["computer:host"]);
+  const watch = vi.fn(), released = vi.fn();
+  runs.onReleased = released;
+  runs.watch(owner, watch);
+  runs.holdForRebuild(owner);
+  if (fail) {
+    expect(() => runs.admit("bot", "thread", {}, ["computer:host"], { takeOver: owner.generation })).toThrow();
+    expect(released).toHaveBeenCalledWith("thread", "bot", owner.generation);
+  } else {
+    const replacement = runs.admit("bot", "thread", {}, [], { takeOver: owner.generation });
+    expect(released).not.toHaveBeenCalled();
+    const fresh = vi.fn(); runs.watch(replacement, fresh);
+    runs.release(replacement);
+    expect(fresh).toHaveBeenCalledOnce();
+  }
+  runs.release(owner); runs.cancel(owner);
+  expect(watch).not.toHaveBeenCalled();
+});
+
+it("T5a unsubscribe removes only its registration and listeners cannot prevent release", () => {
+  const runs = new IndependentThreadRuns<object>();
+  const owner = runs.admit("bot", "thread", {});
+  const removed = vi.fn(), kept = vi.fn();
+  const unsubscribe = runs.watch(owner, removed);
+  runs.watch(owner, () => { throw new Error("watch error"); });
+  runs.watch(owner, kept);
+  unsubscribe(); unsubscribe();
+  runs.onReleased = () => { throw new Error("listener error"); };
+  expect(runs.release(owner)).toBe(true);
+  expect(removed).not.toHaveBeenCalled(); expect(kept).toHaveBeenCalledOnce();
+});
+
+it("T5a reentrant cancellation/release and stale watch registration cannot fire twice", () => {
+  const runs = new IndependentThreadRuns<object>();
+  const owner = runs.admit("bot", "thread", {});
+  const first = vi.fn(() => { runs.cancel(owner); runs.release(owner); });
+  const second = vi.fn();
+  runs.watch(owner, first); runs.watch(owner, second);
+  runs.cancel(owner);
+  const stale = vi.fn(); runs.watch(owner, stale);
+  const replacement = runs.admit("bot", "thread", {});
+  runs.release(replacement);
+  expect(first).toHaveBeenCalledOnce(); expect(second).toHaveBeenCalledOnce(); expect(stale).not.toHaveBeenCalled();
 });

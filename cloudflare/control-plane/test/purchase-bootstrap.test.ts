@@ -4,7 +4,11 @@
 // Real workerd + D1, real-shaped Supabase tokens (ES256 JWKS), Stripe as an injected fake. No network.
 import { env } from "cloudflare:workers";
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { releaseItem9HoldForTests } from "../src/held-until-item9-highs";
+// ITEM 9: these cases exercise a top-up checkout as offered; the launch hold (held-until-item9-highs.ts) is released here.
+beforeAll(() => releaseItem9HoldForTests(true));
+afterAll(() => releaseItem9HoldForTests(false));
 import { createWorker } from "../src/index";
 import { fakeProvider, type ProviderAdapter } from "../src/b3-provider";
 import { invoiceRefundCoverage, type BillingNotifier, type FluxEntitlementHooks } from "../src/b5-billing";

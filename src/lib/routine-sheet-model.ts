@@ -14,7 +14,7 @@ import { permissionModeOf, routineEffectiveMode, type PermissionMode } from "@/l
 import { nextOccurrence } from "@/lib/schedule-words";
 import { routineHealthNotes } from "@/lib/routine-health";
 
-export interface SheetBot { id: string; name: string; hidden?: boolean; autoApprove?: boolean; fullAccess?: boolean; noLimits?: boolean }
+export interface SheetBot { draftOnly?: boolean; id: string; name: string; hidden?: boolean; autoApprove?: boolean; fullAccess?: boolean; noLimits?: boolean }
 export interface SheetGroup { id: string; name: string }
 
 /** Past this many routines the list groups by bot, shows a filter box and puts "Failed this week" first. */
@@ -150,10 +150,10 @@ export function routineSheetModel(
   const botName = bot?.name ?? "";
   const nextAt = routine.enabled ? routine.nextRunAt ?? nextOccurrence(routine.schedule, now) : null;
   const mode = bot ? permissionModeOf({ autoApprove: Boolean(bot.autoApprove), fullAccess: Boolean(bot.fullAccess), noLimits: bot.noLimits }) : null;
-  const own = routine.permissionMode !== undefined;
-  const effective = bot && own
-    ? routineEffectiveMode(routine, { autoApprove: Boolean(bot.autoApprove), fullAccess: Boolean(bot.fullAccess), noLimits: bot.noLimits })
+  const effective = bot
+    ? routineEffectiveMode(routine, { autoApprove: Boolean(bot.autoApprove), fullAccess: Boolean(bot.fullAccess), noLimits: bot.noLimits, draftOnly: bot.draftOnly })
     : routine.permissionMode ?? mode;
+  const own = routine.permissionMode !== undefined && !(routine.permissionExplicit === false && effective === "unlimited");
   const levelText = effective === null
     ? ""
     : own

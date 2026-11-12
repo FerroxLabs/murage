@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -19,14 +20,14 @@ const system32=()=>{const root=process.env.SystemRoot;if(typeof root!=="string"|
 // only plain System32 programs (whoami, icacls), each run by absolute path, and the engine-exclusion addon for what no
 // program's output can be trusted to say (a file's owner, the volume's file system, the computer's domains). A slow or
 // busy machine can still take a while to start one, so wait up to a minute.
-const run=(file,args,options={})=>spawnSync(file,args,{encoding:"utf8",windowsHide:true,timeout:60000,maxBuffer:1024*1024,...options});
+const run=(file,args,options={})=>spawnSync(file,[...args],withHideInherit({encoding:"utf8",windowsHide:true,timeout:60000,maxBuffer:1024*1024,...options}));
 // The same tools, without blocking: the password store runs in Electron's
 // main process, where spawnSync froze the window for each PowerShell start
 // (about 3.5 s) and, called right after the native file dialog and message
 // box, never returned at all on Windows Server 2025 (the dialog's shell work
 // waits for the main thread that spawnSync holds). Resolves, never rejects.
 const runAsync=(file,args,options={})=>new Promise(resolve=>{
- try{execFile(file,args,{encoding:"utf8",windowsHide:true,timeout:60000,maxBuffer:1024*1024,...options},(error,stdout)=>resolve({status:error?(Number.isInteger(error.code)?error.code:1):0,stdout:String(stdout??"")}));}
+ try{execFile(file,[...args],withHideInherit({encoding:"utf8",windowsHide:true,timeout:60000,maxBuffer:1024*1024,...options}),(error,stdout)=>resolve({status:error?(Number.isInteger(error.code)?error.code:1):0,stdout:String(stdout??"")}));}
  catch{resolve({status:1,stdout:""});}
 });
 

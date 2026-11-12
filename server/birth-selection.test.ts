@@ -234,7 +234,7 @@ describe("no startup cache, no sign-in", () => {
     expect(index).toContain('reading: registry.scanReading()');
     expect(index).toContain('fuigo: () => registry.instances().filter(instance => instance.driverKind === "fuigoAgent")');
     // Pin the complete boundary: eligibility is shared, paid and remembered choices are desktop-only.
-    expect(index.replace(/\s+/g, " ")).toContain('const birthOnDesktop = process.env.MURAGE_CLOUD_ROLE !== "home"; const store = new Store({ fuigo: () => registry.instances().filter(instance => instance.driverKind === "fuigoAgent"), copyChief: birthOnDesktop, eligible: id => liveForBirth(id) !== null, ...(birthOnDesktop ? { firstBot: () => bootSelection, signedIn: source => birthCandidate({ reading: registry.scanReading(), paidOnly: ENGINE_DEFAULT_PAID_ONLY, live: liveForBirth, source }) } : {}) },');
+    expect(index.replace(/\s+/g, " ")).toContain('const birthOnDesktop = process.env.MURAGE_CLOUD_ROLE !== "home"; const store = new Store({ fuigo: () => registry.instances().filter(instance => instance.driverKind === "fuigoAgent"), copyChief: birthOnDesktop, eligible: id => liveForBirth(id) !== null, ...(birthOnDesktop ? { firstBot: () => bootSelection, signedIn: source => birthCandidate({ reading: registry.scanReading(), paidOnly: ENGINE_DEFAULT_PAID_ONLY, live: liveForBirth, source }) } : { homeFallback: homeBirthFallback(() => lastProbeReadings, pickDefaultEngine, currentBirthReadings) }) },');
     expect(index.match(/\bbootSelection\b/g)?.length, "bootSelection: declaration, adopt, the r3 firstBot wiring, engine health and comments only").toBeLessThanOrEqual(8);
     // no birth caller of the sign-in-ranked pick is left; it survives only as engine health's display probe (BN1)
     expect(index).not.toMatch(/\bdefaultSelection\(/);
@@ -362,9 +362,14 @@ describe("route wiring: every birth read happens after the route's last wait", (
   it("P5 package import births once inside the commit and admits leads on the final engine there", () => {
     expect(index).toContain('let importModelSelection: ModelSelection | "birth" = "birth";');
     expect(index).toContain("starterLeads: starter,");
-    const commit = between("atomicCommit: ({ prepared }) => {", "botBatch.publish();", index.indexOf("1.0.15 BIRTH-FUIGO P5"));
+    // Package routes and first-run hiring share the same synchronous commit.
+    const route = between("1.0.15 BIRTH-FUIGO P5", "if (result.leadBotIds.length)");
+    expect(route).toContain("atomicCommit: packageImportAtomicCommit(refuseRepeatedImport),");
+    const commit = between("function packageImportAtomicCommit(", "botBatch.publish();");
+    expect(commit).toContain("return ({ prepared }) => {");
     expect(commit).not.toMatch(/\bawait\b/);
     expect(commit).toContain("store.preparePackageAddition(prepared.bots, prepared.groups, { born: new Set(prepared.bornBotIds) })");
+    expect(commit.match(/store\.preparePackageAddition\(/g)).toHaveLength(1);
     expect(commit.indexOf("leadershipAdmissionError")).toBeGreaterThan(commit.indexOf("store.preparePackageAddition("));
   });
 
@@ -545,7 +550,8 @@ describe("1.0.18 ENGINE-DEFAULT eligibility", () => {
   });
   it("B10/G1: birth wiring and shutdown use the r6.2 rules", () => {
     const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
-    expect(index.startsWith('import "./memory/pre-listen-enable.ts";')).toBe(true);
+    // bb7141769b requires the Windows process preload first; 7f3aafecab requires memory enable before runtime imports.
+    expect(index.startsWith('import "../shared/win-hide-child-process.mjs";\nimport "./memory/pre-listen-enable.ts";')).toBe(true);
     expect(index.match(/commitEngineChange\(/g)).toHaveLength(6);
     expect(index.match(/reloadWithRollback\(/g)).toHaveLength(6);
     expect(index).not.toContain("await reloadProviders(");
@@ -555,7 +561,7 @@ describe("1.0.18 ENGINE-DEFAULT eligibility", () => {
     // 2e749c0d5 (NLINT-FIX4 B3) put the outside-store flush seal first in this job, and 39096ec82 (ELD250 B6) added the onStart repair latch ahead of cleanup; the birth rule is unchanged: beginShutdown still precedes the stream close.
     expect(index).toContain("async () => { beginOutsideShutdown(); registry.beginShutdown(); streamsStopping = true; await closeAllStreams(); }");
     const uncommented = index.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, "");
-    expect(uncommented).toMatch(/const gracefulShutdown = createGracefulShutdown\(\{\s*onStart: \(\) => keepAllRepair\.stop\(\),\s*cleanup: \[\s*async \(\) => \{ beginOutsideShutdown\(\); registry\.beginShutdown\(\); streamsStopping = true; await closeAllStreams\(\); \}/);
+    expect(uncommented).toMatch(/const gracefulShutdown = createGracefulShutdown\(\{\s*onStart: \(\) => \{ stopConnectorHealthMonitor\?\.\(\); stopConnectorRecovery\?\.\(\); stopConnectorChanges\?\.\(\); keepAllRepair\.stop\(\); \},\s*cleanup: \[\s*async \(\) => \{ beginOutsideShutdown\(\); registry\.beginShutdown\(\); streamsStopping = true; await closeAllStreams\(\); \}/);
     // These five routes must enter reload in the same synchronous interval as their commit.
     // Names, modes and saves are pinned per caller, not just counted across the file.
     const immediateRoutes = [

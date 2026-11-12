@@ -58,6 +58,8 @@ export interface ModelSelection {
   connectionId?: string;
   /** Optional: no effort means no flag, and the CLI keeps its own default. */
   effort?: EffortLevel;
+  /** Native ACP thinking choice, scoped to the selected model. */
+  variant?: string;
 }
 
 // ── instance configuration envelope ────────────────────────────────────
@@ -139,6 +141,8 @@ export type RuntimeEvent = RuntimeEventBase &
       }
     | {
         type: "turn.completed";
+        readsComplete?: true;
+        helperRow?: import('./turn-settle.ts').HelperRow;
         ok: boolean;
         stopReason?: string | null;
         cost?: number | null;
@@ -291,7 +295,7 @@ export type RuntimeEvent = RuntimeEventBase &
          * contract table applies (server/drivers/contracts.ts). */
         toolEngine?: EngineKind;
         /** Additive (1.0.3), F5: a field the driver's contract needs was
-         * absent on the wire; the driver never substitutes one. */
+         * absent on the wire; retained fallback safety text does not prove that field. */
         toolInputMissing?: string;
         /** Additive (1.0.4, 09-1): the driver's own gate held this call as a
          * key file (Pi's gate resolves links itself); the rule it named. It
@@ -313,6 +317,9 @@ export type RuntimeEvent = RuntimeEventBase &
          * starting directory, the pinned shell form, and where the map came
          * from. Server-side only. */
         execEnv?: ExecEnv;
+        /** Actual local tool-process working directory, supplied by the driver
+         * when there is no shell environment record. Server-side only. */
+        executionCwd?: string;
         /** Additive (1.0.3, Astra #9): the value-free projection of
          * `execEnv` (names, shell form, capture, provenance, managed names;
          * shared/mount-identity.ts envInfoOf), the one part of the F12
@@ -326,6 +333,10 @@ export type RuntimeEvent = RuntimeEventBase &
       }
     | {
         type: "request.resolved";
+        /** S3 identifies posture retirement explicitly; S1 terminalizes the
+         * captured old request before S4 releases its generation. Absence keeps
+         * BASE source mapping. Never authorizes or acknowledges an answer. */
+        settlement?: "cancelled" | "expired" | "superseded";
         behavior: "allow" | "deny" | "answer";
         /** who decided: a person, auto mode, the ask's own timeout, the
          * harness (turn ended / settings changed), or nobody — the answerer
@@ -352,7 +363,7 @@ export type RuntimeEvent = RuntimeEventBase &
     | { type: "turn.served-model"; routed: string; requested: string }
     // `setup: true` marks a failure the user fixes by installing or
     // configuring something, not by retrying — the UI offers setup instead.
-    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** the engine's own upper-case error code (OpenCode's QUOTA_EXCEEDED), read from the RPC error, never from text */ engineCode?: string; /** Flux's refusal code (server/flux-refusal.ts), read from the raw error before its text is sanitised */ gatewayCode?: string; /** FLUX-BURN-COPY-1018: when Flux's hourly spend gate lifts (epoch ms), only from the retry_after its body carried */ gatewayResetsAt?: number; /** a reset time the engine reported as data (epoch ms), for limit detection */ limitResetsAt?: number; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
+    | { type: "runtime.error"; message: string; details?: string; setup?: boolean; authRequired?: boolean; /** the installed Claude Code is too old for the model */ claudeUpdate?: boolean; errorKind?: string; /** the engine's own upper-case error code (OpenCode's QUOTA_EXCEEDED), read from the RPC error, never from text */ engineCode?: string; /** Flux's refusal code (server/flux-refusal.ts), read from the raw error before its text is sanitised */ gatewayCode?: string; fluxDecision?: import("../shared/flux-busyloop.ts").Decision; /** HTTP status retained before ACP display sanitisation. */ httpStatus?: number; /** FLUX-BURN-COPY-1018: when Flux's hourly spend gate lifts (epoch ms), only from the retry_after its body carried */ gatewayResetsAt?: number; /** a reset time the engine reported as data (epoch ms), for limit detection */ limitResetsAt?: number; /** A device-side setup failure the chat words from its code (a bot's engine folder); localFailureEngine names the engine. */ localFailure?: LocalSetupFailure; localFailureEngine?: string; providerError?: ProviderErrorInfo; diagnostic?: RuntimeErrorDiagnostic }
   );
 
 export type RuntimeEventListener = (event: RuntimeEvent) => void;
@@ -407,6 +418,9 @@ export interface SendTurnInput {
    * the concrete per-turn mounts used for the message text and the per-turn
    * binding line that rides in front of it. */
   onToolSurface?: (surface: import("./murage-tool-surface.ts").McpToolSurface, mounts: import("./murage-tool-surface.ts").MurageToolMounts, body?: { mounts: import("./murage-tool-surface.ts").MurageToolMounts; binding: string; askRules?: string }) => void;
+  /** Validate setup before spawning a process that must await readiness before its prompt write.
+   * Releases no prompt and authorizes no later write: beforeSubmit still runs at that write. */
+  beforePrepare?: () => void;
   /** Server-only synchronous submission fence, the one validation contract
    * every adapter honours: called immediately before EVERY engine prompt
    * write of this turn (a relaunch's write too), with no await between the
@@ -414,9 +428,13 @@ export interface SendTurnInput {
    * every call; only its delivery bookkeeping is idempotent). On refusal
    * (it throws), write nothing. Before sendTurn resolved, either throw or
    * return the addressable turnId for cleanup; after it resolved, settle the
-   * turn failed without writing, and the server re-runs it once on a reset
-   * session. */
+   * turn failed without writing. Only a verified unwritten attempt may be rebuilt;
+   * a prior released or unknown submission must not be replayed automatically. */
   beforeSubmit?: () => void;
+  /** Run the synchronous beforeSubmit checks during process preparation, without
+   * releasing a prompt. The driver must call beforeSubmit again at the actual
+   * write. Only the server's submission boundary supplies this scope. */
+  prepareSubmit?: (validate: () => void) => void;
   /** Server-only: the adapter says that the write the last `beforeSubmit` released did not happen (the process never started, the
    * connection failed before any answer, the write failed whole). BOTADDED-DESIGN-V3 r6 invariant I14 reads "released to the
    * engine's write", so the server withdraws the delivery bookkeeping that call made; a later write's `beforeSubmit` makes it again.
@@ -449,6 +467,8 @@ export interface SendTurnInput {
   providerRoute?: import("./provider-routing.ts").ProviderTurnRoute;
   effort?: EffortLevel;
   fuigoResume?: import("./drivers/acp/fuigo-policy.ts").FuigoResumeContext;
+  /** Native ACP thinking choice, scoped to the selected model. */
+  variant?: string;
   resumeCursor?: unknown;
   /** Start without the previous native context, including a retained idle
    * process. Takes precedence over resumeCursor. Set whenever the harness
@@ -461,7 +481,10 @@ export interface SendTurnInput {
   sealed?: boolean;
   replayMetadata?: string;
   /** Prior turns for transcript-replay providers (API-backed drivers). */
-  transcript?: Array<{ role: "user" | "assistant"; text: string;
+  ownerMessageId?: string;
+  /** The adapter reached its actual submission write. */
+  onEngineWrite?: () => void;
+  transcript?: Array<{ id?: string; role: "user" | "assistant"; text: string;
     /** Run header (turn-context.ts runHeaders): on the first reply of a run written on an engine, the line saying so. */
     header?: string }>;
   /** Bot persona (name/title/description) as a system prompt. */
@@ -565,6 +588,8 @@ export interface SendTurnInput {
    * the asks. When both stopLine and routeAsks are absent, the instance's
    * own setting stands. */
   stopLine?: true;
+  /** Route every No limits permission through the shared final decision gate. */
+  noLimits?: true;
   /** Ask and Auto turns must reach Murage's permission broker. For this turn
    * only, replace a skip-all instance setting with its asking mode; preserve
    * every other instance mode. Full access and No limits use stopLine above.
@@ -575,6 +600,8 @@ export interface SendTurnInput {
    * and plan, and every file change or command is refused before it runs (server/drivers/ask-stop.ts). Engines
    * that ask for every change ignore it. */
   askLevel?: true;
+  /** Server-owned live level reader. Never serialized to an engine or accepted from tool input. */
+  permissionNow?: () => Pick<SendTurnInput, "routeAsks" | "stopLine" | "askLevel" | "noLimits">;
   /* Cards carry no deadline (Sean 10-26, 10-29, LONGWORK H4): a card waits until the owner answers it or the turn stops,
    * on every engine. The one exception is this flag, set only by the registry decorator (harness/ask-note-adapter.ts)
    * on a turn nobody is at, a routine run or an unattended turn. There a question still ends with the 30 minute note:
@@ -637,7 +664,28 @@ export interface TurnStartResult {
 /** What `ProviderAdapter.holdIdle` returns: how to let the adapter keep or warm engines again, and whether every idle one is gone. */
 export interface IdleHold { release: () => void; confirmed: boolean }
 
-export interface ProviderAdapter {
+/** Transport acknowledgement for the r3.1 answer-id protocol. `already` means
+ * the SAME answerId was accepted; a different answerId is failed and never sent.
+ * A pending duplicate joins the original promise and cannot claim acceptance.
+ * A failed attempt can re-send once with the same answerId (A10a).
+ */
+export interface RequestDelivery { state: "accepted" | "already" | "failed" }
+export interface RequestAnswerOptions { answerId: string }
+export type GateTapEvent =
+  | { type: "posture"; threadId: string; generation: string; state: "requested" | "accepted" | "failed" | "interrupted"; level: "ask" | "auto" | "full" | "unlimited" }
+  | { type: "request"; generation: string; requestId: string; tool: string; inputHash: string }
+  | { type: "answer"; generation: string; requestId: string; answerId: string; state: RequestDelivery["state"] };
+
+/** Strict S3 capability carried through the live ProviderInstance registry. */
+export type DecisionProviderAdapter = Pick<ProviderAdapter<RequestDelivery>,
+  'respondToRequest' | 'interruptTurn' | 'onPostureChange' | 'gateTap'>;
+
+/** Existing adapters retain their BASE return type until S3 migrates them.
+ * S3 implements ProviderAdapter<RequestDelivery>; its fourth argument is
+ * required and its result cannot be mistaken for a legacy RequestOutcome. */
+export interface ProviderAdapter<Delivery extends RequestOutcome | RequestDelivery = RequestOutcome> {
+  onPostureChange?(threadId: ThreadId): Promise<void>;
+  gateTap?(event: GateTapEvent): void;
   readonly provider: DriverKind;
   readonly mcpToolSurface?: import("./murage-tool-surface.ts").McpToolSurface;
   readonly capabilities: {
@@ -795,7 +843,8 @@ export interface ProviderAdapter {
       /** Rules 69e, 73d: the call as judged, or the narrowed call, to run in place of the one asked. */
       updatedInput?: Record<string, unknown>;
     },
-  ): Promise<RequestOutcome>;
+    ...delivery: Delivery extends RequestOutcome ? [options?: RequestAnswerOptions] : [options: RequestAnswerOptions]
+  ): Promise<Delivery>;
   /** Deliver a user message into the RUNNING turn on this thread. Resolves
    * false or "rejected" when there is no live turn to steer (the caller then
    * sends it as a normal turn), true or "delivered" when the turn took it, and
@@ -833,6 +882,8 @@ export interface ProviderSnapshot {
   /** Cloud home: the engine's sign-in should be renewed (Claude's token expires within 30 days or
    * is no longer accepted). The UI offers the sign-in again. */
   renewSignIn?: boolean;
+  /** Cloud home: some bot on this home has a sign-in for the engine. Home-level SETUP status only: it never means a given bot is signed in. */
+  setUpOnHome?: boolean;
 }
 
 // ── engine install descriptor ───────────────────────────────────────────
@@ -865,6 +916,8 @@ export interface EngineInstall {
 // `create` owns ALL per-instance state; two create calls share nothing.
 // Failures must reject, never throw synchronously — the registry downgrades
 // a rejection to an unavailable shadow snapshot.
+export interface ModelVariantOption { id: string; label: string }
+
 export interface ModelCatalog {
   default: string;
   /** "live" only when this catalog came from a successful list by the engine's
@@ -874,6 +927,7 @@ export interface ModelCatalog {
   options: Array<{
     id: string;
     label: string;
+    variants?: ModelVariantOption[];
     custom?: boolean;
     loaded?: boolean;
     /** upstream provider id (e.g. "zai", "nous") when the engine can report
@@ -885,7 +939,7 @@ export interface ModelCatalog {
      * back to a pattern table over the model id, then a conservative default. */
     contextWindow?: number;
     /** Local models only: the server this model is served by, already in the
-     * form the picker shows ("llama.cpp on seanbeast"). Spec V3. */
+     * form the picker shows ("llama.cpp on a local box"). Spec V3. */
     localServer?: string;
     /** Local models only: how the last Local models tool test came out, so the
      * picker can mark a model that answers but cannot call tools. Absent means
@@ -931,6 +985,13 @@ export interface ProviderInstance {
   /** Refresh a live catalog without recreating the provider instance. */
   readonly refreshModels?: (options?: ModelRefreshOptions) => Promise<void>;
   readonly adapter: ProviderAdapter;
+  /** S3 exposes bound strict methods from the SAME engine session and dedup
+   * map as adapter. S4 uses this capability for DecisionTransport; absence
+   * means unavailable, never a cast or legacy outcome treated as acceptance.
+   * Keeps BASE callers and registry decorators source-compatible during waves.
+   * Legacy respondToRequest must bridge to this same send/dedup operation.
+   */
+  readonly decisionAdapter?: DecisionProviderAdapter;
   snapshot(): Promise<ProviderSnapshot>;
   /** Cheap one-shot text call (upstream TextGeneration) — titles, summaries. */
   generateText?(prompt: string, botId?: string, cwd?: string): Promise<string>;

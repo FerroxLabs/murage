@@ -1,14 +1,18 @@
+import * as messageTableDefinitions from "./message-tables.ts";
+import { SCHEMA_1_0_1 } from "./schema-1.0.1.ts";
+import { cancelOpenRecords, assertBackupEmailActions, refreshBackupEmailPresentations } from './decision/records.ts';
 import { initializeChatsPreviewStorage } from "./thread-summary.ts";
 import { ensureForgetTable } from "./harness/event-log.ts";
 import { ensureScrubPassTable } from "./memory/scrub-state.ts";
 import { initializeTeamIdentityTables } from "./team-identities.ts";
 import { initializeThreadSnooze } from "./thread-snooze.ts";
+import { initializeHighLevelThreadMarks } from "./highlevel/thread-marks.ts";
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, rmSync, statSync, writeSync, type Stats } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { backup, DatabaseSync } from "node:sqlite";
 import { publishNoReplace } from "./publish-file.ts";
-import { claimCopyScratch, settleFtsCopy, sweepStaleCopyScratch } from "./settle-copy.ts";
+import { claimCopyScratch, settleFtsCopy, sweepStaleCopyScratch, RETIRED_SEARCH_TABLES } from "./settle-copy.ts";
 import { noteWrittenBytes, noteWrittenFile } from "./io-written.ts";
 import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 import { isDiskFullError, validateMemorySchema } from "./memory/schema.ts";
@@ -22,12 +26,14 @@ import { initializeProjectTables } from "./project-tables.ts";
 import { initializeMobilePush } from "./mobile-push-store.ts";
 import { initializeSharedRequestProvenance } from "./shared-provenance-schema.ts";
 import { initializePendingDelegations } from "./pending-delegations-schema.ts";
+import { initializeDelegationPacks } from "./delegation-pack/schema.ts";
 import { initializeProjectCardDelivery } from "./project-card-delivery-schema.ts";
 import { initializeOwnerSends } from "./send-store.ts";
 import { initializeBotCalls } from "./bot-calls-schema.ts";
 import { initializeAppTriggers } from "./app-trigger-store.ts";
 import { initializeTurnSourceHolds } from "./turn-source-holds.ts";
 import { initializeEmailTables } from "./email/email-store.ts";
+import { RESTORE_JOB_MARKS_DDL, RESTORE_BOOT_WAIT_DDL } from "./email/restore-job-marks-ddl.ts";
 import { initializeVenuePosts } from "./venue-post-held.ts";
 import { initializeRoomShares } from "./room-shares-schema.ts";
 import { initializeReplySchema } from "./tts/reply-schema.ts";
@@ -42,7 +48,7 @@ import { initializeAskRevocations } from "./phones/ask-revocations.ts";
 import { initializePhoneReceipts } from "./phones/receipts.ts";
 import { initializePhones } from "./phones/registry.ts";
 import { ADDED_TABLE_LIFECYCLE } from "./added-table-lifecycle.ts";
-import { APP_SCHEMA_102_ADDITIONS } from "./installation-app-schema-downgrade.ts";
+import { APP_SCHEMA_102_ADDITIONS, PENDING_DELEGATIONS_PRE_PACK_DDL } from "./installation-app-schema-downgrade.ts";
 import { rowToMessage } from "./transcript-seq.ts";
 export { InstallationSnapshotError } from "./installation-snapshot-error.ts";
 
@@ -78,6 +84,8 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   open_card: { required: false, optional: [] },
   turn_first: { required: false, optional: [] },
   transcript_index_state: { required: false, optional: [] },
+  // SQLite creates this exact bookkeeping table for search_intents AUTOINCREMENT.
+  sqlite_sequence: { required: false, optional: [] },
   // pending "Checking the browser" notes, kept by the message writers and filled in the background (message-tables.ts), new in 1.0.2
   browser_check_pending: { required: false, optional: [] },
   // the Flux Memory number hold of a thread (server/flux-capture-hold.ts, message-tables.ts), new in 1.0.4
@@ -145,8 +153,8 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   project_routine_authority: { required: false, optional: [] },
   room_requests: { required: false, optional: ["handoff", "shared_work"] },
   // every owner send, committed before it is acknowledged (server/send-store.ts), new in 1.0.2;
-  // notice (the code of what the person was told) was appended by ALTER during 1.0.2, and so was turn_id (the turn a steer went into); via, queue_only, via_device and attachments (a phone's share or ask line) were appended in 1.0.9
-  owner_sends: { required: false, optional: ["notice", "restore_held", "restore_gen", "stopped", "stop_gen", "action_id", "turn_id", "via", "queue_only", "via_device", "attachments"] },
+  // notice and turn_id were appended during 1.0.2; the phone columns in 1.0.9; via_proof (ask admission evidence) in 1.0.19.
+  owner_sends: { required: false, optional: ["notice", "restore_held", "restore_gen", "stopped", "stop_gen", "action_id", "turn_id", "via", "queue_only", "via_device", "attachments", "via_proof"] },
   // the owner's deletion record and the restore generation (server/owner-deletions.ts, server/send-store.ts), new in 1.0.2
   owner_deleted_threads: { required: false, optional: [] },
   send_restore_generation: { required: false, optional: [] },
@@ -174,6 +182,8 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   push_relay_removals: { required: false, optional: [] },
   // routine provenance of shared requests (shared-provenance-schema.ts); an older archive lacks it
   shared_request_provenance: { required: false, optional: [] },
+  // 1.0.19 appends the authenticated owner proof; earlier queues have no proof.
+  pending_delegations: { required: false, optional: ["owner_rooted"] },
   // Tables added in 1.0.2 (shared_request_events, project_card_delivery_owed, ...) are not listed here: they are registered from
   // APP_SCHEMA_102_ADDITIONS.tables, the list the downgrade drops, by referenceSchema() below (owner_sends carries a column appended
   // later, so it is named above too).
@@ -195,6 +205,11 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   app_event_batches: { required: false, optional: [] },
   app_event_run_events: { required: false, optional: [] },
   app_event_runs: { required: false, optional: [] },
+  // the restore job's marks (email/restore-job-effects.ts, Cloud 1.0.19 J2): created lazily by the first owner restore, so no initializer makes it.
+  // Accepted with its exact definition (created below from RESTORE_JOB_MARKS_DDL) so a home that finished a restore still backs up; the staged
+  // copy drops it (sanitizeStagedRestoreMarks), because a marker of THIS installation's restore means nothing in another installation.
+  restore_job_marks: { required: false, optional: [] },
+  restore_boot_wait: { required: false, optional: [] },
 }));
 
 type SchemaRow = { type: string; name: string; tbl_name: string; sql: string | null };
@@ -225,9 +240,26 @@ function referenceSchema(): Map<string, ReferenceObject> {
   const db = new DatabaseSync(":memory:");
   try {
     initializeChatsPreviewStorage(db);
+    initializeHighLevelThreadMarks(db);
     initializeMessageTables(db); initializeTurnSourceHolds(db); ensureBrowserCheckIndex(db); ensureIntegrityPassTable(db); ensureScrubPassTable(db); ensureUpgradeAppTables(db); initializeInbox(db); initializeArtifacts(db);
     for (const { schema } of LEGACY_UPGRADE_TABLES.values()) db.exec(schema);
-    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); ensureForgetTable(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializePhones(db); initializeAskRevocations(db); initializePhoneReceipts(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeReplySchema(db); initializeAppTriggers(db); initializeEmailTables(db); initializeVenuePosts(db); initializeRoomShares(db);
+    // The serving initializer no longer owns legacy FTS. Keep archive references independently
+    // of it, including the quoted spelling SQLite produces on ALTER TABLE RENAME.
+    const legacySearchDdl = "MESSAGE_SEARCH_DDL" in messageTableDefinitions
+      ? String(messageTableDefinitions.MESSAGE_SEARCH_DDL)
+      : SCHEMA_1_0_1.find(object => object.name === "messages_fts")!.ddl!;
+    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='messages_fts'").get()) db.exec(legacySearchDdl);
+    for (const name of RETIRED_SEARCH_TABLES) {
+      db.exec(`ALTER TABLE messages_fts RENAME TO "${name}"`);
+      db.exec(legacySearchDdl);
+    }
+    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='search_intents'").get()) {
+      db.exec("CREATE TABLE search_intents(seq INTEGER PRIMARY KEY AUTOINCREMENT, nonce INTEGER NOT NULL, rowid INTEGER, thread_key TEXT, CHECK ((rowid IS NULL) <> (thread_key IS NULL)), CHECK (thread_key IS NULL OR length(CAST(thread_key AS BLOB)) <= 72))");
+    }
+
+    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); ensureForgetTable(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializePhones(db); initializeAskRevocations(db); initializePhoneReceipts(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeDelegationPacks(db); initializeBotCalls(db); initializeReplySchema(db); initializeAppTriggers(db); initializeEmailTables(db); initializeVenuePosts(db); initializeRoomShares(db);
+    db.exec(RESTORE_JOB_MARKS_DDL);
+    db.exec(RESTORE_BOOT_WAIT_DDL);
     const objects = new Map<string, ReferenceObject>();
     const rows = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[];
     const tables = new Map(APP_TABLES);
@@ -275,6 +307,17 @@ function referenceSchema(): Map<string, ReferenceObject> {
         legacy.exec(LEGACY_OWED_TABLE_DDL);
         owedObject.sql.add(normalizedSql((legacy.prepare("SELECT sql FROM sqlite_schema WHERE name='room_request_owed'").get() as SchemaRow).sql));
         owedObject.columns.push(columnShape(legacy, "room_request_owed"));
+      } finally { legacy.close(); }
+    }
+    // The pending-hand-off table before owner_rooted (fee454fb0) is accepted with exactly its text and columns: an archive from 1.0.2 carries
+    // it, and the app adds the column on first open (pending-delegations-schema.ts).
+    const pendingObject = objects.get("pending_delegations");
+    if (pendingObject) {
+      const legacy = new DatabaseSync(":memory:");
+      try {
+        legacy.exec(PENDING_DELEGATIONS_PRE_PACK_DDL);
+        pendingObject.sql.add(normalizedSql((legacy.prepare("SELECT sql FROM sqlite_schema WHERE name='pending_delegations'").get() as SchemaRow).sql));
+        pendingObject.columns.push(columnShape(legacy, "pending_delegations"));
       } finally { legacy.close(); }
     }
     reference = objects;
@@ -444,7 +487,7 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
     report("database-clean");
     // Every staged messages.db settles itself (SMOOTH-FTS-MERGE R6 section 3): the search index's deleted postings, the email
     // rows of a backup and every freed page leave the staged file before inspect, digest and publish. One VACUUM, always.
-    if (component === "messages.db") settleFtsCopy(staged, { check: false, beforeVacuum: sanitizeStagedEmailRows });
+    if (component === "messages.db") settleFtsCopy(staged, { check: false, beforeVacuum: db => { sanitizeStagedEmailRows(db); sanitizeStagedRestoreMarks(db); } });
     report("database-verify");
     const copied = new DatabaseSync(staged, { readOnly: true, timeout: 1000 });
     let counts;
@@ -482,16 +525,29 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
  * once its payload is gone (Astra r2 Medium). A database without the tables (email never on) is not touched. */
 export function sanitizeStagedEmailRows(db: DatabaseSync): { payloads: number; events: number; cards: number } {
   const has = (name: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
-  if (!has("email_payloads") && !has("email_events")) return { payloads: 0, events: 0, cards: 0 };
+  assertBackupEmailActions(db);
+  const hasCards = has("messages") && Boolean(db.prepare(`SELECT 1 FROM messages WHERE instr(json,'"emailSend"')>0 AND CASE WHEN json_valid(json) THEN json_type(json,'$.card.emailSend') END IS NOT NULL LIMIT 1`).get());
+  if (!has("email_payloads") && !has("email_events") && !hasCards) return { payloads: 0, events: 0, cards: 0 };
   const payloads = has("email_payloads") ? Number(db.prepare("DELETE FROM email_payloads").run().changes) : 0;
   const events = has("email_events") ? Number(db.prepare("DELETE FROM email_events").run().changes) : 0;
   // a row with damaged JSON is left as it is (json_valid first): sanitizing never fails a backup over one bad row
+  cancelOpenRecords(db, "Cancelled (backup)");
   const subtitle = "json_extract(json,'$.card.subtitle')";
   const cards = has("messages") ? Number(db.prepare(
-    `UPDATE messages SET json=json_set(json, '$.card.subtitle', CASE WHEN instr(${subtitle}, char(10)||char(10))>0 THEN substr(${subtitle}, 1, instr(${subtitle}, char(10)||char(10))-1) ELSE '' END, '$.card.emailSend.draft.text', '') ` +
-    `WHERE instr(json, '"emailSend"')>0 AND (CASE WHEN json_valid(json) THEN json_extract(json,'$.card.kind') END)='email-send'`,
+    `UPDATE messages SET json=json_remove(CASE WHEN json_extract(json,'$.card.approvalId') IS NULL AND json_type(json,'$.card.emailSend.draft.text') IS NOT NULL THEN json_set(json, '$.card.subtitle', CASE WHEN instr(${subtitle}, char(10)||char(10))>0 THEN substr(${subtitle}, 1, instr(${subtitle}, char(10)||char(10))-1) ELSE '' END, '$.card.emailSend.draft.text', '') ELSE json_set(json, '$.card.subtitle', CASE WHEN instr(${subtitle}, char(10)||char(10))>0 THEN substr(${subtitle}, 1, instr(${subtitle}, char(10)||char(10))-1) ELSE '' END) END,'$.card.detail') ` +
+    `WHERE instr(json, '"emailSend"')>0 AND (CASE WHEN json_valid(json) THEN json_type(json,'$.card.emailSend') END) IS NOT NULL`,
   ).run().changes) : 0;
+  refreshBackupEmailPresentations(db);
   return { payloads, events, cards };
+}
+
+/** The restore job's marks (swapped, prepared, blind) say where THIS installation's own restore stands; boot recovery reads them to finish or clear it.
+ * Carried into a backup they would travel into another installation's restore, where a stale "swapped" or "prepared" could steer recovery of a
+ * job that never ran there. They are dropped from the STAGED file only (the live source keeps them), on the settle's own connection so the VACUUM
+ * after it leaves no old page content. A database without the table (no owner restore yet) is not touched. */
+export function sanitizeStagedRestoreMarks(db: DatabaseSync): void {
+  db.exec("DROP TABLE IF EXISTS restore_boot_wait");
+  db.exec("DROP TABLE IF EXISTS restore_job_marks");
 }
 
 function snapshotDatabaseWhileOwned(dataDir: string, destination: string, onProgress?: BackupProgressReport) {

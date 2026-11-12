@@ -1,3 +1,5 @@
+import { ProducerApprovalQueue, producerBase, type ServiceAuthorityReader } from "../narrow-denials.ts";
+import { readApproval } from "../decision/index.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -26,6 +28,7 @@ export interface PhoneJobInfo {
 }
 
 export interface PhoneJobsDeps {
+  authorityFor?: ServiceAuthorityReader;
   now(): number;
   setTimer(ms: number, fn: () => void): () => void;
   push: { park(job: PhoneJobInfo): void; withdraw(job: PhoneJobInfo): void };
@@ -58,6 +61,8 @@ const LINE_DENIED = PHONE_COPY.denied;
 const LINE_UNSUPPORTED = PHONE_COPY.unsupported;
 
 interface Job {
+  approvalId?:string;
+  permissionRun: boolean;
   operationId: string; deviceId: string; authority: PhoneAuthority; capability: PhoneCapability; action: string; args: unknown; say: string;
   provider: { id: string; name: string }; phoneName: string; botName: string; workspace: string; eventRef: string;
   state: JobState; offerId: string; leaseToken?: string; leasedAt?: number; expiresAt?: number; leaseMs: number; requestedAt: number;
@@ -90,26 +95,48 @@ function jsonBytes(v: unknown): number | null {
 
 export class PhoneJobs {
   private readonly deps: PhoneJobsDeps;
+  private readonly approvals:ProducerApprovalQueue;
+  pendingApprovals(){return this.approvals.pendingApprovals();}
+  approvalQueue(){return this.approvals;}
   private readonly jobs = new Map<string, Job>();
   private readonly waiters = new Map<string, Set<Waiter>>();
   // No parameter properties: the server runs under node --experimental-strip-types, which cannot erase them.
-  constructor(deps: PhoneJobsDeps) { this.deps = deps; }
+  constructor(deps: PhoneJobsDeps) {
+    this.deps = deps;
+    const accept=(item:import('../decision/index.ts').PendingQueueApproval,answer:import('../decision/index.ts').ApprovalAnswer)=>{
+      const job=this.jobs.get(item.ref);
+      if(!job){if(answer.behavior==='allow')throw new Error('approval-queue-delivery-unavailable');return;}
+      if(!OFFERABLE.has(job.state))throw new Error('approval-queue-conflict');
+      if(answer.behavior==='allow'){job.permissionRun=true;this.wake(job.deviceId);}
+      else this.end(job,'FAILED',{kind:'declined',line:LINE_DECLINED});
+    };
+    this.approvals=new ProducerApprovalQueue('phone',undefined,accept,accept);
+  }
 
   eventRefFor(operationId: string): string { return eventRefFor(operationId); }
 
   request(input: PhoneJobRequest): { operationId: string; outcome: Promise<BotOutcome> } {
     this.prune();
+    const permissionRun = false;
     const operationId = this.deps.ids();
     let resolve!: (o: BotOutcome) => void;
     const outcome = new Promise<BotOutcome>((r) => { resolve = r; });
     const now = this.deps.now();
     const job: Job = {
-      operationId, deviceId: input.deviceId, authority: input.authority, capability: input.capability, action: input.action, args: input.args, say: input.say,
+      permissionRun, operationId, deviceId: input.deviceId, authority: input.authority, capability: input.capability, action: input.action, args: input.args, say: input.say,
       provider: input.provider, phoneName: input.phoneName ?? "your phone", botName: input.botName ?? input.authority.botId, workspace: input.workspace ?? "Murage",
       eventRef: eventRefFor(operationId), state: "QUEUED", offerId: this.deps.ids(), leaseMs: SHEET_CAPABILITIES.has(input.capability) ? SHEET_LEASE_MS : LEASE_MS,
       requestedAt: now, parked: false, resolve,
     };
-    this.jobs.set(operationId, job);
+    const request=this.approvals.open({authority:this.deps.authorityFor?.(input.authority.threadId,input.authority.botId),ref:operationId,tool:input.action,
+      input:{deviceId:input.deviceId,capability:input.capability,action:input.action,args:input.args},
+      action:{requestId:operationId,tool:input.action,options:['Allow','Deny'],deviceId:input.deviceId,capability:input.capability,args:input.args},
+      view:{title:input.say,subtitle:input.phoneName??'your phone'},base:producerBase(true)});
+    job.args=(request.item.call.input as {args:unknown}).args;
+    const execution=this.approvals.executeNow(request,()=>{job.permissionRun=true;});
+    if(execution.kind==='refuse')throw new Error(execution.message);
+    this.jobs.set(operationId,job);
+    if(execution.kind!=='executed'){job.approvalId=execution.ref.approvalId;this.approvals.presentNow(request,execution.ref);}
     job.cancelDeadline = this.deps.setTimer(REQUEST_DEADLINE_MS, () => this.onDeadline(job));
     if (!this.wake(job.deviceId)) this.armPark(job);
     return { operationId, outcome };
@@ -155,6 +182,7 @@ export class PhoneJobs {
   decline(deviceId: string, operationId: string, offerId: string): boolean {
     const job = this.jobs.get(operationId);
     if (!job || job.deviceId !== deviceId || job.state !== "OFFERED" || job.offerId !== offerId) return false;
+    if(job.approvalId&&this.approvals.answerNow(job.approvalId,{behavior:'deny'}).state==='failed')return false;
     this.end(job, "FAILED", { kind: "declined", line: LINE_DECLINED });
     return true;
   }
@@ -169,6 +197,7 @@ export class PhoneJobs {
       this.end(job, "REVOKED", { kind: "did_not_run", line: LINE_CHANGED });
       return { active: false };
     }
+    if(job.approvalId&&!job.permissionRun&&this.approvals.answerNow(job.approvalId,{behavior:'allow'}).state==='failed')return {active:false};
     job.cancelPark?.(); job.cancelPark = undefined;
     job.cancelDeadline?.(); job.cancelDeadline = undefined;
     const now = this.deps.now();
@@ -300,7 +329,7 @@ export class PhoneJobs {
       job.state = "PARKED";
       if (job.parked) return;
       job.parked = true;
-      try { this.deps.push.park(this.info(job)); } catch { /* the job still waits for a poll */ }
+      try { if (!job.permissionRun) this.deps.push.park(this.info(job)); } catch { /* the job still waits for a poll */ }
     });
   }
 
@@ -324,6 +353,8 @@ export class PhoneJobs {
     job.offerId = this.deps.ids();
     job.cancelPark?.(); job.cancelPark = undefined;
     return {
+      ...(job.approvalId?{approvalId:job.approvalId,requestRef:job.operationId,actionHash:readApproval(job.approvalId)?.actionHash}:{}),
+      ...(job.permissionRun ? {permission:"run" as const} : {}),
       operationId: job.operationId, offerId: job.offerId, workspace: job.workspace, bot: { id: job.authority.botId, name: job.botName }, capability: job.capability,
       action: job.action, args: (typeof job.args === "object" && job.args !== null ? job.args : {}) as Record<string, unknown>, say: job.say, provider: job.provider,
       expiresAt: job.requestedAt + REQUEST_DEADLINE_MS, leaseMs: job.leaseMs as 45000 | 180000,

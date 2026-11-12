@@ -31,6 +31,8 @@ export function checkAuthUrl(value: unknown, hosts: readonly string[] = ENGINE_L
   return hosts.includes(url.hostname) ? url.href : null;
 }
 
+export const LINK_ENDED = "That sign-in has ended. Start it again.";
+export const LINK_STARTING = "The sign-in is still starting. Try again in a moment.";
 export const LINK_REFUSED = "That link isn't a sign-in page for this engine, so it was not opened.";
 
 // ── terminal guards ──────────────────────────────────────────────────────────────────────────────────────────────
@@ -139,7 +141,7 @@ export interface EngineLoginBridge {
   onClosed(listener: (payload: { id: string; reason: string }) => void): () => void;
 }
 export type EngineLoginEngine = "codex" | "claudeAgent" | "grokAgent" | "kimiAgent" | "opencodeGo";
-/** Engines whose sign-in belongs to one bot (server/cloud-home/engine-login.ts BOT_LOGIN_ENGINES). Claude's is engine-wide. */
+/** Engines whose sign-in belongs to one bot (server/cloud-home/engine-login.ts BOT_LOGIN_ENGINES). Claude's is home-wide; it names a bot only for that bot's own sign-in. */
 export const BOT_LOGIN_ENGINES: readonly EngineLoginEngine[] = Object.freeze(["codex", "grokAgent", "kimiAgent", "opencodeGo"]);
 /** Same words as server/cloud-home/copy.ts (engineLoginBotRequired). */
 export const BOT_REQUIRED_COPY = "Choose which bot to sign this engine in for.";
@@ -200,7 +202,10 @@ export function startEngineLoginSession({ bridge, request, write, onState }: {
   return {
     /** An allow-listed link opens in the default browser through main; anything else is refused here and again in main. */
     async openLink(url: string): Promise<boolean> {
-      if (id === null || finished || !checkAuthUrl(url)) { onState({ phase: finished ? "closed" : id === null ? "connecting" : "open", notice: LINK_REFUSED }); return false; }
+      // Three different reasons, three different sentences: a link that is fine must never be called "not a sign-in page".
+      if (finished) { onState({ phase: "closed", notice: LINK_ENDED }); return false; }
+      if (id === null) { onState({ phase: "connecting", notice: LINK_STARTING }); return false; }
+      if (!checkAuthUrl(url)) { onState({ phase: "open", notice: LINK_REFUSED }); return false; }
       const result = await bridge.openLink({ id, url });
       if (!result.ok) onState({ phase: "open", notice: result.message });
       return result.ok;

@@ -15,6 +15,40 @@ const RENDERER_ORIGIN_ARGUMENT = "--murage-renderer-origin=";
  * Electron rejects with "Error invoking remote method '<channel>': Error:
  * <message>"; only <message> was ever meant to be shown. */
 const IPC_WRAPPER = /^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/;
+const ATTENTION_SESSION = /^[a-z0-9]{16,64}$/;
+const ATTENTION_REFS_MAX = 288; // LEDGER_MAX = CAP_HOME + 32 (NOTIFY-EVERYWHERE-1019 S3R R4)
+const ATTENTION_ICON_MAX = 65536; // a data:image/png of at most 64 KB; main checks the same bound
+const attentionRef = (value) => typeof value === "string" && value.length > 0 && value.length <= 64;
+const attentionGen = (value) => Number.isSafeInteger(value) && value >= 0;
+const attentionText = (value, max) => typeof value === "string" && value.length <= max;
+/** main -> window push: bounded, session-addressed, nothing else passes (S3R R3). */
+const attentionMessage = (value) => {
+  if (!value || typeof value !== "object" || typeof value.session !== "string" || !ATTENTION_SESSION.test(value.session)) return null;
+  if (value.type === "show" && attentionRef(value.ref) && attentionGen(value.gen) && typeof value.previews === "boolean") return { type: "show", session: value.session, ref: value.ref, gen: value.gen, previews: value.previews };
+  if (value.type === "close" && attentionRef(value.ref) && attentionGen(value.gen)) return { type: "close", session: value.session, ref: value.ref, gen: value.gen };
+  if (value.type === "previews" && typeof value.previews === "boolean") return { type: "previews", session: value.session, previews: value.previews };
+  return null;
+};
+/** window -> main: the new delivery shapes are checked here and again in main (S3R R3 bounds). Anything malformed never leaves the window. */
+const attentionHello = (value) => (value && typeof value === "object" && typeof value.session === "string" && ATTENTION_SESSION.test(value.session) ? { session: value.session } : null);
+const attentionPresent = (value) => {
+  if (!value || typeof value !== "object" || typeof value.session !== "string" || !ATTENTION_SESSION.test(value.session) || !attentionRef(value.ref) || !attentionGen(value.gen)) return null;
+  if (!attentionText(value.title, 256) || !attentionText(value.body, 1024)) return null;
+  const out = { session: value.session, ref: value.ref, gen: value.gen, title: value.title, body: value.body };
+  for (const field of ["botId", "threadId"]) if (value[field] !== undefined) { if (!attentionText(value[field], 512)) return null; out[field] = value[field]; }
+  for (const field of ["privatePreview", "silent"]) if (value[field] !== undefined) { if (typeof value[field] !== "boolean") return null; out[field] = value[field]; }
+  if (value.icon !== undefined) {
+    if (typeof value.icon !== "string" || value.icon.length > ATTENTION_ICON_MAX || !value.icon.startsWith("data:image/png;base64,")) return null;
+    out.icon = value.icon;
+  }
+  return out;
+};
+const attentionGone = (value) => (value && typeof value === "object" && typeof value.session === "string" && ATTENTION_SESSION.test(value.session) && attentionRef(value.ref) && attentionGen(value.gen) ? { session: value.session, ref: value.ref, gen: value.gen } : null);
+const attentionFreed = (value) => {
+  if (!value || typeof value !== "object" || typeof value.session !== "string" || !ATTENTION_SESSION.test(value.session) || !Array.isArray(value.refs) || value.refs.length > ATTENTION_REFS_MAX || !value.refs.every(attentionRef)) return null;
+  return { session: value.session, refs: [...value.refs] };
+};
+
 function invokeShown(channel, ...args) {
   return ipcRenderer.invoke(channel, ...args).catch((error) => {
     throw new Error(String(error?.message ?? error).replace(IPC_WRAPPER, ""));
@@ -51,6 +85,15 @@ function exposeBridge() {
 // load sibling CommonJS files. Keep this tiny predicate inline here; main's
 // privileged process uses the shared browser-platform helper.
 const browserSurfaceSupported = process.platform === "darwin" || process.platform === "linux" || process.platform === "win32";
+// Keep a sign-in intent until the Connect UI subscribes, as with the tray's Inbox intent.
+let pendingCloudSignIn = null;
+const cloudSignInListeners = new Set();
+if (cloudFlagOn()) ipcRenderer.on("cloud-home:sign-in-requested", (_event, request) => {
+  if (!request || typeof request.homeId !== "string" || typeof request.bot !== "string" || typeof request.engine !== "string") return;
+  const checked = { homeId: request.homeId, bot: request.bot, engine: request.engine };
+  if (!cloudSignInListeners.size) pendingCloudSignIn = checked;
+  for (const listener of cloudSignInListeners) listener(checked);
+});
 let pendingStartupInbox=false;
 const startupInboxListeners=new Set();
 ipcRenderer.on("startup-background:open-inbox",()=>{
@@ -68,6 +111,9 @@ ipcRenderer.on("tray:open",(_event,target)=>{
   if(!trayListeners.size){pendingTrayTarget=target;return;}
   for(const listener of trayListeners)listener(target);
 });
+
+// Main probes after a navigation that never committed; one reply proves this renderer is alive (app-readiness.mjs).
+ipcRenderer.on("app-readiness:probe", (_event, t) => { if (Number.isInteger(t)) ipcRenderer.send("app-readiness:alive", t); });
 
 let pendingPackageInstallUrl = null;
 const packageInstallListeners = new Set();
@@ -96,6 +142,9 @@ const desktopSurfaceSecret = (() => {
   }
 })();
 
+// A pop-out must be registered in main before it receives even the bridge.
+// Keep the main-window development fallback unchanged.
+if (new URL(globalThis.location?.search || "/", globalThis.location.origin).searchParams.get("surface") === "browser-popout" && !desktopSurfaceSecret) return;
 contextBridge.exposeInMainWorld("muragebox", {
   /** Host platform ("darwin" | "win32" | "linux") — for platform-aware UI. */
   platform: process.platform,
@@ -150,6 +199,20 @@ contextBridge.exposeInMainWorld("muragebox", {
     applyRetention: (remoteRef, revision, policy, previewId) => ipcRenderer.invoke("backup-remote:applyRetention", remoteRef, revision, policy, previewId),
     clearRetentionReview: (remoteRef, revision, previewId) => ipcRenderer.invoke("backup-remote:clearRetentionReview", remoteRef, revision, previewId),
   },
+  /** NOTIFY-EVERYWHERE-1019 S3: events and what is on screen go to main's router by routing ids only; main answers with a ref to show. */
+  attention: {
+    hello: payload => { const checked = attentionHello(payload); return checked ? ipcRenderer.invoke("attention:hello", checked) : Promise.resolve({ ok: false }); },
+    offer: payload => ipcRenderer.invoke("attention:offer", payload),
+    visible: payload => ipcRenderer.invoke("attention:visible", payload),
+    present: payload => { const checked = attentionPresent(payload); return checked ? ipcRenderer.invoke("attention:present", checked) : Promise.resolve({ ok: false }); },
+    gone: payload => { const checked = attentionGone(payload); return checked ? ipcRenderer.invoke("attention:gone", checked) : Promise.resolve({ ok: false }); },
+    freed: payload => { const checked = attentionFreed(payload); if (checked) ipcRenderer.send("attention:freed", checked); },
+    onShow: cb => {
+      const handler = (_event, value) => { const checked = attentionMessage(value); if (checked) cb(checked); };
+      ipcRenderer.on("attention:show", handler);
+      return () => ipcRenderer.removeListener("attention:show", handler);
+    },
+  },
   approvalNotifications: {
     show: payload => ipcRenderer.invoke("approval-notification:show", payload),
     onOpen: cb => {
@@ -171,9 +234,15 @@ contextBridge.exposeInMainWorld("muragebox", {
     connectPaste: () => invokeShown("cloud-home:connect-paste"),
     connectStatus: () => invokeShown("cloud-home:connect-status"),
     disconnect: homeId => invokeShown("cloud-home:disconnect", homeId),
-    open: homeId => invokeShown("cloud-home:open", homeId),
+    open: (homeId, reconnecting) => invokeShown("cloud-home:open", homeId, ...(reconnecting === true ? [true] : [])),
     /** Main tells the window when Cloud goes live (or stops being), so the entry appears without a restart. */
     onLive: cb => { const handler = (_event, state) => cb(state?.live === true); ipcRenderer.on("cloud-home:live", handler); return () => ipcRenderer.removeListener("cloud-home:live", handler); },
+    /** main -> this window: open a Cloud bot's existing Connect sign-in. Buffered until React subscribes. */
+    onSignInRequested: cb => {
+      cloudSignInListeners.add(cb);
+      if (pendingCloudSignIn) { const request = pendingCloudSignIn; pendingCloudSignIn = null; cb(request); }
+      return () => cloudSignInListeners.delete(cb);
+    },
     /** main -> this window: this computer was disconnected from its Cloud home; show the Connect panel. */
     onShowConnect: cb => {
       const handler = () => cb();
@@ -188,11 +257,25 @@ contextBridge.exposeInMainWorld("muragebox", {
     },
   },
   } : {}),
+  notifySurfaces: {
+    get:()=>ipcRenderer.invoke("notify-surfaces:get"),
+    set:(key,value)=>ipcRenderer.invoke("notify-surfaces:set",key,value),
+    reset:()=>ipcRenderer.invoke("notify-surfaces:reset"),
+    capabilities:()=>ipcRenderer.invoke("notify-surfaces:capabilities"),
+    ensurePermission:()=>ipcRenderer.invoke("notify-surfaces:ensure-permission"),
+  },
   startup: {
     status:()=>ipcRenderer.invoke("startup-background:status"),
     update:patch=>ipcRenderer.invoke("startup-background:update",patch),
     onChange:cb=>{const handler=(_event,state)=>cb(state);ipcRenderer.on("startup-background:changed",handler);return()=>ipcRenderer.removeListener("startup-background:changed",handler);},
     onOpenInbox:cb=>{startupInboxListeners.add(cb);if(pendingStartupInbox){pendingStartupInbox=false;queueMicrotask(cb);}return()=>startupInboxListeners.delete(cb);},
+    pendingWhatsNew:()=>ipcRenderer.invoke("startup:pending-whats-new"),
+    ackWhatsNew:()=>ipcRenderer.invoke("startup:ack-whats-new"),
+    onWhatsNew:cb=>{const handler=()=>cb();ipcRenderer.on("startup:whats-new",handler);return()=>ipcRenderer.removeListener("startup:whats-new",handler);},
+  },
+  startupPicture: {
+    save:payload=>ipcRenderer.invoke("startup-picture:save",payload),
+    sessionTip:()=>ipcRenderer.invoke("startup-picture:session-tip"),
   },
   tray: {
     onOpen:cb=>{trayListeners.add(cb);if(pendingTrayTarget){const target=pendingTrayTarget;pendingTrayTarget=null;queueMicrotask(()=>cb(target));}return()=>trayListeners.delete(cb);},
@@ -364,6 +447,17 @@ contextBridge.exposeInMainWorld("muragebox", {
   },
   /** Mirrors durable unread state into the native Dock/taskbar badge. */
   setUnreadCount: (count) => ipcRenderer.send("desktop:unread-count", count),
+  /** A separate live view; window lifetime never changes browser control. */
+  browserPopout: {
+    open: (botId) => ipcRenderer.invoke("browser-popout:open", botId),
+    close: (botId) => ipcRenderer.invoke("browser-popout:close", botId),
+    currentState: () => ipcRenderer.invoke("browser-popout:state-now"),
+    onState: (cb) => {
+      const handler = (_event, state) => cb(state);
+      ipcRenderer.on("browser-popout:state", handler);
+      return () => ipcRenderer.removeListener("browser-popout:state", handler);
+    },
+  },
   /** Live VNC/noVNC in a sandboxed window owned by the app window. */
   desktopViewer: {
     open: (url, title, contextId) => ipcRenderer.invoke("desktop-viewer:open", url, title, contextId),
@@ -504,6 +598,9 @@ contextBridge.exposeInMainWorld("muragebox", {
   /** The owner's own MCP servers (MCP-LINK T11): keys, links, env values and
    * sign-in go to the main process, which keeps them encrypted. Nothing here
    * ever returns a value. */
+  highlevel: {
+    commit: (intent) => ipcRenderer.invoke("highlevel:commit", intent),
+  },
   mcpServers: {
     mode: () => ipcRenderer.invoke("mcp-servers:mode"),
     saveSecrets: (name, input) => ipcRenderer.invoke("mcp-servers:save-secrets", name, input),

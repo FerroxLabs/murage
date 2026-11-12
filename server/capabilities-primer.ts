@@ -36,6 +36,7 @@ import { ownerOnly } from "./owner-audience.ts";
 import type { SendTurnInput } from "./contracts.ts";
 import type { BrowserProtection } from "./browser-lock.ts";
 import { driverMountsPhoneJobs } from "./phone-jobs-engines.ts";
+import { highlevelEngineTurnLine } from "./highlevel/offered.ts";
 import { HIGHLEVEL_CLOSED_LINE } from "./highlevel/owner-turn.ts";
 
 /** Exactly the integrations the harness can hand a driver. Taken from the
@@ -108,8 +109,8 @@ export const INTEGRATION_FACTS = {
   },
   // Native HighLevel (HL-S2): present only on an owner turn for a bot the owner gave a confirmed location.
   highlevel: {
-    // read only in HL-S2 (MurageMain 11-04): the bot is never told it can change the CRM
-    present: "read the owner's HighLevel CRM (read only: it cannot change records there)",
+    // The host checks the operation against the owner's grant and approval basis.
+    present: "manage the owner's HighLevel account within what they allowed. Changes wait for the owner's approval on their computer unless they set you to No limits; deletes, payments, user changes and bulk sends also need them at their computer",
     absent: "",
   },
   memory: {
@@ -178,6 +179,7 @@ export interface PrimerFacts {
   readonly emailAbsentLine?: string;
   /** HL-RO (1.0.17): the bot holds a HighLevel grant, but this owner turn is not a message the owner sent it directly in its chat. */
   readonly highlevelClosed?: boolean;
+  readonly highlevelAbsentLine?: string;
   /** Phone calls are set up but this engine has no Murage tools on the turn (BOT-CALLS-1020). */
   readonly phoneAbsentLine?: string;
   /** True when the turn is with the owner (their own chat), the only audience
@@ -399,6 +401,7 @@ export function capabilitiesPrimer(facts: PrimerFacts): string {
       ? `Read recent lines from your projects and channels with ${murageTool("venue_read_messages")}.`
       : "",
     emailPrimer(facts.mounted.agents ? facts.emailMode : undefined, facts.emailAbsentLine, facts.ownerAudience === true),
+    facts.highlevelAbsentLine && !facts.mounted.highlevel && facts.ownerAudience ? facts.highlevelAbsentLine : "",
     facts.highlevelClosed && !facts.mounted.highlevel && facts.ownerAudience ? HIGHLEVEL_CLOSED_LINE : "",
     phonePrimer(facts.phoneAbsentLine, facts.ownerAudience === true),
     facts.mounted.agents && facts.peers > 0
@@ -471,6 +474,7 @@ export function turnCapabilityFacts(input: {
   emailAbsentLine?: string | null;
   /** HL-RO: set at the mount when a granted bot's turn did not pass the allow proof. */
   highlevelClosed?: boolean;
+  highlevelGrantCount?: number;
   phoneAbsentLine?: string | null;
   /** The computer this harness runs on; a test passes it, a live turn reads the process. */
   platform?: NodeJS.Platform;
@@ -509,6 +513,7 @@ export function turnCapabilityFacts(input: {
     ...((agentsEnv?.MURAGE_EMAIL === "send" || agentsEnv?.MURAGE_EMAIL === "read") && !agentsEnv.MURAGE_PROJECT_ROLE ? { emailMode: agentsEnv.MURAGE_EMAIL } : {}),
     ...(input.emailAbsentLine ? { emailAbsentLine: input.emailAbsentLine } : {}),
     ...(input.highlevelClosed ? { highlevelClosed: true } : {}),
+    highlevelAbsentLine: highlevelEngineTurnLine({ driverKind: input.instance.driverKind, grants: input.highlevelGrantCount ?? 0, ownerAudience: input.ownerAudience === true }),
     ...(input.phoneAbsentLine ? { phoneAbsentLine: input.phoneAbsentLine } : {}),
     memory: input.memory,
     imageProvider: input.imageProvider,

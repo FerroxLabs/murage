@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The event-log prune's forgotten-message lookup: large transcript columns and SQLite waits stay on this thread. The main database is
 // opened read-only; every page is two keyed statements of at most 200 rows (event-log.ts forgottenTextsReader).

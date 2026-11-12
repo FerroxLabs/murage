@@ -240,24 +240,32 @@ describe("PATCH /api/bots/:id/browser-extension/check (T34 follow-up)", () => {
   });
   it("desktop saves flux or bot and GET mode reports it", async () => {
     const one = await bot("Dax Check");
-    expect((await mode(one.id)).body.actionCheck).toBe("flux");
+    expect((await mode(one.id)).body).toEqual({ mode: "task", checkerAvailable: false });
     const done = await setCheck(one.id, { check: "bot" });
     expect(done.status, JSON.stringify(done.body)).toBe(200); expect(done.body.actionCheck).toBe("bot");
     expect((await mode(one.id)).body.actionCheck).toBe("bot");
     expect((await setCheck(one.id, { check: "flux" })).body.actionCheck).toBe("flux");
+    expect((await mode(one.id)).body.actionCheck).toBe("flux");
   });
   it("a paired phone, an unknown value and extra keys are refused and nothing changes", async () => {
     const one = await bot("Dax Check Two");
     expect((await setCheck(one.id, { check: "bot" }, companion)).status).toBe(403);
     expect((await setCheck(one.id, { check: "other" })).status).toBe(400);
     expect((await setCheck(one.id, { check: "bot", mode: "full" })).status).toBe(400);
-    expect((await mode(one.id)).body.actionCheck).toBe("flux");
+    expect((await mode(one.id)).body).toEqual({ mode: "task", checkerAvailable: false });
   });
   it("GET mode reports checkerAvailable: false with a reason while the Flux no-retain header is not deployed, true on the bot's own engine", async () => {
     const one = await bot("Dax Avail");
+    const fresh = (await mode(one.id)).body;
+    expect(fresh.actionCheck).toBeUndefined();
+    expect(fresh.checkerAvailable).toBe(false);
+    expect(fresh.checkerFallback).toBeUndefined();
+    const saved = await setCheck(one.id, { check: "flux" });
+    expect(saved.status).toBe(200);
+    expect(saved.body.actionCheck).toBe("flux");
     const flux = (await mode(one.id)).body;
     // Flux has no key here, so the owner's Flux switch runs on the bot's own engine and says so (checkerFallback).
-    expect(flux.checkerAvailable).toBe(true); expect(flux.checkerFallback).toBe(true);
+    expect(flux).toEqual({ mode: "task", checkerAvailable: false });
     await setCheck(one.id, { check: "bot" });
     const own = (await mode(one.id)).body;
     expect(own.checkerAvailable).toBe(true); expect(own.checkerReason).toBeUndefined();

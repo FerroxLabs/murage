@@ -3,13 +3,14 @@
 // a server type or an image id lives here or in env, never in the lifecycle code.
 import { z } from "zod";
 import { STRIPE_API_VERSION } from "./b5-stripe";
+import { HTTPError } from "./http";
 import { refundKeyConfigError } from "./refund-identity";
 
 declare global {
   interface Env { // Secrets and vars below are optional: billing is off until they are set.
     STRIPE_SECRET_KEY?: string; STRIPE_WEBHOOK_SECRET?: string; STRIPE_API_VERSION?: string;
     STRIPE_PRICE_STARTER?: string; STRIPE_PRICE_PRO?: string; STRIPE_PRICE_MAX?: string;
-    STRIPE_PORTAL_CONFIGURATION?: string; STRIPE_ALLOW_LIVE?: string;
+    STRIPE_PORTAL_CONFIGURATION?: string; STRIPE_ALLOW_LIVE?: string; CLOUD_SALES_OPEN?: string; CLOUD_SALES_ALLOWLIST?: string;
     BILLING_RETURN_ORIGIN?: string; FP_COMMISSION_PRICE_IDS?: string; FLUX_TOPUP_PRICE_IDS?: string;
     B5_PROVISIONER_CONFIG?: string; HCLOUD_TOKEN?: string; VULTR_API_KEY?: string;
     STORAGEBOX_API_TOKEN?: string; STORAGEBOX_MAIN_PASSWORD?: string;
@@ -18,7 +19,7 @@ declare global {
     interface Env {
       STRIPE_SECRET_KEY?: string; STRIPE_WEBHOOK_SECRET?: string; STRIPE_API_VERSION?: string;
       STRIPE_PRICE_STARTER?: string; STRIPE_PRICE_PRO?: string; STRIPE_PRICE_MAX?: string;
-      STRIPE_PORTAL_CONFIGURATION?: string; STRIPE_ALLOW_LIVE?: string;
+      STRIPE_PORTAL_CONFIGURATION?: string; STRIPE_ALLOW_LIVE?: string; CLOUD_SALES_OPEN?: string; CLOUD_SALES_ALLOWLIST?: string;
       BILLING_RETURN_ORIGIN?: string; FP_COMMISSION_PRICE_IDS?: string; FLUX_TOPUP_PRICE_IDS?: string;
       B5_PROVISIONER_CONFIG?: string; HCLOUD_TOKEN?: string; VULTR_API_KEY?: string;
       STORAGEBOX_API_TOKEN?: string; STORAGEBOX_MAIN_PASSWORD?: string;
@@ -93,6 +94,12 @@ export function billingConfig(env: Env): BillingConfig | null {
     planByPrice: new Map(PLANS.map((p) => [priceByPlan[p], p] as const)), commissionPriceIds: commission };
 }
 
+// Flux Router's own Terms of Service, accepted in the same single acceptance as ours (no second screen). The URL is Flux's, not the site's
+// origin, and the version is the date of the text it linked when this wording shipped; both live only here, in b5-config.ts. A new version bumps
+// SCREEN_VERSION (legal-flows.ts), so a page showing the old line is refused 409 disclosure_stale.
+export const FLUX_TERMS_URL = "https://fluxrouter.ai/terms-of-service";
+export const FLUX_TERMS_VERSION = "October 31, 2026";
+
 /** The marketing site's origin (murage.ai), where the legal pages Stripe's submit text links to live. Not the cloud origin. CHECKOUT_SITE_ORIGIN
  *  overrides it (staging); anything but a plain https origin falls back to the default. */
 export const DEFAULT_SITE_ORIGIN = "https://murage.ai";
@@ -103,8 +110,8 @@ export function siteOrigin(env: unknown): string {
   } catch { /* default */ }
   return DEFAULT_SITE_ORIGIN;
 }
-/** The three legal pages the direct submit text links to (route folders under apps/web/app/[locale]/(marketing)/(legal)/). */
-export const submitLinksFor = (env: unknown) => { const o = siteOrigin(env); return { terms: `${o}/cloud-terms`, tos: `${o}/terms-of-service`, privacy: `${o}/privacy-policy` }; };
+/** The legal pages the direct submit text links to: three on the site (route folders under apps/web/app/[locale]/(marketing)/(legal)/) and Flux Router's terms (FLUX_TERMS_URL, never the site origin). */
+export const submitLinksFor = (env: unknown) => { const o = siteOrigin(env); return { terms: `${o}/cloud-terms`, tos: `${o}/terms-of-service`, privacy: `${o}/privacy-policy`, flux: FLUX_TERMS_URL }; };
 
 /** Why a NEW checkout cannot be sold right now because of the refund-identity key, or null. A malformed key is refused in any mode, and
  *  a live checkout is not sold without one (every 7-day request would otherwise wait for it). Only checkout reads this: everything a
@@ -121,6 +128,26 @@ export const EU_VULTR_REGIONS = ["fra", "ams", "cdg", "sto", "waw", "mad", "mxp"
 /** Vultr reads firewall_group_id "0" as remove-the-firewall, so blank and "0" are never valid ids. */
 const vultrId = z.string().trim().min(1).max(64).refine((v) => v !== "0" && !/^0+$/.test(v), "vultr_id_invalid");
 const hetznerArch = z.enum(["x86", "arm"]);
+const poolRung = z.object({ serverType: z.string().regex(/^[a-z0-9-]{2,32}$/), arch: hetznerArch }).strict();
+const poolClass = z.object({
+  rungs: z.array(poolRung).min(1).max(6),
+  target: z.number().int().min(0).max(1000), red: z.number().int().min(0).max(1000), max: z.number().int().min(0).max(1000),
+}).strict().refine((c) => c.red <= c.target && c.target <= c.max, "pool_class_order");
+const poolUsage = z.object({ vcpu: z.number().int().min(0), primaryIps: z.number().int().min(0), volumeGb: z.number().int().min(0) }).strict();
+/** Warm pool of pre-created, powered-off servers. Absent = pool off. */
+export const poolSchema = z.object({
+  env: z.enum(["staging", "production"]),
+  classes: z.object({ starter: poolClass, pro: poolClass }).strict(),
+  monthlyIdleCapEur: z.number().min(0).max(100_000),
+  maxCreatesPerTick: z.number().int().min(1).max(100).default(10),
+  maxCreatesPerDay: z.number().int().min(1).max(5000).default(150),
+  maxConsecutiveCreateFailures: z.number().int().min(1).max(100).default(5),
+  limits: poolUsage.extend({ reserveForLive: poolUsage }).strict(),
+  overTargetRetireAfterH: z.number().int().min(1).max(24 * 30).default(72),
+}).strict();
+export type PoolConfig = z.infer<typeof poolSchema>;
+/** The signer's name, informational only: the Worker trusts the signature (image-signature.ts), never a label. */
+export const VERIFIER_NAME = "hz-live-rescue";
 export const provisionerSchema = z.object({
   /** Locations tried in order for build host; a server type is tried in every location before the next rung. */
   hetznerLocations: z.array(z.enum(EU_HETZNER_LOCATIONS)).min(1).default(["fsn1", "nbg1", "hel1"]),
@@ -144,7 +171,8 @@ export const provisionerSchema = z.object({
   quarantineFirewallGroupId: vultrId.optional(),
   /** Vultr ids are strings (UUIDs). Without this block a Vultr rung is skipped: a home is never created unfirewalled. */
   vultr: z.object({
-    sshKeyIds: z.array(vultrId).min(1),
+    /** Optional: a home takes no operator login. Production sets none; the image has no sshd. */
+    sshKeyIds: z.array(vultrId).default([]),
     firewallGroupId: vultrId,
     quarantineFirewallGroupId: vultrId,
   }).strict().optional(),
@@ -158,6 +186,12 @@ export const provisionerSchema = z.object({
    *  Never set in production: customer homes have no operator ssh. World-open ranges are refused. */
   opsSshFrom: z.array(z.string().regex(/^\d{1,3}(\.\d{1,3}){3}(\/(1[6-9]|2\d|3[0-2]))?$/)).max(4).default([]),
   snapshotAtSuspension: z.boolean().default(true),
+  pool: poolSchema.optional(),
+  /** Image id -> the signed entry the signer printed (image-signature.ts). NOT validated at parse time, so one bad entry or key can never stop
+   *  suspend, fence or delete; verifyImageForUse validates the selected key and entry when a server is about to be created. */
+  imageKinds: z.unknown().optional(),
+  /** Customer homes are build host only. Off: a ladder rung on Vultr is never used. On: it is walked like any other rung. */
+  allowVultrCustomerHomes: z.boolean().default(false),
 }).strict();
 export type ProvisionerConfig = z.infer<typeof provisionerSchema>;
 
@@ -166,25 +200,27 @@ export const DEFAULT_LADDERS: Record<Plan, LadderRung[]> = {
   starter: [
     { provider: "hetzner", serverType: "cx23", arch: "x86" },
     { provider: "hetzner", serverType: "cax11", arch: "arm" },
-    { provider: "vultr", serverType: "vc2-2c-4gb", arch: "x86" },
   ],
   pro: [
     { provider: "hetzner", serverType: "cax21", arch: "arm" },
     { provider: "hetzner", serverType: "cx33", arch: "x86" },
-    { provider: "vultr", serverType: "vc2-4c-8gb", arch: "x86" },
   ],
   max: [
     { provider: "hetzner", serverType: "cax21", arch: "arm" },
     { provider: "hetzner", serverType: "cx33", arch: "x86" },
-    { provider: "vultr", serverType: "vc2-4c-8gb", arch: "x86" },
   ],
 };
 
+/** True only on the staging control plane. Anything else (unset, "0", "true") is production. */
+export const isStagingEnv = (env: unknown): boolean => (env as { CLOUD_CP0_STAGING?: string }).CLOUD_CP0_STAGING === "1";
 export function provisionerConfig(env: Env): ProvisionerConfig {
   const config = provisionerSchema.parse(JSON.parse(env.B5_PROVISIONER_CONFIG ?? "null"));
   for (const ladder of Object.values(config.ladders ?? {})) {
     for (const rung of ladder) assertAllowedType(config, rung.serverType);
   }
+  for (const cls of Object.values(config.pool?.classes ?? {})) for (const rung of cls.rungs) assertAllowedType(config, rung.serverType);
+  // Operator root ssh exists on staging homes only. A production config that carries it is refused outright.
+  if (config.opsSshFrom.length && !isStagingEnv(env)) throw new Error("ops_ssh_staging_only");
   return config;
 }
 export function assertAllowedType(config: Pick<ProvisionerConfig, "forbiddenTypePrefixes">, serverType: string) {
@@ -195,4 +231,37 @@ export function ladderFor(config: ProvisionerConfig, plan: string): LadderRung[]
   if (!ladder) throw new Error("unknown_plan");
   for (const rung of ladder) assertAllowedType(config, rung.serverType);
   return ladder;
+}
+
+/** The sales switch, CLOUD_SALES_OPEN, parsed STRICTLY. Exactly "true" is open to everyone, exactly "invite" is open to invited emails only
+ *  (sales_invites, sales-invite.ts), exactly "false" is shut. Anything else is SHUT: unset, empty, "TRUE", " true", "1", "yes", a typo. A
+ *  forgotten or mistyped value can therefore never open sales. Shut (and the shut half of every other value) refuses reserve, checkout and
+ *  checkout/resume with 503 sales_closed; an uninvited caller in invite mode gets 403 not_invited instead.
+ *  It is a SALES-ONLY switch: nothing else reads it. GET /v1/status ({live}) does NOT depend on it: live means the service operates for
+ *  existing customers (status.ts cloudOperating), so closing sales never makes the desktop disable Cloud for them. */
+export type SalesMode = "open" | "invite" | "shut";
+export function salesMode(env: Pick<Env, "CLOUD_SALES_OPEN">): SalesMode {
+  switch (env.CLOUD_SALES_OPEN) {
+    case "true": return "open";
+    case "invite": return "invite";
+    default: return "shut";
+  }
+}
+export const salesShut = (env: Pick<Env, "CLOUD_SALES_OPEN">): boolean => salesMode(env) === "shut";
+/** The invite list for a dark launch: CLOUD_SALES_ALLOWLIST, a plain var of comma-separated exact email addresses (trimmed, lowercased,
+ *  empty entries ignored; no wildcards, no domains). Unset or empty lists nobody. */
+export function salesAllowlist(env: Pick<Env, "CLOUD_SALES_ALLOWLIST">): Set<string> {
+  return new Set((env.CLOUD_SALES_ALLOWLIST ?? "").split(",").map((e) => e.trim().toLowerCase()).filter((e) => e.length > 0));
+}
+/** Sales are allowed for this caller when they are open (today's rule), or when sales are shut and `email` is the SIGNED-IN account's
+ *  address and it is on CLOUD_SALES_ALLOWLIST. Callers pass only the resolved session's email, never one from a request body. */
+export function salesAllowed(env: Pick<Env, "CLOUD_SALES_OPEN" | "CLOUD_SALES_ALLOWLIST">, email?: string | null): boolean {
+  if (!salesShut(env)) return true;
+  if (typeof email !== "string") return false;
+  const e = email.trim().toLowerCase();
+  return e.length > 0 && salesAllowlist(env).has(e);
+}
+/** Refuses 503 sales_closed when sales are shut and the signed-in email is not on CLOUD_SALES_ALLOWLIST. "invite" passes here: the per-caller check is assertInvited (sales-invite.ts). */
+export function assertSalesOpen(env: Pick<Env, "CLOUD_SALES_OPEN" | "CLOUD_SALES_ALLOWLIST">, email?: string | null): void {
+  if (!salesAllowed(env, email)) throw new HTTPError(503, "sales_closed");
 }

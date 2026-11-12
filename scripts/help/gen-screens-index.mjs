@@ -36,7 +36,12 @@ function ids(text) {
   return [...text.matchAll(/\{\s*id:\s*"([A-Za-z0-9-]+)"/g)].map((m) => m[1]);
 }
 
-const settingsPages = ids(block(read("src/lib/settings-pages.ts"), "export const SECTION_PAGES", "settings-pages.ts"));
+const settingsSource = read("src/lib/settings-pages.ts");
+const settingsPages = ids(block(settingsSource, "export const SECTION_PAGES", "settings-pages.ts"));
+// Channels keeps its own help while it is a published alias into Connected apps.
+// Derive that retained route from SECTION_ALIASES; removing the alias must expose its orphan copy.
+const settingsAliases = settingsSource.slice(settingsSource.indexOf("export const SECTION_ALIASES"), settingsSource.indexOf("const PAGE_IDS"));
+const retainedSettingsPages = [...settingsAliases.matchAll(/^  (channels): \{ section:/gm)].map(match => match[1]);
 const botSections = ids(block(read("src/components/bot-settings-sections.ts"), "export const BOT_SETTINGS_SECTIONS", "bot-settings-sections.ts"));
 const setupMatch = /SETUP_STEPS = \[([^\]]+)\]/.exec(read("shared/setup.ts"));
 if (!setupMatch) throw new Error("shared/setup.ts: cannot find SETUP_STEPS");
@@ -62,6 +67,9 @@ const screens = [
   ["new-bot", "new-bot"],
   ["connect-app", "connect-app:<slug>"],
   ...settingsPages.map((page) => [`settings:${page}`, `settings:${page}`]),
+  // Messaging moved into Connected apps, but the published channels route remains valid.
+  // Its help is still used by envelopes carrying that legacy section id.
+  ...retainedSettingsPages.map((page) => [`settings:${page}`, `settings:${page}`]),
   ["help", "help"],
   ...setupSteps.map((step) => [`first-run:${step}`, `first-run:${step}`]),
   // FIRSTRUN boards (UX-FIRSTRUN-SCALE-1012 rule 7)
@@ -95,7 +103,7 @@ const controls = {
   apps: [{ id: "connect-app", label: "ux.l4a.control.connectApp", address: "murage://settings/connections" }],
   "no-engines": [{ id: "engines", label: "ux.l4a.control.engines", address: "murage://settings/engines" }],
 };
-for (const page of settingsPages) controls[`settings:${page}`] = [SETTINGS_SEARCH];
+for (const page of [...settingsPages, ...retainedSettingsPages]) controls[`settings:${page}`] = [SETTINGS_SEARCH];
 
 const copy = { ...JSON.parse(read(COPY_FILE)), ...JSON.parse(read(SCREEN_COPY_FILE)) };
 const problems = [];

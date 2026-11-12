@@ -1,0 +1,5 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`R10c4 F09-Codex real Full access autoAccept native approval 1`] = `"{"decision":"accept"}"`;
+
+exports[`R10c4 F09-Codex real Full access own-workspace shortcut 1`] = `"[{"id":"nl-patch","name":"apply_patch","input":{"command":"*** Begin Patch\\n*** Add File: out/notes\\n+hello\\n*** End Patch"},"verdict":"allow"}]"`;

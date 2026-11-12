@@ -22,12 +22,21 @@ const homeDevice = z.object({ id: z.string().min(1).max(128), scope: z.enum(SCOP
   lastSeenAt: z.number().int().nonnegative().nullable().optional(),
   factor: z.enum(["passkey", "remembered-owner"]).nullable().optional(),
   factorExpiresAt: z.number().int().nonnegative().nullable().optional() }).passthrough();
+// bind (home image 4D): sha256-of-pubkey, 64 lowercase hex, the door ticket's bind; present only on ACTIVE devices. Anything else is absent, never an
+// error; a device the list marks revoked never keeps one. Internal to the CP: the customer's device list below never carries it.
+const BIND_HEX = /^[0-9a-f]{64}$/;
+function deviceBind(d: Record<string, unknown>): string | null {
+  if (typeof d.bind !== "string" || !BIND_HEX.test(d.bind)) return null;
+  if (d.revoked === true || d.status === "revoked" || (d.revokedAt !== undefined && d.revokedAt !== null)) return null;
+  return d.bind;
+}
 // fullScopeEver: true once any full-scope device ever enrolled at the home (revoked ones included). consumedHoldIds: the pair holds the home
 // spent through consumePairHold, most recent first, capped at 50 (MurageMain contract, 10-15). Both optional: an older image omits them, and
 // then the history (or the consumption) is UNKNOWN, never "none".
 const homeList = z.object({ devices: z.array(homeDevice).max(1000), fullScopeEver: z.boolean().optional(),
   consumedHoldIds: z.array(z.string().min(1).max(128)).max(1000).optional() }).passthrough();
-export type HomeDevices = { devices: { id: string; scope: typeof SCOPES[number]; addedAt: number; lastSeenAt: number | null; factor: "passkey" | "remembered-owner" | null; factorExpiresAt: number | null }[]; fullScopeEver: boolean | null;
+export type HomeDevices = { devices: { id: string; scope: typeof SCOPES[number]; addedAt: number; lastSeenAt: number | null; bind: string | null;
+  factor: "passkey" | "remembered-owner" | null; factorExpiresAt: number | null }[]; fullScopeEver: boolean | null;
   consumedHoldIds: string[] | null };
 /** The most consumed hold ids the home reports (and the CP reconciles) per answer. */
 export const CONSUMED_HOLD_IDS_MAX = 50;
@@ -66,14 +75,26 @@ export async function reconcileConsumedHolds(env: Env, homeId: string, ids: stri
 /** The home's device list (unrevoked), as the CP shows it: never a key or key hash. 503 home_unreachable when the home cannot answer. The
  *  holds it reports consumed are reconciled into CP state first (reconcileConsumedHolds). */
 export async function listHomeDevices(env: Env, homeId: string, account: { id: string; email: string }, dependencies: PairingDependencies): Promise<HomeDevices> {
-  const res = await homeManagementCall(env, homeId, account, HOME_DEVICES_LIST, {}, dependencies);
+  const answer = await askHomeDevices(env, homeId, account, dependencies, false);
+  if (answer.consumedHoldIds) await reconcileConsumedHolds(env, homeId, answer.consumedHoldIds, Date.now());
+  return answer;
+}
+
+/** The same list, READ-ONLY: no pairing_key_use audit row (nothing is connected) and no hold reconcile (nothing is spent). Only for words
+ *  shown to the owner (the removal email's device label, step-up-email.ts); never for a decision. */
+export function readHomeDevices(env: Env, homeId: string, account: { id: string; email: string }, dependencies: PairingDependencies): Promise<HomeDevices> {
+  return askHomeDevices(env, homeId, account, dependencies, true);
+}
+
+async function askHomeDevices(env: Env, homeId: string, account: { id: string; email: string }, dependencies: PairingDependencies,
+  readOnly: boolean): Promise<HomeDevices> {
+  const res = await homeManagementCall(env, homeId, account, HOME_DEVICES_LIST, {}, dependencies, { readOnly });
   if (res.status !== 200) throw new HTTPError(503, "home_unreachable");
   const parsed = homeList.safeParse(await res.json().catch(() => null));
   if (!parsed.success) throw new HTTPError(503, "home_unreachable");
   const consumedHoldIds = parsed.data.consumedHoldIds ? parsed.data.consumedHoldIds.slice(0, CONSUMED_HOLD_IDS_MAX) : null;
-  if (consumedHoldIds) await reconcileConsumedHolds(env, homeId, consumedHoldIds, Date.now());
-  return { devices: parsed.data.devices.map((d) => ({ id: d.id, scope: d.scope, addedAt: d.addedAt, lastSeenAt: d.lastSeenAt ?? null,
-      factor: d.factor ?? null, factorExpiresAt: d.factorExpiresAt ?? null })),
+  return { devices: parsed.data.devices.map((d) => ({ id: d.id, scope: d.scope, addedAt: d.addedAt, lastSeenAt: d.lastSeenAt ?? null, bind: deviceBind(d),
+    factor: d.factor ?? null, factorExpiresAt: d.factorExpiresAt ?? null })),
     fullScopeEver: parsed.data.fullScopeEver ?? null, consumedHoldIds };
 }
 
@@ -109,7 +130,7 @@ export async function devicesRoute(request: Request, env: Env, identity: Identit
     try {
       const answer = await listHomeDevices(env, homeId, account, dependencies);
       console.log(JSON.stringify({ message: "home devices listed", homeId, count: answer.devices.length, outcome: "ok" }));
-      const res = json({ devices: answer.devices });
+      const res = json({ devices: answer.devices.map(({ bind: _bind, ...d }) => d) });
       res.headers.set("cache-control", "no-store");
       return res;
     } catch (e) {

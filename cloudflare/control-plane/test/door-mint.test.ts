@@ -8,10 +8,10 @@ import { verifyPayload } from "../src/b3-signatures";
 import { createIdentity } from "../src/customer-identity";
 import { reconciledContactEmail } from "../src/cloud-accounts";
 import { noticeBackoff } from "../src/b5-billing";
-import { DOOR_ATTEMPT_SUBJECT, DOOR_HANDING_OUT, DOOR_NOTICE_CLAIM_MS, DOOR_NOTICE_SUBJECT, doorRoute, handOutDoorTicket, sweepDoorNotices, type DoorDependencies } from "../src/door";
+import { DOOR_ATTEMPT_SUBJECT, DOOR_HANDING_OUT, DOOR_NOTICE_CLAIM_MS, DOOR_NOTICE_SUBJECT, FIRST_COMPUTER_SUBJECT, doorRoute, handOutDoorTicket, sweepDoorNotices, type DoorDependencies } from "../src/door";
 import { errorResponse, HTTPError } from "../src/http";
 import { createWorker } from "../src/index";
-import { readyPairHolds, reservePairHold, selectPairHold, spendPairHold, type PairingDependencies } from "../src/pairing";
+import { homeManagementCall, readyPairHolds, reservePairHold, selectPairHold, spendPairHold, type PairingDependencies } from "../src/pairing";
 import type { KeyWrapper } from "../src/key-wrapper";
 
 const REF_ORIGIN = "https://testref.supabase.co";
@@ -52,7 +52,9 @@ async function token(sub: string, email: string, totpAgo: number | null = 10, op
 }
 
 const sent: { to: string; subject: string; text: string }[] = [];
-const deps: PairingDependencies = { emailSender: () => ({ async send(m) { sent.push({ to: m.to, subject: m.subject, text: m.text }); } }) };
+/** ITEM 9 M4: the mail provider is down while `mailDown.on`. */
+const mailDown = { on: false };
+const deps: PairingDependencies = { emailSender: () => ({ async send(m) { if (mailDown.on) throw new Error("provider down"); sent.push({ to: m.to, subject: m.subject, text: m.text }); } }) };
 const jwksFetch = (async () => Response.json(jwks)) as typeof fetch;
 /** Supabase Auth's current record of a sub, where a test makes it differ from the token: its address, its factor list. */
 const supabaseNow = new Map<string, { email?: string; factors?: unknown[] }>();
@@ -121,7 +123,7 @@ async function ticketOf(res: Response) {
   return { body, ticket, payload, signature, claims };
 }
 
-afterEach(async () => { await settle(); sent.length = 0; supabaseNow.clear(); emails.clear(); readerDown.on = false; vi.restoreAllMocks(); });
+afterEach(async () => { await settle(); sent.length = 0; supabaseNow.clear(); emails.clear(); readerDown.on = false; mailDown.on = false; vi.restoreAllMocks(); });
 
 /** doorRoute itself, as the worker calls it after its gate, then the worker's last step (handOutDoorTicket), with test hooks and an optional
  *  fixed clock; `beforeHandOut` stands in for the step-up intent's finalization (recordOutcome) in between. A refusal is its error response.
@@ -194,7 +196,7 @@ async function emailApproved(w: ReturnType<typeof createWorker>, sessionId: stri
   await waitOnExecutionContext(send.ctx);
   expect(send.res.status).toBe(202);
   const { challengeId } = await send.res.json<{ challengeId: string }>();
-  const code = /\b(\d{6})\b/.exec(sent.filter((m) => m.subject === "Your Murage security code").at(-1)!.text)![1];
+  const code = /\b(\d{6})\b/.exec(sent.filter((m) => m.subject === "Your Murage code to confirm it's you").at(-1)!.text)![1];
   const verify = await held(w, "/v1/account/step-up/email/verify", t, { intentId, challengeId, code });
   await waitOnExecutionContext(verify.ctx);
   expect(verify.res.status).toBe(200);
@@ -269,6 +271,23 @@ describe("POST /v1/homes/:id/door", () => {
     await expect(verifyPayload({ payload, signature, algorithm: "ES256" }, other)).rejects.toThrow("invalid_signature");
   });
 
+  it("the owner's first open of a home just gone ready is closed unmailed; a day later it is mailed", async () => {
+    const owner = await member(OWNER_SUB, "owner@example.test");
+    await seedHome(owner.id);
+    await env.DB.prepare("UPDATE cloud_homes SET ready_at=?").bind(Date.now() - 60_000).run();
+    await ticketOf(await door(owner.token));
+    await settle();
+    expect(sent).toEqual([]);
+    expect((await env.DB.prepare("SELECT COUNT(*) n FROM cloud_door_notices WHERE sent_at IS NOT NULL").first<{ n: number }>())!.n).toBe(1);
+  });
+  it("a first open more than a day after the home went ready is mailed", async () => {
+    const owner = await member(OWNER_SUB, "owner@example.test");
+    await seedHome(owner.id);
+    await env.DB.prepare("UPDATE cloud_homes SET ready_at=?").bind(Date.now() - 25 * 3_600_000).run();
+    await ticketOf(await door(owner.token));
+    await settle();
+    expect(sent).toEqual([expect.objectContaining({ subject: DOOR_NOTICE_SUBJECT })]);
+  });
   it("each mint has a fresh nonce; the first per (account, home) emails the owner once, before the ticket", async () => {
     const owner = await member(OWNER_SUB, "owner@example.test");
     await seedHome(owner.id);
@@ -449,7 +468,7 @@ describe("POST /v1/homes/:id/door", () => {
     const sendRes = await call("/v1/account/step-up/email/send", t, { intentId });
     expect(sendRes.status).toBe(202);
     const { challengeId } = await sendRes.json<{ challengeId: string }>();
-    const mail = sent.find((m) => m.subject === "Your Murage security code")!;
+    const mail = sent.find((m) => m.subject === "Your Murage code to confirm it's you")!;
     expect(mail.text).toContain("opening your Murage home");
     const code = /\b(\d{6})\b/.exec(mail.text)![1];
     const verified = await call("/v1/account/step-up/email/verify", t, { intentId, challengeId, code });
@@ -524,7 +543,7 @@ describe("POST /v1/homes/:id/door", () => {
     const sendRes = await call("/v1/account/step-up/email/send", t, { intentId });
     expect(sendRes.status).toBe(202);
     const { challengeId } = await sendRes.json<{ challengeId: string }>();
-    const code = /\b(\d{6})\b/.exec(sent.find((m) => m.subject === "Your Murage security code")!.text)![1];
+    const code = /\b(\d{6})\b/.exec(sent.find((m) => m.subject === "Your Murage code to confirm it's you")!.text)![1];
     expect((await call("/v1/account/step-up/email/verify", t, { intentId, challengeId, code })).status).toBe(200);
     // Door v2 (3.4): an emailed code granted in THIS Supabase session within 900 s counts for the door, whatever it approved; the
     // export's intent itself never authorizes the door (the door mints on the session's grant, not on that intent).
@@ -649,7 +668,7 @@ describe("POST /v1/homes/:id/door", () => {
     const sendRes = await call("/v1/account/step-up/email/send", t, { intentId });
     expect(sendRes.status).toBe(202);
     const { challengeId } = await sendRes.json<{ challengeId: string }>();
-    const code = /\b(\d{6})\b/.exec(sent.find((m) => m.subject === "Your Murage security code")!.text)![1];
+    const code = /\b(\d{6})\b/.exec(sent.find((m) => m.subject === "Your Murage code to confirm it's you")!.text)![1];
     expect((await call("/v1/account/step-up/email/verify", t, { intentId, challengeId, code })).status).toBe(200);
     // The approval ages 301 s (its grant and its granted event with it).
     await env.DB.prepare("UPDATE cloud_stepup_intents SET approved_at=approved_at-301000, grant_expires_at=grant_expires_at-301000 WHERE id=?").bind(intentId).run();
@@ -1472,15 +1491,15 @@ describe("POST /v1/homes/:id/door", () => {
     expect(notices()).toHaveLength(0);
   });
 
-  it("the sweep's reconciliation A -> B is fenced after its event log: a move B -> C that lands meanwhile is never answered as B; sent to C", async () => {
+  it("the sweep's reconciliation A -> B is fenced after its unit commits (the event is inside the batch): a move B -> C that lands meanwhile is never answered as B; sent to C", async () => {
     const owner = await member(OWNER_SUB, "a@example.test");
     await seedHome(owner.id);
     const now = Date.now();
     await owedRow(owner.id, now);
     supabaseNow.set(OWNER_SUB, { email: "b@example.test" });
     let landed = false;
-    const db = hookedDb((sql) => sql.startsWith("INSERT INTO account_link_events"), async () => {
-      // While the sweep logs its A -> B move, the member moves on to C and a member request reconciles it.
+    const db = hookedDb((sql) => sql.startsWith("SELECT 1 AS ok FROM supabase_identities WHERE sub=? AND email_revision=?"), async () => {
+      // While the sweep's A -> B unit has committed and the fence is about to read, the member moves on to C and a member request reconciles it.
       supabaseNow.set(OWNER_SUB, { email: "c@example.test" });
       expect(await reconciledContactEmail(env.DB, owner.id, Date.now(), async (s) => ({ id: s, email: "c@example.test" }))).toBe("c@example.test");
       landed = true;
@@ -1511,7 +1530,7 @@ describe("POST /v1/homes/:id/door", () => {
     expect((await contactOf(owner.id)).contact_email).toBe("c@example.test");
   });
 
-  it("the sweep's conflict clearing is fenced after its event log: a move to C that lands meanwhile is never answered as A; sent to C", async () => {
+  it("the sweep's conflict clearing is fenced after its unit commits (the event is inside the batch): a move to C that lands meanwhile is never answered as A; sent to C", async () => {
     const owner = await member(OWNER_SUB, "a@example.test");
     await seedHome(owner.id);
     const now = Date.now();
@@ -1519,7 +1538,7 @@ describe("POST /v1/homes/:id/door", () => {
     // A conflict recorded earlier; Supabase is back on the stored A, so the sweep clears it.
     await env.DB.prepare("UPDATE supabase_identities SET email_conflict='b@example.test', email_revision=email_revision+1 WHERE user_id=?").bind(owner.id).run();
     let landed = false;
-    const db = hookedDb((sql) => sql.startsWith("INSERT INTO account_link_events"), async () => {
+    const db = hookedDb((sql) => sql.startsWith("SELECT 1 AS ok FROM supabase_identities WHERE sub=? AND email_revision=?"), async () => {
       supabaseNow.set(OWNER_SUB, { email: "c@example.test" });
       expect(await reconciledContactEmail(env.DB, owner.id, Date.now(), async (s) => ({ id: s, email: "c@example.test" }))).toBe("c@example.test");
       landed = true;
@@ -1797,6 +1816,163 @@ describe("D1 door v2", () => {
     expect(Object.keys(browser.claims).sort()).toEqual([...V2_KEYS, "proof"].sort());
     expect(browser.claims.proof).toBe("email");
   });
+  // ---- browser owner (browser-owner/DESIGN.md: the factor's proof claim and 3.6, the first computer) ----
+  const setDoorProof = (v: number) => env.DB.prepare("UPDATE cloud_homes SET door_proof=? WHERE id=?").bind(v, HOME).run();
+  const emailedToken = (ago = 10) => amrToken(OWNER_SUB, "owner@example.test", [{ method: "otp", ago }]);
+  const firstHome = () => { homeAnswer = () => Response.json({ devices: [{ id: "b-1", scope: "browser", addedAt: 1 }], fullScopeEver: false, consumedHoldIds: [] }); };
+  it("browser owner: a door_proof=1 home adds `proof` to a BROWSER ticket only: email from an emailed sign-in, factor from an authenticator; door_proof=0 adds none", async () => {
+    const m = await v2Home();
+    const emailed = await emailedToken();
+    expect(Object.keys((await ticketOf(await mintWith(emailed, { bind: BIND_A, kind: "browser" }))).claims)).toEqual(V2_KEYS);
+    await setDoorProof(1);
+    expect((await ticketOf(await mintWith(emailed, { bind: BIND_A, kind: "browser" }))).claims.proof).toBe("email");
+    expect((await ticketOf(await mintWith(m.token, { bind: BIND_A, kind: "browser" }))).claims.proof).toBe("factor");
+    // A desktop ticket never carries it (the claim opens only the remembered-owner browser factor).
+    firstHome();
+    expect(Object.keys((await ticketOf(await mintWith(emailed, { bind: BIND_A, kind: "desktop" }))).claims)).toEqual(V2_KEYS);
+  });
+  it("browser owner: the ready-email open after the 15-minute proof window needs the normal emailed step-up once, and the ticket then carries proof email", async () => {
+    await v2Home();
+    await setDoorProof(1);
+    // A proof older than 900 s is no step-up: the door asks again, whatever the link the customer followed.
+    expect(await errorOf(await mintWith(await emailedToken(1000), { bind: BIND_A, kind: "browser" }))).toEqual([403, "step_up_required"]);
+    const fresh = await ticketOf(await mintWith(await emailedToken(5), { bind: BIND_A, kind: "browser" }));
+    expect(fresh.claims.proof).toBe("email");
+    expect(fresh.claims.stepUpAt as number).toBeGreaterThan(Date.now() - 60_000);
+  });
+  it("browser owner (3.6): the first computer of a home with no computer needs a fresh EMAILED step-up: an authenticator alone is refused with email_code_required", async () => {
+    const m = await v2Home();
+    firstHome();
+    const res = await mintWith(m.token, { bind: BIND_A, kind: "desktop" });
+    expect(res.status).toBe(403);
+    const body = await res.json<{ error: string; step_up?: { reason?: string } }>();
+    expect(body.error).toBe("step_up_required");
+    expect(body.step_up?.reason).toBe("email_code_required");
+    // Nothing was minted, reserved or mailed.
+    await settle();
+    expect(sent.filter((x) => x.subject === FIRST_COMPUTER_SUBJECT)).toEqual([]);
+    expect((await env.DB.prepare("SELECT COUNT(*) n FROM door_computer_notices").first<{ n: number }>())!.n).toBe(0);
+  });
+  it("browser owner (3.6): an emailed step-up connects the first computer at once (no hold, no claim) and the owner is mailed after: a computer was connected, with Make chat-only and Remove", async () => {
+    await v2Home();
+    firstHome();
+    const t = await ticketOf(await mintWith(await emailedToken(), { bind: BIND_A, kind: "desktop" }));
+    expect(Object.keys(t.claims)).toEqual(V2_KEYS);
+    expect(t.claims.pairHold).toBeUndefined();
+    await settle();
+    const mails = sent.filter((x) => x.subject === FIRST_COMPUTER_SUBJECT);
+    expect(mails).toHaveLength(1);
+    expect(mails[0].to).toBe("owner@example.test");
+    expect(mails[0].text).toContain("A computer");
+    expect(mails[0].text).toContain("Make chat-only");
+    expect(mails[0].text).toContain("Remove");
+    const row = await env.DB.prepare("SELECT ticket_nonce, sent_at FROM door_computer_notices WHERE home_id=?").bind(HOME).first<{ ticket_nonce: string; sent_at: number | null }>();
+    expect(row?.ticket_nonce).toBe(t.claims.nonce);
+    expect(row?.sent_at).not.toBeNull();
+  });
+  it("ITEM 9 M4: a first-computer mail whose send failed (join switch unset) is tried again by the notice sweep, bounded, and goes out at most once", async () => {
+    await v2Home();
+    firstHome();
+    mailDown.on = true;
+    const t = await ticketOf(await mintWith(await emailedToken(), { bind: BIND_A, kind: "desktop" }));
+    await settle();
+    const first = () => sent.filter((x) => x.subject === FIRST_COMPUTER_SUBJECT);
+    const row = () => env.DB.prepare("SELECT created_at, sent_at FROM door_computer_notices WHERE home_id=? AND ticket_nonce=?").bind(HOME, t.claims.nonce)
+      .first<{ created_at: number; sent_at: number | null }>();
+    const r0 = (await row())!;
+    expect(r0.sent_at).toBeNull();
+    expect(first()).toEqual([]);
+    // Not before the retry gap; then one try per backoff step while the provider is still down.
+    await sweepDoorNotices(testEnv(), r0.created_at + 60_000, deps);
+    expect((await env.DB.prepare("SELECT tries AS n FROM door_computer_notices WHERE ticket_nonce NOT LIKE 'retry:%'").first<{ n: number }>())!.n).toBe(0);
+    await sweepDoorNotices(testEnv(), r0.created_at + 5 * 60_000, deps);
+    await sweepDoorNotices(testEnv(), r0.created_at + 5 * 60_000 + 1000, deps); // the same step: no second try
+    expect((await env.DB.prepare("SELECT tries AS n FROM door_computer_notices WHERE ticket_nonce NOT LIKE 'retry:%'").first<{ n: number }>())!.n).toBe(1);
+    expect((await row())!.sent_at).toBeNull();
+    // The provider is back: the next step sends it once; later sweeps send nothing more.
+    mailDown.on = false;
+    await sweepDoorNotices(testEnv(), r0.created_at + 20 * 60_000, deps);
+    expect(first()).toHaveLength(1);
+    expect(first()[0]!.to).toBe("owner@example.test");
+    expect((await row())!.sent_at).not.toBeNull();
+    await sweepDoorNotices(testEnv(), r0.created_at + 80 * 60_000, deps);
+    expect(first()).toHaveLength(1);
+  });
+  it("ITEM 9 M4: the retry is bounded: a provider down for the whole day gets at most 3 tries and nothing after the day", async () => {
+    await v2Home();
+    firstHome();
+    mailDown.on = true;
+    const t = await ticketOf(await mintWith(await emailedToken(), { bind: BIND_A, kind: "desktop" }));
+    await settle();
+    const c = (await env.DB.prepare("SELECT created_at FROM door_computer_notices WHERE home_id=? AND ticket_nonce=?").bind(HOME, t.claims.nonce).first<{ created_at: number }>())!.created_at;
+    for (const m of [5, 20, 80, 320, 1000, 1430]) await sweepDoorNotices(testEnv(), c + m * 60_000, deps);
+    expect((await env.DB.prepare("SELECT tries AS n FROM door_computer_notices WHERE ticket_nonce NOT LIKE 'retry:%'").first<{ n: number }>())!.n).toBe(3);
+    mailDown.on = false;
+    await sweepDoorNotices(testEnv(), c + 25 * 60 * 60_000, deps);
+    expect(sent.filter((x) => x.subject === FIRST_COMPUTER_SUBJECT)).toEqual([]);
+  });
+  it("ITEM 9 r2 (door.ts:806): two overdue sweeps racing on one unsent notice produce exactly one mail (one claim per original notice)", async () => {
+    await v2Home();
+    firstHome();
+    mailDown.on = true;
+    const t = await ticketOf(await mintWith(await emailedToken(), { bind: BIND_A, kind: "desktop" }));
+    await settle();
+    mailDown.on = false;
+    const c = (await env.DB.prepare("SELECT created_at FROM door_computer_notices WHERE home_id=? AND ticket_nonce=?").bind(HOME, t.claims.nonce).first<{ created_at: number }>())!.created_at;
+    // A provider that accepts the mail but answers slowly: both sweeps start while the first send is still in flight.
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const slowMail: { subject: string }[] = [];
+    const slow: PairingDependencies = { ...deps, emailSender: () => ({ async send(m) { if (m.subject === FIRST_COMPUTER_SUBJECT) { slowMail.push({ subject: m.subject }); await gate; } } }) };
+    // 30 minutes late: retries 1 and 2 are both overdue.
+    const a = sweepDoorNotices(testEnv(), c + 30 * 60_000, slow);
+    const b = sweepDoorNotices(testEnv(), c + 30 * 60_000 + 1, slow);
+    await new Promise((r) => setTimeout(r, 200));
+    release();
+    await Promise.all([a, b]);
+    expect(slowMail).toHaveLength(1);
+    expect((await env.DB.prepare("SELECT sent_at FROM door_computer_notices WHERE home_id=? AND ticket_nonce=?").bind(HOME, t.claims.nonce).first<{ sent_at: number | null }>())!.sent_at).not.toBeNull();
+  });
+  it("ITEM 9 r2 (door.ts:796): 50 exhausted notices never starve an eligible one: the 51st is retried", async () => {
+    await v2Home();
+    firstHome();
+    mailDown.on = true;
+    const t = await ticketOf(await mintWith(await emailedToken(), { bind: BIND_A, kind: "desktop" }));
+    await settle();
+    mailDown.on = false;
+    const c = (await env.DB.prepare("SELECT created_at FROM door_computer_notices WHERE home_id=? AND ticket_nonce=?").bind(HOME, t.claims.nonce).first<{ created_at: number }>())!.created_at;
+    // 50 older notices of the same home, unsent and past every retry: exhausted (3 tries made), each claim long expired.
+    for (let i = 0; i < 50; i++) {
+      await env.DB.prepare("INSERT INTO door_computer_notices (home_id,ticket_nonce,created_at,sent_at,tries,claimed_at) VALUES (?,?,?,NULL,3,?)")
+        .bind(HOME, `old-${i}`, c - 60 * 60_000 - i, c - 60 * 60_000).run();
+      for (let k = 1; k <= 3; k++) await env.DB.prepare("INSERT INTO door_computer_notices (home_id,ticket_nonce,created_at,sent_at) VALUES (?,?,?,?)")
+        .bind(HOME, `retry:${k}:old-${i}`, c - 60 * 60_000, c - 60 * 60_000).run();
+    }
+    await sweepDoorNotices(testEnv(), c + 5 * 60_000, deps);
+    expect(sent.filter((x) => x.subject === FIRST_COMPUTER_SUBJECT)).toHaveLength(1);
+    expect((await env.DB.prepare("SELECT sent_at FROM door_computer_notices WHERE home_id=? AND ticket_nonce=?").bind(HOME, t.claims.nonce).first<{ sent_at: number | null }>())!.sent_at).not.toBeNull();
+  });
+  it("browser owner (3.6): an emailed proof older than the freshest authenticator still counts, and it is the emailed time the ticket carries", async () => {
+    await v2Home();
+    firstHome();
+    const t = await ticketOf(await mintWith(await emailedToken(300), { bind: BIND_A, kind: "desktop" }));
+    expect(t.claims.stepUpAt as number).toBeLessThanOrEqual((t.claims.issuedAt as number) - 290_000);
+  });
+  it("browser owner (3.6): a home that had a computer is unchanged (the 72-hour hold), and so is a browser ticket on a never home with an authenticator", async () => {
+    const m = await v2Home();
+    await hadDesktop();
+    expect(await errorOf(await mintWith(m.token, { bind: BIND_A, kind: "desktop" }))).toEqual([409, "door_needs_hold"]);
+    firstHome();
+    expect(Object.keys((await ticketOf(await mintWith(m.token, { bind: BIND_A, kind: "browser" }))).claims)).toEqual(V2_KEYS);
+  });
+  it("browser owner: make chat-only is forwarded to the home as factorOnly, and a full removal sends none", async () => {
+    const m = await v2Home();
+    homeAnswer = () => Response.json({ revoked: true });
+    expect((await req("POST", `/v1/homes/${HOME}/devices/dev-1/revoke`, m.token, { factorOnly: true })).status).toBe(200);
+    expect((await req("POST", `/v1/homes/${HOME}/devices/dev-2/revoke`, m.token, {})).status).toBe(200);
+    expect(homeCalls.map((c) => [c.body.deviceId, c.body.factorOnly])).toEqual([["dev-1", true], ["dev-2", undefined]]);
+    expect(await errorOf(await req("POST", `/v1/homes/${HOME}/devices/dev-3/revoke`, m.token, { factorOnly: "yes" }))).toEqual([400, "invalid_request"]);
+  });
   it("D1 mint: v2 home {} is 400 door_body_required, with and without the flag, logged", async () => {
     const m = await v2Home();
     const log = vi.spyOn(console, "log");
@@ -1924,6 +2100,117 @@ describe("D1 door v2", () => {
     void m;
   });
 
+  // ---- one code (MurageMain 11-04): the email proof's code is also the door's second step, for its own session ----
+  describe("one code", () => {
+    // A new buyer is a paying home with Flux serving: only then is the email proof "needed" (accountProvisioning).
+    const FLUX_ON = { CLOUD_FLUX_ROUTES_ENABLED: "1", FLUX_CLOUD_SERVICE_TOKEN: "s".repeat(40), FLUX_CLOUD_GRANTS_TOKEN: "g".repeat(40) };
+    async function oneCodeHome() {
+      const m = await v2Home();
+      await env.DB.prepare(`INSERT INTO billing_subscriptions (home_id,customer_id,subscription_id,plan,status,created_at,updated_at)
+        VALUES (?,'cus_oc','sub_oc','starter','active',1,1)`).bind(HOME).run();
+      return m;
+    }
+    const OC_SESSION = "sess-onecode";
+    const EMAIL = "owner@example.test";
+    /** A new buyer's browser: a password sign-in (aal1, no emailed amr), in `session`. */
+    const buyer = (session = OC_SESSION) => amrToken(OWNER_SUB, EMAIL, [{ method: "password", ago: 60 }], session);
+    const codeMails = () => sent.filter((s) => ![DOOR_NOTICE_SUBJECT, DOOR_ATTEMPT_SUBJECT, FIRST_COMPUTER_SUBJECT].includes(s.subject));
+    const lastCode = () => /Your code is: ([0-9]{6})/.exec(codeMails().at(-1)!.text)![1];
+    /** The proof box: send, then type the mailed code (or `code`) in `session`. */
+    async function prove(session = OC_SESSION, code?: string) {
+      const t = await buyer(session);
+      const s = await req("POST", "/v1/account/flux/email-proof/send", t, {}, FLUX_ON);
+      expect(s.status).toBe(202);
+      const { challengeId } = await s.json<{ challengeId: string }>();
+      return req("POST", "/v1/account/flux/email-proof/verify", t, { challengeId, code: code ?? lastCode() }, FLUX_ON);
+    }
+    const open = async (session = OC_SESSION) => mintWith(await buyer(session), { bind: BIND_A, kind: "browser" });
+    const grants = () => env.DB.prepare("SELECT session_id,intent_id,challenge_id FROM cloud_stepup_events WHERE kind='granted'").all().then((r) => r.results);
+    const age = (ms: number) => env.DB.prepare("UPDATE cloud_stepup_events SET at=at-? WHERE kind='granted'").bind(ms).run();
+
+    it("1. a new buyer types exactly ONE code (the proof) and Open Murage opens: no step-up mail, no step-up challenge", async () => {
+      await oneCodeHome();
+      expect(await errorOf(await open())).toEqual([403, "step_up_required"]);
+      expect((await prove()).status).toBe(200);
+      const res = await open();
+      expect(res.status).toBe(200);
+      expect((await ticketOf(res)).claims).toMatchObject({ type: "murage-door-v2", kind: "browser", bind: BIND_A });
+      await settle();
+      expect(codeMails()).toHaveLength(1);
+      expect(codeMails()[0].subject).toBe("Murage Cloud: your code to confirm your email");
+      expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_stepup_challenges").first<{ n: number }>()).toEqual({ n: 0 });
+      expect(await grants()).toEqual([{ session_id: OC_SESSION, intent_id: null, challenge_id: expect.stringMatching(/^fp_[0-9a-f]{32}$/) }]);
+    });
+    it("2. a later new browser (another session, after the window) still gets one step-up", async () => {
+      await oneCodeHome();
+      expect((await prove()).status).toBe(200);
+      expect((await open()).status).toBe(200);
+      await age(901_000);
+      expect(await errorOf(await open("sess-later"))).toEqual([403, "step_up_required"]);
+    });
+    it("3. the grant does not carry over to a different session of the same account", async () => {
+      await oneCodeHome();
+      expect((await prove()).status).toBe(200);
+      expect(await errorOf(await open("sess-other-browser"))).toEqual([403, "step_up_required"]);
+      expect((await open()).status).toBe(200);
+    });
+    it("4. it does not carry over an email change (a new revision), even back to the same address", async () => {
+      const m = await oneCodeHome();
+      expect((await prove()).status).toBe(200);
+      expect((await open()).status).toBe(200);
+      await reconciledContactEmail(env.DB, m.id, Date.now(), async () => ({ id: OWNER_SUB, email: "moved@example.test" }));
+      await reconciledContactEmail(env.DB, m.id, Date.now(), async () => ({ id: OWNER_SUB, email: EMAIL }));
+      expect(await errorOf(await open())).toEqual([403, "step_up_required"]);
+    });
+    it("5. it lasts the normal window: 900 s yes, 901 s no", async () => {
+      await oneCodeHome();
+      expect((await prove()).status).toBe(200);
+      await age(890_000);
+      expect((await open()).status).toBe(200);
+      await age(11_000);
+      expect(await errorOf(await open())).toEqual([403, "step_up_required"]);
+    });
+    it("6. other step-up intents still need their own code: device revoke, desktop code and the pair hold are 403", async () => {
+      await oneCodeHome();
+      expect((await prove()).status).toBe(200);
+      expect((await open()).status).toBe(200);
+      const t = await buyer();
+      expect(await errorOf(await req("POST", `/v1/homes/${HOME}/devices/dev-1/revoke`, t, {}))).toEqual([403, "step_up_required"]);
+      expect(await errorOf(await req("POST", `/v1/account/homes/${HOME}/desktop-code`, t, {}))).toEqual([403, "step_up_required"]);
+      expect(await errorOf(await req("POST", "/v1/account/home/hold", t, { action: "pair" }))).toEqual([403, "step_up_required"]);
+      expect(homeCalls.filter((c) => c.path.endsWith("/revoke"))).toEqual([]);
+    });
+    it("7. a failed or disputed proof mints nothing; a dispute after the proof ends the grant", async () => {
+      const m = await oneCodeHome();
+      const wrong = await prove(OC_SESSION, "000000");
+      expect(await errorOf(wrong)).toEqual([403, "code_refused"]);
+      expect(await grants()).toEqual([]);
+      expect(await errorOf(await open())).toEqual([403, "step_up_required"]);
+      // The right code now, then support disputes the proof: the grant stops counting at once.
+      const t = await buyer();
+      const live = await (await req("GET", "/v1/account/flux/email-proof", t, undefined, FLUX_ON)).json<{ challengeId: string }>();
+      expect((await req("POST", "/v1/account/flux/email-proof/verify", t, { challengeId: live.challengeId, code: lastCode() }, FLUX_ON)).status).toBe(200);
+      expect((await open()).status).toBe(200);
+      await env.DB.prepare("INSERT INTO flux_email_proof_disputes (account_id,note,by,email_revision,at) VALUES (?,?,?,0,?)").bind(m.id, "not mine", "support", Date.now()).run();
+      expect(await errorOf(await open())).toEqual([403, "step_up_required"]);
+      // A proof typed while a dispute is open is refused and mints nothing new.
+      await env.DB.prepare("DELETE FROM cloud_stepup_events").run();
+      expect(await errorOf(await req("POST", "/v1/account/flux/email-proof/verify", t, { challengeId: live.challengeId, code: lastCode() }, FLUX_ON))).toEqual([409, "proof_disputed"]);
+      expect(await grants()).toEqual([]);
+    });
+    it("7b. a replayed proof code (already used, no fresh stamp) mints nothing in another session", async () => {
+      await oneCodeHome();
+      expect((await prove()).status).toBe(200);
+      await env.DB.prepare("DELETE FROM cloud_stepup_events").run();
+      // The same answer again from another browser: already consumed, so refused, and nothing is recorded.
+      const t = await buyer("sess-replay");
+      const id = (await env.DB.prepare("SELECT id FROM flux_email_proof").first<{ id: string }>())!.id;
+      expect((await req("POST", "/v1/account/flux/email-proof/verify", t, { challengeId: id, code: lastCode() }, FLUX_ON)).status).not.toBe(200);
+      expect(await grants()).toEqual([]);
+      expect(await errorOf(await open("sess-replay"))).toEqual([403, "step_up_required"]);
+    });
+  });
+
   // ---- devices (3.2) ----
   it("D1 devices list: the owner gets the home's devices without key material, through one HMAC call with operation = the path and a fresh nonce", async () => {
     const m = await v2Home();
@@ -1987,6 +2274,98 @@ describe("D1 door v2", () => {
     expect(await errorOf(await req("POST", `/v1/homes/${HOME}/devices/dev-x/revoke`, m.token, {}))).toEqual([429, "rate_limited"]);
   });
 
+  // ---- the removal code names the device (server side only) ----
+  const OCT_12 = Date.UTC(2026, 9, 12, 9);
+  const OCT_20 = Date.UTC(2026, 9, 20, 18);
+  /** An aal1 revoke of `deviceId` refused with an emailed-code intent; the code sent; the email and the challenge returned. */
+  async function revokeCode(t: string, deviceId: string, body: Record<string, unknown> = {}) {
+    const refused = await req("POST", `/v1/homes/${HOME}/devices/${deviceId}/revoke`, t, body);
+    expect(refused.status).toBe(403);
+    const intentId = (await refused.json<{ step_up: { email_code: { intent_id: string } } }>()).step_up.email_code.intent_id;
+    const sendRes = await req("POST", "/v1/account/step-up/email/send", t, { intentId });
+    expect(sendRes.status).toBe(202);
+    const { challengeId } = await sendRes.json<{ challengeId: string }>();
+    const mail = sent.filter((x) => x.subject === "Your Murage code to confirm it's you").at(-1)!;
+    return { intentId, challengeId, mail, code: /\b(\d{6})\b/.exec(mail.text)![1] };
+  }
+  it("removal code: the email names the device from the home's own list (scope and dates), and the {} revoke then runs once", async () => {
+    await v2Home();
+    homeAnswer = (p) => (p.endsWith("/list") ? Response.json({ devices: [
+      { id: "dev-1", scope: "browser", addedAt: OCT_12, lastSeenAt: OCT_20 }, { id: "dev-2", scope: "owner-phone", addedAt: OCT_20, lastSeenAt: null }] })
+      : Response.json({ revoked: true }));
+    const t = await token(OWNER_SUB, "owner@example.test", null);
+    const { intentId, challengeId, mail, code } = await revokeCode(t, "dev-1");
+    expect(mail.text).toContain("It approves removing a browser added 12 Oct 2026 (last used 20 Oct 2026) from your Murage home.");
+    expect(homeCalls.map((c) => c.path)).toEqual(["/api/cloud/devices/list"]);
+    expect((await req("POST", "/v1/account/step-up/email/verify", t, { intentId, challengeId, code })).status).toBe(200);
+    const ok = await req("POST", `/v1/homes/${HOME}/devices/dev-1/revoke`, t, { stepUpIntentId: intentId });
+    expect([ok.status, await ok.json()]).toEqual([200, { revoked: true }]);
+    expect(homeCalls.filter((c) => c.path.endsWith("/revoke")).map((c) => c.body.deviceId)).toEqual(["dev-1"]);
+    // Another scope, never seen: "your phone added 20 Oct 2026".
+    await env.DB.prepare("DELETE FROM cloud_stepup_events").run();
+    const phone = await revokeCode(t, "dev-2");
+    expect(phone.mail.text).toContain("It approves removing your phone added 20 Oct 2026 from your Murage home.");
+  });
+  it("removal code: a home that cannot answer, or does not list the device, still gets the code, with the generic words", async () => {
+    await v2Home();
+    deps.homeFetch = (async () => { throw new Error("down"); }) as typeof fetch;
+    const t = await token(OWNER_SUB, "owner@example.test", null);
+    const down = await revokeCode(t, "dev-1");
+    expect(down.mail.text).toContain("It approves removing a device from your Murage home.");
+    await env.DB.prepare("DELETE FROM cloud_stepup_events").run();
+    homeCalls.length = 0;
+    deps.homeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      homeCalls.push({ path: new URL(String(input)).pathname, body: JSON.parse(String(init?.body)) as Record<string, unknown>, signature: null, origin: null });
+      return Response.json({ devices: [{ id: "dev-other", scope: "browser", addedAt: OCT_12, lastSeenAt: null }] });
+    }) as typeof fetch;
+    const missing = await revokeCode(t, "dev-1");
+    expect(missing.mail.text).toContain("It approves removing a device from your Murage home.");
+    expect(missing.mail.text).not.toContain("12 Oct");
+    expect(homeCalls.map((c) => c.path)).toEqual(["/api/cloud/devices/list"]);
+  });
+  it("removal code: the label's lookup is read-only (no pairing_key_use row, no hold reconcile); the devices list still audits and reconciles", async () => {
+    const m = await v2Home();
+    await hold();
+    homeAnswer = (p) => (p.endsWith("/list") ? Response.json({ devices: [{ id: "dev-1", scope: "browser", addedAt: OCT_12, lastSeenAt: null }],
+      fullScopeEver: true, consumedHoldIds: [HOLD] }) : Response.json({ revoked: true }));
+    const keyUses = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_access_events WHERE home_id=? AND kind='pairing_key_use'")
+      .bind(HOME).first<{ n: number }>())!.n;
+    const before = await holdRow();
+    const uses = await keyUses();
+    const log = vi.spyOn(console, "log");
+    const t = await token(OWNER_SUB, "owner@example.test", null);
+    const { mail } = await revokeCode(t, "dev-1");
+    expect(mail.text).toContain("removing a browser added 12 Oct 2026 from your Murage home.");
+    expect(homeCalls.map((c) => c.path)).toEqual(["/api/cloud/devices/list"]);
+    // (a) no audit row; (b) no reconcile, the hold unchanged.
+    expect(await keyUses()).toBe(uses);
+    expect(log.mock.calls.some((c) => String(c[0]).includes("pair holds consumed at home"))).toBe(false);
+    expect(await holdRow()).toEqual(before);
+    expect(before).toMatchObject({ spent_device_digest: null, spent_at: null });
+    // Read-only is only ever the device list: any other management operation refuses it before any key is read.
+    await expect(homeManagementCall(env, HOME, { id: m.id, email: "owner@example.test" }, "/api/cloud/devices/revoke", { deviceId: "dev-1" }, deps,
+      { readOnly: true })).rejects.toMatchObject({ status: 500 });
+    expect(homeCalls).toHaveLength(1);
+    // (c) the normal list: one pairing_key_use row and the consumed hold spent, exactly as before.
+    expect((await req("GET", `/v1/homes/${HOME}/devices`, m.token)).status).toBe(200);
+    expect(await keyUses()).toBe(uses + 1);
+    expect(await holdRow()).toMatchObject({ reserved_by: null, reserved_until: null, spent_device_digest: "home-consumed" });
+    expect(log.mock.calls.some((c) => String(c[0]).includes("pair holds consumed at home"))).toBe(true);
+  });
+  it("removal code: a client-supplied field never names the device and is still refused (the body must be {})", async () => {
+    await v2Home();
+    homeAnswer = (p) => (p.endsWith("/list") ? Response.json({ devices: [{ id: "dev-1", scope: "browser", addedAt: OCT_12, lastSeenAt: null }] })
+      : Response.json({ revoked: true }));
+    const t = await token(OWNER_SUB, "owner@example.test", null);
+    const body = { label: "your old laptop", deviceLabel: "your old laptop" };
+    const { intentId, challengeId, mail, code } = await revokeCode(t, "dev-1", body);
+    expect(mail.text).not.toContain("old laptop");
+    expect(mail.text).toContain("removing a browser added 12 Oct 2026 from your Murage home.");
+    expect((await req("POST", "/v1/account/step-up/email/verify", t, { intentId, challengeId, code })).status).toBe(200);
+    expect(await errorOf(await req("POST", `/v1/homes/${HOME}/devices/dev-1/revoke`, t, { ...body, stepUpIntentId: intentId }))).toEqual([400, "invalid_request"]);
+    expect(homeCalls.filter((c) => c.path.endsWith("/revoke"))).toEqual([]);
+  });
+
   // ---- the desktop ticket and the pair hold (2.5.3, r4.1, r4.2) ----
   it("D1 r4.2 (a)+(d): a home that had a desktop and a completed hold: the desktop ticket carries pairHold, RESERVED (not spent) until expiry + skew", async () => {
     const m = await v2Home();
@@ -2009,10 +2388,83 @@ describe("D1 door v2", () => {
     await hold();
     expect((await ticketOf(await mintWith(m.token, { bind: BIND_A, kind: "desktop" }))).claims.pairHold).toBe(HOLD);
   });
+  describe("known bind (home image 4D): a desktop already a device of the home re-enters without a hold", () => {
+    const desktop = (bind?: unknown, over: Record<string, unknown> = {}) => ({ id: "d-1", scope: "owner-desktop", addedAt: 1, ...(bind === undefined ? {} : { bind }), ...over });
+    const answer = (devices: unknown[], extra: Record<string, unknown> = {}) => { homeAnswer = () => Response.json({ devices, fullScopeEver: true, ...extra }); };
+    const mintDesktop = (token: string, bind = BIND_A) => mintWith(token, { bind, kind: "desktop" });
+    it("an active full-scope device with this bind: no hold, no pairHold claim, nothing reserved (even with a ready hold)", async () => {
+      const m = await v2Home();
+      await hold();
+      answer([desktop(BIND_A)]);
+      const t = await ticketOf(await mintDesktop(m.token));
+      expect(Object.keys(t.claims)).toEqual(V2_KEYS);
+      expect(await holdRow()).toEqual({ reserved_by: null, reserved_until: null, spent_device_digest: null, spent_at: null });
+    });
+    it("a known bind with no hold at all still mints", async () => {
+      const m = await v2Home();
+      answer([desktop(BIND_A)]);
+      expect(Object.keys((await ticketOf(await mintDesktop(m.token))).claims)).toEqual(V2_KEYS);
+    });
+    it("a browser-scope device's bind does not count: still door_needs_hold", async () => {
+      const m = await v2Home();
+      answer([{ id: "b-1", scope: "browser", addedAt: 1, bind: BIND_A }, desktop(BIND_B)]);
+      expect(await errorOf(await mintDesktop(m.token))).toEqual([409, "door_needs_hold"]);
+    });
+    it("an enrolled owner-phone (any scope but owner-desktop) with this bind is not a known desktop: pair hold still applies", async () => {
+      const m = await v2Home();
+      answer([desktop(BIND_A, { scope: "owner-phone" })]);
+      expect(await errorOf(await mintDesktop(m.token))).toEqual([409, "door_needs_hold"]);
+      await hold();
+      const t = await ticketOf(await mintDesktop(m.token));
+      expect(t.claims.pairHold).toBe(HOLD);
+    });
+    it("an unknown bind on a home that had a device: 409 door_needs_hold as before", async () => {
+      const m = await v2Home();
+      answer([desktop(BIND_B)]);
+      expect(await errorOf(await mintDesktop(m.token))).toEqual([409, "door_needs_hold"]);
+    });
+    it("a malformed bind in the list is ignored (no error, no match)", async () => {
+      const m = await v2Home();
+      for (const bad of [BIND_A.toUpperCase(), BIND_A.slice(1), `${BIND_A}0`, 7, null, ""]) {
+        answer([desktop(bad)]);
+        expect(await errorOf(await mintDesktop(m.token))).toEqual([409, "door_needs_hold"]);
+      }
+      answer([desktop(BIND_A.toUpperCase())]);
+      expect((await req("GET", `/v1/homes/${HOME}/devices`, m.token)).status).toBe(200);
+    });
+    it("a device the list marks revoked never matches, even with a bind", async () => {
+      const m = await v2Home();
+      answer([desktop(BIND_A, { revokedAt: 5 })]);
+      expect(await errorOf(await mintDesktop(m.token))).toEqual([409, "door_needs_hold"]);
+    });
+    it("keyHash is never matched: a device with keyHash equal to the request's bind but no bind still needs a hold", async () => {
+      const m = await v2Home();
+      answer([desktop(undefined, { keyHash: BIND_A })]);
+      expect(await errorOf(await mintDesktop(m.token))).toEqual([409, "door_needs_hold"]);
+    });
+    it("no bind fields at all (older image): behaviour as today", async () => {
+      const m = await v2Home();
+      answer([desktop()]);
+      expect(await errorOf(await mintDesktop(m.token))).toEqual([409, "door_needs_hold"]);
+      await hold();
+      expect((await ticketOf(await mintDesktop(m.token))).claims.pairHold).toBe(HOLD);
+    });
+    it("a never history is unchanged (no hold, no claim), and the customer's device list never carries bind", async () => {
+      const m = await v2Home();
+      homeAnswer = () => Response.json({ devices: [{ id: "b-1", scope: "browser", addedAt: 1 }], fullScopeEver: false });
+      const emailed = await amrToken(OWNER_SUB, "owner@example.test", [{ method: "otp", ago: 10 }]);
+      expect(Object.keys((await ticketOf(await mintDesktop(emailed))).claims)).toEqual(V2_KEYS);
+      answer([desktop(BIND_A)]);
+      const r = await req("GET", `/v1/homes/${HOME}/devices`, m.token);
+      expect(await r.json()).toEqual({ devices: [{ id: "d-1", scope: "owner-desktop", addedAt: 1, lastSeenAt: null, factor: null, factorExpiresAt: null }] });
+    });
+  });
   it("D1 r4.2: the first full-scope device a home ever has needs no hold (no claim); an active desktop at the home needs one", async () => {
     const m = await v2Home();
     homeAnswer = () => Response.json({ devices: [{ id: "b-1", scope: "browser", addedAt: 1 }], fullScopeEver: false });
-    const first = await ticketOf(await mintWith(m.token, { bind: BIND_A, kind: "desktop" }));
+    // The first computer of a home needs a fresh EMAILED step-up (browser-owner design 3.6): an emailed sign-in here.
+    const emailed = await amrToken(OWNER_SUB, "owner@example.test", [{ method: "otp", ago: 10 }]);
+    const first = await ticketOf(await mintWith(emailed, { bind: BIND_A, kind: "desktop" }));
     expect(Object.keys(first.claims)).toEqual(V2_KEYS);
     homeAnswer = () => Response.json({ devices: [{ id: "d-1", scope: "owner-desktop", addedAt: 1 }] });
     expect(await errorOf(await mintWith(m.token, { bind: BIND_A, kind: "desktop" }))).toEqual([409, "door_needs_hold"]);
@@ -2084,11 +2536,12 @@ describe("D1 door v2", () => {
     const m = await v2Home();
     await issuedCode();
     homeAnswer = () => Response.json({ devices: [{ id: "b-1", scope: "browser", addedAt: 1 }], fullScopeEver: false, consumedHoldIds: [] });
-    const first = await mintWith(m.token, { bind: BIND_A, kind: "desktop" });
+    const emailed = await amrToken(OWNER_SUB, "owner@example.test", [{ method: "otp", ago: 10 }]);
+    const first = await mintWith(emailed, { bind: BIND_A, kind: "desktop" });
     expect(first.status).toBe(200);
     expect(Object.keys((await ticketOf(first)).claims)).toEqual(V2_KEYS);
     await hold();
-    const again = await ticketOf(await mintWith(m.token, { bind: BIND_A, kind: "desktop" }));
+    const again = await ticketOf(await mintWith(emailed, { bind: BIND_A, kind: "desktop" }));
     expect(again.claims.pairHold).toBeUndefined();
     expect(await holdRow()).toEqual({ reserved_by: null, reserved_until: null, spent_device_digest: null, spent_at: null });
   });
@@ -2209,7 +2662,7 @@ describe("D1 door v2", () => {
     const m = await v2Home();
     // Five mints inside one clock hour (never across its end).
     const left = ONE_HOUR - (Date.now() % ONE_HOUR);
-    if (left < 20_000) await new Promise((r) => setTimeout(r, left + 100));
+    if (left < 90_000) await new Promise((r) => setTimeout(r, left + 100)); // the sweep below runs at T + 60 s, inside the same hour
     const H = Math.floor(Date.now() / ONE_HOUR);
     const T = Date.now();
     const t = await token(OWNER_SUB, "owner@example.test", 10, { sessionId: "sess-1" });
@@ -2252,5 +2705,28 @@ describe("D1 door v2", () => {
     expect(await sweepDoorNotices(testEnv(), now + ONE_HOUR * 2, sweepDeps)).toBe(0);
     expect(sent).toHaveLength(1);
     expect(sent[0].subject).toBe(DOOR_NOTICE_SUBJECT);
+  });
+});
+
+describe("launch flow A (FLUX-ENSURE-EMAIL-VERIFIED contract (c)): no door while the owner's email is not proven", () => {
+  const fluxEnv = () => ({ ...testEnv(), CLOUD_FLUX_ROUTES_ENABLED: "1", FLUX_CLOUD_SERVICE_TOKEN: "s".repeat(40), FLUX_CLOUD_GRANTS_TOKEN: "g".repeat(40) }) as unknown as Env;
+  async function doorWithFlux(bearer: string) {
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(new Request(`https://auth.murage.test/v1/homes/${HOME}/door`, { method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` }, body: "{}" }), fluxEnv(), ctx);
+    pending.push(waitOnExecutionContext(ctx));
+    return res;
+  }
+  it("POST /v1/homes/:id/door is 409 email_unproven until the email is proven, so a direct link cannot skip the code; then it opens", async () => {
+    const owner = await member(OWNER_SUB, "owner@example.test");
+    await seedHome(owner.id);
+    await env.DB.prepare(`INSERT INTO billing_subscriptions (home_id,customer_id,subscription_id,plan,status,created_at,updated_at)
+      VALUES (?,'cus_door','sub_door','starter','active',1,1)`).bind(HOME).run();
+    expect(await errorOf(await doorWithFlux(owner.token))).toEqual([409, "email_unproven"]);
+    expect(await errorOf(await doorWithFlux(owner.token))).toEqual([409, "email_unproven"]);
+    await env.DB.prepare("UPDATE supabase_identities SET email_verified_at=1,email_verified_for=lower(trim(contact_email)) WHERE user_id=?").bind(owner.id).run();
+    const open = await doorWithFlux(owner.token);
+    expect(open.status).toBe(200);
+    expect((await ticketOf(open)).claims).toMatchObject({ homeId: HOME, account: owner.id });
   });
 });

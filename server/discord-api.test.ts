@@ -29,7 +29,7 @@ it.each([true])("joins owner DM binding, restart and revocation (scripted model:
       MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: secret, PATH: process.env.PATH, FAKE_CLAUDE_DUMP: join(home, "unexpected-model-turn.json"),
       ...(restored ? { MURAGE_DISCORD_BOT_TOKEN: fakeBot } : {}) };
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
-    child = spawn(process.execPath, ["--import", pathToFileURL(join(root, "server/testing/discord-sdk-preload.mjs")).href, join(root, "server/index.ts")], { cwd: root, env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
+    child = spawn(process.execPath, ["--import", pathToFileURL(join(root, "server/testing/discord-sdk-preload.mjs")).href, join(root, "server/index.ts")], { windowsHide: true, cwd: root, env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
     child.stderr!.on("data", chunk => { stderr += chunk; }); child.on("message", value => { if ((value as Trace)?.kind === "discord-fixture") traces.push(value as Trace); });
     await expect.poll(async () => { if (child!.exitCode !== null) throw new Error("Fixture exited: " + stderr); try { return (await request("GET", "/api/health")).status; } catch { return 0; } }, { timeout: 20000 }).toBe(200);
   };

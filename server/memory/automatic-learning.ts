@@ -42,7 +42,9 @@ export function candidateReviewReason(db:DatabaseSync,id:string,version:number):
 export function pendingSaveNote(reason:string):string {
   return `Saved for the owner's review in Needs you. It is not active yet, so memory_search will not return it until the owner approves it. Reason: ${reason.trim().replace(/[.\s]+$/,"")}.`;
 }
-export function holdMemoryCandidate(db:DatabaseSync,id:string,reason:string){
+export function holdMemoryCandidate(db:DatabaseSync,id:string,reason:string, _authority:unknown=undefined){
+  // Autonomous learning has no executing owner actor. Requested saves resolve
+  // their live authority before entering the transaction in authority.ts.
   db.prepare("UPDATE memory_record_details SET confidence_basis=? WHERE record_id=? AND record_version=1 AND EXISTS(SELECT 1 FROM memory_records r WHERE r.id=memory_record_details.record_id AND r.version=memory_record_details.record_version AND r.state='candidate')").run(learningReviewReason(reason),id);
   return false;
 }

@@ -200,6 +200,11 @@ export interface SetupAgentReading {
    *  Only ever set on a signed-out reading, and only so the card can name the
    *  command rather than hardcode one per engine. */
   signInCommand?: string;
+  /** The driver kind ("claudeAgent", "codex"...), set on a signed-out reading so a Cloud home can open the right sign-in. */
+  driverKind?: string;
+  /** Set on a signed-out reading when the engine is truly owed: some visible bot (the Chief included) runs on it, Flux state aside.
+   *  A Cloud home reports a signed-out engine only when this is set. */
+  owedOnCloud?: boolean;
   /**
    * The bots that run on this engine now (their own engine, or one chat's own
    * pick, with that chat's thread). Only ever set on a signed-out reading.
@@ -298,6 +303,9 @@ export interface SetupLiveState {
    * defect. These are offered instead: see `setupSignedOutReading`.
    */
   signedOutAgents: readonly SetupAgentReading[];
+  /** Grok Bot data found on this computer (slice F), read live, never
+   *  persisted. Absent or malformed reads as 0; a failing finder is 0. */
+  moveIn?: { grok: number };
   /** The Flux Router connection as the app's own credential policy reports
    *  it, plus whether the saved key is shaped like a key at all. The key
    *  itself never leaves the server. */
@@ -341,6 +349,12 @@ export interface SetupLiveState {
   connectedAppIds: readonly string[] | null;
   /** A settled engine reply exists somewhere in the workspace. */
   botReplyExists: boolean;
+  /** The owner has written a message in some conversation (a reply may have failed, so this is not botReplyExists). */
+  ownerMessageExists?: boolean;
+  /** A conversation other than the Chief's own opening one holds messages of any kind. */
+  otherThreadHasMessages?: boolean;
+  /** This install was made by a restore or backup import (the restore marker files sit in the data folder). */
+  restoredInstall?: boolean;
   /**
    * Some conversation's facts could not be read yet: the Inbox projection's
    * first fill is still partial for it, so what the server holds about its
@@ -678,6 +692,14 @@ export function nextSetupStep(state: SetupState): SetupStep | null {
  * these — it has answered turns, a saved key, connected apps and routines —
  * which is the case that matters most, because interrupting someone's
  * restored workspace with a welcome screen is the worst bug this flow has.
+ *
+ * A saved Flux key is NOT one of the traces. A Cloud home is born with one we
+ * delivered, and a desktop owner may connect Flux before the hello card; neither
+ * has used the workspace. A restored backup still trips the name, reply, apps,
+ * routines and crew checks. A failed turn leaves no settled reply, so a used
+ * workspace is also known by the owner having written anywhere, by any
+ * conversation beyond the Chief's opening one holding messages, and by the
+ * install being a restore (its marker files), none of which a seeded Chief has.
  */
 export function setupIsFirstRun(state: SetupState, live: SetupLiveState): boolean {
   const untouched = SETUP_STEPS.every(
@@ -687,7 +709,9 @@ export function setupIsFirstRun(state: SetupState, live: SetupLiveState): boolea
     && live.threadFactsUnknown !== true
     && live.ownerName.trim().length === 0
     && !live.botReplyExists
-    && !live.flux.configured
+    && live.ownerMessageExists !== true
+    && live.otherThreadHasMessages !== true
+    && live.restoredInstall !== true
     && (live.connectedApps ?? 0) === 0
     && live.routines.total === 0
     && live.crewSize === 0;
@@ -872,6 +896,8 @@ export interface SetupView {
    *  offer the sign-in instead of claiming them or pretending they are not
    *  there. Never counted as an agent: see `SetupLiveState.signedOutAgents`. */
   signedOutAgents: readonly SetupAgentReading[];
+  /** Grok Bot data found on this computer, in memory only (slice F). */
+  moveIn: { grok: number };
   /** Routines, and the morning brief's own state. */
   routines: SetupRoutineReading;
   /** Visible bots other than the Chief, for the "hire your first teammate"
@@ -973,6 +999,7 @@ export function setupView(state: SetupState, live: SetupLiveState): SetupView {
     engine: live.bundledEngine,
     agents: live.agents,
     signedOutAgents: live.signedOutAgents,
+    moveIn: { grok: Number.isInteger(live.moveIn?.grok) && (live.moveIn?.grok ?? 0) > 0 ? (live.moveIn?.grok ?? 0) : 0 },
     routines: live.routines,
     crewSize: live.crewSize,
     fluxReady: fluxUsable(live),

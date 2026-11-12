@@ -48,6 +48,17 @@ function mapping(id: string): void {
 const rows = (table: string): number => Number((database().prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n);
 
 describe("the lifecycle map beside the list of added tables", () => {
+  it("T-SCHEMA-STARTUP: delegation packs are registered and survive reopening; mutant omits initialization", async () => {
+    expect(APP_SCHEMA_102_ADDITIONS.tables).toContain("delegation_packs");
+    expect(ADDED_TABLE_LIFECYCLE.delegation_packs).toMatchObject({ kind: "marker", reason: expect.stringContaining("source or destination") });
+    const db = database();
+    db.exec("INSERT INTO delegation_packs(id,delegation_id,source_thread_id,source_bot_id,target_bot_id,refs,cut_at,created_at) VALUES('pack','job','source','sable','ember','[]',1,1)");
+    expect(db.prepare("SELECT prepared, destination_thread_id FROM delegation_packs").get()).toEqual({ prepared: "[]", destination_thread_id: null });
+    closeDatabase();
+    await settleTestHandles();
+    expect(database().prepare("SELECT id FROM delegation_packs").all()).toEqual([{ id: "pack" }]);
+  });
+
   it("has one entry for every listed table and no entry for a table that is not listed", () => {
     const listed = [...APP_SCHEMA_102_ADDITIONS.tables].sort();
     expect(Object.keys(ADDED_TABLE_LIFECYCLE).sort()).toEqual(listed);

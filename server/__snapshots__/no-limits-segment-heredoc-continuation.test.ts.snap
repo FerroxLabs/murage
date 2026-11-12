@@ -1,0 +1,225 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`continued heredoc owner > continued delimiter preserves the later command > Full access snapshot protected=false 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; cat <<EOF
+data
+EO\\
+F
+touch ./notes",
+    "fullAccessOrigin": "owner",
+    "outsideRead": null,
+    "ownerStarted": true,
+  },
+}
+`;
+
+exports[`continued heredoc owner > continued delimiter preserves the later command > Full access snapshot protected=true 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; cat <<EOF
+data
+EO\\
+F
+touch /etc/hosts",
+    "fullAccessOrigin": "owner",
+    "outsideRead": null,
+    "ownerStarted": true,
+  },
+}
+`;
+
+exports[`continued heredoc owner > substitution across a physical newline > Full access snapshot protected=false 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; cat <<EOF
+$\\
+(touch ./notes)
+EOF",
+    "fullAccessOrigin": "owner",
+    "outsideRead": null,
+    "ownerStarted": true,
+  },
+}
+`;
+
+exports[`continued heredoc owner > substitution across a physical newline > Full access snapshot protected=true 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; cat <<EOF
+$\\
+(touch /etc/hosts)
+EOF",
+    "fullAccessOrigin": "owner",
+    "outsideRead": null,
+    "ownerStarted": true,
+  },
+}
+`;
+
+exports[`continued heredoc routine > continued delimiter preserves the later command > Full access snapshot protected=false 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; cat <<EOF
+data
+EO\\
+F
+touch ./notes",
+    "fullAccessOrigin": "routine",
+    "outsideRead": null,
+    "ownerStarted": false,
+    "routineLevel": true,
+  },
+}
+`;
+
+exports[`continued heredoc routine > continued delimiter preserves the later command > Full access snapshot protected=true 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; cat <<EOF
+data
+EO\\
+F
+touch /etc/hosts",
+    "fullAccessOrigin": "routine",
+    "outsideRead": null,
+    "ownerStarted": false,
+    "routineLevel": true,
+  },
+}
+`;
+
+exports[`continued heredoc routine > substitution across a physical newline > Full access snapshot protected=false 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; cat <<EOF
+$\\
+(touch ./notes)
+EOF",
+    "fullAccessOrigin": "routine",
+    "outsideRead": null,
+    "ownerStarted": false,
+    "routineLevel": true,
+  },
+}
+`;
+
+exports[`continued heredoc routine > substitution across a physical newline > Full access snapshot protected=true 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; cat <<EOF
+$\\
+(touch /etc/hosts)
+EOF",
+    "fullAccessOrigin": "routine",
+    "outsideRead": null,
+    "ownerStarted": false,
+    "routineLevel": true,
+  },
+}
+`;

@@ -23,7 +23,7 @@ describe("ambient Murage environment", () => {
   it("runtime keys are ambient; keys that steer the test run are not", () => {
     for (const key of ["MURAGE_DATA_DIR", "MURAGE_HARNESS_URL", "MURAGE_COMMS_TOKEN", "MURAGE_PORT", "MURAGE_BOT_ID", "MURAGE_DEV_DESKTOP_SECRET", "MURAGE_ACP_POOL", "MURAGE_SKIP_PROVIDER_KEY"])
       expect(isAmbientMurageKey(key), key).toBe(true);
-    for (const key of ["MURAGE_CORPUS_OUT", "MURAGE_BACKUP_TEST_AGE_DIR", "MURAGE_E2E_DATA_DIR", "MURAGE_SMOKE_DIST", "MURAGE_KEEP_SMOKE_DIR", "MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE", "MURAGE_B33_NATIVE_DIR", "MURAGE_QUAL_EVIDENCE_DIR", "MURAGE_GEPA_TEST_PYTHON", "PATH", "HOME"])
+    for (const key of ["MURAGE_OPENCODE_PINNED_BIN", "MURAGE_CORPUS_OUT", "MURAGE_BACKUP_TEST_AGE_DIR", "MURAGE_E2E_DATA_DIR", "MURAGE_SMOKE_DIST", "MURAGE_KEEP_SMOKE_DIR", "MURAGE_SKIP_REAL_ELECTRON_BROWSER_FIXTURE", "MURAGE_B33_NATIVE_DIR", "MURAGE_QUAL_EVIDENCE_DIR", "MURAGE_GEPA_TEST_PYTHON", "PATH", "HOME"])
       expect(isAmbientMurageKey(key), key).toBe(false);
   });
 
@@ -46,6 +46,7 @@ describe("ambient Murage environment", () => {
       "process.stdout.write(JSON.stringify({ keys, refused }));",
     ].join("\n");
     const result = spawnSync(process.execPath, ["--import", PRELOAD, "--input-type=module", "-e", probe], {
+      windowsHide: true,
       cwd: ROOT,
       encoding: "utf8",
       env: { ...WIN_BASE, PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", MURAGE_DATA_DIR: "/murage-authz-ambient-probe/data", MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_COMMS_TOKEN: "ambient", MURAGE_BACKUP_TEST_AGE_DIR: "/age" },
@@ -59,6 +60,7 @@ describe("ambient Murage environment", () => {
   // hands its worker MURAGE_* settings this way).
   it("a child the test spawned keeps the keys the test gave it", () => {
     const result = spawnSync(process.execPath, ["--import", PRELOAD, "--input-type=module", "-e", "process.stdout.write(process.env.MURAGE_DATA_DIR ?? '')"], {
+      windowsHide: true,
       cwd: ROOT,
       encoding: "utf8",
       env: { ...WIN_BASE, PATH: process.env.PATH ?? "", HOME: process.env.HOME ?? "", MURAGE_TEST_ENV_SCRUBBED: "1", MURAGE_DATA_DIR: "/tmp/murage-child-data" },

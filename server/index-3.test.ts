@@ -7,6 +7,10 @@
 // entries so the suite is deterministic with or without agent CLIs installed
 // and exercises the shadow-instance behavior end to end.
 // Part 3 of 4.
+// This file fires many revokes within a minute (bots, rooms and settings changes). The revoke marker's per-minute write budget and the drain pace
+// (server/memory/revoke-budget.ts) have their own tests; here both are lifted in the server child, exactly as index-2.test.ts does, so a turn is not
+// held behind marker work they are pacing. Set before the harness module starts the child.
+vi.hoisted(() => { process.env.MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET = "1"; });
 import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -28,8 +32,17 @@ import { z } from "zod";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
-import { BASE, FAKE_CLAUDE_CLI, FIXTURE_ENGINE_OVERRIDES, ROOT, SERVER_DIR, WEBHOOK_BASE, api, boxStubPort, browserFixturePrelude, browserMount, browserNativeEvents, browserRegisterDelayMs, browserRpc, browserSession, desktopApi, expectStoppedTestServerCleanly, fakeClaudeDump, home, privateDesktopHeaders, readJsonFileWhenReady, holdBoxSlowValidation, setBrowserRegisterDelayMs, startInternalFixtureTurn, storedMessageCount, waitForIsolatedServer } from "./testing/index-harness.ts";
+import { BASE, FAKE_CLAUDE_CLI, FIXTURE_ENGINE_OVERRIDES, ROOT, SERVER_DIR, WEBHOOK_BASE, api, boxStubPort, browserFixturePrelude, browserMount, browserNativeEvents, browserRegisterDelayMs, browserRpc, browserSession, desktopApi as rawDesktopApi, expectStoppedTestServerCleanly, fakeClaudeDump, home, privateDesktopHeaders, readJsonFileWhenReady, holdBoxSlowValidation, setBrowserRegisterDelayMs, startInternalFixtureTurn, storedMessageCount, waitForIsolatedServer } from "./testing/index-harness.ts";
 import { ISOLATED_START_MS, browserEngineRefusesHost } from "./testing/index-harness.ts";
+
+// S134 4.6: review the destination even for a legacy PATCH without a revision.
+const desktopApi: typeof rawDesktopApi = async (method, path, body) => {
+  if(method === 'PATCH' && /^\/api\/bots\/[^/]+$/.test(path) && body && typeof body === 'object' && ['useMyChrome','browserTransport','browserProfile'].some(k=>k in (body as Record<string,unknown>))) {
+    const preview = await rawDesktopApi('GET', path + '/browser-choice/preview?' + new URLSearchParams({mode:'builtin', ...((body as any).browserProfile ? {profile:(body as any).browserProfile} : {})}));
+    body = {...body, disclosureKey:preview.body.disclosure.disclosureKey};
+  }
+  return rawDesktopApi(method, path, body);
+};
 
 /** One spelling for a path on every OS: Windows hands out short (RUNNER~1) and long names and
  * ignores case, so compare the long, lower-cased form there. */
@@ -545,6 +558,7 @@ describe("harness HTTP API", () => {
     if (process.env.PATH) isolatedEnv.PATH = process.env.PATH;
     if (process.env.SystemRoot) isolatedEnv.SystemRoot = process.env.SystemRoot;
     const isolatedChild = spawn(process.execPath, ["--import", browserFixturePrelude, "--import", noAckDesktopPrelude, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: ROOT,
       env: isolatedEnv,
       stdio: ["ignore", "pipe", "pipe", "ipc"],
@@ -669,6 +683,7 @@ describe("harness HTTP API", () => {
       process.execPath,
       ["--import", ackDesktopPrelude, join(SERVER_DIR, "index.ts")],
       {
+        windowsHide: true,
         cwd: ROOT,
         env: {
           ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -750,6 +765,7 @@ describe("harness HTTP API", () => {
     `)}`;
     let isolatedStderr = "";
     const isolatedChild = spawn(process.execPath, ["--import", browserFixturePrelude, "--import", desktopPrelude, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: ROOT,
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -876,6 +892,7 @@ describe("harness HTTP API", () => {
     `)}`;
     let isolatedStderr = "";
     const isolatedChild = spawn(process.execPath, ["--import", browserFixturePrelude, "--import", desktopPrelude, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: ROOT,
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -982,8 +999,9 @@ describe("harness HTTP API", () => {
       expect(blocked.status).toBe(409);
       expect(blocked.body.error).toMatch(/stop .* turn/i);
       const switched = await desktopApi("PATCH", `/api/bots/${bot.id}`, { browserProfile: null });
-      expect(switched.status).toBe(409);
-      expect(switched.body.error).toMatch(/stop this bot's turn before changing its browser profile/i);
+      // S134 4.2/4.3: the choice queues; the running turn keeps its profile.
+      expect(switched.status).toBe(202);
+      expect(switched.body.pending).toMatchObject({mode:'builtin'});
       const state = (await api("GET", "/api/bots")).body;
       expect(state.bots.find((candidate: { id: string }) => candidate.id === bot.id)?.browserProfile).toBe("active");
     } finally {

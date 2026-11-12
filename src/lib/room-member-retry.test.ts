@@ -62,3 +62,10 @@ describe("room error card details (117)", () => {
     expect(en["room.sendAgainTo"]).not.toMatch(/[–—]/);
   });
 });
+
+describe("a room error card gets the member's Sign in again action, like a direct chat", () => {
+  const source = readFileSync(new URL("../components/GroupView.tsx", import.meta.url), "utf8");
+  it("passes the member's bot and engine kind to the card", () => {
+    expect(source).toContain("signInAgain={engine?.driverKind ? { bot: { id: member.id, name: member.name }, engine: engine.driverKind } : undefined}");
+  });
+});

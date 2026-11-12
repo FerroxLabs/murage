@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 // Kimi Code harness support — Moonshot's `kimi` CLI over ACP stdio
 // (`kimi acp`), on the Kimi Code subscription login
 // (~/.kimi-code/credentials/kimi-code.json for kimi.com, or
@@ -117,7 +118,7 @@ async function readKimiCandidate(path: string, dir: string, pin: { dev: number |
     }
     if (total > KIMI_CREDENTIAL_MAX_BYTES) return "ignored";
     let parsed: unknown;
-    try { parsed = JSON.parse(buf.subarray(0, total).toString("utf8")); } catch { return "ignored"; }
+    try { parsed = registerBusyloopPayloadSite("read", JSON.parse(buf.subarray(0, total).toString("utf8"))); } catch { return "ignored"; }
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return "ignored";
     const token = parsed as { access_token?: unknown; refresh_token?: unknown };
     if (token.access_token === "" && token.refresh_token === "") return "ignored";

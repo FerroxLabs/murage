@@ -58,7 +58,7 @@ describe.skipIf(process.platform === "win32")("a room's no activity limit while 
       const codex=(mode)=>({driver:'codex',displayName:mode,config:{cli:${JSON.stringify(FAKE_CODEX)},fullAuto:true},environment:{FAKE_CODEX_MODE:mode}});
       cfg.instances.codexTool=codex('tool-hold');
       cfg.instances.codexClosed=codex('tool-close-then-hold');
-      cfg.instances.acpTool={driver:'customAcp',displayName:'acpTool',config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true},environment:{FAKE_ACP_MODE:'stall-after-tool',FAKE_ACP_TOOL_NEVER_FINISHES:'1'}};
+      cfg.instances.acpTool={driver:'customAcp',displayName:'acpTool',config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true},environment:{FAKE_ACP_MODE:'stall-after-tool',FAKE_ACP_TOOL_NEVER_FINISHES:'1',FAKE_ACP_MODELS:'fake-acp-model'}};
       cfg.instances.piSilent={driver:'piAgent',displayName:'piSilent',config:{cli:${JSON.stringify(join(serverDir, "testing/fake-pi-cli.ts"))},fullAuto:true},environment:{FAKE_PI_MODE:'hold'}};
       fs.writeFileSync(file,JSON.stringify(cfg));
     ` });

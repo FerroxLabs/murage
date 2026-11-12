@@ -6,12 +6,13 @@
 // this record (written only by the mount in index.ts runTurn, when emailMounts held) is what every email call is checked against.
 import { createHash } from "node:crypto";
 
-/** Who the turn is for: the owner's own direct turn (with its proven origin), or the owner's own routine run (schedule or manual). */
+/** The owner's direct or routine turn, or a server-proven owner-rooted hand-off. */
 export type EmailTurnKind =
   | { kind: "direct"; origin: "desktop" | "companion" }
-  | { kind: "routine"; trigger: "schedule" | "manual" };
-/** `send`: every email tool is listed; `read`: email_list and email_read only (the engine cannot prove a send tool's name, 3.2). */
-export type EmailToolMode = "send" | "read";
+  | { kind: "routine"; trigger: "schedule" | "manual" }
+  | { kind: "delegated"; handoffId: string; rootThreadId: string; attended: boolean };
+/** `send`: every tool; `delegated`: send/reply/list/read, never trust_offer; `read`: list/read only (3.2). */
+export type EmailToolMode = "send" | "read" | "delegated";
 export type EmailTurnRecord = { botId: string; threadId: string; mode: EmailToolMode } & EmailTurnKind;
 
 /** The email-mount records by capability generation. Deleted when the generation's claims are revoked (internal-capabilities.ts). */

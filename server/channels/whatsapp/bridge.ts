@@ -1,3 +1,4 @@
+import "../../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // Socket handling, reconnect, watchdog and serialized send queue adapted from Hermes Agent
 // scripts/whatsapp-bridge/bridge.js (MIT, Nous Research) and OpenClaw extensions/whatsapp/src

@@ -26,6 +26,19 @@ const searchable = HELP_INDEX.map((entry) => `${entry.title} ${entry.heading ?? 
 const needle = (capability: Capability): string => (capability.kind === "tool" ? capability.name : capability.term).toLowerCase();
 
 describe("help covers what the code can do", () => {
+  it("explains web_read continuation and the trust boundary in shipped help", () => {
+    const entry = HELP_INDEX.find((candidate) => candidate.id.startsWith("features/bot-tools#") && candidate.text.includes("web_read"));
+    expect(entry?.text).toMatch(/complete web page/i);
+    expect(entry?.text).toContain("next_offset");
+    expect(entry?.text).toMatch(/untrusted/i);
+  });
+
+  it("explains Signal availability in shipped messaging help", () => {
+    const entry = HELP_INDEX.find((candidate) => candidate.id.startsWith("features/messaging-apps#") && candidate.heading === "Signal");
+    expect(entry?.text).toMatch(/unavailable/i);
+    expect(entry?.text).toMatch(/release checks/i);
+  });
+
   it("has a capabilities file that matches the code", () => {
     expect(() => execFileSync(process.execPath, ["scripts/build-capabilities.mjs", "--check"], { cwd: root, stdio: "pipe" })).not.toThrow();
   });
@@ -35,8 +48,8 @@ describe("help covers what the code can do", () => {
     expect([...kinds].sort()).toEqual(["bot-settings", "label", "limit", "place", "route", "settings-page", "tool"]);
     // The sidebar's own page names (settings.page.*), not the pre-1.0.3 section names (CAPABILITY-DB-1010 section 5).
     const pages = new Map(HELP_CAPABILITIES.filter((capability) => capability.kind === "settings-page").map((capability) => [capability.name, capability.term]));
-    expect(pages.get("botDefaults")).toBe("Bots");
-    expect(pages.get("companion")).toBe("Devices");
+    expect(pages.get("botDefaults")).toBe("How every bot behaves");
+    expect(pages.get("companion")).toBe("Phone and other devices");
     expect(pages.get("aboutMe")).toBe("About me");
     expect(HELP_CAPABILITIES.filter((capability) => capability.kind === "tool").map((capability) => capability.name)).toEqual(
       expect.arrayContaining(["murage_help", "list_bots", "ask_bot", "delegate_bot", "project_assign"]),

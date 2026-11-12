@@ -1,3 +1,8 @@
+import { appendDecision } from '../decision-log.ts';
+import { DATA_DIR } from '../config.ts';
+import { isDeepStrictEqual } from "node:util";
+import { executeServiceSync, type RequestHandle, type ServiceCall, type ServiceExecution } from "../decision/index.ts";
+import { MemoryApprovalQueue, producerBase, type ServiceAuthority, type OpenProducerRequest } from "./service-approval.ts";
 import { isProjectCloseLesson } from "../project-close.ts";
 import { roomRequest } from "../room-requests.ts";
 import { executionStore, partitionOfScope } from "../execution-audience.ts";
@@ -121,10 +126,27 @@ export function assertMemoryCaptureComplete(evidence:ReadonlyArray<{sourceId:str
  }
 }
 
+/** S4 supplies a verifier-issued service claim. Callers without a live service
+ * request retain the automatic-learning BASE path and cannot activate a held
+ * candidate by inventing an owner turn. */
+export async function saveGroundedMemory(text:string,evidence:MemoryEvidenceHandle[],key:string,access:MemoryAccess,claimType:MemoryClaimType|undefined,extractor:TextOnlyExtractor|null,ownerInvitation?:MemoryEvidenceHandle,options:{budgetGate?:(scopeId:string)=>boolean;authority?:ServiceAuthority}={}) {
+  if (!options.authority) return saveGroundedMemoryBase(text,evidence,key,access,claimType,extractor,ownerInvitation,options);
+  if(ownerInvitation&&claimType!=="character-canon")throw Object.assign(new Error("Owner invitations can only support character canon."),{status:400});
+  const cited=ownerInvitation?[...evidence,ownerInvitation]:evidence;
+  assertMemoryCaptureComplete(cited,access);
+  const id=saveMemoryCandidate(text,cited,key,access);
+  const request=openMemoryRequest(options.authority,access,id,1);
+  if(request.baseBranch && request.outcome.kind==='card') {
+    await saveGroundedMemoryBase(text,evidence,key,access,claimType,extractor,ownerInvitation,options);
+    if(database().prepare("SELECT state FROM memory_records WHERE id=? AND version=1").get(id)?.state==='candidate') presentMemoryRequest(request,request.outcome.ref,access,id,1);
+  } else finishMemoryRequest(request,access,id,1);
+  return id;
+}
+
 /** Ground through the configured isolated text-only evaluator. The durable
  * candidate exists before optional synthesis; a changed audience/source/config
  * fences activation, while unavailable synthesis remains honestly provisional. */
-export async function saveGroundedMemory(text:string,evidence:MemoryEvidenceHandle[],key:string,access:MemoryAccess,claimType:MemoryClaimType|undefined,extractor:TextOnlyExtractor|null,ownerInvitation?:MemoryEvidenceHandle,options:{budgetGate?:(scopeId:string)=>boolean}={}){
+async function saveGroundedMemoryBase(text:string,evidence:MemoryEvidenceHandle[],key:string,access:MemoryAccess,claimType:MemoryClaimType|undefined,extractor:TextOnlyExtractor|null,ownerInvitation?:MemoryEvidenceHandle,options:{budgetGate?:(scopeId:string)=>boolean}={}){
   if(ownerInvitation&&claimType!=="character-canon")throw Object.assign(new Error("Owner invitations can only support character canon."),{status:400});
   assertMemoryAccess(access);
   const cited=ownerInvitation?[...evidence,ownerInvitation]:evidence;
@@ -259,6 +281,89 @@ export function approveCorrection(db: DatabaseSync, record: Record<string, unkno
 
 export function approveMemory(ticket: object, id: string, version: number, options: {pin?: boolean; scopeId?: string; correctionPin?: CorrectionPinChoice} = {}) {
   requireMemoryOwner(ticket);
+  return applyMemoryApproval(id,version,options);
+}
+/** Build the action from the durable candidate, never from the display prose.
+ * The source evidence, exact target revision and pin state are part of the
+ * registered input as well as the candidate identity and requesting access. */
+function requestedMemoryInput(access: MemoryAccess, id: string, version: number) {
+  const db=database(), record=db.prepare("SELECT * FROM memory_records WHERE id=? AND version=?").get(id,version);
+  if(!record)throw new Error("MEMORY_VERSION_CONFLICT");
+  const target=readCorrectionTarget(db,id,version)?.target;
+  return {operation:record.supersedes_id?'correction':'save',candidateId:id,version,botId:access.botId,threadId:access.threadId,generation:access.generation,
+    scopeId:String(record.scope_id),text:String(record.text),
+    evidence:db.prepare("SELECT source_id,source_revision,start_byte,end_byte FROM memory_evidence WHERE record_id=? AND record_version=? ORDER BY source_id,source_revision,start_byte,end_byte").all(id,version).map(row=>({...row})),
+    target:target?{id:target.id,version:target.version,ownerPinned:target.ownerPinned}:null};
+}
+
+/** The registered call, including its exact operation, is the authority. This
+ * private mutation is shared with the queue's authenticated answer delivery;
+ * neither service nor routine claims mint a desktop owner ticket. */
+function applyRegisteredMemory(call:ServiceCall,access:MemoryAccess,id:string,version:number):void {
+  transaction(db=>{
+    const expected=requestedMemoryInput(access,id,version);
+    const tool=expected.operation==='correction'?'memory_correction':'memory_save';
+    // The decision executor delivers null-prototype objects. Compare exact
+    // values after cloning, so an object prototype cannot reject an owner RUN.
+    if(call.tool!==tool || !isDeepStrictEqual(structuredClone(call.input),expected))throw new Error("MEMORY_REQUEST_MISMATCH");
+    const record=db.prepare("SELECT * FROM memory_records WHERE id=? AND version=?").get(id,version)!;
+    if(db.prepare("SELECT max(version) AS version FROM memory_records WHERE id=?").get(id)?.version!==version)throw new Error("MEMORY_VERSION_CONFLICT");
+    assertMemoryAccess(access,String(record.scope_id)); assertEvidenceCurrent(db,id,version);
+    if(record.state==='active')return;
+    const target=readCorrectionTarget(db,id,version);
+    applyMemoryApproval(id,version,target?.target?.ownerPinned?{correctionPin:'transfer'}:{});
+  });
+}
+
+/** Final deny recheck and at-most-once execution belong to the decision executor. */
+export function applyRequestedMemory(handle:RequestHandle,access:MemoryAccess,id:string,version:number):ServiceExecution<void> {
+  return executeServiceSync(handle,call=>applyRegisteredMemory(call,access,id,version));
+}
+
+// The producer owns this actual durable queue; S4 binds its recovery/reopen and
+// synchronous delivery capabilities before recover. A recovery access must be
+// freshly revalidated, never deserialized from the saved proof.
+const queues=new WeakMap<DatabaseSync,MemoryApprovalQueue>();
+let recoveryAccess:((proof:unknown)=>MemoryAccess|undefined)|undefined;
+export function installMemoryApprovalAccess(resolve:(proof:unknown)=>MemoryAccess|undefined):()=>void {
+  recoveryAccess=resolve; return ()=>{if(recoveryAccess===resolve)recoveryAccess=undefined;};
+}
+export function memoryApprovalQueue():MemoryApprovalQueue {
+  const db=database();
+  let queue=queues.get(db);
+  if(!queue) {
+    const deliver=(item:import('../decision/index.ts').PendingQueueApproval,answer:import('../decision/index.ts').ApprovalAnswer)=>{
+      if(answer.behavior!=='allow')return;
+      const access=recoveryAccess?.(item.proof);
+      if(!access)throw new Error('MEMORY_UNAUTHORIZED');
+      const input=item.call.input as {candidateId:string;version:number};
+      applyRegisteredMemory(item.call,access,input.candidateId,input.version);
+    };
+    queue=new MemoryApprovalQueue('memory',undefined,deliver,deliver);
+    queues.set(db,queue);
+  }
+  return queue;
+}
+export function openMemoryRequest(authority:ServiceAuthority,access:MemoryAccess,id:string,version:number,operation:'save'|'correction'='save'):OpenProducerRequest {
+  const input=requestedMemoryInput(access,id,version),tool=operation==='correction'?'memory_correction':'memory_save';
+  if(input.operation!==operation)throw new Error('MEMORY_REQUEST_MISMATCH');
+  return memoryApprovalQueue().open({authority,ref:`memory-${id}-${version}`,tool,input,
+    action:{requestId:`memory-${id}-${version}`,tool,options:['Keep','Discard'],candidateId:id,version,target:input.target},
+    view:{title:'This memory needs you before it is used.',subtitle:input.text},base:producerBase(true)});
+}
+export function presentMemoryRequest(request:OpenProducerRequest,ref:import('../decision/index.ts').ApprovalRef,access:MemoryAccess,id:string,version:number):void {
+  memoryApprovalQueue().presentNow(request,ref,(item,answer)=>{
+    if(answer.behavior==='allow')applyRegisteredMemory(item.call,access,id,version);
+  });
+}
+export function finishMemoryRequest(request:OpenProducerRequest,access:MemoryAccess,id:string,version:number):void {
+  const result=request.outcome.kind==='run'?applyRequestedMemory(request.handle,access,id,version):request.outcome;
+  if(result.kind==='refuse')throw new Error(result.message);
+  if(result.kind!=='executed')presentMemoryRequest(request,result.ref,access,id,version);
+  else if(!request.baseBranch) appendDecision(DATA_DIR,{threadId:access.threadId,botId:access.botId,requestId:request.item.ref,tool:request.item.call.tool,summary:request.item.call.tool,decision:'auto-approved',source:'no-limits'});
+}
+
+function applyMemoryApproval(id: string, version: number, options: {pin?: boolean; scopeId?: string; correctionPin?: CorrectionPinChoice}) {
   return transaction(db => {
     const record = db.prepare("SELECT * FROM memory_records WHERE id=? AND version=? AND state='candidate'").get(id,version);
     if (!record) throw new Error("MEMORY_VERSION_CONFLICT");

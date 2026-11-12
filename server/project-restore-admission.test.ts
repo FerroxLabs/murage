@@ -48,7 +48,7 @@ function processAlive(pid: number): boolean {
 }
 
 async function startFixture(signal: AbortSignal, options: { env?: Record<string, string>; gateRestore?: boolean } = {}): Promise<Fixture> {
-  const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+  const realGit = execFileSync("which", ["git"], { windowsHide: true, encoding: "utf8" }).trim();
   const root = mkdtempSync(join(tmpdir(), "murage-restore-admission-"));
   const data = join(root, "data"), bin = join(root, "bin"), project = join(root, "project");
   const ready = join(root, "restore-ready"), release = join(root, "restore-release"), dump = join(root, "fake-engine.json");
@@ -65,7 +65,7 @@ async function startFixture(signal: AbortSignal, options: { env?: Record<string,
   writeFileSync(join(data, "config.json"), JSON.stringify({ engineDiscovery: "explicit", instances: { fixture: { driver: "claudeAgent", config: { cli: fakeCli } } } }));
   const port = await freePortBlock([0, 1]), secret = "7".repeat(64);
   const desktop = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret };
-  const child = spawn(process.execPath, [fileURLToPath(new URL("./index.ts", import.meta.url))], { cwd: fileURLToPath(new URL("..", import.meta.url)), env: {
+  const child = spawn(process.execPath, [fileURLToPath(new URL("./index.ts", import.meta.url))], { windowsHide: true, cwd: fileURLToPath(new URL("..", import.meta.url)), env: {
     HOME: root, USERPROFILE: root, PATH: `${bin}:${process.env.PATH ?? "/usr/bin:/bin"}`, MURAGE_DATA_DIR: data,
     MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: secret, FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: dump,
     ...options.env,

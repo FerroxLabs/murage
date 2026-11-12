@@ -25,6 +25,12 @@ import { appendDecision, flushDecisionLog, readDecisions } from "./decision-log.
 
 ensureDirs();
 
+it('keeps the local tool execution cwd on the server', () => {
+  const event = { ...ask(), executionCwd: '/fixture/private-tool-cwd' } as Extract<RuntimeEvent, { type: 'request.opened' }>;
+  expect(requestOpenedOut(event)).toEqual(requestOpenedOut(ask() as typeof event));
+  expect(loggedRuntimeEvent(event)).toEqual(loggedRuntimeEvent(ask()));
+});
+
 const FAKE_PROVIDER_KEY = "fake-provider-key-0001-not-real";
 const FAKE_SHELL_VALUE = "fake-shell-value-0002-not-real";
 

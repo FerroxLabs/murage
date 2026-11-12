@@ -1,0 +1,74 @@
+
+ RUN  v4.1.12 /evidence/wiring-gate-final
+
+ ❯ scripts/contract.test.mjs (8 tests | 1 failed | 6 skipped) 623ms
+   ↓ T-RELEASE-NO-REBUILD
+   ↓ T-INTEGRITY-ONE-CONTRACT
+   ↓ T-REPRO-SELF: Gradle and environment are deterministic before pinning
+   ✓ T-GRADLE-STRICT: reviewed metadata covers the complete closure 2ms
+   × T-GRADLE-STRICT: production execution and key retrieval fail closed with fake inputs 619ms
+   ↓ T-NO-NESTED-NATIVE: launcher selects both loose libraries
+   ↓ T-NO-NESTED-NATIVE and T-JRE-UPSTREAM rejection witnesses
+   ↓ T-REPRO-SELF rejects an unpinned image and a missing Gradle checksum before downloading
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed | 6 skipped (8)
+   Start at  09:06:45
+   Duration  799ms (transform 52ms, setup 0ms, import 72ms, tests 623ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  scripts/contract.test.mjs > T-GRADLE-STRICT: production execution and key retrieval fail closed with fake inputs
+AssertionError: test_exact_limit_is_not_truncated (__main__.KeyRetrieval.test_exact_limit_is_not_truncated) ... ok
+test_export_failure_is_fatal (__main__.KeyRetrieval.test_export_failure_is_fatal) ... ok
+test_import_failure_is_fatal_and_diagnostic_is_retained (__main__.KeyRetrieval.test_import_failure_is_fatal_and_diagnostic_is_retained) ... ok
+test_local_process_failure_is_fatal (__main__.KeyRetrieval.test_local_process_failure_is_fatal) ... ok
+test_local_write_failure_is_fatal (__main__.KeyRetrieval.test_local_write_failure_is_fatal) ... ok
+test_network_fallback_retains_retrieval_diagnostics (__main__.KeyRetrieval.test_network_fallback_retains_retrieval_diagnostics) ... ok
+test_oversized_response_is_fatal_and_never_imported (__main__.KeyRetrieval.test_oversized_response_is_fatal_and_never_imported) ... ok
+test_unavailable_network_keeps_both_diagnostics (__main__.KeyRetrieval.test_unavailable_network_keeps_both_diagnostics) ... ok
+test_both_production_attempts_stage_exact_inputs_and_invoke_strict_gradle (__main__.ProductionWiring.test_both_production_attempts_stage_exact_inputs_and_invoke_strict_gradle) ... FAIL
+test_missing_reviewed_input_fails_before_gradle (__main__.ProductionWiring.test_missing_reviewed_input_fails_before_gradle) ... ok
+
+======================================================================
+FAIL: test_both_production_attempts_stage_exact_inputs_and_invoke_strict_gradle (__main__.ProductionWiring.test_both_production_attempts_stage_exact_inputs_and_invoke_strict_gradle)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/evidence/wiring-gate-final/scripts/signal-gradle-verification.test.py", line 194, in test_both_production_attempts_stage_exact_inputs_and_invoke_strict_gradle
+    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+AssertionError: 1 != 0 : synthetic-java
+Traceback (most recent call last):
+  File "/tmp/signal-production-fixture-qzt4wqhc/out/first-build/source/./gradlew", line 7, in <module>
+    assert staged.is_file(), 'missing staged '+name
+AssertionError: missing staged verification-metadata.xml
+
+
+----------------------------------------------------------------------
+Ran 10 tests in 0.534s
+
+FAILED (failures=1)
+
+
+1 !== 0
+
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ scripts/contract.test.mjs:36:10
+     34|   const { spawnSync } = await import('node:child_process');
+     35|   const result = spawnSync('python3', ['scripts/signal-gradle-verifica…
+     36|   assert.equal(result.status, 0, result.stdout + result.stderr);
+       |          ^
+     37| });
+     38| test('T-NO-NESTED-NATIVE: launcher selects both loose libraries', () =…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+Underlying gate exit: 1
+KILLED: production wiring gate rejected the commented metadata-copy command

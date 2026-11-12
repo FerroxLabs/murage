@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { env } from "cloudflare:workers";
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createAuth } from "../src/auth";
+import { alertTier } from "../src/alert-tiers";
+import { weeklyReviewLines } from "../src/alert-pages";
+import { firstKeyRetryDelayMs, renewalHeldBack } from "../src/b4-flux-renewal";
+import { FluxEmailUnverified, FluxEnsureRefused, FluxHookRetry, FluxNotDispatched } from "../src/flux-grants";
+import { fluxEmailProofOperatorRoute } from "../src/flux-email-proof";
 import {
   changePlan,
   createFluxClient,
@@ -10,6 +15,7 @@ import {
   FLUX_OFF_MESSAGE,
   fluxOffStubRoute,
   grantMonthlyCredits,
+  linkRedirectForTests,
   stopForBilling,
   spendingOffMaxStalenessMs,
   spendingOffPollBatch,
@@ -23,6 +29,7 @@ import {
 import { DEFAULT_FLUX_CONFIG, defaultCapUsd, isFluxPath, readFluxConfig } from "../src/b4-flux-config";
 import { DISPATCH_TTL_MS, ledgerPage } from "../src/b4-flux-ledger";
 import { stubFluxHooks } from "../src/b5-billing";
+import { reconcileQueuedStops } from "../src/legal-refunds";
 import { readConfig } from "../src/config";
 import { createWorker } from "../src/index";
 import { sha256 } from "../src/installations";
@@ -37,6 +44,8 @@ const FLUX_ACCOUNT = "11111111-2222-3333-4444-555555555555";
 const ADMIN = "admin-token-for-flux-tests-0123456789abcdef";
 const SERVICE_TOKEN = "s".repeat(40);
 const DAY = 86_400_000;
+/** 8b: the compatible site sends this on POST /flux/cap; with FLUX_RESUME_VIA_POLLER=1 it lets ON resume a stopped home through the poller. */
+const SITE_COMPAT = { "x-murage-site-compat": "spending-2" };
 /** Round 4: a failed op is retried by the sweep after its backoff (5 min for the first failure). */
 const BACKOFF = 6 * 60_000;
 const LEASE = 2 * 60_000;
@@ -76,6 +85,19 @@ class FakeFlux implements FluxClient {
   keyRevokeDown = false;
   latestGeneration = 0;
   conflictOnce: string | null = null;
+  /** 8b router models, all opt-in (the older tests keep the older, looser router). */
+  /** L:681: a home stopped at lifecycle V refuses a mint at V or lower (409 home_stopped); a higher one lifts the Stop whatever owner_resume says. */
+  strictStop = false;
+  /** Router PR 624: a mint that would lift a Stop is refused unless owner_resume is true. */
+  requireOwnerResume = false;
+  /** R:~500: a generation at or below the latest is 409 stale_generation by CODE (no number in the words). */
+  staleByCode = false;
+  /** Every router call, in order: "mint:<lifecycle>", "stop:<lifecycle>", "revoke:<generation>", "cap:<version>". */
+  log: string[] = [];
+  /** Router calls of any kind (the exclusive wrapper) and mint calls that reached the router (even refused ones). */
+  calls = 0;
+  mintCalls = 0;
+  statusHomes: string[] = [];
   statusFor: FluxHomeStatus = { state: "ok", capMicrocents: 30_000_000, spentMicrocents: 4_000_000, resetsAt: "2026-11-01T00:00:00Z", accountSpendableMicrocents: 12_000_000, accountAutoTopUpEnabled: true };
   // ── Flux app (credit grants) ──
   grants: FluxGrant[] = [];
@@ -120,6 +142,7 @@ class FakeFlux implements FluxClient {
   private failFor(homeId: string) { if (this.failHomes.has(homeId)) { this.failedCalls++; throw new FluxError(502, ""); } }
   private async exclusive<T>(fn: () => Promise<T>): Promise<T> {
     this.inflight++;
+    this.calls++;
     if (this.inflight > 1) this.overlapped = true;
     try { return await fn(); } finally { this.inflight--; }
   }
@@ -128,6 +151,7 @@ class FakeFlux implements FluxClient {
   revokeKey(homeId: string, generation: number, lifecycleVersion: number) { return this.exclusive(() => this.revokeKeyImpl(homeId, generation, lifecycleVersion)); }
   setCap(homeId: string, capMicrocents: number, capVersion: number) { return this.exclusive(() => this.setCapImpl(homeId, capMicrocents, capVersion)); }
   private async mintImpl(input: FluxMint) {
+    this.mintCalls++;
     this.check();
     if (this.mintError) throw this.mintError;
     if (this.onMint) { const hook = this.onMint; this.onMint = null; await hook(); }
@@ -137,7 +161,10 @@ class FakeFlux implements FluxClient {
     if (input.capVersion < this.capFloor) throw new FluxError(409, "", "stale_cap");
     if (this.enforceLink && input.linkVersion < this.linkFloor) throw new FluxError(409, "", "stale_link");
     if (this.tombstonedKeys.has(input.generation)) throw new FluxError(409, "", "generation_revoked");
-    if (input.generation <= this.highestGeneration) throw new FluxError(409, `generation must be greater than ${this.highestGeneration}`);
+    if (this.strictStop && this.stopped && input.lifecycleVersion <= this.lifecycleFloor) throw new FluxError(409, "", "home_stopped");
+    if (this.requireOwnerResume && this.stopped && !input.ownerResume) throw new FluxError(409, "", "owner_resume_required");
+    if (input.generation <= this.highestGeneration) throw this.staleByCode ? new FluxError(409, "", "stale_generation") : new FluxError(409, `generation must be greater than ${this.highestGeneration}`);
+    this.log.push(`mint:${input.lifecycleVersion}`);
     this.mints.push(input);
     this.routerCap = input.capMicrocents;
     this.routerCapVersion = input.capVersion;
@@ -162,6 +189,7 @@ class FakeFlux implements FluxClient {
     if (options.linkVersion !== undefined) this.linkFloor = Math.max(this.linkFloor, options.linkVersion);
     this.stopped = true;
     this.keys.clear();
+    this.log.push(`stop:${lifecycleVersion}`);
     this.stops.push(homeId); this.stopVersions.push(lifecycleVersion); this.stopLinkVersions.push(options.linkVersion);
     if (this.stopAckLost) { this.stopAckLost = false; throw new FluxError(0, "unreachable"); }
   }
@@ -170,6 +198,7 @@ class FakeFlux implements FluxClient {
     if (this.onKeyRevoke) { const hook = this.onKeyRevoke; this.onKeyRevoke = null; await hook(); }
     if (this.keyRevokeDown) throw new FluxError(502, "");
     this.keys.delete(generation);
+    this.log.push(`revoke:${generation}`);
     this.tombstonedKeys.add(generation); // idempotent; a never-published generation can no longer be published
     this.keyRevokes.push({ homeId, generation, lifecycleVersion });
   }
@@ -183,7 +212,7 @@ class FakeFlux implements FluxClient {
     this.caps.push({ homeId, capMicrocents, capVersion });
   }
   statusCalls = 0;
-  async status() { this.statusCalls++; this.check(); return this.statusFor; }
+  async status(homeId?: string) { this.statusCalls++; if (homeId) this.statusHomes.push(homeId); this.check(); return this.statusFor; }
   async grant(input: FluxGrant) {
     this.check();
     this.deliveries.push({ grantId: input.grantId, deliveryId: input.deliveryId });
@@ -257,6 +286,7 @@ function armDb(match: RegExp, action: () => Promise<void>) {
 
 let flux = new FakeFlux();
 let clock = Date.parse("2026-10-09T12:00:00Z");
+// 8b: the owner mint is closed in the product; this suite takes its keys through the home's own poller (pollerKey).
 const deps: FluxDependencies = { fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock };
 // Wiring step 3: the Flux owner routes take only the Supabase members-area token (Cloud scope), and link, key, cap and Stop
 // need a fresh TRUSTED second factor (the real gate: aal2 + a fresh totp proof + an active cloud_trusted_factors row + the factor
@@ -272,6 +302,8 @@ const fluxAuthFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => 
     factors: [{ id: factorOf(c.sub), factor_type: "totp", status: unverified.has(c.sub) ? "unverified" : "verified", friendly_name: "" }] });
 }) as typeof fetch;
 const worker = createWorker(undefined, undefined, {}, {}, {}, { jwksFetch, authFetch: fluxAuthFetch }, {}, deps);
+const worker8b = worker; // kept so a parallel branch that adds tests to the 8b block still merges
+let activeWorker = worker;
 /** A members-area token that proved the member's TOTP factor `ageS` seconds ago (aal2), or an aal1 sign-in only. */
 const stepUpToken = (sub: string, email: string, options: { ageS?: number; aal1?: boolean } = {}) =>
   supabaseToken(sub, email, (s) => options.aal1 ? {} : { aal: "aal2", mfa_factor_id: factorOf(sub),
@@ -290,14 +322,14 @@ const testEnv = () => ({
   ...env, DB: dbHook ? hookDb(env.DB, dbHook) : env.DB, MACHINE_OPEN_LIMIT: undefined, MACHINE_BEARER_LIMIT: undefined,
   ...supabaseEnv, CLOUD_ADMIN_TOKEN: ADMIN, FLUX_CLOUD_SERVICE_TOKEN: SERVICE_TOKEN, FLUX_LINK_PUBLIC_KEY: publicKeyB64,
   // The Flux routes and cron are default-off (Astra B4-PORT P1/P2); this suite exercises them switched on and configured.
-  CLOUD_FLUX_ROUTES_ENABLED: "1", FLUX_API_BASE: "https://api.fluxrouter.ai", ...extra,
+  CLOUD_FLUX_ROUTES_ENABLED: "1", FLUX_API_BASE: "https://api.fluxrouter.ai", FLUX_CLOUD_GRANTS_TOKEN: "g".repeat(40), ...extra,
 }) as Env;
 
 async function call(method: string, path: string, token: string | null, body?: unknown, headers: Record<string, string> = {}) {
   const h = new Headers({ "content-type": "application/json", ...headers });
   if (token) h.set("authorization", `Bearer ${token}`);
   const ctx = createExecutionContext();
-  const response = await worker.fetch(new Request(`https://auth.murage.test${path}`, {
+  const response = await activeWorker.fetch(new Request(`https://auth.murage.test${path}`, {
     method, headers: h, body: body === undefined || method === "GET" || method === "DELETE" ? undefined : JSON.stringify(body),
   }), testEnv(), ctx);
   await waitOnExecutionContext(ctx);
@@ -309,7 +341,9 @@ async function signIn(email: string) {
   const member = await cloudMember(email);
   await env.DB.prepare("INSERT OR IGNORE INTO cloud_trusted_factors (user_id,factor_id,factor_type,via,trusted_at,usable_at,state) VALUES (?,?,'totp','email_code',0,0,'active')")
     .bind(member.userId, factorOf(member.sub)).run();
-  return { token: await stepUpToken(member.sub, email), userId: member.userId, sub: member.sub, email };
+  const token = await stepUpToken(member.sub, email);
+  tokenUsers.set(token, member.userId);
+  return { token, userId: member.userId, sub: member.sub, email };
 }
 /** The phone companion's Better Auth email-code session: never an identity on a Flux owner route. */
 async function companionSignIn(email: string) {
@@ -343,10 +377,15 @@ async function signedProof(state: string, overrides: Record<string, unknown> = {
   if (flipSignature) signature[0] ^= 1;
   return `${encoded}.${b64url(signature)}`;
 }
+/** Stage A: the redirect link flow is retired (/v1/flux/link/start is 404). An owner's link is the one ensureOwnerLinked writes: link_id =
+ *  the Flux account id, version 1. The tests seed exactly that row. */
+const tokenUsers = new Map<string, string>();
 async function link(token: string, fluxAccount = FLUX_ACCOUNT) {
-  const start = await (await call("POST", "/v1/flux/link/start", token)).json<{ state: string }>();
-  const done = await call("POST", "/v1/flux/link/complete", token, { state: start.state, proof: await signedProof(start.state, { flux_account_id: fluxAccount }) });
-  expect(done.status).toBe(200);
+  const userId = tokenUsers.get(token);
+  if (userId === undefined) throw new Error("link(): token not from signIn");
+  await env.DB.prepare(`INSERT OR IGNORE INTO flux_links (owner_user_id,flux_account_id,linked_at,link_id,link_version,fenced)
+    SELECT ?,?,?,?,COALESCE((SELECT version FROM flux_link_floor WHERE owner_user_id=?),0)+1,0`)
+    .bind(userId, fluxAccount, Date.now(), fluxAccount, userId).run();
 }
 async function machineSetup(ownerToken: string, userId: string) {
   await seedHome(userId);
@@ -356,6 +395,51 @@ const admin = (path: string, body: unknown, token: string | null = ADMIN) => cal
 const seedHomeKeyRow = () => env.DB.prepare(`INSERT OR IGNORE INTO flux_home_keys (home_id,plan,generation,state,cap_microcents,cap_custom,updated_at)
   VALUES (?, 'starter', 0, 'none', 30000000, 0, ?)`).bind(HOME, Date.now()).run();
 const homeRow = () => env.DB.prepare("SELECT * FROM flux_home_keys WHERE home_id=?").bind(HOME).first<Record<string, unknown>>();
+/** What the home's own poller needs to take a key: its machine credential, a paid live home and an active subscription. Idempotent. */
+async function pollerReady(homeId = HOME) {
+  await env.DB.batch([
+    env.DB.prepare("UPDATE cloud_machines SET credential_hash=? WHERE id=?").bind(await sha256(MACHINE_TOKEN), homeId),
+    env.DB.prepare("UPDATE cloud_homes SET entitlement='paid', heartbeat_at=COALESCE(heartbeat_at, ?) WHERE id=?").bind(clock, homeId),
+    env.DB.prepare(`INSERT OR IGNORE INTO billing_subscriptions (home_id,customer_id,subscription_id,plan,status,created_at,updated_at)
+      VALUES (?,'cus_1','sub_1','starter','active',?,?)`).bind(homeId, clock, clock),
+  ]);
+}
+/** The poller's mint: renewal-due, then subkey with the named operation (the only way a key is minted). A home that already holds a live
+ *  key is made due first, so a second call is a renewal. Answers the mint response (not acked). */
+async function pollerMint(generation = 1): Promise<Response> {
+  await pollerReady();
+  await env.DB.prepare("DELETE FROM flux_first_key_retry WHERE home_id=?").bind(HOME).run(); // the seed does not wait out the poller's bound
+  const post = (route: string, body: unknown) => call("POST", `/v1/machines/${HOME}/flux/${route}`, MACHINE_TOKEN, body, { "CF-Connecting-IP": HOME_IP });
+  let due = await (await post("renewal-due", { generation })).json<{ due: boolean; op_id?: string }>();
+  if (!due.due) {
+    await env.DB.prepare("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?").bind(clock, HOME).run();
+    due = await (await post("renewal-due", { generation })).json<{ due: boolean; op_id?: string }>();
+  }
+  return post("subkey", { generation, op_id: due.op_id });
+}
+/** Spending back ON through the cap route (8b: writes the resume, mints nothing); resumeAndKey then takes the poller's resume mint and ack. */
+async function spendingOn(ownerToken: string): Promise<Response> {
+  extra = { ...extra, FLUX_RESUME_VIA_POLLER: "1" };
+  const on = await call("POST", `/v1/homes/${HOME}/flux/cap`, ownerToken, { enabled: true }, { "x-murage-site-compat": "spending-2" });
+  expect(on.status).toBe(200);
+  return on;
+}
+async function resumeAndKey(ownerToken: string): Promise<Response> {
+  await spendingOn(ownerToken);
+  return pollerKey();
+}
+/** pollerMint, then the poller's ack when the mint landed: the key is delivered and adopted. Answers the mint response. */
+async function pollerKey(generation = 1): Promise<Response> {
+  const minted = await pollerMint(generation);
+  if (minted.status === 200) {
+    const k = await minted.clone().json<{ generation: number }>();
+    const op = await env.DB.prepare("SELECT pending_op_id FROM flux_home_keys WHERE home_id=?").bind(HOME).first<{ pending_op_id: string }>();
+    const ack = await call("POST", `/v1/machines/${HOME}/flux/subkey/ack`, MACHINE_TOKEN, { generation, op_id: op!.pending_op_id, key_generation: k.generation }, { "CF-Connecting-IP": HOME_IP });
+    expect(ack.status).toBe(200);
+    await env.DB.prepare("DELETE FROM flux_mint_ops WHERE op_id=?").bind(op!.pending_op_id).run(); // a seed leaves no operation marker behind
+  }
+  return minted;
+}
 /** Astra INTEGRATED-9: the B4 ledger as tests read it. */
 const ledgerAcct = (grantId: string) => env.DB.prepare("SELECT * FROM flux_grant_accounts WHERE grant_id=?").bind(grantId).first<Record<string, unknown>>();
 const ledgerAlert = async (grantId: string) => {
@@ -493,7 +577,7 @@ describe("wiring step 3: Flux owner routes on the Supabase Cloud account", () =>
     const status = await call("GET", "/v1/flux/link", owner.token);
     expect(status.status).toBe(200);
     expect(await status.json()).toMatchObject({ linked: true, fluxAccountHint: FLUX_ACCOUNT.slice(-4) });
-    const minted = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    const minted = await pollerKey();
     expect(minted.status).toBe(200);
     expect(flux.mints.map((m) => [m.homeId, m.accountId])).toEqual([[HOME, FLUX_ACCOUNT]]);
     const cap = await call("POST", `/v1/homes/${HOME}/flux/cap`, owner.token, { capUsd: 55 });
@@ -530,17 +614,22 @@ describe("wiring step 3: Flux owner routes on the Supabase Cloud account", () =>
     await machineSetup(owner.token, owner.userId);
     const other = await signIn("other@example.test");
     await link(other.token, "22222222-3333-4444-5555-666666666666"); // a linked member, stepped up: still not the owner
-    for (const [method, action, body] of [["GET", ""], ["POST", "/subkey", {}], ["POST", "/cap", { capUsd: 50 }], ["POST", "/stop", {}]] as [string, string, unknown?][]) {
+    for (const [method, action, body] of [["GET", ""], ["POST", "/cap", { capUsd: 50 }], ["POST", "/stop", {}]] as [string, string, unknown?][]) {
       const theirs = await call(method, `/v1/homes/${HOME}/flux${action}`, other.token, body);
       const unknown = await call(method, `/v1/homes/home-nobody/flux${action}`, other.token, body);
       const a = [theirs.status, await theirs.text()];
       expect([method, action, ...a]).toEqual([method, action, 404, JSON.stringify({ error: "not_found" })]);
       expect([method, action, unknown.status, await unknown.text()]).toEqual([method, action, ...a]);
     }
+    // 8b: the owner mint is closed for every home, so /subkey answers one 410 for a foreign and an unknown home alike (it never reaches the owner check).
+    for (const id of [HOME, "home-nobody"]) {
+      const retired = await call("POST", `/v1/homes/${id}/flux/subkey`, other.token, {});
+      expect([id, retired.status, await retired.json()]).toEqual([id, 410, { error: "owner_mint_retired", message: "Your Cloud takes its own Flux key. Nothing to do here." }]);
+    }
     expect([flux.mints, flux.caps, flux.stops]).toEqual([[], [], []]);
   });
 
-  it("step 3: link start/complete, subkey, cap and stop need a fresh trusted second factor: missing, stale (outside the window) or untrusted factor is 403 step_up_required", async () => {
+  it("step 3: link start/complete, cap and stop need a fresh trusted second factor: missing, stale (outside the window) or untrusted factor is 403 step_up_required", async () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await seedHome(owner.userId);
@@ -550,11 +639,11 @@ describe("wiring step 3: Flux owner routes on the Supabase Cloud account", () =>
     const untrustedMember = await cloudMember("untrusted@example.test");
     const untrusted = await stepUpToken(untrustedMember.sub, "untrusted@example.test");
     await seedHome(untrustedMember.userId, { homeId: "home-untrusted" });
-    const start = await (await call("POST", "/v1/flux/link/start", owner.token)).json<{ state: string }>();
+    const start = { state: "s".repeat(43) }; // Stage A: the redirect flow is retired, no challenge can be made; the routes keep their gate
     const proof = await signedProof(start.state);
     const gated: [string, unknown, string?][] = [
       ["/v1/flux/link/start", undefined], ["/v1/flux/link/complete", { state: start.state, proof }],
-      [`/v1/homes/${HOME}/flux/subkey`, {}], [`/v1/homes/${HOME}/flux/cap`, { capUsd: 50 }], [`/v1/homes/${HOME}/flux/stop`, {}],
+      [`/v1/homes/${HOME}/flux/cap`, { capUsd: 50 }], [`/v1/homes/${HOME}/flux/stop`, {}],
     ];
     const refused = async (token: string, path: string, body: unknown, reason: string) => {
       const response = await call("POST", path, token, body);
@@ -570,16 +659,19 @@ describe("wiring step 3: Flux owner routes on the Supabase Cloud account", () =>
     unverified.add(owner.sub);
     for (const [path, body] of gated) await refused(owner.token, path, body, "untrusted_factor");
     unverified.delete(owner.sub);
+    // 8b: the retired owner mint has no step-up gate in front of it: a sign-in-only session gets the 410, not step_up_required.
+    const retired = await call("POST", `/v1/homes/${HOME}/flux/subkey`, aal1, {});
+    expect([retired.status, (await retired.json<{ error: string }>()).error]).toEqual([410, "owner_mint_retired"]);
     // Nothing happened: no link, no key, no cap, no Stop.
     expect((await linkState(owner.userId)).links).toBe(0);
     expect((await linkState(untrustedMember.userId))).toEqual({ challenges: 0, links: 0 });
     expect([flux.mints, flux.caps, flux.stops]).toEqual([[], [], []]);
     // Sign-in only: link status.
     expect((await call("GET", "/v1/flux/link", aal1)).status).toBe(200);
-    // The fresh trusted factor passes, and the challenge the gate held back still completes.
-    const done = await call("POST", "/v1/flux/link/complete", owner.token, { state: start.state, proof });
-    expect(done.status).toBe(200);
-    expect(await linkState(owner.userId)).toMatchObject({ links: 1 });
+    // The fresh trusted factor passes the gate; the retired start and complete answer 404.
+    expect((await call("POST", "/v1/flux/link/start", owner.token)).status).toBe(404);
+    expect((await call("POST", "/v1/flux/link/complete", owner.token, { state: start.state, proof })).status).toBe(404);
+    expect(await linkState(owner.userId)).toMatchObject({ links: 0, challenges: 0 });
     // Sign-in only too: the home's status.
     expect((await call("GET", `/v1/homes/${HOME}/flux`, aal1)).status).toBe(200);
   });
@@ -665,7 +757,7 @@ describe("wiring step 3: Flux owner routes on the Supabase Cloud account", () =>
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    expect((await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {})).status).toBe(200);
+    expect((await pollerKey()).status).toBe(200);
     flux.grantAckLost = true;
     const first = await admin("/v1/internal/flux/grant", { homeId: HOME, plan: "starter", invoiceId: "in_acklost_1", ...period() });
     expect(await first.json()).toMatchObject({ status: "pending", amountUsd: 10 });
@@ -771,7 +863,7 @@ describe("wiring step 3: Flux owner routes on the Supabase Cloud account", () =>
       response.headers.forEach((value, name) => { if (name !== "x-request-id") headers.push([name, value]); });
       return [response.status, headers, await response.text()];
     };
-    for (const [method, action, body] of [["GET", ""], ["POST", "/subkey", {}], ["POST", "/cap", { capUsd: 50 }], ["POST", "/stop", {}]] as [string, string, unknown?][]) {
+    for (const [method, action, body] of [["GET", ""], ["POST", "/cap", { capUsd: 50 }], ["POST", "/stop", {}]] as [string, string, unknown?][]) {
       const theirs = await snapshot(await call(method, `/v1/homes/${HOME}/flux${action}`, other.token, body));
       const staged = await snapshot(await call(method, `/v1/homes/home-cp0-foreign/flux${action}`, other.token, body));
       const unknown = await snapshot(await call(method, `/v1/homes/home-nobody/flux${action}`, other.token, body));
@@ -781,6 +873,14 @@ describe("wiring step 3: Flux owner routes on the Supabase Cloud account", () =>
       expect([method, action, staged]).toEqual([method, action, theirs]);
       expect([method, action, unknown]).toEqual([method, action, theirs]);
     }
+    // 8b: the retired owner mint answers the same 410 for the foreign, the staged and the unknown home.
+    const retiredAll = await Promise.all([HOME, "home-cp0-foreign", "home-nobody"].map(async (id) => {
+      const r = await call("POST", `/v1/homes/${id}/flux/subkey`, other.token, {});
+      return [r.status, await r.text()];
+    }));
+    expect(retiredAll[0][0]).toBe(410);
+    expect(retiredAll[1]).toEqual(retiredAll[0]);
+    expect(retiredAll[2]).toEqual(retiredAll[0]);
     // The owner's own answers keep their telemetry.
     expect((await call("GET", `/v1/homes/${HOME}/flux`, owner.token)).headers.get("server-timing")).toMatch(/^d1;dur=/);
     expect([flux.mints, flux.caps, flux.stops]).toEqual([[], [], []]);
@@ -859,113 +959,98 @@ describe("linking a Murage account to a Flux account", () => {
     }
   });
 
-  it("starts with a one-time state whose hash alone is stored, then links on a signed Flux proof", async () => {
-    await setupKeys();
-    const owner = await signIn("owner@example.test");
-    const start = await call("POST", "/v1/flux/link/start", owner.token);
-    expect(start.status).toBe(200);
-    const { state, authorizeUrl } = await start.json<{ state: string; authorizeUrl: string }>();
-    expect(authorizeUrl.startsWith("https://")).toBe(true);
-    expect(new URL(authorizeUrl).searchParams.get("state")).toBe(state);
-    const stored = await env.DB.prepare("SELECT state_hash FROM flux_link_challenges").all<{ state_hash: string }>();
-    expect(stored.results).toEqual([{ state_hash: await sha256(state) }]);
-    const done = await call("POST", "/v1/flux/link/complete", owner.token, { state, proof: await signedProof(state) });
-    expect(done.status).toBe(200);
-    expect(await done.json()).toEqual({ linked: true, fluxAccountHint: FLUX_ACCOUNT.slice(-4) });
-    const status = await (await call("GET", "/v1/flux/link", owner.token)).json<Record<string, unknown>>();
-    expect(status.linked).toBe(true);
-    expect(JSON.stringify(status)).not.toContain(FLUX_ACCOUNT);
-  });
-
-  it("refuses a proof that is replayed, forged, for another state, wrong audience or expired", async () => {
-    await setupKeys();
-    const owner = await signIn("owner@example.test");
-    const start = async () => (await (await call("POST", "/v1/flux/link/start", owner.token)).json<{ state: string }>()).state;
-    const complete = (state: string, proof: string) => call("POST", "/v1/flux/link/complete", owner.token, { state, proof });
-
-    const s1 = await start();
-    const proof = await signedProof(s1);
-    expect((await complete(s1, proof)).status).toBe(200);
-    expect((await complete(s1, proof)).status).toBe(400); // state and proof are both spent
-
-    const s2 = await start();
-    expect((await complete(s2, await signedProof(s2, {}, true))).status).toBe(400); // forged signature
-    const s3 = await start();
-    expect((await complete(s3, await signedProof(s2))).status).toBe(400); // proof for a different state
-    const s4 = await start();
-    expect((await complete(s4, await signedProof(s4, { aud: "someone-else" }))).status).toBe(400);
-    const s5 = await start();
-    expect((await complete(s5, await signedProof(s5, { exp: Math.floor(clock / 1000) - 1 }))).status).toBe(400);
-    const s6 = await start();
-    expect((await complete(s6, await signedProof(s6, { iat: Math.floor(clock / 1000) - 3600, exp: Math.floor(clock / 1000) + 3600 }))).status).toBe(400);
-    const s7 = await start();
-    const reusedJti = await signedProof(s7, { jti: JSON.parse(atob(proof.split(".")[0].replaceAll("-", "+").replaceAll("_", "/"))).jti });
-    expect((await complete(s7, reusedJti)).status).toBe(400); // a proof id works once
-    expect((await complete("not-a-known-state-0123456789", await signedProof("not-a-known-state-0123456789"))).status).toBe(400);
-    expect((await complete(s7, "garbage")).status).toBe(400);
-  });
-
+  // The retired flow, switched on in the test only (b4-flux.ts linkRedirectForTests): its own checks still hold.
   it("will not let a different Murage account use someone else's challenge", async () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     const thief = await signIn("thief@example.test");
-    const { state } = await (await call("POST", "/v1/flux/link/start", owner.token)).json<{ state: string }>();
-    expect((await call("POST", "/v1/flux/link/complete", thief.token, { state, proof: await signedProof(state) })).status).toBe(400);
+    linkRedirectForTests.enabled = true;
+    try {
+      const { state } = await (await call("POST", "/v1/flux/link/start", owner.token)).json<{ state: string }>();
+      expect((await call("POST", "/v1/flux/link/complete", thief.token, { state, proof: await signedProof(state) })).status).toBe(400);
+    } finally { linkRedirectForTests.enabled = false; }
   });
 
   it("expires an unused challenge", async () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
-    const { state } = await (await call("POST", "/v1/flux/link/start", owner.token)).json<{ state: string }>();
-    await env.DB.prepare("UPDATE flux_link_challenges SET expires_at=?").bind(clock - 1).run();
-    expect((await call("POST", "/v1/flux/link/complete", owner.token, { state, proof: await signedProof(state) })).status).toBe(400);
+    linkRedirectForTests.enabled = true;
+    try {
+      const { state } = await (await call("POST", "/v1/flux/link/start", owner.token)).json<{ state: string }>();
+      await env.DB.prepare("UPDATE flux_link_challenges SET expires_at=?").bind(clock - 1).run();
+      expect((await call("POST", "/v1/flux/link/complete", owner.token, { state, proof: await signedProof(state) })).status).toBe(400);
+    } finally { linkRedirectForTests.enabled = false; }
   });
 
-  it("is one Flux account per Murage account, both ways", async () => {
-    await setupKeys();
-    const a = await signIn("a@example.test");
-    const b = await signIn("b@example.test");
-    await link(a.token);
-    const again = await (await call("POST", "/v1/flux/link/start", a.token)).json<{ state: string }>();
-    const other = "99999999-2222-3333-4444-555555555555";
-    expect((await call("POST", "/v1/flux/link/complete", a.token, { state: again.state, proof: await signedProof(again.state, { flux_account_id: other }) })).status).toBe(409);
-    const second = await (await call("POST", "/v1/flux/link/start", b.token)).json<{ state: string }>();
-    expect((await call("POST", "/v1/flux/link/complete", b.token, { state: second.state, proof: await signedProof(second.state) })).status).toBe(409);
-    expect(await (await call("GET", "/v1/flux/link", b.token)).json()).toEqual({ linked: false });
-  });
-
-  it("says so, with a 503, when the Flux public key is not configured", async () => {
+  it("ITEM4-PROOF-CURRENT: /complete 404s while the flow is retired; switched on, its INSERT refuses without a TRUE stamp and with an open dispute", async () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
-    const { state } = await (await call("POST", "/v1/flux/link/start", owner.token)).json<{ state: string }>();
-    extra = { FLUX_LINK_PUBLIC_KEY: "" };
-    expect((await call("POST", "/v1/flux/link/complete", owner.token, { state, proof: await signedProof(state) })).status).toBe(503);
+    await env.DB.prepare("UPDATE supabase_identities SET contact_email=? WHERE user_id=?").bind(owner.email, owner.userId).run();
+    const challenge = async () => {
+      const state = b64url(crypto.getRandomValues(new Uint8Array(32)));
+      await env.DB.prepare("INSERT INTO flux_link_challenges (state_hash,owner_user_id,expires_at) VALUES (?,?,?)").bind(await sha256(state), owner.userId, clock + 600_000).run();
+      return { state, proof: await signedProof(state) };
+    };
+    const links = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_links").first<{ n: number }>())!.n;
+    const c0 = await challenge();
+    expect((await call("POST", "/v1/flux/link/complete", owner.token, c0)).status).toBe(404);
+    expect(await links()).toBe(0);
+    linkRedirectForTests.enabled = true;
+    try {
+      // Unproven: refused, nothing linked.
+      const r1 = await call("POST", "/v1/flux/link/complete", owner.token, await challenge());
+      expect([r1.status, (await r1.json<{ error: string }>()).error]).toEqual([409, "flux_email_unverified"]);
+      expect(await links()).toBe(0);
+      // Proven but disputed: refused.
+      await env.DB.prepare("UPDATE supabase_identities SET email_verified_at=1, email_verified_for=lower(contact_email) WHERE user_id=?").bind(owner.userId).run();
+      await env.DB.prepare("INSERT INTO flux_email_proof_disputes (account_id,note,by,email_revision,at) VALUES (?,'x','ops',0,1)").bind(owner.userId).run();
+      const r2 = await call("POST", "/v1/flux/link/complete", owner.token, await challenge());
+      expect([r2.status, (await r2.json<{ error: string }>()).error]).toEqual([409, "flux_email_unverified"]);
+      expect(await links()).toBe(0);
+      // A proof for another address (the stamp is not for the current one): refused.
+      await env.DB.prepare("DELETE FROM flux_email_proof_disputes").run();
+      await env.DB.prepare("UPDATE supabase_identities SET email_verified_for='other@example.test' WHERE user_id=?").bind(owner.userId).run();
+      expect((await call("POST", "/v1/flux/link/complete", owner.token, await challenge())).status).toBe(409);
+      expect(await links()).toBe(0);
+      // A TRUE stamp, no dispute: it links.
+      await env.DB.prepare("UPDATE supabase_identities SET email_verified_for=lower(contact_email) WHERE user_id=?").bind(owner.userId).run();
+      expect((await call("POST", "/v1/flux/link/complete", owner.token, await challenge())).status).toBe(200);
+      expect(await links()).toBe(1);
+    } finally {
+      linkRedirectForTests.enabled = false;
+      await env.DB.prepare("DELETE FROM flux_email_proof_disputes").run();
+    }
   });
+
 });
 
 describe("a Flux key for one home", () => {
-  it("needs the account linked and the machine bound, and never reveals foreign homes", async () => {
+  it("the owner route mints nothing for anyone: linked or not, own home, foreign home or unknown home all answer the same 410 owner_mint_retired, with no writes and no router call", async () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     const stranger = await signIn("stranger@example.test");
     await seedHome(owner.userId);
-    expect((await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {})).status).toBe(409);
-    expect((await (await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {})).json<{ error: string }>()).error).toBe("flux_not_linked");
+    const refusals = async (token: string, path: string) => {
+      const r = await call("POST", path, token, {});
+      return [r.status, (await r.json<{ error: string }>()).error];
+    };
+    const retired = [410, "owner_mint_retired"];
+    expect(await refusals(owner.token, `/v1/homes/${HOME}/flux/subkey`)).toEqual(retired); // not linked yet
     await link(owner.token);
-    const foreign = await call("POST", `/v1/homes/${HOME}/flux/subkey`, stranger.token, {});
-    const unknown = await call("POST", "/v1/homes/no-such-home/flux/subkey", stranger.token, {});
-    expect(foreign.status).toBe(404);
-    expect(await foreign.text()).toBe(await unknown.text());
-    expect(flux.mints).toHaveLength(0);
+    expect(await refusals(owner.token, `/v1/homes/${HOME}/flux/subkey`)).toEqual(retired);
+    expect(await refusals(stranger.token, `/v1/homes/${HOME}/flux/subkey`)).toEqual(retired);
+    expect(await refusals(stranger.token, "/v1/homes/no-such-home/flux/subkey")).toEqual(retired);
     await env.DB.prepare("UPDATE cloud_machines SET bound_ips=NULL").run();
-    expect((await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {})).status).toBe(409);
+    expect(await refusals(owner.token, `/v1/homes/${HOME}/flux/subkey`)).toEqual(retired);
+    expect(flux.calls).toBe(0);
+    expect([flux.mints.length, (await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_keys").first<{ n: number }>())!.n]).toEqual([0, 0]);
   });
 
   it("issues a capped, expiring key bound to the machine's IPs, once, and stores no secret", async () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    const response = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    const response = await pollerMint();
     expect(response.status).toBe(200);
     expect(response.headers.get("cache-control")).toBe("no-store");
     const body = await response.json<{ key: string; generation: number; expiresAt: string; capUsd: number }>();
@@ -974,8 +1059,8 @@ describe("a Flux key for one home", () => {
     expect(body.capUsd).toBe(30);
     expect(flux.mints).toEqual([{
       accountId: FLUX_ACCOUNT, homeId: HOME, generation: 1, boundIps: [HOME_IP], capMicrocents: 30_000_000, ttlSeconds: 35 * 86_400,
-      lifecycleVersion: 1, ownerResume: true, opId: expect.stringMatching(/^owner:home-flux:/),
-      linkId: expect.stringMatching(/^[0-9a-f]{32}$/), linkVersion: 1, capVersion: 1, billingState: "ok",
+      lifecycleVersion: 1, ownerResume: false, opId: `renew:${HOME}:1:0`,
+      linkId: FLUX_ACCOUNT, linkVersion: 1, capVersion: 1, billingState: "ok",
     }]);
     const row = await homeRow();
     expect(row).toMatchObject({ generation: 1, state: "active", cap_microcents: 30_000_000, cap_custom: 0, plan: "starter" });
@@ -988,11 +1073,11 @@ describe("a Flux key for one home", () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
-    const second = await (await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {})).json<{ generation: number }>();
+    await pollerKey();
+    const second = await (await pollerKey()).json<{ generation: number }>();
     expect(second.generation).toBe(2);
     flux.conflictOnce = "generation must be greater than 7";
-    const third = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    const third = await pollerKey();
     expect((await third.json<{ generation: number }>()).generation).toBe(8);
     expect((await homeRow())?.generation).toBe(8);
   });
@@ -1002,7 +1087,7 @@ describe("a Flux key for one home", () => {
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
     flux.down = true;
-    const response = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    const response = await pollerKey();
     expect(response.status).toBe(502);
     expect((await response.json<{ error: string }>()).error).toBe("flux_unavailable");
     expect((await homeRow())?.generation).toBe(0);
@@ -1020,7 +1105,7 @@ describe("a Flux key for one home", () => {
     // A home with no key yet is not active: a machine cannot be the first minter.
     expect((await renew()).status).toBe(409);
     expect(flux.mints).toHaveLength(0);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     // Fresh key: renewal is not due.
     const early = await renew();
     expect(early.status).toBe(409);
@@ -1042,7 +1127,7 @@ describe("a Flux key for one home", () => {
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
     await env.DB.prepare("UPDATE cloud_machines SET credential_hash=? WHERE id=?").bind(await sha256(MACHINE_TOKEN), HOME).run();
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     await env.DB.prepare("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?").bind(clock + DAY, HOME).run();
     await env.DB.prepare("INSERT INTO flux_mint_ops (op_id,home_id,created_at) VALUES (?,?,?)").bind(`renew:${HOME}:1:1`, HOME, clock).run();
     const replay = await call("POST", `/v1/machines/${HOME}/flux/subkey`, MACHINE_TOKEN, { generation: 1 }, { "CF-Connecting-IP": HOME_IP });
@@ -1054,6 +1139,7 @@ describe("a Flux key for one home", () => {
     flux.down = true;
     expect((await call("POST", `/v1/machines/${HOME}/flux/subkey`, MACHINE_TOKEN, { generation: 1 }, { "CF-Connecting-IP": HOME_IP })).status).toBe(502);
     flux.down = false;
+    clock += 60_000; // 8b fix r1 (Astra M5): the failed attempt waits the bound's first minute
     expect((await call("POST", `/v1/machines/${HOME}/flux/subkey`, MACHINE_TOKEN, { generation: 1 }, { "CF-Connecting-IP": HOME_IP })).status).toBe(200);
   });
 
@@ -1064,7 +1150,7 @@ describe("a Flux key for one home", () => {
     await env.DB.prepare("UPDATE cloud_machines SET credential_hash=? WHERE id=?").bind(await sha256(MACHINE_TOKEN), HOME).run();
     const ip = { "CF-Connecting-IP": HOME_IP };
     const post = (path: string, body: unknown, token = MACHINE_TOKEN) => call("POST", `/v1/machines/${HOME}/flux/${path}`, token, body, ip);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     const dueAt = clock + DAY;
     await env.DB.prepare("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?").bind(dueAt, HOME).run();
     const due = await (await post("renewal-due", { generation: 1 })).json<{ due: boolean; op_id: string }>();
@@ -1075,6 +1161,9 @@ describe("a Flux key for one home", () => {
     const body = await minted.json<{ key: string; generation: number; expiresAt: string; capUsd: number }>();
     expect(Object.keys(body).sort()).toEqual(["capUsd", "expiresAt", "generation", "key"]);
     expect((await homeRow())?.key_expires_at).toBe(dueAt);
+    // Undelivered: renewal waits the 60 s bound before it is cued again.
+    expect(await (await post("renewal-due", { generation: 1 })).json()).toEqual({ due: false });
+    clock += 60_000;
     const stillDue = await (await post("renewal-due", { generation: 1 })).json<{ due: boolean; op_id: string }>();
     expect(stillDue).toEqual({ due: true, op_id: `renew:${HOME}:1:${body.generation}` });
     // A stale or foreign operation name is not acknowledged; a bad credential is refused.
@@ -1098,9 +1187,12 @@ describe("a Flux key for one home", () => {
     await env.DB.prepare("UPDATE cloud_machines SET credential_hash=? WHERE id=?").bind(await sha256(MACHINE_TOKEN), HOME).run();
     const ip = { "CF-Connecting-IP": HOME_IP };
     const post = (path: string, body: unknown) => call("POST", `/v1/machines/${HOME}/flux/${path}`, MACHINE_TOKEN, body, ip);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     await env.DB.prepare("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?").bind(clock + DAY, HOME).run();
     expect((await post("subkey", { generation: 1 })).status).toBe(200); // delivery lost: no ack
+    const early = await post("subkey", { generation: 1 });
+    expect([early.status, (await early.json<{ error: string }>()).error]).toEqual([429, "renewal_retry_later"]);
+    clock += 60_000;
     const next = await (await post("renewal-due", { generation: 1 })).json<{ due: boolean; op_id: string }>();
     expect(next.due).toBe(true);
     const second = await post("subkey", { generation: 1, op_id: next.op_id });
@@ -1117,7 +1209,7 @@ describe("a Flux key for one home", () => {
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
     await env.DB.prepare("UPDATE cloud_machines SET credential_hash=? WHERE id=?").bind(await sha256(MACHINE_TOKEN), HOME).run();
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     await env.DB.prepare("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?").bind(clock + DAY, HOME).run();
     const response = await call("POST", `/v1/machines/${HOME}/flux/subkey`, MACHINE_TOKEN, { generation: 1, op_id: `renew:${HOME}:1:42` }, { "CF-Connecting-IP": HOME_IP });
     expect(response.status).toBe(409);
@@ -1125,13 +1217,13 @@ describe("a Flux key for one home", () => {
     expect(flux.mints).toHaveLength(1);
   });
 
-  it("renewal never undoes an owner Stop or a billing hold; only the owner resumes, and not under a hold", async () => {
+  it("renewal never undoes an owner Stop or a billing hold; the owner route no longer resumes (410), and a hold still refuses", async () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
     await env.DB.prepare("UPDATE cloud_machines SET credential_hash=? WHERE id=?").bind(await sha256(MACHINE_TOKEN), HOME).run();
     const renew = () => call("POST", `/v1/machines/${HOME}/flux/subkey`, MACHINE_TOKEN, { generation: 1 }, { "CF-Connecting-IP": HOME_IP });
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     await env.DB.prepare("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?").bind(clock - 1000, HOME).run(); // expired: renewal due
     await call("POST", `/v1/homes/${HOME}/flux/stop`, owner.token, {});
     const afterStop = await renew();
@@ -1139,15 +1231,14 @@ describe("a Flux key for one home", () => {
     expect((await afterStop.json<{ error: string }>()).error).toBe("home_not_active");
     expect(flux.mints).toHaveLength(1);
     expect((await homeRow())?.state).toBe("stopped");
-    const resumed = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
-    expect(resumed.status).toBe(200);
-    expect(flux.mints.at(-1)).toMatchObject({ ownerResume: true });
-    await env.DB.prepare("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?").bind(clock - 1000, HOME).run();
+    // 8b: the owner's /subkey no longer resumes a stopped home (spending back ON goes through the poller: see the 8b block).
+    const retired = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    expect([retired.status, (await retired.json<{ error: string }>()).error]).toEqual([410, "owner_mint_retired"]);
+    expect((await homeRow())?.state).toBe("stopped");
     await admin("/v1/internal/flux/stop", { homeId: HOME, reason: "refunded" });
     const underHold = await renew();
     expect((await underHold.json<{ error: string }>()).error).toBe("billing_hold");
-    expect((await (await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {})).json<{ error: string }>()).error).toBe("billing_hold");
-    expect(flux.mints).toHaveLength(2);
+    expect(flux.mints).toHaveLength(1);
   });
 
   it("the machine renewal-due question answers true only for an active, un-held home with a key due, and needs the machine credential", async () => {
@@ -1156,7 +1247,7 @@ describe("a Flux key for one home", () => {
     await machineSetup(owner.token, owner.userId);
     await env.DB.prepare("UPDATE cloud_machines SET credential_hash=? WHERE id=?").bind(await sha256(MACHINE_TOKEN), HOME).run();
     const ask = (token: string) => call("POST", `/v1/machines/${HOME}/flux/renewal-due`, token, { generation: 1 }, { "CF-Connecting-IP": HOME_IP });
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     expect(await (await ask(MACHINE_TOKEN)).json()).toEqual({ due: false });
     await env.DB.prepare("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?").bind(clock + 86_400_000, HOME).run();
     expect(await (await ask(MACHINE_TOKEN)).json()).toEqual({ due: true, op_id: `renew:${HOME}:1:1` });
@@ -1169,16 +1260,18 @@ describe("a Flux key for one home", () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     expect(flux.mints.at(-1)).toMatchObject({ lifecycleVersion: 1 });
     // Stop bumps the version before Flux is told, and Flux is told that version.
     await call("POST", `/v1/homes/${HOME}/flux/stop`, owner.token, {});
     expect(flux.stopVersions).toEqual([2]);
     expect((await homeRow())?.lifecycle_version).toBe(2);
-    // Resume claims version 3; a Stop lands after Flux published the key but before the answer returned.
+    // Spending back ON writes resume version 3 for the poller's mint (8b); a Stop lands after Flux published the key but before the answer returned.
+    extra = { FLUX_RESUME_VIA_POLLER: "1" };
+    expect((await call("POST", `/v1/homes/${HOME}/flux/cap`, owner.token, { enabled: true }, { "x-murage-site-compat": "spending-2" })).status).toBe(200);
     flux.stops.length = 0; flux.stopVersions.length = 0;
     flux.afterMint = async () => { await call("POST", `/v1/homes/${HOME}/flux/stop`, owner.token, {}); };
-    const raced = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    const raced = await pollerKey();
     expect(raced.status).toBe(409);
     expect(await raced.text()).not.toContain("sk-flux-home-");
     expect(flux.mints.at(-1)).toMatchObject({ lifecycleVersion: 3, ownerResume: true });
@@ -1193,7 +1286,7 @@ describe("a Flux key for one home", () => {
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
     flux.onMint = async () => { await call("POST", `/v1/homes/${HOME}/flux/stop`, owner.token, {}); };
-    const raced = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    const raced = await pollerKey();
     expect(raced.status).toBe(409);
     expect((await raced.json<{ error: string }>()).error).toBe("stale_lifecycle");
     expect(flux.keys.size).toBe(0);
@@ -1206,7 +1299,7 @@ describe("a Flux key for one home", () => {
     await machineSetup(owner.token, owner.userId);
     flux.keyRevokeDown = true;
     flux.afterMint = async () => { await call("DELETE", "/v1/flux/link", owner.token); };
-    const raced = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    const raced = await pollerKey();
     expect(raced.status).toBe(409);
     expect(await raced.text()).not.toContain("sk-flux-home-");
     expect(await (await call("GET", "/v1/flux/link", owner.token)).json()).toEqual({ linked: false });
@@ -1225,15 +1318,15 @@ describe("a Flux key for one home", () => {
     await machineSetup(owner.token, owner.userId);
     for (const reason of ["stale_lifecycle", "home_stopped"]) {
       flux.mintError = new FluxError(409, reason);
-      const response = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+      const response = await pollerKey();
       expect(response.status).toBe(409);
       expect((await response.json<{ error: string }>()).error).toBe(reason);
     }
     flux.mintError = new FluxError(409, "", "stale_lifecycle");
-    expect((await (await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {})).json<{ error: string }>()).error).toBe("stale_lifecycle");
+    expect((await (await pollerKey()).json<{ error: string }>()).error).toBe("stale_lifecycle");
     // Not the generation catch-up phrase, even though it ends in a number: final, no second attempt.
     flux.mintError = new FluxError(409, "key limit reached 7");
-    const final = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    const final = await pollerKey();
     expect(final.status).toBe(409);
     expect((await final.json<{ error: string }>()).error).toBe("flux_conflict");
     expect(flux.mints).toHaveLength(0);
@@ -1245,14 +1338,14 @@ describe("a Flux key for one home", () => {
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
     flux.mintError = new FluxError(503, "billing_identity_unavailable");
-    const first = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    const first = await pollerKey();
     expect(first.status).toBe(503);
     expect((await first.json<{ error: string }>()).error).toBe("billing_identity_unavailable");
     flux.mintError = new FluxError(503, "", "billing_identity_unavailable");
-    expect((await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {})).status).toBe(503);
+    expect((await pollerKey()).status).toBe(503);
     expect((await homeRow())?.state).toBe("none");
     flux.mintError = null; // Flux recovered: the same request now succeeds
-    expect((await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {})).status).toBe(200);
+    expect((await pollerKey()).status).toBe(200);
   });
 });
 
@@ -1261,7 +1354,7 @@ describe("cap, Stop and status", () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     for (const bad of [4.99, 1000.01, -5]) expect((await call("POST", `/v1/homes/${HOME}/flux/cap`, owner.token, { capUsd: bad })).status).toBe(400);
     expect((await call("POST", `/v1/homes/${HOME}/flux/cap`, owner.token, { capUsd: "50" })).status).toBe(400);
     const ok = await call("POST", `/v1/homes/${HOME}/flux/cap`, owner.token, { capUsd: 55.5 });
@@ -1276,14 +1369,15 @@ describe("cap, Stop and status", () => {
     flux.down = false;
     clock += BACKOFF; // round 4: a failed op is retried after its backoff
     await sweepFlux(testEnv(), { fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock });
-    expect(flux.caps.at(-1)).toEqual({ homeId: HOME, capMicrocents: 70_000_000, capVersion: 3 });
+    // The double always reports a $30 cap, which reads as a flushed router, so the same sweep's cap catch-up also repairs it at a higher version.
+    expect(flux.caps).toContainEqual({ homeId: HOME, capMicrocents: 70_000_000, capVersion: 3 });
   });
 
   it("Stop revokes at Flux; if Flux is down it stays 'stopping' and the sweep finishes it", async () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     flux.down = true;
     expect((await call("POST", `/v1/homes/${HOME}/flux/stop`, owner.token, {})).status).toBe(502);
     expect((await homeRow())?.state).toBe("stopping");
@@ -1295,9 +1389,10 @@ describe("cap, Stop and status", () => {
     expect(flux.stops).toEqual([HOME]);
     expect((await homeRow())?.state).toBe("stopped");
     expect((await call("POST", `/v1/homes/${HOME}/flux/stop`, owner.token, {})).status).toBe(200);
-    const resumed = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
-    expect(resumed.status).toBe(200);
-    expect((await homeRow())?.state).toBe("active");
+    // The owner route no longer resumes (410); spending back ON goes through the poller (8b block).
+    const retired = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    expect([retired.status, (await retired.json<{ error: string }>()).error]).toEqual([410, "owner_mint_retired"]);
+    expect((await homeRow())?.state).toBe("stopped");
   });
 
   it("reports state, cap, spend and the plain pause message at the cap", async () => {
@@ -1305,7 +1400,7 @@ describe("cap, Stop and status", () => {
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
     expect(await (await call("GET", `/v1/homes/${HOME}/flux`, owner.token)).json()).toMatchObject({ state: "none", paused: true, plan: "starter", includedCreditsUsd: 10, defaultCapUsd: 30 });
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     const ok = await (await call("GET", `/v1/homes/${HOME}/flux`, owner.token)).json<Record<string, unknown>>();
     expect(ok).toMatchObject({ state: "active", flux: "ok", paused: false, message: null, capUsd: 30, spentUsd: 4, accountSpendableUsd: 12, autoTopUpOn: true });
     // Unknown stays unknown: never reported as on.
@@ -1334,7 +1429,7 @@ describe("cap, Stop and status", () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     const result = await call("DELETE", "/v1/flux/link", owner.token);
     expect(await result.json()).toEqual({ linked: false, stoppedHomes: 1 });
     expect(flux.stops).toEqual([HOME]);
@@ -1353,7 +1448,7 @@ describe("journey A8: the monthly spend limit needs the second factor only to ra
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     expect(await post(owner.token, 80)).toEqual([200, null]);
     const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
     expect(await post(aal1, 60)).toEqual([200, null]);
@@ -1370,7 +1465,7 @@ describe("journey A8: the monthly spend limit needs the second factor only to ra
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     expect(await post(owner.token, 80)).toEqual([200, null]);
     const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
     // The gate compares 50 with 80 (a lowering); just before the write, another request lowers the limit to 30.
@@ -1386,25 +1481,31 @@ describe("journey A8: the monthly spend limit needs the second factor only to ra
   });
 });
 
-describe("journey A8 (Astra JOURNEY-A-2): spending can be switched off with sign-in only; switching it back on keeps the step-up", () => {
+// PRODFLUX r4 C: switched on with the real hooks, switching spending off journals a real Stop, so it needs the step-up too (the sign-in-only
+// off of journey A8 stays for Flux off, where it changes nothing). These cases post off with the stepped-up token.
+describe("journey A8 (Astra JOURNEY-A-2): spending off is stored and revoked (stepped up while Flux is switched on); switching it back on keeps the step-up", () => {
   const capPath = `/v1/homes/${HOME}/flux/cap`;
+  beforeEach(() => { extra = { FLUX_RESUME_VIA_POLLER: "1" }; }); // 8b: switching back on resumes through the home's poller
   const post = async (token: string, body: unknown) => {
-    const r = await call("POST", capPath, token, body);
+    const r = await call("POST", capPath, token, body, SITE_COMPAT);
     return [r.status, await r.json<Record<string, unknown>>()] as const;
   };
   it("{enabled:false} and {capUsd:0} store the off state (a zero limit, kept across plan changes) and push it to Flux; the status says off", async () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     expect((await call("POST", capPath, owner.token, { capUsd: 80 })).status).toBe(200);
     const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
+    // PRODFLUX r4 C: sign-in only is refused for both OFF bodies (nothing written), the step-up switches it off.
+    for (const off of [{ enabled: false }, { capUsd: 0 }]) expect((await post(aal1, off))[0]).toBe(403);
+    expect(await homeRow()).toMatchObject({ spending_off: 0 });
     // The probe: {capUsd:0} passed the exemption but was 400 invalid_cap; {enabled:false} was rejected outright.
-    expect(await post(aal1, { enabled: false })).toEqual([200, { capUsd: 0, enabled: false }]);
+    expect(await post(owner.token, { enabled: false })).toEqual([200, { capUsd: 0, enabled: false }]);
     expect(await homeRow()).toMatchObject({ spending_off: 1, cap_microcents: 80_000_000, cap_custom: 1 }); // the owner's limit is kept for switching back on
-    expect(flux.caps.at(-1)).toMatchObject({ homeId: HOME, capMicrocents: 0 });
-    expect(await post(aal1, { capUsd: 0 })).toEqual([200, { capUsd: 0, enabled: false }]);
-    flux.statusFor = { ...flux.statusFor, capMicrocents: 0 }; // the router confirms the zero limit
+    expect(flux.stops.at(-1)).toBe(HOME); expect(flux.caps.some((c) => c.capMicrocents === 0)).toBe(false); // Stage A: off is a home-scope revoke, never cap 0
+    expect(await post(owner.token, { capUsd: 0 })).toEqual([200, { capUsd: 0, enabled: false }]);
+    flux.statusFor = { ...flux.statusFor, state: "stopped", capMicrocents: 0 }; // the router confirms the zero limit
     const status = await (await call("GET", `/v1/homes/${HOME}/flux`, owner.token)).json<{ capUsd: number; spendingEnabled: boolean; paused: boolean; message: string }>();
     expect(status).toMatchObject({ capUsd: 0, spendingEnabled: false, paused: true });
     expect(status.message).toContain("switched off");
@@ -1422,10 +1523,10 @@ describe("journey A8 (Astra JOURNEY-A-2): spending can be switched off with sign
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     expect((await call("POST", capPath, owner.token, { capUsd: 80 })).status).toBe(200);
     const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
-    expect((await post(aal1, { enabled: false }))[0]).toBe(200);
+    expect((await post(owner.token, { enabled: false }))[0]).toBe(200);
     type Status = { capUsd: number; spendingEnabled: boolean; spendingOff: Record<string, boolean>; paused: boolean; message: string };
     // The probe: Flux still reports an $80 cap.
     flux.statusFor = { ...flux.statusFor, state: "ok", capMicrocents: 80_000_000 };
@@ -1441,7 +1542,7 @@ describe("journey A8 (Astra JOURNEY-A-2): spending can be switched off with sign
     expect(unknown.capUsd).toBe(80);
     flux.down = false;
     // The router confirms 0: switched off.
-    flux.statusFor = { ...flux.statusFor, capMicrocents: 0 };
+    flux.statusFor = { ...flux.statusFor, state: "stopped", capMicrocents: 0 };
     const off = await (await call("GET", `/v1/homes/${HOME}/flux`, owner.token)).json<Status>();
     expect(off).toMatchObject({ capUsd: 0, spendingOff: { requested: true, confirmed: true, pending: false }, paused: true });
     expect(off.message).toContain("switched off");
@@ -1450,12 +1551,12 @@ describe("journey A8 (Astra JOURNEY-A-2): spending can be switched off with sign
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     expect((await call("POST", capPath, owner.token, { capUsd: 80 })).status).toBe(200);
     const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
     const offAt = clock;
     flux.down = true; // the router fails every call
-    expect(await post(aal1, { enabled: false })).toEqual([200, { capUsd: 0, enabled: false, pending: true }]);
+    expect(await post(owner.token, { enabled: false })).toEqual([200, { capUsd: 0, enabled: false, pending: true }]);
     expect(await homeRow()).toMatchObject({ spending_off: 1, spending_off_at: offAt });
     type Status = { spendingOff: { pending: boolean; pendingSince: number | null; pendingForMs: number | null; supportAction: { action: string; message: string } | null }; message: string };
     const status = async () => (await (await call("GET", `/v1/homes/${HOME}/flux`, owner.token)).json<Status>());
@@ -1477,29 +1578,29 @@ describe("journey A8 (Astra JOURNEY-A-2): spending can be switched off with sign
     flux.down = false;
     clock += 2 * 60 * 60_000;
     await sweepFlux(testEnv(), sweepDeps);
-    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id=? AND kind='cap' AND state IN ('queued','running')").bind(HOME).first()).toEqual({ n: 0 });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id=? AND kind IN ('cap','stop') AND state IN ('queued','running')").bind(HOME).first()).toEqual({ n: 0 });
     expect(await alerts()).toEqual([{ id: `alert:spending_off:${HOME}:${offAt}`, resolved_at: clock }]);
   });
   it("Astra JOURNEY-A-5 #7: a positive limit after a confirmed switch-off is drift: zero is requeued and a new incident stays open until it lands", async () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     expect((await call("POST", capPath, owner.token, { capUsd: 80 })).status).toBe(200);
     const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
-    expect(await post(aal1, { enabled: false })).toEqual([200, { capUsd: 0, enabled: false }]);
+    expect(await post(owner.token, { enabled: false })).toEqual([200, { capUsd: 0, enabled: false }]);
     type Status = { spendingOff: { confirmed: boolean; pending: boolean; pendingSince: number | null } };
     const status = async () => (await (await call("GET", `/v1/homes/${HOME}/flux`, owner.token)).json<Status>());
     const alerts = () => env.DB.prepare("SELECT id,resolved_at,detail FROM cloud_alerts WHERE kind='flux.spending_off_unconfirmed' ORDER BY raised_at,id")
       .all<{ id: string; resolved_at: number | null; detail: string }>().then((r) => r.results);
-    const queuedCaps = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id=? AND kind='cap' AND state IN ('queued','running')").bind(HOME).first<{ n: number }>())!.n;
+    const queuedCaps = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id=? AND kind IN ('cap','stop') AND state IN ('queued','running')").bind(HOME).first<{ n: number }>())!.n;
     const sweepDeps = { fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock };
     // Confirmed: the router enforces zero.
-    flux.statusFor = { ...flux.statusFor, capMicrocents: 0 };
+    flux.statusFor = { ...flux.statusFor, state: "stopped", capMicrocents: 0 };
     expect((await status()).spendingOff).toMatchObject({ confirmed: true, pending: false });
     expect(await alerts()).toEqual([]);
     // Later the router reports a positive limit again (and cannot be told zero right now): drift.
-    flux.statusFor = { ...flux.statusFor, capMicrocents: 80_000_000 };
+    flux.statusFor = { ...flux.statusFor, state: "ok", capMicrocents: 80_000_000 };
     flux.failHomes.add(HOME);
     clock += 10 * 60_000;
     const driftAt = clock;
@@ -1522,7 +1623,7 @@ describe("journey A8 (Astra JOURNEY-A-2): spending can be switched off with sign
     clock += 2 * 60 * 60_000;
     await sweepFlux(testEnv(), sweepDeps);
     expect(await queuedCaps()).toBe(0);
-    expect(flux.caps.at(-1)).toMatchObject({ homeId: HOME, capMicrocents: 0 });
+    expect(flux.stops.at(-1)).toBe(HOME); expect(flux.caps.some((c) => c.capMicrocents === 0)).toBe(false); // Stage A: off is a home-scope revoke, never cap 0
     expect((await alerts())[0].resolved_at).toBe(clock);
     // A later drift opens a NEW incident (the resolved one never blocks it).
     clock += 60_000;
@@ -1533,21 +1634,21 @@ describe("journey A8 (Astra JOURNEY-A-2): spending can be switched off with sign
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
-    expect(await post(aal1, { enabled: false })).toEqual([200, { capUsd: 0, enabled: false }]);
+    expect(await post(owner.token, { enabled: false })).toEqual([200, { capUsd: 0, enabled: false }]);
     const sweepDeps = { fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock };
-    const queuedCaps = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id=? AND kind='cap' AND state IN ('queued','running')").bind(HOME).first<{ n: number }>())!.n;
+    const queuedCaps = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id=? AND kind IN ('cap','stop') AND state IN ('queued','running')").bind(HOME).first<{ n: number }>())!.n;
     const checkedAt = async () => (await env.DB.prepare("SELECT spending_off_checked_at AS c FROM flux_home_keys WHERE home_id=?").bind(HOME).first<{ c: number | null }>())!.c;
     const alerts = () => env.DB.prepare("SELECT id,resolved_at FROM cloud_alerts WHERE kind='flux.spending_off_unconfirmed' ORDER BY raised_at,id").all().then((r) => r.results);
     // Zero confirmed by the router, nothing queued.
-    flux.statusFor = { ...flux.statusFor, capMicrocents: 0 };
+    flux.statusFor = { ...flux.statusFor, state: "stopped", capMicrocents: 0 };
     clock += 60_000;
     await sweepFlux(testEnv(), sweepDeps);
     expect(await queuedCaps()).toBe(0);
     expect(await checkedAt()).toBe(clock);
     // Nobody visits the page; the router drifts to a positive limit (and cannot be told zero right now).
-    flux.statusFor = { ...flux.statusFor, capMicrocents: 80_000_000 };
+    flux.statusFor = { ...flux.statusFor, state: "ok", capMicrocents: 80_000_000 };
     flux.failHomes.add(HOME);
     // Not yet its turn again (polled at most every 15 minutes): no router read.
     const reads = flux.statusCalls;
@@ -1564,11 +1665,11 @@ describe("journey A8 (Astra JOURNEY-A-2): spending can be switched off with sign
     expect((await alerts()).map((a) => [a.id, a.resolved_at])).toEqual([[`alert:spending_off:${HOME}:${driftAt}`, null]]);
     // While the zero is queued the home is not re-polled (never requeued twice); once it lands the incident is resolved.
     flux.failHomes.delete(HOME);
-    flux.statusFor = { ...flux.statusFor, capMicrocents: 0 };
+    flux.statusFor = { ...flux.statusFor, state: "stopped", capMicrocents: 0 };
     clock += 2 * 60 * 60_000;
     await sweepFlux(testEnv(), sweepDeps);
     expect(await queuedCaps()).toBe(0);
-    expect(flux.caps.at(-1)).toMatchObject({ homeId: HOME, capMicrocents: 0 });
+    expect(flux.stops.at(-1)).toBe(HOME); expect(flux.caps.some((c) => c.capMicrocents === 0)).toBe(false); // Stage A: off is a home-scope revoke, never cap 0
     expect((await alerts()).map((a) => a.resolved_at)).toEqual([clock]);
   });
   it("Astra JOURNEY-A-7: drift polling is bounded: 1,000 switched-off homes are each re-read within an hour of five-minute sweeps", async () => {
@@ -1586,7 +1687,7 @@ describe("journey A8 (Astra JOURNEY-A-2): spending can be switched off with sign
         VALUES (?,'starter','active',30000000,1,?,?)`).bind(id, clock, clock)));
     }
     // The router confirms zero for every home: polling finds no drift, it only has to keep every home fresh.
-    flux.statusFor = { ...flux.statusFor, capMicrocents: 0 };
+    flux.statusFor = { ...flux.statusFor, state: "stopped", capMicrocents: 0 };
     const start = clock;
     const sweepDeps = { fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock };
     let worst = 0;
@@ -1606,7 +1707,7 @@ describe("journey A8 (Astra JOURNEY-A-2): spending can be switched off with sign
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     const before = (await homeRow())!;
     expect(before.cap_custom).toBe(0); // the plan's own limit, untouched
     // The plan change has read its row (not custom) when the owner switches spending off, keeping that limit as their own.
@@ -1618,16 +1719,21 @@ describe("journey A8 (Astra JOURNEY-A-2): spending can be switched off with sign
     const moved = await changePlan(testEnv(), { homeId: HOME, plan: "max" }, { fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock });
     expect(await homeRow()).toMatchObject({ plan: "max", cap_microcents: before.cap_microcents, cap_custom: 1, spending_off: 1 });
     expect(moved).toEqual({ plan: "max", capUsd: (before.cap_microcents as number) / 1_000_000 });
-    // What the router is told is the stored state: off, so zero.
-    expect(flux.caps.at(-1)).toMatchObject({ homeId: HOME, capMicrocents: 0 });
+    // The plan change sends nothing for an off home (no cap 0); the revoke the race left undone is finished by the sweep's off poll.
+    expect(flux.caps).toEqual([]);
+    clock += 10 * 60_000;
+    flux.statusFor = { ...flux.statusFor, state: "none" }; // the Stop took: the router no longer reports the key live (8b: a live stopped home gets a repair Stop)
+    await sweepFlux(testEnv(), { fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock });
+    expect(flux.stops).toEqual([HOME]);
+    expect(await homeRow()).toMatchObject({ state: "stopped", spending_off: 1 });
   });
   it("switching spending back on, or raising it from off, needs the fresh second factor", async () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
-    expect((await post(aal1, { enabled: false }))[0]).toBe(200);
+    expect((await post(owner.token, { enabled: false }))[0]).toBe(200);
     expect(await post(aal1, { enabled: true })).toEqual([403, expect.objectContaining({ error: "step_up_required" })]);
     expect(await post(aal1, { enabled: true, capUsd: 20 })).toEqual([403, expect.objectContaining({ error: "step_up_required" })]);
     expect(await post(aal1, { capUsd: 5 })).toEqual([403, expect.objectContaining({ error: "step_up_required" })]);
@@ -1637,7 +1743,236 @@ describe("journey A8 (Astra JOURNEY-A-2): spending can be switched off with sign
     expect(on).toMatchObject({ enabled: true });
     expect((on.capUsd as number) > 0).toBe(true);
     expect(await homeRow()).toMatchObject({ spending_off: 0 });
-    expect(flux.caps.at(-1)!.capMicrocents).toBeGreaterThan(0);
+    expect(on.resume).toBe("pending"); // 8b: the route mints nothing; the home's poller takes its own key
+    expect(flux.mints).toHaveLength(1);
+  });
+});
+
+describe("Stage A: spending off is a home-scope revoke, turning it on resumes through the poller (8b), the cap floor is $5", () => {
+  const capPath = `/v1/homes/${HOME}/flux/cap`;
+  beforeEach(() => { extra = { FLUX_RESUME_VIA_POLLER: "1" }; });
+  const sweepDeps = () => ({ fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock });
+  const start = async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    await env.DB.prepare("UPDATE cloud_machines SET credential_hash=? WHERE id=?").bind(await sha256(MACHINE_TOKEN), HOME).run();
+    await pollerKey();
+    return owner;
+  };
+  const renew = () => call("POST", `/v1/machines/${HOME}/flux/subkey`, MACHINE_TOKEN, { generation: 1 }, { "CF-Connecting-IP": HOME_IP });
+  const customerWords = (text: string) => {
+    expect(text).not.toMatch(/\bkey\b|router|Flux|revoked|stale|\u2014|\u2013/i);
+  };
+  it("off sends a home-scope revoke and never cap 0; turning it on mints nothing at the route: the poller takes a fresh key at the higher versions", async () => {
+    const owner = await start();
+    expect((await call("POST", capPath, owner.token, { capUsd: 80 })).status).toBe(200);
+    const before = await homeRow();
+    const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
+    const off = await call("POST", capPath, owner.token, { enabled: false });
+    expect([off.status, await off.json()]).toEqual([200, { capUsd: 0, enabled: false }]);
+    expect(flux.stops).toEqual([HOME]);
+    expect(flux.caps.every((c) => c.capMicrocents >= 5_000_000)).toBe(true);
+    expect(await homeRow()).toMatchObject({ spending_off: 1, state: "stopped", cap_microcents: 80_000_000 });
+    const mintsBefore = flux.mints.length;
+    const on = await call("POST", capPath, owner.token, { capUsd: 80 }, SITE_COMPAT);
+    expect([on.status, await on.json()]).toEqual([200, { capUsd: 80, enabled: true, resume: "pending" }]);
+    expect(flux.mints).toHaveLength(mintsBefore); // the route mints nothing
+    expect(await homeRow()).toMatchObject({ spending_off: 0, state: "active", key_expires_at: null });
+    // The home's own poller takes the key: owner_resume true, at a higher lifecycle and generation.
+    const taken = await renew();
+    expect(taken.status).toBe(200);
+    const body = await taken.json<{ generation: number }>();
+    expect(flux.mints.at(-1)).toMatchObject({ ownerResume: true });
+    expect(flux.mints.at(-1)!.lifecycleVersion).toBeGreaterThan(Number(before!.lifecycle_version));
+    expect(flux.mints.at(-1)!.generation).toBeGreaterThan(Number(before!.generation));
+    expect(await homeRow()).toMatchObject({ spending_off: 0, state: "active", generation: body.generation });
+    expect(flux.keys.has(body.generation)).toBe(true);
+  });
+  it("if the poller's mint cannot land at once the resume stays pending and the poller's next attempt finishes it", async () => {
+    const owner = await start();
+    await call("POST", capPath, owner.token, { enabled: false });
+    const on = await call("POST", capPath, owner.token, { capUsd: 80 }, SITE_COMPAT);
+    expect([on.status, await on.json()]).toEqual([200, { capUsd: 80, enabled: true, resume: "pending" }]);
+    flux.mintError = new FluxError(502, "");
+    expect((await renew()).status).toBe(502);
+    expect(await homeRow()).toMatchObject({ state: "active", spending_off: 0, key_expires_at: null });
+    flux.mintError = null;
+    clock += 60_000; // fix r1 (Astra M5): a failed resume attempt waits the bound's first minute
+    expect((await renew()).status).toBe(200);
+    expect(await homeRow()).toMatchObject({ state: "active", spending_off: 0, pending_op_id: expect.any(String) });
+  });
+  it("a renewal after a stop keeps the lifecycle version, stays stopped, raises no alert, and answers in plain words", async () => {
+    const owner = await start();
+    await env.DB.prepare("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?").bind(clock - 1000, HOME).run();
+    const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
+    await call("POST", capPath, owner.token, { enabled: false });
+    const stopped = await homeRow();
+    const answer = await renew();
+    expect(answer.status).toBe(409);
+    const refusal = await answer.json<{ error: string; message: string }>();
+    expect(refusal.error).toBe("home_not_active");
+    expect(refusal.message).toContain("Spending is switched off");
+    expect(refusal.message).toContain("monthly limit of $5 or more");
+    customerWords(refusal.message);
+    expect(await homeRow()).toMatchObject({ state: "stopped", lifecycle_version: stopped!.lifecycle_version, generation: stopped!.generation });
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE home_id=?").bind(HOME).first<{ n: number }>())!.n).toBe(0);
+  });
+  it("a renewal mint on an active home does not bump the lifecycle version", async () => {
+    const owner = await start();
+    const first = await homeRow();
+    expect((await pollerKey()).status).toBe(200);
+    expect((await homeRow())!.lifecycle_version).toBe(first!.lifecycle_version);
+    expect(Number((await homeRow())!.generation)).toBeGreaterThan(Number(first!.generation));
+  });
+  it("a renewal in flight during a stop leaves no live key, and the stale renewal cannot block the resume", async () => {
+    const owner = await start();
+    await env.DB.prepare("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?").bind(clock - 1000, HOME).run();
+    const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
+    let renewalGeneration = 0;
+    flux.afterMint = async () => { // the stop lands while the renewal's key exists at the router and the renewal holds the home
+      renewalGeneration = flux.latestGeneration;
+      await call("POST", capPath, owner.token, { enabled: false });
+    };
+    const answer = await renew();
+    expect(answer.status).not.toBe(200); // the stale renewal is never delivered
+    expect(renewalGeneration).toBeGreaterThan(1);
+    clock += 10 * 60_000;
+    await sweepFlux(testEnv(), sweepDeps());
+    clock += 10 * 60_000;
+    await sweepFlux(testEnv(), sweepDeps());
+    expect(await homeRow()).toMatchObject({ state: "stopped", spending_off: 1 });
+    expect(flux.keys.size).toBe(0);
+    expect(flux.stopped).toBe(true);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_mint_ops WHERE home_id=?").bind(HOME).first<{ n: number }>())!.n).toBe(0);
+    // Turning spending back on: the poller mints above the stale generation; nothing the renewal left behind blocks it.
+    const on = await call("POST", capPath, owner.token, { capUsd: 80 }, SITE_COMPAT);
+    expect(on.status).toBe(200);
+    const taken = await renew();
+    const body = await taken.json<{ key?: string; generation?: number }>();
+    expect(taken.status).toBe(200);
+    expect(body.key).toBeDefined();
+    expect(body.generation!).toBeGreaterThan(renewalGeneration);
+    clock += 10 * 60_000;
+    await sweepFlux(testEnv(), sweepDeps());
+    expect([...flux.keys]).toEqual([body.generation]);
+  });
+  it("a lowering on a STOPPED home needs the step-up like /subkey: a sign-in-only session gets 403, no key, no resume; on an active home it still works", async () => {
+    const owner = await start();
+    expect((await call("POST", capPath, owner.token, { capUsd: 80 })).status).toBe(200);
+    const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
+    // Active home: a plain lowering is sign-in only and answers no key.
+    const lowered = await call("POST", capPath, aal1, { capUsd: 40 });
+    expect(lowered.status).toBe(200);
+    expect(await lowered.json()).toEqual({ capUsd: 40, enabled: true });
+    expect(await homeRow()).toMatchObject({ state: "active", cap_microcents: 40_000_000 });
+    // Stop leaves spending_off=0; the home is stopped.
+    const stop = await call("POST", `/v1/homes/${HOME}/flux/stop`, owner.token, {});
+    expect(stop.status).toBe(200);
+    expect(await homeRow()).toMatchObject({ state: "stopped", spending_off: 0 });
+    const mints = flux.mints.length;
+    const refused = await call("POST", capPath, aal1, { capUsd: 5 });
+    expect(refused.status).toBe(403);
+    expect(flux.mints).toHaveLength(mints);
+    expect(await homeRow()).toMatchObject({ state: "stopped", cap_microcents: 40_000_000 });
+    // With the fresh verification it resumes and answers the key, as /subkey does.
+    const resumed = await call("POST", capPath, owner.token, { capUsd: 5 }, SITE_COMPAT);
+    expect(resumed.status).toBe(200);
+    expect(await resumed.json()).toMatchObject({ resume: "pending", capUsd: 5 });
+  });
+  it("a Stop that commits between the cap read and its write refuses the sign-in-only lowering (403 step_up_required), never a 500", async () => {
+    const owner = await start();
+    expect((await call("POST", capPath, owner.token, { capUsd: 80 })).status).toBe(200);
+    const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
+    const mints = flux.mints.length;
+    armDb(/UPDATE flux_home_keys SET plan=\?/, async () => {
+      await env.DB.prepare("UPDATE flux_home_keys SET state='stopped' WHERE home_id=?").bind(HOME).run();
+    });
+    const raced = await call("POST", capPath, aal1, { capUsd: 50 });
+    expect(raced.status).toBe(403);
+    expect((await raced.json<{ error: string }>()).error).toBe("step_up_required");
+    expect(flux.mints).toHaveLength(mints);
+    expect(await homeRow()).toMatchObject({ state: "stopped", cap_microcents: 80_000_000 });
+  });
+  it("after an unlink the poller's next mint (spending back on) links again above the floor with no extra step; repeated or raced unlinks never reuse a version", async () => {
+    const owner = await start();
+    await env.DB.prepare("UPDATE supabase_identities SET contact_email=?, email_verified_at=1, email_verified_for=lower(?) WHERE user_id=?").bind(owner.email, owner.email, owner.userId).run();
+    (flux as unknown as { ensureAccount: unknown }).ensureAccount = async () => ({ fluxAccountId: FLUX_ACCOUNT, created: false });
+    const linkOf = () => env.DB.prepare("SELECT link_version AS v, fenced FROM flux_links WHERE owner_user_id=?").bind(owner.userId).first<{ v: number; fenced: number }>();
+    const floor = async () => (await env.DB.prepare("SELECT version AS v FROM flux_link_floor WHERE owner_user_id=?").bind(owner.userId).first<{ v: number }>())?.v ?? 0;
+    expect((await linkOf())!.v).toBe(1);
+    expect((await call("DELETE", "/v1/flux/link", owner.token)).status).toBe(200);
+    expect(await linkOf()).toBeNull();
+    expect(await floor()).toBe(2);
+    expect((await call("DELETE", "/v1/flux/link", owner.token)).status).toBe(200); // repeated: nothing moves
+    expect(await floor()).toBe(2);
+    const resume = async () => expect((await call("POST", capPath, owner.token, { enabled: true }, SITE_COMPAT)).status).toBe(200); // unlink stopped the home
+    await resume();
+    const again = await pollerKey();
+    expect(again.status).toBe(200);
+    expect(await linkOf()).toEqual({ v: 3, fenced: 0 });
+    expect(flux.mints.at(-1)!.linkVersion).toBe(3);
+    // Raced unlinks: every version stays strictly above the last one seen, and the next link is above the floor.
+    await Promise.all([call("DELETE", "/v1/flux/link", owner.token), call("DELETE", "/v1/flux/link", owner.token)]);
+    for (let i = 0; i < 3 && (await linkOf()) !== null; i += 1) await call("DELETE", "/v1/flux/link", owner.token);
+    expect(await linkOf()).toBeNull();
+    const f = await floor();
+    expect(f).toBeGreaterThanOrEqual(4);
+    await resume();
+    expect((await pollerKey()).status).toBe(200);
+    expect((await linkOf())!.v).toBe(f + 1);
+  });
+  it("the lowest monthly limit is $5: a smaller one is refused in plain words, $5 is accepted, and below $5 is never a sign-in-only lowering", async () => {
+    const owner = await start();
+    const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
+    expect((await call("POST", capPath, owner.token, { capUsd: 20 })).status).toBe(200);
+    const refused = await call("POST", capPath, owner.token, { capUsd: 3 });
+    expect(refused.status).toBe(400);
+    const body = await refused.json<{ error: string; message: string }>();
+    expect(body.message).toBe("The lowest monthly limit is $5. Enter $5 or more, or switch spending off.");
+    expect((await call("POST", capPath, aal1, { capUsd: 3 })).status).toBe(403); // not exempt from the step-up
+    expect((await call("POST", capPath, aal1, { capUsd: 5 })).status).toBe(200); // a lowering to the floor is sign-in only
+    expect(flux.caps.at(-1)).toMatchObject({ capMicrocents: 5_000_000 });
+    expect(await homeRow()).toMatchObject({ cap_microcents: 5_000_000 });
+    expect(() => readFluxConfig({ FLUX_B4_CONFIG: JSON.stringify({ ...DEFAULT_FLUX_CONFIG, minCapUsd: 1 }) })).toThrow();
+  });
+  it("status words while spending is off: it is off, how to turn it on, no router words; the raw router state never reaches the answer", async () => {
+    const owner = await start();
+    const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
+    await call("POST", capPath, owner.token, { enabled: false });
+    flux.statusFor = { ...flux.statusFor, state: "revoked", capMicrocents: 0 };
+    const status = await (await call("GET", `/v1/homes/${HOME}/flux`, owner.token)).json<{ message: string; flux: string; paused: boolean; spendingOff: { confirmed: boolean } }>();
+    expect(status).toMatchObject({ paused: true, flux: "paused", spendingOff: { confirmed: true } });
+    expect(status.message).toContain("Spending is switched off");
+    expect(status.message).toContain("To turn it on");
+    customerWords(status.message);
+    flux.statusFor = { ...flux.statusFor, state: "unfunded", capMicrocents: 30_000_000 };
+    await env.DB.prepare("UPDATE flux_home_keys SET spending_off=0,state='active' WHERE home_id=?").bind(HOME).run();
+    const unfunded = await (await call("GET", `/v1/homes/${HOME}/flux`, owner.token)).json<{ message: string; flux: string }>();
+    expect(unfunded.flux).toBe("unfunded");
+    expect(unfunded.message).toBe("Your credits are used up or not added yet. Add credits to keep going. Your Claude and ChatGPT sign-ins keep working.");
+    flux.statusFor = { ...flux.statusFor, state: "ip_refused" };
+    const other = await (await call("GET", `/v1/homes/${HOME}/flux`, owner.token)).json<{ message: string; flux: string }>();
+    expect(other.flux).toBe("paused");
+    expect(other.message).not.toContain("ip_refused");
+    customerWords(other.message);
+  });
+  it("a spending-off mint refusal carries the same plain words", async () => {
+    const owner = await start();
+    const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
+    await call("POST", capPath, owner.token, { enabled: false });
+    const refused = await pollerKey();
+    expect(refused.status).toBe(409);
+    const body = await refused.json<{ error: string; message: string }>();
+    expect(body.error).toBe("home_not_active"); // the poller's refusal for a stopped home, carrying the spending-off words
+    expect(body.message).toContain("Spending is switched off");
+    customerWords(body.message);
+  });
+  it("the redirect link flow is retired: /link/start is 404 and writes no challenge", async () => {
+    const owner = await signIn("owner2@example.test");
+    const response = await call("POST", "/v1/flux/link/start", owner.token);
+    expect(response.status).toBe(404);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_link_challenges").first<{ n: number }>())!.n).toBe(0);
   });
 });
 
@@ -1837,19 +2172,32 @@ describe("monthly included credits (Billing calls these)", () => {
       .bind(HOME, "pro", 20_000_000, PERIOD_START, PERIOD_END, addDays(PERIOD_END, 30), clock).run();
     await sweep();
     expect(await env.DB.prepare("SELECT status,last_error FROM flux_grants WHERE grant_id='inv:in_dead_001'").first()).toEqual({ status: "failed", last_error: "flux_0" });
+    // Paid with no credit and no retry left: ONE page-tier alert for the grant, never a second.
+    const exhausted = () => env.DB.prepare("SELECT id,home_id,severity,resolved_at FROM cloud_alerts WHERE kind='credit.grant_exhausted'").all().then((r) => r.results);
+    expect(await exhausted()).toEqual([{ id: "alert:grant_exhausted:inv:in_dead_001", home_id: HOME, severity: "high", resolved_at: null }]);
+    expect(alertTier("credit.grant_exhausted")).toMatchObject({ tier: "page", group: "credit.undelivered" });
+    clock += 11 * 60_000;
+    await sweep();
+    expect(await exhausted()).toHaveLength(1);
+    // Only the 20th failure alerts: the 19th try of another grant raises nothing.
+    await env.DB.prepare("INSERT INTO flux_grants (grant_id,entitlement_key,home_id,plan,amount_microcents,period_start,period_end,expires_at,attempts,created_at) VALUES ('inv:in_early_01','k-early',?,?,?,?,?,?,17,?)")
+      .bind(HOME, "pro", 20_000_000, PERIOD_START, PERIOD_END, addDays(PERIOD_END, 30), clock).run();
+    await sweep();
+    expect(await env.DB.prepare("SELECT status,attempts FROM flux_grants WHERE grant_id='inv:in_early_01'").first()).toEqual({ status: "pending", attempts: 18 });
+    expect(await exhausted()).toHaveLength(1);
   });
 
   it("a billing stop cannot be undone by the owner; only a NEW later paid invoice lifts it", async () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     await admin("/v1/internal/flux/grant", grantBody("starter", "in_before_1"));
     expect((await admin("/v1/internal/flux/stop", { homeId: HOME, reason: "cancelled" })).status).toBe(200);
     expect(flux.stops).toEqual([HOME]);
     expect((await homeRow())?.state).toBe("stopped");
     expect(await homeRow()).toMatchObject({ billing_hold: 1, billing_hold_at: clock });
-    const blocked = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    const blocked = await pollerKey();
     expect(blocked.status).toBe(409);
     expect((await blocked.json<{ error: string }>()).error).toBe("billing_hold");
     // An old invoice replayed, and an old period arriving as a new invoice: both leave the hold alone.
@@ -1859,13 +2207,13 @@ describe("monthly included credits (Billing calls these)", () => {
     const stale = await admin("/v1/internal/flux/grant", grantBody("starter", "in_stale_01", -40));
     expect(await stale.json()).toMatchObject({ status: "held_by_billing_hold", amountUsd: 0 });
     expect(await homeRow()).toMatchObject({ billing_hold: 1 });
-    expect((await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {})).status).toBe(409);
+    expect((await pollerKey()).status).toBe(409);
     // A new paid invoice for a period that starts after the hold.
     clock += 2 * DAY;
     const fresh = await admin("/v1/internal/flux/grant", { homeId: HOME, plan: "starter", invoiceId: "in_after_01", periodStart: clock - DAY, periodEnd: clock + 30 * DAY });
     expect(await fresh.json()).toMatchObject({ status: "done", amountUsd: 10 });
     expect(await homeRow()).toMatchObject({ billing_hold: 0 });
-    expect((await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {})).status).toBe(200);
+    expect((await resumeAndKey(owner.token)).status).toBe(200);
     // A replay of that invoice, even after a newer hold, must not clear it.
     await admin("/v1/internal/flux/stop", { homeId: HOME, reason: "chargeback" });
     await admin("/v1/internal/flux/grant", { homeId: HOME, plan: "starter", invoiceId: "in_after_01", periodStart: clock - DAY, periodEnd: clock + 30 * DAY });
@@ -1910,7 +2258,7 @@ describe("monthly included credits (Billing calls these)", () => {
       const b = await grantB();
       expect(await b.json()).toMatchObject({ status: "done", amountUsd: 10 });
       expect(await homeRow()).toMatchObject({ billing_hold: 0 });
-      expect((await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {})).status).toBe(200);
+      expect((await resumeAndKey(owner.token)).status).toBe(200);
       // No double grant: B's invoice replayed grants nothing more.
       const grants = flux.grants.length;
       expect(await (await grantB()).json()).toMatchObject({ status: "done", amountUsd: 10 });
@@ -2046,7 +2394,7 @@ describe("monthly included credits (Billing calls these)", () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     await admin("/v1/internal/flux/grant", grantBody("starter", "in_cur_0001")); // current period, delivered
     flux.down = true;
     await admin("/v1/internal/flux/grant", grantBody("pro", "in_next_0001", 40)); // pending, another invoice
@@ -2078,7 +2426,7 @@ describe("monthly included credits (Billing calls these)", () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     await admin("/v1/internal/flux/grant", grantBody("starter", "in_cur_0001")); // the disputed month, delivered
     await admin("/v1/internal/flux/grant", grantBody("starter", "in_old_0001", -1)); // an earlier month of the same contract
     for (const inv of ["in_cur_0001", "in_old_0001"]) {
@@ -2110,7 +2458,7 @@ describe("monthly included credits (Billing calls these)", () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     await admin("/v1/internal/flux/grant", grantBody("starter", "in_cur_0001"));
     const id = "inv:in_cur_0001";
     const before = flux.balances();
@@ -2969,7 +3317,7 @@ describe("monthly included credits (Billing calls these)", () => {
     await setupKeys();
     const owner = await signIn("owner@example.test");
     await machineSetup(owner.token, owner.userId);
-    await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+    await pollerKey();
     expect(await (await admin("/v1/internal/flux/plan", { homeId: HOME, plan: "pro" })).json()).toEqual({ plan: "pro", capUsd: 60 });
     expect(flux.caps.at(-1)).toEqual({ homeId: HOME, capMicrocents: 60_000_000, capVersion: 2 });
     await call("POST", `/v1/homes/${HOME}/flux/cap`, owner.token, { capUsd: 45 });
@@ -2978,7 +3326,32 @@ describe("monthly included credits (Billing calls these)", () => {
     expect(flux.caps).toHaveLength(0);
     expect((await admin("/v1/internal/flux/plan", { homeId: HOME, plan: "nope" })).status).toBe(400);
     expect(await changePlan(testEnv(), { homeId: HOME, plan: "starter" }, { fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock })).toEqual({ plan: "starter", capUsd: 45 });
-    expect(await stopForBilling(testEnv(), HOME, { fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock })).toEqual({ state: "stopped" });
+    expect(await stopForBilling(testEnv(), HOME, { fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock })).toEqual({ state: "stopped", opId: expect.any(String) });
+  });
+
+  it("CH1 P2: stopForBilling returns its own op id; queued behind another holder it stays pending, and the router's real stale_lifecycle answer supersedes it; the refund reconcile reads that terminal state and stamps the marker", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    await pollerKey();
+    const d = { fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock };
+    await env.DB.prepare("UPDATE flux_home_keys SET op_holder='other-worker',op_lease_until=? WHERE home_id=?").bind(clock + 60_000, HOME).run();
+    const queued = await stopForBilling(testEnv(), HOME, d, { invoiceId: "in_p2_queue", keepGrants: true });
+    expect(queued.state).toBe("stopping");
+    const op = () => env.DB.prepare("SELECT state FROM flux_home_ops WHERE op_id=?").bind(queued.opId).first<{ state: string }>();
+    expect(await op()).toEqual({ state: "queued" });
+    await env.DB.prepare(`INSERT INTO refund_ops (id,kind,home_id,user_id,end_plan,done_at,flux_stop_op_id,created_at,updated_at) VALUES ('rf-p2','withdrawal',?,'u-p2',1,?,?,?,?)`)
+      .bind(HOME, clock, queued.opId, clock, clock).run();
+    const marker = () => env.DB.prepare("SELECT credits_revoked_at AS at FROM refund_ops WHERE id='rf-p2'").first<{ at: number | null }>();
+    await reconcileQueuedStops(testEnv(), { deps: {}, now: clock });
+    expect((await marker())!.at).toBeNull();                      // still pending: untouched
+    flux.lifecycleFloor = 1_000_000;                              // a later resume owns the home: the router now answers stale_lifecycle to the Stop
+    await env.DB.prepare("UPDATE flux_home_keys SET op_holder=NULL,op_lease_until=NULL WHERE home_id=?").bind(HOME).run();
+    clock += BACKOFF;
+    await sweepFlux(testEnv(), d);
+    expect(await op()).toEqual({ state: "superseded" });
+    await reconcileQueuedStops(testEnv(), { deps: {}, now: clock });
+    expect((await marker())!.at).toBe(clock);
   });
 });
 
@@ -3060,12 +3433,15 @@ describe("flux_renewal_due (poller trigger)", () => {
   it("is true only for an active, un-held home with a key due; never for a stop or a hold", async () => {
     const { fluxRenewalDue, RENEWAL_WINDOW_MS } = await import("../src/b4-flux-renewal");
     const now = Date.now();
-    const put = (state: string, hold: number, expires: number | null) =>
+    // A delivered key: generation 1, acked (8b fix r1, Astra H1: an unacked adopted generation keeps renewal due).
+    const put = (state: string, hold: number, expires: number | null, acked: number | null = 1) =>
       env.DB.prepare(
-        "INSERT OR REPLACE INTO flux_home_keys (home_id,plan,generation,state,cap_microcents,cap_custom,billing_hold,key_expires_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)",
-      ).bind("home-renew", "starter", 1, state, 30_000_000, 0, hold, expires, now).run();
+        "INSERT OR REPLACE INTO flux_home_keys (home_id,plan,generation,state,cap_microcents,cap_custom,billing_hold,key_expires_at,updated_at,acked_generation) VALUES (?,?,?,?,?,?,?,?,?,?)",
+      ).bind("home-renew", "starter", 1, state, 30_000_000, 0, hold, expires, now, acked).run();
     await put("active", 0, now + RENEWAL_WINDOW_MS - 1000);
     expect(await fluxRenewalDue(env, "home-renew", now)).toBe(true);
+    await put("active", 0, now + 30 * 86_400_000, null);
+    expect(await fluxRenewalDue(env, "home-renew", now)).toBe(true); // adopted, never acked
     await put("active", 0, now + 30 * 86_400_000);
     expect(await fluxRenewalDue(env, "home-renew", now)).toBe(false);
     await put("stopped", 0, now - 1000);
@@ -3225,7 +3601,6 @@ describe("round 2: lifecycle, link fencing and compensation (hole 5, relink, sta
     await machineSetup(owner.token, owner.userId);
     return owner;
   };
-  const mintReq = (token: string) => call("POST", `/v1/homes/${HOME}/flux/subkey`, token, {});
   /** The compensate ops, as {generation, state}: 'queued' is what the old table called due/armed. */
   const compRows = () => env.DB.prepare(`SELECT json_extract(payload,'$.generation') AS generation,state FROM flux_home_ops
     WHERE kind='compensate' ORDER BY seq`).all<{ generation: number; state: string }>();
@@ -3233,7 +3608,7 @@ describe("round 2: lifecycle, link fencing and compensation (hole 5, relink, sta
   it("hole 5: a mint cannot return 200 with zero link rows when unlink completes between the link read and the claim", async () => {
     const owner = await ready();
     armDb(/UPDATE flux_home_keys SET\s+lifecycle_version/, async () => { await call("DELETE", "/v1/flux/link", owner.token); });
-    const response = await mintReq(owner.token);
+    const response = await pollerKey();
     expect(response.status).toBe(409);
     expect(await response.text()).not.toContain("sk-flux-home-");
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_links").first()).toEqual({ n: 0 });
@@ -3244,7 +3619,7 @@ describe("round 2: lifecycle, link fencing and compensation (hole 5, relink, sta
   it("hole 5: an unlink that lands while the mint is in flight fails the conditional D1 commit and revokes the specific key", async () => {
     const owner = await ready();
     flux.afterMint = async () => { await call("DELETE", "/v1/flux/link", owner.token); };
-    const response = await mintReq(owner.token);
+    const response = await pollerKey();
     expect(response.status).toBe(409);
     expect(await response.text()).not.toContain("sk-flux-home-");
     expect(flux.keys.size).toBe(0);
@@ -3255,7 +3630,7 @@ describe("round 2: lifecycle, link fencing and compensation (hole 5, relink, sta
 
   it("hole 5: unlink fences the link (version up, fenced) BEFORE it stops any home", async () => {
     const owner = await ready();
-    await mintReq(owner.token);
+    await pollerKey();
     let atStop: Record<string, unknown> | null = null;
     flux.onStop = async () => { atStop = await env.DB.prepare("SELECT link_version,fenced FROM flux_links").first(); };
     await call("DELETE", "/v1/flux/link", owner.token);
@@ -3264,33 +3639,55 @@ describe("round 2: lifecycle, link fencing and compensation (hole 5, relink, sta
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_links").first()).toEqual({ n: 0 });
   });
 
-  it("hole 5: a fenced link cannot issue a key while the unlink is unfinished", async () => {
+  it("hole 5: an unfinished unlink leaves its home stopping, which issues no key, and the retry finishes it", async () => {
     const owner = await ready();
-    await mintReq(owner.token);
+    await pollerKey();
     flux.stopDown = true;
     expect((await call("DELETE", "/v1/flux/link", owner.token)).status).toBe(502);
     expect(await env.DB.prepare("SELECT fenced FROM flux_links").first()).toEqual({ fenced: 1 });
     flux.stopDown = false;
-    expect((await mintReq(owner.token)).status).toBe(409);
+    const mints = flux.mintCalls;
+    const refused = await pollerKey();
+    expect(refused.status).toBe(409);
+    expect((await refused.json<{ error: string }>()).error).toBe("home_not_active"); // the home is stopping: refused before the link check
+    expect(flux.mintCalls).toBe(mints);
     expect((await call("DELETE", "/v1/flux/link", owner.token)).status).toBe(200); // the retry finishes it
+  });
+
+  it("hole 5 (8b fix r2, Astra Low): a fenced link on a mint-eligible home is refused flux_not_linked before any claim, zero mint calls", async () => {
+    const owner = await ready();
+    await pollerKey();
+    // The unlink's own fence statement, alone: the home stays active and keyed, so the poller's mint reaches the link check.
+    await env.DB.prepare("UPDATE flux_links SET link_version=link_version+1,fenced=1 WHERE owner_user_id=?").bind(owner.userId).run();
+    expect(await homeRow()).toMatchObject({ state: "active", billing_hold: 0, spending_off: 0 });
+    const mints = flux.mintCalls;
+    let claimed = false;
+    armDb(/INSERT OR IGNORE INTO flux_mint_ops/, async () => { claimed = true; });
+    const refused = await pollerMint();
+    expect(refused.status).toBe(409);
+    expect((await refused.json<{ error: string }>()).error).toBe("flux_not_linked");
+    expect(flux.mintCalls).toBe(mints);
+    expect(claimed).toBe(false); // refused at the fence itself, not later by the claim's own link guard
+    expect(await homeRow()).toMatchObject({ state: "active" });
   });
 
   it("hole 5: compensation revokes the SPECIFIC minted key with a durable retry, and never a later resume", async () => {
     const owner = await ready();
     flux.keyRevokeDown = true;
     flux.afterMint = async () => { await call("POST", `/v1/homes/${HOME}/flux/stop`, owner.token, {}); };
-    const raced = await mintReq(owner.token);
+    const raced = await pollerKey();
     expect(raced.status).toBe(409);
     expect(await raced.text()).not.toContain("sk-flux-home-");
     expect((await compRows()).results).toEqual([{ generation: 1, state: "queued" }]);
     // Round 4: a resume never runs ahead of a queued op that is failing: it is told so (502) and the
     // compensation stays queued.
-    const blocked = await mintReq(owner.token);
+    await spendingOn(owner.token);
+    const blocked = await pollerKey();
     expect(blocked.status).toBe(502);
     expect(flux.mints).toHaveLength(1);
-    // The owner resumes (generation 2) once the router answers: the compensation of 1 runs first.
+    // The poller resumes (generation 2) once the router answers: the compensation of 1 runs first.
     flux.keyRevokeDown = false;
-    const resumed = await mintReq(owner.token);
+    const resumed = await pollerKey();
     expect(resumed.status).toBe(200);
     expect((await resumed.json<{ generation: number }>()).generation).toBe(2);
     clock += 11 * 60_000;
@@ -3317,16 +3714,16 @@ describe("round 2: lifecycle, link fencing and compensation (hole 5, relink, sta
   it("hole 5: a mint that Flux definitively refuses leaves no compensation, one that may have landed leaves a due one", async () => {
     const owner = await ready();
     flux.mintError = new FluxError(409, "", "stale_lifecycle");
-    await mintReq(owner.token);
+    await pollerKey();
     expect((await compRows()).results).toEqual([]);
     flux.mintError = null;
     flux.down = true;
-    await mintReq(owner.token);
+    await pollerKey();
     flux.down = false;
     expect((await compRows()).results).toHaveLength(1);
     expect((await compRows()).results[0].state).toBe("queued");
     // The next try uses a generation above the one that may have been published (and is now tombstoned).
-    const ok = await mintReq(owner.token);
+    const ok = await pollerKey();
     expect((await ok.json<{ generation: number }>()).generation).toBeGreaterThan(1 + 0);
     await sweep();
     expect(flux.tombstonedKeys.size).toBeGreaterThan(0);
@@ -3335,15 +3732,16 @@ describe("round 2: lifecycle, link fencing and compensation (hole 5, relink, sta
 
   it("hole 5: resume advances the lifecycle version, so a delayed Stop retry cannot revoke it", async () => {
     const owner = await ready();
-    await mintReq(owner.token);
+    await pollerKey();
     expect(flux.mints[0].lifecycleVersion).toBe(1);
     // The Stop cannot reach the router; a resume is refused while that Stop is unfinished (round 4: a
     // mint never runs ahead of a failing queued op), then lands right after the Stop, above it.
     flux.stopDown = true;
     expect((await call("POST", `/v1/homes/${HOME}/flux/stop`, owner.token, {})).status).toBe(502);
-    expect((await mintReq(owner.token)).status).toBe(502);
+    await spendingOn(owner.token);
+    expect((await pollerKey()).status).toBe(429); // 8b: the poller's resume mint waits for the failing Stop (renewal_retry_later)
     flux.stopDown = false;
-    expect((await mintReq(owner.token)).status).toBe(200);
+    expect((await pollerKey()).status).toBe(200);
     expect(flux.stopVersions).toEqual([2]);
     expect(flux.mints.at(-1)!.lifecycleVersion).toBe(3);
     clock += BACKOFF;
@@ -3356,12 +3754,12 @@ describe("round 2: lifecycle, link fencing and compensation (hole 5, relink, sta
 
   it("relink: after a versioned unlink and revoke the home can be re-issued under the new link, above the old link version", async () => {
     const owner = await ready();
-    await mintReq(owner.token);
+    await pollerKey();
     const first = flux.mints[0];
     await call("DELETE", "/v1/flux/link", owner.token);
     expect(flux.linkFloor).toBe(2);
     await link(owner.token, "99999999-2222-3333-4444-555555555555");
-    const again = await mintReq(owner.token);
+    const again = await resumeAndKey(owner.token);
     expect(again.status).toBe(200);
     const second = flux.mints[1];
     expect(second.accountId).toBe("99999999-2222-3333-4444-555555555555");
@@ -3372,32 +3770,32 @@ describe("round 2: lifecycle, link fencing and compensation (hole 5, relink, sta
 
   it("round 2 wire: a mint carries the link, lifecycle, cap and billing versions; a cap change bumps the cap version", async () => {
     const owner = await ready();
-    await mintReq(owner.token);
+    await pollerKey();
     expect(flux.mints[0]).toMatchObject({ linkVersion: 1, lifecycleVersion: 1, capVersion: 1, billingState: "ok" });
-    expect(flux.mints[0].linkId).toMatch(/^[0-9a-f]{32}$/);
+    expect(flux.mints[0].linkId).toBe(FLUX_ACCOUNT);
     await call("POST", `/v1/homes/${HOME}/flux/cap`, owner.token, { capUsd: 40 });
     expect(flux.caps).toEqual([{ homeId: HOME, capMicrocents: 40_000_000, capVersion: 2 }]);
-    await mintReq(owner.token);
+    await pollerKey();
     expect(flux.mints[1].capVersion).toBe(3);
     expect(flux.mints[1].capMicrocents).toBe(40_000_000);
   });
 
-  it("hole 12: CP never refuses a prepaid-only account (no billing identity) and passes the identity only when it has one", async () => {
+  it("hole 12: CP never refuses a prepaid-only account (no billing identity); the identity is kept locally and never sent on the mint", async () => {
     const owner = await ready();
-    expect((await mintReq(owner.token)).status).toBe(200);
-    expect(flux.mints[0].billingCustomerId).toBeUndefined();
+    expect((await pollerKey()).status).toBe(200);
     await admin("/v1/internal/flux/plan", { homeId: HOME, plan: "pro", billingCustomerId: "cus_abc123" });
-    expect((await mintReq(owner.token)).status).toBe(200);
-    expect(flux.mints[1].billingCustomerId).toBe("cus_abc123");
+    expect((await pollerKey()).status).toBe(200);
+    const row = await env.DB.prepare("SELECT billing_customer_id AS b FROM flux_home_keys WHERE home_id=?").bind(HOME).first<{ b: string }>();
+    expect(row?.b).toBe("cus_abc123");
   });
 
   it("status: every router refusal state is paused; only ok is not, and an unreachable router is paused", async () => {
     const owner = await ready();
-    await mintReq(owner.token);
+    await pollerKey();
     for (const state of ["capped", "stopped", "revoked", "ip_refused", "unavailable", "invalid", "unfunded", "fenced", "state_lost"]) {
       flux.statusFor = { ...flux.statusFor, state };
       const body = await (await call("GET", `/v1/homes/${HOME}/flux`, owner.token)).json<{ paused: boolean; message: string | null; flux: string }>();
-      expect(body, state).toMatchObject({ paused: true, flux: state });
+      expect(body, state).toMatchObject({ paused: true, flux: state === "capped" || state === "unfunded" ? state : "paused" }); // the router's own words never reach the answer
       expect(body.message, state).toContain("Claude and ChatGPT sign-ins keep working");
     }
     flux.statusFor = { ...flux.statusFor, state: "ok" };
@@ -3421,8 +3819,9 @@ describe("round 2: the Flux client wire format", () => {
     await createFluxClient(testEnv(), fakeFetch(200, { key, expires_at: "2026-11-13T00:00:00Z", generation: 3, cap_microcents: 30_000_000 })).mint({
       accountId: FLUX_ACCOUNT, homeId: HOME, generation: 3, boundIps: [HOME_IP], capMicrocents: 30_000_000, ttlSeconds: 3600,
       lifecycleVersion: 4, ownerResume: true, opId: "o", linkId: "abc", linkVersion: 2, capVersion: 5, billingState: "ok", billingCustomerId: "cus_1",
-    });
-    expect(sent()).toMatchObject({ link_id: "abc", link_version: 2, lifecycle_version: 4, cap_version: 5, billing_state: "ok", billing_customer_id: "cus_1" });
+    } as never);
+    expect(sent()).toMatchObject({ link_id: "abc", link_version: 2, lifecycle_version: 4, cap_version: 5, billing_state: "ok" });
+    expect(Object.keys(sent())).not.toContain("billing_customer_id");
     await createFluxClient(testEnv(), fakeFetch(200, {})).stop(HOME, 7, { linkVersion: 3, reason: "unlink" });
     expect(sent()).toEqual({ home_id: HOME, lifecycle_version: 7, scope: "home", link_version: 3, reason: "unlink" });
     await createFluxClient(testEnv(), fakeFetch(200, {})).stop(HOME, 7);
@@ -3465,14 +3864,13 @@ describe("round 3: one per-home serializer (Codex findings 2, 3, 4, 7, control-p
     await machineSetup(owner.token, owner.userId);
     return owner;
   };
-  const mintReq = (token: string) => call("POST", `/v1/homes/${HOME}/flux/subkey`, token, {});
   const stopReq = (token: string) => call("POST", `/v1/homes/${HOME}/flux/stop`, token, {});
   const errorOf = async (response: Response) => (await response.json<{ error: string }>()).error;
   const ops = () => env.DB.prepare("SELECT kind,state FROM flux_home_ops ORDER BY seq").all<{ kind: string; state: string }>();
 
   it("F2: a billing Stop interrupted right after its batch is finished by the sweep: router Stop with the bumped version, state stopped, reversals sent", async () => {
     const owner = await ready();
-    await mintReq(owner.token);
+    await pollerKey();
     await admin("/v1/internal/flux/grant", { homeId: HOME, plan: "starter", invoiceId: "in_f2_0001", ...period(-10) }); // current period, delivered
     expect(flux.grants).toHaveLength(1);
     await coverRefund("in_f2_0001", 4900); // INTEGRATED-9: only money actually returned removes credit
@@ -3497,7 +3895,7 @@ describe("round 3: one per-home serializer (Codex findings 2, 3, 4, 7, control-p
 
   it("Astra JOURNEY-A-5 #3: a billing Stop that names its invoice reverses only that invoice's grant, never another current-period grant", async () => {
     const owner = await ready();
-    await mintReq(owner.token);
+    await pollerKey();
     await admin("/v1/internal/flux/grant", { homeId: HOME, plan: "starter", invoiceId: "in_a5_0001", ...period(-10) });
     await admin("/v1/internal/flux/grant", { homeId: HOME, plan: "starter", invoiceId: "in_b5_0001", ...period(-5) });
     expect(flux.grants).toHaveLength(2);
@@ -3513,7 +3911,7 @@ describe("round 3: one per-home serializer (Codex findings 2, 3, 4, 7, control-p
     flux.afterMint = async () => {
       expect((await call("POST", `/v1/homes/${HOME}/flux/cap`, owner.token, { capUsd: 5 })).status).toBe(200);
     };
-    const minted = await mintReq(owner.token);
+    const minted = await pollerKey();
     expect(minted.status).toBe(200);
     expect(flux.mints[0].capMicrocents).toBe(30_000_000); // the mint published the old cap
     expect(flux.routerCap).toBe(5_000_000); // and the queued cap op republished the new one
@@ -3524,7 +3922,7 @@ describe("round 3: one per-home serializer (Codex findings 2, 3, 4, 7, control-p
 
   it("F4: a cap change that cannot reach the router is kept and retried, never undone", async () => {
     const owner = await ready();
-    await mintReq(owner.token);
+    await pollerKey();
     flux.down = true;
     await call("POST", `/v1/homes/${HOME}/flux/cap`, owner.token, { capUsd: 9 });
     expect(await homeRow()).toMatchObject({ cap_microcents: 9_000_000, cap_version: 2 });
@@ -3543,8 +3941,13 @@ describe("round 3: one per-home serializer (Codex findings 2, 3, 4, 7, control-p
     const owner = await ready();
     let during: Response | null = null;
     flux.afterMint = async () => { await stopReq(owner.token); }; // the first mint is raced, so its key is compensated
-    flux.onKeyRevoke = async () => { during = await mintReq(owner.token); }; // a resume arrives while the compensation is at the router
-    const raced = await mintReq(owner.token);
+    // Spending back ON (8b) lands while the compensation is at the router; the poller's resume mint asks then.
+    flux.onKeyRevoke = async () => {
+      await spendingOn(owner.token);
+      await env.DB.prepare("DELETE FROM flux_mint_ops").run(); // the poll that asks now is its own request, not a replay of the one in flight
+      during = await pollerKey();
+    };
+    const raced = await pollerKey();
     expect(raced.status).toBe(409);
     expect(during).not.toBeNull();
     expect(during!.status).toBe(409);
@@ -3552,7 +3955,7 @@ describe("round 3: one per-home serializer (Codex findings 2, 3, 4, 7, control-p
     expect(flux.overlapped).toBe(false);
     expect(flux.keyRevokes.map((r) => r.generation)).toEqual([1]);
     // Retried after the home is free, the resume lands on a higher generation and is not revoked.
-    const resumed = await mintReq(owner.token);
+    const resumed = await pollerKey();
     expect(resumed.status).toBe(200);
     expect((await resumed.json<{ generation: number }>()).generation).toBe(2);
     expect([...flux.keys]).toEqual([2]);
@@ -3572,17 +3975,18 @@ describe("round 3: one per-home serializer (Codex findings 2, 3, 4, 7, control-p
 
   it("F7: a Stop and a resume issued at the same time run in order: the resume is told home_busy while the Stop is at the router, and is not revoked on retry", async () => {
     const owner = await ready();
-    await mintReq(owner.token);
+    await pollerKey();
     let resumeDuring: Response | null = null;
-    flux.onStop = async () => { resumeDuring = await mintReq(owner.token); };
+    // 8b: the owner's mint route is closed, so a resume asked for while the Stop is at the router is refused outright (410) and writes nothing.
+    flux.onStop = async () => { resumeDuring = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {}); };
     const stop = await stopReq(owner.token);
     expect(stop.status).toBe(200);
-    expect(resumeDuring!.status).toBe(409);
-    expect(await errorOf(resumeDuring!)).toBe("home_busy");
+    expect(resumeDuring!.status).toBe(410);
+    expect(await errorOf(resumeDuring!)).toBe("owner_mint_retired");
     expect(flux.overlapped).toBe(false);
     expect(flux.stopVersions).toEqual([2]);
     expect(await homeRow()).toMatchObject({ state: "stopped" });
-    const resumed = await mintReq(owner.token);
+    const resumed = await resumeAndKey(owner.token);
     expect(resumed.status).toBe(200);
     expect(flux.keys.has(flux.mints.at(-1)!.generation)).toBe(true);
     await sweep();
@@ -3593,9 +3997,9 @@ describe("round 3: one per-home serializer (Codex findings 2, 3, 4, 7, control-p
 
   it("F7: a Stop that arrives while a resume is minting queues behind it and runs right after (resume then Stop, in order)", async () => {
     const owner = await ready();
-    await mintReq(owner.token);
+    await pollerKey();
     flux.afterMint = async () => { expect((await stopReq(owner.token)).status).toBe(202); };
-    const raced = await mintReq(owner.token);
+    const raced = await pollerKey();
     expect(raced.status).toBe(409); // the Stop wins; the resumed key is compensated, never returned
     expect(flux.overlapped).toBe(false);
     expect(flux.keys.size).toBe(0);
@@ -3604,7 +4008,7 @@ describe("round 3: one per-home serializer (Codex findings 2, 3, 4, 7, control-p
 
   it("a crashed lease holder: an expired lease is taken over by the sweep; an unexpired one is left alone", async () => {
     const owner = await ready();
-    await mintReq(owner.token);
+    await pollerKey();
     flux.stopDown = true;
     await stopReq(owner.token); // 502, the Stop stays queued
     flux.stopDown = false;
@@ -3618,8 +4022,9 @@ describe("round 3: one per-home serializer (Codex findings 2, 3, 4, 7, control-p
   });
 
   it("ops are idempotent: a Stop whose answer was lost is sent again with the same version and ends the same", async () => {
+    flux.statusFor = { state: "none" }; // 8b: a stopped home whose key the router reports live gets a repair Stop; these tests count the Stops they send
     const owner = await ready();
-    await mintReq(owner.token);
+    await pollerKey();
     flux.stopAckLost = true;
     expect((await stopReq(owner.token)).status).toBe(502);
     expect(flux.stopVersions).toEqual([2]); // it took effect at the router
@@ -3634,7 +4039,7 @@ describe("round 3: one per-home serializer (Codex findings 2, 3, 4, 7, control-p
 
   it("unlink records every Stop with the fence in one batch, and the link row goes only when all are done", async () => {
     const owner = await ready();
-    await mintReq(owner.token);
+    await pollerKey();
     flux.stopDown = true;
     expect((await call("DELETE", "/v1/flux/link", owner.token)).status).toBe(502);
     expect(await env.DB.prepare("SELECT fenced FROM flux_links").first()).toEqual({ fenced: 1 });
@@ -3655,7 +4060,6 @@ describe("round 4 (Astra 2026-10-10): cap sync, fair sweep, lease ownership, unl
     await machineSetup(owner.token, owner.userId);
     return owner;
   };
-  const mintReq = (token: string) => call("POST", `/v1/homes/${HOME}/flux/subkey`, token, {});
   const errorOf = async (response: Response) => (await response.json<{ error: string }>()).error;
   const cpCap = async () => (await homeRow()) as { cap_microcents: number; cap_version: number; generation: number };
 
@@ -3668,7 +4072,7 @@ describe("round 4 (Astra 2026-10-10): cap sync, fair sweep, lease ownership, unl
       expect(await lowered.json()).toEqual({ capUsd: 5, enabled: true, pending: true });
       flux.down = true;
     };
-    const minted = await mintReq(owner.token);
+    const minted = await pollerKey();
     expect(minted.status).toBe(503);
     const text = await minted.text();
     expect(text).not.toContain("sk-flux-home-");
@@ -3682,7 +4086,7 @@ describe("round 4 (Astra 2026-10-10): cap sync, fair sweep, lease ownership, unl
     await sweep();
     expect(flux.tombstonedKeys.has(1)).toBe(true);
     expect([...flux.keys]).toEqual([]); // no usable key at the stale $30 cap
-    const retried = await mintReq(owner.token);
+    const retried = await pollerKey();
     expect(retried.status).toBe(200);
     const body = await retried.json<{ capUsd: number; generation: number }>();
     expect(body.capUsd).toBe(5);
@@ -3698,7 +4102,7 @@ describe("round 4 (Astra 2026-10-10): cap sync, fair sweep, lease ownership, unl
     const origSetCap = flux.setCap.bind(flux);
     let pushedBeforeCommit = false;
     flux.setCap = async (h, c, v) => { const r = await origSetCap(h, c, v); if ((await cpCap()).generation === 0) pushedBeforeCommit = true; return r; };
-    const minted = await mintReq(owner.token);
+    const minted = await pollerKey();
     expect(minted.status).toBe(200);
     capWhenReturned = flux.routerCap;
     expect(pushedBeforeCommit).toBe(true);
@@ -3709,7 +4113,7 @@ describe("round 4 (Astra 2026-10-10): cap sync, fair sweep, lease ownership, unl
 
   it("#3: fifty failing homes cannot starve another home's billing Stop; retries back off and each sweep is bounded", async () => {
     const owner = await ready();
-    expect((await mintReq(owner.token)).status).toBe(200);
+    expect((await pollerKey()).status).toBe(200);
     // Fifty homes whose router calls always fail, queued BEFORE the billing Stop.
     for (let i = 0; i < 50; i++) {
       const id = `home-bad-${String(i).padStart(2, "0")}`;
@@ -3737,7 +4141,7 @@ describe("round 4 (Astra 2026-10-10): cap sync, fair sweep, lease ownership, unl
 
   it("#3: an ordinary Stop queued behind sixty failing homes is reached within a few sweeps", async () => {
     const owner = await ready();
-    expect((await mintReq(owner.token)).status).toBe(200);
+    expect((await pollerKey()).status).toBe(200);
     for (let i = 0; i < 60; i++) {
       const id = `home-bad-${String(i).padStart(2, "0")}`;
       flux.failHomes.add(id);
@@ -3756,8 +4160,9 @@ describe("round 4 (Astra 2026-10-10): cap sync, fair sweep, lease ownership, unl
   });
 
   it("round 5 #1: 25 failing billing Stops cannot starve another home's ordinary Stop across 4 sweeps", async () => {
+    flux.statusFor = { state: "none" }; // 8b: a stopped home whose key the router reports live gets a repair Stop; these tests count the Stops they send
     const owner = await ready();
-    expect((await mintReq(owner.token)).status).toBe(200);
+    expect((await pollerKey()).status).toBe(200);
     // Astra review 5 reproduction: 25 homes with a billing Stop whose router call always fails (their
     // 1-minute backoff expires before every 10-minute sweep), plus one ordinary Stop.
     for (let i = 0; i < 25; i++) {
@@ -3785,6 +4190,7 @@ describe("round 4 (Astra 2026-10-10): cap sync, fair sweep, lease ownership, unl
   });
 
   it("round 5 #1: a full billing backlog still leaves reserved slots for ordinary work every sweep", async () => {
+    flux.statusFor = { state: "none" }; // 8b: a stopped home whose key the router reports live gets a repair Stop; these tests count the Stops they send
     await ready();
     for (let i = 0; i < 40; i++) {
       const id = `home-bill-${String(i).padStart(2, "0")}`;
@@ -3818,18 +4224,20 @@ describe("round 4 (Astra 2026-10-10): cap sync, fair sweep, lease ownership, unl
 
   it("#4: a caller that loses its lease mid-drain stops; the later caller's key stays valid", async () => {
     const owner = await ready();
-    expect((await mintReq(owner.token)).status).toBe(200); // generation 1
+    expect((await pollerKey()).status).toBe(200); // generation 1
     flux.stopDown = true;
     expect((await call("POST", `/v1/homes/${HOME}/flux/stop`, owner.token, {})).status).toBe(502); // Stop queued
     flux.stopDown = false;
+    await spendingOn(owner.token); // 8b: spending back ON; the poller's resume mint drains the older Stop first
     let b: Response | null = null;
     // A resumes and drains the older Stop; while that Stop is at the router A's lease expires and B
     // takes over, finishes the Stop and resumes successfully.
     flux.onStop = async () => {
       clock += 3 * 60_000;
-      b = await mintReq(owner.token);
+      await env.DB.prepare("DELETE FROM flux_mint_ops").run(); // B's poll is its own request, not a replay of A's
+      b = await pollerKey();
     };
-    const a = await mintReq(owner.token);
+    const a = await pollerKey();
     expect(b!.status).toBe(200);
     const bGen = (await b!.json<{ generation: number }>()).generation;
     expect(bGen).toBe(2);
@@ -3845,12 +4253,12 @@ describe("round 4 (Astra 2026-10-10): cap sync, fair sweep, lease ownership, unl
 
   it("#4: the mint claim needs the current holder and an unexpired lease", async () => {
     const owner = await ready();
-    expect((await mintReq(owner.token)).status).toBe(200);
+    expect((await pollerKey()).status).toBe(200);
     // Take the lease away (another worker) between acquisition and the claim.
     armDb(/UPDATE flux_home_keys SET lifecycle_version = lifecycle_version/, async () => {
       await env.DB.prepare("UPDATE flux_home_keys SET op_holder='other-worker',op_lease_until=? WHERE home_id=?").bind(clock + LEASE, HOME).run();
     });
-    const refused = await mintReq(owner.token);
+    const refused = await pollerKey();
     expect(refused.status).toBe(409);
     expect(await errorOf(refused)).toBe("home_busy");
     expect(flux.mints).toHaveLength(1);
@@ -3858,7 +4266,7 @@ describe("round 4 (Astra 2026-10-10): cap sync, fair sweep, lease ownership, unl
 
   it("#5: a fenced link whose Stops all completed is finalized by the sweep (crash between the last Stop and the finalize)", async () => {
     const owner = await ready();
-    expect((await mintReq(owner.token)).status).toBe(200);
+    expect((await pollerKey()).status).toBe(200);
     flux.stopDown = true;
     expect((await call("DELETE", "/v1/flux/link", owner.token)).status).toBe(502);
     flux.stopDown = false;
@@ -3872,7 +4280,7 @@ describe("round 4 (Astra 2026-10-10): cap sync, fair sweep, lease ownership, unl
 
   it("#5: the last Stop's completion and the link finalization commit together", async () => {
     const owner = await ready();
-    expect((await mintReq(owner.token)).status).toBe(200);
+    expect((await pollerKey()).status).toBe(200);
     flux.stopDown = true;
     expect((await call("DELETE", "/v1/flux/link", owner.token)).status).toBe(502);
     flux.stopDown = false;
@@ -3885,5 +4293,1826 @@ describe("round 4 (Astra 2026-10-10): cap sync, fair sweep, lease ownership, unl
     await sweep();
     expect(await env.DB.prepare("SELECT state FROM flux_home_ops WHERE kind='stop'").first()).toEqual({ state: "done" });
     expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_links").first()).toEqual({ n: 0 });
+  });
+});
+
+// The FIRST Flux key, taken by the home's own poller with the existing wire (renewal-due, subkey, ack): a brand-new paid home must answer
+// with Fuigo without the customer signing in. Worker only: nothing here changes the poller or the wire.
+describe("first Flux key by the poller (a brand-new paid home)", () => {
+  const ip = { "CF-Connecting-IP": HOME_IP };
+  const m = (route: string, body: unknown, id = HOME) => call("POST", `/v1/machines/${id}/flux/${route}`, MACHINE_TOKEN, body, ip);
+  const due = async () => (await m("renewal-due", { generation: 1 })).json<{ due: boolean; op_id?: string }>();
+  const retryRow = () => env.DB.prepare("SELECT failures,next_at FROM flux_first_key_retry WHERE home_id=?").bind(HOME).first<{ failures: number; next_at: number }>();
+  const alerts = async () => (await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts").first<{ n: number }>())!.n;
+  let ensured: number;
+  /** A fresh paid home: owned, ready, subscription active, NO link and NO Flux row (the owner has never signed in to Flux). */
+  const fresh = async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await seedHome(owner.userId);
+    await env.DB.prepare("UPDATE cloud_machines SET credential_hash=? WHERE id=?").bind(await sha256(MACHINE_TOKEN), HOME).run();
+    await env.DB.prepare("UPDATE cloud_homes SET entitlement='paid' WHERE id=?").bind(HOME).run();
+    await env.DB.prepare(`INSERT INTO billing_subscriptions (home_id,customer_id,subscription_id,plan,status,created_at,updated_at)
+      VALUES (?,'cus_1','sub_1','starter','active',?,?)`).bind(HOME, clock, clock).run();
+    // The owner proved the inbox (ITEM4-PROOF-CURRENT: Flux is called only on a TRUE stamp for the current address).
+    await env.DB.prepare("UPDATE supabase_identities SET contact_email=?, email_verified_at=1, email_verified_for=lower(?) WHERE user_id=?").bind(owner.email, owner.email, owner.userId).run();
+    ensured = 0;
+    (flux as unknown as { ensureAccount: unknown }).ensureAccount = async () => { ensured += 1; return { fluxAccountId: FLUX_ACCOUNT, created: true }; };
+    return owner;
+  };
+  const keyRow = (state: string, extraSql = "") => env.DB.prepare(`INSERT OR REPLACE INTO flux_home_keys (home_id,plan,generation,state,cap_microcents,cap_custom,updated_at${extraSql ? "," + extraSql.split("=")[0] : ""})
+    VALUES (?,'starter',0,?,30000000,0,?${extraSql ? "," + extraSql.split("=")[1] : ""})`).bind(HOME, state, clock).run();
+
+  it("a fresh paid home is cued, ensures the owner's account, mints with the owner's cap, acks, and is then an ordinary active row", async () => {
+    await fresh();
+    expect(await due()).toEqual({ due: true, op_id: `renew:${HOME}:1:0` });
+    const minted = await m("subkey", { generation: 1, op_id: `renew:${HOME}:1:0` });
+    expect(minted.status).toBe(200);
+    const body = await minted.json<{ key: string; generation: number; capUsd: number }>();
+    expect([body.generation, body.capUsd, ensured]).toEqual([1, 30, 1]);
+    expect(flux.mints).toEqual([expect.objectContaining({ homeId: HOME, generation: 1, capMicrocents: 30_000_000, ownerResume: false, lifecycleVersion: 1,
+      opId: `renew:${HOME}:1:0`, accountId: FLUX_ACCOUNT, linkVersion: 1, billingState: "ok" })]);
+    expect(await homeRow()).toMatchObject({ state: "active", generation: 1, key_expires_at: null, pending_op_id: `renew:${HOME}:1:0` });
+    // Undelivered: cued again only after the bound (60 s), with the next identity.
+    expect(await retryRow()).toEqual({ failures: 1, next_at: clock + 60_000 });
+    expect(await due()).toEqual({ due: false });
+    clock += 60_000;
+    expect(await due()).toEqual({ due: true, op_id: `renew:${HOME}:1:1` });
+    expect(await (await m("subkey/ack", { generation: 1, op_id: `renew:${HOME}:1:0`, key_generation: 1 })).json()).toEqual({ acked: true });
+    expect((await homeRow())!.key_expires_at).not.toBeNull();
+    expect(await due()).toEqual({ due: false });
+    expect(await retryRow()).toBeNull();
+    await env.DB.prepare("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?").bind(clock + DAY, HOME).run();
+    expect(await due()).toEqual({ due: true, op_id: `renew:${HOME}:1:1` });
+  });
+
+  it("a warm-pool server (no home row) and an ownerless or unpaid home are never cued and never minted for, with no ensure call", async () => {
+    await fresh();
+    const now = Date.now();
+    await env.DB.prepare(`INSERT INTO cloud_machines (id,home_id,generation,state,credential_hash,bound_ips,created_at,public_origin,admin_url)
+      VALUES ('pool-1','pool-1',1,'active',?,?,?,'https://p.murage.test','https://a.murage.test')`).bind(await sha256(MACHINE_TOKEN), JSON.stringify([HOME_IP]), now).run();
+    expect(await (await m("renewal-due", { generation: 1 }, "pool-1")).json()).toEqual({ due: false });
+    expect((await m("subkey", { generation: 1 }, "pool-1")).status).toBe(404);
+    for (const sql of [
+      "UPDATE cloud_homes SET owner_id='' WHERE id='home-flux'",
+      "UPDATE cloud_homes SET entitlement='pending' WHERE id='home-flux'",
+      "UPDATE cloud_homes SET entitlement='refund_pending' WHERE id='home-flux'",
+      "UPDATE cloud_homes SET desired_state='suspended' WHERE id='home-flux'",
+      "UPDATE cloud_homes SET desired_state='provisioning' WHERE id='home-flux'",
+      "UPDATE billing_subscriptions SET status='canceled' WHERE home_id='home-flux'",
+      "UPDATE billing_subscriptions SET status='past_due' WHERE home_id='home-flux'",
+      "UPDATE billing_subscriptions SET subscription_id=NULL WHERE home_id='home-flux'",
+    ]) {
+      await env.DB.batch([env.DB.prepare("UPDATE cloud_homes SET owner_id=(SELECT user_id FROM supabase_identities LIMIT 1),entitlement='paid',desired_state='ready' WHERE id=?").bind(HOME),
+        env.DB.prepare("UPDATE billing_subscriptions SET status='active',subscription_id='sub_1' WHERE home_id=?").bind(HOME), env.DB.prepare(sql)]);
+      expect([sql, await due()]).toEqual([sql, { due: false }]);
+      expect([sql, (await m("subkey", { generation: 1 })).status]).toEqual([sql, 409]);
+    }
+    expect([flux.mints.length, ensured, await homeRow()]).toEqual([0, 0, null]);
+  });
+
+  it("a billing hold, spending off, stopped and stopping are refused at the cue and at the mint, and nothing is minted or ensured", async () => {
+    await fresh();
+    for (const [label, state, extraSql] of [["hold", "none", "billing_hold=1"], ["spending off", "none", "spending_off=1"], ["stopped", "stopped", ""], ["stopping", "stopping", ""]] as const) {
+      await keyRow(state, extraSql);
+      expect([label, await due()]).toEqual([label, { due: false }]);
+      const refused = await m("subkey", { generation: 1 });
+      expect([label, refused.status]).toEqual([label, 409]);
+      expect([label, (await refused.json<{ error: string }>()).error]).toEqual([label, label === "hold" ? "billing_hold" : label === "spending off" ? "spending_off" : "home_not_active"]);
+    }
+    expect([flux.mints.length, ensured, await retryRow()]).toEqual([0, 0, null]);
+  });
+
+  it("a replayed operation is refused, a foreign op_id is refused, and a key already taken is not a first key again", async () => {
+    await fresh();
+    await env.DB.prepare("INSERT INTO flux_mint_ops (op_id,home_id,created_at) VALUES (?,?,?)").bind(`renew:${HOME}:1:0`, HOME, clock).run();
+    expect((await (await m("subkey", { generation: 1, op_id: `renew:${HOME}:1:0` })).json<{ error: string }>()).error).toBe("renewal_replayed");
+    await env.DB.prepare("DELETE FROM flux_mint_ops").run();
+    expect((await (await m("subkey", { generation: 1, op_id: `renew:${HOME}:1:7` })).json<{ error: string }>()).error).toBe("renewal_op_mismatch");
+    expect(flux.mints).toHaveLength(0);
+    expect((await m("subkey", { generation: 1, op_id: `renew:${HOME}:1:0` })).status).toBe(200);
+    // fix r1 (Astra H1): an unacked key keeps renewal due, so the home acks it first.
+    expect((await m("subkey/ack", { generation: 1, op_id: `renew:${HOME}:1:0`, key_generation: 1 })).status).toBe(200);
+    // Active now: a second first-key style request is an ordinary renewal and is refused while the key is fresh.
+    await env.DB.prepare("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?").bind(clock + 30 * DAY, HOME).run();
+    expect((await (await m("subkey", { generation: 1 })).json<{ error: string }>()).error).toBe("renewal_not_due");
+    expect(flux.mints).toHaveLength(1);
+  });
+
+  it("a failed mint is retried under the same identity, only after the bound, and the key lands", async () => {
+    await fresh();
+    const opId = `renew:${HOME}:1:0`;
+    flux.mintError = new FluxError(503, "down");
+    expect((await m("subkey", { generation: 1, op_id: opId })).status).toBe(502);
+    expect(await retryRow()).toEqual({ failures: 1, next_at: clock + 60_000 });
+    expect(await due()).toEqual({ due: false });
+    const early = await m("subkey", { generation: 1, op_id: opId });
+    expect([early.status, (await early.json<{ error: string }>()).error]).toEqual([429, "first_key_retry_later"]);
+    clock += 60_000;
+    expect(await due()).toEqual({ due: true, op_id: opId });
+    flux.mintError = null;
+    expect((await m("subkey", { generation: 1, op_id: opId })).status).toBe(200);
+    expect(flux.mints.map((x) => x.opId)).toEqual([opId]);
+    expect(await retryRow()).not.toBeNull(); // landed but not acked yet: still bounded
+    expect(await homeRow()).toMatchObject({ state: "active" });
+    expect((await m("subkey/ack", { generation: 1, op_id: opId, key_generation: flux.mints[0].generation })).status).toBe(200);
+    expect(await retryRow()).toBeNull();
+  });
+
+  it("a persistently failing first key is asked of Flux about 9 times an hour, not 60, and raises no alert", async () => {
+    await fresh();
+    let calls = 0;
+    const real = flux.mint.bind(flux);
+    flux.mint = (input: FluxMint) => { calls += 1; return real(input); };
+    flux.mintError = new FluxError(503, "down");
+    for (let minute = 0; minute < 60; minute++) {
+      const ask = await due();
+      if (ask.due) await m("subkey", { generation: 1, op_id: ask.op_id });
+      clock += 60_000;
+    }
+    expect(calls).toBe(9); // minutes 0, 1, 3, 7, 15, 25, 35, 45, 55
+    expect((await retryRow())!.failures).toBe(9);
+    expect(await alerts()).toBe(0);
+    expect([1, 2, 3, 4, 5, 6].map(firstKeyRetryDelayMs)).toEqual([60_000, 120_000, 240_000, 480_000, 600_000, 600_000]);
+  });
+
+  it("ITEM4-PROOF-CURRENT first key: an UNPROVEN owner is a local hold with NO ensure call: 409 uncounted, failures 0, next_at = +15 min, no link, no page", async () => {
+    const owner = await fresh();
+    await env.DB.prepare("UPDATE supabase_identities SET email_verified_at=NULL, email_verified_for=NULL WHERE user_id=?").bind(owner.userId).run();
+    const r = await m("subkey", { generation: 1 });
+    expect([r.status, (await r.json<{ error: string }>()).error]).toEqual([409, "flux_email_unverified"]);
+    expect(ensured).toBe(0);
+    const row = () => env.DB.prepare("SELECT failures,next_at,hold FROM flux_first_key_retry WHERE home_id=?").bind(HOME).first();
+    expect(await row()).toEqual({ failures: 0, next_at: clock + 15 * 60_000, hold: "email_unverified" });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_links").first()).toEqual({ n: 0 });
+    expect(await alerts()).toBe(0);
+    // An hour of polling every minute: never an ensure call, failures never move, no page.
+    for (let i = 0; i < 60; i++) {
+      clock += 60_000;
+      const ask = await due();
+      if (ask.due) expect((await m("subkey", { generation: 1, op_id: ask.op_id })).status).toBe(409);
+    }
+    expect(ensured).toBe(0);
+    expect(await row()).toMatchObject({ failures: 0, hold: "email_unverified" });
+    expect(await alerts()).toBe(0);
+    expect(flux.mints).toHaveLength(0);
+  });
+
+  it("ITEM4-PROOF-CURRENT B4 delivery: an unproven owner's grant stays pending with NO ensure call", async () => {
+    const owner = await fresh();
+    await env.DB.prepare("UPDATE supabase_identities SET email_verified_at=NULL, email_verified_for=NULL WHERE user_id=?").bind(owner.userId).run();
+    const g = await grantMonthlyCredits(testEnv(), { homeId: HOME, plan: "starter", invoiceId: "in_unproven_01", ...period() }, { ...deps });
+    expect(g.status).toBe("pending");
+    clock += 11 * 60_000;
+    await sweepFlux(testEnv(), deps);
+    expect(ensured).toBe(0);
+    expect(flux.grants).toHaveLength(0);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_links").first()).toEqual({ n: 0 });
+  });
+
+  it("ITEM4-PROOF-CURRENT first key: a 202 to a PROVEN call is a typed hold (409 uncounted, +15 min) and ONE flux.ensure_verified_refused page", async () => {
+    const owner = await fresh();
+    let sent: Record<string, unknown> | null = null;
+    (flux as unknown as { ensureAccount: unknown }).ensureAccount = async (a: Record<string, unknown>) => { ensured += 1; sent = a; throw new FluxEmailUnverified(); };
+    const r = await m("subkey", { generation: 1 });
+    expect([r.status, (await r.json<{ error: string }>()).error]).toEqual([409, "flux_email_unverified"]);
+    expect(sent).toMatchObject({ murageAccountId: owner.userId, emailVerified: true });
+    const row = () => env.DB.prepare("SELECT failures,next_at,hold FROM flux_first_key_retry WHERE home_id=?").bind(HOME).first();
+    expect(await row()).toEqual({ failures: 0, next_at: clock + 15 * 60_000, hold: "email_unverified" });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='flux.ensure_verified_refused' AND subject=?").bind(`account:${owner.userId}`).first()).toEqual({ n: 1 });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind LIKE 'flux.ensure_account%' OR kind='credit.email_unverified_hold'").first()).toEqual({ n: 0 });
+    // An hour of polling every minute: ensure is asked at most 4 or 5 times, failures never move, one page for the account.
+    for (let i = 0; i < 60; i++) {
+      clock += 60_000;
+      const ask = await due();
+      if (ask.due) expect((await m("subkey", { generation: 1, op_id: ask.op_id })).status).toBe(409);
+    }
+    expect(ensured).toBeLessThanOrEqual(5);
+    expect(ensured).toBeGreaterThanOrEqual(4);
+    expect(await row()).toMatchObject({ failures: 0, hold: "email_unverified" });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='flux.ensure_verified_refused'").first()).toEqual({ n: 1 });
+    expect(flux.mints).toHaveLength(0);
+    // A real failure on a held row is counted and clears the hold (the wake-up never deletes a real-failure row).
+    clock += 15 * 60_000;
+    (flux as unknown as { ensureAccount: unknown }).ensureAccount = async () => { ensured += 1; throw new FluxHookRetry("ensure_account_unavailable"); };
+    const ask = await due();
+    expect((await m("subkey", { generation: 1, op_id: ask.op_id })).status).toBe(502);
+    expect(await row()).toMatchObject({ failures: 1, hold: null });
+  });
+
+  it("FLUX-ENSURE-EMAIL-VERIFIED first key: any other 202 stays a retry (counted), never the hold", async () => {
+    await fresh();
+    (flux as unknown as { ensureAccount: unknown }).ensureAccount = async () => { ensured += 1; throw new FluxHookRetry("ensure_account_unavailable"); };
+    expect((await m("subkey", { generation: 1 })).status).toBe(502);
+    expect(await env.DB.prepare("SELECT failures,hold FROM flux_first_key_retry WHERE home_id=?").bind(HOME).first()).toEqual({ failures: 1, hold: null });
+  });
+
+  it("ensure-account: unavailable is bounded and silent; a refusal is ONE alert and no further ensure call while it is open", async () => {
+    const owner = await fresh();
+    (flux as unknown as { ensureAccount: unknown }).ensureAccount = async () => { ensured += 1; throw new FluxHookRetry("ensure_account_unavailable"); };
+    expect((await m("subkey", { generation: 1 })).status).toBe(502);
+    expect([ensured, await alerts(), (await retryRow())!.failures]).toEqual([1, 0, 1]);
+    (flux as unknown as { ensureAccount: unknown }).ensureAccount = async () => { ensured += 1; throw new FluxEnsureRefused(409); };
+    for (let i = 0; i < 12; i++) {
+      clock += 600_000;
+      const ask = await due();
+      if (ask.due) expect((await m("subkey", { generation: 1, op_id: ask.op_id })).status).toBe(409);
+    }
+    expect(ensured).toBe(2); // the refusal was asked once; the open alert blocks every later call
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='flux.ensure_account_refused' AND subject=?").bind(`ensure:${owner.userId}`).first()).toEqual({ n: 1 });
+    expect(flux.mints).toHaveLength(0);
+  });
+
+  it("dark with the Flux route switch off: the cue question and the mint are 404 for a fresh paid home, nothing is read or written", async () => {
+    await fresh();
+    extra = { CLOUD_FLUX_ROUTES_ENABLED: undefined };
+    const before = await env.DB.prepare("SELECT (SELECT COUNT(*) FROM flux_home_keys)+(SELECT COUNT(*) FROM flux_first_key_retry)+(SELECT COUNT(*) FROM flux_mint_ops)+(SELECT COUNT(*) FROM flux_links) AS n").first();
+    for (const route of ["renewal-due", "subkey", "subkey/ack"]) {
+      const r = await m(route, { generation: 1, op_id: "renew:x:1:0" });
+      expect([route, r.status, await r.json()]).toEqual([route, 404, { error: "not_found" }]);
+    }
+    expect(await env.DB.prepare("SELECT (SELECT COUNT(*) FROM flux_home_keys)+(SELECT COUNT(*) FROM flux_first_key_retry)+(SELECT COUNT(*) FROM flux_mint_ops)+(SELECT COUNT(*) FROM flux_links) AS n").first()).toEqual(before);
+    expect([flux.mints.length, ensured]).toEqual([0, 0]);
+  });
+
+  it("grant ordering: a plan grant paid before the first key answers 503 unbound, stays pending, and lands after the first key binds", async () => {
+    await fresh();
+    const real = flux.grant.bind(flux);
+    flux.grant = async (input: FluxGrant) => { if (flux.mints.length === 0) throw new FluxError(503, "", "unbound"); return real(input); };
+    const g = await grantMonthlyCredits(testEnv(), { homeId: HOME, plan: "starter", invoiceId: "in_first_0001", ...period() }, { ...deps });
+    expect(g.status).toBe("pending");
+    expect(flux.grants).toHaveLength(0);
+    expect((await m("subkey", { generation: 1, op_id: `renew:${HOME}:1:0` })).status).toBe(200);
+    expect(flux.mints[0].capMicrocents).toBe(30_000_000); // the cap an owner mint sends for the same plan
+    clock += 11 * 60_000;
+    await sweepFlux(testEnv(), deps);
+    expect(await env.DB.prepare("SELECT status FROM flux_grants WHERE grant_id='inv:in_first_0001'").first()).toEqual({ status: "done" });
+    expect(flux.grants.map((x) => x.grantId)).toEqual(["inv:in_first_0001"]);
+  });
+
+  // Astra round 2 (first key). The fetch stub flips state INSIDE the mint await; the key must never be returned and must be revoked.
+  const flipInMint = (sql: string[]) => { flux.afterMint = async () => { await env.DB.batch(sql.map((q) => env.DB.prepare(q))); }; };
+  const deleteHome = ["UPDATE cloud_machines SET generation=generation+1,credential_hash=NULL,state='fenced' WHERE id='home-flux'",
+    "UPDATE cloud_homes SET desired_state='deleted',generation=generation+1 WHERE id='home-flux'"];
+
+  it("item 1 race: a payment-failed webhook during the mint refuses the first key, revokes the minted generation and keeps the home never-keyed", async () => {
+    await fresh();
+    flipInMint(["UPDATE billing_subscriptions SET status='past_due' WHERE home_id='home-flux'"]);
+    const refused = await m("subkey", { generation: 1, op_id: `renew:${HOME}:1:0` });
+    expect([refused.status, (await refused.json<{ error: string }>()).error]).toEqual([409, "home_not_active"]);
+    expect(flux.mints).toHaveLength(1);
+    expect(flux.keyRevokes.map((r) => r.generation)).toEqual([1]);
+    expect(await homeRow()).toMatchObject({ state: "none", generation: 0 });
+    expect(await due()).toEqual({ due: false });
+  });
+
+  it("item 1 race: a payment-failed webhook during ensure-account stops the claim before anything is minted", async () => {
+    await fresh();
+    (flux as unknown as { ensureAccount: unknown }).ensureAccount = async () => {
+      await env.DB.prepare("UPDATE billing_subscriptions SET status='past_due' WHERE home_id='home-flux'").run();
+      return { fluxAccountId: FLUX_ACCOUNT, created: true };
+    };
+    const refused = await m("subkey", { generation: 1 });
+    expect([refused.status, (await refused.json<{ error: string }>()).error]).toEqual([409, "home_not_active"]);
+    expect([flux.mints.length, flux.keyRevokes.length]).toEqual([0, 0]);
+  });
+
+  it("item 2 race: a delete that completes during the first mint refuses the key (401), revokes it, and never hands it out", async () => {
+    await fresh();
+    flipInMint(deleteHome);
+    const refused = await m("subkey", { generation: 1, op_id: `renew:${HOME}:1:0` });
+    expect(refused.status).toBe(401);
+    expect(JSON.stringify(await refused.json())).not.toContain("sk-flux");
+    expect(flux.keyRevokes.map((r) => r.generation)).toEqual([1]);
+    expect(await homeRow()).toMatchObject({ state: "none", generation: 0 });
+  });
+
+  it("item 2 race: the same hole in ORDINARY renewal is closed (a delete during the renewal mint)", async () => {
+    await fresh();
+    expect((await m("subkey", { generation: 1, op_id: `renew:${HOME}:1:0` })).status).toBe(200);
+    expect((await m("subkey/ack", { generation: 1, op_id: `renew:${HOME}:1:0`, key_generation: 1 })).status).toBe(200);
+    await env.DB.prepare("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?").bind(clock + DAY, HOME).run();
+    flipInMint(deleteHome);
+    const refused = await m("subkey", { generation: 1, op_id: `renew:${HOME}:1:1` });
+    expect(refused.status).toBe(401);
+    expect(flux.keyRevokes.map((r) => r.generation)).toEqual([2]);
+    expect(await homeRow()).toMatchObject({ generation: 1, pending_op_id: null });
+  });
+
+  it("item 2: a home already deleted when the request arrives is refused without a mint", async () => {
+    await fresh();
+    await env.DB.prepare("UPDATE cloud_homes SET desired_state='deleted' WHERE id=?").bind(HOME).run();
+    expect((await m("subkey", { generation: 1 })).status).toBe(404); // the owner lookup already answers nothing for a deleted home
+    expect(flux.mints).toHaveLength(0);
+  });
+
+  it("item 3: a first key whose ack never comes is re-minted on the 1, 2, 4, 8, then 10 minute bound, at the cue and at the route, and the ack clears it", async () => {
+    await fresh();
+    const start = clock;
+    const mintedAt: number[] = [];
+    for (let minute = 0; minute < 40; minute++) {
+      clock = start + minute * 60_000;
+      const ask = await due();
+      if (ask.due) { expect((await m("subkey", { generation: 1, op_id: ask.op_id })).status).toBe(200); mintedAt.push(minute); }
+      else {
+        // The route holds the same line the cue does.
+        const early = await m("subkey", { generation: 1 });
+        expect([early.status, (await early.json<{ error: string }>()).error]).toEqual([429, "renewal_retry_later"]);
+      }
+    }
+    expect(mintedAt).toEqual([0, 1, 3, 7, 15, 25, 35]);
+    expect(flux.mints).toHaveLength(7);
+    const last = flux.mints[6];
+    expect((await m("subkey/ack", { generation: 1, op_id: last.opId, key_generation: last.generation })).status).toBe(200);
+    expect(await retryRow()).toBeNull();
+    expect(await due()).toEqual({ due: false });
+  });
+
+  it("item 4: the plan grant goes out right after the first key; a failing grant never fails the key, and the sweep delivers it later", async () => {
+    await fresh();
+    const real = flux.grant.bind(flux);
+    flux.grant = async (input: FluxGrant) => { if (flux.mints.length === 0) throw new FluxError(503, "", "unbound"); return real(input); };
+    await grantMonthlyCredits(testEnv(), { homeId: HOME, plan: "starter", invoiceId: "in_first_0004", ...period() }, { ...deps });
+    expect(flux.grants).toHaveLength(0);
+    expect((await env.DB.prepare("SELECT status FROM flux_grants WHERE grant_id='inv:in_first_0004'").first())).toEqual({ status: "pending" });
+    const minted = await m("subkey", { generation: 1, op_id: `renew:${HOME}:1:0` });
+    expect(minted.status).toBe(200);
+    expect(flux.grants.map((x) => x.grantId)).toEqual(["inv:in_first_0004"]); // no sweep ran
+    expect(await env.DB.prepare("SELECT status FROM flux_grants WHERE grant_id='inv:in_first_0004'").first()).toEqual({ status: "done" });
+  });
+
+  it("item 4: a grant that throws after the first key leaves the key response a 200 and the grant pending for the sweep", async () => {
+    await fresh();
+    flux.grant = async () => { throw new Error("boom"); };
+    await grantMonthlyCredits(testEnv(), { homeId: HOME, plan: "starter", invoiceId: "in_first_0005", ...period() }, { ...deps });
+    const minted = await m("subkey", { generation: 1, op_id: `renew:${HOME}:1:0` });
+    expect(minted.status).toBe(200);
+    expect((await minted.json<{ key: string }>()).key).toContain("sk-flux");
+    expect(await env.DB.prepare("SELECT status FROM flux_grants WHERE grant_id='inv:in_first_0005'").first()).toEqual({ status: "pending" });
+    expect(flux.keyRevokes).toHaveLength(0);
+  });
+});
+
+describe("renewalHeldBack: the ack bound never outlasts a live key (Astra FIRSTKEY-2 P1)", () => {
+  const now = 1_000_000_000;
+  it("holds a due renewal back while the wait runs, and not after", () => {
+    expect(renewalHeldBack(now + 60_000, now + 86_400_000, now)).toBe(true);
+    expect(renewalHeldBack(now, now + 86_400_000, now)).toBe(false);
+    expect(renewalHeldBack(null, now + 86_400_000, now)).toBe(false);
+  });
+  it("lets the last 15 minutes of a live key through, and holds an expired or unacked key", () => {
+    expect(renewalHeldBack(now + 90_000, now + 120_000, now)).toBe(false);
+    expect(renewalHeldBack(now + 90_000, now + 15 * 60_000, now)).toBe(false);
+    expect(renewalHeldBack(now + 90_000, now - 1, now)).toBe(true);
+    expect(renewalHeldBack(now + 90_000, null, now)).toBe(true);
+  });
+});
+
+describe("ITEM 9 M2: support's email-proof routes work while Flux is off or a credential is missing (admin credential still required)", () => {
+  const ACCT = "user-item9-m2";
+  const seed = async () => {
+    await env.DB.prepare(`INSERT OR IGNORE INTO "user" (id,name,email,emailVerified,createdAt,updatedAt) VALUES (?,'n','cloud-item9-m2@cloud-account.invalid',1,0,0)`).bind(ACCT).run();
+    await env.DB.prepare("INSERT OR REPLACE INTO supabase_identities (sub,user_id,via,created_at,email_revision,contact_email) VALUES ('sub-item9-m2',?,'created',1,0,'m2@example.test')")
+      .bind(ACCT).run();
+  };
+  const tidy = async () => {
+    for (const t of ["flux_email_proof_disputes", "flux_email_proof_audit", "flux_email_proof_events", "flux_email_proof"]) await env.DB.prepare(`DELETE FROM ${t} WHERE account_id=?`).bind(ACCT).run();
+    await env.DB.prepare("DELETE FROM cloud_alerts WHERE subject=?").bind(`account:${ACCT}`).run();
+    await env.DB.prepare("DELETE FROM supabase_identities WHERE user_id=?").bind(ACCT).run();
+    await env.DB.prepare(`DELETE FROM "user" WHERE id=?`).bind(ACCT).run();
+  };
+  afterEach(async () => { extra = {}; await tidy(); });
+  for (const [label, over] of [["Flux off", { CLOUD_FLUX_ROUTES_ENABLED: undefined }], ["grants token missing", { FLUX_CLOUD_GRANTS_TOKEN: undefined }],
+    ["service token missing", { FLUX_CLOUD_SERVICE_TOKEN: undefined }]] as const) {
+    it(`${label}: dispute and dispute-clear are recorded; resend answers plainly (never a 404); no admin credential is refused`, async () => {
+      await seed();
+      extra = { ...over };
+      const noAuth = await call("POST", "/v1/internal/flux/email-proof/dispute", null, { account_id: ACCT, note: "buyer says not theirs", by: "ops" });
+      expect([401, 403]).toContain(noAuth.status);
+      const wrong = await call("POST", "/v1/internal/flux/email-proof/dispute", "x".repeat(44), { account_id: ACCT, note: "buyer says not theirs", by: "ops" });
+      expect([401, 403]).toContain(wrong.status);
+      expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_email_proof_disputes WHERE account_id=?").bind(ACCT).first()).toEqual({ n: 0 });
+      const d = await call("POST", "/v1/internal/flux/email-proof/dispute", ADMIN, { account_id: ACCT, note: "buyer says not theirs", by: "ops" });
+      expect([d.status, await d.json()]).toEqual([200, { linked: false, disputed: true }]);
+      expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_email_proof_disputes WHERE account_id=?").bind(ACCT).first()).toEqual({ n: 1 });
+      const r = await call("POST", "/v1/internal/flux/email-proof/resend", ADMIN, { account_id: ACCT, by: "ops" });
+      expect(r.status).not.toBe(404);
+      expect(r.status).toBeGreaterThanOrEqual(400); // disputed and nothing held: refused plainly
+      const c = await call("POST", "/v1/internal/flux/email-proof/dispute-clear", ADMIN, { account_id: ACCT, by: "ops" });
+      expect([c.status, await c.json()]).toEqual([200, { cleared: true }]);
+      expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_email_proof_disputes WHERE account_id=?").bind(ACCT).first()).toEqual({ n: 0 });
+    });
+  }
+});
+
+describe("DISPUTE-FENCE-ACCOUNT: an open email-proof dispute is authoritative at every Flux commit point, linked or not", () => {
+  const DISPUTE = "/v1/internal/flux/email-proof/dispute";
+  const CLEAR = "/v1/internal/flux/email-proof/dispute-clear";
+  const dispute = (account: string) => admin(DISPUTE, { account_id: account, note: "buyer says not theirs", by: "ops" });
+  const clearOf = (account: string, version?: number) => admin(CLEAR, { account_id: account, by: "ops", ...(version === undefined ? {} : { version }) });
+  const version = async (account: string) => (await env.DB.prepare("SELECT version,open FROM flux_account_dispute WHERE account_id=?").bind(account)
+    .first<{ version: number; open: number }>());
+  const err = async (r: Response) => [r.status, (await r.json<{ error?: string }>()).error] as const;
+  const capPath = `/v1/homes/${HOME}/flux/cap`;
+  const keyRow = (homeId = HOME) => env.DB.prepare("SELECT * FROM flux_home_keys WHERE home_id=?").bind(homeId).first<Record<string, unknown>>();
+  const grantOf = (body = { homeId: HOME, plan: "starter", invoiceId: "in_fence_01", ...period() }) => admin("/v1/internal/flux/grant", body);
+
+  it("a dispute on a LINKED account holds it without an unlink: the link, the stamp path and the accounting stay as they are", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    expect(await (await dispute(owner.userId)).json()).toEqual({ linked: true, alerted: true, unlinked: false });
+    expect(await version(owner.userId)).toEqual({ version: 1, open: 1 });
+    expect(await env.DB.prepare("SELECT fenced,link_id FROM flux_links WHERE owner_user_id=?").bind(owner.userId).first()).toEqual({ fenced: 0, link_id: FLUX_ACCOUNT });
+  });
+
+  it("commit point 1, the key claim: a linked, disputed account gets no key; a dispute landing after the early check is caught inside the claim statement", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    await dispute(owner.userId);
+    expect(await err(await pollerMint())).toEqual([409, "flux_email_unverified"]);
+    expect(flux.mints).toHaveLength(0);
+    expect((await clearOf(owner.userId)).status).toBe(200);
+    // Race: the dispute opens between the early read and the claim UPDATE (the first statement that bumps gen_floor).
+    armDb(/gen_floor = MAX\(generation, gen_floor\) \+ 1/, async () => { await dispute(owner.userId); });
+    expect((await pollerMint()).status).toBe(409);
+    expect(flux.mints).toHaveLength(0);
+    expect(await keyRow()).toMatchObject({ generation: 0, state: "none" });
+  });
+
+  it("commit point 2, the key commit: a dispute opened while Flux was minting keeps the key out of the home (the generation is compensated)", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    flux.afterMint = async () => { await dispute(owner.userId); };
+    const r = await pollerMint();
+    expect(r.status).toBe(409);
+    expect(await keyRow()).toMatchObject({ generation: 0, state: "none", proof_hold: 1 });
+    expect(flux.mints).toHaveLength(1); // the router did publish it: the commit refused, so the generation is revoked, never adopted
+    await sweepFlux(testEnv(), { fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock });
+    expect(flux.keyRevokes.map((k) => k.generation)).toContain(1);
+  });
+
+  it("commit point 3, the credit grant dispatch: nothing is sent while the dispute stands (the grant stays pending); a dispute landing at the claim batch is caught there; after the clear it is delivered", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    await dispute(owner.userId);
+    const held = await grantOf();
+    expect(held.status).toBe(200);
+    expect(flux.grants).toHaveLength(0);
+    expect(flux.deliveries).toHaveLength(0);
+    expect(await env.DB.prepare("SELECT status FROM flux_grants WHERE grant_id='inv:in_fence_01'").first()).toEqual({ status: "pending" });
+    expect((await clearOf(owner.userId)).status).toBe(200);
+    clock += 6 * 3_600_000;
+    await sweepFlux(testEnv(), { fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock });
+    expect(flux.grants.map((g) => g.grantId)).toEqual(["inv:in_fence_01"]);
+    // The race, on a second grant: the dispute opens just before the claim batch.
+    armDb(/INSERT OR IGNORE INTO flux_grant_dispatches/, async () => { await dispute(owner.userId); });
+    await grantOf({ homeId: HOME, plan: "starter", invoiceId: "in_fence_02", ...period(40) });
+    expect(flux.grants.map((g) => g.grantId)).toEqual(["inv:in_fence_01"]);
+    expect(flux.deliveries.map((d) => d.grantId)).not.toContain("inv:in_fence_02");
+  });
+
+  it("commit point 4, spending on / a cap raise above 0: refused while disputed (no step-up asked); lowering the limit and switching spending OFF always work", async () => {
+    extra = { FLUX_RESUME_VIA_POLLER: "1" }; // 8b: switching spending back on resumes through the poller
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    expect((await pollerMint()).status).toBe(200);
+    expect((await call("POST", capPath, owner.token, { capUsd: 80 })).status).toBe(200);
+    await dispute(owner.userId);
+    const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
+    // A raise: with the step-up it is refused for the dispute (and no second factor is asked once the dispute is known); sign-in only is
+    // stopped earlier by the gate, as for any raise.
+    expect(await err(await call("POST", capPath, owner.token, { capUsd: 200 }))).toEqual([409, "flux_email_unverified"]);
+    expect(await err(await call("POST", capPath, aal1, { capUsd: 200 }))).toEqual([403, "step_up_required"]);
+    expect(await keyRow()).toMatchObject({ cap_microcents: 80_000_000, spending_off: 0 });
+    // A lowering that keeps spending on is not a raise.
+    expect((await call("POST", capPath, aal1, { capUsd: 50 })).status).toBe(200);
+    expect(await keyRow()).toMatchObject({ cap_microcents: 50_000_000, spending_off: 0 });
+    // Cap to 0 (spending off) is always allowed.
+    expect((await call("POST", capPath, owner.token, { capUsd: 0 })).status).toBe(200);
+    expect(await keyRow()).toMatchObject({ spending_off: 1 });
+    // Switching it back on is a raise from zero: refused while the dispute stands, allowed after the clear.
+    expect(await err(await call("POST", capPath, owner.token, { capUsd: 50 }))).toEqual([409, "flux_email_unverified"]);
+    expect(await keyRow()).toMatchObject({ spending_off: 1 });
+    expect((await clearOf(owner.userId)).status).toBe(200);
+    expect((await call("POST", capPath, owner.token, { capUsd: 50 }, SITE_COMPAT)).status).toBe(200);
+    expect(await keyRow()).toMatchObject({ spending_off: 0 });
+  });
+
+  it("commit point 4, the race: a dispute landing between the cap read and its write is caught inside the write", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    expect((await pollerMint()).status).toBe(200);
+    armDb(/UPDATE flux_home_keys SET plan=\?,cap_microcents=\?,cap_custom=\?/, async () => { await dispute(owner.userId); });
+    const r = await call("POST", capPath, owner.token, { capUsd: 200 });
+    expect(r.status).toBe(409);
+    expect(await keyRow()).toMatchObject({ cap_microcents: 30_000_000 });
+  });
+
+  it("8b fix: a raise that reaches the refused branch after a dispute landed answers 409 flux_email_unverified, never a step-up prompt", async () => {
+    extra = { FLUX_RESUME_VIA_POLLER: "1" };
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    expect((await pollerMint()).status).toBe(200);
+    expect((await call("POST", capPath, owner.token, { capUsd: 80 })).status).toBe(200);
+    const aal1 = await stepUpToken(owner.sub, owner.email, { aal1: true });
+    // The race: read as a lowering (80 to 50); before the write a concurrent lowering (to 30) makes it a raise and the account is disputed.
+    armDb(/UPDATE flux_home_keys SET plan=\?,cap_microcents=\?,cap_custom=\?/, async () => {
+      await env.DB.prepare("UPDATE flux_home_keys SET cap_microcents=30000000 WHERE home_id=?").bind(HOME).run();
+      await dispute(owner.userId);
+    });
+    expect(await err(await call("POST", capPath, aal1, { capUsd: 50 }))).toEqual([409, "flux_email_unverified"]);
+    expect(await keyRow()).toMatchObject({ cap_microcents: 30_000_000, spending_off: 0 });
+  });
+
+  it("8b fix: only the write-guard CHECK is retried; a UNIQUE failure is not retried and surfaces", async () => {
+    extra = { FLUX_RESUME_VIA_POLLER: "1" };
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    expect((await pollerMint()).status).toBe(200);
+    const CAP_WRITE = /UPDATE flux_home_keys SET plan=\?,cap_microcents=\?,cap_custom=\?/;
+    let writes = 0;
+    dbHook = async (sql) => {
+      if (!CAP_WRITE.test(sql)) return;
+      writes += 1;
+      throw new Error("D1_ERROR: UNIQUE constraint failed: flux_home_ops.op_id: SQLITE_CONSTRAINT");
+    };
+    const r = await call("POST", capPath, owner.token, { capUsd: 200 });
+    dbHook = null;
+    expect(r.status).toBe(500);
+    expect(writes).toBe(1);
+    expect(await keyRow()).toMatchObject({ cap_microcents: 30_000_000 });
+  });
+
+  it("8b fix: a write-guard CHECK failure on a raise is retried once, as before", async () => {
+    extra = { FLUX_RESUME_VIA_POLLER: "1" };
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    expect((await pollerMint()).status).toBe(200);
+    const CAP_WRITE = /UPDATE flux_home_keys SET plan=\?,cap_microcents=\?,cap_custom=\?/;
+    let writes = 0;
+    dbHook = async (sql) => {
+      if (!CAP_WRITE.test(sql)) return;
+      writes += 1;
+      if (writes === 1) throw new Error("D1_ERROR: CHECK constraint failed: ok=1: SQLITE_CONSTRAINT");
+    };
+    const r = await call("POST", capPath, owner.token, { capUsd: 200 });
+    dbHook = null;
+    expect(r.status).toBe(200);
+    expect(writes).toBe(2);
+    expect(await keyRow()).toMatchObject({ cap_microcents: 200_000_000 });
+  });
+
+  it("key rows made AFTER the dispute inherit the hold: a lazily created row and a home bought later; existing rows are held; the clear lifts all, and other accounts are untouched", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    const other = await signIn("other@example.test");
+    await seedHome(owner.userId);
+    await link(owner.token);
+    await seedHome(other.userId, { homeId: "home-other" });
+    await link(other.token, "99999999-2222-3333-4444-555555555555");
+    expect(await keyRow()).toBeNull(); // no row yet: it is created lazily
+    await dispute(owner.userId);
+    expect(await keyRow()).toBeNull(); // still lazy: nothing to hold yet, the table is what decides
+    // The lazy creation (the status read) while the dispute stands.
+    expect((await call("GET", `/v1/homes/${HOME}/flux`, owner.token)).status).toBe(200);
+    expect(await keyRow()).toMatchObject({ proof_hold: 1 });
+    // A home bought after the dispute.
+    await seedHome(owner.userId, { homeId: "home-later" });
+    expect((await call("GET", `/v1/homes/home-later/flux`, owner.token)).status).toBe(200);
+    expect(await keyRow("home-later")).toMatchObject({ proof_hold: 1 });
+    // Another account's home is not held.
+    expect((await call("GET", `/v1/homes/home-other/flux`, other.token)).status).toBe(200);
+    expect(await keyRow("home-other")).toMatchObject({ proof_hold: 0 });
+    // A row that existed before the dispute is held when it opens.
+    await env.DB.prepare("DELETE FROM flux_home_keys WHERE home_id='home-later'").run();
+    await clearOf(owner.userId);
+    expect(await keyRow()).toMatchObject({ proof_hold: 0 });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_keys WHERE proof_hold=1").first()).toEqual({ n: 0 });
+    await dispute(owner.userId);
+    expect(await keyRow()).toMatchObject({ proof_hold: 1 });
+    await seedHome(owner.userId, { homeId: "home-third" });
+    expect((await call("GET", `/v1/homes/home-third/flux`, owner.token)).status).toBe(200);
+    expect(await keyRow("home-third")).toMatchObject({ proof_hold: 1 });
+    await clearOf(owner.userId);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_keys WHERE proof_hold=1").first()).toEqual({ n: 0 });
+  });
+
+  it("a stale clear cannot lift a newer dispute: by version, across a repeat and across a clear and a re-open; a clear without a version lifts what it reads", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    await dispute(owner.userId);
+    expect(await version(owner.userId)).toEqual({ version: 1, open: 1 });
+    await dispute(owner.userId); // a repeat rewrites the dispute: version 2
+    expect(await version(owner.userId)).toEqual({ version: 2, open: 1 });
+    const stale = await clearOf(owner.userId, 1);
+    expect(await stale.json()).toMatchObject({ cleared: false, reason: "newer_dispute" });
+    expect(await version(owner.userId)).toEqual({ version: 2, open: 1 });
+    expect(await err(await pollerMint())).toEqual([409, "flux_email_unverified"]);
+    expect(await (await clearOf(owner.userId, 2)).json()).toEqual({ cleared: true });
+    expect(await version(owner.userId)).toEqual({ version: 3, open: 0 });
+    // A clear with the old version after a re-open: the version only rises, so it never matches.
+    await dispute(owner.userId);
+    expect(await version(owner.userId)).toEqual({ version: 4, open: 1 });
+    for (const old of [1, 2, 3]) expect(await (await clearOf(owner.userId, old)).json()).toMatchObject({ cleared: false });
+    expect(await version(owner.userId)).toEqual({ version: 4, open: 1 });
+    // A clear after nothing is open says so.
+    expect(await (await clearOf(owner.userId)).json()).toEqual({ cleared: true });
+    expect(await (await clearOf(owner.userId)).json()).toEqual({ cleared: false, reason: "no_dispute" });
+    expect((await pollerMint()).status).toBe(200);
+  });
+
+  it("a dispute written between the clear's read and its batch is not lifted (the seam)", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    await dispute(owner.userId);
+    const r = await fluxEmailProofOperatorRoute(new Request("https://cp.test/v1/internal/flux/email-proof/dispute-clear", { method: "POST",
+      headers: { "content-type": "application/json" }, body: JSON.stringify({ account_id: owner.userId, by: "ops" }) }), testEnv(), "dispute-clear",
+      { beforeClearBatch: async () => { await dispute(owner.userId); } });
+    expect(await r.json()).toMatchObject({ cleared: false, reason: "newer_dispute" });
+    expect(await version(owner.userId)).toEqual({ version: 2, open: 1 });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='credit.email_proof_disputed' AND resolved_at IS NULL").first()).toEqual({ n: 1 });
+  });
+});
+
+// DISPUTE-FENCE-ACCOUNT round 2 (Astra + Opus reviews of 1b5ee3eac). Each scenario is an Astra fixture, red on 1b5ee3eac.
+import { raiseCapToCover, writeDisputeFirstKeyHold } from "../src/b4-flux";
+describe("DISPUTE-FENCE-ACCOUNT round 2: caps, clear snapshot, re-dispute alert, audit, held reasons", () => {
+  const DISPUTE = "/v1/internal/flux/email-proof/dispute";
+  const CLEAR = "/v1/internal/flux/email-proof/dispute-clear";
+  const dispute = (account: string, note = "buyer says not theirs") => admin(DISPUTE, { account_id: account, note, by: "ops" });
+  const clearOf = (account: string, version?: number) => admin(CLEAR, { account_id: account, by: "ops", ...(version === undefined ? {} : { version }) });
+  const fenceOf = (account: string) => env.DB.prepare("SELECT version,open FROM flux_account_dispute WHERE account_id=?").bind(account).first<{ version: number; open: number }>();
+  const keyRow = (homeId = HOME) => env.DB.prepare("SELECT * FROM flux_home_keys WHERE home_id=?").bind(homeId).first<Record<string, unknown>>();
+  const deps = () => ({ fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock });
+  const minted = async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    expect((await pollerMint()).status).toBe(200);
+    return owner;
+  };
+
+  it("Astra H2: the automatic cap catch-up (raiseCapToCover) raises nothing while the account is disputed, and raises again after the clear", async () => {
+    const owner = await minted();
+    await dispute(owner.userId);
+    flux.statusFor = { ...flux.statusFor, capMicrocents: 30_000_000, spentMicrocents: 4_000_000, accountSpendableMicrocents: 126_000_000 };
+    const before = flux.caps.length;
+    const r = await raiseCapToCover(testEnv(), HOME, deps());
+    expect(r).not.toBe("raised");
+    expect(await keyRow()).toMatchObject({ cap_microcents: 30_000_000 });
+    expect(flux.caps.slice(before).filter((c) => c.capMicrocents > 30_000_000)).toEqual([]);
+    expect((await clearOf(owner.userId)).status).toBe(200);
+    expect(await raiseCapToCover(testEnv(), HOME, deps())).toBe("raised");
+    expect(await keyRow()).toMatchObject({ cap_microcents: 130_000_000 });
+  });
+
+  it("Astra H2: a billing plan change while disputed records the plan but cannot raise the cap that follows it; after the clear the plan's cap applies", async () => {
+    const owner = await minted();
+    await dispute(owner.userId);
+    const before = flux.caps.length;
+    const moved = await changePlan(testEnv(), { homeId: HOME, plan: "pro" }, deps());
+    expect(moved).toEqual({ plan: "pro", capUsd: 30 });
+    expect(await keyRow()).toMatchObject({ plan: "pro", cap_microcents: 30_000_000 });
+    expect(flux.caps.slice(before).filter((c) => c.capMicrocents > 30_000_000)).toEqual([]);
+    expect((await clearOf(owner.userId)).status).toBe(200);
+    expect(await changePlan(testEnv(), { homeId: HOME, plan: "pro" }, deps())).toEqual({ plan: "pro", capUsd: 60 });
+  });
+
+  it("Astra M4: a dispute that changes between the clear's two reads is never half cleared (the account fence and the proof dispute stand or fall together)", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await seedHome(owner.userId); // not linked: the proof dispute row exists beside the account fence
+    expect((await dispute(owner.userId)).status).toBe(200);
+    let fired = false; // the hook closure outlives one use: fire the second dispute once, between the clear's reads
+    armDb(/FROM flux_account_dispute WHERE account_id=\? AND open=1/, async () => { if (fired) return; fired = true; await dispute(owner.userId, "second look at the same buyer"); });
+    await clearOf(owner.userId);
+    const proof = await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_email_proof_disputes WHERE account_id=?").bind(owner.userId).first<{ n: number }>();
+    const fence = await fenceOf(owner.userId);
+    expect(fence!.open === 1).toBe(proof!.n === 1);
+    if (fence!.open === 1) expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_home_keys WHERE proof_hold=0").first()).toEqual({ n: 0 });
+  });
+
+  it("Astra M5 / Opus M1: dispute, clear, dispute again on a linked account reopens the paging alert and resets its delivery", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    const id = `alert:email_proof_disputed:${owner.userId}`;
+    await dispute(owner.userId);
+    await env.DB.prepare("UPDATE cloud_alerts SET delivered_at=5,delivery_attempts=3 WHERE id=?").bind(id).run();
+    expect(await (await clearOf(owner.userId)).json()).toEqual({ cleared: true });
+    expect(await env.DB.prepare("SELECT resolved_at IS NOT NULL AS r FROM cloud_alerts WHERE id=?").bind(id).first()).toEqual({ r: 1 });
+    await dispute(owner.userId);
+    expect(await env.DB.prepare("SELECT resolved_at,delivered_at,delivery_attempts FROM cloud_alerts WHERE id=?").bind(id).first())
+      .toEqual({ resolved_at: null, delivered_at: null, delivery_attempts: 0 });
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='credit.email_proof_disputed' AND severity='high' AND resolved_at IS NULL").first()).toEqual({ n: 1 });
+  });
+
+  it("Astra L6: a stale clear that is refused writes no dispute_clear audit entry; the real clear writes exactly one", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await seedHome(owner.userId); // unlinked: the legacy dispute row is what the audit used to match
+    await dispute(owner.userId);
+    await dispute(owner.userId); // version 2
+    const stale = await clearOf(owner.userId, 1);
+    expect(await stale.json()).toMatchObject({ cleared: false, reason: "newer_dispute" });
+    expect(await fenceOf(owner.userId)).toEqual({ version: 2, open: 1 });
+    const audits = () => env.DB.prepare("SELECT COUNT(*) AS n FROM flux_email_proof_audit WHERE account_id=? AND act='dispute_clear'").bind(owner.userId).first<{ n: number }>();
+    expect(await audits()).toEqual({ n: 0 });
+    expect(await (await clearOf(owner.userId, 2)).json()).toEqual({ cleared: true });
+    expect(await audits()).toEqual({ n: 1 });
+  });
+
+  it("Opus Low 1: a grant held by the dispute says so (grant_held:account_disputed), and is delivered after the clear", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    await dispute(owner.userId);
+    expect((await admin("/v1/internal/flux/grant", { homeId: HOME, plan: "starter", invoiceId: "in_round2_held", ...period() })).status).toBe(200);
+    expect(await env.DB.prepare("SELECT status,last_error FROM flux_grants WHERE grant_id='inv:in_round2_held'").first()).toEqual({ status: "pending", last_error: "grant_held:account_disputed" });
+    expect((await clearOf(owner.userId)).status).toBe(200);
+    clock += 6 * 3_600_000;
+    await sweepFlux(testEnv(), { fluxClient: () => flux, billingFlux: QUALIFIED_HOOKS, now: () => clock });
+    expect(await env.DB.prepare("SELECT status,last_error FROM flux_grants WHERE grant_id='inv:in_round2_held'").first()).toEqual({ status: "done", last_error: null });
+  });
+
+  it("Opus Low 2/3: a renewal refused by the dispute is not asked again on every poll; the clear lifts that wait", async () => {
+    const owner = await minted();
+    await env.DB.prepare("UPDATE cloud_machines SET credential_hash=? WHERE id=?").bind(await sha256(MACHINE_TOKEN), HOME).run();
+    const ip = { "CF-Connecting-IP": HOME_IP };
+    const post = (path: string, body: unknown) => call("POST", `/v1/machines/${HOME}/flux/${path}`, MACHINE_TOKEN, body, ip);
+    await env.DB.prepare("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?").bind(clock + DAY, HOME).run();
+    await env.DB.prepare("DELETE FROM flux_first_key_retry WHERE home_id=?").bind(HOME).run(); // the seed mint's own poll bound is not what this test is about
+    await dispute(owner.userId);
+    const first = await post("subkey", { generation: 1 });
+    expect([first.status, (await first.json<{ error: string }>()).error]).toEqual([409, "flux_email_unverified"]);
+    const again = await post("subkey", { generation: 1 });
+    expect([again.status, (await again.json<{ error: string }>()).error]).toEqual([429, "renewal_retry_later"]);
+    expect((await clearOf(owner.userId)).status).toBe(200);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_first_key_retry WHERE home_id=?").bind(HOME).first()).toEqual({ n: 0 });
+    expect((await post("subkey", { generation: 1 })).status).toBe(200);
+  });
+
+  // ---- polish round (Astra M1, Low 4; Opus Low 2, Low 3) ----
+  const seedAttempts = (id: string, attempts: number) => env.DB.prepare("INSERT INTO flux_grants (grant_id,entitlement_key,home_id,plan,amount_microcents,period_start,period_end,expires_at,attempts,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)")
+    .bind(id, `k-${id}`, HOME, "pro", 20_000_000, PERIOD_START, PERIOD_END, addDays(PERIOD_END, 30), attempts, clock).run();
+  const grantRow = (id: string) => env.DB.prepare("SELECT status,attempts,last_error FROM flux_grants WHERE grant_id=?").bind(id).first();
+  const exhaustedAlerts = () => env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='credit.grant_exhausted'").first();
+
+  it("Astra M1: attempts=19, a dispute lands before the grant allocation (refused, nothing sent): the grant stays pending, the attempt is taken back, it says why, and it is delivered after the clear", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    await seedAttempts("inv:in_m1_19", 19);
+    flux.onGrant = async () => { await dispute(owner.userId); throw new FluxNotDispatched("account_disputed"); };
+    await sweepFlux(testEnv(), deps());
+    expect(await grantRow("inv:in_m1_19")).toEqual({ status: "pending", attempts: 19, last_error: "grant_held:account_disputed" });
+    expect(await exhaustedAlerts()).toEqual({ n: 0 });
+    expect(flux.grants.map((g) => g.grantId)).not.toContain("inv:in_m1_19");
+    expect((await clearOf(owner.userId)).status).toBe(200);
+    clock += 6 * 3_600_000;
+    await sweepFlux(testEnv(), deps());
+    expect(await grantRow("inv:in_m1_19")).toEqual({ status: "done", attempts: 20, last_error: null });
+    expect(flux.grants.map((g) => g.grantId)).toContain("inv:in_m1_19");
+  });
+
+  it("Astra M1 (the 20th attempt): a dispute refusal on the last try leaves the grant pending, not failed, and raises no exhausted page; any other refusal on the 20th still fails it", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    await seedAttempts("inv:in_m1_dispute", 19);
+    flux.onGrant = async () => { throw new FluxNotDispatched("account_disputed"); };
+    await sweepFlux(testEnv(), deps());
+    expect(await grantRow("inv:in_m1_dispute")).toMatchObject({ status: "pending", attempts: 19, last_error: "grant_held:account_disputed" });
+    expect(await exhaustedAlerts()).toEqual({ n: 0 });
+    // Control: a refusal that is NOT the dispute spends the 20th attempt and fails the grant, as before.
+    await seedAttempts("inv:in_m1_other", 19);
+    flux.onGrant = async () => { throw new FluxNotDispatched("grant_owner_lost"); };
+    clock += 6 * 3_600_000;
+    await sweepFlux(testEnv(), deps());
+    expect(await grantRow("inv:in_m1_other")).toMatchObject({ status: "failed", attempts: 20 });
+  });
+
+  it("Opus L2 (the race on attempt 20): a dispute opens just before the allocation and a clear lands right after the refusal: the refusal reason comes from the refusing statement, so it is still a HOLD (pending, attempt given back, no exhausted page)", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await machineSetup(owner.token, owner.userId);
+    await seedAttempts("in_l2_race:period", 19);
+    await env.DB.prepare("UPDATE flux_grants SET invoice_id='in_l2_race',kind='period' WHERE grant_id='in_l2_race:period'").run(); // the real client derives the grant id from invoice + kind
+    let opened = 0;
+    let cleared = 0;
+    dbHook = async (sql) => {
+      if (/UPDATE flux_grant_fence SET next_revision/.test(sql) && !opened) { opened++; const h = dbHook; dbHook = null; await dispute(owner.userId); dbHook = h; return; }
+      // The OLD code re-read the dispute here, as its own statement, after the refusal; a clear lands in that gap. The new code has no such read.
+      if (/^\s*SELECT EXISTS \(SELECT 1 FROM flux_account_dispute/.test(sql) && opened && !cleared) {
+        cleared++; const h = dbHook; dbHook = null;
+        await env.DB.prepare("UPDATE flux_account_dispute SET open=0 WHERE account_id=?").bind(owner.userId).run();
+        dbHook = h;
+      }
+    };
+    // The REAL grant client (fencedMutation -> allocateFenceRevision) over a fake router; every other call stays on the fake Flux.
+    const savedExtra = extra;
+    extra = { FLUX_CLOUD_GRANTS_URL: "https://router.test", FLUX_CLOUD_GRANTS_TOKEN: "g".repeat(40) };
+    const real = createFluxClient(testEnv(), (async () => new Response(JSON.stringify({ status: "granted" }), { status: 200, headers: { "content-type": "application/json" } })) as unknown as typeof fetch);
+    const hybrid = new Proxy(flux, { get(t, p) { if (p === "grant") return (g: Parameters<typeof real.grant>[0]) => real.grant(g); const v = (t as unknown as Record<string | symbol, unknown>)[p]; return typeof v === "function" ? v.bind(t) : v; } });
+    try { await sweepFlux(testEnv(), { ...deps(), fluxClient: () => hybrid }); } finally { dbHook = null; extra = savedExtra; }
+    expect(opened).toBe(1);
+    expect(await grantRow("in_l2_race:period")).toEqual({ status: "pending", attempts: 19, last_error: "grant_held:account_disputed" });
+    expect(await exhaustedAlerts()).toEqual({ n: 0 });
+    expect(flux.grants.map((g) => g.grantId)).not.toContain("in_l2_race:period");
+  });
+
+  it("Astra Low 4: the dispute hold row is written only while the dispute is still open", async () => {
+    await setupKeys();
+    const owner = await signIn("owner@example.test");
+    await seedHome(owner.userId);
+    const rows = () => env.DB.prepare("SELECT COUNT(*) AS n FROM flux_first_key_retry WHERE home_id=?").bind(HOME).first();
+    await writeDisputeFirstKeyHold(testEnv(), HOME, clock); // no dispute: nothing written (a clear that committed after the read leaves no wait)
+    expect(await rows()).toEqual({ n: 0 });
+    await dispute(owner.userId);
+    await writeDisputeFirstKeyHold(testEnv(), HOME, clock);
+    expect(await rows()).toEqual({ n: 1 });
+  });
+
+  it("Opus Low 2: a dispute cleared between the fence's refusal and the dispute read does not fail the cap write (made again, once)", async () => {
+    const owner = await minted();
+    await dispute(owner.userId);
+    flux.statusFor = { ...flux.statusFor, capMicrocents: 30_000_000, spentMicrocents: 4_000_000, accountSpendableMicrocents: 126_000_000 };
+    armDb(/JOIN cloud_homes[\s\S]*AS d\b/, async () => { expect((await clearOf(owner.userId)).status).toBe(200); });
+    expect(await raiseCapToCover(testEnv(), HOME, deps())).toBe("raised");
+    expect(await keyRow()).toMatchObject({ cap_microcents: 130_000_000 });
+  });
+
+  it("Opus Low 3: a plan change when the key row vanished in flight does not throw", async () => {
+    await minted();
+    armDb(/UPDATE flux_home_keys SET plan=/, async () => { await env.DB.prepare("DELETE FROM flux_home_keys WHERE home_id=?").bind(HOME).run(); });
+    await expect(changePlan(testEnv(), { homeId: HOME, plan: "pro" }, deps())).resolves.toBeDefined();
+  });
+});
+
+// ══ 8b: spending back ON goes through the home's own poller (SPENDING-RESUME-VIA-POLLER rev 1.5.3, section 7, CP tests) ══
+// The owner mint is closed for every home; every key a home holds here came through its poller.
+describe("8b: spending back ON goes through the home's own poller (SPENDING-RESUME-VIA-POLLER 1.5.3)", () => {
+  const ip = { "CF-Connecting-IP": HOME_IP };
+  const COMPAT = { "x-murage-site-compat": "spending-2" };
+  const m = (route: string, body: unknown, id = HOME) => call("POST", `/v1/machines/${id}/flux/${route}`, MACHINE_TOKEN, body, ip);
+  let owner: Awaited<ReturnType<typeof signIn>>;
+  type Row = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+  const rowOf = async (): Promise<Row> => (await homeRow()) as Row;
+  const getStatus = async (): Promise<Row> => (await call("GET", `/v1/homes/${HOME}/flux`, owner.token)).json<Row>();
+  const delivery = async () => (await getStatus()).spendingDelivery as { state: string; stopConfirmed: boolean; homeOnline: boolean | null; pendingSince: number | null };
+  const capOn = (headers: Record<string, string> = COMPAT, body: unknown = { enabled: true }) => call("POST", `/v1/homes/${HOME}/flux/cap`, owner.token, body, headers);
+  const capOff = () => call("POST", `/v1/homes/${HOME}/flux/cap`, owner.token, { enabled: false });
+  const ownerStopCall = () => call("POST", `/v1/homes/${HOME}/flux/stop`, owner.token, {});
+  const routerQuiet = () => { flux.statusFor = { state: "none" }; };
+  const due = async () => (await m("renewal-due", { generation: 1 })).json<{ due: boolean; op_id?: string }>();
+  const run = (sql: string, ...binds: unknown[]) => env.DB.prepare(sql).bind(...binds).run();
+  const count = async (sql: string, ...binds: unknown[]) => (await env.DB.prepare(sql).bind(...binds).first<{ n: number }>())!.n;
+
+  const setup = async () => {
+    activeWorker = worker8b;
+    extra = { FLUX_RESUME_VIA_POLLER: "1" };
+    await setupKeys();
+    owner = await signIn("owner@example.test");
+    await seedHome(owner.userId);
+    await link(owner.token);
+    await run("UPDATE cloud_machines SET credential_hash=? WHERE id=?", await sha256(MACHINE_TOKEN), HOME);
+    await run("UPDATE cloud_homes SET entitlement='paid', heartbeat_at=? WHERE id=?", clock, HOME);
+    await run(`INSERT INTO billing_subscriptions (home_id,customer_id,subscription_id,plan,status,created_at,updated_at) VALUES (?,'cus_1','sub_1','starter','active',?,?)`, HOME, clock, clock);
+    routerQuiet();
+  };
+  afterEach(() => { activeWorker = worker; });
+
+  /** The home's first key, taken by its poller and acked: generation 1 at lifecycle 1. */
+  const keyed = async () => {
+    const d = await due();
+    expect(d.due).toBe(true);
+    const minted = await m("subkey", { generation: 1, op_id: d.op_id });
+    expect(minted.status).toBe(200);
+    const k = await minted.json<{ generation: number; expiresAt: string }>();
+    expect((await m("subkey/ack", { generation: 1, op_id: d.op_id, key_generation: k.generation })).status).toBe(200);
+    return k;
+  };
+  /** A keyed home after an owner Stop: stopped at lifecycle 2, generation 1 dead, router quiet. */
+  const stopped = async () => { await keyed(); expect((await ownerStopCall()).status).toBe(200); };
+  /** Resume then take the key by the poller; returns the mint body. */
+  const resumedAndKeyed = async () => {
+    await stopped();
+    expect((await capOn()).status).toBe(200);
+    const d = await due();
+    const minted = await m("subkey", { generation: 1, op_id: d.op_id });
+    expect(minted.status).toBe(200);
+    const k = await minted.json<{ generation: number }>();
+    expect((await m("subkey/ack", { generation: 1, op_id: d.op_id, key_generation: k.generation })).status).toBe(200);
+    return k;
+  };
+  const snapshot = async () => JSON.stringify(await Promise.all(["flux_home_keys", "flux_home_ops", "flux_first_key_retry", "cloud_write_guards", "flux_mint_ops"]
+    .map(async (t) => (await env.DB.prepare(`SELECT * FROM ${t} ORDER BY 1`).all()).results)));
+
+  it("1. ON on a stopped home (flag on, header sent): zero router calls, row active at LV+1 with no key, resume pending", async () => {
+    await setup(); await stopped();
+    const before = flux.calls;
+    const on = await capOn();
+    expect([on.status, await on.json()]).toEqual([200, { capUsd: 30, enabled: true, resume: "pending" }]);
+    expect(flux.calls).toBe(before);
+    expect(await rowOf()).toMatchObject({ state: "active", lifecycle_version: 3, key_expires_at: null, resume_lv: 3, resume_from_generation: 1, resume_at: clock,
+      pending_op_id: null, pending_generation: null, pending_expires_at: null, pending_lifecycle_version: null, spending_off: 0 });
+  });
+
+  it("2. the cue is true; the machine subkey sends owner_resume at V+1, again after a lost response; GET is pending after the commit and on after the ack", async () => {
+    await setup(); await stopped(); await capOn();
+    const d = await due();
+    expect(d).toEqual({ due: true, op_id: `renew:${HOME}:1:1` });
+    flux.afterMint = async () => { throw new FluxError(0, "unreachable"); }; // the key is published, the answer is lost
+    expect((await m("subkey", { generation: 1, op_id: d.op_id })).status).toBe(502);
+    // fix r1 (Astra M5): the failed resume attempt is counted: the next one waits the bound's first minute, never at the unchanged clock
+    const early = await m("subkey", { generation: 1, op_id: d.op_id });
+    expect([early.status, (await early.json<{ error: string }>()).error]).toEqual([429, "renewal_retry_later"]);
+    expect((await due()).due).toBe(false);
+    clock += 60_000;
+    expect((await due()).due).toBe(true);
+    const second = await m("subkey", { generation: 1, op_id: d.op_id });
+    expect(second.status).toBe(200);
+    expect(flux.mints.slice(-2).map((x) => [x.lifecycleVersion, x.ownerResume])).toEqual([[3, true], [3, true]]);
+    expect(await delivery()).toMatchObject({ state: "pending" });
+    const k = await second.json<{ generation: number }>();
+    expect((await m("subkey/ack", { generation: 1, op_id: d.op_id, key_generation: k.generation })).status).toBe(200);
+    expect(await delivery()).toMatchObject({ state: "on" });
+    expect(await rowOf()).toMatchObject({ acked_lifecycle_version: 3, acked_generation: k.generation });
+  });
+
+  it("2b. an ordinary renewal sends owner_resume false", async () => {
+    await setup(); await keyed();
+    await run("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?", clock + DAY, HOME);
+    const d = await due();
+    expect((await m("subkey", { generation: 1, op_id: d.op_id })).status).toBe(200);
+    expect(flux.mints.at(-1)).toMatchObject({ ownerResume: false });
+  });
+
+  describe("2d. fix r1 (Astra M5): failed resume and ordinary-renewal attempts wait 1, 2, 4, 8, then 10 minutes", () => {
+    const retryAt = async () => (await env.DB.prepare("SELECT next_at FROM flux_first_key_retry WHERE home_id=?").bind(HOME).first<{ next_at: number }>())?.next_at ?? null;
+    /** Every attempt fails ambiguously at the router (unreachable: the compensation queued by one keeps the next from minting either). */
+    const progression = async () => {
+      flux.down = true;
+      for (const wait of [60_000, 120_000, 240_000, 480_000, 600_000, 600_000]) {
+        const d = await due();
+        expect(d.due).toBe(true);
+        expect((await m("subkey", { generation: 1, op_id: d.op_id })).status).toBe(502);
+        expect((await retryAt())! - clock).toBe(wait);
+        expect(await due()).toEqual({ due: false });
+        clock += wait - 1;
+        const early = await m("subkey", { generation: 1, op_id: d.op_id });
+        expect([early.status, (await early.json<{ error: string }>()).error]).toEqual([429, "renewal_retry_later"]);
+        clock += 1;
+      }
+      flux.down = false;
+      const d = await due();
+      const k = await (await m("subkey", { generation: 1, op_id: d.op_id })).json<{ generation: number }>();
+      expect((await m("subkey/ack", { generation: 1, op_id: d.op_id, key_generation: k.generation })).status).toBe(200);
+      expect(await retryAt()).toBeNull();
+      expect((await delivery()).state).toBe("on");
+    };
+    it("a resume (NULL expiry)", async () => {
+      await setup(); await stopped(); expect((await capOn()).status).toBe(200);
+      expect((await rowOf()).key_expires_at).toBeNull();
+      await progression();
+    });
+    it("an ordinary renewal inside the 7-day window", async () => {
+      await setup(); await keyed();
+      await run("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?", clock + DAY, HOME);
+      await progression();
+    });
+  });
+
+  it("2c. router PR 624: a Stop is lifted only by the poller's resume mint (owner_resume true); an ordinary renewal never reaches a stopped home", async () => {
+    await setup(); flux.requireOwnerResume = true; flux.strictStop = true; await stopped(); await capOn();
+    const d = await due();
+    expect((await m("subkey", { generation: 1, op_id: d.op_id })).status).toBe(200); // the router accepts: owner_resume true, lifecycle 3 > 2
+    expect(flux.stopped).toBe(false);
+  });
+
+  it("3. ON on a stopping home with the Stop queued: Stop(V) reaches the router before mint(V+1) and the row is not flipped back; a failing Stop holds the mint (renewal_retry_later, no mint call)", async () => {
+    await setup(); await keyed();
+    flux.stopDown = true;
+    expect((await ownerStopCall()).status).toBe(502); // the Stop is journaled at lifecycle 2 and not sent
+    expect(await rowOf()).toMatchObject({ state: "stopping", lifecycle_version: 2 });
+    expect((await capOn()).status).toBe(200);
+    expect(await rowOf()).toMatchObject({ state: "active", lifecycle_version: 3, resume_lv: 3 });
+    const d = await due();
+    const mintCalls = flux.mintCalls;
+    const held = await m("subkey", { generation: 1, op_id: d.op_id });
+    expect([held.status, (await held.json<{ error: string }>()).error]).toEqual([429, "renewal_retry_later"]);
+    expect(flux.mintCalls).toBe(mintCalls);
+    flux.stopDown = false;
+    const ok = await m("subkey", { generation: 1, op_id: d.op_id });
+    expect(ok.status).toBe(200);
+    expect(flux.log.filter((e) => e.startsWith("stop:") || e.startsWith("mint:")).slice(-2)).toEqual(["stop:2", "mint:3"]);
+    expect(await rowOf()).toMatchObject({ state: "active", lifecycle_version: 3 });
+  });
+
+  it("4. ON then OFF before the claim, and between commit and ack: nothing minted or compensated, ack is ack_unknown, the row reads turning off", async () => {
+    await setup(); await stopped(); await capOn();
+    const d = await due();
+    expect((await capOff()).status).toBe(200); // OFF before the poller's claim: lifecycle 4, Stop sent
+    const mintCalls = flux.mintCalls;
+    const refused = await m("subkey", { generation: 1, op_id: d.op_id });
+    expect([refused.status, (await refused.json<{ error: string }>()).error]).toEqual([409, "home_not_active"]);
+    expect(flux.mintCalls).toBe(mintCalls);
+    expect(await due()).toEqual({ due: false });
+    // ON again, the poller commits, then OFF before the ack.
+    expect((await capOn()).status).toBe(200);
+    const d2 = await due();
+    const k = await (await m("subkey", { generation: 1, op_id: d2.op_id })).json<{ generation: number }>();
+    expect((await capOff()).status).toBe(200);
+    const ack = await m("subkey/ack", { generation: 1, op_id: d2.op_id, key_generation: k.generation });
+    expect([ack.status, (await ack.json<{ error: string }>()).error]).toEqual([409, "ack_unknown"]);
+    expect(await delivery()).toMatchObject({ state: "off" });
+    expect((await getStatus()).spendingOff).toMatchObject({ requested: true });
+  });
+
+  it("4b. OFF landing between the poller's claim and its commit: commit refused, the key compensated, the ack is unknown", async () => {
+    await setup(); await stopped(); await capOn();
+    const d = await due();
+    armDb(/UPDATE flux_home_keys SET generation=\?,state='active'/, async () => { expect((await capOff()).status).toBeGreaterThanOrEqual(200); });
+    const raced = await m("subkey", { generation: 1, op_id: d.op_id });
+    expect(raced.status).toBe(409);
+    expect(flux.log.filter((e) => e.startsWith("revoke:"))).toContain("revoke:2");
+    expect((await m("subkey/ack", { generation: 1, op_id: d.op_id, key_generation: 2 })).status).toBe(409);
+    expect((await delivery()).state).not.toBe("on");
+  });
+
+  it("5. ON, OFF, ON: one live resume_lv, the older mint and ack are refused", async () => {
+    await setup(); await stopped(); await capOn();
+    const d1 = await due();
+    expect((await capOff()).status).toBe(200);
+    expect((await capOn()).status).toBe(200);
+    expect(await rowOf()).toMatchObject({ lifecycle_version: 5, resume_lv: 5, state: "active" });
+    const stale = await m("subkey/ack", { generation: 1, op_id: d1.op_id, key_generation: 2 });
+    expect(stale.status).toBe(409);
+    const d2 = await due();
+    expect((await m("subkey", { generation: 1, op_id: d2.op_id })).status).toBe(200);
+    expect(flux.mints.at(-1)).toMatchObject({ lifecycleVersion: 5, ownerResume: true });
+  });
+
+  it("6. two concurrent ONs (the second lands between the first's read and its batch): LV moves once, both answers 200", async () => {
+    await setup(); await stopped();
+    let second: Response | undefined;
+    armDb(/resume_lv=lifecycle_version\+1/, async () => { second = await capOn(); });
+    const first = await capOn();
+    expect([first.status, second?.status]).toEqual([200, 200]);
+    expect(await first.json()).toEqual({ capUsd: 30, enabled: true, resume: "pending" });
+    expect(await rowOf()).toMatchObject({ lifecycle_version: 3, resume_lv: 3 });
+  });
+
+  it("6b. a concurrent resume wins with a different cap: the losing ON answers the cap stored by the winner, not its own request", async () => {
+    await setup(); await stopped();
+    let second: Response | undefined;
+    armDb(/resume_lv=lifecycle_version\+1/, async () => { second = await capOn(COMPAT, { capUsd: 50 }); });
+    const first = await capOn(COMPAT, { capUsd: 80 });
+    expect([first.status, second?.status]).toEqual([200, 200]);
+    expect(await second!.json()).toEqual({ capUsd: 50, enabled: true, resume: "pending" });
+    expect(await first.json()).toEqual({ capUsd: 50, enabled: true, resume: "pending" });
+    expect(await rowOf()).toMatchObject({ lifecycle_version: 3, resume_lv: 3, cap_microcents: 50_000_000 });
+  });
+
+  it.each(["owner", "billing", "unlink"])("7. a %s Stop during the poller's mint: the commit is refused, the key compensated, delivery is not on", async (kind) => {
+    await setup(); await stopped(); await capOn();
+    const d = await due();
+    const stop = async () => {
+      if (kind === "owner") await ownerStopCall();
+      else if (kind === "billing") await stopForBilling(testEnv(), HOME, deps);
+      else await call("DELETE", "/v1/flux/link", owner.token);
+    };
+    armDb(/UPDATE flux_home_keys SET generation=\?,state='active'/, stop);
+    const raced = await m("subkey", { generation: 1, op_id: d.op_id });
+    expect(raced.status).toBeGreaterThanOrEqual(409);
+    expect(flux.log).toContain("revoke:2");
+    expect((await delivery()).state).not.toBe("on");
+  });
+
+  describe("8. a billing hold is row-identical for every ON (r2 H3)", () => {
+    const hold = () => run("UPDATE flux_home_keys SET billing_hold=1,billing_hold_at=? WHERE home_id=?", clock, HOME);
+    const expectHeld = async (res: Response, before: string, calls: number) => {
+      expect([res.status, (await res.json<{ error: string }>()).error]).toEqual([409, "billing_hold"]);
+      expect(await snapshot()).toBe(before);
+      expect(flux.calls).toBe(calls);
+      expect(await due()).toEqual({ due: false });
+    };
+    it("(a) held before the press", async () => {
+      await setup(); await stopped(); await hold();
+      const before = await snapshot(); const calls = flux.calls;
+      await expectHeld(await capOn(), before, calls);
+    });
+    it("(b) a hold lands between the read and the resume batch", async () => {
+      await setup(); await stopped();
+      let before = ""; let calls = 0;
+      armDb(/resume_lv=lifecycle_version\+1/, async () => { await hold(); before = await snapshot(); calls = flux.calls; });
+      await expectHeld(await capOn(), before, calls);
+    });
+    it("(c) an active row, a hold lands between the read and the notRaising batch", async () => {
+      await setup(); await keyed();
+      let before = ""; let calls = 0;
+      armDb(/cap_microcents>=\?/, async () => { await hold(); before = await snapshot(); calls = flux.calls; });
+      await expectHeld(await capOn(COMPAT, { capUsd: 30 }), before, calls);
+    });
+    it("(d) a hold lands between the notRaising refusal and the stepped-up batch", async () => {
+      await setup(); await keyed();
+      let before = ""; let calls = 0;
+      // a raise is refused for the notRaising path without a write (it needs the step-up); the hold lands before the stepped-up batch
+      armDb(/SET plan=/, async () => { await hold(); before = await snapshot(); calls = flux.calls; });
+      await expectHeld(await capOn(COMPAT, { capUsd: 80 }), before, calls);
+    });
+    it("(e) a second ON on a pending-resume active row, hold injected before its batch", async () => {
+      await setup(); await stopped(); await capOn();
+      let before = ""; let calls = 0;
+      armDb(/cap_microcents>=\?/, async () => { await hold(); before = await snapshot(); calls = flux.calls; });
+      await expectHeld(await capOn(), before, calls);
+    });
+    // fix r1 (Astra M4): a never-keyed home (state none): every ON write is hold-fenced too
+    it("(f) a never-keyed row, a stepped-up raise ($30 to $80), the hold lands before its batch", async () => {
+      await setup(); await seedHomeKeyRow();
+      expect(await rowOf()).toMatchObject({ state: "none", generation: 0, cap_microcents: 30_000_000 });
+      let before = ""; let calls = 0;
+      armDb(/SET plan=/, async () => { await hold(); before = await snapshot(); calls = flux.calls; });
+      await expectHeld(await capOn(COMPAT, { capUsd: 80 }), before, calls);
+      expect(await rowOf()).toMatchObject({ state: "none", cap_microcents: 30_000_000, billing_hold: 1 });
+    });
+    it("(g) a never-keyed row, a same-limit ON, the hold lands before the notRaising batch", async () => {
+      await setup(); await seedHomeKeyRow();
+      let before = ""; let calls = 0;
+      armDb(/cap_microcents>=\?/, async () => { await hold(); before = await snapshot(); calls = flux.calls; });
+      await expectHeld(await capOn(COMPAT, { capUsd: 30 }), before, calls);
+    });
+  });
+
+  it("9. the undelivered compensation of a pre-deploy generation after a resume revokes it and leaves the row active", async () => {
+    await setup(); await stopped(); await capOn();
+    await run(`INSERT INTO flux_home_ops (op_id,home_id,seq,kind,payload,state,created_at,updated_at)
+      VALUES ('undelivered:intent-x',?,(SELECT COALESCE(MAX(seq),0)+1 FROM flux_home_ops),'compensate',json_object('generation',1,'lifecycleVersion',2,'undelivered','intent-x'),'queued',?,?)`, HOME, clock, clock);
+    await sweepFlux(testEnv(), deps);
+    expect(flux.log).toContain("revoke:1");
+    expect(await rowOf()).toMatchObject({ state: "active", resume_lv: 3, resume_from_generation: 1 });
+  });
+
+  it("10. step-up: none gives 403 and no write; a raise while the resume is pending sends no cap call", async () => {
+    await setup(); await stopped();
+    const before = await snapshot(); const calls = flux.calls;
+    const weak = await stepUpToken(owner.sub, owner.email, { aal1: true });
+    tokenUsers.set(weak, owner.userId);
+    const refused = await call("POST", `/v1/homes/${HOME}/flux/cap`, weak, { enabled: true }, COMPAT);
+    expect([refused.status, (await refused.json<{ error: string }>()).error]).toEqual([403, "step_up_required"]);
+    expect(await snapshot()).toBe(before);
+    expect(flux.calls).toBe(calls);
+    expect((await capOn()).status).toBe(200);
+    expect((await capOn(COMPAT, { capUsd: 80 })).status).toBe(200); // a stepped-up raise while pending
+    expect(flux.caps).toEqual([]);
+    expect(flux.calls).toBe(calls);
+  });
+
+  it("11. a stale pre-resume ack gives 409; a pre-migration pending row (no pending lifecycle) still acks", async () => {
+    await setup(); await keyed();
+    await run("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?", clock + DAY, HOME);
+    const d = await due();
+    const k = await (await m("subkey", { generation: 1, op_id: d.op_id })).json<{ generation: number }>();
+    expect((await ownerStopCall()).status).toBe(200);
+    expect((await capOn()).status).toBe(200); // the resume clears pending_*
+    const stale = await m("subkey/ack", { generation: 1, op_id: d.op_id, key_generation: k.generation });
+    expect([stale.status, (await stale.json<{ error: string }>()).error]).toEqual([409, "ack_unknown"]);
+    // a row minted before the migration: pending set, pending_lifecycle_version NULL
+    await run("UPDATE flux_home_keys SET pending_op_id=?,pending_generation=generation,pending_expires_at=?,pending_lifecycle_version=NULL WHERE home_id=?", `renew:${HOME}:1:77`, clock + 5 * DAY, HOME);
+    expect((await m("subkey/ack", { generation: 1, op_id: `renew:${HOME}:1:77` })).status).toBe(200);
+    const row = await rowOf();
+    expect(row).toMatchObject({ acked_lifecycle_version: row.lifecycle_version, acked_generation: row.generation, pending_op_id: null });
+  });
+
+  it("12. the owner /subkey answers 410 owner_mint_retired on stopped and active homes, zero writes or calls", async () => {
+    await setup(); await keyed();
+    for (const state of ["active", "stopped"]) {
+      if (state === "stopped") expect((await ownerStopCall()).status).toBe(200);
+      const before = await snapshot(); const calls = flux.calls;
+      const intents = await count("SELECT COUNT(*) AS n FROM cloud_stepup_intents");
+      const res = await call("POST", `/v1/homes/${HOME}/flux/subkey`, owner.token, {});
+      expect([res.status, (await res.json<{ error: string }>()).error]).toEqual([410, "owner_mint_retired"]);
+      expect(await snapshot()).toBe(before);
+      expect(flux.calls).toBe(calls);
+      expect(await count("SELECT COUNT(*) AS n FROM cloud_stepup_intents")).toBe(intents);
+    }
+    const weak = await stepUpToken(owner.sub, owner.email, { aal1: true });
+    tokenUsers.set(weak, owner.userId);
+    expect((await call("POST", `/v1/homes/${HOME}/flux/subkey`, weak, {})).status).toBe(410); // no step-up gate in front of it
+  });
+
+  it("13. flag off, or the header absent with the flag on: ON on a stopped home answers 410 resume_unavailable, row-identical, zero router calls", async () => {
+    await setup(); await stopped();
+    const before = await snapshot(); const calls = flux.calls;
+    for (const [flag, headers] of [["1", {}], [undefined, COMPAT]] as const) {
+      extra = flag ? { FLUX_RESUME_VIA_POLLER: flag } : {};
+      const res = await capOn(headers);
+      expect([res.status, (await res.json<{ error: string }>()).error]).toEqual([410, "resume_unavailable"]);
+      expect(await snapshot()).toBe(before);
+      expect(flux.calls).toBe(calls);
+    }
+  });
+
+  it("14. expiry writers: a non-NULL key_expires_at is written only by the ack; NULL only by the resume batch and the undelivered compensation", async () => {
+    await setup();
+    const seen: string[] = [];
+    dbHook = (sql) => { seen.push(sql); };
+    await keyed(); await ownerStopCall(); await capOn();
+    const d = await due();
+    await m("subkey", { generation: 1, op_id: d.op_id });
+    expect((await rowOf()).key_expires_at).toBeNull(); // minted and committed, not acked
+    dbHook = (sql) => { seen.push(sql); };
+    await m("subkey/ack", { generation: 1, op_id: d.op_id, key_generation: 2 });
+    const acked = await rowOf();
+    expect(acked.key_expires_at).not.toBeNull();
+    // Fix r3 (Grok Low): drive the undelivered compensation of the CURRENT generation through its NULL arm (b4-flux.ts runOps).
+    await run(`INSERT INTO flux_home_ops (op_id,home_id,seq,kind,payload,state,created_at,updated_at)
+      VALUES ('undelivered:intent-14',?,(SELECT COALESCE(MAX(seq),0)+1 FROM flux_home_ops),'compensate',json_object('generation',?,'lifecycleVersion',?,'undelivered','intent-14'),'queued',?,?)`,
+      HOME, acked.generation, acked.lifecycle_version, clock, clock);
+    await sweepFlux(testEnv(), deps);
+    expect(flux.log).toContain(`revoke:${acked.generation}`);
+    expect(await rowOf()).toMatchObject({ generation: acked.generation, state: "stopped", key_expires_at: null });
+    dbHook = null;
+    const setters = seen.filter((sql) => /key_expires_at\s*=/.test(sql));
+    const kinds = new Set(setters.map((sql) => /key_expires_at=pending_expires_at/.test(sql) ? "ack" : /key_expires_at=NULL/.test(sql) ? "null-resume" : /key_expires_at=CASE WHEN generation=\?/.test(sql) ? "null-compensation" : "other"));
+    expect([...kinds].sort()).toEqual(["ack", "null-compensation", "null-resume"]);
+    expect(setters.some((sql) => /key_expires_at=CASE WHEN \?=1/.test(sql))).toBe(false); // the owner commit arm is gone from every statement run
+  });
+
+  it("15. a typed hold survives a resume and keeps the cue false until its own next_at", async () => {
+    await setup(); await stopped();
+    await run("INSERT INTO flux_first_key_retry (home_id,failures,next_at,updated_at,hold) VALUES (?,0,?,?,'email_unverified')", HOME, clock + 15 * 60_000, clock);
+    expect((await capOn()).status).toBe(200);
+    expect(await count("SELECT COUNT(*) AS n FROM flux_first_key_retry WHERE home_id=? AND hold='email_unverified'", HOME)).toBe(1);
+    expect(await due()).toEqual({ due: false });
+    clock += 15 * 60_000;
+    expect((await due()).due).toBe(true);
+  });
+
+  it("16. GET /flux spendingDelivery: all six states and stopConfirmed", async () => {
+    await setup(); await keyed();
+    const set = (sql: string, ...b: unknown[]) => run(`UPDATE flux_home_keys SET ${sql} WHERE home_id=?`, ...b, HOME);
+    expect(await delivery()).toEqual({ state: "on", stopConfirmed: false, homeOnline: true, pendingSince: null });
+    await set("key_expires_at=?", clock - 1);
+    expect((await delivery()).state).toBe("pending"); // an expired key is never On
+    await set("key_expires_at=?", clock + DAY);
+    await set("gen_floor=generation+1");
+    expect((await delivery()).state).toBe("pending"); // a later generation was dispatched
+    await set("gen_floor=generation");
+    await set("acked_generation=generation-1");
+    expect((await delivery()).state).toBe("pending"); // the home acked a different generation
+    await set("acked_generation=generation");
+    await set("billing_hold=1");
+    expect((await delivery()).state).toBe("held");
+    await set("billing_hold=0, spending_off=1");
+    expect((await delivery()).state).toBe("off");
+    await set("spending_off=0, state='stopping'");
+    expect(await delivery()).toMatchObject({ state: "stopping", stopConfirmed: false });
+    await set("state='stopped'");
+    flux.statusFor = { state: "ok", capMicrocents: 30_000_000 };
+    expect(await delivery()).toMatchObject({ state: "stopping", stopConfirmed: false }); // the router still reports the key live
+    routerQuiet();
+    expect(await delivery()).toMatchObject({ state: "stopped", stopConfirmed: true });
+    flux.down = true;
+    expect(await delivery()).toMatchObject({ state: "stopping", stopConfirmed: false }); // Flux unreachable: not confirmed
+    flux.down = false;
+    await set("state='active', resume_lv=lifecycle_version, resume_at=?, acked_lifecycle_version=lifecycle_version-1", clock - 5);
+    expect(await delivery()).toMatchObject({ state: "pending", pendingSince: clock - 5 });
+    await run("UPDATE cloud_homes SET heartbeat_at=? WHERE id=?", clock - 3 * LEASE_FRESH, HOME);
+    expect(await delivery()).toMatchObject({ homeOnline: false });
+  });
+
+  describe("17. cost", () => {
+    it("GET /flux and setCap ON issue the same number of statements with 0 and 500 flux_home_ops rows", async () => {
+      await setup(); await stopped();
+      const statements = async (go: () => Promise<unknown>) => { let n = 0; dbHook = (sql) => { n += sql.split(";\n").length; }; await go(); dbHook = null; return n; };
+      const getN0 = await statements(getStatus);
+      const onN0 = await statements(() => capOn());
+      await run(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<500)
+        INSERT INTO flux_home_ops (op_id,home_id,seq,kind,payload,state,created_at,updated_at)
+        SELECT 'bulk:'||i,'other-home',1000+i,'cap','{}','done',1,1 FROM n`);
+      await run("UPDATE flux_home_keys SET state='stopped', resume_lv=NULL WHERE home_id=?", HOME);
+      const getN1 = await statements(getStatus);
+      const onN1 = await statements(() => capOn());
+      expect([getN1, onN1]).toEqual([getN0, onN0]);
+    });
+
+    it("the two overdue passes read through the partial indexes (no full scan of the alert or key table)", async () => {
+      await setup(); await stopped(); await capOn();
+      await run("UPDATE cloud_homes SET heartbeat_at=? WHERE id=?", clock + 2 * 3_600_000, HOME);
+      clock += 2 * 3_600_000;
+      const seen: string[] = [];
+      dbHook = (sql) => { seen.push(sql); };
+      await sweepFlux(testEnv(), deps);
+      dbHook = null;
+      const raise = seen.find((sql) => /FROM flux_home_keys k JOIN cloud_homes h/.test(sql) && /resume_at/.test(sql));
+      const resolve = seen.find((sql) => /FROM cloud_alerts a LEFT JOIN flux_home_keys k/.test(sql));
+      expect([typeof raise, typeof resolve]).toEqual(["string", "string"]);
+      await run("INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at,resolved_at) WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<5000) SELECT 'bulk-a'||i,'h-'||i,CASE WHEN i%2 THEN 'flux.grant_held' ELSE 'flux.resume_undelivered' END,'high','{}',i,i FROM n");
+      const plan = async (sql: string) => {
+        const binds = Array.from({ length: (sql.match(/\?/g) ?? []).length }, () => 0);
+        return (await env.DB.prepare(`EXPLAIN QUERY PLAN ${sql}`).bind(...binds).all<{ detail: string }>()).results.map((r) => r.detail).join("\n");
+      };
+      const p1 = await plan(raise!); const p2 = await plan(resolve!);
+      expect(p1).toMatch(/SEARCH k USING INDEX flux_home_keys_resume_open/);
+      expect(p1).not.toMatch(/SCAN (k|a)\b/);
+      expect(p2).toMatch(/SCAN a USING INDEX cloud_alerts_resume_open/);
+      expect(p2).not.toMatch(/SCAN k\b/);
+    });
+  });
+
+  const LEASE_FRESH = 60_000;
+  /** n homes whose resume is open: row active at LV 3, resume_lv 3, not acked, resumed at `at`, online (heartbeat now). */
+  const bulkResumes = async (n: number, at: number, prefix = "bulk") => {
+    await run(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?)
+      INSERT INTO cloud_homes (id,installation_id,owner_id,desired_state,observed_state,image_digest,home_key,created_at,updated_at,heartbeat_at)
+      SELECT ?||i,'inst-'||?||i,'o','ready','ready','sha256:x','k',1,1,? FROM n`, n, prefix, prefix, clock);
+    await run(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?)
+      INSERT INTO flux_home_keys (home_id,plan,generation,state,cap_microcents,cap_custom,updated_at,lifecycle_version,resume_lv,resume_from_generation,resume_at,gen_floor)
+      SELECT ?||i,'starter',1,'active',30000000,0,1,3,3,1,?,1 FROM n`, n, prefix, at);
+  };
+
+  it("18. overdue coverage: 30 online homes pending over 60 minutes: 25 raised, then 5, then none; acking 27 resolves 27 in one pass; offline, young and already-raised rows are never selected", async () => {
+    await setup();
+    await bulkResumes(30, clock - 61 * 60_000);
+    await bulkResumes(3, clock - 61 * 60_000, "off"); await run("UPDATE cloud_homes SET heartbeat_at=? WHERE id LIKE 'off%'", clock - 10 * LEASE_FRESH);
+    await bulkResumes(3, clock - 10 * 60_000, "young");
+    const open = () => count("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='flux.resume_undelivered' AND resolved_at IS NULL");
+    await sweepFlux(testEnv(), deps); expect(await open()).toBe(25);
+    await sweepFlux(testEnv(), deps); expect(await open()).toBe(30);
+    await sweepFlux(testEnv(), deps); expect(await open()).toBe(30);
+    expect(await count("SELECT COUNT(*) AS n FROM cloud_alerts WHERE home_id LIKE 'off%' OR home_id LIKE 'young%'")).toBe(0);
+    await run("UPDATE flux_home_keys SET acked_lifecycle_version=3,acked_generation=2 WHERE home_id IN (SELECT home_id FROM flux_home_keys WHERE home_id LIKE 'bulk%' ORDER BY home_id LIMIT 27)");
+    await sweepFlux(testEnv(), deps);
+    expect(await open()).toBe(3);
+  });
+
+  it("19. migration 0150 (fix r2): its only writes are acked_lifecycle_version and acked_generation on active rows; every other key column is untouched", async () => {
+    await setup();
+    const migration = (env as unknown as { TEST_MIGRATIONS: { name: string; queries: string[] }[] }).TEST_MIGRATIONS.find((x) => x.name.startsWith("0150"))!;
+    expect(migration.name).toBe("0150_flux_resume_via_poller.sql");
+    const writes = migration.queries.filter((q) => /\b(UPDATE|INSERT|DELETE)\b/i.test(q.replace(/--[^\n]*/g, "")));
+    expect(writes).toHaveLength(1); // step 2 (the owner-resumed repair) is gone: no stored mint provenance selects its rows
+    const mk = (id: string, state: string, generation: number, lv: number, cols: Record<string, number | string> = {}) => {
+      const names = Object.keys(cols);
+      return run(`INSERT INTO flux_home_keys (home_id,plan,generation,gen_floor,state,cap_microcents,cap_custom,updated_at,lifecycle_version,key_expires_at${names.map((n) => "," + n).join("")})
+        VALUES (?,'starter',?,?,?,30000000,0,1,?,99${names.map(() => ",?").join("")})`, id, generation, generation + 1, state, lv, ...Object.values(cols));
+    };
+    const stopOp = (home: string, version: number) => run(`INSERT INTO flux_home_ops (op_id,home_id,seq,kind,payload,state,created_at,updated_at)
+      VALUES (?,?,(SELECT COALESCE(MAX(seq),0)+1 FROM flux_home_ops),'stop',json_object('version',?),'done',1,1)`, `op-${home}`, home, version);
+    await mk("mig-active", "active", 4, 5);
+    await mk("mig-stopped", "stopped", 4, 5); await stopOp("mig-stopped", 5);
+    await mk("mig-stopping", "stopping", 4, 6);
+    await mk("mig-none", "none", 0, 1);
+    await mk("mig-held", "active", 4, 5, { billing_hold: 1 });
+    await mk("mig-off", "active", 4, 5, { spending_off: 1 });
+    await mk("mig-pending", "active", 4, 5, { pending_op_id: "renew:x", pending_generation: 4, pending_expires_at: 777 });
+    // The old step 2 candidate: active, its last done Stop one lifecycle below, no pending key, never acked. It now keeps every key column.
+    await mk("mig-old-candidate", "active", 4, 5); await stopOp("mig-old-candidate", 4);
+    const snapshot = async () => Object.fromEntries((await env.DB.prepare("SELECT * FROM flux_home_keys WHERE home_id LIKE 'mig-%' ORDER BY home_id")
+      .all<Record<string, unknown>>()).results.map((r) => [r.home_id as string, r]));
+    const before = await snapshot();
+    expect(Object.keys(before)).toHaveLength(8);
+    for (const q of writes) await env.DB.prepare(q).run();
+    const after = await snapshot();
+    for (const [id, row] of Object.entries(before)) {
+      const active = row.state === "active";
+      expect(after[id], id).toEqual({ ...row,
+        acked_lifecycle_version: active ? row.lifecycle_version : row.acked_lifecycle_version,
+        acked_generation: active ? row.generation : row.acked_generation });
+      for (const c of ["resume_lv", "resume_from_generation", "resume_at", "acked_lifecycle_version", "acked_generation"]) if (!active) expect(after[id][c], `${id}.${c}`).toBeNull();
+      expect(after[id].resume_lv, id).toBeNull();
+    }
+    expect(after["mig-old-candidate"]).toMatchObject({ acked_lifecycle_version: 5, acked_generation: 4, key_expires_at: 99, resume_lv: null, resume_from_generation: null, resume_at: null });
+    expect(after["mig-pending"]).toMatchObject({ acked_lifecycle_version: 5, acked_generation: 4, pending_op_id: "renew:x", pending_generation: 4, pending_expires_at: 777 });
+  });
+
+  describe("20-21. renewal and rotation (r2 H1, H2)", () => {
+    const renewalDue = async () => { await run("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?", clock + DAY, HOME); };
+    it("20. acked g, the renewal claims g+1 and the answer is lost: delivery pending, the cue true, never on from g's expiry; the same for a lost ack; g+2 acked gives on", async () => {
+      await setup(); await keyed(); await renewalDue();
+      expect((await delivery()).state).toBe("on");
+      const d = await due();
+      flux.afterMint = async () => { throw new FluxError(0, "unreachable"); };
+      expect((await m("subkey", { generation: 1, op_id: d.op_id })).status).toBe(502);
+      expect((await delivery()).state).toBe("pending");
+      expect((await due()).due).toBe(false); // fix r1 (Astra M5): the failed attempt waits the bound's first minute
+      clock += 60_000;
+      expect((await due()).due).toBe(true);
+      // commit, then the poller never acks (a lost answer or a lost ack): still pending
+      const ok = await m("subkey", { generation: 1, op_id: d.op_id });
+      expect(ok.status).toBe(200);
+      expect((await delivery()).state).toBe("pending");
+      clock += 120_000; // the second consecutive wait on the bound (the failed attempt was the first)
+      const d2 = await due();
+      expect(d2.due).toBe(true);
+      const k2 = await (await m("subkey", { generation: 1, op_id: d2.op_id })).json<{ generation: number }>();
+      expect((await m("subkey/ack", { generation: 1, op_id: d2.op_id, key_generation: k2.generation })).status).toBe(200);
+      expect(await delivery()).toMatchObject({ state: "on" });
+      expect(await rowOf()).toMatchObject({ acked_generation: k2.generation, generation: k2.generation, gen_floor: k2.generation });
+    });
+    it("20b. an attempt never adopted outside the 7-day window keeps the cue true, bounded by the retry table", async () => {
+      await setup(); await keyed();
+      await run("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?", clock + 30 * DAY, HOME);
+      expect(await due()).toEqual({ due: false });
+      await run("UPDATE flux_home_keys SET gen_floor=generation+1 WHERE home_id=?", HOME); // an attempt was dispatched and never adopted
+      expect((await due()).due).toBe(true);
+      expect((await delivery()).state).toBe("pending");
+      flux.mintError = new FluxError(502, "");
+      expect((await m("subkey", { generation: 1, op_id: (await due()).op_id })).status).toBe(502);
+      expect(await due()).toEqual({ due: false }); // counted on the bound table
+      clock += 60_000;
+      expect((await due()).due).toBe(true);
+    });
+    it("20c. fix r1 (Astra H1): a delayed ack of g+1 lands after g+2's claim and before its commit, g+2 commits and its answer is lost: renewal stays due and the poller gets a fresh key", async () => {
+      await setup(); await keyed(); await renewalDue();
+      const d1 = await due();
+      const g2 = await (await m("subkey", { generation: 1, op_id: d1.op_id })).json<{ generation: number }>(); // delivered; its ack is delayed
+      clock += 60_000; // the bound after a committed, unacked mint
+      const d2 = await due();
+      expect(d2.due).toBe(true);
+      // the router publishes g+2 (g+1 is refused at the gate from now on), then the delayed ack of g+1 lands, then the CP commits g+2
+      flux.afterMint = async () => { expect((await m("subkey/ack", { generation: 1, op_id: d1.op_id, key_generation: g2.generation })).status).toBe(200); };
+      const lost = await m("subkey", { generation: 1, op_id: d2.op_id });
+      expect(lost.status).toBe(200); // committed; this answer never reaches the home
+      const g3 = (await lost.json<{ generation: number }>()).generation;
+      expect(g3).toBeGreaterThan(g2.generation);
+      expect(flux.keys.has(g2.generation)).toBe(false);
+      const row = await rowOf();
+      expect(row).toMatchObject({ generation: g3, gen_floor: g3, acked_generation: g2.generation, pending_generation: g3 });
+      expect(row.key_expires_at - clock).toBeGreaterThan(7 * DAY); // the delayed ack moved the expiry past the window
+      expect((await delivery()).state).toBe("pending");
+      expect(await due()).toEqual({ due: false }); // still inside the bound of g+2's commit
+      clock += 60_000;
+      const d3 = await due();
+      expect(d3.due).toBe(true);
+      const fresh = await m("subkey", { generation: 1, op_id: d3.op_id });
+      expect(fresh.status).toBe(200);
+      const g4 = (await fresh.json<{ generation: number }>()).generation;
+      expect(g4).toBeGreaterThan(g3);
+      expect((await m("subkey/ack", { generation: 1, op_id: d3.op_id, key_generation: g4 })).status).toBe(200);
+      expect((await delivery()).state).toBe("on");
+      expect(await due()).toEqual({ due: false });
+    });
+    it("21. rotation: publishing g+1 makes g refused at the gate, no CP revoke call; an unadopted g+1 is compensated and the row reads pending and due", async () => {
+      await setup(); await keyed(); await renewalDue();
+      expect([...flux.keys]).toEqual([1]);
+      const d = await due();
+      const k = await (await m("subkey", { generation: 1, op_id: d.op_id })).json<{ generation: number }>();
+      expect([...flux.keys]).toEqual([k.generation]);
+      expect(flux.log.filter((e) => e.startsWith("revoke:"))).toEqual([]);
+      await m("subkey/ack", { generation: 1, op_id: d.op_id, key_generation: k.generation });
+      await run("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?", clock + DAY, HOME);
+      flux.afterMint = async () => { throw new FluxError(0, "unreachable"); };
+      const d2 = await due();
+      expect((await m("subkey", { generation: 1, op_id: d2.op_id })).status).toBe(502);
+      expect(flux.log.filter((e) => e.startsWith("revoke:"))).toEqual([`revoke:${k.generation + 1}`]);
+      expect([...flux.keys]).toEqual([]);
+      expect((await delivery()).state).toBe("pending");
+      expect((await due()).due).toBe(false); // fix r1 (Astra M5): due again once the bound's first minute has passed
+      clock += 60_000;
+      expect((await due()).due).toBe(true);
+    });
+  });
+
+  describe("28. G7: only a mint at a lifecycle the owner's resume wrote lifts a Stop", () => {
+    it("a machine subkey on stopped, stopping and held rows reaches the router zero times", async () => {
+      await setup(); flux.strictStop = true; await stopped();
+      const mints = flux.mintCalls;
+      for (const [label, sql] of [["stopped", "state='stopped'"], ["stopping", "state='stopping'"], ["held", "state='active', billing_hold=1"]] as const) {
+        await run(`UPDATE flux_home_keys SET ${sql} WHERE home_id=?`, HOME);
+        const res = await m("subkey", { generation: 1, op_id: `renew:${HOME}:1:1` });
+        expect([label, res.status >= 400]).toEqual([label, true]);
+      }
+      expect(flux.mintCalls).toBe(mints);
+    });
+    it("a Stop committed between the claim and the dispatch: the mint carries the old lifecycle, the Stop is sent after it, the home ends stopped", async () => {
+      await setup(); await keyed(); await run("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?", clock + DAY, HOME);
+      const d = await due();
+      flux.onMint = async () => { await ownerStopCall(); };
+      const res = await m("subkey", { generation: 1, op_id: d.op_id });
+      expect(res.status).toBeGreaterThanOrEqual(409);
+      expect(flux.stopped).toBe(true);
+      expect([...flux.keys]).toEqual([]);
+      expect(await rowOf()).toMatchObject({ state: "stopped" });
+    });
+    it("with the strict router a stale mint cannot lift a Stop and the resume lifecycle does", async () => {
+      await setup(); flux.strictStop = true; await stopped();
+      expect(flux.stopped).toBe(true);
+      await capOn();
+      const d = await due();
+      expect((await m("subkey", { generation: 1, op_id: d.op_id })).status).toBe(200);
+      expect(flux.stopped).toBe(false);
+    });
+  });
+
+  it("29. resolve is not starved: 120 stuck homes, the 10 newest ack and 5 more get an OFF: one pass resolves exactly those 15", async () => {
+    await setup();
+    await bulkResumes(120, clock - 2 * 3_600_000);
+    await run("UPDATE cloud_homes SET heartbeat_at=NULL WHERE id LIKE 'bulk%'"); // offline: no new raise in this pass
+    await run(`INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at,subject) SELECT 'alert:resume:'||home_id||':3',home_id,'flux.resume_undelivered','high','{}',resume_at,'3' FROM flux_home_keys WHERE home_id LIKE 'bulk%'`);
+    await run("UPDATE flux_home_keys SET acked_lifecycle_version=3,acked_generation=2 WHERE home_id IN (SELECT home_id FROM flux_home_keys WHERE home_id LIKE 'bulk%' ORDER BY home_id DESC LIMIT 10)");
+    await run("UPDATE flux_home_keys SET lifecycle_version=4 WHERE home_id IN (SELECT home_id FROM flux_home_keys WHERE home_id LIKE 'bulk%' ORDER BY home_id LIMIT 5)");
+    await sweepFlux(testEnv(), deps);
+    expect(await count("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='flux.resume_undelivered' AND resolved_at IS NOT NULL")).toBe(15);
+    expect(await count("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='flux.resume_undelivered' AND resolved_at IS NULL")).toBe(105);
+  });
+
+  it("30. overlap: V+1 raised; OFF and ON before any resolve; the V+3 raise opens a second row; the next pass closes V+1 only, V+3 closes at its ack", async () => {
+    await setup(); await stopped(); await capOn();
+    clock += 61 * 60_000; await run("UPDATE cloud_homes SET heartbeat_at=? WHERE id=?", clock, HOME);
+    await sweepFlux(testEnv(), deps);
+    const alerts = () => env.DB.prepare("SELECT subject,resolved_at FROM cloud_alerts WHERE kind='flux.resume_undelivered' ORDER BY subject").all<{ subject: string; resolved_at: number | null }>().then((r) => r.results);
+    expect(await alerts()).toEqual([{ subject: "3", resolved_at: null }]);
+    expect((await capOff()).status).toBe(200); expect((await capOn()).status).toBe(200);
+    clock += 61 * 60_000; await run("UPDATE cloud_homes SET heartbeat_at=? WHERE id=?", clock, HOME);
+    await sweepFlux(testEnv(), deps);
+    const after = await alerts();
+    expect(after.map((a) => [a.subject, a.resolved_at !== null])).toEqual([["3", true], ["5", false]]);
+    const d = await due();
+    const k = await (await m("subkey", { generation: 1, op_id: d.op_id })).json<{ generation: number }>();
+    await m("subkey/ack", { generation: 1, op_id: d.op_id, key_generation: k.generation });
+    await sweepFlux(testEnv(), deps);
+    expect((await alerts()).map((a) => a.resolved_at !== null)).toEqual([true, true]);
+  });
+
+  it.each([
+    ["403 (not a generation conflict)", new FluxError(403, "", "billing_hold"), 0],
+    ["a non-generation 409", new FluxError(409, "", "stale_cap"), 0],
+    ["503 billing_identity_unavailable", new FluxError(503, "", "billing_identity_unavailable"), 0],
+    ["status 0", new FluxError(0, "unreachable"), 1],
+    ["502", new FluxError(502, ""), 1],
+  ])("31. G1: %s journals %i compensation", async (_name, error, expected) => {
+    await setup(); await keyed(); await run("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?", clock + DAY, HOME);
+    const d = await due();
+    flux.mintError = error as FluxError;
+    await m("subkey", { generation: 1, op_id: d.op_id });
+    expect(await count("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id=? AND kind='compensate'", HOME)).toBe(expected);
+  });
+
+  it("32. a same-generation retry that gets 409 stale_generation is treated as already landed: moved past once, nothing compensated, the retry mints above it", async () => {
+    await setup(); await keyed(); await run("UPDATE flux_home_keys SET key_expires_at=? WHERE home_id=?", clock + DAY, HOME);
+    flux.staleByCode = true;
+    flux.highestGeneration = 2; // a key at generation 2 already landed (a lost answer); the CP still holds 1 (the router says it by code only)
+    const d = await due();
+    const res = await m("subkey", { generation: 1, op_id: d.op_id });
+    expect(res.status).toBe(200);
+    expect((await res.json<{ generation: number }>()).generation).toBe(3);
+    expect(flux.mints.at(-1)).toMatchObject({ generation: 3 });
+    expect(await count("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id=? AND kind='compensate'", HOME)).toBe(0);
+    expect(await rowOf()).toMatchObject({ gen_floor: 3, generation: 3 });
+  });
+
+  describe("33. a stopped row whose router key is live (2.6a)", () => {
+    const resolveRoute = (id: string, body: unknown, token: string | null = ADMIN) => call("POST", `/v1/internal/alerts/${id}/resolve`, token, body);
+    const incidents = () => env.DB.prepare("SELECT id,resolved_at FROM cloud_alerts WHERE kind='flux.stopped_key_live' ORDER BY raised_at,id").all<{ id: string; resolved_at: number | null }>().then((r) => r.results);
+    const repairOps = () => count("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id=? AND kind='stop' AND json_extract(payload,'$.reason')='stopped_live_repair'", HOME);
+    const audits = () => count("SELECT COUNT(*) AS n FROM selfservice_audit WHERE action='alert_resolve'");
+    const live = () => { flux.statusFor = { state: "ok", capMicrocents: 30_000_000 }; };
+    /** a stopped home, key live at the router, the router ahead of the CP (409 stale_lifecycle): one open incident. */
+    const incident = async () => {
+      await setup(); await stopped(); live();
+      flux.lifecycleFloor = 99;
+      await sweepFlux(testEnv(), deps);
+      const open = (await incidents()).filter((i) => i.resolved_at === null);
+      expect(open).toHaveLength(1);
+      return open[0].id;
+    };
+
+    it("one pass journals exactly one stopped_live_repair Stop at the next lifecycle, drains it; GET reads turning off until the router reports not live, then off", async () => {
+      await setup(); await stopped(); live();
+      await sweepFlux(testEnv(), deps);
+      expect(await repairOps()).toBe(1);
+      expect(flux.log.at(-1)).toBe("stop:3");
+      expect(await rowOf()).toMatchObject({ state: "stopped", lifecycle_version: 3 });
+      expect(await delivery()).toMatchObject({ state: "stopping", stopConfirmed: false });
+      routerQuiet();
+      expect(await delivery()).toMatchObject({ state: "stopped", stopConfirmed: true });
+      await sweepFlux(testEnv(), deps); clock += 20 * 60_000; await sweepFlux(testEnv(), deps);
+      expect(await repairOps()).toBe(1); // not live any more: nothing more is sent
+    });
+
+    it("fix r1 (Astra H2): grants token absent (revoke-only), a stopped row the router reports live, no Stop open: the sweep sends the repair Stop and raises the incident", async () => {
+      await setup(); await stopped(); live();
+      extra = { ...extra, FLUX_CLOUD_GRANTS_TOKEN: undefined }; // revocation ready, issuing not
+      flux.lifecycleFloor = 99; // the key keeps spending: the router is ahead of the CP and answers the Stop 409 stale_lifecycle
+      let stopsSent = 0;
+      flux.onStop = async () => { stopsSent++; };
+      const mints = flux.mintCalls; const statusHomes = flux.statusHomes.length;
+      await sweepFlux(testEnv(), deps);
+      expect(flux.statusHomes.slice(statusHomes)).toEqual([HOME]); // the one read the repair needs
+      expect(stopsSent).toBe(1);
+      expect(await repairOps()).toBe(1);
+      expect((await incidents()).filter((i) => i.resolved_at === null)).toHaveLength(1);
+      expect(await rowOf()).toMatchObject({ state: "stopped", lifecycle_version: 3 });
+      expect([flux.mintCalls, flux.caps]).toEqual([mints, []]); // nothing that issues went out
+      // the router no longer ahead: the next eligible pass re-sends the Stop, which lands; the incident stays open for a person
+      flux.lifecycleFloor = 0; clock += 20 * 60_000;
+      await sweepFlux(testEnv(), deps);
+      expect(flux.log.at(-1)).toBe("stop:4");
+      expect((await incidents()).filter((i) => i.resolved_at === null)).toHaveLength(1);
+    });
+
+    it("fix r1 (Grok Low): the repair's own drain sees its Stop pending, a later drain fails it: the incident opens", async () => {
+      await setup(); await stopped(); live();
+      // another holder takes the lease right as the repair Stop is journaled, so the repair's own drain cannot send it (pending, no attempt)
+      armDb(/state='stopped'\s+AND NOT EXISTS \(SELECT 1 FROM flux_home_ops WHERE home_id=\? AND kind='stop'/, async () => {
+        await run("UPDATE flux_home_keys SET op_holder='other',op_lease_until=? WHERE home_id=?", clock + 1_000, HOME);
+      });
+      await sweepFlux(testEnv(), deps);
+      expect(await repairOps()).toBe(1);
+      expect(await count("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id=? AND kind='stop' AND state='queued' AND attempts=0", HOME)).toBe(1);
+      expect(await incidents()).toEqual([]);
+      // the lease expires; the general drain sends the Stop and it fails at the router
+      clock += 20 * 60_000; flux.stopDown = true;
+      await sweepFlux(testEnv(), deps);
+      expect(await count("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id=? AND kind='stop' AND state='queued' AND attempts>0", HOME)).toBe(1);
+      expect((await incidents()).filter((i) => i.resolved_at === null)).toHaveLength(1);
+      // a further failed drain adds no second incident while one is open
+      clock += 20 * 60_000;
+      await sweepFlux(testEnv(), deps);
+      expect(await incidents()).toHaveLength(1);
+    });
+
+    it("a Stop already open is skipped; more homes than the batch are all visited, oldest stop_checked_at first", async () => {
+      await setup(); await stopped(); live();
+      await run(`INSERT INTO flux_home_ops (op_id,home_id,seq,kind,payload,state,created_at,updated_at)
+        VALUES ('open-stop',?,(SELECT COALESCE(MAX(seq),0)+1 FROM flux_home_ops),'stop',json_object('version',2,'reason','stop'),'queued',1,1)`, HOME);
+      flux.stopDown = true; // the open Stop cannot go out in this test
+      await sweepFlux(testEnv(), deps);
+      expect(await repairOps()).toBe(0);
+      expect(flux.statusHomes).not.toContain(HOME);
+      flux.stopDown = false;
+      await run("DELETE FROM flux_home_ops WHERE op_id='open-stop'");
+      await run("UPDATE flux_home_keys SET state='active' WHERE home_id=?", HOME);
+      await run(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<12)
+        INSERT INTO flux_home_keys (home_id,plan,generation,state,cap_microcents,cap_custom,updated_at,lifecycle_version) SELECT 'stp-'||i,'starter',1,'stopped',30000000,0,1,2 FROM n`);
+      await sweepFlux(testEnv(), deps);
+      expect(await count("SELECT COUNT(*) AS n FROM flux_home_keys WHERE home_id LIKE 'stp-%' AND stop_checked_at IS NOT NULL")).toBe(spendingOffPollBatch(12));
+      await sweepFlux(testEnv(), deps);
+      expect(await count("SELECT COUNT(*) AS n FROM flux_home_keys WHERE home_id LIKE 'stp-%' AND stop_checked_at IS NOT NULL")).toBe(12);
+      expect(await count("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id LIKE 'stp-%' AND kind='stop' AND json_extract(payload,'$.reason')='stopped_live_repair'")).toBe(12);
+    });
+
+    it("a router 409 stale_lifecycle, or a failed Stop: the incident opens once (one per home); the repair keeps being re-sent each pass; no second Stop within one pass", async () => {
+      await setup(); await stopped(); live();
+      flux.lifecycleFloor = 99; // the router is ahead of the CP
+      await sweepFlux(testEnv(), deps);
+      expect(await incidents()).toHaveLength(1);
+      expect(await repairOps()).toBe(1);
+      clock += 20 * 60_000;
+      await sweepFlux(testEnv(), deps);
+      expect(await repairOps()).toBe(2); // re-sent, one per pass
+      expect(await incidents()).toHaveLength(1); // cloud_alerts_open: no second row while one is open
+    });
+
+    it("the incident is closed by nothing but an operator: not a sweep, a router read, a resume, a Stop, an OFF or a hold", async () => {
+      const id = await incident();
+      const stillOpen = async () => expect((await incidents()).filter((i) => i.resolved_at === null).map((i) => i.id)).toEqual([id]);
+      flux.lifecycleFloor = 3; routerQuiet();
+      clock += 20 * 60_000; await sweepFlux(testEnv(), deps); await stillOpen();
+      await getStatus(); await stillOpen();
+      expect((await capOn()).status).toBe(200); await stillOpen();
+      expect((await ownerStopCall()).status).toBeLessThan(300); await stillOpen();
+      expect((await capOff()).status).toBe(200); await stillOpen();
+      await run("UPDATE flux_home_keys SET billing_hold=1,billing_hold_at=? WHERE home_id=?", clock, HOME);
+      clock += 20 * 60_000; await sweepFlux(testEnv(), deps); await stillOpen();
+    });
+
+    it("the operator resolve: admin only; by and reason; resolves once; one audit row whose at equals resolved_at; the Monday review counts it", async () => {
+      const id = await incident();
+      const body = { by: "sean", reason: "Flux reports the key stopped" };
+      expect((await resolveRoute(id, body, null)).status).toBe(401);
+      expect((await resolveRoute(id, body, "wrong-admin-token-0123456789abcdef")).status).toBe(401);
+      expect(await audits()).toBe(0);
+      const bad = [{}, { by: "sean" }, { reason: "r" }, { by: " ", reason: "r" }, { by: "sean", reason: "  " }, { by: "x".repeat(81), reason: "r" },
+        { by: "sean", reason: "r".repeat(501) }, { by: 7, reason: "r" }, { by: "sean", reason: ["r"] }, { by: "sean", reason: "r", extra: 1 }];
+      for (const b of bad) {
+        const res = await resolveRoute(id, b);
+        expect([res.status, (await res.json<{ error: string }>()).error]).toEqual([400, "invalid_request"]);
+      }
+      expect(await audits()).toBe(0);
+      expect((await incidents())[0].resolved_at).toBeNull();
+      const ok = await resolveRoute(id, body);
+      expect([ok.status, await ok.json()]).toEqual([200, { resolved: true, alertId: id, resolvedAt: clock }]);
+      const audit = await env.DB.prepare("SELECT home_id,actor,outcome,detail,at FROM selfservice_audit WHERE action='alert_resolve'").all<{ home_id: string; actor: string; outcome: string; detail: string; at: number }>();
+      expect(audit.results).toHaveLength(1);
+      expect(audit.results[0]).toMatchObject({ home_id: HOME, actor: "operator", outcome: "resolved", at: clock });
+      expect(JSON.parse(audit.results[0].detail)).toEqual({ alertId: id, kind: "flux.stopped_key_live", by: "sean", reason: "Flux reports the key stopped" });
+      expect((await incidents())[0].resolved_at).toBe(clock);
+      const again = await resolveRoute(id, body);
+      expect([again.status, (await again.json<{ error: string }>()).error]).toEqual([409, "already_resolved"]);
+      expect(await audits()).toBe(1);
+      expect((await incidents())[0].resolved_at).toBe(clock);
+      expect((await weeklyReviewLines(testEnv(), clock)).join("\n")).toMatch(/flux\.stopped_key_live: fired 1, .*action recorded on 1/);
+      const unknown = await resolveRoute("no-such-alert", body);
+      expect(unknown.status).toBe(404);
+    });
+
+    it("another kind sent to the resolve route: 409 wrong_kind, the row stays open and unchanged, no audit row", async () => {
+      await setup();
+      await run("INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at,subject) VALUES ('other-1',?,'flux.resume_undelivered','high','{}',?,'3')", HOME, clock);
+      const res = await resolveRoute("other-1", { by: "sean", reason: "r" });
+      expect([res.status, (await res.json<{ error: string }>()).error]).toEqual([409, "wrong_kind"]);
+      expect(await env.DB.prepare("SELECT resolved_at FROM cloud_alerts WHERE id='other-1'").first()).toEqual({ resolved_at: null });
+      expect(await audits()).toBe(0);
+    });
+
+    it("after an operator resolve the key going live again opens a NEW incident; the old one stays resolved; the re-send continues", async () => {
+      const id = await incident();
+      expect((await resolveRoute(id, { by: "sean", reason: "checked" })).status).toBe(200);
+      clock += 20 * 60_000;
+      await sweepFlux(testEnv(), deps);
+      const all = await incidents();
+      expect(all).toHaveLength(2);
+      expect(all.filter((i) => i.resolved_at === null)).toHaveLength(1);
+      expect(all.find((i) => i.id === id)!.resolved_at).not.toBeNull();
+      expect(all.find((i) => i.resolved_at === null)!.id).not.toBe(id);
+    });
+  });
+
+  describe("34. the repair against an owner resume (2.6a race)", () => {
+    it("repair first: a resume at V+1 goes to V+2 and the router sees Stop V+1 before mint V+2 (the pinned 403 half is in step-up-email.test.ts)", async () => {
+      await setup(); flux.strictStop = true; await stopped(); flux.statusFor = { state: "ok", capMicrocents: 30_000_000 };
+      flux.stopDown = true; // the repair Stop is journaled at V+1 = 3 and cannot go out yet
+      await sweepFlux(testEnv(), deps);
+      expect(await rowOf()).toMatchObject({ state: "stopped", lifecycle_version: 3 });
+      expect((await capOn()).status).toBe(200);
+      expect(await rowOf()).toMatchObject({ state: "active", lifecycle_version: 4, resume_lv: 4 });
+      const d = await due();
+      const held = await m("subkey", { generation: 1, op_id: d.op_id });
+      expect([held.status, (await held.json<{ error: string }>()).error]).toEqual([429, "renewal_retry_later"]);
+      flux.stopDown = false; routerQuiet();
+      expect((await m("subkey", { generation: 1, op_id: d.op_id })).status).toBe(200);
+      expect(flux.log.filter((e) => /^(stop|mint):/.test(e)).slice(-2)).toEqual(["stop:3", "mint:4"]);
+    });
+    it("resume committed first, then the repair: 0 rows, no Stop op; the repair selected, then the resume commits, then the repair writes: 0 rows", async () => {
+      await setup(); await stopped(); flux.statusFor = { state: "ok", capMicrocents: 30_000_000 };
+      armDb(/stopped_live_repair|SET state=CASE WHEN state='stopped'/, async () => { expect((await capOn()).status).toBe(200); }); // the resume lands between the status read and the repair write
+      await sweepFlux(testEnv(), deps);
+      expect(await rowOf()).toMatchObject({ state: "active", lifecycle_version: 3, resume_lv: 3 });
+      expect(await count("SELECT COUNT(*) AS n FROM flux_home_ops WHERE home_id=? AND json_extract(payload,'$.reason')='stopped_live_repair'", HOME)).toBe(0);
+    });
+  });
+
+  describe("35. cost of the stopped class", () => {
+    it.each([30, 1200, 10_000])("%i stopped homes: one hour of sweeps makes 12 x batch status reads (capped at 1,200), each home read at most once an hour until all are read", async (N) => {
+      await setup(); routerQuiet();
+      await run(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?)
+        INSERT INTO flux_home_keys (home_id,plan,generation,state,cap_microcents,cap_custom,updated_at,lifecycle_version) SELECT 'stp-'||i,'starter',1,'stopped',30000000,0,1,2 FROM n`, N);
+      const batch = spendingOffPollBatch(N);
+      const start = clock;
+      for (let pass = 0; pass < 12; pass++) { await sweepFlux(testEnv(), deps); clock += 5 * 60_000; }
+      const reads = flux.statusHomes.filter((h) => h.startsWith("stp-"));
+      expect(reads.length).toBe(Math.min(12 * batch, 1200));
+      if (N >= 1200) expect(new Set(reads).size).toBe(reads.length); // fewer than one read a home an hour
+      const oldest = (await env.DB.prepare("SELECT MIN(COALESCE(stop_checked_at,0)) AS t FROM flux_home_keys WHERE home_id LIKE 'stp-%'").first<{ t: number }>())!.t;
+      if (N <= 1200) expect(clock - 5 * 60_000 - oldest).toBeLessThanOrEqual(spendingOffMaxStalenessMs(N));
+      if (N > 1200) {
+        // Fix r3 (Grok Low): beyond 1,200 homes the hour does not cover the cohort; keep sweeping until every home is read once, and that
+        // takes no longer than spendingOffMaxStalenessMs(N), with no home read twice before all are read.
+        let last = clock - 5 * 60_000;
+        for (let pass = 12; pass < 400 && await count("SELECT COUNT(*) AS n FROM flux_home_keys WHERE home_id LIKE 'stp-%' AND stop_checked_at IS NULL") > 0; pass++) {
+          last = clock; await sweepFlux(testEnv(), deps); clock += 5 * 60_000;
+        }
+        expect(await count("SELECT COUNT(*) AS n FROM flux_home_keys WHERE home_id LIKE 'stp-%' AND stop_checked_at IS NULL")).toBe(0);
+        const all = flux.statusHomes.filter((h) => h.startsWith("stp-"));
+        expect(new Set(all).size).toBe(N);
+        expect(all.length).toBe(N);
+        expect(last - start).toBeLessThanOrEqual(spendingOffMaxStalenessMs(N));
+      }
+    }, 600_000);
+    it("the spending-off class keeps its own batch: both classes run each pass", async () => {
+      await setup(); routerQuiet();
+      await run(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<50)
+        INSERT INTO flux_home_keys (home_id,plan,generation,state,cap_microcents,cap_custom,updated_at,lifecycle_version,spending_off,spending_off_at,stop_checked_at) SELECT 'off-'||i,'starter',1,'stopped',30000000,0,1,2,1,1,? FROM n`, clock);
+      await run(`WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<30)
+        INSERT INTO flux_home_keys (home_id,plan,generation,state,cap_microcents,cap_custom,updated_at,lifecycle_version) SELECT 'stp-'||i,'starter',1,'stopped',30000000,0,1,2 FROM n`);
+      await sweepFlux(testEnv(), deps);
+      expect(flux.statusHomes.filter((h) => h.startsWith("stp-")).length).toBe(spendingOffPollBatch(80));
+      expect(flux.statusHomes.filter((h) => h.startsWith("off-")).length).toBe(spendingOffPollBatch(50)); // the spending-off class, from its own batch
+    });
+  });
+
+  it("alert tiers: both new kinds are pages with their own groups and a plain action", () => {
+    for (const [kind, group, action] of [
+      ["flux.resume_undelivered", "flux.resume_stuck",
+        "Open the home in admin. It is online and its poller has not taken a key for an hour. Check the poller log for renewal-due and subkey answers, then Flux status."],
+      ["flux.stopped_key_live", "flux.stop_unenforced",
+        "Open the home in admin and check Flux status for the key. The sweep re-sends the Stop each pass. Resolve this alert only when Flux reports stopped or revoked for the key, or the customer turned spending back on and Flux shows the current generation. Anything else, or Flux ahead of the CP lifecycle: tell FluxMain."],
+    ] as const) {
+      expect(alertTier(kind)).toMatchObject({ tier: "page", group, action });
+    }
   });
 });

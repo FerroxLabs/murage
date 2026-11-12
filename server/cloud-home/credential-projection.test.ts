@@ -10,7 +10,7 @@ describe("pending-revoke list projection", () => {
   it("rejects a client write of either field", () => {
     expect(isGenericCredentialPatch({ [PENDING_REVOKES_KEY]: "[]" })).toBe(false);
     expect(isGenericCredentialPatch({ [LEGACY_PENDING_REVOKE_KEY]: "" })).toBe(false);
-    expect(isGenericCredentialPatch({ fluxApiKey: "k" })).toBe(true);
+    expect(isGenericCredentialPatch({ fluxApiKey: "sk-flux-home-" + "k".repeat(24) })).toBe(true);
   });
   it("reads the list, migrates the legacy value, dedupes, and survives garbage", () => {
     expect(pendingRevokes({ [PENDING_REVOKES_KEY]: '["a","b"]', [LEGACY_PENDING_REVOKE_KEY]: "c" })).toEqual(["a", "b", "c"]);

@@ -409,7 +409,11 @@ describe("5. the downgrade drops every 1.0.2 application object (frozen list) an
     const head = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as Array<{ type: string; name: string; tbl_name: string; sql: string | null }>;
     const known = new Set(SCHEMA_1_0_1.map((object) => object.name));
     const listed = new Set<string>([...APP_SCHEMA_102_ADDITIONS.triggers, ...APP_SCHEMA_102_ADDITIONS.indexes, ...APP_SCHEMA_102_ADDITIONS.tables]);
-    const unlisted = head.filter((row) => row.sql !== null && !row.name.startsWith("memory_") && !row.tbl_name.startsWith("memory_") && !known.has(row.name) && !listed.has(row.name) && !SEQ_103_OBJECTS.includes(row.name) && !MESSAGE_ID_103_OBJECTS.includes(row.name) && !(UPGRADE_104_TABLES as readonly string[]).includes(row.name) && !(UPGRADE_108_TABLES as readonly string[]).includes(row.tbl_name) && !PUSH_RETENTION_103_INDEXES.some(([name]) => name === row.name) && !BOT_CALLS_109_OBJECTS.includes(row.name) && !APP_TRIGGER_OBJECTS.includes(row.name) && !isInboxProjectionObject(row)).map((row) => row.name); // (the Inbox projection is derived data: a restore and the snapshot inspector treat it so)
+    // 5d5a791f19 adds AUTOINCREMENT search intents; SQLite owns this exact bookkeeping table.
+    // It is not an application object. Pin its whole shape before excluding it from the application census.
+    const sequence = head.find(row => row.name === "sqlite_sequence");
+    expect(sequence).toEqual({ type: "table", name: "sqlite_sequence", tbl_name: "sqlite_sequence", sql: "CREATE TABLE sqlite_sequence(name,seq)" });
+    const unlisted = head.filter((row) => row !== sequence && row.sql !== null && !row.name.startsWith("memory_") && !row.tbl_name.startsWith("memory_") && !known.has(row.name) && !listed.has(row.name) && !SEQ_103_OBJECTS.includes(row.name) && !MESSAGE_ID_103_OBJECTS.includes(row.name) && !(UPGRADE_104_TABLES as readonly string[]).includes(row.name) && !(UPGRADE_108_TABLES as readonly string[]).includes(row.tbl_name) && !PUSH_RETENTION_103_INDEXES.some(([name]) => name === row.name) && !BOT_CALLS_109_OBJECTS.includes(row.name) && !APP_TRIGGER_OBJECTS.includes(row.name) && !isInboxProjectionObject(row)).map((row) => row.name); // (the Inbox projection is derived data: a restore and the snapshot inspector treat it so)
     expect(unlisted, "a 1.0.2 object that downgradeApplicationSchemaTo101 would leave behind").toEqual([]);
     for (const name of listed) expect(known.has(name), `${name} is in both lists`).toBe(false);
     if (!haveV101) return;

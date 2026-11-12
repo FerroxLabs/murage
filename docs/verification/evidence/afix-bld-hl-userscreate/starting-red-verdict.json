@@ -1,0 +1,7 @@
+{
+  "base": "0567676f107f5e8690b94841fd96a050b3da2748",
+  "exit": 1,
+  "collected": 2,
+  "failedAssertions": 2,
+  "behavioralRed": true
+}

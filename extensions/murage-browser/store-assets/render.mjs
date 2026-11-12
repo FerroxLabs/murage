@@ -8,7 +8,7 @@ import { createHash } from 'node:crypto';
 const out = path.dirname(fileURLToPath(import.meta.url));
 const source = path.dirname(out);
 const home = process.env.HOME;
-if (!home?.startsWith('/Volumes/Scratch/work/murageextension/.planning/browser-extension/experiments/store-assets-') ||
+if (!home?.startsWith('/Volumes/Fixture/ExampleWorkspace/murageextension/.planning/browser-extension/experiments/store-assets-') ||
     process.env.USERPROFILE !== home || process.env.CFFIXED_USER_HOME !== home ||
     !process.env.TMPDIR?.startsWith(path.dirname(home) + path.sep)) {
   throw Error('Explicit task-owned store asset HOME and temporary paths required before launch');
@@ -59,3 +59,5 @@ try {
   await fs.writeFile(path.join(out, 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
   console.log(JSON.stringify(receipt));
 } finally { await browser.close(); }
+
+// secret-scan: fixture (generic /Volumes/Fixture and /Users/fixture paths only; no host data)

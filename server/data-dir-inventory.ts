@@ -49,6 +49,7 @@ const LEFTOVER = "Temporary files left by an interrupted task; not restored";
 const DERIVED_SKILLS = "Derived skill search index rebuilt from the skill library; not restored";
 const RESTORE_MARKER = "Written by a restore into the installation it made; not restored";
 const OS_METADATA = "Folder metadata the operating system writes; not restored";
+const UNRECOGNISED_WHY = "Not recognised by Murage, so the backup leaves it out; it stays where it is in the data folder";
 
 const record = (): DataDirEntry => ({ backup: "record", why: APPLICATION });
 const ownerFile = (): DataDirEntry => ({ backup: "owner-file", why: APPLICATION });
@@ -58,7 +59,10 @@ const excluded = (why: string): DataDirEntry => ({ backup: "excluded", why });
 export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.freeze({
   // Required records (store.ts, routines.ts, config.ts and friends).
   ".murage-root.json": record(),
-  "config.json": record(), "bots.json": record(), "groups.json": record(), "routines.json": record(),
+  // Bot creates and revisions waiting for review live in bots.json (staged, pendingRevision, intended levels/model, heldWork and the pendingHeldWork transfer outbox).
+  // messages.db cards retain asking origin, full spec/effective digests, and single-use passes. Old cards have none.
+  // outside-state.jsonl retains the first mark's value-free site and why alongside its existing source.
+  "config.json": record(), "bots.json": record(), "browser-modes.json": record(), "groups.json": record(), "routines.json": record(),
   "calendar-calls.json": record(), "webhooks.json": record(), "delegations.json": record(),
   "delegation-receipts.json": record(), "section-contexts.json": record(), "browser-cleanups.json": record(),
 
@@ -85,6 +89,10 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "setup.json": ownerFile(), "queued-messages.json": ownerFile(), "whats-new.json": ownerFile(),
   "announcements.json": ownerFile(), "house-rules.md": ownerFile(), "house-rules.json": ownerFile(),
   "about-me.md": ownerFile(),
+  // Local restore inputs already follow the unknown-name rule below. Keep its exact exclusion and report while classifying this reader.
+  "restore-archives": { backup: "excluded", why: UNRECOGNISED_WHY, skip: "unrecognised" },
+  // Keep the existing unknown-name backup and reporting behavior for this local alert marker.
+  "restore-stuck-at": { backup: "excluded", why: UNRECOGNISED_WHY, skip: "unrecognised" },
   // NOLIMITS (outside-store.ts): the durable outside marks, session state and download registry. Restored, so a restored
   // installation still knows which threads and sessions read outside content; a backup without it starts a new
   // `outsideSince`, so every older row reads as an earlier session (marked). Unreadable lines leave the store not ready (marked).
@@ -134,6 +142,10 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "image-reference-packs": ownerFolder(),
 
   "messages.db": { backup: "database", why: APPLICATION },
+  "search.db": excluded("Derived message search index rebuilt from messages.db; holds trigrams of deleted messages until merged; never backed up or restored; deleted by restore and erase"),
+  "search.db-wal": excluded("Derived message search index rebuilt from messages.db; holds trigrams of deleted messages until merged; never backed up or restored; deleted by restore and erase"),
+  "search.db-shm": excluded("Derived message search index rebuilt from messages.db; holds trigrams of deleted messages until merged; never backed up or restored; deleted by restore and erase"),
+
   "messages.db-wal": { backup: "sidecar", why: APPLICATION },
   "messages.db-shm": { backup: "sidecar", why: APPLICATION },
   // The connected-app operation ledger (connected-app-journal.ts): records of
@@ -180,6 +192,8 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // from the start and changes nothing a second time; it is keyed on rowids a restored copy need not keep, so it never travels.
   "frozen-replies-recovery.json": excluded("Start-up note saying how far the recovery of earlier withheld delegated replies has read; read again from the start when absent, changing nothing a second time"),
   "memory-upgrade-status.json": excluded("Start-up note written while the memory upgrade runs (progress, or why it could not run); removed when the upgrade finishes"),
+  // Installation-local recovery notice obligations must not replay in a restored installation.
+  "fence-notices": excluded(RUNTIME),
   "native": excluded(RUNTIME), "decider-log": excluded("Decision-model call log (no message text); regenerates and expires after 180 days"), "pending-deletions.json": excluded(RUNTIME), "memory-index": excluded(RUNTIME),
   // The settings overlays of running Claude turns (claude-private.ts): restated values, removed at turn end and at startup.
   "claude-private": excluded("Settings of a running Claude turn, removed when it ends and at startup; not restored"),
@@ -191,6 +205,8 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "claude-signin-answers.json": excluded("Remembered answers to the Claude sign-in card, keyed by this install's own secret salt; not restored, the card asks again"),
   "models": excluded(RUNTIME), "logs": excluded(RUNTIME), "tmp": excluded(RUNTIME), "connector-tools-cache": excluded(DOWNLOADED), "browser-profiles": excluded(RUNTIME),
   "browser-engine": excluded(RUNTIME),
+  "model-catalogs": excluded("Cached engine model and thinking discovery per engine environment, refreshed from the installed engine at startup; never restored"),
+  "browser-window": excluded("Downloaded Chrome and machine-bound package verification evidence; downloaded and verified again when needed, not restored"),
   "engine-redo": excluded("Crash journal of a coding-engine history rewrite (offsets and fill kinds, never any text); finished at the next start and removed; not restored"),
   // Handoff budgets that expire after 24 hours (coordination-budget.ts) and
   // who holds each native browser session (browser-control.ts).
@@ -210,6 +226,11 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // account ids, aliases and statuses for one credential. Refetched on the
   // restored computer, and never shown to another account.
   "connected-apps-inventory.json": excluded(RUNTIME),
+  // Reconnect observations, probe cooldowns and notification receipts belong to
+  // this installation's credentials and incident IDs. A restored installation
+  // checks its own connections instead of replaying stale incidents or pages.
+  "connector-health.json": excluded("Installation-local connector health, probe state and reconnect incidents; checked again after restore"),
+  "connector-notice-receipts.json": excluded("Installation-local connector notification receipts and retry attempts; not restored"),
   "bus-spill": excluded("Over-bound events parked by an earlier build; removed at start, never restored"),
   "skill-index.db": excluded(DERIVED_SKILLS), "skill-index.db-wal": excluded(DERIVED_SKILLS),
   "skill-index.db-shm": excluded(DERIVED_SKILLS), "skill-index.db-journal": excluded(DERIVED_SKILLS),
@@ -232,6 +253,8 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   "memory-model-adopted.json.tmp": excluded(LEFTOVER),
   // "Leave paused" on the learning-paused Inbox item (inbox-learning-paused.ts): the one month it was set aside for. It clears
   // itself when the month changes; after a restore the item is simply asked again.
+  "cloud-signin-offers.json": excluded("Which \"sign this bot in and use it\" offers the owner dismissed on a Cloud home (cloud-home/signin-offers.ts); names only, and an offer that comes back is simply dismissed again, so it is not restored"),
+  "cloud-signin-offers.json.tmp": excluded(LEFTOVER),
   "learning-paused-left.json": excluded("This month's Leave paused choice on the learning-paused item; clears itself when the month changes, so not restored"),
 
   // Trust Murage asks for again on a restored computer: the host identity,
@@ -255,6 +278,8 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // journals and the media cache. The records are useless without the key in the desktop credential store, which
   // does not travel either, so a restored installation relinks (channels/ stays retained: it holds no secret).
   "whatsapp": excluded(CREDENTIAL),
+  // Signal device keys, ingress, logs and temporary files stay on this computer; restored installations relink.
+  "signal": excluded(CREDENTIAL),
   // Murage for Chrome (browser-extension-integration.ts, index.ts): paired
   // external clients, their generated pairing files and the extension's
   // shared tabs and site choices. Each belongs to this computer's browser, so
@@ -267,7 +292,9 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // Home supervision owns these outside ordinary workspace restoration.
   ".murage-home-machine": excluded(TRUST),
   // The root-owned scratch directory murage-control's data-write readiness check writes one temp file in and removes
-  // (cloud-home/supervisor.ts prepareHealthProbeDir). Empty between checks; made again on every home start.
+  // (cloud-home/home-volume-spec.ts prepareHealthProbeDir, run by deploy/cloud-home/murage-home-launch.py). Empty between checks; made again on every home start.
+  // The ops-event spool the server writes alerts to for murage-control (home-events.ts, supervisor.ts prepareHomeEventsDir); consumed within a heartbeat.
+  ".murage-events": excluded("Ops-event spool, collected by murage-control within a heartbeat; not restored"),
   ".murage-health": excluded("Readiness check scratch directory, made again on every home start; not restored"),
   // Sentinel's producer input root (1.0.9, GAP-SENTINEL-109 section 3.3): minute counter windows, sealed database
   // statistics, the backup status manifest and their temporary or rotated children, all below this one folder. Every
@@ -291,7 +318,7 @@ export const DATA_DIR_ENTRIES: Readonly<Record<string, DataDirEntry>> = Object.f
   // Written by a restore into the installation it made. Restore refuses these
   // names inside an archive (installation-restore-preparation.ts
   // RESERVED_RESTORE_FILES), so they can only ever be left out.
-  "restore-review.json": excluded(RESTORE_MARKER), "restored-connections.json": excluded(RESTORE_MARKER),
+  "restore-review.json": excluded(RESTORE_MARKER), "restored-connections.json": excluded(RESTORE_MARKER), "restore-provenance.json": excluded(RESTORE_MARKER),
   "recovery-quarantine": excluded(RESTORE_MARKER),
 
   ".DS_Store": excluded(OS_METADATA), "Thumbs.db": excluded(OS_METADATA), "desktop.ini": excluded(OS_METADATA),
@@ -351,6 +378,8 @@ export const DATA_DIR_PATTERNS: ReadonlyArray<{ pattern: RegExp; entry: DataDirE
   // The sign-in answers file's own write-then-rename temp (claude-signin-answers.ts): `<name>.<8 hex>.tmp`; it holds the install's salt.
   { pattern: /^claude-signin-answers\.json\.[a-f0-9]{8}\.tmp$/, entry: excluded(LEFTOVER), example: "claude-signin-answers.json.0f8e2b1a.tmp" },
   { pattern: /^(?:config|startup-background)\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "startup-background.json.48213.tmp" },
+  // Connector notice receipts use the desktop's same pid-and-rename format.
+  { pattern: /^connector-notice-receipts\.json\.\d+\.tmp$/, entry: excluded(LEFTOVER), example: "connector-notice-receipts.json.4242.tmp" },
   // A bot-package import's per-file replacement (package-import-transaction.ts).
   { pattern: /^[^/\\]+\.package-[\w-]+\.tmp$/, entry: excluded(LEFTOVER), example: "bots.json.package-0f8e2b1a.tmp" },
   // A memory index that failed its integrity check is set aside and rebuilt
@@ -402,8 +431,6 @@ export function isRestorableDataDirName(name: string): boolean {
 // so one leftover file meant no backup at all. Exact rows keep their own
 // handling, including the names Murage knows to refuse.
 // ---------------------------------------------------------------------------
-const UNRECOGNISED_WHY = "Not recognised by Murage, so the backup leaves it out; it stays where it is in the data folder";
-
 /** What a backup does with this top-level name, ALWAYS answering (see the rule above). */
 export function classifyDataDirEntryForBackup(name: string): DataDirEntry {
   return classifyDataDirEntry(name) ?? { backup: "excluded", why: UNRECOGNISED_WHY, skip: "unrecognised" };

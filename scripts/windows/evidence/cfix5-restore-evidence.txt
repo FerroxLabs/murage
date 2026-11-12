@@ -1,0 +1,7 @@
+from pathlib import Path
+import shutil
+for saved in Path('.test-tmp/cfix5-winscen/prior-evidence').glob('*.log'):
+ target=Path('scripts/windows/evidence')/saved.name
+ if saved.name.startswith(('cfix4-mutant-','cfix4-prior-mutant-')) or saved.read_bytes()!=target.read_bytes():
+  shutil.copy2(target,target.with_name(target.name.replace('cfix4','cfix5',1)))
+ shutil.copy2(saved,target)

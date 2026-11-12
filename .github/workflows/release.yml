@@ -60,7 +60,7 @@ jobs:
     name: Pin the release commit
     runs-on: ubuntu-24.04
     # Pinning and the preflight checks only. The CI gate is its own job so the
-    # platform builds start now instead of after CI finishes.
+    # platform builds start after the token probe, beside the CI check.
     timeout-minutes: 15
     outputs:
       sha: ${{ steps.pin.outputs.sha }}
@@ -75,6 +75,19 @@ jobs:
           ref: ${{ inputs.ref || github.sha }}
           persist-credentials: false
           fetch-depth: 0
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+      - name: Release asset CHECK - public releases and anonymous pinned assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-release-assets.mjs
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Release check - require the reviewed Signal pin and all five post-G0 gates
+        env:
+          RELEASE: '1'
+        run: node scripts/signal-release-check.mjs
       - id: pin
         env:
           BEFORE: ${{ github.event.before }}
@@ -110,35 +123,12 @@ jobs:
         # copy-lint/pending-review.json must be empty at the release cut.
         if: steps.pin.outputs.should_release == 'true'
         run: node scripts/copy-pending-check.mjs
-      - name: Refuse to overwrite a published release
-        if: steps.pin.outputs.should_release == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.RELEASES_PAT }}
-        run: |
-          node scripts/release-guard.mjs available "$(node scripts/release-guard.mjs version)"
-      - name: Prove the release token can write to murage-releases
-        # `available` only reads (plus a permissions.push flag GitHub reports).
-        # A token that cannot actually create a release would surface at
-        # assemble, after ~90 minutes of signed builds. Create and delete a
-        # throwaway DRAFT: a draft creates no tag, so nothing can be left
-        # behind that a later real release could collide with.
-        if: steps.pin.outputs.should_release == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.RELEASES_PAT }}
-          PROBE: release-preflight-${{ github.run_id }}-${{ github.run_attempt }}
-        run: |
-          set -euo pipefail
-          id=$(gh api --method POST repos/FerroxLabs/murage-releases/releases \
-            -f tag_name="$PROBE" -f name="$PROBE" -F draft=true --jq .id)
-          [[ "$id" =~ ^[0-9]+$ ]] || { echo "::error::release token cannot create a draft on murage-releases"; exit 1; }
-          gh api --method DELETE "repos/FerroxLabs/murage-releases/releases/$id"
-          echo "ok: release token created and deleted throwaway draft $PROBE (id $id)"
 
   ci-gate:
     name: CI must have passed on the pinned commit
-    # Runs beside the platform builds, not before them. Only assemble (the
-    # first job that can create a draft) and everything after it wait for this
-    # verdict, so a CI failure leaves no draft and no release asset behind.
+    # Runs beside platform builds after pinning. Stage waits for this verdict;
+    # assemble creates only its throwaway probe before CI, and waits for stage
+    # before creating an installer draft or uploading any release asset.
     # Audit C8: a release must not be cut from a commit CI never passed. The
     # CI workflow is ci.yml (name: CI). A push to main starts both, so a run
     # still in progress is waited for; a failed, cancelled or missing one
@@ -192,23 +182,32 @@ jobs:
           CI_WAIVER: ${{ github.event_name == 'workflow_dispatch' && inputs.ci_waiver || '' }}
         run: node scripts/release-ci-gate.mjs
 
-  abort-on-ci-failure:
-    name: Stop the builds when CI failed
-    # A red CI means nothing built here can ship; stop paying for the Mac job.
-    needs: [prepare, ci-gate]
-    if: always() && needs.ci-gate.result == 'failure'
+  preflight:
+    name: Wait for the release token probe
+    needs: [prepare]
+    if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 15
     permissions:
-      actions: write
+      contents: read
+      actions: read
     steps:
-      - env:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: node scripts/release-guard.mjs bootstrap
+      - run: node scripts/release-guard.mjs wait-probe
+        env:
           GH_TOKEN: ${{ github.token }}
-        run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
 
   mac:
     name: macOS arm64 + x64 (sign, notarize, staple)
-    needs: prepare
+    needs: [prepare, preflight]
     if: needs.prepare.outputs.should_release == 'true'
     runs-on: macos-15
     # package-mac-qualification.yml needs 90 for ONE architecture plus the
@@ -323,6 +322,8 @@ jobs:
             sudo softwareupdate --install-rosetta --agree-to-license
           fi
           /usr/bin/arch -x86_64 /usr/bin/true && echo "Rosetta ready"
+      - name: Stage reviewed Signal runtime (darwin-arm64)
+        run: node scripts/stage-signal-runtime.mjs --target darwin-arm64 --release
       - name: Package both architectures
         run: |
           set -euo pipefail
@@ -358,6 +359,7 @@ jobs:
           set -euo pipefail
           mkdir -p qualification-evidence
           node scripts/whatsapp-inventory.mjs "release/mac-arm64/Murage.app/Contents/Resources/server" --check
+          node scripts/signal-inventory.mjs "release/mac-arm64/Murage.app/Contents/Resources/signal-runtime" --target darwin-arm64 --check
           node scripts/staged-tree-check.mjs "release/mac-arm64/Murage.app/Contents/Resources/server" --max-path 140
           cp "release/mac-arm64/Murage.app/Contents/Resources/server/whatsapp-runtime-manifest.json" qualification-evidence/whatsapp-darwin-arm64-inventory.json
           node scripts/smoke-whatsapp-packaged.mjs --server-directory "release/mac-arm64/Murage.app/Contents/Resources/server" --runtime "release/mac-arm64/Murage.app/Contents/MacOS/Murage" --platform darwin --arch arm64 --electron-version "$(node -p 'require("electron/package.json").version')" > qualification-evidence/whatsapp-darwin-arm64.json 2> qualification-evidence/whatsapp-darwin-arm64-probe.log
@@ -633,7 +635,7 @@ jobs:
     # The packaged x64 app run natively: no Rosetta warm-up, no emulation
     # timing, and a flaky smoke reruns this job alone, not the 90-minute Mac
     # build. Binds its report to the final x64 bytes from the mac job.
-    needs: [prepare, mac]
+    needs: [prepare, preflight, mac]
     if: needs.prepare.outputs.should_release == 'true'
     runs-on: macos-15-intel
     timeout-minutes: 30
@@ -786,7 +788,7 @@ jobs:
 
   windows:
     name: Windows x64
-    needs: prepare
+    needs: [prepare, preflight]
     if: needs.prepare.outputs.should_release == 'true'
     runs-on: windows-latest
     timeout-minutes: 90
@@ -908,6 +910,8 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/stage-memory-model.mjs --target win32-x64 --out dist-native/memory-model --cache "$RUNNER_TEMP/memory-model-cache"
+      - name: Stage reviewed Signal runtime (win32-x64)
+        run: node scripts/stage-signal-runtime.mjs --target win32-x64 --release
       - name: Package (Azure Trusted Signing)
         shell: pwsh
         run: |
@@ -938,6 +942,7 @@ jobs:
           set -euo pipefail
           mkdir -p qualification-evidence
           node scripts/whatsapp-inventory.mjs "release/win-unpacked/resources/server" --check
+          node scripts/signal-inventory.mjs "release/win-unpacked/resources/signal-runtime" --target win32-x64 --check
           node scripts/staged-tree-check.mjs "release/win-unpacked/resources/server" --max-path 140
           cp "release/win-unpacked/resources/server/whatsapp-runtime-manifest.json" qualification-evidence/whatsapp-win32-x64-inventory.json
           node scripts/smoke-whatsapp-packaged.mjs --server-directory "release/win-unpacked/resources/server" --runtime "release/win-unpacked/Murage.exe" --platform win32 --arch x64 --electron-version "$(node -p 'require("electron/package.json").version')" > qualification-evidence/whatsapp-win32-x64.json 2> qualification-evidence/whatsapp-win32-x64-probe.log
@@ -1111,16 +1116,12 @@ jobs:
 
   linux:
     name: Ubuntu 24.04 x64
-    needs: prepare
+    needs: [prepare, preflight]
     if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 120
-    # id-token and attestations let the provenance step below sign with the
-    # workflow's identity; the job still cannot write contents.
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1201,6 +1202,8 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/stage-memory-model.mjs --target linux-x64 --out dist-native/memory-model --cache "$RUNNER_TEMP/memory-model-cache"
+      - name: Stage reviewed Signal runtime (linux-x64)
+        run: node scripts/stage-signal-runtime.mjs --target linux-x64 --release
       - name: Package with the frozen GEPA manifest
         env:
           NODE_OPTIONS: --max-old-space-size=6144
@@ -1218,6 +1221,7 @@ jobs:
           set -euo pipefail
           mkdir -p qualification-evidence
           node scripts/whatsapp-inventory.mjs "release/linux-unpacked/resources/server" --check
+          node scripts/signal-inventory.mjs "release/linux-unpacked/resources/signal-runtime" --target linux-x64 --check
           node scripts/staged-tree-check.mjs "release/linux-unpacked/resources/server" --max-path 140
           cp "release/linux-unpacked/resources/server/whatsapp-runtime-manifest.json" qualification-evidence/whatsapp-linux-x64-inventory.json
           node scripts/smoke-whatsapp-packaged.mjs --server-directory "release/linux-unpacked/resources/server" --runtime "release/linux-unpacked/murage" --platform linux --arch x64 --electron-version "$(node -p 'require("electron/package.json").version')" > qualification-evidence/whatsapp-linux-x64.json 2> qualification-evidence/whatsapp-linux-x64-probe.log
@@ -1333,16 +1337,6 @@ jobs:
             const fingerprint = verifyDetachedSignature(readFileSync("release/SHA256SUMS-ubuntu-x64.txt"), readFileSync("release/SHA256SUMS-ubuntu-x64.txt.asc", "utf8"), readFileSync("electron/release-key.asc", "utf8"));
             console.log(`verified against the shipped release key ${fingerprint}`);'
           echo "signed SHA256SUMS-ubuntu-x64.txt"
-      - name: Attest build provenance for the Linux packages
-        # Audit C8: a signed statement that these exact bytes were built by this
-        # workflow from the pinned commit. Check with
-        # `gh attestation verify <file> --repo <owner>/<repo>`.
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: |
-            release/*.deb
-            release/*.AppImage
-            release/SHA256SUMS-ubuntu-x64.txt
       - name: Bind WhatsApp reports to final artifacts
         shell: bash
         run: |
@@ -1411,20 +1405,18 @@ jobs:
           path: ${{ runner.temp }}/package-tool-cache
           key: package-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/prepare-cloudflared.mjs', 'shared/backup-age-pins.mjs', 'shared/backup-restic-pin.mjs', 'shared/windows-backup-tools.mjs', 'scripts/prepare-cua.mjs', 'scripts/build-murage-cage.mjs') }}-${{ steps.tool-sig.outputs.sig }}
 
-  assemble:
-    name: Assemble the draft and verify every feed
+  stage:
+    name: Stage and verify the release assets
     needs: [prepare, ci-gate, mac, mac-x64, windows, linux]
     # Builds run beside CI; nothing below this point (draft, upload, publish)
     # starts unless ci-gate passed, so a red CI leaves no draft behind.
     if: needs.prepare.outputs.should_release == 'true'
     runs-on: ubuntu-24.04
-    # generate-notes is a POST and needs Contents: write. Granted here rather
-    # than at the workflow level so the build jobs stay read-only.
     permissions:
-      contents: write
+      contents: read
     timeout-minutes: 30
     concurrency:
-      group: release-assemble-v${{ needs.prepare.outputs.version }}
+      group: release-stage-v${{ needs.prepare.outputs.version }}
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1434,6 +1426,9 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+        # upload and publish each rerun the shared Signal prerequisite check.
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           # Only the three installer sets. The *-gepa-evidence artifacts are
@@ -1555,31 +1550,7 @@ jobs:
           if (bad) process.exit(1);
           console.log(`\nall feeds verified; ${readdirSync(".").length} assets staged`);
           EOF
-      - name: Generate the release notes from merged pull requests
-        # The draft body used to be a hand-written placeholder nobody replaced.
-        # The releases repo holds no commits, so the notes are generated
-        # against the SOURCE repo (categories come from .github/release.yml
-        # there) and handed to the releases repo as a file. A failure here is
-        # cosmetic, never fatal: fall back to naming the pinned commit.
-        env:
-          GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-          SHA: ${{ needs.prepare.outputs.sha }}
-        run: |
-          notes="$RUNNER_TEMP/release-notes.md"
-          if gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" \
-              -f tag_name="v$VERSION" -f target_commitish="$SHA" --jq .body > "$notes" \
-              && [ -s "$notes" ]; then
-            echo "generated $(wc -l < "$notes") lines of release notes"
-          else
-            printf 'Built by the release workflow from %s@%s.\n' "$GITHUB_REPOSITORY" "$SHA" > "$notes"
-            echo "::warning::could not generate notes from pull requests; using the commit reference"
-          fi
-      - name: Record an approved CI waiver in the draft notes
-        # Only when ci-gate let a red CI through under a committed waiver: the
-        # release itself says which run failed, which file waived it and who
-        # approved it.
-        if: needs.ci-gate.outputs.waived == 'true'
+      - name: Retain the CI review record for the sole release writer
         env:
           SHA: ${{ needs.prepare.outputs.sha }}
           WAIVER_PATH: ${{ needs.ci-gate.outputs.waiver_path }}
@@ -1588,53 +1559,85 @@ jobs:
           WAIVER_RUN_URL: ${{ needs.ci-gate.outputs.waiver_run_url }}
           WAIVER_APPROVAL: ${{ needs.ci-gate.outputs.waiver_approval }}
         run: |
-          set -euo pipefail
-          notes="$RUNNER_TEMP/release-notes.md"
-          {
-            printf '\n## CI review record\n\n'
-            printf 'Built from %s@%s. CI run %s (%s) was reviewed and released under the approved waiver `%s` (sha256 `%s`), approved by %s.\n' \
-              "$GITHUB_REPOSITORY" "$SHA" "$WAIVER_RUN" "$WAIVER_RUN_URL" "$WAIVER_PATH" "$WAIVER_SHA256" "$WAIVER_APPROVAL"
-          } >> "$notes"
-          {
-            echo "## CI waiver recorded in the draft notes"
-            echo "- \`$WAIVER_PATH\` for CI run $WAIVER_RUN, approved by $WAIVER_APPROVAL"
-          } >> "$GITHUB_STEP_SUMMARY"
+          node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            const keys = ["SHA","WAIVER_PATH","WAIVER_SHA256","WAIVER_RUN","WAIVER_RUN_URL","WAIVER_APPROVAL"];
+            writeFileSync("review.json", JSON.stringify(Object.fromEntries(keys.map(key => [key, process.env[key] || ""]))));'
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-ci-review-${{ github.run_attempt }}
+          path: review.json
+          if-no-files-found: error
+          retention-days: 7
+      - name: Retain the verified installer set for the release job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: release-staged-assets-${{ github.run_attempt }}
+          path: assets/*
+          if-no-files-found: error
+          retention-days: 7
+
+  assemble:
+    name: Release the verified assets
+    needs: [prepare]
+    if: needs.prepare.outputs.should_release == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      actions: read
+    timeout-minutes: 360
+    concurrency:
+      group: release-assemble-v${{ needs.prepare.outputs.version }}
+      cancel-in-progress: false
+    # This is the only release-write capability in the repository. All shell
+    # commands are fixed guard entrypoints; no action may extend this allowlist.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.prepare.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - name: Install the pinned guard dependencies without lifecycle scripts
+        run: node scripts/release-guard.mjs bootstrap
+      - name: Probe release token before builds
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_PAT }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: node scripts/release-guard.mjs probe-prepared
+      - name: Wait for successful CI and verified staging
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-guard.mjs wait-stage
+      - name: Download only this run's verified installer artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/release-guard.mjs download
+      - name: Generate notes and record any approved CI waiver
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SHA: ${{ needs.prepare.outputs.sha }}
+          REVIEW_FILE: release-review/review.json
+        run: node scripts/release-guard.mjs notes-file
       - name: Create or update the draft with the complete asset set
         id: upload
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           VERSION: ${{ needs.prepare.outputs.version }}
-        run: |
-          # Rechecks draft status at every upload boundary and binds uploads
-          # to one numeric release ID. Existing assets must match exactly;
-          # there is no automatic delete or --clobber path.
-          release_id=$(node scripts/release-guard.mjs upload "$VERSION" assets "$RUNNER_TEMP/release-notes.md")
-          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
-
+        run: node scripts/release-guard.mjs upload-prepared
       - name: Prove the draft holds the exact staged bytes
-        # An upload that half-succeeded is invisible until a user's download
-        # fails its checksum. Compare GitHub's own digest for every asset
-        # against what we staged. Names, upload state and any reported digest
-        # fail at once; GitHub computes digests asynchronously, so a digest
-        # that is not reported yet gets a bounded wait (6 x 10 s). A digest
-        # still absent after that HOLDS the release: this step fails, so
-        # Publish never runs. Resume without rebuilding by re-running the
-        # failed assemble job: the build artifacts are reused, retained uploads
-        # are kept, and this proof runs again against the same draft.
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           VERSION: ${{ needs.prepare.outputs.version }}
           RELEASE_ID: ${{ steps.upload.outputs.release_id }}
-        run: node scripts/release-digests.mjs verify "$VERSION" "$RELEASE_ID" assets
-
+        run: node scripts/release-guard.mjs verify-digests
       - name: Publish (only when asked to)
         if: ${{ inputs.publish }}
         env:
           GH_TOKEN: ${{ secrets.RELEASES_PAT }}
           VERSION: ${{ needs.prepare.outputs.version }}
           RELEASE_ID: ${{ steps.upload.outputs.release_id }}
-        # The guard re-checks every digest against the staged bytes right
-        # before flipping the draft, so publication cannot outrun the proof.
-        run: |
-          node scripts/release-guard.mjs publish "$VERSION" "$RELEASE_ID" assets
-          echo "v$VERSION is live"
+        run: node scripts/release-guard.mjs publish-prepared

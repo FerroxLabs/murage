@@ -1,9 +1,11 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
+import { closeOwnedBrowser } from "./browser-owned-close.ts";
 // Harness-owned transport for pinned agent-browser 0.36.0. Its raw localhost
 // stream has NO authentication: this relay protects network clients, not other
 // processes running with the same OS identity. Never disclose its port in APIs.
 import { USER_CHROME_ALLOW_WAIT_MS, userChromeAttachLog } from "./user-chrome.ts";
-import { readFileSync, statSync, writeFileSync } from "node:fs";
-import { connect as connectSocket } from "node:net";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { captureDaemonIdentity, judgeDaemonIdentity, type DaemonIdentity } from './browser-daemon-identity.ts';
 import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { nativeProcessList } from "./drivers/win-process-table.ts";
@@ -19,11 +21,14 @@ import type { AgentBrowserSpec } from "./browser-engine.ts";
 import { startHeadlessEngine, type EngineClient } from "./drivers/headless-browser-proxy.ts";
 import { closeSocketQuietly } from "./browser-socket-teardown.ts";
 import { BrowserEngineError } from "./browser-engine-error.ts";
+import { isControlTokenMismatch, streamAuthHeaders } from "./browser-control-token.ts";
 import { originOf, prepareBrowserRestore, restoreScript, type OriginStorage, type RestoreSession } from "./browser-restore-store.ts";
 
 export type BrowserFrame = { seq: number; data: string; width: number; height: number };
 
 export interface NativeBrowser {
+  readonly daemonIdentity?: import('./browser-daemon-identity.ts').DaemonIdentity;
+  seedDaemonIdentity?(identity: import('./browser-daemon-identity.ts').DaemonIdentity): void;
   protected(armed?: boolean): Promise<boolean>;
   request(method: string, params?: Record<string, unknown>): Promise<unknown>;
   command(args: string[]): Promise<unknown>;
@@ -56,6 +61,8 @@ export const CLOUD_RESTORE_REFRESH_MS = 60_000;
 /** After an engine request failed, the soonest the relay asks the launcher whether the host restarted. */
 export const CLOUD_RESTORE_SUSPECT_MS = 5_000;
 export type NativeBrowserOptions = {
+  /** Recovery must receive an acknowledgement even when this relay never launched anything. */
+  closeOnly?: boolean;
   commandBoundMs?: number; startBoundMs?: number;
   /** Arguments placed before the engine's own, for an engine run through an
    * interpreter (a test runs a script with process.execPath on every OS). */
@@ -136,14 +143,22 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
   let socket: WebSocket | undefined;
   let initialized: Promise<void> | undefined;
   let closing = false;
+  let closeAcknowledged = false;
+  let retired = false;
+  const commands = new Set<ReturnType<typeof spawn>>();
+  const active = () => { if (retired) throw Object.assign(new Error('Browser session is closing'), { status: 409, code: 'browser_closing' }); };
+  /** BRTOKEN19: a daemon a previous launch left running holds an older control token. One recovery per session, then the failure stands. */
+  let staleRecovered = false;
   let streamId = "";
   let daemonPid: number | undefined;
+  let daemonIdentity: DaemonIdentity | undefined;
   const pidFile = join(spec.env.AGENT_BROWSER_SOCKET_DIR!, `${spec.env.AGENT_BROWSER_SESSION}.pid`);
   const startFile = join(spec.env.AGENT_BROWSER_SOCKET_DIR!, `${spec.env.AGENT_BROWSER_SESSION}.murage-start`);
   let startRecordedFor: number | undefined;
   /** Windows: once a command answered, the daemon named by the pid file is this session's; record when it started. */
-  const recordDaemonStart = () => {
+  const recordDaemonStart = async () => {
     const pid = daemonPid;
+    daemonIdentity = pid === undefined ? undefined : await captureDaemonIdentity(pid, spec.command);
     if (process.platform !== "win32" || pid === undefined || !Number.isSafeInteger(pid) || pid <= 0 || startRecordedFor === pid) return;
     startRecordedFor = pid;
     // The native process list (no PowerShell): the daemon's own creation time.
@@ -151,14 +166,6 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
     const ms = entry ? nativeStartMs(entry) : null;
     if (!entry || (entry.exe ?? "").toLowerCase() !== spec.command.toLowerCase() || ms === null || !Number.isSafeInteger(ms) || ms <= 0) { startRecordedFor = undefined; return; }
     try { writeFileSync(startFile, `${pid} ${ms}`, { mode: 0o600 }); } catch { startRecordedFor = undefined; }
-  };
-  /** What the stop checks the daemon's start time against. */
-  const daemonStartCheck = (pid: number): DaemonStartCheck | undefined => {
-    try {
-      const [recordedPid, recordedMs] = readFileSync(startFile, "utf8").trim().split(" ").map(Number);
-      if (recordedPid === pid && Number.isSafeInteger(recordedMs) && recordedMs! > 0) return { recordedMs: recordedMs! };
-    } catch { /* not recorded yet */ }
-    try { return { pidFileWrittenMs: statSync(pidFile).mtimeMs }; } catch { return undefined; }
   };
   // The owner's own Chrome: its first connections wait on the owner's Allow.
   const attached = Boolean(spec.env.AGENT_BROWSER_CDP);
@@ -225,8 +232,9 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
   /** A command answered, so a daemon is running: the next one with no daemon prepares again. */
   const engineAnswered = () => { prepared = false; };
   const startEngine = async () => {
-    await ensureBrowserSandboxAccess(spec);
+    await ensureBrowserSandboxAccess(spec); active();
     if (!initialized) {
+      closeAcknowledged = false;
       client = startHeadlessEngine(spec);
       initialized = client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "murage-browser", version: "1" } }).then(() => {});
     }
@@ -242,6 +250,7 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
     return warmed;
   };
   const command = async (args: string[]): Promise<unknown> => {
+    active();
     await warm(); await syncCloudRestore(); await ensureBrowserSandboxAccess(spec);
     beforeEngineStart();
     // The owner typed an address: its saved storage goes back first, as it does for the bot.
@@ -251,15 +260,26 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
       // One attempt per run: an origin whose "/" lands elsewhere is not tried again.
       if (origin && restore?.pending(origin)) restore.abandoned(origin);
     }
-    return run(args).catch((error) => { if (cloudRestore) cloudSuspect = true; throw error; });
+    return run(args).catch(async (error) => {
+      // BRTOKEN19: the engine refused our control token (a stale daemon). The identity-checked stop `close()` performs, then the same command once more.
+      if ((error as { staleControlToken?: boolean }).staleControlToken && !staleRecovered) {
+        staleRecovered = true;
+        await browser.close(); retired = false; closing = false;
+        return run(args).catch((again) => { if (cloudRestore) cloudSuspect = true; throw again; });
+      }
+      if (cloudRestore) cloudSuspect = true;
+      throw error;
+    });
   };
   const run = (args: string[]): Promise<unknown> => new Promise((resolve, reject) => {
+    active(); closeAcknowledged = false;
     // No daemon for this session yet (first use, or after its idle exit): this
     // command starts Chrome and restores the session, so it gets the start bound.
     const starting = !attached && !cloud && sessionPid() === null;
     const bound = attached ? USER_CHROME_ALLOW_WAIT_MS : starting ? startBoundMs : commandBoundMs;
     const started = Date.now();
-    const child = spawnCloudBrowser(["--json", ...args], spec.env) ?? spawn(spec.command, [...(options.cliPrefix ?? []), "--json", ...args], { env: spec.env, cwd: spec.env.HOME, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawnCloudBrowser(["--json", ...args], spec.env) ?? spawn(spec.command, [...(options.cliPrefix ?? []), "--json", ...args], withHideInherit({ env: spec.env, cwd: spec.env.HOME, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] }));
+    commands.add(child); child.once("close", () => commands.delete(child));
     let output = "";
     let stderr = "";
     let overflow = false;
@@ -272,14 +292,15 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
       else output += chunk.toString();
     });
     child.once("error", () => { clearTimeout(timer); logBrowserEngineFailure(args, "could not start", ""); reject(new BrowserEngineError("start")); });
-    child.once("close", (code) => {
+    child.once("close", async (code) => {
       clearTimeout(timer);
+      const staleControlToken = isControlTokenMismatch(output) || isControlTokenMismatch(stderr);
       if (timedOut || overflow || code !== 0) {
         const kind = timedOut ? "timeout" : overflow ? "overflow" : "failed";
         // A timed-out command is stopped mid-way; the log says which bound it hit and whether it was starting the engine.
         const how = kind === "failed" ? `exit ${code}` : kind === "timeout" ? `stopped after ${bound} ms, its bound ${starting ? "for starting the engine" : attached ? "for the owner's Allow" : "for a running engine"}` : kind;
         logBrowserEngineFailure(args, how, kind === "overflow" ? "" : engineReason(output, stderr));
-        return reject(new BrowserEngineError(kind));
+        return reject(Object.assign(new BrowserEngineError(kind), { staleControlToken }));
       }
       if (starting && Date.now() - started > 5_000) console.error(`[browser] engine took ${Date.now() - started} ms to start`);
       else if (starting && restore) console.log(`[browser] engine started in ${Date.now() - started} ms (restore store: ${restore.origins} origins, each restored on first visit)`);
@@ -287,8 +308,8 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
       try { value = JSON.parse(output); }
       catch { logBrowserEngineFailure(args, "invalid result", ""); return reject(new Error("Browser returned an invalid command result")); }
       // The engine exited 0 but refused the command: keep its reason too.
-      if (value?.success === false) { logBrowserEngineFailure(args, "refused", engineReason(output, stderr)); return reject(new BrowserEngineError("refused")); }
-      if (!cloud) { try { daemonPid = Number(readFileSync(pidFile, "utf8")); } catch {} recordDaemonStart(); }
+      if (value?.success === false) { logBrowserEngineFailure(args, "refused", engineReason(output, stderr)); return reject(Object.assign(new BrowserEngineError("refused"), { staleControlToken })); }
+      if (!cloud) { try { daemonPid = Number(readFileSync(pidFile, "utf8")); } catch {} await recordDaemonStart(); }
       engineAnswered();
       resolve(value?.data ?? value);
     });
@@ -368,39 +389,49 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
     })();
   };
   const guard = new BrowserDocumentGuard(command, { ...(attached ? { connectTimeoutMs: USER_CHROME_ALLOW_WAIT_MS } : {}), ...(spec.guardCdpUrl ? { endpoint: spec.guardCdpUrl } : {}), ...(spec.guardScope ? { scope: spec.guardScope } : {}), connection: cloudRelayConnection("cdp", spec.env) });
-  return {
+  const browser: NativeBrowser = {
     command,
     protected: (armed = true) => guard.protected(armed),
     async request(method, params) {
+      if (method === "tools/call" && params?.name === "agent_browser_read") throw Error("Network read must use the mediated reader.");
       await warm();
       await syncCloudRestore();
       beforeEngineStart();
-      await startEngine();
+      await startEngine(); active();
       let reply: unknown;
       // A dialog the page opens during the bot's call is answered by the guard's connection (see answerDialogs).
       if (method === "tools/call") guard.answerDialogs(true);
       try { reply = method === "tools/call" && restore?.waiting() ? await restoringCall(params ?? {}) : await client!.request(method, params); }
       catch (error) { if (cloudRestore) cloudSuspect = true; throw error; }
       finally { if (method === "tools/call") guard.answerDialogs(false); }
-      engineAnswered();
+      // MCP-only sessions also start daemons. Capture their identity while
+      // the answering process is alive, before client.close can retire it.
+      if(!cloud){const pid=sessionPid();if(pid!==null){daemonPid=pid;await recordDaemonStart();}}
+      active();engineAnswered();
       return reply;
     },
     ownerReached(address) { const origin = originOf(address); if (origin) restore?.passed(origin); },
     async connect(onFrame, onUrl, onDisconnect) {
-      closing = false;
+      active(); closing = false;
       if (socket?.readyState === WebSocket.OPEN) return streamId;
+      const dial = async (): Promise<string> => {
       await attach();
       const result = await command(["stream", "status"]) as { port?: number; streamPort?: number };
+      active();
       const port = result.port ?? result.streamPort;
       if (!Number.isInteger(port) || port! < 1 || port! > 65535) throw new Error("Browser returned an invalid stream port");
       streamId = String(port);
       const streamConnection = cloudRelayConnection("stream", spec.env);
       await new Promise<void>((resolve, reject) => {
-        const ws = new WebSocket(`ws://127.0.0.1:${port}/?pacing=ack&maxFps=10`, { maxPayload: 4 * 1024 * 1024, handshakeTimeout: 5000, ...(streamConnection ? { createConnection: streamConnection as never } : {}) });
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/?pacing=ack&maxFps=10`, { maxPayload: 4 * 1024 * 1024, handshakeTimeout: 5000, ...(streamAuthHeaders(spec.env) ? { headers: streamAuthHeaders(spec.env) } : {}), ...(streamConnection ? { createConnection: streamConnection as never } : {}) });
         socket = ws;
-        ws.once("open", resolve);
-        ws.on("error", () => reject(new Error("Browser stream unavailable")));
-        ws.on("close", () => { if (socket === ws) socket = undefined; if (!closing) onDisconnect(); });
+        let opened = false;
+        ws.once("open", () => { opened = true; resolve(); });
+        ws.on("error", (error) => reject(Object.assign(new Error("Browser stream unavailable"), { unauthorized: /\b401\b/u.test(String((error as Error)?.message)) })));
+        // A failed handshake rejects dial(); it never established a stream to
+        // disconnect. Notifying here would retire the controller generation
+        // whose callbacks the internal 401 recovery still needs for live frames.
+        ws.on("close", () => { if (socket === ws) socket = undefined; if (opened && !closing) onDisconnect(); });
         ws.on("message", (raw) => {
           try {
             const value = JSON.parse(raw.toString());
@@ -412,6 +443,15 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
         });
       });
       return streamId;
+      };
+      try { return await dial(); }
+      catch (error) {
+        // BRTOKEN19: the stream refused our token, so the engine is a stale daemon from an earlier launch. One recovery, then the failure stands.
+        if (!(error as { unauthorized?: boolean }).unauthorized || staleRecovered) throw error;
+        staleRecovered = true;
+        await browser.close(); retired = false; closing = false;
+        return dial();
+      }
     },
     input(event) {
       if (!socket || socket.readyState !== WebSocket.OPEN || socket.bufferedAmount > 64 * 1024) throw new Error("Browser stream disconnected or busy");
@@ -421,87 +461,38 @@ export function createNativeBrowser(spec: AgentBrowserSpec, options: NativeBrows
     // The teardown that ended the owner's server mid-conversation in 0.1.57.
     // See browser-socket-teardown.ts for the crash and why the order matters.
     resetStream() { const old = socket; socket = undefined; closeSocketQuietly(old); },
+    get daemonIdentity() { return daemonIdentity; },
+    seedDaemonIdentity(identity) { daemonIdentity = identity; daemonPid = identity.pid; closeAcknowledged = false; },
     async close() {
+      retired = true;
+      if (closeAcknowledged) return;
+      // Even an unused relay asks the maintenance CLI for an ownership receipt.
       closing = true; attachedReady = false;
       guard.close();
       socket?.close(); socket = undefined;
+      await Promise.all([...commands].map(child => new Promise<void>(resolve => {
+        if (child.exitCode !== null || child.signalCode !== null) { resolve(); return; }
+        child.once('close', () => resolve()); child.kill('SIGKILL');
+      })));
       await client?.close();
       if (process.env.MURAGE_CLOUD_ROLE === "home") {
         await closeAgentBrowserSession(spec);
-        client = undefined; initialized = undefined; warmed = undefined; return;
+        closeAcknowledged = true; client = undefined; initialized = undefined; warmed = undefined; return;
       }
-      const endpoint = () => process.platform === "win32"
-        ? { host: "127.0.0.1", port: Number(readFileSync(join(spec.env.AGENT_BROWSER_SOCKET_DIR!, `${spec.env.AGENT_BROWSER_SESSION}.port`), "utf8")) }
-        : { path: join(spec.env.AGENT_BROWSER_SOCKET_DIR!, `${spec.env.AGENT_BROWSER_SESSION}.sock`) };
-      const currentPid = sessionPid();
-      let pid = daemonPid !== undefined && currentPid === daemonPid ? daemonPid : undefined;
-      // No command has answered since this server started (a fresh server
-      // meeting a stuck daemon), so no pid was captured. This session's own pid
-      // file names its daemon only while this session's own socket still
-      // accepts a connection: a stale pid file, or a pid reused by another
-      // session's daemon, is never stopped.
-      if (pid === undefined && currentPid !== null) {
-        const ours = await new Promise<boolean>((done) => {
-          let target: ReturnType<typeof endpoint>;
-          try { target = endpoint(); } catch { done(false); return; }
-          const probe = connectSocket(target, () => { clearTimeout(timer); probe.destroy(); done(true); });
-          const timer = setTimeout(() => { probe.destroy(); done(false); }, 2000);
-          probe.once("error", () => { clearTimeout(timer); done(false); });
-        });
-        if (ours) pid = currentPid;
-      }
-      if (pid !== undefined) {
-        // Send directly to the existing daemon: CLI `close` performs startup
-        // discovery and would create a new daemon after an idle timeout.
-        // A stuck daemon may never answer `close`. It is still stopped below, so
-        // Reopen blank page can start a fresh one instead of reaching it again.
-        await new Promise<void>((done, fail) => {
-          const transport = connectSocket(endpoint(), () => transport.write(JSON.stringify({ id: "murage-close", action: "close" }) + "\n"));
-          let data = "";
-          const timer = setTimeout(() => { transport.destroy(); fail(new Error("Browser session close timed out")); }, 5000);
-          transport.on("data", chunk => {
-            data += chunk.toString();
-            if (data.length > 65536) { transport.destroy(); clearTimeout(timer); fail(new Error("Browser close response exceeded its bound")); return; }
-            if (!data.includes("\n")) return;
-            clearTimeout(timer); transport.destroy();
-            try { const result = JSON.parse(data.split("\n")[0]!); result.success === true && result.data?.closed === true ? done() : fail(new Error("Browser session close was refused")); }
-            catch { fail(new Error("Browser close response was invalid")); }
-          });
-          transport.once("error", () => { clearTimeout(timer); fail(new Error("Browser session close connection failed")); });
-        }).catch((error: Error) => { console.error(`[browser] engine did not close cleanly (${error.message}); stopping it`); });
-        if (process.platform === "win32") {
-          // Image and start time both have to match, read from the native process list (no PowerShell, murage-releases #1): a pid
-          // that is gone is done, one that now runs another program or started at another time is refused, ours is ended and must be
-          // gone within 5 s. A pid file with neither a record nor a readable write time stops nothing.
-          const start = daemonStartCheck(pid);
-          if (!start) throw new Error("Browser daemon identity could not be checked");
-          const same = (list: readonly NativeProcess[]) => list.find((entry) => entry.pid === pid);
-          const first = nativeProcessList();
-          if (!first) throw new Error("Browser daemon cleanup failed");
-          if (windowsDaemonStopDecision(same(first), spec.command, start) === "stop") {
-            try { process.kill(pid); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw new Error("Browser daemon cleanup failed"); }
-            const until = Date.now() + 5000;
-            for (;;) {
-              const now = nativeProcessList();
-              if (!now) throw new Error("Browser daemon cleanup failed");
-              if (!same(now)) break;
-              if (Date.now() >= until) throw new Error("Browser daemon is still running");
-              await new Promise((resume) => setTimeout(resume, 100));
-            }
-          }
-        } else {
-          // The daemon PID is read back from this session's private runtime
-          // directory, never supplied by a caller. One that ignores SIGTERM is
-          // stopped with SIGKILL, so the fresh engine never meets it again.
-          const stopped = (): boolean => { try { process.kill(pid!, 0); return false; } catch (error) { return (error as NodeJS.ErrnoException).code === "ESRCH"; } };
-          try { process.kill(pid, "SIGTERM"); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error; }
-          const deadline = Date.now() + 3000;
-          while (!stopped() && Date.now() < deadline) await new Promise(done => setTimeout(done, 100));
-          if (!stopped()) { console.error("[browser] engine did not stop on SIGTERM; stopping it with SIGKILL"); try { process.kill(pid, "SIGKILL"); } catch {} }
+      // Recovery may not treat a missing ownership record as proof that an old process is ours.
+      const ownerFile = join(spec.env.AGENT_BROWSER_SOCKET_DIR!, `${spec.env.AGENT_BROWSER_SESSION}.owner.json`);
+      if (options.closeOnly && !existsSync(ownerFile)) throw new Error('Browser ownership is unconfirmed; try closing it again');
+      if (daemonIdentity && existsSync(ownerFile)) {
+        const owner = JSON.parse(readFileSync(ownerFile, "utf8"));
+        if (owner?.daemon?.pid !== daemonIdentity.pid || await judgeDaemonIdentity(daemonIdentity, spec.command) !== 'alive') {
+          throw new Error('Browser daemon identity could not be checked');
         }
       }
-      daemonPid = undefined; client = undefined; initialized = undefined;
+      // Preserve launch-bound ownership and descendant exhaustion checks for shutdown.
+      await closeOwnedBrowser(spec, sessionPid());
+      closeAcknowledged = true; daemonPid = undefined; daemonIdentity = undefined; client = undefined; initialized = undefined;
 
     },
   };
+  return browser;
 }

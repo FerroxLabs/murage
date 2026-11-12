@@ -1,0 +1,2313 @@
+{
+  "commit": "be6823cf1d12e4ce561d8e17cb6fe242315491ad",
+  "sourceSha256": "000ab62a164c88e5c54f2112d034769bc54e6caaa5c9b2e7f3bfbb64d03c96c3",
+  "rows": {
+    "delegatedOwnerOrigin-0": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "delegatedOwnerOrigin-1": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "delegatedOwnerOrigin-2": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "delegatedOwnerOrigin-3": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "delegatedOwnerOrigin-4": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "delegatedOwnerOrigin-5": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "delegatedOwnerOrigin-6": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "delegatedOwnerOrigin-7": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "delegatedOwnerOrigin-8": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "delegatedOwnerOrigin-9": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "delegatedOwnerOrigin-10": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "delegatedOwnerOrigin-11": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "delegatedOwnerOrigin-12": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "delegatedOwnerOrigin-13": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "delegatedOwnerOrigin-14": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "delegatedOwnerOrigin-15": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "delegatedOwnerOrigin-16": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "delegatedOwnerOrigin-17": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "delegatedOwnerOrigin-18": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "delegatedOwnerOrigin-19": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "delegatedOwnerOrigin-20": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "delegatedOwnerOrigin-21": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits",
+      "rule": "n1=unreadable"
+    },
+    "delegatedOwnerOrigin-22": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "delegatedOwnerOrigin-23": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits",
+      "rule": "held=key-row"
+    },
+    "manualRoutine-24": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "manualRoutine-25": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "manualRoutine-26": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "manualRoutine-27": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "manualRoutine-28": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "manualRoutine-29": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "manualRoutine-30": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "manualRoutine-31": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "manualRoutine-32": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "manualRoutine-33": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "manualRoutine-34": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "manualRoutine-35": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "manualRoutine-36": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "manualRoutine-37": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "manualRoutine-38": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "manualRoutine-39": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "manualRoutine-40": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "manualRoutine-41": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "manualRoutine-42": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "manualRoutine-43": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "manualRoutine-44": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "manualRoutine-45": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits",
+      "rule": "n1=unreadable"
+    },
+    "manualRoutine-46": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "manualRoutine-47": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits",
+      "rule": "held=key-row"
+    },
+    "scheduledRoutine-48": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "scheduledRoutine-49": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "scheduledRoutine-50": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "scheduledRoutine-51": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "scheduledRoutine-52": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "scheduledRoutine-53": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "scheduledRoutine-54": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "scheduledRoutine-55": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "scheduledRoutine-56": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "scheduledRoutine-57": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "scheduledRoutine-58": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "scheduledRoutine-59": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "scheduledRoutine-60": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "scheduledRoutine-61": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "scheduledRoutine-62": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "scheduledRoutine-63": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "scheduledRoutine-64": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "scheduledRoutine-65": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "scheduledRoutine-66": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "scheduledRoutine-67": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "scheduledRoutine-68": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "scheduledRoutine-69": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits",
+      "rule": "n1=unreadable"
+    },
+    "scheduledRoutine-70": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "scheduledRoutine-71": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits",
+      "rule": "held=key-row"
+    },
+    "ownerLowerLevels-72": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "ownerLowerLevels-73": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "ownerLowerLevels-74": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "ownerLowerLevels-75": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "ownerLowerLevels-76": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "ownerLowerLevels-77": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "ownerLowerLevels-78": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "ownerLowerLevels-79": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "ownerLowerLevels-80": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "ownerLowerLevels-81": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "ownerLowerLevels-82": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "ownerLowerLevels-83": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "ownerLowerLevels-84": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "ownerLowerLevels-85": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "ownerLowerLevels-86": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "ownerLowerLevels-87": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "ownerLowerLevels-88": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "ownerLowerLevels-89": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "routineKnownCwd-90": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "routineKnownCwd-91": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "routineKnownCwd-92": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "routineKnownCwd-93": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "routineKnownCwd-94": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineKnownCwd-95": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "routineKnownCwd-96": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "routineKnownCwd-97": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "routineKnownCwd-98": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "routineKnownCwd-99": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "routineKnownCwd-100": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineKnownCwd-101": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "routineKnownCwd-102": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "routineKnownCwd-103": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "routineKnownCwd-104": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "routineKnownCwd-105": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "routineKnownCwd-106": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineKnownCwd-107": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "routineKnownCwd-108": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "routineKnownCwd-109": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "routineKnownCwd-110": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "routineKnownCwd-111": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits",
+      "rule": "n1=unreadable"
+    },
+    "routineKnownCwd-112": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineKnownCwd-113": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits",
+      "rule": "held=key-row"
+    },
+    "routineStop-114": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-115": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-116": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-117": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "routineStop-118": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineStop-119": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "routineStop-120": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-121": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-122": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-123": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "routineStop-124": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineStop-125": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "routineStop-126": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-127": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-128": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-129": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "routineStop-130": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineStop-131": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "routineStop-132": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-133": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "routineStop-134": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-135": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits",
+      "rule": "n1=unreadable"
+    },
+    "routineStop-136": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineStop-137": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits",
+      "rule": "n1=sensitive-guard"
+    },
+    "routine-138": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "routine-139": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "routine-140": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "routine-141": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "routine-142": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routine-143": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "routine-144": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "routine-145": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "routine-146": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "routine-147": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "routine-148": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routine-149": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "routine-150": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "routine-151": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "routine-152": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "routine-153": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "routine-154": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routine-155": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "routine-156": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "routine-157": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "routine-158": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "routine-159": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits",
+      "rule": "n1=unreadable"
+    },
+    "routine-160": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routine-161": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits",
+      "rule": "held=key-row"
+    },
+    "channel-162": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "channel-163": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "channel-164": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "channel-165": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "channel-166": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "channel-167": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "channel-168": {
+      "approve": null,
+      "source": "unattended-block"
+    },
+    "channel-169": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "channel-170": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "channel-171": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "channel-172": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "channel-173": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "channel-174": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "channel-175": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "channel-176": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "channel-177": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "channel-178": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "channel-179": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "channel-180": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "channel-181": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "channel-182": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "channel-183": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits",
+      "rule": "n1=unreadable"
+    },
+    "channel-184": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "channel-185": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits",
+      "rule": "held=key-row"
+    },
+    "webhook-186": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "webhook-187": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "webhook-188": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "webhook-189": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "webhook-190": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "webhook-191": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "webhook-192": {
+      "approve": null,
+      "source": "unattended-block"
+    },
+    "webhook-193": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "webhook-194": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "webhook-195": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "webhook-196": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "webhook-197": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "webhook-198": {
+      "approve": null,
+      "source": "unattended-block"
+    },
+    "webhook-199": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "webhook-200": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "webhook-201": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "webhook-202": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "webhook-203": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "webhook-204": {
+      "approve": null,
+      "source": "unattended-block"
+    },
+    "webhook-205": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "webhook-206": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "webhook-207": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "webhook-208": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "webhook-209": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "delegated-210": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "delegated-211": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "delegated-212": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "delegated-213": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "delegated-214": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "delegated-215": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "delegated-216": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "delegated-217": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "delegated-218": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "delegated-219": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "delegated-220": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "delegated-221": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "delegated-222": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "delegated-223": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "delegated-224": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "delegated-225": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "delegated-226": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "delegated-227": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "delegated-228": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "delegated-229": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "delegated-230": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "delegated-231": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "delegated-232": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "delegated-233": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "other-234": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "other-235": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "other-236": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "other-237": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "other-238": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "other-239": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "other-240": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "other-241": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "other-242": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "other-243": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "other-244": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "other-245": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "other-246": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "other-247": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "other-248": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "other-249": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "other-250": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "other-251": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "other-252": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "other-253": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "other-254": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "other-255": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "other-256": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "other-257": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "unproven-258": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "unproven-259": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "unproven-260": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "unproven-261": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "unproven-262": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "unproven-263": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "unproven-264": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "unproven-265": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "unproven-266": {
+      "approve": null,
+      "source": "destructive-guard",
+      "rule": "\\brm\\s+(-[a-z]*\\s+)*-[a-z]*[rf]"
+    },
+    "unproven-267": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "unproven-268": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "unproven-269": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "unproven-270": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "unproven-271": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "unproven-272": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "unproven-273": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "unproven-274": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "unproven-275": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "unproven-276": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "unproven-277": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "unproven-278": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "unproven-279": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    },
+    "unproven-280": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "unproven-281": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    },
+    "delegatedOwnerOrigin-whitespace-282": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "delegatedOwnerOrigin-whitespace-283": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "delegatedOwnerOrigin-whitespace-284": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "delegatedOwnerOrigin-whitespace-285": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "delegatedOwnerOrigin-whitespace-286": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "delegatedOwnerOrigin-whitespace-287": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "delegatedOwnerOrigin-whitespace-288": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "delegatedOwnerOrigin-whitespace-289": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "delegatedOwnerOrigin-whitespace-290": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "delegatedOwnerOrigin-whitespace-291": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "delegatedOwnerOrigin-whitespace-292": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "delegatedOwnerOrigin-whitespace-293": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "manualRoutine-whitespace-294": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "manualRoutine-whitespace-295": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "manualRoutine-whitespace-296": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "manualRoutine-whitespace-297": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "manualRoutine-whitespace-298": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "manualRoutine-whitespace-299": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "manualRoutine-whitespace-300": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "manualRoutine-whitespace-301": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "manualRoutine-whitespace-302": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "manualRoutine-whitespace-303": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "manualRoutine-whitespace-304": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "manualRoutine-whitespace-305": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "scheduledRoutine-whitespace-306": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "scheduledRoutine-whitespace-307": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "scheduledRoutine-whitespace-308": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "scheduledRoutine-whitespace-309": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "scheduledRoutine-whitespace-310": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "scheduledRoutine-whitespace-311": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "scheduledRoutine-whitespace-312": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "scheduledRoutine-whitespace-313": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "scheduledRoutine-whitespace-314": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "scheduledRoutine-whitespace-315": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "scheduledRoutine-whitespace-316": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "scheduledRoutine-whitespace-317": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "ownerLowerLevels-whitespace-318": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "ownerLowerLevels-whitespace-319": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "ownerLowerLevels-whitespace-320": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "ownerLowerLevels-whitespace-321": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "ownerLowerLevels-whitespace-322": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "ownerLowerLevels-whitespace-323": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "ownerLowerLevels-whitespace-324": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "ownerLowerLevels-whitespace-325": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "ownerLowerLevels-whitespace-326": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineKnownCwd-whitespace-327": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "routineKnownCwd-whitespace-328": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "routineKnownCwd-whitespace-329": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineKnownCwd-whitespace-330": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "routineKnownCwd-whitespace-331": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "routineKnownCwd-whitespace-332": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineKnownCwd-whitespace-333": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "routineKnownCwd-whitespace-334": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "routineKnownCwd-whitespace-335": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineKnownCwd-whitespace-336": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "routineKnownCwd-whitespace-337": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "routineKnownCwd-whitespace-338": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineStop-whitespace-339": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-whitespace-340": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-whitespace-341": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineStop-whitespace-342": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-whitespace-343": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-whitespace-344": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineStop-whitespace-345": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-whitespace-346": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-whitespace-347": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routineStop-whitespace-348": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-whitespace-349": {
+      "approve": null,
+      "source": "stop-line",
+      "rule": "delete",
+      "note": "Delete 1 item outside its folder: ~/Documents/x"
+    },
+    "routineStop-whitespace-350": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routine-whitespace-351": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "routine-whitespace-352": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "routine-whitespace-353": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routine-whitespace-354": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "routine-whitespace-355": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "routine-whitespace-356": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routine-whitespace-357": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "routine-whitespace-358": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "routine-whitespace-359": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "routine-whitespace-360": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "routine-whitespace-361": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "routine-whitespace-362": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "channel-whitespace-363": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "channel-whitespace-364": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "channel-whitespace-365": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "channel-whitespace-366": {
+      "approve": null,
+      "source": "unattended-block"
+    },
+    "channel-whitespace-367": {
+      "approve": null,
+      "source": "unattended-block"
+    },
+    "channel-whitespace-368": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "channel-whitespace-369": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "channel-whitespace-370": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "channel-whitespace-371": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "channel-whitespace-372": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "channel-whitespace-373": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "channel-whitespace-374": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "webhook-whitespace-375": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "webhook-whitespace-376": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "webhook-whitespace-377": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "webhook-whitespace-378": {
+      "approve": null,
+      "source": "unattended-block"
+    },
+    "webhook-whitespace-379": {
+      "approve": null,
+      "source": "unattended-block"
+    },
+    "webhook-whitespace-380": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "webhook-whitespace-381": {
+      "approve": null,
+      "source": "unattended-block"
+    },
+    "webhook-whitespace-382": {
+      "approve": null,
+      "source": "unattended-block"
+    },
+    "webhook-whitespace-383": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "webhook-whitespace-384": {
+      "approve": null,
+      "source": "unattended-block"
+    },
+    "webhook-whitespace-385": {
+      "approve": null,
+      "source": "unattended-block"
+    },
+    "webhook-whitespace-386": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "delegated-whitespace-387": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "delegated-whitespace-388": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "delegated-whitespace-389": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "delegated-whitespace-390": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "delegated-whitespace-391": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "delegated-whitespace-392": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "delegated-whitespace-393": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "delegated-whitespace-394": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "delegated-whitespace-395": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "delegated-whitespace-396": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "delegated-whitespace-397": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "delegated-whitespace-398": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "other-whitespace-399": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "other-whitespace-400": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "other-whitespace-401": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "other-whitespace-402": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "other-whitespace-403": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "other-whitespace-404": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "other-whitespace-405": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "other-whitespace-406": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "other-whitespace-407": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "other-whitespace-408": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "other-whitespace-409": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "other-whitespace-410": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "unproven-whitespace-411": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "unproven-whitespace-412": {
+      "approve": null,
+      "source": "no-grant"
+    },
+    "unproven-whitespace-413": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "unproven-whitespace-414": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "unproven-whitespace-415": {
+      "approve": "auto-approved Bash",
+      "source": "auto-mode"
+    },
+    "unproven-whitespace-416": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "unproven-whitespace-417": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "unproven-whitespace-418": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    },
+    "unproven-whitespace-419": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    },
+    "unproven-whitespace-420": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "unproven-whitespace-421": {
+      "approve": "auto-approved Bash (no limits)",
+      "source": "no-limits"
+    },
+    "unproven-whitespace-422": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "delete-root",
+      "reason": "delete-root",
+      "note": "This would delete everything on this computer's main drive. Murage always asks before a command like this, at every access level."
+    }
+  }
+}

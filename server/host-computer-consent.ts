@@ -1,3 +1,6 @@
+import {noLimitsAppliesTo,type NoLimitsOrigin} from './no-limits-origin.ts';
+import type {PermissionSetting} from './permission-inheritance.ts';
+import { serviceQueue, waitForProducerApproval, producerBase } from "./narrow-denials.ts";
 // One-time, per-bot confirmation before a bot on the Auto computer
 // destination first acts on THIS computer.
 //
@@ -22,7 +25,6 @@ import { newId } from "./contracts.ts";
 import { botUsesHostComputer } from "./local-routing.ts";
 import { dismissStaleToolCards, type ApprovalBus, type StaleCardKind } from "./peer-approval.ts";
 import type { BotRecord } from "./store.ts";
-import { murageLine } from "./murage-line.ts";
 
 /** The card's tool identity. Never a real tool: nothing can grant it. */
 export const HOST_CONSENT_TOOL = "local_computer_consent";
@@ -48,8 +50,8 @@ export function hostConsentState(
 }
 
 /** Auto must not mount this computer for a bot whose owner said no. */
-export function autoHostDeclined(bot: Pick<BotRecord, "computer" | "hostComputerConsent">): boolean {
-  return bot.computer === undefined && bot.hostComputerConsent === "declined";
+export function autoHostDeclined(bot: Pick<BotRecord, "computer" | "hostComputerConsent"> & PermissionSetting, origin?: NoLimitsOrigin): boolean {
+  return bot.computer === undefined && bot.hostComputerConsent === "declined" && !noLimitsAppliesTo(origin,bot);
 }
 
 /** Grandfathering, evaluated once per bot record (when the field is absent).
@@ -90,12 +92,10 @@ interface Pending {
 const pendingByBot = new Map<string, Pending>();
 
 function settle(pending: Pending, behavior: "allow" | "deny", source: "user" | "system"): void {
-  const existing = pending.bus.store.messageById(pending.threadId, pending.messageId);
-  if (!existing?.card || existing.card.answered) return;
-  pending.bus.store.patchMessage(pending.threadId, pending.messageId, {
-    // A close the owner did not choose reads "Not answered", never "Not allowed" (LONGWORK H2). An "allow" stays "allow" whatever its source: an allow that went through ran the action, so "Not answered" would be untrue (GROK-STOPPED F6, kept on purpose).
-    card: { ...existing.card, answered: source === "user" || behavior === "allow" ? behavior : "unavailable", dismissed: source !== "user" },
-  });
+  const queue=serviceQueue('host-computer');
+  const item=queue.pendingApprovals().find(item=>item.ref===pending.requestId);
+  if(!item)return;
+  if(source==='user')void queue.answer(item.approvalId,{behavior});else void queue.stop(item.approvalId);
 }
 
 function finish(pending: Pending, outcome: HostConsentOutcome): void {
@@ -108,40 +108,18 @@ function finish(pending: Pending, outcome: HostConsentOutcome): void {
   pending.waiters.clear();
 }
 
-function openCard(bus: ApprovalBus, bot: BotRecord, threadId: string): Pending {
-  const requestId = newId();
-  const message = bus.store.appendMessage(threadId, murageLine({
-    role: "bot",
-    kind: "options",
-    card: {
-      title: `Let @${bot.name} use this computer?`,
-      subtitle:
-        `@${bot.name} is set to Auto, which on this Mac means your own screen, mouse and keyboard. ` +
-        `Allow and Murage remembers it for this bot. Don't allow and @${bot.name} stays off this computer. ` +
-        "You can change this later in the bot's Computer panel.",
-      options: ["Allow", "Deny"],
-      requestId,
-      tool: HOST_CONSENT_TOOL,
-      approvalScope: "local-computer",
-      held: "Asked once for each bot on Auto.",
-    },
-  }));
-  let held = false;
-  try { held = bus.routineCard?.opened(threadId, requestId, `Let @${bot.name} use this computer?`) === true; } catch { /* delivery never changes authority */ }
-  const pending: Pending = {
-    requestId,
-    held,
-    botId: bot.id,
-    threadId,
-    messageId: message.id,
-    waiters: new Set(),
-    bus,
-    // The card waits for the owner until it is answered or cancelled (cards-wait
-    // 1.0.8, GROK-STOPPED F1). Each action's own wait is bounded below, and only
-    // the owner's own choice is ever remembered.
-  };
-  pendingByBot.set(bot.id, pending);
-  try { bus.onApproval?.(bot.id, threadId, requestId, message.id); } catch { /* delivery never changes authority */ }
+export function hostConsentPendingApprovals() { return serviceQueue('host-computer').pendingApprovals(); }
+function openCard(bus:ApprovalBus,bot:BotRecord,threadId:string):Pending {
+  const requestId=newId();
+  const pending:Pending={requestId,botId:bot.id,threadId,messageId:'',held:false,waiters:new Set(),bus};
+  pendingByBot.set(bot.id,pending);
+  void waitForProducerApproval(serviceQueue('host-computer'),{
+    authority:bus.authorityFor?.(threadId,bot.id),ref:requestId,tool:HOST_CONSENT_TOOL,input:{scope:'local-computer'},
+    action:{requestId,tool:HOST_CONSENT_TOOL,approvalScope:'local-computer',options:['Allow','Deny'],held:'Asked once for each bot on Auto.'},
+    view:{title:`Let @${bot.name} use this computer?`,subtitle:`@${bot.name} is set to Auto, which on this Mac means your own screen, mouse and keyboard. Allow and Murage remembers it for this bot. Don't allow and @${bot.name} stays off this computer. You can change this later in the bot's Computer panel.`},
+    base:producerBase(true),
+  },{presented:(_item,messageId)=>{pending.messageId=messageId;pending.held=bus.routineCard?.opened(threadId,requestId,`Let @${bot.name} use this computer?`)===true;bus.onApproval?.(bot.id,threadId,requestId,messageId);}})
+    .then(result=>finish(pending,result==='allow'?'allowed':result==='deny'?'declined':'waiting'),()=>finish(pending,'waiting'));
   return pending;
 }
 
@@ -191,10 +169,11 @@ export function resolveHostComputerConsent(
 ): boolean {
   const pending = [...pendingByBot.values()].find((entry) => entry.requestId === requestId);
   if (!pending) return false;
-  const allow = behavior === "allow";
-  remember(pending.botId, allow ? "allowed" : "declined");
-  settle(pending, allow ? "allow" : "deny", "user");
-  finish(pending, allow ? "allowed" : "declined");
+  if(behavior!=='allow'&&behavior!=='deny')return false;
+  const item=serviceQueue('host-computer').pendingApprovals().find(item=>item.ref===requestId);
+  if(!item)return false;
+  if(serviceQueue('host-computer').answerNow(item.approvalId,{behavior}).state==='failed')return false;
+  remember(pending.botId,behavior==='allow'?'allowed':'declined');
   return true;
 }
 
@@ -233,4 +212,9 @@ export function hostConsentRefusal(outcome: Exclude<HostConsentOutcome, "allowed
     ? `The person chose not to let ${botName} use this computer. Nothing was done on the screen. Do not retry computer actions; carry on without them or ask the person.`
     : `Waiting for the person to allow ${botName} to use this computer. A card is shown in the chat. Nothing was done on the screen. Ask them to answer it before trying again.`;
   return { isError: true, content: [{ type: "text", text }] };
+}
+
+/** True while a consent card with this request id is open. */
+export function hostConsentPending(requestId: string): boolean {
+  return [...pendingByBot.values()].some((entry) => entry.requestId === requestId);
 }

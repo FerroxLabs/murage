@@ -5,20 +5,25 @@
 // Modified transport: every destination requires admission; credentials are never
 // inherited, and oversized/protected responses are refused rather than truncated.
 import { parse } from "parse5";
-import { fencePageText } from "./browser-untrusted.ts";
-import { capReadText, READ_BUDGET } from "./browser-extension-snapshot.ts";
+import { fencePageText, escapeMarkers } from "./browser-untrusted.ts";
+import { READ_BUDGET } from "./browser-extension-snapshot.ts";
 import { looksLikeSecretName } from "../shared/browser-secret-classifier.ts";
 import { redactMediaType, redactPageOutput, redactUrlForOutput, sanitizeRawHtml } from "./browser-output-redaction.ts";
 
+import { WebDocuments, validateWebRange, WEB_FETCH_KEYS, type WebRange, type WebPage } from "./web-documents.ts";
+
 type Node = { nodeName: string; tagName?: string; value?: string; attrs?: { name: string; value: string }[]; childNodes?: Node[]; content?: Node };
-export type EngineReadOptions = { url?: string; raw?: boolean; requireMd?: boolean; llms?: "index" | "full"; outline?: boolean; filter?: string; readTimeoutMs?: number };
+export type EngineReadOptions = WebRange & { url?: string; raw?: boolean; requireMd?: boolean; llms?: "index" | "full"; outline?: boolean; filter?: string; readTimeoutMs?: number };
 export interface EngineReadContext {
+  documents?: WebDocuments;
+  scope?: string;
+  direct?: boolean;
   currentUrl: string;
   activeHtml: () => Promise<string>;
   authorize: () => boolean;
   admitUrl: (url: string, signal?: AbortSignal) => Promise<void>;
   fetch?: typeof fetch;
-  /** Seam for the core lane: when set, page text in the result is capped at 20,000 characters and fenced (T24). */
+  /** When set, each saved range is fenced as untrusted page text (T24). */
   fenceOrigin?: string;
 }
 class RefusedRead extends Error {}
@@ -175,7 +180,19 @@ function linkedDocument(text: string, base: string, target: string) {
   return matches.length === 1 ? matches[0] : undefined;
 }
 
+const defaultDocuments = new WeakMap<EngineReadContext, WebDocuments>();
+function savedResult(page: WebPage, origin?: string, metadata: { status?: number; contentType?: string; source?: string; source_handle?: string; url?: string } = {}) {
+  const { text, ...range } = page;
+  const content = origin === undefined ? text : fencePageText(text, { origin, kind: "read" });
+  return { content: [{ type: "text", text: JSON.stringify({ ...range, ...metadata }) + "\n" + content, ...(origin ? { origin } : {}) }],
+    structuredContent: { ...metadata, ...range, finalUrl: page.url, truncated: false, content } };
+}
 export async function readWithBrowserAuthority(options: EngineReadOptions, context: EngineReadContext) {
+  validateWebRange(options, WEB_FETCH_KEYS);
+  let documents = context.documents ?? defaultDocuments.get(context);
+  if (!documents) { documents = new WebDocuments(); defaultDocuments.set(context, documents); }
+  const scope = context.scope ?? "browser";
+  if (!context.authorize()) throw new RefusedRead("Browser authority changed during reading.");
   const timeout = options.readTimeoutMs ?? 10000;
   if (!Number.isSafeInteger(timeout) || timeout < 1 || timeout > 60000) throw new RefusedRead("Read timeout must be between 1 and 60000 milliseconds.");
   const deadline = Date.now() + timeout, controller = new AbortController();
@@ -244,6 +261,15 @@ export async function readWithBrowserAuthority(options: EngineReadOptions, conte
     throw new RefusedRead("Browser read redirect limit reached.");
   };
   try {
+    if (options.handle) {
+      // Re-admit the saved origin, not the current tab. Re-read after the await:
+      // a settings change may have invalidated this handle while admission ran.
+      const origin = documents.origin(scope, options.handle);
+      await allow(origin);
+      valid();
+      const page = documents.read(scope, options);
+      return savedResult(page, context.fenceOrigin === undefined ? undefined : origin);
+    }
     const active = !options.url && !options.llms && !options.requireMd;
     const rawTarget = options.url ?? context.currentUrl;
     // Match upstream's https shorthand for fetched URLs; an active document's
@@ -252,22 +278,34 @@ export async function readWithBrowserAuthority(options: EngineReadOptions, conte
     const admitted = await allow(requested);
     if (!active) admitted.hash = "";
     const target = admitted.href;
-    const result = (value: { finalUrl: string; contentType: string; status?: number }, source: string, content: string, pageTransform = true) => {
+    const result = (value: { finalUrl: string; contentType: string; status?: number }, sourceKind: string, content: string, pageTransform = true, completeSource = content) => {
       // M9: the text belongs to the document that was fetched (its final origin), not to the tab the bot happens to be on.
       const fetchedOrigin = (() => { try { return new URL(value.finalUrl).origin; } catch { return undefined; } })();
       const fenceOrigin = context.fenceOrigin === undefined ? undefined : fetchedOrigin ?? context.fenceOrigin;
       // Whatever the mode, the text that leaves here has passed the page-output redaction (cards, codes, SSNs, labelled secrets, URL paths).
-      const transformed = redactPageOutput(pageTransform ? transform(content, value.finalUrl, options) : content);
-      const capped = context.fenceOrigin === undefined ? { text: transformed, truncated: false } : capReadText(transformed);
-      const output = fenceOrigin === undefined ? capped.text : fencePageText(capped.text, { origin: fenceOrigin, kind: "read" });
+      const clean = (text: string) => {
+        // Refuse before the redactor's own display cap can discard a tail.
+        if (text.length > BODY_LIMIT) throw new RefusedRead("Converted page exceeds the read limit. No partial document was saved.");
+        const redacted = redactPageOutput(text);
+        return fenceOrigin === undefined ? redacted : escapeMarkers(redacted);
+      };
+      const complete = clean(completeSource);
+      const transformed = pageTransform ? clean(transform(content, value.finalUrl, options)) : clean(content);
+
       const suffix = pageTransform ? options.outline ? "-outline" : options.filter !== undefined ? "-filtered" : "" : "";
       valid();
       // Never spread an internal fetch object: it contains the raw response and
       // parse5 parent-linked tree, neither of which belongs in observations.
-      return { content: [{ type: "text", text: output, ...(fenceOrigin === undefined ? {} : { origin: fenceOrigin }) }], structuredContent: {
-        url: redactUrlForOutput(target), finalUrl: redactUrlForOutput(value.finalUrl), ...(value.status === undefined ? {} : { status: value.status }),
-        contentType: redactMediaType(value.contentType), source: source + suffix, truncated: capped.truncated, content: output,
-      } };
+      const sourceUrl = redactUrlForOutput(value.finalUrl);
+      // An explicit outline/filter is a view. Keep the complete converted
+      // source too, so filtering cannot make its tail unreachable.
+      const source = documents.save(scope, complete, sourceUrl, { length: options.length }, new URL(value.finalUrl).origin);
+      const page = transformed === complete ? source : documents.save(scope, transformed, sourceUrl, { length: options.length }, new URL(value.finalUrl).origin);
+      return savedResult(page, fenceOrigin, {
+        url: redactUrlForOutput(target), ...(value.status === undefined ? {} : { status: value.status }),
+        contentType: redactMediaType(value.contentType), source: sourceKind + suffix,
+        ...(page.handle === source.handle ? {} : { source_handle: source.handle }),
+      });
     };
     if (active) {
       const html = await bounded(context.activeHtml), parsed = inspectReadHtml(html);
@@ -295,7 +333,7 @@ export async function readWithBrowserAuthority(options: EngineReadOptions, conte
           : options.filter !== undefined ? "No matching llms.txt links" : normalize(content);
       } else if (options.filter !== undefined) content = filterMarkdownSections(content, options.filter, "No matching llms-full.txt sections");
       // llms modes own their output view: upstream ignores raw/outline here.
-      return result(fetched, "llms-" + options.llms, content, false);
+      return result(fetched, "llms-" + options.llms, content, false, fetched.body);
     }
     const contentFrom = (fetched: Awaited<ReturnType<typeof fetchResource>>) => {
       if (options.requireMd && baseType(fetched.contentType) !== "text/markdown") throw expectedMarkdown(fetched.contentType);
@@ -306,6 +344,10 @@ export async function readWithBrowserAuthority(options: EngineReadOptions, conte
       return { source: "raw", content: /<[a-zA-Z!]/.test(fetched.body) ? sanitizeRawHtml(fetched.body) : fetched.body };
     };
     const primary = await fetchResource(target);
+    if (context.direct) {
+      if (!primary.ok) throw new Error(`Read failed with HTTP ${primary.status}`);
+      const content = contentFrom(primary); return result(primary, content.source, content.content);
+    }
     if (primary.ok && (options.raw || baseType(primary.contentType) === "text/markdown" || (!options.requireMd && markdown(primary.contentType)))) {
       const content = contentFrom(primary); return result(primary, content.source, content.content);
     }

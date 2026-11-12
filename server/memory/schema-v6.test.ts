@@ -66,11 +66,19 @@ async function usedV5DataDir(): Promise<string> {
   message(thread, "ask-2", 20, "user", "Say it again?");
   message(thread, "y", 21, "bot", "Again: the code is 7731.");
   message("moss-direct", "moss-1", 30, "bot", "Unrelated chat.");
-  expect(downgradeMemorySchema(database(), 5)).toMatchObject({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 5 });
-  database().exec("PRAGMA wal_checkpoint(TRUNCATE)");
-  closeDatabase();
+  // 2fe571bb91's runtime-only authority triggers refer to v10 deny tables.
+  // The installation downgrade uses an offline connection. Snapshot the live
+  // fixture coherently, then make the historical shape on that offline copy;
+  // its schema work cannot race the runtime's retiring checkpointer.
   const copy = join(copyDir, "messages.db");
-  copyFileSync(join(DATA_DIR, "messages.db"), copy);
+  database().prepare("VACUUM INTO ?").run(copy);
+  closeDatabase();
+  const offline = new DatabaseSync(copy);
+  try {
+    offline.exec("PRAGMA foreign_keys=ON");
+    expect(downgradeMemorySchema(offline, 5)).toMatchObject({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 5 });
+    offline.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+  } finally { offline.close(); }
   return copy;
 }
 /** Every table's rows as text, in key order: what "unchanged" means here. */

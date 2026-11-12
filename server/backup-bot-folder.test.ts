@@ -28,7 +28,7 @@ import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = { scope: "application-data", credentialPolicy: "preserve-in-encrypted-fidelity" } as const;
-const has = (tool: string, args: string[] = ["--version"]) => spawnSync(tool, args, { stdio: "ignore" }).status === 0;
+const has = (tool: string, args: string[] = ["--version"]) => spawnSync(tool, args, { windowsHide: true, stdio: "ignore" }).status === 0;
 const deskOf = (data: string) => join(data, "workspaces", "bot", "threads", "thread");
 
 async function stageAndInventory(data: string, parent: string, options: { maxFiles?: number } = {}) {
@@ -63,7 +63,7 @@ const artefacts: Record<string, (desk: string) => void> = {
   "shortcut to a file outside the data folder": desk => { symlinkSync("/etc/hosts", join(desk, "hosts-link")); },
   "Windows device name and trailing dot": desk => { writeFileSync(join(desk, "aux.txt"), "a"); writeFileSync(join(desk, "notes."), "n"); },
   "an empty folder with a colon in its name": desk => { mkdirSync(join(desk, "run 10:30")); mkdirSync(join(desk, "run 11:00", "empty"), { recursive: true }); },
-  "a socket or pipe left by a tool": desk => { execFileSync("mkfifo", [join(desk, "tool.pipe")]); },
+  "a socket or pipe left by a tool": desk => { execFileSync("mkfifo", [join(desk, "tool.pipe")], { windowsHide: true }); },
 };
 
 // A colon cannot be in a Windows file name: mkdir refuses it, and a file
@@ -170,13 +170,13 @@ it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("round trip: a used bot folde
   mkdirSync(join(desk, "site", "node_modules", "dep"), { recursive: true });
   writeFileSync(join(desk, "site", "node_modules", "dep", "index.js"), "x");
   // Real tools where this computer has them.
-  if (has("python3")) execFileSync("python3", ["-m", "venv", "--without-pip", join(desk, "pyenv")], { stdio: "ignore" });
+  if (has("python3")) execFileSync("python3", ["-m", "venv", "--without-pip", join(desk, "pyenv")], { windowsHide: true, stdio: "ignore" });
   if (has("git")) {
-    execFileSync("git", ["init", "-q", join(desk, "origin")], { stdio: "ignore" });
+    execFileSync("git", ["init", "-q", join(desk, "origin")], { windowsHide: true, stdio: "ignore" });
     writeFileSync(join(desk, "origin", "README.md"), "hello\n");
-    execFileSync("git", ["-C", join(desk, "origin"), "add", "."], { stdio: "ignore" });
-    execFileSync("git", ["-C", join(desk, "origin"), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "one"], { stdio: "ignore" });
-    execFileSync("git", ["clone", "-q", "--local", join(desk, "origin"), join(desk, "clone")], { stdio: "ignore" });
+    execFileSync("git", ["-C", join(desk, "origin"), "add", "."], { windowsHide: true, stdio: "ignore" });
+    execFileSync("git", ["-C", join(desk, "origin"), "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "one"], { windowsHide: true, stdio: "ignore" });
+    execFileSync("git", ["clone", "-q", "--local", join(desk, "origin"), join(desk, "clone")], { windowsHide: true, stdio: "ignore" });
   }
   try {
     const first = join(f.parent, "first.age");
@@ -199,7 +199,7 @@ it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("round trip: a used bot folde
     expect(readFileSync(join(back, "aux.txt"), "utf8")).toBe("device name\n");
     expect(existsSync(join(back, "site", "node_modules"))).toBe(false);
     if (has("git")) {
-      expect(execFileSync("git", ["-C", join(back, "clone"), "log", "--format=%s"], { encoding: "utf8" }).trim()).toBe("one");
+      expect(execFileSync("git", ["-C", join(back, "clone"), "log", "--format=%s"], { windowsHide: true, encoding: "utf8" }).trim()).toBe("one");
       expect(statSync(join(back, "clone", "README.md")).isFile()).toBe(true);
     }
     // The restored copy passes review, and backs up again.

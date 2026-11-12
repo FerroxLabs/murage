@@ -6,13 +6,12 @@ import { basename, dirname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
+import { BUILD_INPUTS, fetchBuildInput } from "./fetch-build-input.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const platformNames = { darwin: "darwin", linux: "linux", win32: "win32" };
-const archiveNames = { darwin: "darwin", linux: "linux", win32: "windows" };
 const platform = platformNames[process.platform];
-const archive = archiveNames[process.platform];
-if (!platform || !archive) throw new Error(`Android Platform Tools are unsupported on ${process.platform}`);
+if (!platform) throw new Error(`Android Platform Tools are unsupported on ${process.platform}`);
 
 const finalDir = join(root, "dist-native", "android-platform-tools", platform);
 const override = process.env.MURAGE_ANDROID_PLATFORM_TOOLS_SOURCE;
@@ -26,8 +25,10 @@ try {
     }
     cpSync(override, staged, { recursive: true });
   } else {
-    const url = `https://dl.google.com/android/repository/platform-tools-latest-${archive}.zip`;
-    const response = await fetch(url);
+    // Platform Tools 37.0.1, including Google's "win" archive spelling.
+    const pin = BUILD_INPUTS[{ darwin: "D074", linux: "D075", win32: "D076" }[process.platform]];
+    const url = pin.urls[0];
+    const response = await fetchBuildInput(url, pin);
     if (!response.ok) throw new Error(`could not download Android Platform Tools: HTTP ${response.status}`);
     const zip = join(temporary, basename(new URL(url).pathname));
     writeFileSync(zip, Buffer.from(await response.arrayBuffer()));

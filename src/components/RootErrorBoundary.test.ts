@@ -32,7 +32,9 @@ describe("the root error boundary", () => {
     // App inside CloudDoor: the boundary sits outside both branches, so the
     // door and App are covered alike.
     const plain = String.raw`<App \/>`;
-    const cloud = String.raw`\{[^{}]*\?\s*<CloudDoor>\s*<App \/>\s*<\/CloudDoor>\s*:\s*<App \/>\s*\}`;
+    // fd2e454356 / 6f8a669a20 add a lazy browser pop-out inside this boundary.
+    const popout = String.raw`popoutBot\s*\?\s*<Suspense fallback=\{null\}><BrowserPopout botId=\{popoutBot\} \/><\/Suspense>\s*:\s*`;
+    const cloud = String.raw`\{(?:${popout})?CloudDoor\s*\?\s*<CloudDoor>\s*<App \/>\s*<\/CloudDoor>\s*:\s*<App \/>\s*\}`;
     expect(main).toMatch(new RegExp(String.raw`<RootErrorBoundary>\s*(?:${plain}|${cloud})\s*<\/RootErrorBoundary>`));
   });
 

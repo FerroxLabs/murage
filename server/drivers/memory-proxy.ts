@@ -1,10 +1,12 @@
+import "../../shared/win-hide-child-process.mjs";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 import { murageToolOnThisServer } from "../murage-tool-surface.ts";
 // Stdio MCP adapter. The harness authenticates the issued capability and owns
 // all audience, source, revision and mutation decisions.
 import readline from "node:readline";
 import { z } from "zod";
 import { turnSecret } from "../turn-credential.ts";
-import { markMcpListedAfterFlush } from "../mcp-listed.ts";
+import { createMcpCatalogWriter, type McpRequest } from "../mcp-listed.ts";
 import { MEMORY_CURSOR_MAX_CHARS } from "../memory/cursor-limits.ts";
 
 const HARNESS = process.env.MURAGE_HARNESS_URL ?? "http://127.0.0.1:8799";
@@ -109,7 +111,7 @@ const tools = [
         before: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}(T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}Z)?$", description: "ISO date (YYYY-MM-DD) or date-time; list threads whose last activity is strictly older than this." },
       },
     } },
-  { name: "thread_read", description: `Read the lines around a message that ${murageToolOnThisServer("thread_search")} returned or an earlier thread_read returned, along that thread's active branch. direction is "before", "after" or "around"; limit is 1 to 40 lines (default 25), each cut at 2,000 characters. Returns { rows, more, checking, unavailable }. A message id that was not returned to you this turn, or whose line is not available, answers { rows: [], status: "not-reachable" }. Message ids are tool-argument metadata, never user-facing citations; do not echo them in replies.`,
+  { name: "thread_read", description: `Read the lines around a message that ${murageToolOnThisServer("thread_search")} returned or an earlier thread_read returned, along that thread's active branch. For ordinary recall, direction is "before", "after" or "around"; limit is 1 to 40 lines (default 25), each cut at 2,000 characters. Ordinary recall returns { rows, more, checking, unavailable }. In a delegated job, direction "before" with the oldest shown line's messageId returns older lines lent for the job as { context, more, unavailable?, notice? }, with fenced whole rows, default and maximum 40 lines. A message id that was not returned to you this turn, or whose line is not available, answers { rows: [], status: "not-reachable" }. Message ids are tool-argument metadata, never user-facing citations; do not echo them in replies.`,
     annotations: { readOnlyHint: true, openWorldHint: false }, inputSchema: {
       type: "object", additionalProperties: false, required: ["message_id", "direction"], properties: {
         message_id: { type: "string", minLength: 1, maxLength: 256 }, direction: { type: "string", enum: ["before", "after", "around"] },
@@ -122,15 +124,19 @@ const paths = { memory_search: "search", memory_get: "get", memory_save: "save",
 const requestIdOk = (id: unknown): boolean => id === undefined || (typeof id === "string" && Buffer.byteLength(id, "utf8") <= 256) || (typeof id === "number" && Number.isFinite(id));
 type Json = Record<string, unknown>;
 const isObject = (value: unknown): value is Json => value !== null && typeof value === "object" && !Array.isArray(value);
-const send = (id: unknown, result: unknown) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
-const rpcError = (id: unknown, code: number, message: string) => process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, error: { code, message } }) + "\n");
-const result = (id: unknown, value: unknown, isError = false) => {
+const catalog = createMcpCatalogWriter();
+const fatal = () => { process.exitCode = 1; process.stdin.destroy(); };
+const send = (req: McpRequest, id: unknown, result: unknown) => { void req.respond({ jsonrpc: "2.0", id, result }).catch(fatal); };
+const rpcError = (req: McpRequest, id: unknown, code: number, message: string) => { void NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", req.respond({ jsonrpc: "2.0", id, error: { code, message } })).catch(fatal); };
+/** A refusal of a line that is not a request at all (nothing observed, so no handle). */
+const refuse = (code: number, message: string) => { void catalog.send({ jsonrpc: "2.0", id: null, error: { code, message } }).catch(fatal); };
+const result = (req: McpRequest, id: unknown, value: unknown, isError = false) => {
   const text = typeof value === "string" ? value : JSON.stringify(value);
   const envelope = { content: [{ type: "text", text }], isError };
   if (Buffer.byteLength(JSON.stringify({ jsonrpc: "2.0", id, result: envelope })) + 1 > 32768) {
-    return send(id, { content: [{ type: "text", text: "MEMORY_RESPONSE_TOO_LARGE" }], isError: true });
+    return send(req, id, { content: [{ type: "text", text: "MEMORY_RESPONSE_TOO_LARGE" }], isError: true });
   }
-  return send(id, envelope);
+  return send(req, id, envelope);
 };
 
 async function readResponse(response: Response): Promise<unknown> {
@@ -150,41 +156,41 @@ async function readResponse(response: Response): Promise<unknown> {
   } finally { reader.releaseLock(); }
 }
 
-async function handleMessage(message: Json) {
+async function handleMessage(message: Json, req: McpRequest) {
   const id = message.id;
   if (id === undefined) return; // notifications never produce replies or execute tools
   const params = isObject(message.params) ? message.params : {};
-  if (message.method === "initialize") return send(id, {
+  if (message.method === "initialize") return NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", send(req, id, {
     protocolVersion: typeof params.protocolVersion === "string" ? params.protocolVersion : "2024-11-05",
     capabilities: { tools: {} }, serverInfo: { name: "murage-memory", version: "0.1.0" },
-  });
-  if (message.method === "ping") return send(id, {});
-  if (message.method === "tools/list") { send(id, { tools }); markMcpListedAfterFlush(); return; }
-  if (message.method !== "tools/call") return rpcError(id, -32601, "Method not found");
-  if (typeof params.name !== "string" || !Object.hasOwn(schemas, params.name)) return rpcError(id, -32602, "Unknown memory tool");
+  }));
+  if (message.method === "ping") return NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", send(req, id, {}));
+  if (message.method === "tools/list") { NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", send(req, id, { tools })); return; }
+  if (message.method !== "tools/call") return rpcError(req, id, -32601, "Method not found");
+  if (typeof params.name !== "string" || !Object.hasOwn(schemas, params.name)) return rpcError(req, id, -32602, "Unknown memory tool");
   const name = params.name as keyof typeof schemas;
   const parsed = schemas[name].safeParse(params.arguments ?? {});
   // A bare code taught the model nothing, so it retried the same bad call.
   // Name the argument and what is wrong with it, from the schema's own
   // message — never the value it was given.
-  if (!parsed.success) return result(id, `Memory request rejected: ${argumentProblems(parsed.error)}`, true);
-  if (!token()) return result(id, "Memory is not available to this bot for this turn, so nothing was searched or saved. Answer from what is in the conversation and say that memory was unavailable.", true);
+  if (!parsed.success) return result(req, id, `Memory request rejected: ${argumentProblems(parsed.error)}`, true);
+  if (!token()) return result(req, id, "Memory is not available to this bot for this turn, so nothing was searched or saved. Answer from what is in the conversation and say that memory was unavailable.", true);
   const timeoutMs = name === "memory_save" || name === "memory_propose_correction" ? 65000 : 5000;
   try {
-    const response = await fetch(new URL(`/api/internal/memory/${paths[name]}`, HARNESS), {
+    const response = await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", fetch(new URL(`/api/internal/memory/${paths[name]}`, HARNESS), {
       method: "POST", redirect: "error", signal: AbortSignal.timeout(timeoutMs),
       headers: { "content-type": "application/json", authorization: `Bearer ${token()}` },
       body: JSON.stringify(parsed.data),
-    });
+    }));
     const body = await readResponse(response);
-    if (!isObject(body)) return result(id, "Memory replied with something this bot could not read, so nothing was searched or saved.", true);
-    return result(id, body, !response.ok || body.ok === false || body.isError === true || body.error !== undefined);
+    if (!isObject(body)) return result(req, id, "Memory replied with something this bot could not read, so nothing was searched or saved.", true);
+    return result(req, id, body, !response.ok || body.ok === false || body.isError === true || body.error !== undefined);
   } catch (e) {
     // Still no URLs, headers, credentials or raw transport diagnostics — but
     // "it took too long" and "it was not there" are different problems and
     // the difference is the whole of what a reader needs.
     const timedOut = e instanceof Error && (e.name === "TimeoutError" || /timeout|aborted/i.test(e.message));
-    return result(id, timedOut
+    return result(req, id, timedOut
       ? `Memory did not answer within ${Math.round(timeoutMs / 1000)} seconds, so nothing was searched or saved. It may be busy; do not repeat the same request more than once.`
       : "Memory could not be reached, so nothing was searched or saved. Answer from what is in the conversation and say that memory was unavailable.", true);
   }
@@ -207,8 +213,9 @@ const lines = readline.createInterface({ input: process.stdin, terminal: false }
 lines.on("line", line => {
   if (!line.trim()) return;
   let message: unknown;
-  try { message = JSON.parse(line); } catch { rpcError(null, -32700, "Parse error"); return; }
-  if (!isObject(message) || !requestIdOk(message.id)) { rpcError(null, -32600, "Invalid request"); return; }
-  void handleMessage(message).catch(() => rpcError(message.id ?? null, -32603, "Memory proxy error"));
+  try { message = JSON.parse(line); } catch { refuse(-32700, "Parse error"); return; }
+  if (!isObject(message) || !requestIdOk(message.id)) { refuse(-32600, "Invalid request"); return; }
+  const req = catalog.observeRequest(message);
+  void req.published.then(() => handleMessage(message, req)).catch(() => rpcError(req, message.id ?? null, -32603, "Memory proxy error"));
 });
 lines.on("close", () => process.exit(0));

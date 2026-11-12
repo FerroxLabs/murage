@@ -77,7 +77,7 @@ export function providerFor(facts: AvatarGeneratorFacts): AvatarGeneratorProvide
  * the moment an attempt fails, and that is not decoration: FluxRouter's image
  * endpoint is entitled to paid, cleared accounts only (a free account is
  * answered 402 "image generation requires a paid plan",
- * flux-router/src/images_route.py), and this panel is the only place in the
+ * the Flux router's image route), and this panel is the only place in the
  * whole app where an OpenAI image key can be entered. Hiding it unconditionally
  * would strand exactly the person the fallback exists for.
  */

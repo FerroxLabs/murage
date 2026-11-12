@@ -1,0 +1,14 @@
+#!/bin/bash
+. "$(dirname "$0")/common.sh"
+disks=1
+[[ $scn == second_disk ]] && disks=2
+if [[ $* == *-d* ]]; then
+    echo 'NAME="sda" TYPE="disk"'
+    echo 'NAME="loop0" TYPE="loop"'
+    (( disks == 2 )) && echo 'NAME="sdb" TYPE="disk"'
+    exit 0
+fi
+rows | while read -r name type fs label uuid ptype; do
+    eval "set -- $name $type $fs $label $uuid $ptype"
+    printf 'NAME="%s" TYPE="%s" FSTYPE="%s" LABEL="%s" UUID="%s" PARTTYPE="%s"\n' "$1" "$2" "$3" "$4" "$5" "$6"
+done

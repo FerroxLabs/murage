@@ -173,8 +173,8 @@ public class ApprovalProofTest {
     }
 
     @Test public void aliasIsStablePerOrigin() {
-        assertEquals(ApprovalProof.alias("https://mac.tailnet123.ts.net"), ApprovalProof.alias("https://mac.tailnet123.ts.net"));
-        assertNotEquals(ApprovalProof.alias("https://mac.tailnet123.ts.net"), ApprovalProof.alias("https://other.tailnet123.ts.net"));
-        assertTrue(ApprovalProof.alias("https://mac.tailnet123.ts.net").matches("murage_approval_[0-9a-f]{16}"));
+        assertEquals(ApprovalProof.alias("https://mac.tail000000.ts.net"), ApprovalProof.alias("https://mac.tail000000.ts.net"));
+        assertNotEquals(ApprovalProof.alias("https://mac.tail000000.ts.net"), ApprovalProof.alias("https://other.tail000000.ts.net"));
+        assertTrue(ApprovalProof.alias("https://mac.tail000000.ts.net").matches("murage_approval_[0-9a-f]{16}"));
     }
 }

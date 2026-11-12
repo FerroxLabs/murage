@@ -59,6 +59,12 @@ describe("the without-memory note", () => {
     expect(read("../../server/memory/dispatch.ts")).toContain("`Memory changed while ${engine} was starting, so this reply ran without remembered context.`");
     const index = read("../../server/index.ts");
     expect(index).toMatch(/\{ name: line, ok: true \}, \.\.\.\(kind === "without-memory" \? \{ memoryNote: "without-memory" as const \} : \{\}\)/);
-    expect(index).toMatch(/roomLastResort && turnSucceeded\(e\)\) store\.appendMessage\(threadId, murageLine\(\{[^\n]*memoryNote: "without-memory"/);
+    // Revoke-fence journals both paths through the same marked, idempotent release.
+    const release = index.slice(index.indexOf("function releaseFenceNotice("), index.indexOf("function prepareFenceNotice("));
+    expect(release).toContain('memoryNote: "without-memory"');
+    expect(release).toContain('store.appendMessage(notice.threadId, murageLine(');
+    expect(index).toContain('if (kind === "without-memory" && fenceNote) { fenceNote(providerTurnId);');
+    expect(index).toContain('const roomFenceNote = prepareFenceNotice(threadId,');
+    expect(index).toContain('submissionBoundary.alsoCheck(() => { if (!roomFencePreparing && !roomFencePreflight) roomFenceNote?.(providerTurnId); });');
   });
 });

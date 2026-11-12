@@ -1,0 +1,46 @@
+COMMAND node_modules/.bin/vitest run server/decision/settle-states.test.ts -t "R18 ninth"
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/settle-states.test.ts > R18 ninth question refuses under a bounded reply and leaves the eight FIFO records intact
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/settle-states.test.ts (8 tests | 1 failed | 7 skipped) 349ms
+   ↓ R9 never resolving transport retries same answerId, interrupts by 20s and ignores late completion
+   ↓ R8 R9 M33 X7 two questions retain FIFO; instructions remain a normal send
+   ↓ R19 Ask→No limits answers open owner BASE before returning; webhook stays BASE
+   ↓ R19 a retained wipe card is reclassified when owner moves into No limits
+   ↓ native request.resolved retires the captured generation and preserves its replacement
+   ↓ native turn.completed retires the captured generation and preserves its replacement
+   ↓ R19 non-owner open BASE records stay untouched on a move into No limits
+   × R18 ninth question refuses under a bounded reply and leaves the eight FIFO records intact 346ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 7 skipped (8)
+   Start at  08:11:17
+   Duration  4.52s (transform 3.23s, setup 3.83s, import 227ms, tests 349ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/settle-states.test.ts > R18 ninth question refuses under a bounded reply and leaves the eight FIFO records intact
+AssertionError: expected [ { …(14) }, { …(14) }, …(7) ] to have a length of 8 but got 9
+
+- Expected
++ Received
+
+- 8
++ 9
+
+ ❯ server/decision/settle-states.test.ts:35:31
+     33|   await d.presentApproval(ref,{title:'Question',subtitle:'Fixture'});
+     34|  }
+     35|  expect(d.openApprovals('t')).toHaveLength(8);expect(f.respond).toHave…
+       |                               ^
+     36|  expect(f.respond.mock.calls[0][1].behavior).toBe('deny');
+     37|  expect(f.db.prepare("SELECT COUNT(*) n FROM messages WHERE kind='opti…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

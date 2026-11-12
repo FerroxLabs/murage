@@ -4,6 +4,7 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { murageRenderPlugins } from "./scripts/vite-render-plugin";
 import { precompressPlugin } from "./scripts/compress-dist.mjs";
+import { buildCommitPlugin } from "./scripts/build-commit-plugin.mjs";
 import { resolveBuildCommit } from "./scripts/build-commit.mjs";
 import { LINUX_HOME_TESTS } from "./server/testing/linux-home-tests";
 
@@ -15,18 +16,36 @@ import { LINUX_HOME_TESTS } from "./server/testing/linux-home-tests";
 const STANDARD_USER_ONLY_TESTS = ["server/installation-windows-backup-roundtrip.test.ts"];
 const standardUserRun = process.env.MURAGE_TEST_STANDARD_USER_RT === "1";
 
+const buildCommit = resolveBuildCommit();
 export default defineConfig({
   // The commit behind this build, for the About source link (null without git).
-  define: { __MURAGE_COMMIT__: JSON.stringify(resolveBuildCommit()) },
+  define: { __MURAGE_COMMIT__: JSON.stringify(buildCommit) },
   // murageRenderPlugins: the sandboxed diagram frame page, and the lazy
   // katex/mermaid/dompurify imports that fall back to source when missing.
   // precompressPlugin: `.br`/`.gz` copies of hashed assets for the browser
   // door, written after the bundle (build only; inert under vitest and dev).
-  plugins: [react(), tailwindcss(), murageRenderPlugins(), precompressPlugin()],
+  plugins: [buildCommitPlugin(buildCommit), react(), tailwindcss(), murageRenderPlugins(), precompressPlugin()],
+  experimental: {
+    // The attention entry also loads from a packaged file URL. Resolve its
+    // HTML assets and chunk dependencies relative to their emitted files;
+    // the app's HTML keeps its existing root-relative asset paths.
+    renderBuiltUrl(_filename, { hostType, hostId, type }) {
+      if (type === "asset" && (hostType === "js" || hostType === "css" || hostId === "src/tray-panel/index.html" || hostId === "src/float/bubble.html" || hostId === "src/float/dock.html")) return { relative: true };
+    },
+  },
   build: {
     // dist/.vite/manifest.json: which files the first paint loads, read by
     // scripts/check-bundle-budget.mjs after every CI build (spec §6)
     manifest: true,
+    rollupOptions: {
+      input: {
+        main: fileURLToPath(new URL("./index.html", import.meta.url)),
+        trayPanel: fileURLToPath(new URL("./src/tray-panel/index.html", import.meta.url)),
+        bubble: fileURLToPath(new URL("./src/float/bubble.html", import.meta.url)),
+        dock: fileURLToPath(new URL("./src/float/dock.html", import.meta.url)),
+        pill: fileURLToPath(new URL("./src/pill/index.html", import.meta.url)),
+      },
+    },
   },
   test: {
     environment: "node",
@@ -38,6 +57,11 @@ export default defineConfig({
       "src/components/PhoneAccessCard.test.tsx",
       "src/components/PhoneForBotsRow.test.tsx",
       "src/components/RoomShareCard.test.tsx",
+      "src/components/BotReviewSheet.test.tsx",
+      "src/attention-ui/AttentionPanel.test.tsx",
+      "src/float/*.test.tsx",
+      "src/components/PinToEdgeMenuItem.test.tsx",
+      "src/pill/Pill.test.tsx",
       "src/components/DataFolderSettings.test.tsx",
       "shared/**/*.test.ts",
       "tools/**/*.test.ts",
@@ -47,7 +71,7 @@ export default defineConfig({
     // electron/signed-fetch.test.mjs is test support (imported by the node:test files), not a test: vitest finds no suite in it.
     // On Windows the Cloud home tests that drive its Linux-only pieces are left out (the reason and the list are in
     // server/testing/linux-home-tests.ts); every other OS runs them.
-    exclude: [...configDefaults.exclude, "electron/signed-fetch.test.mjs", ...(process.platform === "win32" ? LINUX_HOME_TESTS : []), ...(standardUserRun ? [] : STANDARD_USER_ONLY_TESTS)],
+    exclude: [...configDefaults.exclude, "electron/signed-fetch.test.mjs", "scripts/probes/native-deny/tests/fixture.test.mjs", "scripts/probes/native-deny/tests/helpers.test.mjs", "scripts/probes/native-deny/tests/results.test.mjs", "scripts/probes/native-deny/tests/review-regressions.test.mjs", "scripts/probes/native-deny/tests/runner.test.mjs", ...(process.platform === "win32" ? LINUX_HOME_TESTS : []), ...(standardUserRun ? [] : STANDARD_USER_ONLY_TESTS)],
     setupFiles: ["server/testing/setup.ts"],
     // the suite spawns fake provider CLIs and a real harness server;
     // parallel files introduce load-sensitive flakes for no win

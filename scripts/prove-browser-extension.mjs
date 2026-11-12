@@ -27,14 +27,15 @@ const proveBrowser = () => process.env.MURAGE_PROVE_BROWSER_EXECUTABLE ? { execu
 // Fail before importing application modules or starting a browser. The launcher
 // must supply HOME/USERPROFILE/TMP/companion isolation externally, not after import.
 const scratch = await realpath(tmpdir());
-// On the Mac the scratch folder must be on the scratch volume; a test VM names its own root (QA_SCRATCH).
-assert.ok(scratch.startsWith(process.env.QA_SCRATCH ?? '/Volumes/Scratch/'), 'Task TMPDIR must be on the scratch volume (or under QA_SCRATCH)');
+// The launcher names its task-owned scratch root explicitly.
+assert.ok(process.env.QA_SCRATCH && scratch.startsWith(process.env.QA_SCRATCH), 'Set QA_SCRATCH to the task-owned TMPDIR root');
 for (const key of ['HOME','USERPROFILE','MURAGE_COMPANION_DIR']) {
   assert.ok(process.env[key], `Externally set ${key} before launching`);
   const child = relative(scratch, resolve(process.env[key]));
   assert.ok(child && !child.startsWith('..') && !isAbsolute(child), `${key} must be inside task TMPDIR`);
 }
-const pinnedEngine=process.env.QA_PINNED_ENGINE??'/Volumes/Scratch/work/murage-0157/dist-native/browser/darwin-arm64/agent-browser';
+const pinnedEngine=process.env.QA_PINNED_ENGINE;
+assert.ok(pinnedEngine, 'Set QA_PINNED_ENGINE to the isolated pinned browser');
 assert.equal(process.env.MURAGE_AGENT_BROWSER_PATH,pinnedEngine,'Set the exact pinned engine path externally before imports');
 const { createBrowserExtensionService } = await import('../server/browser-extension-service.ts');
 const root = fileURLToPath(new URL('../', import.meta.url));

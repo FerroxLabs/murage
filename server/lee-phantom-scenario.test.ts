@@ -68,12 +68,22 @@ describe("Lee_J / Phantom: delegated team replies after permission, roster and s
   };
 
   const start = async () => {
-    const env: NodeJS.ProcessEnv = { HOME: home, USERPROFILE: home, MURAGE_PORT: String(PORT), MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET };
+    const env: NodeJS.ProcessEnv = { HOME: home, USERPROFILE: home, MURAGE_PORT: String(PORT), MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET, NODE_ENV: "test",
+      MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET: process.env.MURAGE_TEST_UNBOUNDED_REVOKE_BUDGET ?? "1" };
     if (process.env.PATH) env.PATH = process.env.PATH;
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
     // the Slack SDK fixture (human-principals-api.test.ts): a person's conversation over a paired bot, no network; traces carry what Slack would show
-    child = spawn(process.execPath, ["--import", pathToFileURL(join(SERVER_DIR, "testing", "slack-sdk-preload.mjs")).href, join(SERVER_DIR, "index.ts")],
-      { cwd: join(SERVER_DIR, ".."), env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
+    // 30a1b3b2ce introduced host-power containment. Like testing/setup.ts,
+    // this standalone fake-engine child needs the in-memory, test-only seam;
+    // the production wrapper still refuses an unprotected real engine.
+    const fakePower = "data:text/javascript," + encodeURIComponent("globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;");
+    // 00770cb0db / 182ba5e2c9 deliberately pace the idle drain across minutes.
+    // c55ce49a57 extends this existing harness seam to that pace. This scenario
+    // tests reply privacy through many revokes, with every reply assertion intact;
+    // the pace and commit bounds have their own io-budget-revoke tests.
+    child = spawn(process.execPath, ["--import", fakePower, "--import", pathToFileURL(join(SERVER_DIR, "testing", "revoke-budget-preload.mjs")).href,
+      "--import", pathToFileURL(join(SERVER_DIR, "testing", "slack-sdk-preload.mjs")).href, join(SERVER_DIR, "index.ts")],
+      { windowsHide: true, cwd: join(SERVER_DIR, ".."), env, stdio: ["ignore", "pipe", "pipe", "ipc"] });
     child.stderr!.on("data", c => (stderr += c));
     child.stdout!.on("data", () => undefined);
     child.on("message", value => { if ((value as any)?.kind === "slack-fixture") traces.push(value as any); });
@@ -156,7 +166,20 @@ describe("Lee_J / Phantom: delegated team replies after permission, roster and s
   /** Waits for the revocation window to close and says how long it was open. */
   const waitWindowClosed = async (label: string, startedAt = Date.now(), timeout = 180_000) => {
     let s = windowState();
-    while (windowOpen(s) && Date.now() - startedAt < timeout) { await sleep(100); s = windowState(); }
+    let previous = "", nextReport = 0;
+    const report = () => {
+      const state = JSON.stringify(s), now = Date.now();
+      if (state === previous && now < nextReport) return;
+      previous = state; nextReport = now + 30_000;
+      const db = new DatabaseSync(join(home, ".murage", "messages.db"), { readOnly: true });
+      try {
+        measure({ kind: "window-transition", label, event: windowOpen(s) ? "open" : "closed", elapsedMs: now - startedAt, state: s,
+          jobs: db.prepare("SELECT revoke_id,kind,phase,cursor,state FROM memory_revoke_jobs WHERE state IN ('seeding','active','undoing') ORDER BY revoke_id LIMIT 8").all(),
+          pending: db.prepare("SELECT thread_id,count(*) AS n FROM memory_deny_pending GROUP BY thread_id ORDER BY thread_id LIMIT 16").all() });
+      } finally { db.close(); }
+    };
+    report();
+    while (windowOpen(s) && Date.now() - startedAt < timeout) { await sleep(100); s = windowState(); report(); }
     measure({ kind: "window", label, openMs: Date.now() - startedAt, closed: !windowOpen(s), state: s });
     return !windowOpen(s);
   };

@@ -56,8 +56,11 @@ describe("who may read Health", () => {
     expect(sentinelOwner({ cloudHome: true, surface: "desktop", cloudIdentity: device("owner-phone") })).toBe(true);
     const passkey = device("browser", { factor: "passkey", publicKey: p256(), assertionKey: p256() });
     expect(sentinelOwner({ cloudHome: true, surface: "desktop", cloudIdentity: passkey })).toBe(true);
+    // The owner's browser (a live emailed-code factor) is an owner session like the phone: it reads Health.
     const remembered = device("browser", { factor: "remembered-owner", publicKey: p256(), assertionKey: p256() });
-    for (const identity of [undefined, remembered, device("browser"), device("service"), device("owner-desktop", { revoked: 1 })]) {
+    expect(sentinelOwner({ cloudHome: true, surface: "desktop", cloudIdentity: remembered })).toBe(true);
+    expect(sentinelOwner({ cloudHome: true, surface: "desktop", cloudIdentity: device("browser", { factor: "remembered-owner", publicKey: p256(), assertionKey: p256(), revoked: 1 }) })).toBe(false);
+    for (const identity of [undefined, device("browser"), device("service"), device("owner-desktop", { revoked: 1 })]) {
       expect(sentinelOwner({ cloudHome: true, surface: "desktop", cloudIdentity: identity })).toBe(false);
     }
   });
@@ -73,9 +76,10 @@ describe("who may read Health", () => {
 
   it("Cloud admits owner sessions and refuses every other scope and every write", () => {
     for (const path of ["/api/sentinel/summary", "/api/sentinel/issues"]) {
-      for (const scope of ["owner-desktop", "owner-phone", "owner-browser"] as const) expect(cloudRouteDecision("GET", path, scope, {})).toBe("allow");
-      for (const scope of ["remembered-owner", "browser", "service", "anonymous"] as const) expect(cloudRouteDecision("GET", path, scope, {})).toBe("deny");
+      for (const scope of ["owner-desktop", "owner-phone", "owner-browser", "remembered-owner"] as const) expect(cloudRouteDecision("GET", path, scope, {})).toBe("allow");
+      for (const scope of ["browser", "service", "anonymous"] as const) expect(cloudRouteDecision("GET", path, scope, {})).toBe("deny");
       for (const method of ["POST", "PUT", "DELETE"]) expect(cloudRouteDecision(method, path, "owner-desktop", {}, true)).toBe("deny");
+      for (const method of ["POST", "PUT", "DELETE"]) expect(cloudRouteDecision(method, path, "remembered-owner", {}, true)).toBe("deny");
     }
   });
 

@@ -1,4 +1,4 @@
-import { threadDenied } from "./deny.ts";
+import { memoryReaderDenied } from "./deny.ts";
 import { executionStore, threadPartition, isHomePartition, partitionScopeKey, sameThreadPartition } from "../execution-audience.ts";
 import { teamMemoryKey } from "../team-identities.ts";
 import { isGroupPrincipal, threadHumanPrincipal, assertHumanPrincipal, isWorkspaceOwner, WORKSPACE_OWNER, type HumanPrincipal } from "../human-principals.ts";
@@ -11,7 +11,10 @@ import { threadMemoryRoom } from "./capture-scope.ts";
 import { scopeRow, scopeRows } from "./scope-id.ts";
 import { eligibilityAnswer, inEligibilityPass, passLookup } from "./eligibility-pass.ts";
 import { revokeAllDisclosures, revokeThreadDisclosures } from "./revocation.ts";
-import { bumpAuthorityThreads, bumpAuthorityHard } from "./authority-epoch.ts";
+import { bumpAuthorityThreads, bumpAuthorityScopes, bumpAuthorityHard } from "./authority-epoch.ts";
+import type { DelegationPack, PackBinding } from "../delegation-pack/types.ts";
+import { branchRows } from "../branch-store.ts";
+import { readActiveLeafOrNewest, readMessage } from "../message-db.ts";
 
 export interface MemoryRoster {
   bots: Array<{name?: string; id: string; threadId: string; section?: string; tasks?: Array<{threadId: string; sharedWork?: {teamId: string; quarantined?: boolean}; channelProjectDesk?: {groupId: string; archivedAt?: number}}>; partitionedAt?: number}>;
@@ -75,7 +78,7 @@ function rosterIntent(roster: MemoryRoster) {
  *   holds any more: their receipts end; what other threads were shown from them is judged live on their next continuation
  *   (disclosures.ts revokedReason hydrates every cited record and source under the live roster, after the hold is dropped). Nothing
  *   else is withdrawn: a thread that cited nothing of a removed thread keeps its session. */
-type RosterDelta = { kind: "same" } | { kind: "audience" } | { kind: "scoped"; removedThreads: string[]; removedContainers?: boolean };
+type RosterDelta = { kind: "same" } | { kind: "audience" } | { kind: "scoped"; removedThreads: string[]; removedScopes: string[]; removedRooms: boolean };
 /** A v2 snapshot of the right shape. A binding written before v2 (ids, sections, members and threads only) cannot say whether a desk, a
  * partition or a room's audience moved since, so it is not accepted: the first roster change after the upgrade is an audience change. */
 function validSnapshot(snapshot: unknown): snapshot is Snapshot {
@@ -146,7 +149,13 @@ function rosterDelta(intent: string, roster: MemoryRoster): RosterDelta {
     const desked = new Set(old.bots.flatMap(bot => Object.values(bot.meta ?? {}).flatMap(meta => { const m = /^desk:(.*):[01]\|/.exec(meta); return m ? [m[1]] : []; })));
     for (const id of nextGroups.keys()) if (!oldGroups.has(id) && (desked.has(id) || !freshEntry(db, "room", id))) return audience;
     // rule 8: what nobody holds any more
-    return { kind: "scoped", removedContainers: [...oldBots.keys()].some(id => !nextBots.has(id)) || [...oldGroups.keys()].some(id => !nextGroups.has(id)), removedThreads: [...oldHolders.keys()].filter(thread => !nextHolders.has(thread)) };
+    const removedScopes: string[] = [];
+    for (const id of [...oldBots.keys()].filter(id => !nextBots.has(id))) {
+      const scopes = db.prepare("SELECT id FROM memory_scopes WHERE kind='bot' AND (owner_key=? OR substr(owner_key,1,?)=?)").all(id, id.length + 1, id + "#");
+      if (!scopes.length) return audience; // an incomplete notebook identity is never a scoped proof
+      removedScopes.push(...scopes.map(row => String(row.id)));
+    }
+    return { kind: "scoped", removedScopes, removedRooms: [...oldGroups.keys()].some(id => !nextGroups.has(id)), removedThreads: [...oldHolders.keys()].filter(thread => !nextHolders.has(thread)) };
   } catch { return audience; }
 }
 function policyRow() { return database().prepare("SELECT state,intent,scope_id FROM memory_scope_bindings WHERE id=?").get(POLICY_ID); }
@@ -188,7 +197,7 @@ export function persistMemoryRoster(roster: MemoryRoster, persist: () => void) {
     db.prepare("INSERT INTO memory_scope_bindings(id,scope_id,subject_type,subject_id,revision,state,intent) VALUES(?,?,'system','roster',?,'pending',?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,state='pending',intent=excluded.intent")
       .run(POLICY_ID,scopeId,memoryState().policyRevision,rosterIntent(roster));
     if (delta.kind === "audience") revokeAllDisclosures(db,"roster");
-    else { for (const thread of delta.removedThreads) revokeThreadDisclosures(db,thread,"roster-removed"); if (delta.removedContainers) bumpAuthorityHard(db); else bumpAuthorityThreads(db,delta.removedThreads); }
+    else { for (const thread of delta.removedThreads) revokeThreadDisclosures(db,thread,"roster-removed"); bumpAuthorityThreads(db,delta.removedThreads); if (delta.removedRooms) bumpAuthorityHard(db); else bumpAuthorityScopes(db,delta.removedScopes); }
   });
   persist();
   reconcileMemoryRoster(roster);
@@ -210,7 +219,7 @@ export function reconcileMemoryRoster(roster: MemoryRoster, options: { unlessUnc
     if (delta.kind === "audience") {
       db.exec("UPDATE memory_meta SET policy_revision=policy_revision+1 WHERE id=1");
       revokeAllDisclosures(db,"roster-reconcile");
-    } else if (delta.kind === "scoped" && delta.removedThreads.length) { for (const thread of delta.removedThreads) revokeThreadDisclosures(db,thread,"roster-reconcile-removed"); if (delta.removedContainers) bumpAuthorityHard(db); else bumpAuthorityThreads(db,delta.removedThreads); }
+    } else if (delta.kind === "scoped" && delta.removedThreads.length) { for (const thread of delta.removedThreads) revokeThreadDisclosures(db,thread,"roster-reconcile-removed"); bumpAuthorityThreads(db,delta.removedThreads); if (delta.removedRooms) bumpAuthorityHard(db); else bumpAuthorityScopes(db,delta.removedScopes); }
     // Only what the last granted roster did not already ensure is looked up: a start over an unchanged roster (the first start after an upgrade among
     // them, before the scope-owner index exists) makes no search by owner, however many scopes the file holds. Its workspace scope is the binding's own,
     // confirmed by one primary-key read.
@@ -425,6 +434,66 @@ export function recallThreads(access: MemoryAccess): string[] {
   return set;
 }
 
+/** Server-owned dispatch facts, re-derived for each loan check, including at the provider write.
+ * delegationId names the live delegation run, not an ID taken from the input row. Replay supplies an anchor instead. */
+export interface PackLoanTurn {
+  generation: string;
+  driverKind: string;
+  delegationId?: string;
+  anchor?: PackBinding["anchor"];
+  isUnattended(threadId: string): boolean;
+}
+
+/** The owner's loan overrides only the other-bot exclusion, for these source pairs and this dispatch.
+ * Ordinary recall never receives this set. All policy, branch and run facts are read live; uncertainty grants nothing. */
+export function packLoan(pack: DelegationPack, access: MemoryAccess, turn: PackLoanTurn): { sourceThreadId: string; ids: ReadonlySet<string> } | null {
+  try {
+    const trusted = contexts.get(access);
+    if (!trusted || turn.generation !== access.generation || !trusted.registry.isActive(trusted.claim)
+      || trusted.registry.activeGeneration(access.threadId) !== turn.generation || turn.driverKind === "antigravity") return null;
+    assertMemoryAccess(access);
+    if (pack.target_bot_id !== access.botId || pack.destination_thread_id !== access.threadId) return null;
+    if (!memoryAccessIsOwnerAudience(access) || !isWorkspaceOwner(threadHumanPrincipal(access.threadId))
+      || !isWorkspaceOwner(threadHumanPrincipal(pack.source_thread_id)) || turn.isUnattended(pack.source_thread_id)) return null;
+
+    const roster = trusted.roster();
+    const source = roster.bots.find(bot => bot.id === pack.source_bot_id), target = roster.bots.find(bot => bot.id === access.botId);
+    const owns = (bot: MemoryRoster["bots"][number] | undefined, thread: string) => bot && (bot.threadId === thread || bot.tasks?.some(task => task.threadId === thread));
+    if (!owns(source, pack.source_thread_id) || !owns(target, access.threadId)) return null;
+    const inRoom = (thread: string) => roster.groups.some(room => room.threadId === thread || room.tasks?.some(task => task.threadId === thread));
+    if (inRoom(pack.source_thread_id) || inRoom(access.threadId)
+      || roster.bots.some(bot => bot.id !== access.botId && owns(bot, access.threadId))) return null;
+    const db = database();
+    if (db.prepare("SELECT 1 FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings' AND e.value=?").get(pack.source_thread_id)) return null;
+    const storedSource = executionStore()?.bot(pack.source_bot_id), storedTarget = executionStore()?.bot(access.botId);
+    if (!storedSource || !storedTarget) return null;
+    // Identical to sameThreadPartition's key, applied across the two bots. Unpartitioned bots count as home.
+    const key = (bot: typeof storedSource, thread: string): string | null => {
+      if (bot.partitionedAt === undefined) return "home";
+      const partition = threadPartition(bot, thread);
+      if (partition.kind === "isolated") return null;
+      return isHomePartition(partition) ? "home" : partition.kind === "project" ? `project:${partition.groupId}` : JSON.stringify(partition);
+    };
+    const sourceKey = key(storedSource, pack.source_thread_id), targetKey = key(storedTarget, access.threadId);
+    if (sourceKey === null || targetKey === null || sourceKey !== targetKey) return null;
+
+    if (turn.anchor) {
+      const anchor = turn.anchor;
+      const stored = db.prepare("SELECT rowid AS mrow FROM messages WHERE thread_id=? AND id=?").get(access.threadId, anchor.messageId);
+      const message = readMessage(access.threadId, anchor.messageId) as (MessageWithPack | undefined);
+      if (!stored || Number(stored.mrow) !== anchor.mrow || message?.packId !== pack.id || message.automation?.kind !== "delegation"
+        || branchRows(access.threadId, readActiveLeafOrNewest(access.threadId)).contains(anchor.mrow) !== true) return null;
+    } else {
+      if (turn.delegationId !== pack.delegation_id) return null;
+      if (!db.prepare("SELECT 1 FROM pending_delegations WHERE id=? AND source_thread_id=? AND from_bot_id=? AND to_bot_id=? AND target_thread_id=? AND phase='started'")
+        .get(pack.delegation_id, pack.source_thread_id, pack.source_bot_id, access.botId, access.threadId)) return null;
+    }
+    return { sourceThreadId: pack.source_thread_id, ids: new Set(pack.refs) };
+  } catch { return null; }
+}
+
+type MessageWithPack = import("../store.ts").Message & { packId?: string };
+
 /** The turn's words were not proven to be the owner's (the claim flag). Its
  * verdicts are about this reader, never about the receipts themselves. */
 export function memoryAccessNotOwnerAudience(access: MemoryAccess): boolean {
@@ -510,7 +579,7 @@ export function assertMemoryAccess(access: MemoryAccess, scope?: string) {
   if (!trusted || !trusted.registry.isActive(trusted.claim)) throw new Error("MEMORY_UNAUTHORIZED");
   // Inside a synchronous pass the meta row and the policy binding are read once (a row this connection writes ends the memo).
   const { state, granted } = passLookup(database(), "assert-memory-state", () => ({ state: memoryState(), granted: policyRow()?.state === "granted" }));
-  if (state.policyRevision !== access.policyRevision || state.deletionEpoch !== access.deletionEpoch || passLookup(database(), `assert-thread-denied:${access.threadId}`, () => threadDenied(database(), access.threadId)) || !granted) throw new Error("MEMORY_CONTEXT_REVOKED");
+  if (state.policyRevision !== access.policyRevision || state.deletionEpoch !== access.deletionEpoch || passLookup(database(), `assert-reader-denied:${access.botId}:${access.threadId}`, () => memoryReaderDenied(database(), access.threadId, access.botId)) || !granted) throw new Error("MEMORY_CONTEXT_REVOKED");
   const roster = trusted.roster(), notOwner = trusted.claim.notOwnerAudience === true;
   // Inside a synchronous pass (hydrating one record, a hit loop) the audience is worked out once; the primary-key re-check still runs once per pass.
   const current = eligibilityAnswer(database(), `assert\u0000${access.botId}\u0000${access.threadId}\u0000${notOwner}`, roster, () => eligibleScopes(access.botId,access.threadId,roster,notOwner));

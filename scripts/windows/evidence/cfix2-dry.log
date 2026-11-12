@@ -1,0 +1,66 @@
+PowerShell 7.4.2; .NET 8.0.4
+PARSE admission-check.ps1
+PARSE admission-policy-check.ps1
+PARSE build-fixture-update.ps1
+PARSE console-observer.ps1
+PARSE desktop-task.ps1
+PARSE dry-check.ps1
+PARSE finalize-receipt.ps1
+PARSE finalizer-check.ps1
+PARSE full-packaged-scenario.ps1
+PARSE gate-admission.ps1
+PARSE gate-paths.ps1
+PARSE gate-task-helper.ps1
+PARSE job-check.ps1
+PARSE owned-process.ps1
+PARSE ownership-check.ps1
+PARSE ownership.ps1
+PARSE run-interactive.ps1
+PARSE run-ledger.ps1
+PARSE safety-check.ps1
+PARSE scenario-common.ps1
+PARSE sentinel-scenario.ps1
+PARSE setup-gate-user.ps1
+PARSE snapshot.ps1
+PARSE stage.ps1
+PARSE updates-handoff.ps1
+PARSE verify-relaunch.ps1
+PARSE windows-hide-desktop-gate.ps1
+QUOTING empty, plain, spaced/trailing backslash and embedded quote
+SCHEMA six complete groups
+SCHEMA missing bot-turns
+SCHEMA missing tools
+SCHEMA missing sentinel
+SCHEMA missing updates-isolated
+SCHEMA missing mcp
+SCHEMA missing browser
+SCHEMA duplicate name
+SCHEMA extra group
+SCHEMA unknown group
+SCHEMA isolated false
+SCHEMA isolated string
+SCHEMA fakeProvidersOnly false
+SCHEMA fakeProvidersOnly string
+SCHEMA failed nonzero
+SCHEMA skipped nonzero
+SCHEMA bad passed 0
+SCHEMA bad passed -1
+SCHEMA bad passed 0.5
+SCHEMA bad passed 1
+SCHEMA unsafe artifact ../escape.json
+SCHEMA unsafe artifact evidence/../../escape.json
+SCHEMA unsafe artifact C:\outside.json
+SCHEMA unsafe artifact \\server\share\x
+SCHEMA unsafe artifact /absolute.json
+SCHEMA unsafe artifact evidence/./x
+SCHEMA unsafe artifact evidence/x:stream
+SCHEMA unsafe artifact 
+SCHEMA no artifact
+SCHEMA duplicate artifact
+SCHEMA missing assertion count
+SCHEMA handoff complete
+SCHEMA handoff custom profile
+SCHEMA handoff owner account
+SCHEMA prerelease refused
+CSHARP owned-process, console-observer, visible-control, task-bridge: compiled only
+PASS Linux dry check: syntax, C# compilation and receipt schema only; no Windows workflow executed

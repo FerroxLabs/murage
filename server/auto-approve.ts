@@ -1,3 +1,7 @@
+import { noLimitsAppliesTo, type NoLimitsOrigin } from './no-limits-origin.ts';
+import { inheritedPermissions, permissionsForOrigin } from "./permission-inheritance.ts";
+import { noLimitsWipe } from "./no-limits-wipe.ts";
+import { highlevelEngineAsk } from "./highlevel/engine-policy.ts";
 // Auto mode: when a bot may answer its own permission requests.
 //
 // Two ways in — the bot is in auto mode, or the user pressed "Always
@@ -21,11 +25,12 @@ import { alwaysAskCommand, alwaysAskNote, alwaysAskRoutineCommand, type CarvedTa
 import { commandCwdFromToolInput, commandFromToolInput, exactCommandKey, isExactCommandKey, routineExactGrantCovers, type ExactCommand } from "../shared/exact-command.ts";
 import { approvalSummaryIsCut } from "../shared/approval-summary.ts";
 import { SENSITIVE_RULES } from "../shared/sensitive-paths.ts";
-import { gateHit, gateHitSpelled, ruleRowId } from "../shared/gate-files.ts";
+import { GATE_ROWS, gateHit, gateHitSpelled, ruleRowId } from "../shared/gate-files.ts";
 import { globKeyRead } from "../shared/sensitive-globs.ts";
 import { fileToolRead, splitCommand, isReadPassHold, keyRowId, keyValueShapeIn, PATH_RULES, readKindRules, TEXT_RULES, type CommandDataRead, type FileToolRead } from "./key-text.ts";
 import { powershellRunner } from "./shell/pwsh.ts";
 import { lex, Unreadable, type Part, type Word } from "./shell/lex.ts";
+import { noLimitsProtectedWrite, structuredProtectedWrite } from "./no-limits-protected.ts";
 import { braceCandidates } from "./shell/walk.ts";
 import { requiredFields } from "./drivers/contracts.ts";
 import { homedir } from "node:os";
@@ -407,6 +412,9 @@ export function wholeCommandOf(tool: string, input: unknown, turnCwd: string | u
 }
 
 export interface AutoApprover {
+  draftOnly?: boolean;
+  permissionExplicit?: boolean;
+  permissionRev?: number;
   /** Server-owned identity for value-free approval diagnostics. */
   id?: string;
   autoApprove?: boolean;
@@ -416,21 +424,23 @@ export interface AutoApprover {
   /** Full access also covers the owner's own messages from Telegram, Slack
    * and Discord. Off unless it is exactly `true`. */
   fullAccessChannelMessages?: boolean;
-  /** No limits, the level above Full access: no stop line. Counts only
-   * while Full access does. On a turn the owner started the key guard keeps only
-   * the gate files (`ownerNoLimits`); on every other turn it still asks. */
+  /** No limits, above Full access: only catastrophe/wipe permission cards.
+   * Origin eligibility is shared with the registered decision layer. */
   noLimits?: boolean;
   alwaysAllow?: string[];
 }
 
 /** Is this bot (or task) on Full access? */
 export function hasFullAccess(bot: AutoApprover | null | undefined): boolean {
-  return bot?.autoApprove === true && bot.fullAccess === true;
+  const effective = bot && inheritedPermissions(bot);
+  if (effective?.draftOnly) return false;
+  return effective?.autoApprove === true && effective.fullAccess === true;
 }
 
 /** Is this bot (or task) on No limits? Only on top of Full access. */
 export function hasNoLimits(bot: AutoApprover | null | undefined): boolean {
-  return hasFullAccess(bot) && bot?.noLimits === true;
+  const effective = bot && inheritedPermissions(bot);
+  return hasFullAccess(effective) && effective?.noLimits === true;
 }
 
 /** Who started the turn, as Full access reads it: the owner at the desktop
@@ -446,9 +456,10 @@ export type FullAccessOrigin = "owner" | "owner-channel" | "routine" | "other";
  * the level it is judged at is Full access or No limits: the caller has
  * already applied the routine's level to `bot`, so the flags ARE that level.
  * Everything else never. */
-export function fullAccessCovers(bot: AutoApprover | null | undefined, origin: FullAccessOrigin): boolean {
+export function fullAccessCovers(bot: AutoApprover | null | undefined, origin: FullAccessOrigin, noLimitsOrigin?: NoLimitsOrigin): boolean {
   if (!hasFullAccess(bot)) return false;
   if (origin === "owner" || origin === "routine") return true;
+  if (origin === "other" && bot?.permissionExplicit === true && (noLimitsOrigin === "guest" || noLimitsOrigin === "other-human")) return true;
   // 1.0.10 (NOLIMITS-CARDS r2): on unless the owner turned it off
   return origin === "owner-channel" && bot?.fullAccessChannelMessages !== false;
 }
@@ -517,7 +528,7 @@ export type AutoVerdictSource =
    * its non-interactive form. `rule` names the row, `note` its reason.
    * Ahead of every standing answer; Full access and No limits keep theirs. */
   | "prompt-guard"
-  /** NOLIMITS-MEANS-IT 1.0.20 (design r4 6.1): an owner No limits lane turn that read outside content (or whose state
+  /** Legacy lower-level policy (design r4 6.1): an owner No limits lane turn that read outside content (or whose state
    * the server did not state) asks before every shell text that is not a read-only shape and every acting tool.
    * `rule` is `outside-content`, `note` names the first source. Never waived; offers no grant. */
   | "outside-turn"
@@ -579,24 +590,26 @@ export function approvalHoldNote(verdict: AutoVerdict | null | undefined): strin
  * rule decided without the call site re-deriving (and eventually
  * mis-deriving) the match. */
 export interface AutoContext {
+  /** Server-proven origin, separate from the older Full access policy. */
+  noLimitsOrigin?: NoLimitsOrigin;
   /** Existing server turn-origin fact, never taken from engine input. */
   fullAccessOrigin?: FullAccessOrigin;
   /** NOLIMITS-MEANS-IT: this call belongs to the bound provider turn of a run the owner started directly. Read from the
    * server's own run record at each ask; absent means false. Never copied to a held item, a message or disk. */
   ownerStarted?: boolean;
-  /** NOLIMITS-MEANS-IT 1.0.20 (design r4 3.1, C2): the marks this turn carried BEFORE this call. `null` = a clean turn,
+  /** Legacy lower-level policy (design r4 3.1, C2): the marks this turn carried BEFORE this call. `null` = a clean turn,
    * filled by the server only when its outside store is wired and loaded (3.5). Absent counts as marked: no relief. */
   outsideRead?: readonly (OutsideMark | OutsideSource)[] | null;
-  /** NOLIMITS-MEANS-IT 1.0.20 (section 1, r3): the engine has no pre-run seam at No limits (OpenClaw). The lane does
+  /** Legacy lower-level policy (section 1, r3): the engine has no pre-run seam at No limits (OpenClaw). The lane does
    * not apply: exactly today's behaviour, clean or marked. */
   noPreRunSeamAtNoLimits?: boolean;
-  /** NOLIMITS-MEANS-IT 1.0.20 (6.3): no call of this engine session wrote since it was tainted. Only `true` lets a
+  /** Legacy lower-level policy (6.3): no call of this engine session wrote since it was tainted. Only `true` lets a
    * read-only shape (6.2) run on a marked lane turn; absent is false. */
   readOnlySoFar?: boolean;
-  /** NOLIMITS-MEANS-IT 1.0.20 (6.2): the hooks the read-only shape check runs with (cwd, `sessionEdits`, the registry
+  /** Legacy lower-level policy (6.2): the hooks the read-only shape check runs with (cwd, `sessionEdits`, the registry
    * check, the PATH lookup on the shared 64-syscall budget). Absent: no shell text is read-only on a marked turn. */
   readOnlyHooks?: ReadOnlyHooks;
-  /** NOLIMITS-MEANS-IT 1.0.20 (6.1.3): the engine's working folder. Absent: every engine file edit on a marked lane
+  /** Legacy lower-level policy (6.1.3): the engine's working folder. Absent: every engine file edit on a marked lane
    * turn asks. */
   workFolder?: string;
   /** the engine's whole command, uncapped, for the always-ask reader (the
@@ -861,6 +874,7 @@ const keyWhyOf = new WeakMap<AutoVerdict, KeyWhy>();
 const readerWhyOf = new WeakMap<AutoVerdict, string>();
 const ASK_LOG_MS = 60_000;
 const ALWAYS_ASK_LOG_RULES = new Set(["delete-root", "delete-home", "delete-system-folder", "disk-erase", "fork-bomb", "unknown-target", "protected-path"]);
+const GATE_LOG_ROWS = new Set(GATE_ROWS.map(row => row.id));
 
 const LOCAL_HOLD_WORDS = "the engine's own check held this as a key file";
 const REAL_PATH_WORDS = "a path this call names could not be followed to where it lands, so it is held as a key file";
@@ -903,8 +917,17 @@ function askReasonClass(verdict: AutoVerdict): string {
 }
 
 /** One ask line per bot/tool/class/minute; the next line reports suppressed repeats. */
-function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context?: AutoContext): void {
-  if (verdict.approve !== null) return;
+function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context?: AutoContext, prior?: AutoVerdict): void {
+  if (verdict.approve !== null) {
+    if (verdict.source !== "no-limits") return;
+    const botId = bot.id && /^[\w-]{1,128}$/.test(bot.id) ? bot.id : "unknown";
+    const toolName = /^[a-zA-Z][\w.:-]{0,127}$/.test(tool) ? tool : "unknown";
+    const reason = askReasonClass(prior ?? verdict);
+    const heldRow = prior?.rule?.startsWith("held=gate:") ? prior.rule.slice("held=gate:".length) : undefined;
+    const row = ruleRowId(prior?.rule) ?? keyRowId(prior?.rule) ?? (heldRow && GATE_LOG_ROWS.has(heldRow) ? heldRow : undefined);
+    console.info(`approvals: auto bot=${botId} tool=${toolName} reason=${reason}${row ? ` row=${row}` : ""} level=no-limits initiator=${noLimitsInitiator(bot, context)}`);
+    return;
+  }
   const botId = bot.id && /^[\w-]{1,128}$/.test(bot.id) ? bot.id : "unknown";
   const toolName = /^[a-zA-Z][\w.:-]{0,127}$/.test(tool) ? tool : "unknown";
   const reason = askReasonClass(verdict), held = askHeldClass(verdict), key = JSON.stringify([botId, toolName, reason, held]), now = Date.now();
@@ -916,7 +939,7 @@ function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context
   const origin = fullAccessOriginOf(context);
   const cmd = !isCommandTool(tool) && context?.exactCommand === undefined ? "none" : isPowerShellTool(tool) || context?.call?.commandShell === "pwsh" ? "pwsh" : "shell";
   const reader = verdict.reader ? ` reader=${verdict.reader}` : "";
-  // NOLIMITS-MEANS-IT 1.0.20 (design 11): every ask of a marked lane turn names its first source, a fixed mark name
+  // Legacy lower-level policy (design 11): every ask of a marked lane turn names its first source, a fixed mark name
   const outsideMark = markedLaneTurn(bot, context) ? (context?.outsideRead?.[0] ?? "unknown") : undefined;
   const outsideField = outsideMark !== undefined && /^[a-z ]{1,32}$/.test(outsideMark) ? ` outside=${outsideMark.replace(/ /g, "-")}` : "";
   // NOLIMITS-MEANS-IT and KEY-TEXT: fixed names only: whether the owner started this turn, a row's id and the class of read, never a path, a name or command text
@@ -924,13 +947,54 @@ function logAsked(bot: AutoApprover, tool: string, verdict: AutoVerdict, context
   const row = keyRow ?? (verdict.source === "sensitive-guard" ? ruleRowId(verdict.rule) : undefined);
   const why = keyWhyOf.get(verdict) ?? readerWhyOf.get(verdict);
   const keyFields = `${row ? ` row=${row}` : ""}${why ? ` why=${why}` : ""}`;
-  console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} origin=${origin} unattended=${context?.unattended ? 1 : 0} cmd=${cmd}${reader} level=${askLevel(bot)} owner=${context?.ownerStarted === true ? 1 : 0}${held ? ` held=${held}` : ""} suppressed=${previous?.suppressed ?? 0}${keyFields}${outsideField}`);
+  const initiatorField = hasNoLimits(bot) ? ` initiator=${noLimitsInitiator(bot, context)}` : "";
+  console.info(`approvals: asked bot=${botId} tool=${toolName} reason=${reason} origin=${origin} unattended=${context?.unattended ? 1 : 0} cmd=${cmd}${reader} level=${askLevel(bot)}${initiatorField} owner=${context?.ownerStarted === true ? 1 : 0}${held ? ` held=${held}` : ""} suppressed=${previous?.suppressed ?? 0}${keyFields}${outsideField}`);
+}
+
+/** Sean ruling 2026-11-12 02:05Z. All No limits calls take this path,
+ * including outside, unattended, cut and failed-reader calls. Other levels
+ * continue through the existing policy without any changed guards. */
+function noLimitsOnlyVerdict(tool: string, summary: string, context?: AutoContext): AutoVerdict {
+  if (context?.question || isQuestionTool(tool)) return {approve:null,source:"question-tool"};
+  const safe = <T>(read: () => T): T | undefined => { try { return read(); } catch { return undefined; } };
+  const command = safe(() => context?.commandText) ?? safe(() => context?.exactCommand?.command);
+  const call = safe(() => context?.call);
+  const executable=isCommandTool(tool)||call?.toolKind==='execute'||/^(?:use_tool|exec|execute_command|start_process|run)$/.test(bareToolName(tool));
+  const inner = executable?safe(() => commandArgument(call?.toolCall?.input)):undefined;
+  const shell = isPowerShellTool(tool) || call?.commandShell === "pwsh" ? "pwsh" : undefined;
+  const edit = /^(?:write|edit|multiedit|notebookedit|write_file|edit_file|apply_patch)$/i.test(tool) || call?.toolKind === "edit";
+  if (/^(?:delete|delete_file|remove_file)$/i.test(tool)) {
+    const input=safe(()=>call?.toolCall?.input) as Record<string,unknown>|undefined;
+    for(const path of [safe(()=>input?.path),safe(()=>input?.file_path),safe(()=>input?.filename)])if(typeof path==='string'){
+      const wipe=noLimitsWipe('rm -rf -- '+JSON.stringify(path),{cwd:safe(()=>context?.commandCwd)??safe(()=>context?.workFolder),project:safe(()=>context?.workFolder),home:safe(()=>context?.promptFacts?.home)});
+      if(wipe)return {approve:null,source:'always-ask',rule:wipe.rule,reason:wipe.rule,note:alwaysAskNote(wipe)};
+    }
+  }
+  const input=safe(()=>call?.toolCall?.input) as Record<string,unknown>|string|undefined;
+  const codeLang=/^(?:python|python3|execute_code)$/i.test(tool)?'py':/^(?:node|nodejs|javascript|js)$/i.test(tool)?'js':undefined;
+  const code=codeLang?safe(()=>typeof input==='string'?input:typeof input?.code==='string'?input.code:undefined):undefined;
+  const texts = new Set([command, inner, code, ...(!edit && executable && command===undefined && inner===undefined && code===undefined ? [summary] : [])]);
+  for (const text of texts) if (text !== undefined) {
+    const wipe = noLimitsWipe(text, { cwd: safe(() => context?.commandCwd) ?? safe(() => context?.workFolder), project: safe(() => context?.workFolder),
+      home: safe(() => context?.promptFacts?.home), shell, ...(codeLang?{lang:codeLang}:{}), unseen: safe(() => ({...context?.unseen, bashResolve:context?.unseen?.bashResolve??context?.handedShellPath, sessionEdits:context?.readOnlyHooks?.sessionEdits??context?.unseen?.sessionEdits, sessionFile:context?.sessionFile??context?.unseen?.sessionFile})), unread: safe(() => context?.inputTruncated) === true || safe(() => call?.truncated) === true });
+    if (wipe) return { approve: null, source: "always-ask", rule: wipe.rule, reason: wipe.rule, note: alwaysAskNote(wipe) };
+  }
+  return { approve: `auto-approved ${tool} (no limits)`, source: "no-limits" };
 }
 
 export function autoVerdict(bot: AutoApprover, tool: string, summary: string, context?: AutoContext): AutoVerdict {
   let verdict: AutoVerdict;
+  let prior: AutoVerdict | undefined;
+  let unlimited=false;
+  try{
+    const origin = context?.noLimitsOrigin ?? (context?.fullAccessOrigin === "owner-channel" && context.channelOwner ? "owner-channel" : noLimitsInitiator(bot, context));
+    unlimited = noLimitsAppliesTo(origin, bot);
+    if (hasNoLimits(bot) && !unlimited) bot = permissionsForOrigin(bot, false);
+  }catch{ /* Unread origin facts retain the existing BASE failure path. */ }
   try {
-    verdict = autoVerdictOf(bot, tool, summary, context);
+    prior = unlimited ? noLimitsOnlyVerdict(tool, summary, context) : autoVerdictOf(bot, tool, summary, context);
+    verdict = prior;
+    if (hasNoLimits(bot)) noLimitsFactsOf.set(verdict, {initiator:noLimitsInitiator(bot,context),n2:verdict.approve===null});
   } catch (error) {
     // 1.0.9 (Sean's log, 10-28): a reader that throws must never drop the
     // request. Thrown out of the approval listener, it raised no card and
@@ -938,12 +1002,12 @@ export function autoVerdict(bot: AutoApprover, tool: string, summary: string, co
     // fault here asks, at every level, as an unreadable command does.
     // the ask is set first; the log line is best-effort and never undoes it.
     // The error's own message may carry the command's text: only its kind and where it was thrown
-    verdict = { approve: null, source: "always-ask", rule: "unreadable", note: alwaysAskNote(unreadableHit()) };
+    verdict = unlimited ? noLimitsOnlyVerdict(tool, summary) : { approve: null, source: "always-ask", rule: "unreadable", note: alwaysAskNote(unreadableHit()) };
     try {
       console.error(`auto-approve: verdict failed (${error instanceof Error ? error.name : typeof error}), asking${error instanceof Error && error.stack ? `\n${error.stack.split("\n").slice(1, 6).join("\n")}` : ""}`);
     } catch { /* the ask stands */ }
   }
-  try { logAsked(bot, tool, verdict, context); } catch { /* the verdict stands */ }
+  try { logAsked(bot, tool, verdict, context, prior); } catch { /* the verdict stands */ }
   return verdict;
 }
 
@@ -957,6 +1021,12 @@ function autoVerdictOf(
   // blocks: no mode, grant or turn origin lets the machine answer it. It
   // names no rule — no grant was consulted, and none could apply.
   if (context?.question || isQuestionTool(tool)) return { approve: null, source: "question-tool" };
+  // HL-WRITES-1019 C3: all family tools mix reads and changes. Release only
+  // a proved own mount to its host before input values reach generic guards.
+  const highlevel = highlevelEngineAsk(context?.call, "unmarked");
+  if (highlevel?.kind === "own") {
+    return { approve: "HighLevel call released to Murage's handler", source: "own-unasked", rule: `own:highlevel/${highlevel.tool}` };
+  }
   // Next, and ahead of every mode, grant and allowance: the short list of
   // commands that wipe the computer always asks the owner. No limits lifts the
   // stop line, not this. It reads the engine's own command, whole, when there
@@ -1056,8 +1126,25 @@ function autoVerdictOf(
     // Each executable component must qualify on its own before any aggregation.
     const normalize = (finding: AlwaysAskHit | null): AlwaysAskHit | null => {
       if (!finding) return null;
-      const denied = finding.unseenScript ? ownerMarks(() => protectedScriptHit(finding.unseenPaths ?? [])) : null;
-      if (denied) return denied;
+      // No limits distinguishes a protected write from legacy path mentions and script reads.
+      if (finding.rule === "protected-path") {
+        const write = noLimitsProtectedWrite(text ?? summary, context, shell) ?? (innerText !== undefined ? noLimitsProtectedWrite(innerText, context, shell) : null);
+        const command = [text ?? summary, innerText ?? ""].join("\n");
+        // Archive mode/operand roles are decided by the write reader above.
+        const namedWriter = /(?:wipe|nuke|cleanse|zap)|^(?:zip|time|touch|tee|truncate|mv|chmod|chown|install)$/.test(finding.program ?? "");
+        return write ?? (namedWriter || /\btime\s+-o\s|\bCopy-Item\s/i.test(command) || plainWipe(command) ? finding : null);
+      }
+      // Sensitive tooling and read mentions keep no reader card on owner No limits work.
+      const componentText = [text ?? summary, innerText ?? ""].join("\n");
+      if (finding.rule === "unreadable" && finding.classification !== "deny" && !finding.mandatory && !finding.namedCatastrophe
+        && matchFirst(PATH_RULES, componentText) && !plainWipe(componentText)
+        && !noLimitsProtectedWrite(text ?? summary, context, shell, true)
+        && (innerText === undefined || !noLimitsProtectedWrite(innerText, context, shell, true))) return null;
+      // An opaque native call without a protected write keeps the owner run outcome.
+      if (finding.rule === "unreadable" && finding.readerFailed && finding.classification !== "deny" && !finding.mandatory && !finding.namedCatastrophe
+        && /\b(?:ctypes|cffi|ffi-napi|fiddle|dlopen)\b/i.test(componentText) && !plainWipe(componentText)
+        && !noLimitsProtectedWrite(text ?? summary, context, shell, true)
+        && (innerText === undefined || !noLimitsProtectedWrite(innerText, context, shell, true))) return null;
       if (finding.classification === "deny" || finding.mandatory) return finding;
       if (finding.unseenScript && context?.scope === "local-computer") return { ...unreadableHit(), unseenWhy: "relayed" };
       const owner = finding.unseenScript && hasNoLimits(bot)
@@ -1065,11 +1152,13 @@ function autoVerdictOf(
       if (typeof owner === "object") return owner;
       const covered = finding.unseenScript === true
         && (marksHitWaivable(finding) || !hasNoLimits(bot) || owner === true)
-        && fullAccessCovers(bot, fullAccessOriginOf(context));
+        && fullAccessCovers(bot, fullAccessOriginOf(context), context?.noLimitsOrigin);
       return covered ? null : finding;
     };
     const findings = [normalize(outer), normalize(innerHit)].filter((hit): hit is AlwaysAskHit => hit !== null);
-    catastrophe = findings.find(hit => hit.classification === "deny") ?? findings.find(hit => hit.mandatory) ?? findings[0] ?? null;
+    catastrophe = structuredProtectedWrite(text ?? summary, context, shell)
+      ?? (innerText !== undefined ? structuredProtectedWrite(innerText, context, shell) : null)
+      ?? findings.find(hit => hit.classification === "deny") ?? findings.find(hit => hit.mandatory) ?? findings[0] ?? null;
     waived = catastrophe !== null && catastrophe.classification !== "deny" && !catastrophe.mandatory
       && !windowsShellCall(shell, [text ?? summary, innerText])
       && couldNotReadWaived(bot, context, [catastrophe, outer, innerHit], [text ?? summary, ...(innerText !== undefined ? [innerText] : [])]);
@@ -1110,7 +1199,7 @@ function autoVerdictOf(
     if (typeof ownerUnseen === "object") catastrophe = ownerUnseen;
     const unseenCovered = catastrophe?.unseenScript === true
       && (marksHitWaivable(catastrophe) || !hasNoLimits(bot) || ownerUnseen === true)
-      && fullAccessCovers(bot, fullAccessOriginOf(context));
+      && fullAccessCovers(bot, fullAccessOriginOf(context), context?.noLimitsOrigin);
     // 1.0.13 (NOLIMITS-MEANS-IT, design section 14): a text the reader could not follow holds at every level, owner
     // No limits included. Hits it holds on carry `readerFailed`.
     // HOOK (NOLIMITS-WIPE-WORD, design R3 and R11): any waiver of such a hit is one check on that mark, here and only here,
@@ -1122,17 +1211,24 @@ function autoVerdictOf(
     if (waived) logWaived(bot, tool, catastrophe!);
     if (catastrophe && !unseenCovered && !waived) {
       const reader = catastrophe.rule === "unreadable" ? "held" : undefined;
-      const held: AutoVerdict = { approve: null, source: "always-ask", rule: catastrophe.rule, note: alwaysAskNote(catastrophe), ...(reader ? { reader } : {}) };
+      const held: AutoVerdict = { approve: null, source: "always-ask", rule: catastrophe.rule,
+        reason: catastrophe.reason ?? catastrophe.doubt ?? catastrophe.rule,
+        note: alwaysAskNote(catastrophe), ...(reader ? { reader } : {}) };
       // APPROVALS-SIMPLE-1018 5 (NOLIMITS-UNREADABLE R6): the asked line says which reader shape still cards, no text
       if (reader) readerWhyOf.set(held, catastrophe.doubt ?? catastrophe.unseenWhy ?? (catastrophe.unseenScript ? "unseen-script" : catastrophe.readerFailed ? "reader-failed" : "named"));
       return held;
     }
   }
-  // NOLIMITS-MEANS-IT 1.0.20 (design r4 6.1): a marked lane turn asks here, after the always-ask read and ahead of every
+  // Legacy lower-level policy (design r4 6.1): a marked lane turn asks here, after the always-ask read and ahead of every
   // mode, grant, own-tool and own-folder answer. A Windows shell call keeps this card too (ruling 3: only 2.1 and 2.3
   // are withheld there; design 7.5).
   const outside = outsideTurnCard(bot, tool, context, resolvedCall, shell, commandTool, [text ?? summary, innerText]);
-  if (outside) return outside;
+  // Gate-file reads/mentions on proven owner work are not outside-content holds.
+  const gateRead = outside && hasNoLimits(bot) && ["owner", "routine", "owner-channel"].includes(noLimitsInitiator(bot, context))
+    && gateHit([text ?? summary, innerText ?? ""]) !== null
+    && !noLimitsProtectedWrite(text ?? summary, context, shell, true)
+    && (innerText === undefined || !noLimitsProtectedWrite(innerText, context, shell, true));
+  if (outside && !gateRead) return outside;
   // a carved command is guarded on its whole text too, so a key or a
   // destructive step past the card's cut summary still holds
   const passed = verdictPastAlwaysAsk(bot, tool, summary, context, windowsBash?.length ? [text ?? summary, ...windowsBash].join("\n") : valueTarget !== undefined ? text : undefined, windowsBash);
@@ -1169,7 +1265,7 @@ const OWN_ALWAYS_ASK_CARDS: ReadonlySet<AutoVerdictSource> = new Set<AutoVerdict
  * tool. A card it raises offers no grant (source always-ask); a guard keeps its
  * name. Full access keeps its contract and its grants. */
 function verdictPastAlwaysAsk(bot: AutoApprover, tool: string, summary: string, context: AutoContext | undefined, wholeText?: string, windowsBash?: readonly string[]): AutoVerdict {
-  const own = fullAccessCovers(bot, fullAccessOriginOf(context)) ? undefined : ownAlwaysAskOf(tool, resolveCall(context?.call), context?.call);
+  const own = fullAccessCovers(bot, fullAccessOriginOf(context), context?.noLimitsOrigin) ? undefined : ownAlwaysAskOf(tool, resolveCall(context?.call), context?.call);
   if (!own) return verdictWithGrants(bot, tool, summary, context, wholeText, windowsBash);
   const ungranted: AutoApprover = { ...bot, alwaysAllow: undefined };
   const stripped: AutoContext | undefined = context && { ...context, taskAllowanceKeys: undefined, stopAllowedForTask: undefined, routineAllow: undefined };
@@ -1201,16 +1297,16 @@ export function ownerNoLimits(bot: AutoApprover, context: AutoContext | undefine
     && !context.unattended && !context.automated && !context.routineLevel;
 }
 
-/** NOLIMITS-MEANS-IT 1.0.20 (section 1, r3): the lane predicate. Relief (2) and the marked-turn rule (6) use it. */
+/** Legacy lower-level policy (section 1, r3): the lane predicate. Relief (2) and the marked-turn rule (6) use it. */
 export function laneApplies(bot: AutoApprover, context: AutoContext | undefined): boolean {
   return ownerNoLimits(bot, context) && context?.noPreRunSeamAtNoLimits !== true;
 }
 
-/** NOLIMITS-MEANS-IT 1.0.20, MurageMain ruling 3 (11-06): on Windows, PowerShell and cmd commands keep TODAY's behaviour
+/** Legacy lower-level policy, MurageMain ruling 3 (11-06): on Windows, PowerShell and cmd commands keep TODAY's behaviour
  *  at No limits (fail closed, the same no-regression exception as OpenClaw): neither the could-not-read waiver (2.1) nor
  *  the gate-file relief (2.3) applies. A call is a Windows shell call when its dialect is PowerShell (a PowerShell tool,
  *  or a driver that runs commands under it), or when any of its texts names cmd or PowerShell as a word anywhere. Words
- *  only over-match, which keeps today's card. A real Windows-path registry is follow-up F4 (1.0.21). */
+ *  only over-match in this legacy BASE reader. Admitted No limits calls use the wipe-only path above. */
 const WINDOWS_SHELL_WORD = /(?:^|[\s;&|(){}\\/=])(?:cmd|powershell|pwsh)(?:\.exe)?(?=$|[\s;&|(){}\\/])/i;
 export function windowsShellCall(dialect: string | undefined, texts: ReadonlyArray<string | undefined>): boolean {
   return dialect !== undefined || texts.some((text) => text !== undefined && WINDOWS_SHELL_WORD.test(text));
@@ -1263,12 +1359,13 @@ function editInsideWorkFolder(context: AutoContext, input: unknown): boolean {
 }
 
 type OutsideShell = "pwsh" | undefined;
-/** NOLIMITS-MEANS-IT 1.0.20 (design r4 6.1 items 1-3): on a marked lane turn, every shell text cards unless it is a
+/** Legacy lower-level policy (design r4 6.1 items 1-3): on a marked lane turn, every shell text cards unless it is a
  *  read-only shape and the session has written nothing since it was tainted; every tool other than the local and
  *  outside readers and an in-folder engine edit cards. Items 4 (the whole key guard, the base could-not-read card)
  *  hold because 2.1 and 2.3 apply only on a clean turn. OWN_WRITERS card here too until their handler holds (6.1.5)
  *  exist: more cards, never fewer. Returns null when the call may go on to the usual verdict. */
 function outsideTurnCard(bot: AutoApprover, tool: string, context: AutoContext | undefined, resolved: ResolvedCall, shell: OutsideShell, commandTool: boolean, texts: ReadonlyArray<string | undefined>): AutoVerdict | null {
+  if (hasNoLimits(bot)) return null; // Sean 2026-11-12 02:05Z: wipe-only.
   if (!markedLaneTurn(bot, context)) return null;
   const card: AutoVerdict = { approve: null, source: "outside-turn", rule: "outside-content", note: outsideTurnNote(context?.outsideRead?.[0]) };
   const inner = commandArgument(resolved.kind === "engine" || resolved.kind === "mcp" ? resolved.input : context?.call?.toolCall?.input);
@@ -1436,7 +1533,7 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
     // was read whole (the cut part is the file's content), and Murage's own connected-apps workbench (its code runs in
     // the Flux sandbox, never here). The key guard below still reads every part it has. No grant is ever made from a
     // cut call (approvalKey, actionGrantRead). Every other cut call, any command, and `scan.cut` keep the hold.
-    : context?.call?.truncated && !(fullAccessCovers(bot, origin) && cutCallReadable(tool, context, resolved)) ? "the call was cut before it could be checked"
+    : context?.call?.truncated && !(fullAccessCovers(bot, origin, context?.noLimitsOrigin) && cutCallReadable(tool, context, resolved)) ? "the call was cut before it could be checked"
     : scan.cut ? "the call's arguments run past what the key guard reads"
     : resolved.kind === "unproven" ? `the tool this runs cannot be proven: ${resolved.why}`
     : grantRead?.unread ? `Murage could not read every action in this call: ${grantRead.unread}`
@@ -1446,7 +1543,7 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   // NOLIMITS-KEY-TEXT (design section 14): on a turn Full access or No limits covers, a known file tool's fields are read
   // by role (B1) and a modeled bash line's echo and printf operands leave the path rows (D3). Never at Ask or Auto, never for a
   // PowerShell text (3.6), an MCP or unproven tool: those keep the whole read.
-  const covered = fullAccessCovers(bot, origin) && context?.fullAccessOrigin !== "other";
+  const covered = fullAccessCovers(bot, origin, context?.noLimitsOrigin) && (context?.fullAccessOrigin !== "other" || bot.permissionExplicit === true && (context.noLimitsOrigin === "guest" || context.noLimitsOrigin === "other-human"));
   const fields: FileToolRead | undefined = covered ? fileToolRead(tool, context?.call, resolved, summary) : undefined;
   const commandData: CommandDataRead | "plain" | "unmodeled" | "summary" | undefined = covered && pinShell !== "pwsh" && !windowsBash?.length ? coveredCommandRead(tool, summary, resolved, [context?.exactCommand?.command, innerCommand, wholeText, context?.commandText]) : undefined;
   const dataRead = typeof commandData === "object" ? commandData : undefined;
@@ -1511,7 +1608,7 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   // No limits lifts the stop line for exactly the turns Full access covers;
   // a webhook, routine or someone else's turn is judged as before (1.0.10 A5
   // was cut: routine runs keep the 1.0.9 stop line).
-  const stop = origin !== "routine" && hasNoLimits(bot) && fullAccessCovers(bot, origin) ? null : context?.stopLine ?? null;
+  const stop = origin !== "routine" && hasNoLimits(bot) && fullAccessCovers(bot, origin, context?.noLimitsOrigin) ? null : context?.stopLine ?? null;
   const routineGrants = context?.routineLevel === true && !context.unattended && context.scope !== "local-computer"
     ? context.routineAllow ?? []
     : [];
@@ -1524,7 +1621,7 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   // It reads the command the engine reported and the shell line the call's
   // arguments carry; the card text only for a command tool that reported
   // neither, since a card title is not shell text.
-  const prompt = fullAccessCovers(bot, origin) || promptText === undefined ? null : promptVerdict(promptText, context?.promptFacts);
+  const prompt = fullAccessCovers(bot, origin, context?.noLimitsOrigin) || promptText === undefined ? null : promptVerdict(promptText, context?.promptFacts);
   const promptHeld: AutoVerdict | null = prompt ? { approve: null, source: "prompt-guard", rule: prompt.rule, note: prompt.note } : null;
   // AMEND-13 Rule 79b: a connector batch of two or more rows is judged row by
   // row. Every finding must be covered by a cover that applies to it, and a
@@ -1574,24 +1671,27 @@ function verdictWithGrants(bot: AutoApprover, tool: string, summary: string, con
   // stop line above and the key guard: a bot reading your keys is quiet,
   // permanent and unrecoverable. No limits on a turn the owner started is the
   // one exception, below: he read and accepted that in the warning.
-  if (fullAccessCovers(bot, origin)) {
+  if (fullAccessCovers(bot, origin, context?.noLimitsOrigin)) {
     // FULL-DENY-1018: a protected file spelled with `./`, `//`, empty or `x/../` segments is the same file at every level
     const keyGuard = sensitive ?? (destructive ? keyHit() : null) ?? gateHitSpelled([keyText, rawDequotedText(keyText, pinShell === "pwsh").text, ...(dequoted ? [dequoted.text] : [])]);
     // No limits on a turn the owner started keeps only the gate files of the key guard: a call naming one still asks,
     // and everything else the guard holds runs and is recorded by its fixed name. The gate runs with no key hit too,
     // since the rows read path spellings the key rows do not (`~/.kube/./config`). Every other turn keeps the whole guard.
-    if (ownerNoLimits(bot, context)) {
-      const gate = gateHit([keyText, rawDequotedText(keyText, pinShell === "pwsh").text, ...(dequoted ? [dequoted.text] : [])]);
-      // NOLIMITS-MEANS-IT 1.0.20 (2.3): on a clean lane turn a gate file runs and is recorded by its row; a marked turn
-      // keeps today's card here (the whole key guard on a marked turn is the 6.1 slice); a Windows shell call keeps it too.
-      // NL-SELFGUARD-RULING-1018: Murage's own hook programs (`murage-engine-hooks`) keep the card on a clean turn as well:
-      // an honest bot never writes them, and a write is the one route by which a clean turn changes the guard for another
-      // bot's live turn. The relief is the owner's own turn only (MARKS r13 H2), never a channel.
-      const cleanGate = gate !== null && ruleRowId(gate) !== "murage-engine-hooks" && ownerOwnTurn(bot, context) && cleanLaneTurn(bot, context) && !windowsShellCall(pinShell, [keyText, promptText]);
-      if (gate && !cleanGate) return { approve: null, source: "sensitive-guard", rule: gate };
-      // a call that did not arrive whole keeps its card, whatever the reason (design R3); a cut the card made is no such call
+    if (hasNoLimits(bot) && ["owner", "routine", "owner-channel"].includes(noLimitsInitiator(bot, context))) {
+      const gateTexts = [keyText, rawDequotedText(keyText, pinShell === "pwsh").text, ...(dequoted ? [dequoted.text] : [])];
+      const gate = gateHit(gateTexts);
+      // S1-B3: only write targets retain the protected-path hold. A read, a mention,
+      // or running tooling does not become a write because its text names a gate file.
+      const executable = [context?.commandText, ...commandParts].filter((part): part is string => part !== undefined);
+      if (!executable.length && isCommandTool(tool)) executable.push(summary);
+      const write = executable.map(command => noLimitsProtectedWrite(command, context, pinShell, true)).find(hit => hit?.program !== undefined);
+      const fileWrite = fields?.read === false || /^(?:Write|Edit|MultiEdit|NotebookEdit|write|edit)$/.test(tool);
+      const filePaths = [...(fields?.paths ?? []), ...(context?.realPaths ?? []), ...(fields ? [] : [scan.text, summary])];
+      const fileGate = fileWrite ? gateHit(filePaths) ?? matchFirst(PATH_RULES, filePaths.join("\n")) ?? localHold : null;
+      if (write || fileGate) return { approve: null, source: "sensitive-guard", rule: fileGate ?? write?.program ?? "protected-path", classification: "deny", reason: "protected-path" };
+      // Completeness handling is retained here; it is independent of path matching.
       if (context?.inputTruncated === true || context?.call?.inputMissing !== undefined) return { approve: null, source: "unread-call", rule: unread ?? "the call was cut before it could be checked" };
-      if (cleanGate) return { approve: `auto-approved ${tool} (no limits)`, source: "no-limits", rule: `held=gate:${ruleRowId(gate!) ?? "row"}` };
+      if (gate && cleanLaneTurn(bot, context)) return { approve: `auto-approved ${tool} (no limits)`, source: "no-limits", rule: `held=gate:${ruleRowId(gate) ?? "row"}` };
       const held = keyGuard ? askHeldClass({ approve: null, source: sensitiveSource, rule: keyGuard }) : undefined;
       return { approve: `auto-approved ${tool} (no limits)`, source: "no-limits", ...(held ? { rule: `held=${held}` } : {}) };
     }
@@ -1756,4 +1856,52 @@ export function autoDecision(
   context?: AutoContext,
 ): string | null {
   return autoVerdict(bot, tool, summary, context).approve;
+}
+
+export const NO_LIMITS_SOURCE: Readonly<Record<AutoVerdictSource, "run" | "keep">> = {
+  "always-ask": "run", "narrow": "run", "always-allow": "run", "exact-command": "run", "auto-mode": "run", "full-access": "run",
+  "no-limits": "run", "own-workspace": "run", "own-files": "run", "own-tool-results": "run", "project-work-roots": "run",
+  "own-unasked": "run", "stop-line": "run", "task-allowance": "run", "routine-allow": "run", "unattended-block": "run",
+  "local-computer-block": "run", "destructive-guard": "run", "sensitive-guard": "run", "unread-call": "run", "prompt-guard": "run",
+  "outside-turn": "run", "question-tool": "keep", "no-grant": "run",
+};
+
+export type NoLimitsInitiator = FullAccessOrigin | "unproven";
+/** Legacy origin metadata only; registered decision provenance owns permission. */
+export function noLimitsInitiator(bot: AutoApprover | null | undefined, context: AutoContext | undefined): NoLimitsInitiator {
+  const stored = context?.fullAccessOrigin;
+  if (stored === undefined) {
+    // missing: no stored origin; only a live routine level stands in for it, and only while nothing contradicts it
+    return context?.routineLevel === true && context.unattended !== true && context.channelOwner !== true && fullAccessCovers(bot, "routine") ? "routine" : "unproven";
+  }
+  if (stored === "other") return "other";
+  if (stored === "owner") {
+    if (context!.unattended === true || context!.automated === true || context!.channelOwner === true) return "unproven";
+  } else if (stored === "routine") {
+    if (context!.routineLevel !== true || context!.channelOwner === true) return "unproven";
+  } else if (stored === "owner-channel") {
+    if (context!.channelOwner !== true) return "unproven";
+  } else return "unproven";
+  return fullAccessCovers(bot, stored) ? stored : "other";
+}
+
+/** Compatibility for pre-integration consumers. Permission authority belongs to
+ * decision/index.ts; the BASE policy never re-decides a registered request. */
+export function finalizeNoLimits(bot: AutoApprover, tool: string, summary: string, context: AutoContext | undefined, verdict: AutoVerdict, _prior: readonly import("../shared/no-limits-decision.ts").ReaderVerdict[] = []): AutoVerdict {
+  try{
+    if (!hasNoLimits(bot)) return verdict;
+    if (!noLimitsAppliesTo(context?.noLimitsOrigin ?? (context?.fullAccessOrigin === "owner-channel" && context.channelOwner ? "owner-channel" : noLimitsInitiator(bot, context)), bot)) return verdict;
+  }catch{return verdict;}
+  const result = noLimitsOnlyVerdict(tool, summary, context);
+  if (verdict.source === "question-tool") return verdict;
+  if (result.approve !== null && verdict.approve !== null) return verdict;
+  noLimitsFactsOf.set(result, { initiator: noLimitsInitiator(bot, context), n2: result.approve === null });
+  if(result.approve!==null)try{logAsked(bot,tool,result,context,verdict);}catch{ /* logging cannot hold a call */ }
+  return result;
+}
+/** Current verdict metadata only; entries disappear with their verdict. */
+const noLimitsFactsOf = new WeakMap<AutoVerdict, { initiator: NoLimitsInitiator; n2: boolean }>();
+export function noLimitsFacts(verdict: Pick<AutoVerdict, never> | null | undefined): { initiator: NoLimitsInitiator; n2: boolean } | undefined {
+  const facts = verdict ? noLimitsFactsOf.get(verdict as AutoVerdict) : undefined;
+  return facts ? { ...facts } : undefined;
 }

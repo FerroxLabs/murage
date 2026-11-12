@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
 import { fixtureRuns, toFiles, WANT } from "./fuigo-bump-fixture.mjs";
+import { FUIGO_ASSETS } from "./prepare-fuigo.mjs";
 import { checkRealTurns, commitFiles, hunksOf, callExpressions, machineHeader, mergeCheck, movePin, parseArgs, parseHashNote, parseReviewed, protocolChanges, readRealTurns, REAL_TURN_OSES, REAL_TURN_STEPS, WINDOWS_STEPS } from "./fuigo-bump.mjs";
 
 const dirs = [];
@@ -62,6 +63,29 @@ describe("fuigo-bump", () => {
     expect(moved).toContain(hex("d"));
     expect(moved).not.toContain("1.0.32");
     expect(() => movePin(source, "1.0.37", next, { "win32-x64": { tarballSha256: hex("c"), binarySha256: hex("d") } })).toThrow(/no pin block/);
+  });
+
+  it("can move the real preparation script's pin and source marker at the next bump", () => {
+    let source = readFileSync(new URL("./prepare-fuigo.mjs", import.meta.url), "utf8");
+    const nextSource = "f".repeat(40);
+    const assets = Object.fromEntries(Object.entries(FUIGO_ASSETS).map(([target, pin]) => [target, { ...pin,
+      tarballSha256: "a".repeat(64), binarySha256: "b".repeat(64),
+    }]));
+    if (source.includes("report gitHead FILL\x2dAT-NPM")) {
+      // The normal bump gate refuses an unpublished pin. Simulate the fill
+      // before proving that the next ordinary bump still finds every block.
+      expect(() => movePin(source, "9.9.9", nextSource, assets)).toThrow(/gitHead comment/);
+      source = source.replace("report gitHead FILL\x2dAT-NPM", `report gitHead ${"c".repeat(40)}`)
+        .replace(/(tarballSha256: ")FILL\x2dAT-NPM/g, `$1${"a".repeat(64)}`)
+        .replace(/(binarySha256: ")FILL\x2dAT-NPM/g, `$1${"b".repeat(64)}`);
+    }
+    const moved = movePin(source, "9.9.9", nextSource, assets);
+    expect(moved).toContain('export const FUIGO_VERSION = "9.9.9"');
+    expect(moved).toContain(`report gitHead ${nextSource}`);
+    for (const pin of Object.values(assets)) {
+      expect(moved).toContain(pin.tarballSha256);
+      expect(moved).toContain(pin.binarySha256);
+    }
   });
 
   it("names each machine header", () => {

@@ -53,6 +53,17 @@ export function defaultSetupBackupSources(): SetupBackupSources {
   return { dataDir: DATA_DIR, controlDirectory: control && control.length < 4096 ? control : undefined, setupFile: SETUP_FILE };
 }
 
+export { CLOUD_DATA_OPS_LOCK, cloudDataOpsBusy, holdCloudDataOpsLock, type DataOpsHold } from "./cloud-data-ops-lock.ts";
+import { cloudDataOpsBusy } from "./cloud-data-ops-lock.ts";
+
+/** r3.4d J4 H3 + J4b: true while a backup is under way, for the restore arm gate. Desktop: the backup host committed state in its control folder (MURAGE_BACKUP_CONTROL_DIR). Cloud home (MURAGE_CLOUD_ROLE=home): the shared data-ops lock, which the nightly backup, a reset, an undo or an export hold. Neither (a harness off both) means no backup host, never busy. */
+export function backupBusyForRestore(controlDirectory: string | undefined = defaultSetupBackupSources().controlDirectory, cloud: { home: boolean; busy: () => boolean } = { home: process.env.MURAGE_CLOUD_ROLE === "home", busy: () => cloudDataOpsBusy() }): boolean {
+  let busy = false;
+  if (controlDirectory) { try { busy = new BackupCoordinator({ stateDirectory: controlDirectory }).busy(); } catch { busy = true; } }
+  if (!busy && cloud.home) { try { busy = cloud.busy(); } catch { busy = true; } }
+  return busy;
+}
+
 /** A request, never a claim. `{}` asks for the derivation to run now.
  * `{choice:"off"}` is the person's own request to keep backups off, for a
  * desktop whose backup host could not start: it can only end an owed step as

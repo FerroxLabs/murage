@@ -1,10 +1,11 @@
+import { routeBrowserRead } from "./browser-read-route.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Trusted semantic executor. Model parameters are data, never JavaScript/CDP.
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { inspectClosedRoots } from "./browser-extension-dom-inspection.ts";
 import { BROWSER_DOCUMENT_GUARD_SOURCE } from "./browser-document-guard.ts";
 import { isClipboardInput, isClipboardKeyName } from "../shared/browser-clipboard.ts";
-import { COMPOSED_ACTIVE_SOURCE, COMPOSED_HIT_TEST_SOURCE, DESCRIBE_TARGET_SOURCE, HTML_LENGTH_EXPRESSION, htmlSliceExpression, presentedLinkExpression } from "./browser-extension-page-scripts.ts";
+import { COMPOSED_ACTIVE_SOURCE, COMPOSED_HIT_TEST_SOURCE, DESCRIBE_TARGET_SOURCE, HTML_LENGTH_EXPRESSION, HTML_RELEASE_EXPRESSION, htmlSliceExpression, presentedLinkExpression } from "./browser-extension-page-scripts.ts";
 import { collectFloorFacts, type FloorFactsExtra, type FloorFactsIo, type FloorTarget } from "./browser-floor-facts.ts";
 import { classifyFloor, type FloorFacts, type FloorResult } from "./browser-floor.ts";
 import { ACCOUNT_OWNER_PHRASE, FLOOR_OWNER_PHRASE } from "../shared/browser-floor-signatures.ts";
@@ -15,12 +16,39 @@ import { BrowserExtensionPolicyError } from "./browser-extension-policy.ts";
 import { redactSecretUrl } from "../shared/browser-secret-classifier.ts";
 
 import { extensionEngineTools, type BrowserExtensionEngineBackend, type EngineObject } from "./browser-extension-engine.ts";
-import { readWithBrowserAuthority, type EngineReadOptions } from "./browser-extension-engine-read.ts";
+import { WebDocuments } from "./web-documents.ts";
+import { type EngineReadOptions } from "./browser-extension-engine-read.ts";
 type Json = Record<string, unknown>;
 export type ExtensionDocument = { profileId: string; tabId: number; frameId: string; navigationEpoch: number; origin: string; url: string };
 export interface ExtensionCdpTransport {
   document(tabId?: number): Promise<ExtensionDocument>;
   send(method: string, params: Json, document: ExtensionDocument): Promise<any>;
+  /** BRLOCK19: every frame of the tab (chrome.webNavigation.getAllFrames, answered by the extension as `{ frames }`). The page
+   * lock cannot see a cross-site iframe through Page.getFrameTree, so this is how the extension route finds one. */
+  frames?(document: ExtensionDocument): Promise<unknown>;
+}
+/** BRLOCK19: do the tab's frames hold one from another origin than the page, or can they not be read? Either locks the page.
+ * `about:blank` and `about:srcdoc` frames take their parent's origin and are not a reason; a frame whose origin cannot be
+ * worked out is unknown, and unknown is a lock. */
+export function frameLockVerdict(reply: unknown, pageUrl: string): "clear" | "locked" | "unsure" {
+  const frames = (reply as { frames?: unknown } | null | undefined)?.frames;
+  if (!Array.isArray(frames) || frames.length === 0) return "unsure";
+  const originOfUrl = (url: unknown): string | undefined => { try { const origin = new URL(String(url)).origin; return origin === "null" ? undefined : origin; } catch { return undefined; } };
+  // A cached (back/forward) or prerendered document can keep frameId 0 beside the live one: two tops is a list that cannot be read as one page.
+  const tops = frames.filter((frame) => frame?.frameId === 0);
+  const top = tops.length === 1 ? tops[0] : undefined;
+  const topOrigin = originOfUrl(top?.url) ?? originOfUrl(pageUrl);
+  if (!top || topOrigin === undefined) return "unsure";
+  let verdict: "clear" | "locked" | "unsure" = "clear";
+  for (const frame of frames) {
+    if (frame === top) continue;
+    if (!frame || typeof frame.url !== "string") return "unsure";
+    if (/^(about:blank|about:srcdoc)([?#].*)?$/i.test(frame.url) || frame.url === "") continue;
+    const origin = originOfUrl(frame.url);
+    if (origin === undefined) verdict = "unsure";
+    else if (origin !== topOrigin) return "locked";
+  }
+  return verdict;
 }
 export type ExtensionAction = { name: string; arguments: Json; document: ExtensionDocument; digest: string; summary: string; mutation: boolean; presentedLink?: boolean;
   /** A0: set only on the bot's own tool-call admission, never on a redirect, popup or reader-fallback admission. */
@@ -40,11 +68,12 @@ export type ExtensionAction = { name: string; arguments: Json; document: Extensi
 /** The hard floor asked for the owner (spec 2.5.1). `text` is the plain sentence the bot reads. */
 /** SABLE-B 5.1: one call's scope. `fence` is the dispatch's identity (the service owns its shape); `signal` aborts when the call ends;
  * `admitted` and `admittedUrls` are the canonical origins and URLs this call admitted. */
-export type CallScope = { fence: unknown; signal: AbortSignal; admitted: Set<string>; admittedUrls: Set<string> };
+export type CallScope = { bootstrapOnly?: boolean; fence: unknown; signal: AbortSignal; admitted: Set<string>; admittedUrls: Set<string> };
 export type ExtensionFloorHandoff ={ result: FloorResult; operation: string; document: ExtensionDocument; text: string };
 /** What the executor reports to the activity log itself: the decisions the service cannot see. */
 export type ExtensionActivityEvent = { operation: string; document: ExtensionDocument; decision: "your turn" | "not done"; outcome: "handed over" | "failed"; level: 1 | 2 | 3; target?: string; fromPage?: boolean; textLength?: number; id?: string };
 export interface ExtensionExecutorOptions {
+  documentOwner?: string;
   transport: ExtensionCdpTransport;
   authorize: () => boolean;
   authorizationError?: () => Error;
@@ -131,6 +160,8 @@ const recipientLine = (facts: { recipients?: unknown; recipientScanFailed?: unkn
 const recipientKey = (facts: { recipients?: unknown; recipientScanFailed?: unknown } | undefined) => JSON.stringify([facts?.recipients ?? null, facts?.recipientScanFailed ?? null]);
 
 export class BrowserExtensionExecutor {
+  private readDocuments: WebDocuments;
+  invalidateReadOrigin(origin: string) { this.readDocuments.invalidateOrigin(origin); }
   /** The approved target as it was described at admission (SEC-02): checked again right before every activating input. */
   private approvedShape?:{observed:string;structure:string;bound:string;editable:boolean;recipients:string;macs:string[]|null;skip:number[]};
   private currentOperation="";
@@ -179,6 +210,7 @@ export class BrowserExtensionExecutor {
   private busy = false;
   private options: ExtensionExecutorOptions;
   constructor(options: ExtensionExecutorOptions) {
+    this.readDocuments = new WebDocuments(undefined, undefined, options.documentOwner);
     this.options=options;
     this.engine=options.createEngine?.({beforeCommand:(document,method,params)=>this.beforeEngineCommand(document,method,params),beforeDestination:(url,document)=>this.destination(url,document,this.scope)});
   }
@@ -247,18 +279,40 @@ export class BrowserExtensionExecutor {
     if (typeof state !== "boolean") refuse("The page protection check is unavailable.");
     this.protectedUnsure = false;
     if (state) return true;
+    // BRLOCK19: a frame from another origin is a page the owner must use directly; frames that cannot be listed are the same doubt.
+    const frames = await this.frameVerdict(document);
+    if (frames === "locked") return true;
+    if (frames === "unsure") { this.protectedUnsure = true; return true; }
+    // An extension older than the app answers Murage.getAllFrames with method_denied. It can still give the browser's own DOM tree, where
+    // an iframe with no contentDocument is out-of-process; the page locks only when this route fails too.
+    const treeFrames = frames === "unlisted";
     // SEC-05: a closed shadow root cannot be read by any page function, so a secret inside one is invisible to the guard. When the page has
     // roots the page cannot read, the browser's own tree decides; an inspection failure is a stop.
     // Round 9 (R8-01): any element can host a closed root, so the browser's own tree is read for every page, and again before every input.
     if (fresh) this.closedChecked.delete(docKey(document));
-    const closed = await this.closedRoot(document);
+    const closed = await this.closedRoot(document, treeFrames);
     if (closed) this.protectedUnsure = true;
     return closed;
   }
+  private async frameVerdict(document: ExtensionDocument): Promise<"clear" | "locked" | "unsure" | "unlisted"> {
+    const list = this.options.transport.frames;
+    if (!list) return "clear";
+    let reply: unknown;
+    this.authorized();
+    try { reply = await list.call(this.options.transport, document); } catch (error) {
+      this.authorized();
+      // Only an extension that does not know the question falls back to the browser's tree; any other failure is doubt, and doubt locks.
+      return (error as { code?: unknown } | null)?.code === "method_denied" ? "unlisted" : "unsure";
+    }
+    this.authorized();
+    return frameLockVerdict(reply, document.url);
+  }
   /** Inspect shallow pieces, paging wide branches. Only the extension's own non-editable overlay may have a closed root. */
-  private async closedRoot(document: ExtensionDocument) {
+  private async closedRoot(document: ExtensionDocument, outOfProcessFrames = false) {
     const key = docKey(document);
-    if (this.closedChecked.has(key)) return false;
+    // The tree fallback for frames is never cached: an iframe can be inserted after a clean look, and the frame listing that would
+    // have caught it is the route that failed.
+    if (!outOfProcessFrames && this.closedChecked.has(key)) return false;
     // A page still settling (a navigation landing, the last task's overlay coming down) can fail one look or show a root that is
     // gone a moment later. One settled second look decides; a page that blocks or fails twice still goes to the owner.
     for (let attempt = 0; attempt < CLOSED_ROOT_LOOKS; attempt++) {
@@ -271,6 +325,7 @@ export class BrowserExtensionExecutor {
           (method, params = {}) => this.sendWithin(document, method, params),
           () => this.world(document, false, true),
           () => this.presenceHost(document),
+          { outOfProcessFrames },
         );
         // The verdict, blocking or not, is about this document only if it is still the one the look began on.
         await this.stable(document);
@@ -279,7 +334,7 @@ export class BrowserExtensionExecutor {
         if (isAuthorityRefusal(error)) throw error;
         continue;
       }
-      this.closedChecked.add(key);
+      if (!outOfProcessFrames) this.closedChecked.add(key);
       return false;
     }
     return true;
@@ -500,11 +555,18 @@ export class BrowserExtensionExecutor {
   private escaping=false;
   /** The page's HTML in slices, so a large page crosses the wire in pieces. */
   private async activeHtml(document:ExtensionDocument){
-    const total=Number(await this.evaluate(document,HTML_LENGTH_EXPRESSION));
-    if(!Number.isSafeInteger(total)||total<0)refuse("The page could not be read.");
-    const slice=120_000;let out="";
-    for(let at=0;at<total&&at<2_400_000;at+=slice)out+=String(await this.evaluate(document,htmlSliceExpression(at,at+slice)));
-    return out;
+    try {
+      const total=Number(await this.evaluate(document,HTML_LENGTH_EXPRESSION));
+      if(!Number.isSafeInteger(total)||total<0)refuse("The page could not be read.");
+      if(total>2*1024*1024)refuse("The page exceeds the read transport limit. No partial document was returned.");
+      const slice=120_000;let out="";
+      for(let at=0;at<total;at+=slice){
+        const chunk=await this.evaluate(document,htmlSliceExpression(at,Math.min(total,at+slice)));
+        if(typeof chunk!=="string"||chunk.length!==Math.min(slice,total-at))refuse("The saved page could not be read in full.");
+        out+=chunk;
+      }
+      return out;
+    } finally { await this.evaluate(document,HTML_RELEASE_EXPRESSION).catch(()=>{}); }
   }
   async call(name:unknown,args:unknown,outerScope?:CallScope):Promise<unknown>{
     // Some engines call an element reference `ref`; this tool names it `selector` (a reference starts with @).
@@ -524,6 +586,10 @@ export class BrowserExtensionExecutor {
     try{
       if(operation==="press"&&isClipboardKeyName(call.arguments.key))refuse("Pasting, copying and select-all are not available in the owner's browser. A paste could hand the page whatever the owner last copied.");
       this.authorized();document=await this.options.transport.document();
+      // Recovery after lending the browser may navigate an empty bootstrap tab.
+      // Check the actual document here, under execution ownership; a tool's URL
+      // or an earlier observation cannot exempt a populated page from snapshot.
+      if(scope?.bootstrapOnly && (operation!=="open" || document.url!=="about:blank"))refuse("Take a fresh browser snapshot before continuing on this page.");
       if(["tab_switch","tab_close"].includes(operation)&&typeof call.arguments.tab==="string")document=await this.backend().resolveTab(call.arguments.tab);
       let destination=typeof call.arguments.url==="string"?call.arguments.url:undefined;
       // SABLE-B 7.3: the page only here; the destination's one consent comes with the action, under the step lock.
@@ -600,10 +666,10 @@ export class BrowserExtensionExecutor {
       const layer=this.layerOwnsRefs()?this.layerFor(document):undefined;
       const engineArgs=layer&&target&&typeof call.arguments.selector==="string"&&call.arguments.selector.startsWith("@")?{...call.arguments,selector:`node:${target.backendNodeId}`}:call.arguments;
       this.reading=operation==="read";
-      let output=operation==="read"?await readWithBrowserAuthority(call.arguments as EngineReadOptions,{fenceOrigin:document.origin,currentUrl:document.url,activeHtml:()=>this.activeHtml(document!),authorize:()=>this.options.authorize(),admitUrl:(url,signal)=>this.destination(url,document!,scope?{...scope,signal:signal?AbortSignal.any([scope.signal,signal]):scope.signal}:undefined)}):operation==="snapshot"&&layer?{content:[{type:"text",text:layer.fenced(await layer.snapshot()),murage:true}]}:await this.backend().call(call.name,engineArgs);
+      let output=operation==="read"?await routeBrowserRead("extension",call.arguments as EngineReadOptions,{documents:this.readDocuments,fenceOrigin:document.origin,currentUrl:document.url,activeHtml:()=>this.activeHtml(document!),authorize:()=>this.options.authorize(),admitUrl:(url,signal)=>this.destination(url,document!,scope?{...scope,signal:signal?AbortSignal.any([scope.signal,signal]):scope.signal}:undefined)}):operation==="snapshot"&&layer?{content:[{type:"text",text:layer.fenced(await layer.snapshot()),murage:true}]}:await this.backend().call(call.name,engineArgs);
       this.reading=false;if(operation==="read")output=markFenced(output);
       this.authorized();
-      if(operation==="close"){await this.engine?.close();this.engine=undefined;this.layers.clear();this.guardRegistered.clear();this.worlds.clear();return output;}
+      if(operation==="close"){this.readDocuments.clear();await this.engine?.close();this.engine=undefined;this.layers.clear();this.guardRegistered.clear();this.worlds.clear();return output;}
       // After an L2 or L3 action: what changed on the page, fenced, appended to the result.
       if(this.mutation&&layer){
         let diff:string|null=null;try{diff=await layer.diffSince();}catch{/* the action happened; the diff is a courtesy */}
@@ -653,5 +719,5 @@ export class BrowserExtensionExecutor {
     else if(method==="Page.javascriptDialogClosed"&&this.dialog?.tabId===tabId)this.dialog=undefined;
     this.engine?.event(tabId,epoch,method,params);
   }
-  async close(){await this.engine?.close();this.engine=undefined;this.refsDocument="";this.dialog=undefined;this.layers.clear();this.guardRegistered.clear();this.worlds.clear();}
+  async close(){this.readDocuments.dispose();await this.engine?.close();this.engine=undefined;this.refsDocument="";this.dialog=undefined;this.layers.clear();this.guardRegistered.clear();this.worlds.clear();}
 }

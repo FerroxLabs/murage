@@ -29,6 +29,7 @@ interface Run { child: ChildProcess; stdout: () => string; report: () => string;
 function launch(command: string, args: string[]): Run {
   base = mkdtempSync(join(tmpdir(), "job-launcher-"));
   const child = spawn(process.execPath, [LAUNCHER, "--", command, ...args], {
+    windowsHide: true,
     cwd: base,
     // what procs.ts gives the launcher on Windows; PATH added only so this host's node can load its type stripper
     env: { ...launcherEnvironment(process.env), PATH: process.env.PATH ?? "" },
@@ -90,14 +91,14 @@ describe("job launcher", () => {
       writeFileSync(preload, `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran");`);
       const turnEnv = { ...process.env, NODE_OPTIONS: `--require ${preload}` };
       // control: Node honours the option when it is in the launcher's own environment
-      const control = spawn(process.execPath, [LAUNCHER, "--", process.execPath, "-e", "0"], { cwd: dir, env: turnEnv, stdio: ["pipe", "ignore", "ignore", "pipe"] });
+      const control = spawn(process.execPath, [LAUNCHER, "--", process.execPath, "-e", "0"], { windowsHide: true, cwd: dir, env: turnEnv, stdio: ["pipe", "ignore", "ignore", "pipe"] });
       children.push(control);
       control.stdin!.end();
       await new Promise<void>((resolve) => control.once("exit", () => resolve()));
       expect(existsSync(marker)).toBe(true);
       // the real launch: the turn's environment only reaches the CLI through the frame
       const { unlinkSync } = await import("node:fs"); unlinkSync(marker);
-      const real = spawn(process.execPath, [LAUNCHER, "--", process.execPath, "-e", "0"], { cwd: dir, env: { ...launcherEnvironment(turnEnv), PATH: process.env.PATH ?? "" }, stdio: ["pipe", "ignore", "ignore", "pipe"] });
+      const real = spawn(process.execPath, [LAUNCHER, "--", process.execPath, "-e", "0"], { windowsHide: true, cwd: dir, env: { ...launcherEnvironment(turnEnv), PATH: process.env.PATH ?? "" }, stdio: ["pipe", "ignore", "ignore", "pipe"] });
       children.push(real);
       real.stdin!.end();
       await new Promise<void>((resolve) => real.once("exit", () => resolve()));

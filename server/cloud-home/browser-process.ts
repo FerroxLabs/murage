@@ -1,3 +1,4 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 import { cloudHomeCopy } from "./copy.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
@@ -9,13 +10,14 @@ import { CANARY_BROWSER_ID, isReservedBotId } from "../../shared/bot-identity.ts
 export const CLOUD_BROWSER_BOT = "MURAGE_CLOUD_BROWSER_BOT";
 let admit: ((bot: string) => boolean) | undefined;
 export function setCloudBrowserAdmission(check: (bot: string) => boolean): void { admit = check; }
-const BROWSER_SETTINGS = ["AGENT_BROWSER_SESSION", "AGENT_BROWSER_ENCRYPTION_KEY", "AGENT_BROWSER_RESTORE_SAVE", "AGENT_BROWSER_RESTORE"];
+const BROWSER_SETTINGS = ["AGENT_BROWSER_CONTROL_TOKEN", "AGENT_BROWSER_SESSION", "AGENT_BROWSER_ENCRYPTION_KEY", "AGENT_BROWSER_RESTORE_SAVE", "AGENT_BROWSER_RESTORE"];
 /** The launcher modes a bot's browser request can take. The two restore modes run the saved-session split and its
  * visit mark as the browser user (server/browser-restore-cli.ts); the others run the browser. */
 export type CloudBrowserMode = "browser" | "browser-restore" | "browser-restore-mark";
 function browserRequest(bot: string, args: string[], env: NodeJS.ProcessEnv, mode: CloudBrowserMode = "browser") {
   const settings: Record<string, string> = {};
   for (const key of BROWSER_SETTINGS) {
+    if (key === "AGENT_BROWSER_CONTROL_TOKEN" && mode !== "browser") continue;
     if (env[key] !== undefined) settings[key] = env[key]!;
   }
   return { mode, bot, args, settings, instance: SERVER_INSTANCE };
@@ -29,9 +31,9 @@ export function cloudBrowserRequest(args: string[], env: NodeJS.ProcessEnv, mode
 function spawnLauncher(request: object): ChildProcessWithoutNullStreams {
   // Before any browser launch the current instance must be readable by the launcher (no-op after the first success).
   ensureServerInstancePublished();
-  const child = spawn("/usr/bin/sudo", ["-n", "-C", "4", "--", TURN_LAUNCHER], {
+  const child = spawn("/usr/bin/sudo", ["-n", "-C", "4", "--", TURN_LAUNCHER], withHideInherit({
     env: { PATH: "/usr/bin:/bin" }, shell: false, stdio: ["pipe", "pipe", "pipe", "pipe"],
-  }) as ChildProcessWithoutNullStreams;
+  })) as ChildProcessWithoutNullStreams;
   const pipe = child.stdio[3] as Writable;
   pipe.on("error", () => {});
   pipe.end(JSON.stringify(request));
@@ -69,9 +71,9 @@ export function resetBrowserRefusalLogForTests(): void { lastRefusalLogAt = -Inf
 export const CLEANUP_BUSY_EXIT = 75;
 function runCleanup(bot: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    const child = spawn("/usr/bin/sudo", ["-n", "-C", "4", "--", TURN_LAUNCHER], {
+    const child = spawn("/usr/bin/sudo", ["-n", "-C", "4", "--", TURN_LAUNCHER], withHideInherit({
       env: { PATH: "/usr/bin:/bin" }, stdio: ["ignore", "ignore", "ignore", "pipe"],
-    });
+    }));
     const pipe = child.stdio[3] as Writable;
     pipe.on("error", () => {}); pipe.end(JSON.stringify({ mode: "browser-cleanup", bot }));
     const timer = setTimeout(() => child.kill("SIGKILL"), 15_000);

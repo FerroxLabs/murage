@@ -1,0 +1,47 @@
+#!/bin/bash
+# Mock ssh for sign-image.sh --dry-run: checks the host key is pinned, answers the three commands the script sends.
+set -u
+[[ -z ${AWS_ACCESS_KEY_ID:-}${AWS_SECRET_ACCESS_KEY:-} ]] || touch "${MOCK_STATE:-/dev/null}/leak"
+args=("$@")
+khfile="" strict=""
+for ((i = 0; i < ${#args[@]}; i++)); do
+    case ${args[i]} in
+        StrictHostKeyChecking=*) strict=${args[i]#*=} ;;
+        UserKnownHostsFile=*) khfile=${args[i]#*=} ;;
+    esac
+done
+cmd=${args[${#args[@]}-1]}
+echo "ssh $cmd" | cut -c1-80 >> "$MOCK_LOG"
+[[ $strict == yes ]] || { echo "ssh mock: StrictHostKeyChecking is not yes" >&2; exit 255; }
+grep -E '^192\.0\.2\.10 ssh-ed25519 ' "$khfile" >/dev/null || { echo "ssh mock: host key not pinned" >&2; exit 255; }
+case $cmd in
+    true) if [[ ${MOCK_HANG_SSH:-0} == 1 ]]; then sleep 300; fi; exit 0 ;;
+    "bash -s -- mount-image "*)
+        # Run the REAL image-disk-check.sh against fake lsblk/dumpe2fs/mount/findmnt (mocks/diskbin) for the MOCK_DISK scenario.
+        cat > "$MOCK_STATE/disk.stdin"
+        export MURAGE_DISKCHECK_ARCH=${MOCK_ARCH:-x86_64}   # the rescue server's uname -m (the image's own architecture)
+        rm -rf "$MOCK_STATE/mnt"; mkdir -p "$MOCK_STATE/mnt"
+        here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+        if [[ ${MOCK_DISK:-good} == bios_evil_path ]]; then printf 'core\0(,gpt1)/opt/evil\0' > "$MOCK_STATE/bios.img"; elif [[ ${MOCK_DISK:-good} == bios_other_part ]]; then printf 'core\0(,gpt9)/boot/grub\0' > "$MOCK_STATE/bios.img"; else printf 'core\0(,gpt1)/boot/grub\0' > "$MOCK_STATE/bios.img"; fi
+        # The boot closure allowlist: the real staging list names the real image's bytes, so the mock builds its own from a pristine
+        # copy of the good fixture (the script's print mode), then judges the scenario's tree against it. MOCK_NO_CLOSURE=1 leaves the
+        # script's own list in place (empty for prod).
+        envn=${cmd##* }
+        printf 'mbr boot code\n' > "$MOCK_STATE/mbr.img"
+        if [[ ${MOCK_DISK:-good} == mbr_changed ]]; then printf 'evil mbr\n' > "$MOCK_STATE/mbr.img"; fi
+        if [[ ${MOCK_NO_CLOSURE:-0} != 1 ]]; then
+            pr="$MOCK_STATE/pristine"; rm -rf "$pr"; mkdir -p "$pr/mnt"
+            printf 'core\0(,gpt1)/boot/grub\0' > "$pr/bios.img"; printf 'mbr boot code\n' > "$pr/mbr.img"
+            MOCK_DISK=good MURAGE_DISKCHECK_PRINT_CLOSURE=1 MURAGE_DISKCHECK_BIOS_FILE="$pr/bios.img" MURAGE_DISKCHECK_MBR_FILE="$pr/mbr.img" PATH="$here/diskbin:$PATH" MURAGE_DISKCHECK_MNT="$pr/mnt" \
+                bash "$MOCK_STATE/disk.stdin" mount-image "$envn" > "$MOCK_STATE/closure.pins" || { echo "ssh mock: could not build the pristine closure" >&2; exit 2; }
+            export MURAGE_DISKCHECK_CLOSURE_FILE="$MOCK_STATE/closure.pins"
+        fi
+        MURAGE_DISKCHECK_BIOS_FILE="$MOCK_STATE/bios.img" MURAGE_DISKCHECK_MBR_FILE="$MOCK_STATE/mbr.img" PATH="$here/diskbin:$PATH" MURAGE_DISKCHECK_MNT="$MOCK_STATE/mnt" bash "$MOCK_STATE/disk.stdin" mount-image "$envn"
+        exit $? ;;
+    "bash -s -- /mnt/img "*)
+        read -r -a words <<< "$cmd"; set -- "${words[@]}"; image=$5; envn=$6
+        cat > "$MOCK_STATE/check.stdin"
+        if [[ ${MOCK_CHECK_FAIL:-0} == 1 ]]; then echo "image-release-check: FAIL mock failure"; exit 1; fi
+        echo "image-release-check: ok image=$image env=$envn (mock)"; exit 0 ;;
+esac
+echo "ssh mock: unexpected command" >&2; exit 2

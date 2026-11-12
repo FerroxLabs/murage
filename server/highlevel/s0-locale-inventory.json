@@ -1,0 +1,20 @@
+{
+  "highlevel.contract.outcomeUnknown": "Not sure it went through. Check HighLevel; Murage will not send it again.",
+  "highlevel.contract.courseImportSent": "The course import was sent. Check it in HighLevel. Murage will not send it again.",
+  "highlevel.contract.locatorUnavailable": "Murage can no longer check this change automatically. Check it in HighLevel. It will not be sent again.",
+  "highlevel.contract.contactIdTooLong": "This contact ID exceeds HighLevel's documented search limit. Nothing was sent.",
+  "highlevel.contract.bulkTargetsUnverified": "Murage could not verify every selected contact. Check the selected contact IDs in HighLevel. Nothing was sent.",
+  "highlevel.contract.contactLocatorRequired": "Give an email, phone number or contact ID so Murage can check this contact. Nothing was sent.",
+  "highlevel.contract.safeCheckUnavailable": "Murage could not prepare a safe check for this change. Nothing was sent.",
+  "highlevel.contract.pitViewOnly": "This token confirms your location. Connect HighLevel to allow changes.",
+  "highlevel.contract.connect": "Connect HighLevel",
+  "highlevel.contract.reconnect": "Reconnect HighLevel",
+  "highlevel.contract.confirmLocation": "Confirm location",
+  "highlevel.contract.confirmLocationQuestion": "Connect {locationName} ({locationId})?",
+  "highlevel.contract.connectionCanceled": "HighLevel was not connected. Try connecting again.",
+  "highlevel.contract.missingPermissions": "HighLevel needs these permissions for this change: {names}. Connect HighLevel again and allow them.",
+  "highlevel.contract.missingPermissionsTool": "Nothing was sent to HighLevel. Open Settings > HighLevel and reconnect to allow {names}.",
+  "highlevel.contract.connectedRetry": "HighLevel is connected. Ask the bot to try the change again.",
+  "highlevel.contract.providerDenied": "HighLevel refused this change (403). Check this connection's permissions in Settings > HighLevel.",
+  "highlevel.contract.setupUnavailable": "HighLevel changes are not set up for this Murage installation yet."
+}

@@ -13,7 +13,9 @@ import { BROWSER_CHECKING_REASON, browserUnavailableActivityName } from "../shar
 import { indexBrowserCheckChunk, PENDING_BROWSER_CHECK_WHERE } from "./message-tables.ts";
 import { readIndexState } from "./transcript-backfill.ts";
 import { memoryUpgradeReporter } from "./memory/upgrade-status.ts";
-import { messageSearchIndexReady, prepareMessageSearchBackfill, stepMessageSearchBackfill } from "./message-search-index.ts";
+import { messageSearchIndexReady } from "./message-search-index.ts";
+import { waitSearchFixture } from "./testing/message-search-fixture.ts";
+import { searchMessagesWithMeta } from "./message-db.ts";
 import { compactRootSetsStep, lineageStorageStatus } from "./memory/root-set-compaction.ts";
 import { rootSetMembers } from "./memory/schema.ts";
 import { buildSyntheticV6 } from "./memory/testing/upgrade-fast-fixture.ts";
@@ -57,7 +59,7 @@ it("S2: the pending browser-check notes are not served from a table that is stil
   expect(PENDING_BROWSER_CHECK_WHERE).toContain("activity");
 });
 
-it("S5: the search index tail and the log checkpoint do not run after the note is gone: the open leaves the tail to the background, and the note's last write is the checkpoint step", () => {
+it("S5: the search tail stays off the opening thread and the checkpoint stays under the upgrade note", async () => {
   const events: string[] = [];
   setUpgradeReporterForTest((dir, name) => {
     const real = memoryUpgradeReporter(dir, name);
@@ -78,13 +80,16 @@ it("S5: the search index tail and the log checkpoint do not run after the note i
   expect(events).toContain("blocking:committing");
   expect(events.lastIndexOf("done")).toBeGreaterThan(events.lastIndexOf("blocking:committing"));
   expect(events.lastIndexOf("done")).toBeGreaterThan(Math.max(...events.map((event, at) => event.startsWith("blocking:") ? at : -1)));
-  // the tail is not indexed by the open; searches scan until the fill ends
+  // 5d5a791f19 moved the tail to a separate worker. The synchronous open
+  // cannot service its ready event or run any FTS fill on messages.db.
   expect(messageSearchIndexReady(db)).toBe(false);
-  expect(db.prepare("SELECT 1 FROM messages_fts_docsize WHERE id=(SELECT rowid FROM messages WHERE id='tail1')").get()).toBeUndefined();
-  while (stepMessageSearchBackfill(db, 3).more) { /* chunks */ }
+  expect(db.prepare("SELECT name FROM sqlite_schema WHERE name = 'messages_fts'").all()).toEqual([]);
+  // The legacy table may remain inert under a retired name (reviewed D2).
+  expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='messages_fts_retired'").get()).toBeTruthy();
+  await waitSearchFixture(db);
   expect(messageSearchIndexReady(db)).toBe(true);
-  expect(db.prepare("SELECT 1 FROM messages_fts_docsize WHERE id=(SELECT rowid FROM messages WHERE id='tail1')").get()).toBeTruthy();
-  expect(prepareMessageSearchBackfill(db)).toBe(false);
+  expect(searchMessagesWithMeta("late words", 40, "t0", { owner: true }).hits.map(hit => hit.messageId)).toContain("tail1");
+  expect(db.prepare("SELECT name FROM sqlite_schema WHERE name = 'messages_fts'").all()).toEqual([]);
 });
 
 it("S7: converting a large set reads none of its rows into memory, keeps its content, and a step spends at most its budget between sets", () => {

@@ -1,3 +1,6 @@
+import { BotReviewSheet } from './BotReviewSheet';
+import { EngineLimitRow } from "./EngineLimitRow";
+import { engineLimitText } from "../../shared/web-read-routing";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -30,9 +33,14 @@ export const BOT_HEADER_CHIPS: readonly { id: string; label: string; section: Bo
   { id: "email", label: "Email", section: "email", anchor: "bot-setting-email" },
 ];
 
-export function BotSettingsPane({ bot, onClose, leaveRef }: { bot: Bot; onClose: () => void; leaveRef?: MutableRefObject<BotSettingsLeave | null> }) {
+export function BotSettingsPane(props: Parameters<typeof ActiveBotSettingsPane>[0]) {
+  return props.bot.staged || props.bot.pendingRevision ? <BotReviewSheet botIds={[props.bot.id]} onDone={props.onClose} /> : <ActiveBotSettingsPane {...props} />;
+}
+
+function ActiveBotSettingsPane({ bot, onClose, leaveRef }: { bot: Bot; onClose: () => void; leaveRef?: MutableRefObject<BotSettingsLeave | null> }) {
   const { state } = useStore(), content = useRef<HTMLDivElement>(null);
   const desktop = useDesktopSurface();
+  const engineLimit = engineLimitText(state.instances?.find(instance => instance.instanceId === bot.modelSelection?.instanceId)?.driverKind ?? "unknown", "settings");
   const owner = useLayerOwner(), searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => { if (owner?.handle?.active) searchRef.current?.focus(); }, [owner]);
   // bot email (1.0.9): the Email row is always listed (SETTINGS-UX-1011 S1); while the server does not say email is on,
@@ -126,6 +134,7 @@ export function BotSettingsPane({ bot, onClose, leaveRef }: { bot: Bot; onClose:
         {/* The section menu above already shows this name on a phone. */}
         <h2 className="shrink-0 px-5 pt-3 text-[17px] font-medium max-sm:sr-only">{label(selected)}</h2>
         <BotSettingsDraftContext.Provider value={updateDraft}><BotSettingsNavigationContext.Provider value={navigate}><SettingsPanel bot={bot} section={section} embedded /></BotSettingsNavigationContext.Provider></BotSettingsDraftContext.Provider>
+        {section === "model" && engineLimit && <EngineLimitRow settings text={engineLimit} />}
       </BoxBody>
     </div>
     {/* The standing note gives way on a short screen or with the keyboard up; a

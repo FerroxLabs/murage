@@ -8,6 +8,8 @@ import { MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBL
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../contracts.ts";
 import { BUILT_IN_DRIVERS } from "../drivers/builtIn.ts";
+import { createAcpDriver } from "../drivers/acp/core.ts";
+import { createOpenclawPrePromptGuard, openclawSupport } from "../drivers/acp/openclaw.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { recordEvents } from "../testing/events.ts";
 import { makeFakeDriver } from "../testing/fake-driver.ts";
@@ -266,7 +268,13 @@ const DISPATCH: Record<string, Dispatch> = {
   droidAgent: acp("droidAgent", { fullAuto: true }),
   cursorAgent: acp("cursorAgent", {}, scratch => ({ HOME: scratch, CURSOR_API_KEY: "cursor-fixture-key" })),
   qwenAgent: acp("qwenAgent"),
-  hermesAgent: acp("hermesAgent", {}, scratch => ({ HOME: scratch, MURAGE_DATA_DIR: join(scratch, "state") })),
+  hermesAgent: acp("hermesAgent", {}, scratch => {
+    const dataDir = join(scratch, "state");
+    // Match normal startup before registering canonical files under this
+    // fixture's explicit data-directory override.
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    return { HOME: scratch, MURAGE_DATA_DIR: dataDir };
+  }),
   customAcp: acp("customAcp"),
   // Runs on OpenClaw's own tools and approvals (no Murage mounts), but the framed
   // turn text still reaches the bridge as the ACP prompt, so it is observed here.
@@ -344,7 +352,18 @@ describe("actual registered drivers receive the memory frame (offline fakes, not
       process.env[key] = value;
     }
     if (spec.http) vi.stubGlobal("fetch", spec.http(calls));
-    const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
+    // cddf1c168e refuses OpenClaw without independent boundary witnesses.
+    // Use its reviewed internal fixture seam, as openclaw.test.ts does; the
+    // real default refusal remains covered by openclaw-deny.test.ts.
+    const drivers = kind === "openclawAgent" ? BUILT_IN_DRIVERS.map(driver => driver.driverKind !== kind ? driver : createAcpDriver({
+      ...openclawSupport,
+      prePrompt: createOpenclawPrePromptGuard({
+        probeVersion: async () => "2026.10.5",
+        call: async (_cli, _method, params) => ({ ok: true, key: params.key, entry: { permissionMode: "read-only" } }),
+        verifyCoverage: async () => ({ refusedReads: true, skillRoots: true, extraTools: true, nativeHarnesses: true, delegation: true, readBoundary: true }),
+      }),
+    })) : BUILT_IN_DRIVERS;
+    const registry = new ProviderRegistry(drivers);
     const id = `memory-${kind}`;
     try {
       await registry.load({ [id]: spec.entry(scratch) } as Parameters<ProviderRegistry["load"]>[0]);

@@ -1,3 +1,6 @@
+import "../../shared/win-hide-child-process.mjs";
+import { routeBrowserRead } from "../browser-read-route.ts";
+import { NotModelRequest } from "../../shared/engine-transport.ts";
 // Built-in browser MCP server — spawned inside a bot's agent process (via
 // the "browser" integration). The browser itself is a WebContentsView in the
 // Electron main process; this proxy forwards each tool call to the loopback
@@ -18,6 +21,7 @@
 //   MURAGE_CONTROL_URL / MURAGE_CONTROL_TOKEN  who-is-driving endpoint: while the
 //                      person holds the wheel in the panel, actions refuse
 import { existsSync } from "node:fs";
+import { WebDocuments, validateWebRange, WEB_RANGE_PROPERTIES, WEB_READ_DESCRIPTION } from "../web-documents.ts";
 import { createInterface } from "node:readline";
 import { z } from "zod";
 
@@ -195,12 +199,12 @@ export function browserHostTimeoutMs(operation: string, body: object = {}): numb
  * is exactly what the model should read, so it is thrown as-is. */
 export async function hostRequest(operation: string, body: object = {}, fetchImpl: typeof fetch = fetch): Promise<unknown> {
   if (!HOST || !token() || !BOT_ID) throw new Error("the built-in browser is not connected for this bot");
-  const res = await fetchImpl(`${HOST}/v1/bots/${encodeURIComponent(BOT_ID)}/${operation}`, {
+  const res = await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", fetchImpl(`${HOST}/v1/bots/${encodeURIComponent(BOT_ID)}/${operation}`, {
     method: "POST",
     headers: { authorization: `Bearer ${token()}`, "content-type": "application/json" },
     body: JSON.stringify({ ...body, profile: PROFILE }),
     signal: AbortSignal.timeout(browserHostTimeoutMs(operation, body)),
-  });
+  }));
   const parsed: unknown = await res.json().catch(() => ({}));
   if (!res.ok) {
     const failure = hostErrorSchema.safeParse(parsed);
@@ -299,8 +303,8 @@ export const TOOLS = [
   {
     name: "browser_read",
     description:
-      "Read the page's rendered text (articles, results, tables) as plain text. Covers the whole document, not just the part on screen, so browser_scroll does not change what it returns; a long page is cut with a note saying so. For understanding content, not for acting: use browser_snapshot for things to click.",
-    inputSchema: { type: "object", properties: {} },
+      WEB_READ_DESCRIPTION + " Reads the whole document; browser_scroll does not change the saved copy. Use browser_snapshot for things to click.",
+    inputSchema: { type: "object", additionalProperties: false, properties: WEB_RANGE_PROPERTIES },
   },
   {
     name: "browser_back",
@@ -397,18 +401,20 @@ const BROWSER_CONTROL_REFUSAL =
 const floorGate = new BuiltinFloorGate();
 
 async function observed(request: HostRequest, operation: string, body?: object, gate: BuiltinFloorGate = floorGate): Promise<ToolResult> {
-  const page = pageSchema.parse(await request(operation, body));
+  const page = pageSchema.parse(await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", request(operation, body)));
   gate.remember(page);
   return textResult(formatObserved(page));
 }
 
+const readDocuments = new WeakMap<HostRequest, WebDocuments>();
 export async function callTool(name: string, args: unknown, request: HostRequest = hostRequest, gate: BuiltinFloorGate = floorGate): Promise<ToolResult> {
   const stepped = (operation: string, target: { ref?: string; key?: string }) => gate.check(operation, target);
   const watched = (operation: string, body?: object) => observed(request, operation, body, gate);
   // The person driving in the panel wins. Reads are private too: a snapshot
   // or screenshot taken while they enter a password would leak it straight
   // into model context. Only the takeover wait choreography remains open.
-  if (name !== "browser_request_takeover" && (await control.state(true)).held) {
+  const controlState = await control.state(true);
+  if (name !== "browser_request_takeover" && (!controlState.available || controlState.held)) {
     return textResult(BROWSER_CONTROL_REFUSAL, true);
   }
   if (name === "browser_navigate") {
@@ -494,10 +500,23 @@ export async function callTool(name: string, args: unknown, request: HostRequest
     return watched("wait", body);
   }
   if (name === "browser_read") {
-    const page = readSchema.parse(await request("read"));
-    const url = safeBrowserUrl(page.url) ?? (page.url === "about:blank" ? "about:blank" : "URL unavailable");
-    if (!page.text.trim()) return textResult(`${page.title || "Untitled"}: ${url}\n(The page has no readable text.)`);
-    return textResult(`${page.title || "Untitled"}: ${url}\n\n${page.text}`);
+    const range = validateWebRange(args);
+    let documents = readDocuments.get(request);
+    if (!documents) { documents = new WebDocuments(); readDocuments.set(request, documents); }
+    if (range.handle) {
+      // The host validates the current bot/profile capability even for an immutable copy.
+      await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", request("state"));
+      const current = await control.state(true);
+      if (!current.available || current.held) return textResult(BROWSER_CONTROL_REFUSAL, true);
+    }
+    return textResult(JSON.stringify(await routeBrowserRead("builtin", range, {
+      documents, scope: BOT_ID, authorize: () => true,
+      acceptedText: async () => {
+        const page = readSchema.parse(await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", request("read")));
+        const url = safeBrowserUrl(page.url) ?? (page.url === "about:blank" ? "about:blank" : "URL unavailable");
+        return { ...page, url };
+      },
+    })));
   }
   if (name === "browser_back") return watched("back");
   if (name === "browser_forward") return watched("forward");
@@ -507,21 +526,21 @@ export async function callTool(name: string, args: unknown, request: HostRequest
     return requestTakeover(parsed.data.reason, request);
   }
   if (name === "browser_state") {
-    const state = stateSchema.parse(await request("state"));
+    const state = stateSchema.parse(await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", request("state")));
     if (!state.url || state.url === "about:blank") return textResult(`The browser tab is empty. Use ${murageToolOnThisServer("browser_navigate")} to open a page.`);
     return textResult(`${state.title || "Untitled"}: ${safeBrowserUrl(state.url) ?? "URL unavailable"}${state.loading === true ? " (still loading)" : ""}`);
   }
   if (name === "browser_screenshot") {
-    const shot = screenshotSchema.parse(await request("screenshot"));
+    const shot = screenshotSchema.parse(await NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", request("screenshot")));
     const mime = shot.format === "png" ? "image/png" : "image/jpeg";
     return { content: [{ type: "text", text: "Current browser page" }, { type: "image", data: shot.png, mimeType: mime }] };
   }
   return textResult(`Unknown tool: ${name}`, true);
 }
 
-const send = (message: object) => process.stdout.write(`${JSON.stringify(message)}\n`);
-const ok = (id: unknown, result: unknown) => send({ jsonrpc: "2.0", id, result });
-const rpcError = (id: unknown, code: number, message: string) => send({ jsonrpc: "2.0", id, error: { code, message } });
+const send = (message: object) => NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", process.stdout.write(`${JSON.stringify(message)}\n`));
+const ok = (id: unknown, result: unknown) => NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", send({ jsonrpc: "2.0", id, result }));
+const rpcError = (id: unknown, code: number, message: string) => NotModelRequest("MCP tool/control traffic to the harness or tool server; this adapter does not submit model inference", send({ jsonrpc: "2.0", id, error: { code, message } }));
 
 async function handle(line: string) {
   const parsed = rpcMessageSchema.safeParse(JSON.parse(line));

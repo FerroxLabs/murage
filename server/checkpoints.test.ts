@@ -38,6 +38,7 @@ function workspace() {
 /** The user's own git, as the user would run it — no shadow env involved. */
 function userGit(cwd: string, ...args: string[]): string {
   return execFileSync("git", args, {
+    windowsHide: true,
     cwd,
     encoding: "utf8",
     env: {

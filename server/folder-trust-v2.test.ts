@@ -459,6 +459,35 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
   /** A pooled turn on a thread, its session resumed the way the harness does. */
   const nativeOrder = (threadId: string) => readFileSync(join(NATIVE_DIR, `${threadId}.ndjson`), "utf8");
 
+  it("N7 No limits honours the owner's stored Do not trust without a card", async () => {
+    await create();
+    const turnId = await send("n7-reject", { stopLine: true, noLimits: true,
+      folderTrust: gate({ decision: "reject", fromRecord: true, sources: ["AGENTS.md"], rejects: [{ key: cwd, folder: cwd }] }) });
+    expect(await done(turnId)).toMatchObject({ ok: true });
+    expect(replies()).toEqual([REJECT_REPLY]);
+    expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
+    expect(chips().some(line => line.startsWith("untrusted folder"))).toBe(true);
+  });
+
+  it("N7 No limits trusts only undecided folders and preserves a reject that answers the engine key", async () => {
+    await create();
+    const turnId = await send("n7-records", { stopLine: true, noLimits: true,
+      folderTrust: gate({ sources: ["AGENTS.md"], rejects: [{ key: cwd, folder: cwd }] }) });
+    expect(await done(turnId)).toMatchObject({ ok: true });
+    expect(replies()).toEqual([REJECT_REPLY]);
+    expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
+  });
+
+  it("N7 No limits generation 1 keeps a stored reject off --trust and answers reject", async () => {
+    await create({ FAKE_ACP_TRUST_V: "", FAKE_ACP_VERSION: "fuigo 1.0.34" }, { cli: ownCli() });
+    const turnId = await send("n7-g1", { stopLine: true, noLimits: true,
+      folderTrust: gate({ decision: "reject", fromRecord: true, sources: ["AGENTS.md"], rejects: [{ key: cwd, folder: cwd }] }) });
+    expect(await done(turnId)).toMatchObject({ ok: true });
+    expect(readDump().argv).not.toContain("--trust");
+    expect(replies().every(line => line?.includes('"outcome":"reject"'))).toBe(true);
+    expect(recorder.events.filter(e => e.type === "request.opened")).toEqual([]);
+  });
+
   it("(R1, R9) generation 2 never passes --trust, raises no card before the spawn, and advertises v2", async () => {
     await create();
     const turnId = await send("t-g2", { folderTrust: gate({ decision: "trust", fromRecord: true, sources: ["AGENTS.md"], trustKeys: [cwd] }) });
@@ -717,7 +746,9 @@ posixOnly("the reply handler, on the real Fuigo driver", () => {
     const turnId = await send("t-hold-late", { folderTrust: gate({ sources: ["AGENTS.md"] }) });
     await done(turnId);
     expect(recorder.events.find((e) => e.type === "request.resolved")).toMatchObject({ folderTrustLate: "finished" });
-    expect(replies()).toEqual([REJECT_REPLY]);
+    // Completion is a driver event; the child still has to receive and log
+    // the reply written to its pipe. Assert that exact reply once observed.
+    await vi.waitFor(() => expect(replies()).toEqual([REJECT_REPLY]));
     expect(chips()).toEqual([folderTrustWithheldName(["AGENTS.md"])]);
   });
   it("(A, B) a card names an inside no, never a sibling desk's, and stores a fitted summary", async () => {

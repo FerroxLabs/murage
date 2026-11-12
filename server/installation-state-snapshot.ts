@@ -416,7 +416,7 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       const rootNames = readdirSync(root).sort();
       // SQLite may create/remove these exact auxiliary files while taking its
       // own consistent backup. All other membership and file checks remain.
-      const rootMembership=(entries:string[])=>entries.filter(name=>name!=="messages.db-wal"&&name!=="messages.db-shm"&&name!=="connected-app-ledger.db-wal"&&name!=="connected-app-ledger.db-shm"&&name!=="phone-calls.db-wal"&&name!=="phone-calls.db-shm"&&name!=="phone-calls.db-journal");
+      const rootMembership=(entries:string[])=>entries.filter(name=>name!=="search.db"&&name!=="search.db-wal"&&name!=="search.db-shm"&&name!=="messages.db-wal"&&name!=="messages.db-shm"&&name!=="connected-app-ledger.db-wal"&&name!=="connected-app-ledger.db-shm"&&name!=="phone-calls.db-wal"&&name!=="phone-calls.db-shm"&&name!=="phone-calls.db-journal");
       if (rootNames.length > maxFiles) fail("SNAPSHOT_LIMIT_EXCEEDED");
       // One list decides every top-level name (data-dir-inventory.ts).
       const kinds = new Map<string, NonNullable<ReturnType<typeof classifyDataDirEntry>>>();

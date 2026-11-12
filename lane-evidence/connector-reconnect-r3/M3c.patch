@@ -1,0 +1,11 @@
+--- server/connected-app-health.ts
++++ server/connected-app-health.ts
+@@ -152,7 +152,7 @@
+   return parsedContent(source).some(value => {
+     const row = obj(value);
+     if (!row) return false;
+-    if (row.kind === "auth" || obj(row.error)?.kind === "auth") return true;
++    // mutant: ignore parsed content broker auth
+     const results = [...(Array.isArray(row.results) ? row.results : []), ...(Array.isArray(obj(row.data)?.results) ? obj(row.data)!.results as Json[] : [])];
+     return (slugOfRow(row) ? [row, ...results] : results).some(value => {
+       const result = obj(value);

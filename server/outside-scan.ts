@@ -55,9 +55,12 @@ let memo: {
   parts: Map<string, readonly string[]>; scripts: Map<string, boolean>; lists: Map<string, ReadonlyArray<readonly string[]>>; interp: Map<string, boolean>; bases: Map<string, string>; hides: Map<string, OutsideMark | null>;
   counts: WeakMap<readonly (readonly string[])[], Map<string, number>>;
 } | null = null;
-/** Tests only: how many scans failed closed and why the last one did, and how many texts (a text and each `${…}` body)
- *  were read. */
-export const scanFailClosed = { count: 0, reason: "", texts: 0 };
+/** Scan diagnostics: fail-closed counts and reason, texts read (including `${…}` bodies), and the last scan's
+ * interpreter branch labels. Keep observation on this object, outside the public scan entry points. */
+export const scanFailClosed = {
+  count: 0, reason: "", texts: 0,
+  get interpreterBranches(): string { return interpBranches.join("+") || "none"; },
+};
 
 /** The folded text both checks read: `$'…'` decoded, NFKC, lower case. */
 function folded(text: string): string {
@@ -120,9 +123,10 @@ export function partsSpendForTests(word: string): number {
 // ---------------------------------------------------------------------------------------------------------------------
 // 2.2 plainWipe
 
-const WIPE = words(`rm rmdir unlink shred srm dd mkfs newfs wipefs fdisk sfdisk parted gpart diskutil format diskpart
+const WIPE = words(`rm rmdir unlink shred srm dd mkfs newfs wipefs fdisk sfdisk parted gpart diskutil diskpart
   format-volume clear-disk remove-item ri del erase rd deltree rmtree rmsync rmdirsync unlinksync rimraf removedirs
   remove removefile deletefile removedirectory delete truncate`);
+const SEGMENT_SPLIT = /([\s(){}<>,=:.[\]]+)/;
 const DELETE_OPTIONS = words("delete delete-after delete-before delete-during delete-excluded");
 const RECURSE_AFTER = words("remove-item ri rm del rd gci get-childitem");
 const DEV_OK = ["null", "zero", "random", "urandom", "stdin", "stdout", "stderr", "tty", "ptmx", "fd/", "pts/", "shm/"];
@@ -142,7 +146,7 @@ export function plainWipe(text: string): boolean {
   return scoped(() => {
   try {
   const raw = folded(text);
-  if (namesDevice(raw) || DEVICE_SPELLINGS.some((spelling) => raw.includes(spelling))) return true;
+  if (namesDevice(raw) || DEVICE_SPELLINGS.some((spelling) => raw.includes(spelling)) || formatIn(raw)) return true;
   const s = raw.replace(/["'`\\]/g, "");
   if (namesDevice(s) || DEVICE_SPELLINGS.some((spelling) => s.includes(spelling))) return true;
   // words read twice: backslashes taken out (`r\m`), and backslashes as folder marks (`C:\x\rm.exe`)
@@ -156,11 +160,64 @@ export function plainWipe(text: string): boolean {
   });
 }
 
+/** Split only unquoted separators. An unmatched quote extends to the end. */
+function formatSegments(text: string, quotes: string, separators: string): string[] {
+  const segments: string[] = [];
+  let quote = "", start = 0;
+  for (let at = 0; at < text.length; at++) {
+    const ch = text[at]!;
+    if (quote) { if (ch === quote) quote = ""; }
+    else if (quotes.includes(ch)) quote = ch;
+    else if (separators.includes(ch)) { segments.push(text.slice(start, at)); start = at + 1; }
+  }
+  segments.push(text.slice(start));
+  return segments;
+}
+
+function formatStripOuter(text: string, quotes: string): string {
+  const s = text.trim();
+  return s.length >= 2 && quotes.includes(s[0]!) && s.at(-1) === s[0] ? s.slice(1, -1) : s;
+}
+
+/** Extra wipe signal for clear format/drive commands and at most two explicit launchers. */
+function formatIn(text: string, depth = 0): boolean {
+  if (depth > 2) return false;
+  for (const segment of [...formatSegments(text, "'\"", ";&|\n"), ...formatSegments(text, '"', "&|\n")]) {
+    const seg = segment.trim();
+    const w = seg ? seg.split(/\s+/) : [];
+    if (w.length < 2) continue;
+    const name = w[0]!.slice(Math.max(w[0]!.lastIndexOf("/"), w[0]!.lastIndexOf("\\")) + 1).toLowerCase().replace(/\.(com|exe)$/, "");
+    if (name === "format" && /^[a-z]:[\\/]?$/i.test(w[1]!)) return true;
+    // Word offsets preserve the launcher's original spacing and quoting.
+    const rest = (k: number): string => {
+      let at = 0;
+      for (let n = 0; n < k && at < seg.length; n++) {
+        while (at < seg.length && !/\s/.test(seg[at]!)) at++;
+        while (at < seg.length && /\s/.test(seg[at]!)) at++;
+      }
+      return seg.slice(at);
+    };
+    if (name === "cmd") {
+      let k = 1;
+      while (k < w.length && /^\/[a-z](:\S*)?$/i.test(w[k]!) && !/^\/[ck]$/i.test(w[k]!)) k++;
+      if (k < w.length && /^\/[ck]$/i.test(w[k]!) && formatIn(formatStripOuter(rest(k + 1), '"'), depth + 1)) return true;
+    }
+    if (name === "powershell" || name === "pwsh") {
+      let k = 1;
+      while (k < w.length && /^-[a-z]+$/i.test(w[k]!) && !/^-(c|command)$/i.test(w[k]!)) k++;
+      if (k < w.length && /^-(c|command)$/i.test(w[k]!) && formatIn(formatStripOuter(rest(k + 1), "\"'"), depth + 1)) return true;
+    }
+  }
+  return false;
+}
+
 function wipeWords(s: string): boolean {
   let recurseArmed = false;
   for (const segment of s.split(/[;&|\n]/)) {
     let git = false;
-    for (const word of segment.split(/[\s(){}<>,=:.[\]]+/)) {
+    const tokens = segment.split(SEGMENT_SPLIT); // words at even indexes, the separators between them at odd ones
+    for (let at = 0; at < tokens.length; at += 2) {
+      const word = tokens[at]!;
       if (!word) continue;
       const parts = partsOf(word);
       for (const part of parts) {
@@ -1545,7 +1602,6 @@ export function outsideScanMarks(text: string, hooks: OutsideScanHooks = {}, dep
 /** NL-WIN-1018 diagnostic: which `interpreter` branches of the last top-level scan fired (fixed ids i1..i16 in source order, never a value). */
 let interpBranches: string[] = [];
 function noteInterpBranch(id: string): void { if (!interpBranches.includes(id)) interpBranches.push(id); }
-export function interpreterBranches(): string { return interpBranches.join("+") || "none"; }
 
 function scanWithin(text: string, g: OutsideScanHooks, depth: number): OutsideMark[] {
   if (depth === 0) interpBranches = [];

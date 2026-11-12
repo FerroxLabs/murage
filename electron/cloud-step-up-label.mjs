@@ -31,7 +31,8 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["DELETE"], path: rx(String.raw`/api/cloud/model-signins/(?:chatgpt|supergrok)`), label: "Remove a model connection from your Cloud home" },
   { methods: ANY, path: /^\/api\/cloud\/own-server(?:\/(?:confirm|test))?$/, label: "Change the server your bots use as a computer" },
   { methods: ["POST"], path: rx("/api/data-dir/confirm-root"), label: "Confirm where a linked data folder now points" },
-  { methods: ANY, path: /^\/api\/engine-login\/(?:codex|claudeAgent|grokAgent|kimiAgent|opencodeGo)$/, label: "Sign in or out of an engine on your Cloud home" },
+  { methods: ANY, path: /^\/api\/engine-login\/(?:codex|claudeAgent|antigravityAgent|grokAgent|kimiAgent|opencodeGo)$/, label: "Sign in or out of an engine on your Cloud home" },
+  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/engine-signin\/code$/, label: "Finish an Antigravity sign-in for a bot on your Cloud home page" },
 
   // Bots.
   { methods: ["POST"], path: rx("/api/bots"), label: "Create a bot", summary: "bot" },
@@ -81,18 +82,21 @@ export const STEP_UP_LABELS = Object.freeze([
   { methods: ["DELETE"], path: rx(`/api/groups/${ID}`), label: "Delete a team or group" },
   { methods: ["POST"], path: /^\/api\/teams\/(?:import|export)$/, label: "Import or export a team" },
   { methods: ["POST"], path: rx("/api/team-library/github"), label: "Download a team from GitHub" },
-  { methods: ["POST"], path: rx("/api/team-library/grok"), label: "Bring in a Grok Bot" },
+  { methods: ["POST"], path: /^\/api\/(?:team-library|move-in)\/grok$/, label: "Bring in a Grok Bot" },
   { methods: ["POST"], path: /^\/api\/packages\/(?:import|export)$/, label: "Import or export a package" },
   { methods: ["POST"], path: rx("/api/starter-profiles"), label: "Install a starter profile" },
   { methods: ANY, path: /^\/api\/(?:move|lend)\/(?:commit|undo|scopes).*$/, label: "Move or lend a bot's work between teams" },
 
   // Settings and connections. Names of what changes are shown; values never are.
+  { methods: ["POST"], path: rx("/api/claude-code-import"), label: "Import skills and tool servers from Claude Code" },
   { methods: ["PATCH", "PUT"], path: rx("/api/config"), label: "Change app settings", summary: "settings" },
   { methods: ANY, path: /^\/api\/flux-connection(?:\/.*)?$/, label: "Change your Flux connection", summary: "none" },
   { methods: ANY, path: /^\/api\/provider-connections(?:\/.*)?$/, label: "Change a model provider connection", summary: "none" },
   { methods: ANY, path: /^\/api\/local-models(?:\/.*)?$/, label: "Change the local models", summary: "none" },
   { methods: ANY, path: /^\/api\/claude-accounts(?:\/.*)?$/, label: "Change a Claude account", summary: "none" },
   { methods: ANY, path: /^\/api\/(?:telegram|slack|discord)\/(?:status|pair|resume|revoke)$/, label: "Change a Telegram, Slack or Discord connection", summary: "none" },
+  { methods: ["GET", "POST"], path: /^\/api\/connector-incidents\/[0-9a-f-]{36}$/, label: "Connect an app", summary: "none" },
+  { methods: ANY, path: /^\/api\/signal\//, label: "Change the Signal connection", summary: "none" },
   { methods: ANY, path: /^\/api\/whatsapp\/(?:status|link|approve|dismiss|resume|revoke|unlink|groups)$/, label: "Change the WhatsApp connection", summary: "none" },
   { methods: ANY, path: /^\/api\/memory(?:\/.*)?$/, label: "Change memory", summary: "settings" },
   { methods: ANY, path: /^\/api\/skills(?:\/.*)?$/, label: "Change the skills collection", summary: "settings" },

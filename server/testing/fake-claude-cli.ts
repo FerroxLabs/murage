@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// @ts-expect-error The isolated replay harness is JavaScript test support.
+import { replayBrowserRead } from "../../scripts/web-read-replay/run.mjs";
 // Fake of the claude CLI's stream-json surface, for driver tests.
 // Reads the prompt from stdin (one stream-json line), then plays a
 // scripted session. Failure modes are toggled by env var, mirroring how
@@ -101,10 +103,13 @@
 //                      figure) and its later turns normally.
 //
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
+import { consumePermissionResult } from "./claude-permission-consumer.ts";
 import { fixtureDumpEnvironment } from "./fixture-dump.ts";
+import { fixtureRequested } from "./fixture-request.ts";
 import { fakeReviewReply } from "./fake-review.ts";
 import { callFirstCustomTool, claudeMcpLaunch, customToolReply, customToolServer, lostServerEnv } from "./fake-custom-tool.ts";
 import { spawn } from "node:child_process";
+import { replayWebRead } from "./fake-web-read.ts";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 
@@ -192,12 +197,6 @@ const FIXTURE_SCREEN_IMAGE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADU
 // A room turn's prompt is the room transcript followed by the harness's
 // "(Reply to the conversation above as NAME.)" trailer, so its current request
 // is the last transcript line before that trailer.
-const ROOM_REPLY_TRAILER = /^\(Reply to the conversation above as .+\.\)$/;
-const fixtureRequested = (text: string, marker: string) => {
-  const lines = text.trimEnd().split("\n");
-  if (lines.length > 1 && ROOM_REPLY_TRAILER.test(lines.at(-1) ?? "")) { lines.pop(); while (lines.length > 1 && !lines.at(-1)?.trim()) lines.pop(); }
-  return (lines.pop() ?? "").includes(marker);
-};
 
 // What a real CLI prints when it refuses the isolation flags (rig, 2.1.281 and 2.1.295: stderr, exit 1).
 function refuseLaunchFlags(): void {
@@ -464,10 +463,11 @@ const callPermissionPromptTool = (args: Record<string, unknown>): Promise<string
   return new Promise((resolve, reject) => {
     // started as the real CLI starts it: through CLAUDE_CODE_SHELL_PREFIX when one is set (claudeMcpLaunch)
     const launch = claudeMcpLaunch({ command: server.command, args: server.args ?? [], env: server.env ?? {} });
-    const child = spawn(launch.command, launch.args, { env: { ...process.env, ...launch.env }, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(launch.command, launch.args, { windowsHide: true, env: { ...process.env, ...launch.env }, stdio: ["pipe", "pipe", "pipe"] });
     let buffered = "";
     let stderr = "";
     let answered = false;
+    let reply: string | undefined;
     const send = (message: unknown) => child.stdin.write(JSON.stringify(message) + "\n");
     child.on("error", reject);
     // The server must answer `initialize` promptly; a tool call after that may wait on a person for as long as it likes.
@@ -485,6 +485,13 @@ const callPermissionPromptTool = (args: Record<string, unknown>): Promise<string
     // the turn ends with the reason instead of waiting on a reply that cannot come.
     child.on("exit", (code, signal) => {
       if (!answered) reject(new Error(`the ${match[1]} server exited before answering (${signal ?? `code ${code}`})${stderr.trim() ? `: ${stderr.trim()}` : ""}`));
+    });
+    child.on("close", () => {
+      clearTimeout(startDeadline);
+      // EOF requests shutdown; it does not reap the server. Keep this fake
+      // turn open until the child is gone, before driver disposal can kill
+      // its parent and leave an orphan zombie holding the process group.
+      if (reply !== undefined) resolve(reply);
     });
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
@@ -513,8 +520,8 @@ const callPermissionPromptTool = (args: Record<string, unknown>): Promise<string
           send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: match[2], arguments: args } });
         } else if (message.id === 2) {
           answered = true;
+          reply = message.result?.content?.[0]?.text ?? "";
           child.stdin.end();
-          resolve(message.result?.content?.[0]?.text ?? "");
         }
       }
     });
@@ -553,22 +560,83 @@ const playAskUserQuestion = async (): Promise<void> => {
   finishIfDone();
 };
 
+/** Real MCP continuation followed by the fixture's four real shell calls. */
+const playWebRead = async (prompt: string, url: string, browser = false): Promise<void> => {
+  let ok = false;
+  const toolOutput = (name: string, input: unknown, output: unknown, failed = false) => {
+    const toolUseId = `web_${process.pid}_${Date.now()}_${Math.random()}`;
+    out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name, input }] } });
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolUseId, is_error: failed, content: typeof output === "string" ? output : JSON.stringify(output) }] } });
+  };
+  try {
+    const servers = (startupMcpConfig as any)?.mcpServers ?? {};
+    const agents = Object.entries(servers).find(([name]) => browser ? name === "browser" || name.endsWith("-browser") : name === "agents" || name.endsWith("-agents"));
+    if (!agents) throw Error("Replay agents mount missing");
+    const [name, server] = agents as [string, { command: string; args: string[]; env: Record<string, string> }];
+    const receipt = await (browser ? replayBrowserRead : replayWebRead)(claudeMcpLaunch(server), url, (input: any, output: unknown) => toolOutput(`mcp__${name}__${browser ? input.name : "web_read"}`, input, output));
+    const commands = prompt.split("\n").filter(line => /^(cd |ls |curl |python3 )/.test(line));
+    if (commands.length !== 4) throw Error("Replay command sequence missing");
+    for (const command of commands) {
+      const permission = await callPermissionPromptTool({ tool_name: "Bash", input: { command }, tool_use_id: `shell_${Date.now()}` });
+      if (permission && JSON.parse(permission).behavior !== "allow") throw Error(`Replay shell refused: ${permission}`);
+      const result = await new Promise<{ code: number | null; text: string }>((resolve, reject) => {
+        const prefix = process.env.CLAUDE_CODE_SHELL_PREFIX;
+        const child = spawn(prefix || "/bin/sh", prefix ? [command] : ["-c", command], { env: { ...process.env, PATH: "/usr/bin:/bin" }, stdio: ["ignore", "pipe", "pipe"] });
+        let text = ""; child.stdout.on("data", x => { text += x; }); child.stderr.on("data", x => { text += x; });
+        child.once("error", reject); child.once("exit", code => resolve({ code, text }));
+      });
+      toolOutput("Bash", { command }, result.text, result.code !== 0);
+      if (result.code !== 0) throw Error("Replay shell failed");
+    }
+    out({ type: "assistant", message: { content: [{ type: "text", text: JSON.stringify(receipt) }] } }); ok = true;
+  } catch (error) { out({ type: "assistant", message: { content: [{ type: "text", text: `Replay failed: ${String(error)}` }] } }); }
+  out({ type: "result", is_error: !ok, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+  turnRunning = false; finishIfDone();
+};
+
 /** `__fixture_permission_tool__`: ask the permission prompt tool about one
  * ordinary tool call (FAKE_CLAUDE_PERM_TOOL / FAKE_CLAUDE_PERM_INPUT), the
  * way the CLI does for anything its permission mode does not cover, and say
  * what came back. Without a prompt tool the CLI would just run it (bypass). */
+let sdkBashHook: string | undefined;
+const sdkHookWaiting = new Map<string, (response: any) => void>();
 const playPermissionTool = async (): Promise<void> => {
   const tool = process.env.FAKE_CLAUDE_PERM_TOOL ?? "Bash";
-  const input = process.env.FAKE_CLAUDE_PERM_INPUT ? (JSON.parse(process.env.FAKE_CLAUDE_PERM_INPUT) as Record<string, unknown>) : { command: ["rm", "-rf", "~/Documents"].join(" ") };
+  const rawInput = process.env.FAKE_CLAUDE_PERM_INPUT_FILE ? readFileSync(process.env.FAKE_CLAUDE_PERM_INPUT_FILE, "utf8") : process.env.FAKE_CLAUDE_PERM_INPUT;
+  const input = rawInput ? (JSON.parse(rawInput) as Record<string, unknown>) : { command: ["rm", "-rf", "~/Documents"].join(" ") };
   const toolUseId = `toolu_fake_perm_${process.pid}_${Date.now()}`;
   out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: tool, input }] } });
   let verdict = "ran without asking";
   // the real CLI puts a deny's message in the tool result, as the model reads it
   let resultText = verdict;
   try {
-    const reply = await callPermissionPromptTool({ tool_name: tool, input, tool_use_id: toolUseId });
+    // W4 SDK 0.3.307 / Claude 2.1.307: the main permission flow reads a
+    // whole-tool ask rule before checkPermissions, except sandbox autoallow.
+    // SDK-host hooks run first even with settings hooks disabled. This opt-in
+    // fake models both paths; no command is ever executed.
+    const sdkSettings = process.env.FAKE_CLAUDE_SDK_ACCEPT_EDITS === "1"
+      ? JSON.parse(readFileSync(argAfter("--settings")!, "utf8")) as { permissions?: { ask?: string[] } }
+      : undefined;
+    const sdkAllows = sdkSettings !== undefined && tool === "Bash" && argAfter("--permission-mode") === "acceptEdits" && (process.env.FAKE_CLAUDE_SDK_SANDBOX === "1" || !sdkSettings.permissions?.ask?.includes("Bash"));
+    let hookDecision: { permissionDecision?: string; updatedInput?: Record<string, unknown> } | undefined;
+    if (sdkSettings && tool === "Bash" && sdkBashHook) {
+      const id = `hook-${toolUseId}`;
+      const answer = new Promise<any>(resolve => sdkHookWaiting.set(id, resolve));
+      out({ type: "control_request", request_id: id, request: { subtype: "hook_callback", callback_id: sdkBashHook,
+        input: { hook_event_name: "PreToolUse", tool_name: tool, tool_input: input }, tool_use_id: toolUseId } });
+      hookDecision = (await answer)?.response?.hookSpecificOutput;
+    }
+    const reply = hookDecision?.permissionDecision === "allow" || hookDecision?.permissionDecision === "deny"
+      ? JSON.stringify({ behavior: hookDecision.permissionDecision, updatedInput: hookDecision.updatedInput })
+      : sdkAllows ? null : await callPermissionPromptTool({ tool_name: tool, input, tool_use_id: toolUseId });
     if (reply !== null) {
-      const decision = JSON.parse(reply) as { behavior?: string; message?: string };
+      const decision: { behavior?: string; message?: string; updatedInput?: Record<string, unknown> } = process.env.FAKE_CLAUDE_PERM_WRITE === "1"
+        ? consumePermissionResult({ content: [{ type: "text", text: reply }] }, process.env, Buffer.byteLength(reply))
+        : JSON.parse(reply);
+      if (decision.behavior === "allow" && tool === "Write" && process.env.FAKE_CLAUDE_PERM_WRITE === "1") {
+        const judged = decision.updatedInput!;
+        writeFileSync(String(judged.file_path), String(judged.content));
+      }
       verdict = decision.behavior === "allow" ? "allowed" : "denied";
       resultText = verdict === "denied" && decision.message ? decision.message : verdict;
     }
@@ -604,7 +672,7 @@ const playCustomTool = async (name: string, prompt: JsonValue): Promise<void> =>
   out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: `mcp__${name}__${outcome.tool ?? "unknown"}`, input: {} }] } });
   out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolUseId, is_error: outcome.isError, content: outcome.text }] } });
   out({ type: "assistant", message: { content: [{ type: "text", text: customToolReply(outcome) }] } });
-  out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+  out({ type: "result", is_error: process.env.FAKE_CUSTOM_TOOL_FAIL_TURN === "1" && outcome.isError, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
   turnRunning = false;
   finishIfDone();
 };
@@ -948,7 +1016,7 @@ const playTurn = (prompt: JsonValue) => {
   if (process.env.FAKE_CLAUDE_SLOW_SERVER && !slowServerStarted) {
     slowServerStarted = true;
     const late = process.env.FAKE_CLAUDE_SLOW_SERVER === "live" ? "sleep 30" : "true";
-    const server = spawn("sh", ["-c", `sleep 2.4; ${late} & exec sleep 60`], { stdio: "ignore" });
+    const server = spawn("sh", ["-c", `sleep 2.4; ${late} & exec sleep 60`], { windowsHide: true, stdio: "ignore" });
     process.on("exit", () => { try { server.kill("SIGKILL"); } catch { /* already gone */ } });
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2_000);
   }
@@ -1075,12 +1143,16 @@ const playTurn = (prompt: JsonValue) => {
       // Gate release models a completed reply. An empty result deliberately
       // exercises the product's empty-turn error and cannot model settlement.
       out({ type: "assistant", message: { content: [{ type: "text", text: "Fixture turn finished." }] } });
-      out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+      out({ type: "result", subtype: "success", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
       turnRunning = false;
       finishIfDone();
     }, gate ? 10 : 1_000);
     return;
   }
+
+  const browserReplay = promptText(prompt).includes("__fixture_browser_read__:");
+  const webReplay = /__fixture_(?:web|browser)_read__:(http:\/\/127\.0\.0\.1:\d+\/sales)/.exec(promptText(prompt));
+  if (webReplay) { void playWebRead(promptText(prompt), webReplay[1], browserReplay); return; }
 
   if (mode === "ask-user-question" || fixtureRequested(promptText(prompt), "__fixture_ask_user_question__")) {
     void playAskUserQuestion();
@@ -1104,7 +1176,7 @@ const playTurn = (prompt: JsonValue) => {
     // A real tool starts a model round trip after init. Give the driver time to
     // take its init-time snapshot first (init is already on the pipe).
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
-    const kid = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+    const kid = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { windowsHide: true, stdio: "ignore" });
     if (process.env.FAKE_CLAUDE_CHILD_PID && kid.pid) writeFileSync(process.env.FAKE_CLAUDE_CHILD_PID, String(kid.pid));
     process.on("exit", () => { try { kid.kill("SIGKILL"); } catch { /* already gone */ } });
   }
@@ -1173,7 +1245,7 @@ const playTurn = (prompt: JsonValue) => {
     const content: Array<
       { type: "text"; text: string } | { type: "tool_use"; id: string; name: string }
     > = [{ type: "text", text }];
-    if (index === replyParts.length - 1) content.push({ type: "tool_use", id: "tu-1", name: "Bash" });
+    if (index === replyParts.length - 1 && process.env.FAKE_CLAUDE_TEXT_ONLY !== "1") content.push({ type: "tool_use", id: "tu-1", name: "Bash" });
     out({
       type: "assistant",
       message: {
@@ -1354,6 +1426,10 @@ const drainStdin = () => {
     if ((control as { type?: string } | null)?.type === "control_response") {
       if (process.env.FAKE_CLAUDE_ELICIT_LOG) appendFileSync(process.env.FAKE_CLAUDE_ELICIT_LOG, `${line}\n`);
       const answered = (control as { response?: { request_id?: string } }).response?.request_id;
+      if (answered && sdkHookWaiting.has(answered)) {
+        const resolve = sdkHookWaiting.get(answered)!; sdkHookWaiting.delete(answered);
+        resolve((control as any).response);
+      }
       if (answered && elicitWaiting.delete(answered) && elicitWaiting.size === 0 && elicitResume) {
         const resume = elicitResume;
         elicitResume = null;
@@ -1362,6 +1438,7 @@ const drainStdin = () => {
       continue;
     }
     if (control?.type === "control_request") {
+      if (control.request?.subtype === "initialize") sdkBashHook = (control.request as any).hooks?.PreToolUse?.find((row: any) => row.matcher === "Bash")?.hookCallbackIds?.[0];
       if (process.env.FAKE_CLAUDE_CONTROL_LOG) appendFileSync(process.env.FAKE_CLAUDE_CONTROL_LOG, `${JSON.stringify({ ...control, at: Date.now() - mcpStartedAt })}\n`);
       // FAKE_CLAUDE_MCP_STATUS: "error" refuses mcp_status as an unknown
       // request (an older build); "silent" never answers it.

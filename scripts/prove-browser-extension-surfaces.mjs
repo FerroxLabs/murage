@@ -25,13 +25,13 @@ const label = process.env.MURAGE_PROVE_LABEL ?? 'browser';
 const isBranded = /Google Chrome(?! for Testing)|google-chrome|Microsoft Edge|msedge|Brave|brave|[\\/]Google[\\/]Chrome[\\/]Application[\\/]/.test(exe);
 const loader = process.env.MURAGE_PROVE_EXTENSION_LOADER ?? (isBranded ? 'cdp' : 'flag');
 const scratch = await realpath(tmpdir());
-if (platform() === 'darwin') assert.ok(scratch.startsWith('/Volumes/Scratch/'), 'Task TMPDIR must be on the scratch volume');
+if (platform() === 'darwin') assert.ok(process.env.QA_SCRATCH && scratch.startsWith(process.env.QA_SCRATCH), 'Set QA_SCRATCH to the task-owned TMPDIR root');
 for (const key of ['HOME', 'USERPROFILE', 'MURAGE_COMPANION_DIR']) {
   assert.ok(process.env[key], `Externally set ${key} before launching`);
   const child = relative(scratch, resolve(process.env[key]));
   assert.ok(child && !child.startsWith('..') && !isAbsolute(child), `${key} must be inside task TMPDIR`);
 }
-if (process.env.MURAGE_AGENT_BROWSER_PATH === undefined && platform() === 'darwin') process.env.MURAGE_AGENT_BROWSER_PATH = '/Volumes/Scratch/work/murage-0157/dist-native/browser/darwin-arm64/agent-browser';
+if (platform() === 'darwin') assert.ok(process.env.MURAGE_AGENT_BROWSER_PATH, 'Set MURAGE_AGENT_BROWSER_PATH to the isolated pinned browser');
 const { createBrowserExtensionService } = await import('../server/browser-extension-service.ts');
 const { BrowserExtensionEngine } = await import('../server/browser-extension-engine.ts');
 const { startFixtureSite } = await import('./browser-extension-fixture-site/server.mjs');

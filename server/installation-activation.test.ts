@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,17 +16,23 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
-async function fixture(options: { brokenLedger?: boolean } = {}) {
+async function fixture(options: { brokenLedger?: boolean; brokenDatabase?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), "murage-activation-")); roots.push(root);
   const source = join(root, "source"), target = join(root, "target"); mkdirSync(source); mkdirSync(target);
   writeFileSync(join(source, "config.json"), "{}");
   writeFileSync(join(source, "bots.json"), JSON.stringify([{ id: "bot", threadId: "thread", name: "History bot", tasks: [{ threadId: "thread", autoApprove: true, alwaysAllow: ["Bash:sh"], resumeCursors: {} }] }]));
   writeFileSync(join(source, "groups.json"), "[]");
   writeFileSync(join(target, "original.txt"), "retained-original");
-  if (options.brokenLedger) writeFileSync(join(target, "messages.db"), "this is not a database");
+  if (options.brokenLedger) {
+    // The deletion ledger cannot be read, but the readable database proves
+    // there are no permanent HighLevel marks to preserve (MAIN item 3).
+    const db = new DatabaseSync(join(target, "messages.db"));
+    try { db.exec("CREATE TABLE memory_meta (id INTEGER PRIMARY KEY)"); } finally { db.close(); }
+  }
+  if (options.brokenDatabase) writeFileSync(join(target, "messages.db"), "this is not a database");
   const archive = join(root, "backup.zip"), saved = await writeInstallationArchive(source, archive);
-  await restoreInstallation(target, archive, saved.sha256);
-  return { root, target };
+  if (!options.brokenDatabase) await restoreInstallation(target, archive, saved.sha256);
+  return { root, target, archive, saved };
 }
 it("requires explicit hash-bound review and retains the permanent startup decision", async () => {
   const f = await fixture();
@@ -87,6 +94,7 @@ it("the actual harness opens reviewed history with every engine disabled", async
   activateInstallation(f.target, review.reviewHash);
   const port = await freePortBlock([0, 1]);
   const child: ChildProcess = spawn(process.execPath, [fileURLToPath(new URL("./index.ts", import.meta.url))], {
+    windowsHide: true,
     env: { PATH: dirname(process.execPath), HOME: f.root, USERPROFILE: f.root, MURAGE_DATA_DIR: f.target, MURAGE_PORT: String(port), ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -172,6 +180,13 @@ it("a restore over a deletion ledger that cannot be read says so in the review a
   expect(() => activateInstallation(f.target, review.reviewHash)).toThrowError(expect.objectContaining({ code: "RESTORE_NOTICE_UNACKNOWLEDGED" }));
   expect(() => assertRestoreReviewed(f.target)).toThrow();
   expect(activateInstallation(f.target, review.reviewHash, { acknowledgedNotice: true }).status).toBe("reviewed-engines-disabled");
+});
+it("refuses an unreadable destination database before replacement because permanent HighLevel marks cannot be preserved", async () => {
+  const f = await fixture({ brokenDatabase: true });
+  await expect(restoreInstallation(f.target, f.archive, f.saved.sha256)).rejects.toMatchObject({ code: "RESTORE_PREPARATION_FAILED" });
+  expect(readFileSync(join(f.target, "messages.db"), "utf8")).toBe("this is not a database");
+  expect(readFileSync(join(f.target, "original.txt"), "utf8")).toBe("retained-original");
+  expect(existsSync(join(f.target, RESTORE_REVIEW_FILE))).toBe(false);
 });
 it("a restore whose deletion ledger was read carries no notice and opens as before (B2)", async () => {
   const f = await fixture();

@@ -1,0 +1,71 @@
+✔ both receipts of the same candidate pass (9.228086ms)
+✖ one desktop receipt cannot pass the gate (0.872915ms)
+✖ one handoff receipt cannot pass the gate (0.266801ms)
+✔ duplicate desktop is not a pair (1.035837ms)
+✔ pair rejects mismatched commit (0.586963ms)
+✔ pair rejects mismatched sha256 (0.381873ms)
+✔ pair rejects mismatched updateSha256 (0.303542ms)
+✔ pair rejects mismatched updateVersion (0.409692ms)
+✔ rejects invalid receipt: r=>r.groups.pop() (0.443882ms)
+✔ rejects invalid receipt: r=>r.groups[0].skipped++ (3.646154ms)
+✔ rejects invalid receipt: r=>r.groups[0].failed++ (0.463383ms)
+✔ rejects invalid receipt: r=>r.groups[0].passed=0 (3.779183ms)
+✔ rejects invalid receipt: r=>r.groups[0].artifacts=['../escape'] (0.261191ms)
+✔ rejects invalid receipt: r=>r.observer.visible.push('console') (0.381992ms)
+✔ rejects invalid receipt: r=>r.observer.samples=0 (0.451843ms)
+✔ rejects invalid receipt: r=>r.observer.maxGapMs=1001 (0.392173ms)
+✔ rejects invalid receipt: r=>r.observer.enumerationErrors.push(5) (0.306501ms)
+✔ rejects invalid receipt: r=>r.isolated=false (0.424003ms)
+✔ rejects invalid receipt: r=>r.fakeProvidersOnly=false (0.987317ms)
+✔ rejects invalid receipt: r=>r.updateVersion='1.0.19-gate.1' (0.282622ms)
+✔ handoff receipt must come from gate-win-nogit (0.266902ms)
+✔ same exe cannot hide a different packageSha256 (0.333181ms)
+✔ same exe cannot hide a different appManifest (0.544653ms)
+✔ legacy receipt without packageSha256 fails closed (0.161831ms)
+✔ legacy receipt without appManifest fails closed (0.092901ms)
+ℹ tests 25
+ℹ suites 0
+ℹ pass 23
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 104.292416
+
+✖ failing tests:
+
+test at ../tmp/winscen-mutant-aTNQSD/receipt-pair.node-test.mjs:14:44
+✖ one desktop receipt cannot pass the gate (0.872915ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///tmp/winscen-mutant-aTNQSD/receipt-pair.node-test.mjs:14:106)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }
+
+test at ../tmp/winscen-mutant-aTNQSD/receipt-pair.node-test.mjs:14:44
+✖ one handoff receipt cannot pass the gate (0.266801ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///tmp/winscen-mutant-aTNQSD/receipt-pair.node-test.mjs:14:106)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: undefined,
+    operator: 'throws',
+    diff: 'simple'
+  }

@@ -7,9 +7,16 @@ import type { AddressInfo } from "node:net";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CloudSessions } from "./cloud-sessions.ts";
-import { createCloudRequestAuth, stepPurpose } from "./cloud-request-auth.ts";
+import { createCloudRequestAuth, stepPurpose, type CloudOwnerAct } from "./cloud-request-auth.ts";
 import { cloudRouteDecision } from "./route-policy.ts";
 import { isOwnerBrowser } from "./cloud-request-identity.ts";
+import { mayAcceptTerms } from "./companion-authority.ts";
+import { handleTermsApi, readTermsRecords } from "./terms.ts";
+import { TERMS_VERSION } from "../shared/terms.ts";
+import { mkdtempSync } from "node:fs";
+import { removeTempDirSync } from "./testing/cleanup.ts";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { cloudHomeCopy } from "./cloud-home/copy.ts";
 
 const origin = "https://home.example", rpId = "home.example";
@@ -77,11 +84,13 @@ function rememberedOwnerBrowser(opts: { expiresAt?: number; keyHash?: string } =
   };
   return { ...paired, confirm, cookie: { cookie: `__Host-murage=${paired.accessToken}` }, stepUp };
 }
-async function start() {
+type Handler = (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => void | Promise<void>;
+async function start(handler?: Handler, ownerAct?: CloudOwnerAct) {
   sessions = new CloudSessions(new DatabaseSync(":memory:"), undefined, origin);
-  const auth = createCloudRequestAuth({ sessions, publicOrigin: origin, bootstrapSecret: () => "fixture-bootstrap-key-32-characters" });
+  const auth = createCloudRequestAuth({ sessions, publicOrigin: origin, bootstrapSecret: () => "fixture-bootstrap-key-32-characters", ...(ownerAct ? { ownerAct } : {}) });
   upstream = createServer(async (req, res) => {
     if (await auth(req, res, new URL(req.url!, origin))) return;
+    if (handler) return handler(req, res);
     res.setHeader("content-type", "application/json"); res.end(JSON.stringify({ reachedHandler: true }));
   });
   upstream.listen(0, "127.0.0.1"); await once(upstream, "listening");
@@ -121,15 +130,19 @@ describe("owner browser on a Cloud home", () => {
     expect((await call(port, "POST", "/api/bots/b1/messages", owner.cookie, { text: "hi" })).status).toBe(200);
     expect((await call(port, "POST", "/api/bots/b1/messages", chat.cookie, { text: "hi" })).status).toBe(200);
   });
-  it("keeps the desktop's step-up on sensitive writes and the chat browser refused", async () => {
+  // CHANGED by the home browser owner design: a passkey row is legacy and inert, so this browser is a remembered-owner browser. A
+  // credential write (a provider key) is plain for it, an elevated body is a fresh emailed code, and a step-up assertion changes nothing.
+  it("treats a key as plain, an elevated body as a fresh code, and the chat browser stays refused", async () => {
     const port = await start(), owner = ownerBrowser(), chat = chatBrowser(), path = "/api/provider-connections", body = { provider: "fixture" };
-    expect((await call(port, "POST", path, owner.cookie, body)).status).toBe(403);
-    expect((await call(port, "POST", path, { ...owner.cookie, ...owner.stepUp("POST", path, { provider: "other" }) }, body)).status).toBe(403);
-    expect((await call(port, "POST", path, { ...owner.cookie, ...owner.stepUp("POST", path, body) }, body)).status).toBe(200);
+    expect((await call(port, "POST", path, owner.cookie, body)).status).toBe(200);
     expect((await call(port, "POST", path, chat.cookie, body)).status).toBe(403);
     const full = { fullAccess: true };
-    expect((await call(port, "PATCH", "/api/bots/b1", owner.cookie, full)).status).toBe(403);
-    expect((await call(port, "PATCH", "/api/bots/b1", { ...owner.cookie, ...owner.stepUp("PATCH", "/api/bots/b1", full) }, full)).status).toBe(200);
+    const needs = await call(port, "PATCH", "/api/bots/b1", owner.cookie, full);
+    expect(needs.status).toBe(403);
+    expect(needs.body.code).toBe("email_code");
+    expect(needs.body.label).toBe("full_access");
+    // a step-up assertion is not a code: it opens nothing for this browser
+    expect((await call(port, "PATCH", "/api/bots/b1", { ...owner.cookie, ...owner.stepUp("PATCH", "/api/bots/b1", full) }, full)).status).toBe(403);
   });
   it("still enforces the exact Origin on owner writes", async () => {
     const port = await start(), owner = ownerBrowser(), path = "/api/bots/b1/messages";
@@ -159,7 +172,7 @@ describe("remembered-owner browser on a Cloud home", () => {
     expect(device.factor).toBe("remembered-owner");
     expect(isOwnerBrowser(device)).toBe(true);
   });
-  it("admits the owner read set and refuses every other desktop-class GET", async () => {
+  it("admits the owner reads and refuses the local machine ones", async () => {
     const port = await start(), r = rememberedOwnerBrowser(), chat = chatBrowser();
     for (const path of ["/api/inbox", "/api/decisions", "/api/team-map", "/api/setup"])
       expect((await call(port, "GET", path, r.cookie)).status).toBe(200);
@@ -167,41 +180,46 @@ describe("remembered-owner browser on a Cloud home", () => {
     // companion class: the gate admits it for any browser and its own handler scopes it, so it is not a gate 403 here).
     for (const path of ["/api/decisions", "/api/team-map", "/api/setup"])
       expect((await call(port, "GET", path, chat.cookie)).status).toBe(403);
-    expect((await call(port, "GET", "/api/storage", r.cookie)).status).toBe(403);
+    // CHANGED: every owner read is plain now (it was 403 for /api/storage); local machine concerns stay refused.
+    expect((await call(port, "GET", "/api/storage", r.cookie)).status).toBe(200);
     expect((await call(port, "GET", "/api/cli-candidates", r.cookie)).status).toBe(403);
   });
-  it("sends chat (the three writes) and nothing else", async () => {
+  // CHANGED: this was "the three chat writes and nothing else". The owner browser now has its own route table, so ordinary
+  // setup writes are plain; the ones that stay refused are listed here.
+  it("sends chat and makes ordinary settings writes; local machine and standing grants stay refused", async () => {
     const port = await start(), r = rememberedOwnerBrowser();
     expect((await call(port, "POST", "/api/bots/b1/messages", r.cookie, { text: "hi" })).status).toBe(200);
     expect((await call(port, "POST", "/api/groups/g1/messages", r.cookie, { text: "hi" })).status).toBe(200);
     expect((await call(port, "POST", "/api/bots/b1/respond", r.cookie, { behavior: "deny" })).status).toBe(200);
-    // room creation, fork move, workspace, ordinary and companion writes are all denied at the gate with pairedDeviceRequired (NOT step-up).
     for (const [method, path, body] of [["POST", "/api/groups", {}], ["POST", "/api/bots/b1/active-branch", {}],
-      ["PUT", "/api/workspace-files/x", {}], ["PUT", "/api/bots/b1/general-notes", { text: "x" }], ["POST", "/api/inbox/state", {}]] as const) {
+      ["PUT", "/api/workspace-files/x", {}], ["PUT", "/api/bots/b1/general-notes", { text: "x" }], ["POST", "/api/inbox/state", {}]] as const)
+      expect((await call(port, method, path, r.cookie, body)).status, `${method} ${path}`).toBe(200);
+    for (const [method, path, body] of [["POST", "/api/cli-test", {}], ["POST", "/api/bots/b1/always-allow", {}], ["PATCH", "/api/bots/b1", { noLimits: true }]] as const) {
       const res = await call(port, method, path, r.cookie, body);
-      expect(res.status).toBe(403);
-      expect(res.body.error).toBe(cloudHomeCopy.pairedDeviceRequired);
+      expect(res.status, `${method} ${path}`).toBe(403);
+      // the Always routes are answered earlier still, by the home's own Always refusal
+      expect([cloudHomeCopy.pairedDeviceRequired, cloudHomeCopy.alwaysAllowUnavailable]).toContain(res.body.error);
       expect(res.body.error).not.toBe(cloudHomeCopy.stepUpRequired);
     }
   });
-  it("the gate decision matrix: reads allow, three writes allow, everything else deny, never step-up", () => {
-    for (const p of ["/api/decisions", "/api/team-map", "/api/setup", "/api/setup/status", "/api/inbox", "/api/config"])
+  it("the gate decision matrix: reads allow, plain writes allow, code writes ask for a code, refused deny, never step-up", () => {
+    for (const p of ["/api/decisions", "/api/team-map", "/api/setup", "/api/setup/status", "/api/inbox", "/api/config", "/api/storage", "/api/deletions/owed"])
       expect(cloudRouteDecision("GET", p, "remembered-owner", {})).toBe("allow");
-    for (const p of ["/api/storage", "/api/cli-candidates", "/api/deletions/owed"])
-      expect(cloudRouteDecision("GET", p, "remembered-owner", {})).toBe("deny");
-    for (const [m, p] of [["POST", "/api/bots/b1/messages"], ["POST", "/api/groups/g1/messages"], ["POST", "/api/bots/b1/respond"]] as const)
-      expect(cloudRouteDecision(m, p, "remembered-owner", {})).toBe("allow");
-    for (const [m, p] of [["POST", "/api/groups"], ["POST", "/api/bots/b1/active-branch"], ["PUT", "/api/bots/b1/general-notes"],
-      ["POST", "/api/inbox/state"], ["PUT", "/api/workspace-files/x"]] as const)
-      expect(cloudRouteDecision(m, p, "remembered-owner", {})).toBe("deny");
-    // No step-up can widen a remembered-owner write.
-    expect(cloudRouteDecision("PUT", "/api/bots/b1/general-notes", "remembered-owner", { text: "x" }, true)).toBe("deny");
+    expect(cloudRouteDecision("GET", "/api/cli-candidates", "remembered-owner", {})).toBe("deny");
+    for (const [m, p] of [["POST", "/api/bots/b1/messages"], ["POST", "/api/groups/g1/messages"], ["POST", "/api/bots/b1/respond"], ["POST", "/api/groups"],
+      ["PUT", "/api/bots/b1/general-notes"], ["POST", "/api/inbox/state"], ["PUT", "/api/workspace-files/x"], ["POST", "/api/bots/b1/active-branch"]] as const)
+      expect(cloudRouteDecision(m, p, "remembered-owner", {}), `${m} ${p}`).toBe("allow");
+    expect(cloudRouteDecision("DELETE", "/api/bots/b1", "remembered-owner", {})).toBe("email-code required");
+    expect(cloudRouteDecision("POST", "/api/cli-test", "remembered-owner", {})).toBe("deny");
+    // A step-up assertion cannot widen it: the decision ignores steppedUp for this scope.
+    expect(cloudRouteDecision("POST", "/api/cli-test", "remembered-owner", {}, true)).toBe("deny");
+    expect(cloudRouteDecision("DELETE", "/api/bots/b1", "remembered-owner", {}, true)).toBe("email-code required");
   });
-  it("no upgrade exists: a valid assertion-key step-up still 403s, and consumeAssertion on the row is false", async () => {
-    const port = await start(), r = rememberedOwnerBrowser(), path = "/api/bots/b1/general-notes", body = { text: "x" };
-    const res = await call(port, "PUT", path, { ...r.cookie, ...r.stepUp("PUT", path, body) }, body);
+  it("no upgrade exists: a valid assertion-key step-up still needs the code, and consumeAssertion on the row is false", async () => {
+    const port = await start(), r = rememberedOwnerBrowser(), path = "/api/bots/b1/sharing/copy", body = { to: "b2" };
+    const res = await call(port, "POST", path, { ...r.cookie, ...r.stepUp("POST", path, body) }, body);
     expect(res.status).toBe(403);
-    expect(res.body.error).toBe(cloudHomeCopy.pairedDeviceRequired);
+    expect(res.body.code).toBe("email_code");
     const challenge = sessions.challenge(r.deviceId, "p"), at = Date.now();
     const message = `murage:${sessions.environmentId}:${r.deviceId}:p:${challenge}:${at}`;
     const sig = sign("sha256", Buffer.from(message), { key: r.confirm.privateKey, dsaEncoding: "ieee-p1363" }).toString("base64url");
@@ -222,15 +240,91 @@ describe("remembered-owner browser on a Cloud home", () => {
   });
   it("Make chat-only drives the owner-factor revoke route into the one atomic revoke+watermark chain", async () => {
     // The device list's "Make chat-only" button posts /api/cloud/devices/:id/owner/revoke (src/lib/cloud-door.ts makeChatOnly).
-    // That sensitive route needs a paired owner step-up, and ends in revokeOwnerFactor: the factor row revoke AND the home-wide
-    // watermark in one tx() BEGIN IMMEDIATE. This proves the button's call reaches that chain, not a shortcut or a direct mutation.
-    const port = await start(), owner = ownerBrowser(), target = rememberedOwnerBrowser();
+    // CHANGED: that route is now a fresh emailed code for the owner's browser (it was a step-up the remembered browser could never pass).
+    // With a verified proof for exactly this act it ends in revokeOwnerFactor: the factor row revoke AND the home-wide watermark in one tx().
+    let acts: string[] = [];
+    const ownerAct: CloudOwnerAct = { token: input => { acts.push(input.act); return "tok"; }, verifyProof: (req, _device, act) => req.headers["x-murage-owner-proof"] === "good" && acts.includes(act), doorFresh: () => false };
+    const port = await start(undefined, ownerAct), owner = ownerBrowser(), target = rememberedOwnerBrowser();
     const path = `/api/cloud/devices/${target.deviceId}/owner/revoke`;
     expect(sessions.watermarkFor("*")).toBe(0);
     expect(sessions.device(target.deviceId)!.factor).toBe("remembered-owner");
-    expect((await call(port, "POST", path, owner.cookie, {})).status).toBe(403); // the sensitive route needs a step-up
-    expect((await call(port, "POST", path, { ...owner.cookie, ...owner.stepUp("POST", path, {}) }, {})).status).toBe(200);
+    const asked = await call(port, "POST", path, owner.cookie, {});
+    expect(asked.status).toBe(403);
+    expect(asked.body).toMatchObject({ code: "email_code", label: "device_remove", actToken: "tok" });
+    expect(sessions.device(target.deviceId)!.factor).toBe("remembered-owner");
+    expect((await call(port, "POST", path, { ...owner.cookie, "x-murage-owner-proof": "bad" }, {})).status).toBe(403);
+    expect((await call(port, "POST", path, { ...owner.cookie, "x-murage-owner-proof": "good" }, {})).status).toBe(200);
     expect(sessions.device(target.deviceId)!.factor).toBe(false);   // the factor row was revoked
     expect(sessions.watermarkFor("*")).toBeGreaterThan(0);          // and the home-wide watermark was written, together
+  });
+  it("Trust and Forget a folder from the owner's browser: a code is asked for, a bad proof is refused, a valid proof goes through (Astra r3 #1)", async () => {
+    const acts: string[] = [];
+    const ownerAct: CloudOwnerAct = { token: input => { acts.push(input.act); return "tok"; }, verifyProof: (req, _device, act) => req.headers["x-murage-owner-proof"] === "good" && acts.includes(act), doorFresh: () => false };
+    const port = await start(undefined, ownerAct), owner = ownerBrowser();
+    for (const [method, path] of [["POST", "/api/folder-trust"], ["DELETE", "/api/folder-trust?key=k1"]] as const) {
+      const asked = await call(port, method, path, owner.cookie, {});
+      expect(asked.status, method).toBe(403);
+      expect(asked.body, method).toMatchObject({ code: "email_code", label: "folder_trust", actToken: "tok" });
+      expect((await call(port, method, path, { ...owner.cookie, "x-murage-owner-proof": "bad" }, {})).status, method).toBe(403);
+      expect((await call(port, method, path, { ...owner.cookie, "x-murage-owner-proof": "good" }, {})).status, method).toBe(200);
+    }
+  });
+});
+
+// The whole request path for POST /api/terms/accept on a Cloud home: the door (cloudRouteDecision) and then the same
+// second layer server/index.ts runs (mayAcceptTerms) in front of the real handleTermsApi, writing a real record.
+describe("terms acceptance by a browser-only customer on a Cloud home", () => {
+  let dir: string;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "terms-home-")); });
+  afterEach(() => removeTempDirSync(dir));
+  const handler: Handler = async (req, res) => {
+    res.setHeader("content-type", "application/json");
+    // index.ts passes requestSurface(...) === "desktop"; a Cloud browser never claims the desktop surface here.
+    if (!mayAcceptTerms(req.headers, false)) { res.statusCode = 403; res.end(JSON.stringify({ error: "refused at the handler" })); return; }
+    const answer = await handleTermsApi({ method: "POST", path: "/api/terms/accept", readBody: async () => ({ version: TERMS_VERSION, ageConfirmed: true }) }, dir, {});
+    res.statusCode = answer!.status; res.end(JSON.stringify(answer!.body));
+  };
+  const accept = (port: number, headers: Record<string, string>) => call(port, "POST", "/api/terms/accept", headers, { version: TERMS_VERSION, ageConfirmed: true });
+  it("a remembered-owner browser accepts: 200 and the record is written", async () => {
+    const port = await start(handler), r = rememberedOwnerBrowser();
+    expect((await accept(port, r.cookie)).status).toBe(200);
+    expect(readTermsRecords(dir).map((x) => x.version)).toContain(TERMS_VERSION);
+  });
+  it("a passkey browser accepts: 200 and the record is written", async () => {
+    const port = await start(handler), o = ownerBrowser();
+    expect((await accept(port, o.cookie)).status).toBe(200);
+    expect(readTermsRecords(dir).map((x) => x.version)).toContain(TERMS_VERSION);
+  });
+  it("a chat-only browser is refused and nothing is written", async () => {
+    const port = await start(handler), c = chatBrowser(), d = doorBrowser();
+    expect((await accept(port, c.cookie)).status).toBe(403);
+    expect((await accept(port, d.cookie)).status).toBe(403);
+    expect(readTermsRecords(dir)).toEqual([]);
+  });
+  it("a revoked remembered-owner browser is refused and nothing is written", async () => {
+    const port = await start(handler), r = rememberedOwnerBrowser();
+    sessions.revoke(r.deviceId);
+    expect((await accept(port, r.cookie)).status).toBe(403);
+    expect(readTermsRecords(dir)).toEqual([]);
+  });
+  it("a caller with no identity (a bot's shell on loopback) is refused", async () => {
+    const port = await start(handler);
+    expect((await accept(port, {})).status).toBe(403);
+    expect(mayAcceptTerms({}, false)).toBe(false);
+    expect(readTermsRecords(dir)).toEqual([]);
+  });
+  it("terms acceptance is plain, and a computer decision stays refused", () => {
+    expect(cloudRouteDecision("POST", "/api/terms/accept", "remembered-owner", {})).toBe("allow");
+    expect(cloudRouteDecision("POST", "/api/terms", "remembered-owner", {})).toBe("deny");
+    // CHANGED: /api/inbox/state is an ordinary owner write now (plain); a settings route that is a computer decision is not.
+    expect(cloudRouteDecision("POST", "/api/inbox/state", "remembered-owner", {})).toBe("allow");
+    // Folder trust is the owner browser's on a fresh emailed code (Sean, 1.0.16), not a hard deny.
+    expect(cloudRouteDecision("POST", "/api/folder-trust", "remembered-owner", {})).toBe("email-code required");
+  });
+  it("off a home nothing changes: no cloud identity means mayAcceptTerms is only the surface or launch proof", () => {
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "");
+    const headers = {};
+    expect(mayAcceptTerms(headers, false)).toBe(false);
+    expect(mayAcceptTerms(headers, true)).toBe(true);
   });
 });

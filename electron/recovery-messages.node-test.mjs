@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const context = {}; context.globalThis = context;
 vm.runInNewContext(readFileSync(new URL("./recovery/messages.js", import.meta.url), "utf8"), context);
-const { messages, captureMessages, fallback, sentence } = context.murageRecoveryMessages;
+const { messages, captureMessages, fallback, sentence, undoRetry } = context.murageRecoveryMessages;
 
 test("backup folder permissions and invalid key locations have plain actionable copy", () => {
   for (const action of [undefined, "backup", "backup-encrypted"]) {
@@ -36,7 +36,8 @@ test("every recovery refusal has its own plain sentence", () => {
 });
 
 test("no sentence shows a code, tool jargon, an em dash or safe", () => {
-  for (const text of [...Object.values(messages), ...Object.values(captureMessages), fallback]) {
+  assert.equal(typeof undoRetry, "string");
+  for (const text of [...Object.values(messages), ...Object.values(captureMessages), fallback, undoRetry]) {
     assert.doesNotMatch(text, /[A-Z]{2,}_[A-Z_]+|age-keygen|fidelity|—|\bsaf(?:e|ely)\b/i, text);
     assert.match(text, /\.$/, text);
   }

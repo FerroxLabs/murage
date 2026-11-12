@@ -45,8 +45,8 @@ describe("the Fuigo card (HEALTH-DOCTOR-FUIGO-VERSION)", () => {
   it("names the version the server read from the install receipt, without a fuigo prefix, and nothing when unknown", () => {
     fixture.answer = answer({ fuigoVersion: "1.0.39" });
     expect(page()).toContain("Fuigo 1.0.39 · Flux Router");
-    fixture.answer = answer({ fuigoVersion: "fuigo 1.0.41" });
-    expect(page()).toContain("Fuigo 1.0.41 · Flux Router");
+    fixture.answer = answer({ fuigoVersion: "fuigo 1.0.42" });
+    expect(page()).toContain("Fuigo 1.0.42 · Flux Router");
     fixture.answer = answer({ fuigoVersion: null });
     expect(page()).toContain("Fuigo and Flux Router");
     expect(page()).not.toMatch(/Fuigo \d/);

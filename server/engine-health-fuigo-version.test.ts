@@ -11,6 +11,9 @@ import { engineHealthRoute, ENGINE_HEALTH_PATH, type EngineHealthInstance } from
 import { installedFuigoVersion } from "./engine-management.ts";
 import { QUALIFIED_FUIGO_VERSION } from "./fuigo-native-update.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
+import { nextPatch } from "./testing/version-fixture.ts";
+
+const newerVersion = nextPatch(QUALIFIED_FUIGO_VERSION);
 
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map((root) => removeTempDir(root))); });
@@ -33,7 +36,7 @@ const url = new URL(`http://127.0.0.1${ENGINE_HEALTH_PATH}`);
 
 describe("the Fuigo version Health shows", () => {
   it("is the install receipt's version, whatever this build qualified", async () => {
-    for (const version of ["1.0.39", "1.0.41"]) {
+    for (const version of ["1.0.39", newerVersion]) {
       const { root, cli } = await receipt(version);
       expect(version).not.toBe(QUALIFIED_FUIGO_VERSION);
       expect(await installedFuigoVersion(root, { instanceId: "fuigo", cli, snapshot: { version: "fuigo 1.0.12" } })).toBe(version);
@@ -42,7 +45,7 @@ describe("the Fuigo version Health shows", () => {
 
   it("falls back to the version the engine reports, without the fuigo prefix, and is null when there is neither", async () => {
     const { root } = await receipt("1.0.39");
-    expect(await installedFuigoVersion(root, { instanceId: "fuigo", cli: "/usr/local/bin/fuigo", snapshot: { version: "fuigo 1.0.40 (ba7ad54)" } })).toBe("1.0.40");
+    expect(await installedFuigoVersion(root, { instanceId: "fuigo", cli: "/usr/local/bin/fuigo", snapshot: { version: "fuigo 1.0.42 (c1605c300fdd)" } })).toBe("1.0.42");
     expect(await installedFuigoVersion(root, { instanceId: "fuigo", snapshot: { version: null } })).toBeNull();
   });
 

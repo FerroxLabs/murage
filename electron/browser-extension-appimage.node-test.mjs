@@ -35,7 +35,7 @@ const electronBinary = process.platform === "darwin"
 // failing, so skip on exactly that loader error; any other failure still fails.
 const missingSharedLibraries = () => {
   if (process.platform === "win32" || !existsSync(electronBinary)) return false;
-  const probe = spawnSync(electronBinary, ["--version"], { encoding: "utf8", env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
+  const probe = spawnSync(electronBinary, ["--version"], { windowsHide: true, encoding: "utf8", env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
   return probe.status === 127 && /error while loading shared libraries/.test(probe.stderr ?? "");
 };
 const REAL = process.platform === "win32" ? "POSIX AppRun" : !existsSync(electronBinary) ? "electron binary not present" : !builderDir ? "app-builder-lib not present" : missingSharedLibraries() ? "electron cannot start here: desktop shared libraries are missing" : false;
@@ -61,7 +61,7 @@ test("Chrome's launch of the AppImage helper reaches the helper script with its 
     writeFileSync(launcherPath, unixLauncher({ electronPath: appImage, hostScriptPath: hostScript, configPath, appImage: true }), { mode: 0o700 });
     // Chrome passes the caller's origin; Murage's own environment is absent.
     const origin = `chrome-extension://${"b".repeat(32)}/`;
-    const r = spawnSync(launcherPath, [origin], { env: { PATH: `${bin}:/usr/bin:/bin`, HOME: dir }, encoding: "utf8" });
+    const r = spawnSync(launcherPath, [origin], { windowsHide: true, env: { PATH: `${bin}:/usr/bin:/bin`, HOME: dir }, encoding: "utf8" });
     assert.equal(r.status, 0, `${name}: helper died: status ${r.status}, stderr ${r.stderr.trim()}`);
     const line = JSON.parse(r.stdout.trim().split("\n").at(-1));
     // browser-extension-host-entry.mjs reads its config from argv[2].

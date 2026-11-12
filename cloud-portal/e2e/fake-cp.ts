@@ -137,7 +137,7 @@ createServer(async (req, res) => {
         exportRequest: mine.exportRequestedAt ? { id: "export-1", status: "open", requestedAt: mine.exportRequestedAt, deliveredAt: null, pausesDeletionUntil: mine.exportRequestedAt + 7 * 86_400_000 } : null });
       }
       if (path === "/v1/account/terms") return send(res, 200, { reacceptRequired: false, changed: [], current: buildDisclosure("starter", Date.now()).versions,
-        accepted: null, noticeSentAt: null, effectiveAt: null, wording: { reaccept: "", arbitration: "" } });
+        screenVersion: buildDisclosure("starter", Date.now()).screenVersion, accepted: null, noticeSentAt: null, effectiveAt: null, wording: { reaccept: "", arbitration: "" } });
       if (path === "/v1/account/confirmation") {
         if (!mine) return send(res, 404, { error: "not_found" });
         return send(res, 200, { subject: "Murage Cloud: your order confirmation and contract copy", sentAt: Date.now(),

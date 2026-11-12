@@ -1,4 +1,6 @@
 #!/usr/bin/env -S node --experimental-strip-types
+import "../shared/win-hide-child-process.mjs";
+import { withHideInherit } from '../shared/win-hide-child-process.mjs';
 // Thin, agent-friendly CLI over the same guarded MCP operations exposed to
 // external clients. It deliberately owns no second API client or wait loop.
 import { spawn, type ChildProcess } from "node:child_process";
@@ -493,13 +495,13 @@ export async function launchVerificationServer(
   }
   function startChild() {
     const log = openSync(logPath, "a", 0o600);
-    try { const launched = spawn(process.execPath, ["--experimental-strip-types", ...(options.instrumentationSource === undefined ? [] : ["--import", pathToFileURL(instrumentationPath).href]), join(ROOT, "server", "index.ts")], {
+    try { const launched = spawn(process.execPath, ["--experimental-strip-types", ...(options.instrumentationSource === undefined ? [] : ["--import", pathToFileURL(instrumentationPath).href]), join(ROOT, "server", "index.ts")], withHideInherit({
     cwd: ROOT,
     env: childEnv,
     // Cloud fixtures keep the private boot pipe at FD3 and satisfy the
     // supervisor's separate IPC contract at FD4; desktop stdio is unchanged.
     stdio: options.cloud ? ["ignore", log, log, "pipe", "ipc"] : ["ignore", log, log],
-    });
+    }));
     if(options.cloud) (launched.stdio[3] as import("node:stream").Writable).on("error", () => {}).end(JSON.stringify({ version: 1, bootstrapSecret: options.cloud.bootstrapSecret, credentials: {} }));
     return launched; } finally { closeSync(log); }
   }

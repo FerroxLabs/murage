@@ -101,6 +101,19 @@ export async function readBoundedJSON(request: Request): Promise<JSONValue> {
   }
 }
 
+/** A form body under the same 16 KB cap (updates consent design v5.6.1 4.1, the unsubscribe POST): `application/x-www-form-urlencoded`
+ *  or no content type at all (some mail providers send none). JSON and every other type answer 415. */
+export async function readBoundedForm(request: Request): Promise<URLSearchParams> {
+  const mediaType = request.headers.get("content-type")?.split(";", 1)[0].trim().toLowerCase() ?? "";
+  if (mediaType !== "" && mediaType !== "application/x-www-form-urlencoded") throw new HTTPError(415, "unsupported_media_type");
+  const bytes = await readBoundedBody(request);
+  try {
+    return new URLSearchParams(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch {
+    throw new HTTPError(400, "invalid_request");
+  }
+}
+
 function appendVary(headers: Headers, name: string) {
   const current = headers.get("vary")?.split(",").map((value) => value.trim()).filter(Boolean) ?? [];
   if (!current.some((value) => value.toLowerCase() === name.toLowerCase())) current.push(name);

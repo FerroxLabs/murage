@@ -1,0 +1,32 @@
+{
+  "server/browser-extension-approvals.ts": {
+    "options": 1
+  },
+  "server/browser-extension-setup.ts": {
+    "options": 1
+  },
+  "server/host-computer-consent.ts": {
+    "options": 1
+  },
+  "server/image-operations.ts": {
+    "options": 1
+  },
+  "server/index.ts": {
+    "options": 7,
+    "mcpSignIn": 1,
+    "secret": 3,
+    "connector": 1
+  },
+  "server/peer-approval.ts": {
+    "options": 2
+  },
+  "server/publish/publish-ops.ts": {
+    "options": 3
+  },
+  "server/routine-requests.ts": {
+    "options": 2
+  },
+  "server/store.ts": {
+    "options": 2
+  }
+}

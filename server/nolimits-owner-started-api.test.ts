@@ -1,6 +1,6 @@
 // NOLIMITS-MEANS-IT section 2, real starts: a bot at No limits, a fake engine asking for a key rule that is not a gate
-// file, over real HTTP. What decides is the start that reached it: the owner's own line runs with no card, and every
-// other start keeps the card it has today. Rows that need a live peer, a channel or a project card are the packaged
+// file, over real HTTP. Proven owner work, including a routine, runs with no card. Unproven starts and rooms
+// keep their cards (RULING-R3 R3). Rows that need a live peer, a channel or a project card are the packaged
 // rig's (rel1013/rig/nl1013-means-it-rows.mjs); their start conditions are pinned one by one in owner-started.test.ts.
 //
 // HEADLESS ONLY: the data directory is a throwaway temp HOME and the port is probed from the fixture band.
@@ -21,7 +21,7 @@ const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const KEY_READ = "cat .env";
 const GATE_READ = "cat ~/.ssh/config";
-// ruling 3 (11-06): a text naming cmd or PowerShell is a Windows shell call, which keeps today's gate card on any turn
+// Binding design rev 8 §3.9: the held Windows gate row reaches the No limits finalizer.
 const GATE_READ_WIN = "cmd /c type ~/.ssh/config";
 const CHIP = "Approved 1 step (No limits)";
 
@@ -84,9 +84,12 @@ async function makeBot(name: string, instanceId = "keys", level: "task" | "bot" 
 }
 
 async function startServer() {
-  child = spawn(process.execPath, ["--import", IDLE_LOAD_PRELOAD, "--import", SETUP_HOLD_PRELOAD, join(SERVER_DIR, "index.ts")], {
+  child = spawn(process.execPath, ["--import", IDLE_LOAD_PRELOAD, "--import", SETUP_HOLD_PRELOAD, "--import", "data:text/javascript,globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;", join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
+    // S4 power: the fake ACP child uses the existing test-process seam.
     env: {
+      NODE_ENV: "test",
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
       HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
       MURAGE_TEST_SETUP_HOLD: join(home, "setup-hold"),
@@ -119,7 +122,7 @@ describe.skipIf(process.platform === "win32")("NOLIMITS-MEANS-IT real starts", (
     mkdirSync(join(home, ".murage"), { recursive: true });
     // FAKE_ACP_TOOL_KIND think: the fake's scripted tool row is a local one, so the owner's turn is a clean turn (an unknown
     // tool kind marks the turn and its session, M2 / M5b)
-    const engine = (driver: string, command: string) => ({ driver, environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_TOOL_KIND: "think", FAKE_ACP_PERMISSION_COMMAND: command }, config: { cli: FAKE_CLI, fullAuto: false } });
+    const engine = (driver: string, command: string) => ({ driver, environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_TOOL_KIND: "think", FAKE_ACP_PERMISSION_COMMAND: command, ...(driver === "customAcp" ? { FAKE_ACP_MODELS: "fake-model" } : {}) }, config: { cli: FAKE_CLI, fullAuto: false } });
     writeFileSync(join(home, ".murage", "config.json"), JSON.stringify({
       instances: {
         keys: engine("grokAgent", KEY_READ), gate: engine("grokAgent", GATE_READ), queued: engine("customAcp", KEY_READ),
@@ -146,14 +149,14 @@ describe.skipIf(process.platform === "win32")("NOLIMITS-MEANS-IT real starts", (
     expect((await send(bot.id, bot.threadId, "read it")).status).toBe(202);
     expect(await waitIdle(bot.id, bot.threadId), `turn never finished. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
     expect(await cards(bot.threadId)).toHaveLength(0);
-    expect(await chip(bot.threadId)).not.toBeNull();
+    expect(await chip(bot.threadId), JSON.stringify({ stderr, stdout, messages: await threadMessages(bot.threadId) })).not.toBeNull();
     // SABLE-LIVE: the log says Murage answered, never that the owner did.
     const id8 = bot.id.slice(0, 8);
     expect(stdout).toMatch(new RegExp(`approvals: resolved bot=${id8}\\S* request=\\S+ behavior=allow source=auto`));
     expect(stdout).not.toMatch(new RegExp(`approvals: resolved bot=${id8}\\S* request=\\S+ behavior=allow source=user`));
   }, 60_000);
 
-  // design 2.3: on a clean owner turn a gate file runs with no card and is recorded by its row; a marked turn keeps the card
+  // Binding design rev 8 §3.9: clean gate calls run directly; marked calls retain the gate row through the finalizer.
   it("2.3: a gate file on the owner's clean line runs with no card and is logged held=gate:<row>", async () => {
     const bot = await makeBot("Gate", "gate");
     expect((await send(bot.id, bot.threadId, "read it")).status).toBe(202);
@@ -165,24 +168,27 @@ describe.skipIf(process.platform === "win32")("NOLIMITS-MEANS-IT real starts", (
     expect(held.rule).toMatch(/^held=gate:[\w-]+$/);
   }, 60_000);
 
-  it("2.3: a gate file on a marked owner turn still cards", async () => {
+  async function expectFinalizedGate(bot: { id: string; threadId: string }) {
+    expect(await waitIdle(bot.id, bot.threadId), `turn never finished. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+    expect(await cards(bot.threadId)).toHaveLength(0);
+    expect(await chip(bot.threadId)).not.toBeNull();
+    const held = await poll(async () => (await decisions(bot.threadId)).find(r => r.decision === "auto-approved") ?? null);
+    // Persisted decisions retain the fixed rule family; the value-free approval line retains its reason and row.
+    expect(held).toMatchObject({ source: "no-limits", rule: "n1" });
+    expect(stdout).toMatch(new RegExp(`approvals: auto bot=${bot.id} tool=\\S+ reason=sensitive-guard row=ssh level=no-limits initiator=owner`));
+  }
+
+  it("3.9: a gate file on a marked owner turn runs through the gate finalizer", async () => {
     const bot = await makeBot("Gate marked", "gateMarked");
-    // the engine's kindless (outside) tool row marks the turn, so the gate file keeps the key guard's card
+    // The kindless tool marks this turn; the finalizer must still record the original gate row.
     expect((await send(bot.id, bot.threadId, "read it")).status).toBe(202);
-    const card = await poll(() => liveCard(bot.threadId));
-    expect(card, "a gate file on a marked turn ran with no card").not.toBeNull();
-    expect(stdout).toMatch(new RegExp(`approvals: asked bot=${bot.id.slice(0, 8)}\\S* [^\\n]* outside=[a-z-]+`));
-    await deny(bot.threadId, card.card.requestId);
-    await waitIdle(bot.id, bot.threadId);
+    await expectFinalizedGate(bot);
   }, 60_000);
 
-  it("ruling 3: a gate file named through cmd keeps its card on the owner's clean line", async () => {
+  it("3.9: a gate file named through cmd runs through the owner's gate finalizer", async () => {
     const bot = await makeBot("Gate cmd", "gateWin");
     expect((await send(bot.id, bot.threadId, "read it")).status).toBe(202);
-    const card = await poll(() => liveCard(bot.threadId));
-    expect(card, "a Windows shell gate call ran with no card").not.toBeNull();
-    await deny(bot.threadId, card.card.requestId);
-    await waitIdle(bot.id, bot.threadId);
+    await expectFinalizedGate(bot);
   }, 60_000);
 
   it("a send with no proof keeps its card", async () => {
@@ -208,7 +214,7 @@ describe.skipIf(process.platform === "win32")("NOLIMITS-MEANS-IT real starts", (
     await deny(threadId!, card.card.requestId);
   }, 60_000);
 
-  it("a routine keeps its card", async () => {
+  it("an owner-started routine runs with the No limits chip", async () => {
     const bot = await makeBot("Scheduled", "keys", "bot");
     const routine = await desktopApi("POST", "/api/routines", { name: "Nightly", prompt: "Read it", botId: bot.id, runOn: "ember", schedule: { type: "interval", everyMinutes: 60, anchorAt: Date.now() + 3_600_000 }, enabled: false });
     expect(routine.status).toBe(201);
@@ -216,9 +222,14 @@ describe.skipIf(process.platform === "win32")("NOLIMITS-MEANS-IT real starts", (
     expect(started.status).toBe(201);
     const threadId = await poll(async () => ((await api("GET", "/api/routines")).body.runs ?? []).find((r: { id: string }) => r.id === started.body.run.id)?.threadId ?? null);
     expect(threadId).toBeTruthy();
-    const card = await poll(() => liveCard(threadId!), 30_000);
-    expect(card, "a routine ran with no card").not.toBeNull();
-    await deny(threadId!, card.card.requestId);
+    // RULING-R3 R3 and no-limits-do-everything-1019.test.ts:128–136:
+    // a proven owner's routine runs at No limits; rooms still keep their cards.
+    expect(await poll(() => chip(threadId!)), "routine did not record its approval").not.toBeNull();
+    const completed = await poll(async () => ((await api("GET", "/api/routines")).body.runs ?? [])
+      .find((run: { id: string; status: string }) => run.id === started.body.run.id && run.status === "completed") ?? null);
+    expect(completed, "routine did not finish its approved step").not.toBeNull();
+    expect(await cards(threadId!)).toHaveLength(0);
+    expect((await decisions(threadId!)).some(row => row.source === "no-limits")).toBe(true);
   }, 60_000);
 
   it("a room turn, even the owner's, keeps its card", async () => {
@@ -322,7 +333,7 @@ describe.skipIf(process.platform === "win32")("NOLIMITS-MEANS-IT real starts", (
     expect((await desktopApi("GET", "/api/config")).body.noLimitsTerms).toEqual({ accepted: false });
     expect((await send(bot.id, bot.threadId, "read it")).status).toBe(202);
     const card = await poll(() => liveCard(bot.threadId));
-    expect(card, "a turn ran with no card before the terms were accepted").not.toBeNull();
+    expect(card, `a turn ran with no card before the terms were accepted. Server output: ${stdout.slice(-8000)}; ${stderr.slice(-2000)}`).not.toBeNull();
     await deny(bot.threadId, card.card.requestId);
     await waitIdle(bot.id, bot.threadId);
 
