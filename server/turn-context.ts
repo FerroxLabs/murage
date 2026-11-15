@@ -5,6 +5,7 @@
 // turn. The first two coincide today but are distinct markers on purpose:
 // rewound also invalidates OTHER instances' cursors, fresh does not.
 import type { BotRow } from "./bot-read.ts";
+import { assertSendReplayProof, type SendReplayProof } from "./memory/replay-lineage.ts";
 
 /** Which engine wrote an assistant line: the provider instance id and the
  * name the model picker shows for it. Absent on user lines and on lines from
@@ -25,6 +26,11 @@ export interface TranscriptEntry {
 }
 
 export interface TurnContextInput {
+  /** PROVISIONAL INTERFACE: I carries the shared selector's F3 proof through
+   * direct/rebuild/native paths, and rechecks it at every provider write. */
+  replayProof?: SendReplayProof;
+  /** Proof recorded when the retained session was positively started fresh. */
+  retainedReplayProof?: SendReplayProof;
   /** the user's new message */
   text: string;
   /** settled text turns on the active branch, oldest first, capped upstream */
@@ -68,7 +74,10 @@ export interface TurnContextInput {
 export const TRANSCRIPT_REPLAY_DRIVER_KINDS: readonly string[] = ["grok", "minimax", "openai-compat"];
 
 export function replaysTranscriptNatively(driverKind: string): boolean {
-  return TRANSCRIPT_REPLAY_DRIVER_KINDS.includes(driverKind);
+  // Muse also renders the supplied transcript on every turn so that replies
+  // delivered between native turns are present. Keep inline replay out of its
+  // text on fresh sessions, rewinds, memory refreshes and external updates.
+  return driverKind === "museCode" || TRANSCRIPT_REPLAY_DRIVER_KINDS.includes(driverKind);
 }
 
 /** Does this engine need the thread replayed to it? True when a DIFFERENT
@@ -139,9 +148,21 @@ export function runHeaders(transcript: readonly TranscriptEntry[], currentInstan
 
 /** The transcript as a driver that replays natively receives it: no engine
  * object, the run header riding on the first reply of its run. */
-export function transcriptForDriver(transcript: readonly TranscriptEntry[], currentInstanceId?: string): Array<{ role: "user" | "assistant"; text: string; header?: string }> {
+export function transcriptForDriver(transcript: readonly TranscriptEntry[], currentInstanceId?: string, replayProof?: SendReplayProof): Array<{ id?: string; role: "user" | "assistant"; text: string; header?: string }> {
+  transcript = checkedTranscript(transcript, replayProof);
   const headers = runHeaders(transcript, currentInstanceId);
-  return transcript.map((m, i) => ({ role: m.role, text: m.text, ...(headers[i] ? { header: headers[i] } : {}) }));
+  return transcript.map((m, i) => ({ ...(m.id ? { id: m.id } : {}), role: m.role, text: m.text, ...(headers[i] ? { header: headers[i] } : {}) }));
+}
+
+function checkedTranscript(transcript: readonly TranscriptEntry[], proof?: SendReplayProof): TranscriptEntry[] {
+  if (!proof) return [...transcript]; // legacy callers, migrated by Slice I
+  assertSendReplayProof(proof);
+  const candidates = new Set(proof.messageIds);
+  return transcript.filter(entry => {
+    const id = entry.id ?? entry.source.id;
+    if (!candidates.has(id)) throw new Error("SEND_REPLAY_UNPROVEN_LINE");
+    return !proof.excludedIds.has(id);
+  });
 }
 
 /** Shared by native messages, inline history and session recovery. */
@@ -178,10 +199,22 @@ export function buildTurnContext(input: TurnContextInput): {
   /** false when the native session must not be resumed */
   resume: boolean;
 } {
-  const { text, transcript, rewound, fresh, externallyUpdated, replaysNatively, memoryRefreshed, currentInstanceId, omitted, omittedMore } = input;
+  const { text, rewound, fresh, externallyUpdated, replaysNatively, memoryRefreshed, currentInstanceId, omitted, omittedMore } = input;
+  const transcript = checkedTranscript(input.transcript, input.replayProof);
+  let replayReset = false;
+  if (input.replayProof) {
+    const retained = input.retainedReplayProof;
+    replayReset = !retained && input.replayProof.epochs.some(([, revision]) => revision !== 0);
+    if (retained) {
+      try {
+        assertSendReplayProof(retained);
+        replayReset = retained.threadId !== input.replayProof.threadId || JSON.stringify(retained.epochs) !== JSON.stringify(input.replayProof.epochs);
+      } catch { replayReset = true; }
+    }
+  }
   const notice = omittedNotice(omitted, omittedMore);
   const restarted = input.sessionRestarted === true && fresh && !rewound && !memoryRefreshed && !externallyUpdated;
-  const resume = !rewound && !fresh && !externallyUpdated && !memoryRefreshed;
+  const resume = !rewound && !fresh && !externallyUpdated && !memoryRefreshed && !replayReset;
   const replay = !resume && !replaysNatively && (transcript.length > 0 || Boolean(notice));
   if (!replay) return { turnText: replaysNatively && (transcript.length > 0 || Boolean(notice)) ? `${replayMetadata(omitted, restarted, omittedMore)}\n\n${text}` : text, resume };
   const headers = runHeaders(transcript, currentInstanceId);

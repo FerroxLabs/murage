@@ -1,3 +1,4 @@
+import { appendFixtureMessage } from './testing/approval-card.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -19,6 +20,7 @@ import { jsonDocument, jsonElementFor, streamThreadExport } from "./thread-expor
 import { transcriptPage } from "./transcript-page.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 import { windowsNightly } from "./testing/windows-hosted.ts";
+import { refillThread } from "./testing/bounded-reads.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 const BOTS = () => join(DATA_DIR, "bots.json");
@@ -66,7 +68,7 @@ describe("P3-10: no client's page stretches to an old card", () => {
   it("a phone page stays at the cap with a stale card 1,200 rows back, and paging back reaches the card", () => {
     const seed = new Store(selection);
     const bot = seed.createBot();
-    const old = seed.appendMessage(bot.threadId, card("req-old"));
+    const old = appendFixtureMessage(seed, bot.threadId, card("req-old"));
     for (let i = 0; i < 1200; i++) seed.appendMessage(bot.threadId, { role: i % 2 ? "bot" : "user", kind: "text", text: `line ${i}` });
     const store = new Store(selection);
     const page = transcriptPage(store, bot.threadId, 100, false);
@@ -88,8 +90,17 @@ describe("P3-10: no client's page stretches to an old card", () => {
       removeTempDirSync(DATA_DIR);
       const seed = new Store(selection);
       const bot = seed.createBot();
-      seed.appendMessage(bot.threadId, card("req-old"));
-      for (let i = 0; i < rows; i++) seed.appendMessage(bot.threadId, { role: "user", kind: "text", text: `l${i}` });
+      appendFixtureMessage(seed, bot.threadId, card("req-old"));
+      // Populate retained history in one fixture transaction rather than
+      // synthesizing thousands of live sends without yielding to the WAL worker.
+      const db = database(), leaf = seed.activeLeaf(bot.threadId);
+      db.prepare(`WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v+1 FROM n WHERE v<?)
+        INSERT INTO messages(thread_id,id,at,role,kind,text,json)
+        SELECT ?, 'fixture-line-'||v, 1700000000000+v, 'user', 'text', 'l'||(v-1),
+          json_object('id','fixture-line-'||v,'at',1700000000000+v,'role','user','kind','text','text','l'||(v-1),
+            'parentId',CASE WHEN v=1 THEN ? ELSE 'fixture-line-'||(v-1) END) FROM n`).run(rows, bot.threadId, leaf);
+      db.prepare("UPDATE thread_state SET active_leaf_id=? WHERE thread_id=?").run(`fixture-line-${rows}`, bot.threadId);
+      refillThread(db, bot.threadId);
       sizes.push(transcriptPage(new Store(selection), bot.threadId, 100, false).messages.length);
     }
     expect(sizes).toEqual([500, 500]);
@@ -98,7 +109,7 @@ describe("P3-10: no client's page stretches to an old card", () => {
   it("a card within the cap is still inside the page", () => {
     const seed = new Store(selection);
     const bot = seed.createBot();
-    const near = seed.appendMessage(bot.threadId, card("req-near"));
+    const near = appendFixtureMessage(seed, bot.threadId, card("req-near"));
     for (let i = 0; i < 250; i++) seed.appendMessage(bot.threadId, { role: "user", kind: "text", text: `l${i}` });
     const page = transcriptPage(new Store(selection), bot.threadId, 100, false);
     expect(page.messages.length).toBe(251);
@@ -114,7 +125,7 @@ describe("P3-11: long-way card reads share one budget", () => {
     const threads: string[] = [];
     for (let b = 0; b < 12; b++) {
       const bot = store.createBot();
-      store.appendMessage(bot.threadId, card(`req-${b}`));
+      appendFixtureMessage(store, bot.threadId, card(`req-${b}`));
       for (let i = 0; i < 29; i++) store.appendMessage(bot.threadId, { role: "user", kind: "text", text: `l${i}` });
       threads.push(bot.threadId);
     }

@@ -1,3 +1,4 @@
+import { initializeMessageTables } from "./message-tables.ts";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -19,7 +20,7 @@ import { removeTempDirSync } from "./testing/cleanup.ts";
 const exec = promisify(execFile);
 const cli = fileURLToPath(new URL("../scripts/installation-recovery.ts", import.meta.url));
 const roots: string[] = [];
-afterEach(() => { for (const path of roots.splice(0)) removeTempDirSync(path); });
+afterEach(async () => { for (const path of roots.splice(0)) removeTempDirSync(path); });
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "murage-backup-cli-"));
   roots.push(root);
@@ -28,7 +29,7 @@ function fixture() {
   writeFileSync(join(data, "config.json"), '{"profile":{"name":"Fixture"},"flux":{"apiKey":"never-print-this-canary"}}');
   return { root, data, target: join(root, "backup with spaces.zip") };
 }
-const run = (args: string[], env?: Record<string, string>) => exec(process.execPath, [cli, ...args], { timeout: 20_000, ...(env ? { env: { ...process.env, ...env } } : {}) });
+const run = (args: string[], env?: Record<string, string>) => exec(process.execPath, [cli, ...args], {  timeout: 20_000, ...(env ? { env: { ...process.env, ...env } } : {}), windowsHide: true });
 
 it("backs up and inspects an explicit offline installation through the real CLI", async () => {
   const f = fixture();
@@ -120,8 +121,8 @@ it("steps a stopped installation back with --to 10 and refuses a running or miss
   const first = await run(["memory-downgrade", "--data-dir", f.data, "--to", "10"]);
   expect(first.stdout + first.stderr).not.toContain("never-print-this-canary");
   expect(JSON.parse(first.stdout)).toEqual({ ok: true, operation: "memory-downgrade", status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 10 });
-  expect(downgradeInstallationMemorySchema(f.data, 1, { testOnlyBefore102: true })).toMatchObject({ status: "downgraded", from: 10, to: 1 });
-  expect(downgradeInstallationMemorySchema(f.data, 1, { testOnlyBefore102: true })).toMatchObject({ status: "already-v1" });
+  expect(await downgradeInstallationMemorySchema(f.data, 1, { testOnlyBefore102: true })).toMatchObject({ status: "downgraded", from: 10, to: 1 });
+  expect(await downgradeInstallationMemorySchema(f.data, 1, { testOnlyBefore102: true })).toMatchObject({ status: "already-v1" });
   const check = new DatabaseSync(file);
   try {
     expect(check.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(1);
@@ -132,13 +133,18 @@ it("steps a stopped installation back with --to 10 and refuses a running or miss
 });
 
 it.each([7,8,9,10,11,12])("supports a stopped-installation downgrade to v%s",async to=>{
- const f=fixture(),db=new DatabaseSync(join(f.data,"messages.db"));migrateMemorySchema(db);db.close();
+ const f=fixture(),db=new DatabaseSync(join(f.data,"messages.db"));initializeMessageTables(db);migrateMemorySchema(db);db.close();
  const result=await run(["memory-downgrade","--data-dir",f.data,"--to",String(to)]);
  expect(JSON.parse(result.stdout)).toMatchObject({status:"downgraded",from:MEMORY_SCHEMA_VERSION,to});
+ const after=new DatabaseSync(join(f.data,"messages.db"),{readOnly:true});
+ try {
+  expect(after.prepare("SELECT name FROM sqlite_schema WHERE name IN ('messages','messages_fts')").all()).toEqual([]);
+  expect(after.prepare("PRAGMA integrity_check").get()?.integrity_check).toBe("ok");
+ } finally {after.close();}
 });
-it.each([2,3,6] as const)("the tests' route steps a file to v%s",to=>{
- const f=fixture(),db=new DatabaseSync(join(f.data,"messages.db"));migrateMemorySchema(db);db.close();
- expect(downgradeInstallationMemorySchema(f.data,to,{testOnlyBefore102:true})).toMatchObject({status:"downgraded",from:MEMORY_SCHEMA_VERSION,to});
+it.each([2,3,6] as const)("the tests' route steps a file to v%s",async to=>{
+ const f=fixture(),db=new DatabaseSync(join(f.data,"messages.db"));initializeMessageTables(db);migrateMemorySchema(db);db.close();
+ expect(await downgradeInstallationMemorySchema(f.data,to,{testOnlyBefore102:true})).toMatchObject({status:"downgraded",from:MEMORY_SCHEMA_VERSION,to});
 });
 
 /** Every name and every byte under a folder, read directly (no SQLite open, which could itself touch the file). */
@@ -167,6 +173,21 @@ function currentInstallation() {
   return f;
 }
 
+it("a captured restore journal makes the CLI print the exact instruction to finish recovery in this version", async () => {
+  const f = currentInstallation();
+  writeFileSync(join(f.data, "restore-job.json"), JSON.stringify({ version: 1, id: "job-X", archiveId: "arc1", source: "local", phase: "captured", at: 1_800_000_000_000 }));
+  const before = folderBytes(f.data);
+  const refused = await run(["memory-downgrade", "--data-dir", f.data, "--to", "10"]).catch(error => error);
+  expect(refused.code).toBe(1);
+  expect(refused.stdout).toBe("");
+  expect(JSON.parse(refused.stderr)).toEqual({
+    ok: false,
+    error: "DOWNGRADE_RESTORE_OPEN",
+    message: "A restore has not finished. Open this version of Murage to finish recovery, then try going back to the earlier version.",
+  });
+  expect(folderBytes(f.data)).toEqual(before);
+});
+
 // Going back to 1.0.1 or older goes through 1.0.2's own command: this build's step to that shape gives a file 1.0.1's inspector does not accept.
 it.each([[[]], [["--to", "1"]], [["--to", "2"]], [["--to", "3"]], [["--to", "4"]], [["--to", "5"]], [["--to", "6"]]] as Array<[string[]]>)("memory-downgrade %j says to go through 1.0.2 first, and every byte of the folder stays as it was", async form => {
   const f = currentInstallation(), before = folderBytes(f.data);
@@ -186,19 +207,22 @@ it("the refusal also holds where the command is called in-process and at the fun
   try {
     await expect(installationRecoveryCommand(["memory-downgrade", "--data-dir", f.data, "--to", "6"])).rejects.toMatchObject({ code: MEMORY_DOWNGRADE_GO_THROUGH_102 });
     await expect(installationRecoveryCommand(["memory-downgrade", "--data-dir", f.data])).rejects.toMatchObject({ code: MEMORY_DOWNGRADE_GO_THROUGH_102 });
-    expect(() => downgradeInstallationMemorySchema(f.data, 6)).toThrow(MEMORY_DOWNGRADE_GO_THROUGH_102_LINE);
+    await expect(downgradeInstallationMemorySchema(f.data, 6)).rejects.toThrow(MEMORY_DOWNGRADE_GO_THROUGH_102_LINE);
   } finally { owner.release(); }
   const after = folderBytes(f.data);
   for (const name of Object.keys(before)) expect(after[name], name).toBe(before[name]);
 });
 
-it("the refusal is three plain sentences, and the Help menu's step stays --to 10", () => {
+it("the refusal is three plain sentences, and the Help menu's step stays --to 10", async () => {
   expect(MEMORY_DOWNGRADE_GO_THROUGH_102_LINE).not.toMatch(/—|\bsafe\b|\bfree\b|_/i);
   expect(MEMORY_DOWNGRADE_GO_THROUGH_102_LINE.split(/[.!?]\s/)).toHaveLength(3);
-  expect(readFileSync(new URL("../electron/main.mjs", import.meta.url), "utf8")).toContain('operation === "memory-downgrade" ? ["memory-downgrade", "--data-dir", dataDirectory, "--to", "10"]');
+  const main = readFileSync(new URL("../electron/main.mjs", import.meta.url), "utf8");
+  // MAIN RULING INT-CONFLICT-DEFAULT 9f6d2a93c9 b63dd2f29e: the reviewed menu keeps explicit older-target 10 alongside previous-target 13.
+  expect(main).toContain('operation === "memory-downgrade" ? ["memory-downgrade", "--data-dir", dataDirectory, "--to", parameters.to === "10" ? "10" : "13"]');
+  expect(main).toContain('runDesktopRecovery("memory-downgrade", { to: release === "1.0.2" ? "10" : "13" })');
 });
 
-it("only test files take the tests' route to a target of 6 or below", () => {
+it("only test files take the tests' route to a target of 6 or below", async () => {
   const offenders: string[] = [];
   const walk = (dir: URL) => {
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -231,8 +255,8 @@ it("the step to schema 6 leaves a file at exactly the version 1.0.1 reads, with 
   expect(db.prepare("SELECT schema_version FROM memory_meta").get()?.schema_version).toBe(MEMORY_SCHEMA_VERSION);
   const objectsBefore = (db.prepare("SELECT name FROM sqlite_schema").all() as Array<{ name: string }>).map(row => row.name);
   db.close();
-  expect(downgradeInstallationMemorySchema(f.data, 6, { testOnlyBefore102: true })).toEqual({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 6, handoffs: 1, handoffsStarted: 0 });
-  expect(downgradeInstallationMemorySchema(f.data, 6, { testOnlyBefore102: true })).toMatchObject({ status: "already-v6", from: 6, to: 6 });
+  expect(await downgradeInstallationMemorySchema(f.data, 6, { testOnlyBefore102: true })).toEqual({ status: "downgraded", from: MEMORY_SCHEMA_VERSION, to: 6, handoffs: 1, handoffsStarted: 0 });
+  expect(await downgradeInstallationMemorySchema(f.data, 6, { testOnlyBefore102: true })).toMatchObject({ status: "already-v6", from: 6, to: 6 });
   const check = new DatabaseSync(file);
   try {
     // 1.0.1 checks schema_version <= 6 (MEMORY_SCHEMA_NEWER otherwise) and validates its own shape
@@ -271,7 +295,7 @@ it("the step to schema 6 leaves a file at exactly the version 1.0.1 reads, with 
   } finally { again.close(); }
 });
 it("memory-downgrade --to 10 steps 1.0.3 back to 1.0.2 without the 1.0.1 application rewind, and refuses a target it does not know",async()=>{
- const f=fixture(),db=new DatabaseSync(join(f.data,"messages.db"));migrateMemorySchema(db);db.close();
+ const f=fixture(),db=new DatabaseSync(join(f.data,"messages.db"));initializeMessageTables(db);migrateMemorySchema(db);db.close();
  expect(JSON.parse((await run(["memory-downgrade","--data-dir",f.data,"--to","10"])).stdout)).toEqual({ok:true,operation:"memory-downgrade",status:"downgraded",from:MEMORY_SCHEMA_VERSION,to:10});
  expect(JSON.parse((await run(["memory-downgrade","--data-dir",f.data,"--to","10"])).stdout)).toMatchObject({status:"already-v10",from:10,to:10});
  // 11 (1.0.3 before the lineage door epoch) is a target since memory schema 12, 12 (1.0.3 to 1.0.6) since 13, 13 (1.0.17) since 1.0.18; 14 is not

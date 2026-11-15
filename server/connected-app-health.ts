@@ -17,19 +17,14 @@
 
 import { SERVICE_TOOL_PREFIX } from "../shared/connected-app-names.ts";
 
-export interface AppHealthMark {
-  at: number;
-  /** A short cause for the log: an HTTP status or a fixed word, never a body. */
-  cause: string;
-  /** The active account ids when it was marked; a different set means the
-   * person signed in again, which clears the mark. */
-  accountKey: string | null;
-  /** The accounts a Reconnect is replacing. They are retired only once a NEW
-   * active account for the app is seen; until then they stay as they are. */
-  replaces?: string[];
+import { join } from "node:path";
+import { DATA_DIR } from "./config.ts";
+import { ConnectorHealthStore, type AppHealthMark } from "./connector-health-store.ts";
+export type { AppHealthMark } from "./connector-health-store.ts";
+let durable: ConnectorHealthStore | undefined;
+export function connectorHealthStore(): ConnectorHealthStore {
+  return durable ??= new ConnectorHealthStore(join(DATA_DIR, "connector-health.json"));
 }
-
-const marks = new Map<string, Map<string, AppHealthMark>>();
 
 /** The service's own meta tools (search, schema, multi-execute) name no app. */
 const SERVICE_META_SLUG = SERVICE_TOOL_PREFIX.slice(0, -1).toLowerCase();
@@ -42,39 +37,21 @@ export function toolkitOfTool(tool: string): string | null {
 }
 
 export function markNeedsReconnect(owner: string, slug: string, cause: string, accountKey: string | null): boolean {
-  let forOwner = marks.get(owner);
-  if (!forOwner) { forOwner = new Map(); marks.set(owner, forOwner); }
-  const fresh = !forOwner.has(slug);
-  forOwner.set(slug, { at: Date.now(), cause, accountKey });
-  return fresh;
+  return connectorHealthStore().mark(owner, slug, cause, accountKey);
 }
 
-/** Change a mark in place (its time stays). False when there is none. */
 export function updateMark(owner: string, slug: string, patch: Partial<Omit<AppHealthMark, "at" | "cause">>): boolean {
-  const mark = marks.get(owner)?.get(slug);
-  if (!mark) return false;
-  Object.assign(mark, patch);
-  return true;
+  return connectorHealthStore().update(owner, slug, patch);
 }
-
 export function clearNeedsReconnect(owner: string, slug: string): boolean {
-  const forOwner = marks.get(owner);
-  const had = forOwner?.delete(slug) ?? false;
-  if (forOwner && forOwner.size === 0) marks.delete(owner);
-  return had;
+  return connectorHealthStore().clear(owner, slug);
 }
-
-export function clearAllHealth(owner?: string): void {
-  if (owner === undefined) marks.clear();
-  else marks.delete(owner);
-}
-
+export function clearAllHealth(owner?: string): void { connectorHealthStore().clearAll(owner); }
 export function healthMark(owner: string, slug: string): AppHealthMark | undefined {
-  return marks.get(owner)?.get(slug);
+  return connectorHealthStore().get(owner, slug);
 }
-
 export function needsReconnectSlugs(owner: string | null): string[] {
-  return owner ? [...(marks.get(owner)?.keys() ?? [])].sort() : [];
+  return owner ? connectorHealthStore().slugs(owner) : [];
 }
 
 export function accountKeyOf(accounts: ReadonlyArray<{ id: string; status: string }> | undefined): string {
@@ -83,23 +60,16 @@ export function accountKeyOf(accounts: ReadonlyArray<{ id: string; status: strin
 
 // ── reading an app's answer ────────────────────────────────────────────
 
-// A 403, "forbidden" or "insufficient scope" is NOT here: the sign-in works and a
-// permission is missing, which signing in again would not change (Reconnect
-// would loop). Only a 401, a rejected or expired grant or token, or a
-// connection the broker says is expired, revoked or inactive says the sign-in
-// itself has stopped working. Free words such as "please reconnect" are not a
-// signal: an app's own message or a fetched email can say anything.
-const AUTH_FAILURE = /(?<![\w.])401(?![\w.])|unauthori[sz]ed|invalid[_ ](credentials|grant|token)|(token|grant|credentials)[^"]{0,30}(expired|revoked|invalid)|(expired|revoked)[^"]{0,20}(token|grant|credentials)|connection[^"]{0,30}(expired|revoked|inactive|invalid)/i;
-
-/** The structured places a failure says what it is. Never `message` or
- * `detail`: those are free text and can echo anything the app returned. */
-const SIGNAL_KEYS = ["error", "status", "status_code", "statusCode", "http_status", "code", "reason", "type"];
-
 export interface AppAnswerReading {
   /** App slug -> why it failed to authorize. */
   failed: Map<string, string>;
   /** Apps a call reached and that answered without an error. */
   ok: Set<string>;
+  /** Any explicit failed tool result, independent of unstable provider wording. */
+  errors: Set<string>;
+  /** Upstream HTTP status inside an error result, never transport auth. */
+  authStatus: Map<string, number>;
+  brokerAuth: boolean;
 }
 
 type Json = unknown;
@@ -126,97 +96,140 @@ const slugOfRow = (row: Record<string, Json>): string | null => {
  * answer itself, or its own `results` (`data.results` of a multi-execute).
  * Never deeper: a fetched email or file can carry any JSON. A row counts only
  * for an app the request named. */
-function rowsOf(value: Json, apps: ReadonlyArray<string>): Array<Record<string, Json>> {
+function resultRowsOf(value: Json): Json[] | null {
+  if (Array.isArray(value)) return value;
   const top = obj(value);
-  const candidates: Json[] = Array.isArray(value) ? value : [];
+  const candidates: Json[] = [];
+  let present = false;
   if (top) {
-    if (slugOfRow(top) !== null) candidates.push(top);
+    if (slugOfRow(top) !== null) { candidates.push(top); present = true; }
     const data = obj(top.data);
-    if (Array.isArray(data?.results)) candidates.push(...data!.results as Json[]);
-    if (Array.isArray(top.results)) candidates.push(...top.results as Json[]);
+    if (Array.isArray(data?.results)) { candidates.push(...data!.results as Json[]); present = true; }
+    if (Array.isArray(top.results)) { candidates.push(...top.results as Json[]); present = true; }
   }
-  return candidates.map(obj).filter((row): row is Record<string, Json> => {
+  return present ? candidates : null;
+}
+
+function rowsOf(value: Json, apps: ReadonlyArray<string>): Array<Record<string, Json>> {
+  return (resultRowsOf(value) ?? []).map(obj).filter((row): row is Record<string, Json> => {
     if (!row) return false;
     const slug = slugOfRow(row);
     return slug !== null && apps.includes(slug);
   });
 }
 
-function signalText(sources: ReadonlyArray<Record<string, Json> | null>): string {
-  const parts: string[] = [];
-  for (const source of sources) {
-    if (!source) continue;
-    for (const key of SIGNAL_KEYS) {
-      const v = source[key];
-      if (typeof v === "string" || typeof v === "number") parts.push(String(v));
-      else if (obj(v)) for (const subKey of SIGNAL_KEYS) {
-        const sub = obj(v)![subKey];
-        if (typeof sub === "string" || typeof sub === "number") parts.push(String(sub));
-      }
+/** Only documented HTTP fields at the envelope boundary are authoritative.
+ * Application data and JSON-RPC/provider `code` fields are deliberately excluded. */
+export function structuredStatus(source: unknown): number | null {
+  const row = obj(source);
+  for (const envelope of [row, obj(row?.response), obj(row?.error), obj(obj(row?.response)?.error)]) {
+    for (const key of ["status", "status_code", "statusCode", "http_status"]) {
+      const value = envelope?.[key];
+      if (typeof value === "number" && Number.isInteger(value) && value >= 100 && value <= 599) return value;
+      if (typeof value === "string" && /^[1-5][0-9]{2}$/.test(value)) return Number(value);
     }
   }
-  return parts.join(" ").slice(0, 600);
+  return null;
 }
 
-/** The structured words of a failure, capped; null when it did not fail. */
-function failureText(row: Record<string, Json>): string | null {
-  // The row and its response only: `data` is what the app returned and can
-  // hold anything, including words that look like a failure.
-  const response = obj(row.response);
-  const sources = [row, response].filter((s): s is Record<string, Json> => s !== null);
-  const failed = sources.some((s) => s.successful === false || s.success === false || s.isError === true)
-    || sources.some((s) => typeof s.error === "string" && s.error.trim() !== "")
-    || sources.some((s) => obj(s.error) !== null);
-  if (!failed) return null;
-  return signalText(sources);
+function parsedContent(frame: Record<string, Json>): Json[] {
+  const result = obj(frame.result);
+  const content = Array.isArray(result?.content) ? result.content : [];
+  const parsed: Json[] = [];
+  for (const part of content) {
+    const text = obj(part)?.text;
+    if (typeof text !== "string") continue;
+    try { parsed.push(JSON.parse(text)); } catch { /* Plain text is never an HTTP status. */ }
+  }
+  if (result && !Array.isArray(result.content)) parsed.push(result);
+  return parsed;
 }
 
-function causeOf(text: string): string {
-  const status = /(?<![\w.])(401)(?![\w.])/.exec(text)?.[1];
-  return status ? `HTTP ${status}` : "sign-in no longer accepted";
+function rowBrokerAuth(row: Record<string, Json>): boolean {
+  return [row, obj(row.response), obj(row.error), obj(obj(row.response)?.error)].some(envelope => envelope?.kind === "auth");
 }
 
-/** What one connected-app action's answer says about each app it touched.
- * `tools` are the tool slugs the request named. */
-export function readAppAnswer(tools: ReadonlyArray<string>, requestId: unknown, bytes: Uint8Array): AppAnswerReading {
-  const reading: AppAnswerReading = { failed: new Map(), ok: new Set() };
-  const apps = [...new Set(tools.map(toolkitOfTool).filter((slug): slug is string => slug !== null))];
-  if (apps.length === 0) return reading;
-  for (const frame of framesOf(bytes, requestId)) {
-    const errorFrame = obj(frame.error);
-    const result = obj(frame.result);
-    const texts: string[] = [];
-    const plain: string[] = [];
-    const parsed: Json[] = [];
-    for (const part of Array.isArray(result?.content) ? result!.content as Json[] : []) {
-      const text = obj(part)?.text;
-      if (typeof text !== "string") continue;
-      texts.push(text);
-      try { parsed.push(JSON.parse(text)); } catch { plain.push(text); }
+/** Flux's project key is an outage, including when it arrives inside a result row. */
+export function brokerAuthOf(frame: unknown): boolean {
+  const source = obj(frame);
+  if (!source) return false;
+  const error = obj(source.error);
+  if (error?.kind === "auth" || obj(error?.data)?.kind === "auth") return true;
+  return parsedContent(source).some(value => {
+    const row = obj(value);
+    if (row && (row.kind === "auth" || obj(row.error)?.kind === "auth")) return true;
+    return (resultRowsOf(value) ?? []).some(value => {
+      const result = obj(value);
+      return !!result && slugOfRow(result) !== null && rowBrokerAuth(result);
+    });
+  });
+}
+
+function failedEnvelope(row: Record<string, Json>): boolean {
+  return [row, obj(row.response)].some(source => source && (
+    source.successful === false || source.success === false || source.isError === true
+    || (typeof source.error === "string" && source.error.trim() !== "") || obj(source.error) !== null
+  ));
+}
+
+// This documented diagnostic can only suppress reconnect, never establish it.
+function brokerDiagnostic(frame: Record<string, Json>): boolean {
+  const error = obj(frame.error), result = obj(frame.result);
+  const texts: unknown[] = [error?.message, ...(result?.isError === true && Array.isArray(result.content)
+    ? result.content.map(part => obj(part)?.text) : [])];
+  for (const value of parsedContent(frame)) {
+    const top = obj(value);
+    if (!top) continue;
+    const rows = [top, ...(Array.isArray(top.results) ? top.results : []), ...(Array.isArray(obj(top.data)?.results) ? obj(top.data)!.results as Json[] : [])];
+    for (const value of rows) {
+      const row = obj(value);
+      if (!row || !failedEnvelope(row)) continue;
+      for (const source of [row, obj(row.response), obj(row.error), obj(obj(row.response)?.error)]) texts.push(source?.error, source?.message);
     }
-    if (result && Object.keys(result).length && !texts.length) parsed.push(result);
-    const rows = parsed.flatMap((value) => rowsOf(value, apps));
+  }
+  return texts.some(text => typeof text === "string" && /Connected-apps provider rejected FluxRouter['’]s credentials/i.test(text));
+}
+
+export function readAppAnswer(tools: ReadonlyArray<string>, requestId: unknown, bytes: Uint8Array, rowIndex?: number): AppAnswerReading {
+  const reading: AppAnswerReading = { failed: new Map(), ok: new Set(), errors: new Set(), authStatus: new Map(), brokerAuth: false };
+  const apps = [...new Set(tools.map(toolkitOfTool).filter((slug): slug is string => slug !== null))];
+  if (!apps.length) return reading;
+  const error = (slug: string, status: number | null) => {
+    reading.errors.add(slug); reading.ok.delete(slug);
+    if (status === 401 || status === 403) {
+      reading.authStatus.set(slug, status); reading.failed.set(slug, `HTTP ${status}`);
+    }
+  };
+  const frames = framesOf(bytes, requestId);
+  // Broker-auth precedence applies to the entire call, before any account changes.
+  if (frames.some(frame => brokerAuthOf(frame) || brokerDiagnostic(frame))) {
+    reading.brokerAuth = true; return reading;
+  }
+  for (const frame of frames) {
+    const errorFrame = obj(frame.error), result = obj(frame.result);
+    const parsed = parsedContent(frame);
+    const rows = parsed.flatMap(value => rowsOf(value, apps));
     if (rows.length) {
-      for (const row of rows) {
-        const slug = slugOfRow(row);
-        if (!slug) continue;
-        const text = failureText(row);
-        if (text === null) { if (!reading.failed.has(slug)) reading.ok.add(slug); }
-        else if (AUTH_FAILURE.test(text)) { reading.failed.set(slug, causeOf(text)); reading.ok.delete(slug); }
+      for (const row of rows.filter(row => rowIndex === undefined || row.index === rowIndex)) {
+        const slug = slugOfRow(row)!;
+        const status = structuredStatus(row);
+        if (failedEnvelope(row) || (status !== null && status >= 400)) error(slug, status);
+        else if (!reading.errors.has(slug)) reading.ok.add(slug);
       }
       continue;
     }
-    // No per-tool rows: the answer speaks for the call. That is only
-    // attributable when the call touched exactly one app.
-    if (apps.length !== 1) continue;
-    const slug = apps[0]!;
-    // A JSON-RPC error is read by its structured fields only; a plain-words
-    // answer the tool itself flagged as an error is that error's own text.
-    const whole = [errorFrame ? signalText([errorFrame, obj(errorFrame.data)]) : "", ...(result?.isError === true ? plain : [])];
-    const topLevel = parsed.map(obj).filter((p): p is Record<string, Json> => p !== null).map(failureText).filter((t): t is string => t !== null);
-    const failure = [...whole, ...topLevel].find((text) => text && AUTH_FAILURE.test(text.slice(0, 600)));
-    if (failure) reading.failed.set(slug, causeOf(failure));
-    else if (result && result.isError !== true && !errorFrame && topLevel.length === 0) reading.ok.add(slug);
+    if (rowIndex !== undefined) continue;
+    // Keep whole-call failures, but never infer recovery from an empty or
+    // unmatched collection's aggregate success flag or a foreign app's row.
+    const objects = parsed.map(obj).filter((row): row is Record<string, Json> =>
+      row !== null && slugOfRow(row) === null && Object.keys(row).length > 0);
+    const sources = [obj(errorFrame?.data), errorFrame, ...objects.flatMap(row => [row, obj(row.error)])];
+    const status = sources.map(structuredStatus).find(status => status !== null) ?? null;
+    if (errorFrame || result?.isError === true || objects.some(failedEnvelope) || (status !== null && status >= 400)) {
+      for (const slug of apps) error(slug, apps.length === 1 ? status : null);
+    } else if (objects.length && parsed.every(value => resultRowsOf(value) === null)) {
+      for (const slug of apps) if (!reading.errors.has(slug)) reading.ok.add(slug);
+    }
   }
   return reading;
 }

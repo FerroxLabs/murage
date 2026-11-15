@@ -1,3 +1,4 @@
+import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
 // What a procedure-evidence verdict and the set of identity sources rest on,
 // as one counter that moves only when those rows can have changed. Ordinary
 // message writes and new source captures do not move it, so the memos built
@@ -258,7 +259,7 @@ export function recomputeIdentityOffThread(db: DatabaseSync, attempts = 6): Prom
       if (!file) { const set = new Set<string>(); for (const row of db.prepare(IDENTITY_SQL).all()) collectRow(row, set); sources = set; }
       else sources = await new Promise<Set<string> | undefined>(resolve => {
         try {
-          const worker = new Worker(RECOMPUTE_WORKER, { eval: true, workerData: { file, sql: IDENTITY_SQL } });
+          const worker = new Worker(windowsHidePrelude + RECOMPUTE_WORKER, { eval: true, workerData: { file, sql: IDENTITY_SQL } });
           let settled = false;
           const finish = (value: Set<string> | undefined) => { if (!settled) { settled = true; resolve(value); } };
           worker.on("message", (m: { ok: boolean; sources?: string[] }) => finish(m.ok ? new Set(m.sources) : undefined));

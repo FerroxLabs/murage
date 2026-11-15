@@ -6,14 +6,17 @@
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendFile } from "node:fs/promises";
+import { appendFile } from "./counted-fs-promises.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { appendDecision, decisionLogQueueStatus, DECISION_MAX_PENDING_BYTES, DECISION_MAX_PENDING_RECORDS, flushDecisionLog, readDecisions, type DecisionRow } from "./decision-log.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
-vi.mock("node:fs/promises", async importOriginal => {
-  const actual = await importOriginal<typeof import("node:fs/promises")>();
+// MAIN RULING INT-CONFLICT-DEFAULT 8848c3ef9d: inject at the counted append entry; its real admission/accounting still runs.
+// setup.ts can reach the logger before this file installs its filesystem fault.
+vi.hoisted(() => vi.resetModules());
+vi.mock("./counted-fs-promises.ts", async importOriginal => {
+  const actual = await importOriginal<typeof import("./counted-fs-promises.ts")>();
   return { ...actual, appendFile: vi.fn(actual.appendFile) };
 });
 
@@ -43,7 +46,7 @@ afterEach(async () => {
 
 describe("appendDecision / readDecisions", () => {
   it.each([1, 5, 10])("bounds retained rows from %i producers while disk is delayed and records the gap", async producers => {
-    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const actual = await vi.importActual<typeof import("./counted-fs-promises.ts")>("./counted-fs-promises.ts");
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     vi.mocked(appendFile).mockImplementationOnce(async (...args) => { await gate; return actual.appendFile(...args); });
@@ -73,7 +76,7 @@ describe("appendDecision / readDecisions", () => {
   });
 
   it("bounds tiny records by count and oversized records by bytes", async () => {
-    const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+    const actual = await vi.importActual<typeof import("./counted-fs-promises.ts")>("./counted-fs-promises.ts");
     let release!: () => void;
     const gate = new Promise<void>(resolve => { release = resolve; });
     vi.mocked(appendFile).mockImplementationOnce(async (...args) => { await gate; return actual.appendFile(...args); });
@@ -89,9 +92,17 @@ describe("appendDecision / readDecisions", () => {
   });
 
   it("releases failed writes and queued rows, retaining only a count until disk recovery", async () => {
-    vi.mocked(appendFile).mockRejectedValueOnce(new Error("fake ENOSPC"));
+    const actual = await vi.importActual<typeof import("./counted-fs-promises.ts")>("./counted-fs-promises.ts");
+    let failed = false;
+    // Other diagnostics append concurrently. Fail this log's write rather
+    // than whichever append happens to reach the shared fs mock first.
+    vi.mocked(appendFile).mockImplementation(async (...args) => {
+      if (String(args[0]) === file() && !failed) { failed = true; throw new Error("fake ENOSPC"); }
+      return actual.appendFile(...args);
+    });
     for (let n = 0; n < 10; n++) appendDecision(dir, row({ requestId: `failed-${n}` }));
     await flushDecisionLog(dir);
+    expect(failed).toBe(true);
     expect(decisionLogQueueStatus(dir)).toEqual({ pendingBytes: 0, pendingRecords: 0, omitted: 10 });
     appendDecision(dir, row({ requestId: "recovered" }));
     await flushDecisionLog(dir);

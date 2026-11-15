@@ -1,22 +1,51 @@
+import { createMemoryEmailSecrets } from "../testing/email-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The Flux email client's outcome mapping, the capability probe (dark launch), the email secret store and the 3.3 decision.
 import { describe, expect, it } from "vitest";
 import { botKeysDark, classifyResponse, FluxEmailClient, parseFluxError } from "./flux-email-client.ts";
+import { createRemovalTransport } from "./removal-transport.ts";
 import { EmailCapabilityProbe, isEnabled } from "./capabilities.ts";
-import { credentialFingerprint, EMAIL_SECRETS_ENV, EmailSecretStore, emailCredentialProvider, sanitizeEmailSecrets } from "./email-secrets.ts";
+import { credentialFingerprint, EMAIL_SECRETS_ENV, emailCredentialProvider, sanitizeEmailSecrets } from "./email-secrets.ts";
 import { decideSend, distinctAddressesInText } from "./send-policy.ts";
 import { canonicalPayload, emailRef, payloadHash, uuidv7 } from "./canonical.ts";
 import { FakeFlux, fluxError } from "../testing/fake-flux-email.ts";
 import { WORKSPACE_CREDENTIAL_ENV } from "../config.ts";
 
+const OWNER_REF = "key_owner";
+
 function client(fake: FakeFlux, account = true) {
-  const secrets = new EmailSecretStore();
+  const secrets = createMemoryEmailSecrets();
   secrets.setOwner({ token: "owner-token", keyId: "key_owner" });
   secrets.setBotKey("b1", { token: "bot-token", keyId: "key_b1" });
   return new FluxEmailClient({ fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test", credentials: emailCredentialProvider(secrets, () => account ? { token: "acct-token", keyId: "key_acct" } : null), timeoutMs: 200 });
 }
+
+it("PAUSE100 owner approval keeps its two-argument API and binds concurrent billing to each bot", async () => {
+  // MAIN RULING INT-CONFLICT-DEFAULT: retain the train's explicit owner-reference argument and all concurrent billing/authorization assertions.
+  const { withEmailSpendBot } = await import("./flux-email-client.ts");
+  const { installFluxStartGate } = await import("../flux-start-gate.ts");
+  const fake = new FakeFlux(), secrets = createMemoryEmailSecrets();
+  secrets.setOwner({ token: "owner-token", keyId: "owner" });
+  secrets.setBotKey("one", { token: "bot-one-token", keyId: "one" });
+  secrets.setBotKey("two", { token: "bot-two-token", keyId: "two" });
+  const c = new FluxEmailClient({ fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test", credentials: emailCredentialProvider(secrets, () => null) });
+  fake.on("POST", /\/approve$/, { status: 200, body: { sends: [] } });
+  fake.on("POST", /\/send$/, { status: 200, body: { status: "sent" } });
+  const keys: Array<string | null | undefined> = [];
+  installFluxStartGate({ authorizeFluxDispatch: async (key?: string | null) => { await Promise.resolve(); keys.push(key); } } as never);
+  try {
+    await Promise.all([
+      withEmailSpendBot("one", async () => { await Promise.resolve(); return c.approve("approval-one", ["held-one"], "owner"); }),
+      withEmailSpendBot("two", async () => { await Promise.resolve(); return c.retryHeld("held-two", "idem-two", "owner"); }),
+    ]);
+    expect(keys.sort()).toEqual(["bot-one-token", "bot-two-token"]);
+    await c.approve("outside", [], "owner");
+    expect(keys.at(-1)).toBe("owner-token");
+    expect(fake.requests.every(request => request.headers.authorization === "Bearer owner-token")).toBe(true);
+  } finally { installFluxStartGate(null); }
+});
 
 describe("outcome mapping (3.4)", () => {
   it("reads the flat error body with `error` as a string or an object", () => {
@@ -71,8 +100,8 @@ describe("the client", () => {
     const c = client(fake);
     const sent = await c.send("b1", "ibx_1", { to: ["a@x.test"], cc: [], subject: "s", text: "t", attachments: [], client_reference: "sid" }, "murage-email:i:sid:1");
     expect(sent).toMatchObject({ kind: "ok", keyId: "key_b1" });
-    await c.approve("apr_1", ["h1"]);
-    await c.mintBotKey({ botId: "b1", botMonthlySpendLimitUsd: 12.5 }, "murage-key:i:op");
+    await c.approve("apr_1", ["h1"], OWNER_REF);
+    await c.mintBotKey({ botId: "b1", botMonthlySpendLimitUsd: 12.5 }, "murage-key:i:op", OWNER_REF);
     await c.capabilities();
     const [send, approve, mint, caps] = fake.requests;
     expect(send.headers.authorization).toBe("Bearer bot-token");
@@ -98,20 +127,21 @@ describe("the client", () => {
       .on("DELETE", /^\/v1\/email\/inboxes\/ibx_1$/, { status: 202, body: { object: "email.inbox", id: "ibx_1", state: "closing", closing_until: "2026-12-01T00:00:00Z" } })
       .on("POST", /^\/v1\/email\/inboxes\/ibx_1\/restore$/, { status: 200, body: { object: "email.inbox", id: "ibx_1", state: "active" } });
     const c = client(fake);
-    const mint = await c.mintBotKey({ botId: "b1" }, "murage-key:i:op");
+    const mint = await c.mintBotKey({ botId: "b1" }, "murage-key:i:op", OWNER_REF);
     expect(botKeysDark(mint)).toBe(true);
     expect(fake.requests[0].body).toEqual({ bot_id: "b1", scopes: ["email:bot"] });
-    expect(botKeysDark(await c.revokeBotKey("key_1"))).toBe(true);
-    const missing = await c.revokeBotKey("key_2");
+    const transport = createRemovalTransport(c);
+    expect(botKeysDark(await transport.revokeBotKey("key_1"))).toBe(true);
+    const missing = await transport.revokeBotKey("key_2");
     expect(missing).toMatchObject({ kind: "refused", status: 404, code: "key_not_found" });
     expect(botKeysDark(missing)).toBe(false);
-    expect(await c.createInbox({ botId: "b1", username: "juniper" }, "murage-inbox:i:op")).toMatchObject({ kind: "refused", code: "bot_not_found" });
+    expect(await c.createInbox({ botId: "b1", username: "juniper" }, "murage-inbox:i:op", OWNER_REF)).toMatchObject({ kind: "refused", code: "bot_not_found" });
     const create = fake.calls("POST", /^\/v1\/email\/inboxes$/)[0];
     expect(create.body).toEqual({ bot_id: "b1", username: "juniper" });
     expect(create.headers.authorization).toBe("Bearer owner-token");
     expect(JSON.stringify(create.body)).not.toContain("bot_key_id");
-    expect(await c.deleteInbox("ibx_1")).toMatchObject({ kind: "held", body: { state: "closing", closing_until: "2026-12-01T00:00:00Z" } });
-    expect(await c.restoreInbox("ibx_1", "b1")).toMatchObject({ kind: "ok", body: { state: "active" } });
+    expect(await transport.deleteInbox("ibx_1")).toMatchObject({ kind: "held", body: { state: "closing", closing_until: "2026-12-01T00:00:00Z" } });
+    expect(await c.restoreInbox("ibx_1", "b1", OWNER_REF)).toMatchObject({ kind: "ok", body: { state: "active" } });
     expect(fake.calls("POST", /\/restore$/)[0]).toMatchObject({ body: { bot_id: "b1" }, headers: { authorization: "Bearer owner-token" } });
     expect(fake.unexpected).toEqual([]);
   });
@@ -127,6 +157,19 @@ describe("the client", () => {
 });
 
 describe("the capability probe (dark launch, F28)", () => {
+  it("answers off on a host that does not offer email (a Cloud home), and never asks Flux there", async () => {
+    const fake = new FakeFlux().on("GET", /capabilities$/, { status: 200, body: { enabled: true, available: true, eligible: true, account_state: "active" } });
+    const probe = new EmailCapabilityProbe({ client: client(fake), accountRef: () => "acct", offered: () => false });
+    expect(await probe.refresh()).toBeNull();
+    await probe.noteRefusal("email_not_enabled");
+    expect(probe.emailEnabled()).toBe(false);
+    expect(fake.calls("GET", /capabilities$/)).toHaveLength(0);
+    // the same answer on a desktop lights it up
+    const desktop = new EmailCapabilityProbe({ client: client(fake), accountRef: () => "acct", offered: () => true });
+    expect(isEnabled(await desktop.refresh())).toBe(true);
+    expect(desktop.emailEnabled()).toBe(true);
+  });
+
   it("is off unless the answer says enabled: true, and #33's available: false keeps it off", () => {
     expect(isEnabled(undefined)).toBe(false);
     expect(isEnabled({ enabled: false })).toBe(false);
@@ -200,7 +243,7 @@ describe("the capability probe (dark launch, F28)", () => {
 describe("the email secret store (2.3, 2.4)", () => {
   it("reads MURAGE_EMAIL_SECRETS once, deletes it, and the name is stripped from every child env", () => {
     const env: NodeJS.ProcessEnv = { [EMAIL_SECRETS_ENV]: JSON.stringify({ owner: { token: "o", keyId: "key_o" }, bots: { b1: { token: "t", keyId: "key_1" }, "../x": { token: "t", keyId: "k" }, b2: { token: "", keyId: "k" } } }) };
-    const store = new EmailSecretStore();
+    const store = createMemoryEmailSecrets();
     expect(store.loadFromEnv(env)).toEqual({ loaded: 2 });
     expect(env[EMAIL_SECRETS_ENV]).toBeUndefined();
     expect(store.loadFromEnv(env)).toEqual({ loaded: 0 });
@@ -211,7 +254,7 @@ describe("the email secret store (2.3, 2.4)", () => {
 
   it("hands every change to the shell and compares by fingerprint only", () => {
     const pushed: unknown[] = [];
-    const store = new EmailSecretStore(doc => pushed.push(doc));
+    const store = createMemoryEmailSecrets(doc => { pushed.push(doc); });
     store.setBotKey("b1", { token: "tok", keyId: "key_1" });
     store.clearBotKey("b1");
     expect(pushed).toHaveLength(2);

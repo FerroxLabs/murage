@@ -16,6 +16,7 @@ import { insertRoomRequest, roomRequest } from "./room-requests.ts";
 import { drainSharedWork, enqueueSharedWork } from "./shared-work.ts";
 import { LINEAGE, ownerWorld, sharedWorld, type OwnerWorld, type SharedWorld } from "./testing/handoff-worlds.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { settleTestHandles } from "./test-handle-registry.ts";
 
 type Kind = "owner" | "shared";
 type Entry = "owner drain" | "shared drain" | "boot redispatch" | "idle release" | "Send again";
@@ -33,8 +34,9 @@ async function until(done: () => boolean, ms = 30_000): Promise<void> {
 const settle = async (): Promise<void> => { await until(() => _drainingCount() === 0); await tick(); await tick(); };
 const rowOf = (id: string) => database().prepare("SELECT phase, started_at FROM pending_delegations WHERE id=?").get(id) as { phase: string; started_at: number | null } | undefined;
 
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); });
-afterEach(() => { _resetOwnerMigration(); _resetPending(); closeDatabase(); });
+beforeEach(async () => { closeDatabase(); await settleTestHandles(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); _resetPending(); _resetOwnerMigration(); });
+// _resetPending can reopen the database after the shared teardown. Join those writers too, before an id or path is reused.
+afterEach(async () => { _resetOwnerMigration(); _resetPending(); closeDatabase(); await settleTestHandles(); });
 
 const isShared = (w: World): w is SharedWorld => "iris" in w;
 const sourceThread = (w: World): string => isShared(w) ? w.sales.threadId : w.from.threadId;
@@ -178,7 +180,8 @@ describe.each(["owner", "shared"] as Kind[])("%s hand-offs: the same verdict whi
       cure = () => { w.knobs.capacity = true; };
     }
     await go(w, entry, id);
-    expect(observe(w, id)).toMatchObject({ turns: 0, row: "queued", receipt: undefined, attemptsSpent: 0, ...(isShared(w) ? { request: "queued" } : {}) });
+    const observed = observe(w, id);
+    expect(observed, JSON.stringify({ observed, receipt: findDelegationReceipt(id), request: roomRequest(database(), id), closed: isShared(w) ? w.closed : [] })).toMatchObject({ turns: 0, row: "queued", receipt: undefined, attemptsSpent: 0, ...(isShared(w) ? { request: "queued" } : {}) });
     cure();
     await go(w, entry === "Send again" ? "owner drain" : entry, id);
     expect(observe(w, id)).toMatchObject({ turns: 1, row: "started" });

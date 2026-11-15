@@ -49,6 +49,7 @@ const REQUEST_OPENED_OUT: Record<keyof RequestOpened, boolean> = {
   reason: true,
   toolKind: true,
   toolIdentity: true,
+  identityFrame: false,
   // proven against server-side only (shared/app-action-grant.ts)
   mcpMounts: false,
   toolEngine: true,
@@ -58,6 +59,7 @@ const REQUEST_OPENED_OUT: Record<keyof RequestOpened, boolean> = {
   commandShell: false,
   // the map handed to the engine process: credentials
   execEnv: false,
+  executionCwd: false,
   // its value-free projection (names, shell, provenance, managed names): out (Astra #9)
   envInfo: true,
   toolInputTruncated: true,

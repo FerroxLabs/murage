@@ -1,0 +1,56 @@
+# Scope: added or restructured CLI diagnostic literals from c1bb72379 through this check-ahead fix.
+# Audience: release/build/qualification maintainers. These scripts are not customer UI or channel replies.
+# Dynamic suffixes contain input identifiers/status/counts/paths; caught helper/runtime errors are forwarded on stderr.
+source	diagnostic template	surface	i18n disposition
+scripts/bundle-dbus-next.mjs	npm ci dbus-next@${DBUS_NEXT_VERSION} failed (${install.status ?? install.error})	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Release asset CHECK requires GH_TOKEN or GITHUB_TOKEN with contents:read for both release repositories	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	GitHub metadata request failed	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	GitHub metadata HTTP ${response.status}	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Invalid GitHub metadata list	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	GitHub metadata pagination limit reached	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Anonymous asset request failed	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Anonymous asset HTTP ${response.status}	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Anonymous asset redirect is not HTTPS	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Anonymous asset returned metadata instead of bytes	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Invalid release asset pin	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Asset metadata differs from pin	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Release missing or inaccessible to token	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Release is draft (anonymous download returns 404)	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Release has no publication timestamp	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Pinned asset missing or not uploaded	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Asset URL differs from release	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Asset size differs from pin	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Asset SHA-256 metadata differs from pin	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Release asset CHECK failed:\n${failures.join("\n")}	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	usage: node scripts/check-release-assets.mjs (token in environment only)	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/check-release-assets.mjs	Release asset CHECK passed: ${result.pins} pins, ${result.urls} anonymous URLs	maintainer CLI stdout	English; no renderer/channel exposure; no locale key required
+scripts/fetch-build-input.mjs	Build input sha256 disagrees with reviewed pin	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch-build-input.mjs	Build input requires a pinned sha256	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch-build-input.mjs	Invalid build input bytes limit	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch-build-input.mjs	Build inputs require HTTPS	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch-build-input.mjs	HTTP ${response.status}	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch-build-input.mjs	Build input redirect requires HTTPS	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch-build-input.mjs	Build input bytes limit exceeded	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch-build-input.mjs	Build input verification failed: bytes mismatch	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch-build-input.mjs	Build input verification failed: sha256 (SHA-256) mismatch	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch-build-input.mjs	Build input download failed: ${last?.message ?? "no sources"}	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch-build-input.mjs	usage: node scripts/fetch-build-input.mjs INPUT_ID OUTPUT	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch_build_input.py	Input has no matching reviewed sha256 pin	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch_build_input.py	Build inputs require HTTPS	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch_build_input.py	Build input redirect requires HTTPS	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch_build_input.py	Build input bytes limit exceeded	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch_build_input.py	Build input size or sha256 mismatch	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/fetch_build_input.py	Build input download failed: {last}	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/install-browser-rust.mjs	Unsupported pinned Rust host/target	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/install-browser-rust.mjs	Fresh Rust toolchain directory required	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/install-browser-rust.mjs	Pinned Rust ${component.key} installation failed	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/install-browser-rust.mjs	Unexpected Rust component archive layout	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/install-browser-rust.mjs	usage: node scripts/install-browser-rust.mjs RUST_TARGET FRESH_DIRECTORY	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/install-browser-rust.mjs	Installed Rust ${RUST_INPUTS.version} at ${prefix}	maintainer CLI stdout	English; no renderer/channel exposure; no locale key required
+scripts/prepare-android-tools.mjs	Android Platform Tools are unsupported on ${process.platform}	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/qualify-memory-runtime.ts	asset download failed ${asset.path}: HTTP ${response.status}	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/qualify-memory-runtime.ts	unexpected range response	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/qualify-memory-runtime.ts	asset integrity mismatch ${asset.path}	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/qualify-memory-runtime.ts	Retrying ${asset.path} (attempt ${attempt + 1} of 3)	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/qualify-memory-runtime.ts	asset download failed ${asset.path}: no sources	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required
+scripts/signal-java-inputs.py	Adoptium signing key sha256 mismatch	maintainer CLI/build stderr	English; no renderer/channel exposure; no locale key required

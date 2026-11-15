@@ -158,7 +158,7 @@ export interface TaskAggregates<T> {
   grants: string[];
 }
 
-interface CachedAggregates { tasks: readonly WindowTask[]; length: number; key: string; value: TaskAggregates<never> }
+interface CachedAggregates { tasks: readonly WindowTask[]; length: number; key: string; value: TaskAggregates<never>; unknownCache:number; costs:number; cachedInput:number }
 
 /** Remembers each bot's window, usage total and grant list until something they were built from changes. `revision` is the
  * caller's counter, moved by any task, usage or grant write (Store.revision) and by any run write (the live run threads the window
@@ -167,6 +167,19 @@ interface CachedAggregates { tasks: readonly WindowTask[]; length: number; key: 
 export function createTaskAggregateCache(maxBots = 4096) {
   const entries = new Map<string, CachedAggregates>();
   return {
+    /** Usage changes do not change window membership. Update the cached totals from the named write. */
+    noteUsage(botId:string, before:UsageLike|undefined, after:UsageLike):void {
+      const held=entries.get(botId);if(!held)return;
+      const sum=held.value.usage;
+      const unknown=(u:UsageLike|undefined)=>Number(!!u && u.input>0 && !finite(u.cachedInput));
+      held.unknownCache+=unknown(after)-unknown(before);
+      held.costs+=Number(finite(after.costUsd))-Number(finite(before?.costUsd));
+      held.cachedInput+=(finite(after.cachedInput)?after.cachedInput:0)-(finite(before?.cachedInput)?before!.cachedInput!:0);
+      sum.input+=after.input-(before?.input??0);sum.output+=after.output-(before?.output??0);sum.turns+=after.turns-(before?.turns??0);
+      const cost=(sum.costUsd??0)+(finite(after.costUsd)?after.costUsd:0)-(finite(before?.costUsd)?before!.costUsd!:0);
+      sum.costUsd=held.costs>0?cost:null;
+      if(held.unknownCache>0)delete sum.cachedInput;else if(held.cachedInput || finite(after.cachedInput) || finite(before?.cachedInput))sum.cachedInput=held.cachedInput;
+    },
     get<T extends WindowTask & { usage?: UsageLike; alwaysAllow?: string[] }>(
       botId: string,
       tasks: readonly T[],
@@ -188,7 +201,9 @@ export function createTaskAggregateCache(maxBots = 4096) {
         usage: sumTaskUsage(tasks),
         grants: taskGrants(tasks),
       };
-      entries.set(botId, { tasks, length: tasks.length, key, value: value as unknown as TaskAggregates<never> });
+      let unknownCache=0,costs=0,cachedInput=0;
+      for(const {usage} of tasks){if(!usage)continue;if(usage.input>0&&!finite(usage.cachedInput))unknownCache++;if(finite(usage.costUsd))costs++;if(finite(usage.cachedInput))cachedInput+=usage.cachedInput;}
+      entries.set(botId, { tasks, length: tasks.length, key, value: value as unknown as TaskAggregates<never>,unknownCache,costs,cachedInput });
       if (entries.size > maxBots) entries.delete(entries.keys().next().value as string);
       return value;
     },

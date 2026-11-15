@@ -46,6 +46,7 @@
 // must match no route until it does, and then lose the mark.
 
 import { ENGINE_LOGIN_PATH } from "./cloud-home/engine-login-engines.ts";
+import { browserOwnerRule, browserOwnerNeedsBody, browserOwnerTier } from "./browser-owner-policy.ts";
 
 export type RouteClass = "desktop" | "conversation" | "companion" | "internal" | "media" | "extension" | "health" | "engine-login" | "phone";
 export interface RoutePolicyEntry {
@@ -57,7 +58,7 @@ export interface RoutePolicyEntry {
    * purpose without additional authority; unknown write entries fail closed. */
   cloudWrite?: "ordinary" | "step-up" | "credential" | "body" | "browser-step-up";
   /** The lane whose routes these are, before it merges. */
-  arrives?: "L6" | "L7" | "B2" | "P109";
+  arrives?: "L8" | "L6" | "L7" | "B2" | "P109";
 }
 
 export const DESKTOP_ONLY_SENTENCE = "This needs the Murage app on your computer.";
@@ -66,37 +67,39 @@ const ID = String.raw`[\w-]+`;
 
 /** Sentinel's owner reads (server/sentinel/owner-api.ts): GET /api/sentinel/summary and /api/sentinel/issues. */
 export const SENTINEL_OWNER_ROUTE = /^\/api\/sentinel\/(?:summary|issues)$/;
-const SENTINEL_CLOUD_OWNER_SCOPES = new Set(["owner-desktop", "owner-phone", "owner-browser"]);
-/** The explicit owner-scoped Cloud rule for Sentinel reads: an owner session may GET; a remembered or chat-only browser,
- *  the service listener, an anonymous caller and every write are refused. */
+const SENTINEL_CLOUD_OWNER_SCOPES = new Set(["owner-desktop", "owner-phone", "owner-browser", "remembered-owner"]);
+/** The explicit owner-scoped Cloud rule for Sentinel reads: an owner session (the desktop, the phone or the owner's browser)
+ *  may GET; a chat-only browser, the service listener, an anonymous caller and every write are refused. */
 export function sentinelCloudDecision(method: string, scope: string): "allow" | "deny" {
   return method === "GET" && SENTINEL_CLOUD_OWNER_SCOPES.has(scope) ? "allow" : "deny";
 }
 const re = (source: string) => new RegExp(`^${source}$`);
 
-/** A remembered-owner browser reads the desktop-class owner reads named here (plus the chat-browser classes and the
- *  settingsRead GETs), and SENDS chat through exactly the three writes below. Nothing else: no approvals, no engine
- *  commands, no desktop surface, no step-up of any kind (§5.3, H1/H2/Medium-1). */
-const REMEMBERED_OWNER_READS = /^\/api\/(?:decisions|team-map|setup)(?:\/|$)/;
-const REMEMBERED_OWNER_WRITES: [string, RegExp][] = [
-  ["POST", re(`/api/bots/${ID}/messages`)], ["POST", re(`/api/groups/${ID}/messages`)], ["POST", re(`/api/bots/${ID}/respond`)]];
-
 export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
+  { methods: ["POST"], path: "/api/spend/check", class: "desktop", cloudWrite: "ordinary", why: "The owner rechecks paused Flux work on this computer." },
+  { methods: ["PUT"], path: "/api/spend/limit", class: "desktop", cloudWrite: "ordinary", why: "The owner changes the monthly Flux spending limit." },
+  { methods: ["POST"], path: "/api/spend/notice/dismiss", class: "desktop", cloudWrite: "ordinary", why: "The owner acknowledges that the monthly limit is heads-up only." },
   { methods: ["GET"], path: ENGINE_LOGIN_PATH, class: "engine-login", arrives: "B2", why: "A paired owner desktop signs an engine in or out through the vendor's own CLI; step-up is required and a browser session is refused." },
+  { methods: ["GET"], path: "/api/cloud/engine-signins", class: "desktop", arrives: "B2", why: "A paired owner reads, per bot, whether its engine is signed in: names and booleans only, never a token." },
+  { methods: ["POST"], path: "/api/cloud/engine-signins/dismiss", class: "desktop", cloudWrite: "ordinary", why: "A paired owner hides the sign-in offer for one bot for good: a bot id and an engine name, never a token." },
   { methods: ["GET"], path: "/api/cloud/model-signins", class: "desktop", why: "Only paired owners read token-free home sign-in status." },
   { methods: ["GET"], path: /^\/api\/cloud\/model-signins\/(chatgpt|supergrok)\/attempts\/[A-Za-z0-9_-]{1,200}$/, class: "desktop", why: "The initiating paired device reads its pending sign-in." },
   { methods: ["POST"], path: /^\/api\/cloud\/model-signins\/(chatgpt|supergrok)\/(start|sign-out|attempts\/[A-Za-z0-9_-]{1,200}\/cancel)$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner confirms a home model sign-in change." },
   { methods: ["DELETE"], path: /^\/api\/cloud\/model-signins\/(chatgpt|supergrok)$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner confirms removing a home model connection." },
   { methods: "*", path: /^\/api\/cloud\/own-server(?:\/(?:confirm|test))?$/, class: "desktop", cloudWrite: "step-up", why: "A paired owner connects, checks or removes their own server for bots to use as a computer (server/cloud-home/own-server.ts)." },
-  { methods: ["GET"], path: "/api/highlevel", class: "desktop", why: "The owner reads native HighLevel status: whether a token is saved, the confirmed location, pending changes and each bot's access. Never the token (server/highlevel/private-token.ts)." },
+  { methods: ["GET"], path: /^\/api\/highlevel\/reviews\/hla_[0-9a-f-]{36}$/, class: "desktop", why: "The owner's desktop card reads an open HighLevel review's values live; they are never stored in the conversation (server/highlevel/review-cards.ts)." },
+  { methods: ["GET"], path: "/api/highlevel", class: "companion", why: "The owner reads native HighLevel status: whether a token is saved, the confirmed location, pending changes and each bot's access. Never the token (server/highlevel/private-token.ts)." },
   { methods: ["POST"], path: /^\/api\/highlevel\/token\/(?:check|[0-9a-f-]{36}\/confirm)$/, class: "desktop", cloudWrite: "credential", why: "The owner checks a HighLevel location with the saved token, then confirms that exact check; only then can a bot reach it." },
-  { methods: ["PUT"], path: re(`/api/highlevel/bots/${ID}/access`), class: "desktop", cloudWrite: "credential", why: "The owner sets which HighLevel read tools a bot may use on the confirmed location (read only: no write path exists, server/highlevel/runtime.ts)." },
-  { methods: ["DELETE"], path: /^\/api\/highlevel\/connections\/hl_[A-Za-z0-9]{4,64}$/, class: "desktop", cloudWrite: "credential", why: "The owner disconnects the HighLevel location; nothing more reaches it until they check and confirm again." },
-  { methods: "*", path: /^\/api\/highlevel(?:\/.*)?$/, class: "desktop", cloudWrite: "credential", why: "Every other method or path under the HighLevel owner block answers 404; it stays owner-desktop like the routes above." },
+  { methods: ["PUT"], path: re(`/api/highlevel/bots/${ID}/access`), class: "companion", cloudWrite: "ordinary", why: "The proven owner reads or revokes access; the handler requires the desktop app for change/full grants and removal of review rules." },
+  { methods: ["DELETE"], path: /^\/api\/highlevel\/connections\/(hl_[A-Za-z0-9_-]{1,157})$/, class: "desktop", cloudWrite: "credential", why: "The owner disconnects the HighLevel location; nothing more reaches it until they check and confirm again." },
+  { methods: ["POST", "PATCH", "DELETE", "HEAD", "OPTIONS"], path: /^\/api\/highlevel(?:\/.*)?$/, class: "desktop", cloudWrite: "credential", why: "Unknown HighLevel mutations answer 404 and retain desktop credential admission." },
+  { methods: ["GET"], path: /^\/api\/highlevel\/.*$/, class: "desktop", why: "Review values and unknown HighLevel reads remain desktop-only; only the exact status route admits paired owners." },
+  { methods: ["PUT"], path: /^\/api\/highlevel(?:$|\/(?!bots\/[\w-]+\/access$).*)$/, class: "desktop", cloudWrite: "credential", why: "Only the exact bot grant route admits paired owners; all other HighLevel PUT paths remain desktop-only." },
   { methods: ["GET", "PUT"], path: "/api/owner/timezone", class: "desktop", cloudWrite: "ordinary", why: "The owner reads and sets their time zone: the home's on a Cloud home, the desktop profile's on this computer (owner-time-zone.ts)." },
   { methods: ["GET"], path: "/api/data-dir/roots", class: "desktop", why: "S5 DR7: the data roots' states for Settings > Data folder; the owner's own computer only (isOwnersComputer), anyone else 404 with no body." },
   { methods: ["POST"], path: "/api/data-dir/confirm-root", class: "desktop", cloudWrite: "step-up", why: "S5 DR7: the owner confirms a linked data root that now points somewhere else; the owner's own computer only, a Cloud home answers 404." },
   { methods: ["GET"], path: "/api/spend", class: "desktop", why: "UX-L2C: the owner's Flux spend figure for Today, Usage and Needs you; the owner's own computer only, a Cloud home answers 404." },
+  { methods: ["POST"], path: "/api/claude-code-import", class: "desktop", cloudWrite: "step-up", why: "CONTRACTS-B 1: a one-time, opt-in copy of Claude Code's user skills and MCP servers, on the owner's press (server/claude-code-import.ts); the owner's own computer only, a phone, a paired browser and a Cloud window get 403, and no file is opened before that check." },
   { methods: ["GET"], path: "/api/plan-usage", class: "desktop", why: "The owner reads each engine account's reported plan usage (server/plan-usage-report.ts); no credential or home path is sent." },
   { methods: ["POST"], path: "/api/plan-usage/refresh", class: "desktop", cloudWrite: "ordinary", why: "The owner asks running engine accounts for a fresh usage report; bounded, never starts an engine or a turn." },
   { methods: ["GET"], path: "/api/projects/new-options", class: "desktop", why: "The owner chooses available project members." },
@@ -122,6 +125,10 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: "*", path: /^\/api\/media\/bytes(?:\/|$)/, class: "media", cloudWrite: "ordinary", why: "audio and video elements cannot send the desktop header; each byte URL carries its own short-lived capability" },
 
   // ── companion: the desktop, or the phone's forwarded launch proof ─────
+  // L8 B1: I owns the dispatcher wiring. Drop arrives when those handlers land.
+  { methods: ["GET"], path: re(`/api/bots/${ID}/turn-state`), class: "companion", arrives: "L8", why: "the proven owner follows one send in an authorized bot/thread, never an arbitrary provider turn" },
+  { methods: ["POST"], path: re(`/api/bots/${ID}/send-actions`), class: "companion", cloudWrite: "ordinary", arrives: "L8", why: "the owner explicitly resends one immutable receipt under current action and Stop/restore fences" },
+  { methods: ["POST"], path: re(`/api/groups/${ID}/send-actions`), class: "companion", cloudWrite: "ordinary", arrives: "L8", why: "the owner explicitly resends one room receipt with the same immutable action contract as bot chat" },
   // CROSS-CHAT-READ-1019: the share card, Share / Don't share and the composer entry; the route itself requires the owner's desktop or companion origin
   { methods: ["GET"], path: re(`/api/room-shares/${ID}`), class: "companion", why: "the owner reads a bot's share request card (room-shares.ts shareCard), owner origin only" },
   { methods: ["POST"], path: re(`/api/room-shares/${ID}/(share|decline)`), class: "companion", cloudWrite: "step-up", why: "the owner shares the exact excerpts or keeps them private, with the draft's nonce and digest" },
@@ -147,6 +154,8 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: re(`/api/groups/${ID}/requests/${ID}/(?:cancel|retry)`), class: "companion", cloudWrite: "ordinary", why: "cancel a waiting request, or ask again after one that ended" },
   { methods: ["POST"], path: re(`/api/groups/${ID}/project/control/(?:stop|pause|resume|redirect)`), class: "companion", cloudWrite: "ordinary", why: "project-wide Stop all, pause, resume and a steering note to the lead: owner-proved (a conversation caller keeps the per-room interrupt)" },
   { methods: "*", path: /^\/api\/bots\/[^/]+\/browser(?:\/frame)?$/, class: "companion", cloudWrite: "ordinary", why: "watching and steering a bot's browser from the phone, for a bot its sidebar shows" },
+  { methods: ["GET"], path: "/api/browser-choice/setup-list", class: "companion", why: "Owner setup list, scoped to visible bots by the handler." },
+  { methods: "*", path: /^\/api\/bots\/[^/]+\/browser-choice\/(preview|preflight|retry|cancel|switch-now|setup|open-chrome)$/, class: "companion", cloudWrite: "ordinary", why: "Browser choice uses owner desktop or phone proof plus current revision and disclosure checks; opening Chrome requires the local desktop." },
   // Bot calls 1.0.9 (docs/contracts/calls-109.yaml): owner routes, the desktop or the phone's companion proof; never a bot.
   { methods: ["GET"], path: "/api/calls/active", class: "companion", why: "the ringing call and the live sessions, for the conversations the caller sees" },
   { methods: ["GET"], path: "/api/calls/history", class: "companion", why: "past calls, for the conversations the caller sees" },
@@ -168,6 +177,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["GET"], path: "/api/phones", class: "desktop", why: "the owner's desktop lists the registered phones and what each can do" },
   { methods: ["GET"], path: "/api/phones/offered", class: "companion", why: "the door asks before it mints a phone-jobs token" },
   { methods: "*", path: /^\/api\/phone-calls(?:\/|$)/, class: "desktop", cloudWrite: "step-up", why: "bot phone call owner routes (phone-calls/owner-routes.ts): setup, settings, the call list, cancel and share answer the desktop app only, and a bot or engine credential is refused first" },
+  { methods: "*", path: /^\/api\/restore-job(?:\/|$)/, class: "desktop", cloudWrite: "step-up", why: "the owner restores a backup on this computer, reads where a restore stands, and clears a failed one (email/restore-owner-routes.ts); a bot or engine credential is refused first" },
   { methods: "*", path: /^\/api\/email(?:\/|$)/, class: "companion", cloudWrite: "step-up", why: "bot email owner routes (email/owner-routes.ts): the account switch answers the desktop only, every phone act carries a fresh device proof, and a bot or engine credential is refused first (F18)" },
   { methods: "*", path: /^\/api\/mobile\/push\//, class: "companion", cloudWrite: "ordinary", why: "push enrolment and notification actions, each proved by the companion door (mobile/v1)" },
   { methods: "*", path: re(`/api/threads/${ID}/browser-setup/${ID}`), class: "companion", cloudWrite: "ordinary", why: "answering a bot's browser setup card, like any card: the desktop or the paired phone (mayApprove)" },
@@ -181,11 +191,12 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: "/api/browser-extension/mcp", class: "extension", cloudWrite: "ordinary", why: "a paired external browser client's tool calls, authorized by its own client id and bearer credential, never with an Origin" },
 
   // ── conversation: the phone, the browser door and the MCP server ──────
+  { methods: "*", path: /^\/api\/delegation-packs\//, class: "conversation", cloudWrite: "ordinary", why: "GET only: the owner inspects prepared delegation source rows. The handler requires desktop proof or ownerActs before any read, checks forgetting, and answers 404 for other methods or paths." },
   { methods: ["GET"], path: "/api/config", class: "conversation", why: "configured-or-not booleans and which surface is asking; the keys never leave" },
   { methods: ["GET"], path: "/api/events", class: "conversation", why: "the live stream; frames are scoped to what a non-desktop surface may see (sse-visibility.ts)" },
   { methods: ["GET"], path: "/api/instances", class: "conversation", why: "which engines and models exist, to pick one for a bot" },
   { methods: ["GET"], path: "/api/search", class: "conversation", why: "transcript search, scoped to visible threads off the desktop" },
-  { methods: ["GET"], path: "/api/chats", class: "companion", why: "All chats: one page of the owner's chats from the task records (titles, times, marks; no transcript), for the desktop or the paired phone, which sees what its sidebar shows" },
+  { methods: ["GET"], path: "/api/chats", class: "conversation", why: "All chats: the handler requires chatsReader (desktop, owner phone, or the non-demo companion browser read proof); door authority alone never suffices" },
   { methods: ["GET", "POST"], path: "/api/bots", class: "conversation", cloudWrite: "body", why: "the fleet (view=sidebar: the fleet without transcripts, one sidebar line per conversation), and making a bot: one made by a caller that proved nothing starts with no computer, browser or connected apps and in no team" },
   { methods: ["GET"], path: re(`/api/bots/${ID}`), class: "conversation", why: "one bot's whole record (its full description, its playbooks), no transcript, for a settings panel that booted from the roster's cut copy; the same visibility as the fleet listing" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/messages`), class: "conversation", cloudWrite: "ordinary", why: "talking to a bot; words not proven to be the owner's are recorded as unproven and never run engine commands" },
@@ -202,6 +213,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["GET", "POST"], path: re(`/api/bots/${ID}/tasks`), class: "conversation", cloudWrite: "ordinary", why: "start a separate task conversation, or page back through the older ones the roster window leaves out" },
   { methods: ["GET", "POST", "PATCH"], path: re(`/api/bots/${ID}/tasks/${ID}`), class: "conversation", cloudWrite: "body", why: "read, open or rename a task conversation; its settings stay on the desktop (ifRev: an Undo restores only the record it changed, UX-TRUST-L1B-1013)" },
   // 1.0.4 SL-K / SL-I: conversation class so a paired device gets the plain 404 from the route's own desktop check (as the task settings PATCH)
+  { methods: ["GET", "POST"], path: "/api/permissions/no-limits", class: "desktop", cloudWrite: "step-up", why: "The owner inspects or applies No limits inheritance across bots and routines; writes retain fresh owner proof." },
   { methods: ["POST"], path: re(`/api/bots/${ID}/permissions/refresh`), class: "desktop", cloudWrite: "step-up", why: "preview a level (targetLevel) with its conversations and routines, then raise owner open conversations (rosterId, targetLevel, afterRev; designs UX-TRUST-L1B-1013)" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/tasks/${ID}/permissions/refresh`), class: "desktop", cloudWrite: "step-up", why: "copy the bot's permissions onto one chat after a preview" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/threads/follow-model`), class: "desktop", cloudWrite: "ordinary", why: "chats with a model of their own go back to the bot's model" },
@@ -237,12 +249,14 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["GET"], path: re(`/api/threads/${ID}/open-cards`), class: "conversation", why: "the open request cards on the active branch of one thread" },
   { methods: ["GET"], path: re(`/api/threads/${ID}/messages/${ID}/image`), class: "conversation", why: "an image in a transcript" },
   { methods: ["GET"], path: re(`/api/threads/${ID}/messages/${ID}/voice-note`), class: "conversation", why: "the audio of a voice note in a transcript, same visibility as the transcript; never a path (voice-note-audio.ts)" },
+  { methods: ["POST"], path: re(`/api/threads/${ID}/messages/${ID}/resend-used`), class: "conversation", cloudWrite: "ordinary", why: "claim Send again once for a visible message before submitting a fresh turn" },
   { methods: ["POST"], path: re(`/api/threads/${ID}/messages/${ID}/reactions`), class: "conversation", cloudWrite: "ordinary", why: "react to a message" },
   { methods: ["GET"], path: re(`/api/threads/${ID}/export`), class: "conversation", why: "export one conversation" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/respond`), class: "conversation", cloudWrite: "ordinary", why: "answer a card in the bot's own thread, same rule as the thread route (mayApprove)" },
   { methods: ["POST"], path: "/api/inbox/approve-all/preview", class: "conversation", cloudWrite: "ordinary", why: "Approve all: freeze the Approvals list and say which cards it may answer; the desktop app or the paired phone app only (approveAllSurface)" },
   { methods: ["POST"], path: "/api/inbox/approve-all/surface", class: "conversation", cloudWrite: "ordinary", why: "Approve all: whether this surface shows the button, from the one owner-app check (ownerAppSurface); read only" },
   { methods: ["POST"], path: "/api/inbox/approve-all/caution", class: "conversation", cloudWrite: "ordinary", why: "Approve all: the owner's shared choice to hide or show the first-use caution again (owner-prefs.ts); the desktop app or the paired phone app only" },
+  { methods: ["GET", "POST"], path: "/api/owner/first-run-jobs", class: "conversation", cloudWrite: "ordinary", why: "the first run's queue of ticked jobs (owner-prefs.ts firstRunJobs); the desktop app or the keyed paired phone app only (ownerAppSurface)" },
   { methods: ["GET"], path: "/api/owner-prefs/today-view", class: "conversation", cloudWrite: "ordinary", why: "Today: the owner's shared Calm | Detailed choice (owner-prefs.ts) and whether this surface may save it (ownerAppSurface); read only" },
   { methods: ["POST"], path: "/api/owner-prefs/today-view", class: "conversation", cloudWrite: "ordinary", why: "Today: save the Calm | Detailed choice (owner-prefs.ts); the desktop app or the keyed paired phone app only (ownerAppSurface)" },
   { methods: ["POST"], path: "/api/inbox/approve-all/apply", class: "conversation", cloudWrite: "ordinary", why: "Approve all: Allow once on each ticked card through the respond function; the phone signs the ticked set once (fresh-auth gate)" },
@@ -274,10 +288,14 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["GET"], path: "/api/connectors/catalog/search", class: "conversation", why: "catalogue search; read-only" },
   { methods: ["GET"], path: "/api/connectors/catalog/page", class: "conversation", why: "one page of the full catalogue; read-only" },
   { methods: ["GET"], path: "/api/connectors/connected", class: "conversation", why: "which apps are connected; authorizing and revoking stay on the desktop" },
+  { methods: ["GET"], path: "/api/connector-incidents", class: "conversation", why: "owner-only connector status; handler requires desktop or paired owner proof and checks visibility" },
+  { methods: ["GET", "POST"], path: /^\/api\/connector-incidents\/[0-9a-f-]{36}$/, class: "conversation", cloudWrite: "credential", why: "a durable connector incident; the handler requires the desktop or paired owner's proof and checks thread visibility before returning accounts or beginning sign-in" },
   { methods: ["GET"], path: "/api/connectors/needs-reconnect", class: "desktop", why: "which connected apps need signing in again, with their account ids and labels, for the owner's Reconnect line; the handler does no per-caller scoping, so it stays with the owner's desktop" },
   { methods: ["GET"], path: "/api/library/suggest", class: "conversation", why: "the new-bot intake's suggestions; ranks, never installs" },
   { methods: ["GET"], path: "/api/library/search", class: "conversation", why: "library search for the intake" },
   { methods: ["GET"], path: "/api/library/browse", class: "conversation", why: "library facets for the intake" },
+  { methods: ["GET"], path: "/api/library/topics", class: "desktop", why: "the owner's complete skills library taxonomy" },
+  { methods: ["GET"], path: "/api/library/skills", class: "desktop", why: "the owner's paged skills, copies and bot switches" },
   { methods: ["GET"], path: "/api/team-library/catalog", class: "conversation", why: "the team catalogue for the intake" },
   { methods: ["GET"], path: /^\/api\/team-library\/teams\/[a-z0-9][a-z0-9-]*$/, class: "conversation", why: "one team's description for the intake" },
 
@@ -312,7 +330,12 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: "/api/deletions/retry", class: "desktop", cloudWrite: "ordinary", why: "Try again now for an engine copy still owed" },
   { methods: ["POST"], path: "/api/deletions/dismiss", class: "desktop", cloudWrite: "ordinary", why: "Dismiss the lines for engine copies still owed (saved, so it lasts)" },
   { methods: ["GET"], path: "/api/desktop/tray", class: "desktop", why: "the menu bar and tray menu" },
-  { methods: "*", path: /^\/api\/memory(?:\/|$)/, class: "desktop", cloudWrite: "step-up", why: "memory authority, sharing, retention and configuration" },
+  { methods: ["GET"], path: "/api/desktop/attention", class: "desktop", why: "what the desktop outside surfaces (banners, pill, panels) read" },
+  { methods: ["GET"], path: "/api/desktop/attention/card", class: "desktop", why: "one open card for an outside surface" },
+  { methods: ["POST"], path: "/api/desktop/attention/held/ack", class: "desktop", cloudWrite: "ordinary", why: "clears only the in-memory list of what quiet hours held" },
+  // Like GET /api/groups/:id/usage, this owner summary needs the companion's launch proof, not just a conversation door marker.
+  { methods: ["GET"], path: "/api/memory/learning-usage", class: "companion", why: "learning token totals and connection label only, for the desktop or paired phone" },
+  { methods: "*", path: /^\/api\/memory(?:\/(?!learning-usage$)|$)/, class: "desktop", cloudWrite: "step-up", why: "memory authority, sharing, retention and configuration" },
   { methods: ["GET", "POST"], path: "/api/images/settings", class: "desktop", cloudWrite: "ordinary", why: "image provider and model selection" },
   { methods: ["GET", "POST", "DELETE"], path: /^\/api\/images\/(?:probe|library|prompt-blocks|reference-packs)(?:\/|$)/, class: "desktop", cloudWrite: "ordinary", why: "image model checks, which send a real render, and every bot's saved prompt blocks and reference packs" },
   { methods: ["PATCH", "PUT"], path: "/api/config", class: "desktop", cloudWrite: "credential", why: "application, credentials, browser and computer configuration" },
@@ -322,7 +345,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: "*", path: /^\/api\/whats-new(?:\/seen)?$/, class: "desktop", cloudWrite: "ordinary", why: "What's New pages shown" },
   { methods: ["GET"], path: "/api/terms", class: "conversation", why: "which terms are accepted: any owner surface the door serves may read it, so a screen that cannot accept can still see that the desktop did, or say where to accept" },
   { methods: ["POST", "PUT", "PATCH", "DELETE"], path: "/api/terms", class: "companion", cloudWrite: "ordinary", why: "only GET reads the terms status; every other method on it is for the owner's desktop or paired phone" },
-  { methods: "*", path: "/api/terms/accept", class: "companion", cloudWrite: "ordinary", why: "terms acceptance: the owner's desktop or paired phone accepts; nothing else can agree to the terms for them" },
+  { methods: "*", path: "/api/terms/accept", class: "companion", cloudWrite: "ordinary", why: "terms acceptance: the owner's desktop, paired phone or, on a Cloud home, the owner's own browser (a browser-only customer has no other surface; it grants no authority over bots, tools or money); nothing else can agree to the terms for them" },
   { methods: "*", path: /^\/api\/announcements(?:\/|$)/, class: "desktop", cloudWrite: "ordinary", why: "announcements seen, dismissed and their settings" },
   { methods: "*", path: /^\/api\/skills(?:\/|$)/, class: "desktop", cloudWrite: "step-up", why: "the skill collection: import, duplicate, switch on for a bot, delete" },
   { methods: ["GET", "PUT"], path: "/api/section-context", class: "desktop", cloudWrite: "ordinary", why: "persistent team instructions" },
@@ -334,9 +357,12 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: "/api/team-library/grok", class: "desktop", cloudWrite: "step-up", why: "read a shared Grok Bot page on x.ai or a pasted export into a package preview" },
   { methods: ["POST"], path: /^\/api\/packages\/(?:import|export)$/, class: "desktop", cloudWrite: "step-up", why: "review and commit or export a local package" },
   { methods: ["GET"], path: "/api/packages/scan-progress", class: "desktop", why: "progress of the import guard's scan of a local package; the owner's own import on the computer" },
+  { methods: ["GET"], path: "/api/move-in/found", class: "desktop", why: "what Grok Bot data this computer holds, as a label and a count (move-in-found.ts); the desktop app only" },
+  { methods: ["POST"], path: "/api/move-in/grok", class: "desktop", cloudWrite: "step-up", why: "move the Grok Bot exports in Downloads in as bots, through the package guards; the desktop app only" },
   { methods: ["POST"], path: "/api/starter-profiles", class: "desktop", cloudWrite: "step-up", why: "review and install a local starter profile" },
   { methods: "*", path: /^\/api\/(?:telegram|slack|discord)\/(?:status|pair|resume|revoke)$/, class: "desktop", cloudWrite: "credential", why: "pair and revoke an owner channel" },
   { methods: "*", path: /^\/api\/whatsapp\/(?:status|link|approve|dismiss|resume|revoke|unlink|groups)$/, class: "desktop", cloudWrite: "credential", why: "link, approve contacts for and unlink the owner's WhatsApp number" },
+  { methods: "*", path: /^\/api\/signal\//, class: "desktop", cloudWrite: "credential", why: "link, review deliveries for and disconnect the owner's Signal device" },
   { methods: "*", path: /^\/api\/setup(?:\/|$)/, class: "desktop", cloudWrite: "ordinary", why: "the first-run checklist and its recorded answers" },
   { methods: ["GET"], path: "/api/cli-candidates", class: "desktop", why: "engine binaries found on this computer" },
   { methods: ["POST"], path: "/api/cli-test", class: "desktop", cloudWrite: "step-up", why: "execute a supplied engine binary" },
@@ -372,6 +398,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["POST"], path: re(`/api/webhooks/${ID}/(?:rotate|test)`), class: "desktop", cloudWrite: "step-up", why: "rotate or exercise an external trigger" },
   { methods: ["POST"], path: re(`/api/connectors/${ID}/authorize`), class: "desktop", cloudWrite: "credential", why: "authorize a connected account" },
   { methods: ["DELETE"], path: re(`/api/connectors/${ID}(?:/accounts/[A-Za-z0-9][A-Za-z0-9_-]{0,127})?`), class: "desktop", cloudWrite: "credential", why: "revoke connected accounts" },
+  { methods: "*", path: /^\/api\/delegation-packs\/[A-Za-z0-9_-]+$/, class: "desktop", cloudWrite: "step-up", why: "only the authenticated owner may inspect prepared delegated chat context" },
   { methods: ["POST"], path: re(`/api/delegations/[\\w-]{4,64}/stop`), class: "desktop", cloudWrite: "ordinary", why: "stop a delegated task" },
   { methods: ["POST"], path: re(`/api/delegations/[\\w-]{4,160}/(?:send-again|dismiss)`), class: "desktop", cloudWrite: "ordinary", why: "send a held hand-off again, or let it go" },
   // one bot's administration
@@ -388,8 +415,9 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   { methods: ["PATCH"], path: re(`/api/bots/${ID}/cards/${ID}`), class: "companion", cloudWrite: "ordinary", why: "record the owner's own choice on a card in their conversation, from the desktop or the paired phone, like answering it (mayApprove)" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/held-continuations/${ID}/retry`), class: "desktop", cloudWrite: "step-up", why: "reauthorize a saved continuation or retry its original request" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/intake`), class: "desktop", cloudWrite: "ordinary", why: "apply the new-bot intake's answers" },
-  { methods: ["DELETE"], path: re(`/api/bots/${ID}/queue/${ID}`), class: "desktop", cloudWrite: "ordinary", why: "drop a queued message" },
+  { methods: ["DELETE"], path: re(`/api/bots/${ID}/queue/${ID}`), class: "companion", cloudWrite: "ordinary", why: "drop a queued message" },
   { methods: ["PATCH"], path: re(`/api/bots/${ID}/message-allow`), class: "companion", cloudWrite: "step-up", why: "who a bot can message: an owner-only field; the route itself refuses any widening from the phone and lets it narrow back to My team (contract 4.3)" },
+  { methods: ["GET", "POST"], path: re(`/api/bots/${ID}/review`), class: "conversation", cloudWrite: "ordinary", why: "owner review; activation checks full display digest and computer or attested phone proof in the route" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/secret-cards/${ID}/(?:provided|resume|dismiss|value)`), class: "desktop", cloudWrite: "credential", why: "a secret typed on the computer (value: the dev and headless fallback only, which keeps it in config.json)" },
   { methods: ["POST"], path: re(`/api/bots/${ID}/mcp-enable-cards/${ID}/(?:enable|dismiss)`), class: "desktop", cloudWrite: "step-up", why: "the owner's own Turn on (or Not now) for a server a bot filed switched off; the click on the computer is the approval" },
   { methods: "*", path: re(`/api/bots/${ID}/connector-cards/${ID}/(?:authorize|status|timeout|resume|dismiss)`), class: "desktop", cloudWrite: "credential", why: "authorize an account through an inline card" },
@@ -407,7 +435,7 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
   // one room's administration
   { methods: ["PATCH", "DELETE"], path: re(`/api/groups/${ID}`), class: "desktop", cloudWrite: "body", why: "room configuration and deletion" },
   { methods: ["PATCH"], path: re(`/api/groups/${ID}/setup`), class: "desktop", cloudWrite: "ordinary", why: "room working folder and execution setup" },
-  { methods: ["DELETE"], path: re(`/api/groups/${ID}/queue/${ID}`), class: "desktop", cloudWrite: "ordinary", why: "drop a queued room message" },
+  { methods: ["DELETE"], path: re(`/api/groups/${ID}/queue/${ID}`), class: "companion", cloudWrite: "ordinary", why: "drop a queued room message" },
   { methods: ["GET"], path: re(`/api/threads/${ID}/events`), class: "desktop", why: "one conversation's event history" },
   { methods: "*", path: /^\/api\/bots\/[^/]+\/browser-extension\/check$/, class: "desktop", cloudWrite: "step-up", why: "choosing which engine runs the browser action check: owner and desktop app only; the handler answers PATCH only" },
   { methods: "*", path: "/api/browser-extension/clients", class: "desktop", cloudWrite: "step-up", why: "pair and revoke external browser clients" },
@@ -419,9 +447,9 @@ export const ROUTE_POLICY: readonly RoutePolicyEntry[] = [
  * desktop gets the same answer for a hidden bot or a bot-to-bot room as for
  * one that does not exist (visibleToCompanion), whatever the route. */
 export function conversationSubject(target: string): { scope: "bot"; botId: string } | { scope: "group"; groupId: string } | null {
-  const bot = /^\/api\/bots\/([\w-]+)\/(?:messages(?:\/[\w-]+\/edit)?|calls\/rules|interrupt|message-allow|read|warm|typing|active-branch|engine-commands|postable-venues|avatar\/generate|profile|respond|cards\/[\w-]+|skills|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?|task-allow\/(?:remove|clear))$/.exec(target);
+  const bot = /^\/api\/bots\/([\w-]+)\/(?:turn-state|send-actions|queue\/[\w-]+|messages(?:\/[\w-]+\/edit)?|calls\/rules|interrupt|message-allow|read|warm|typing|active-branch|engine-commands|postable-venues|avatar\/generate|profile|respond|review|cards\/[\w-]+|skills|browser-choice\/(?:preview|preflight|retry|cancel|switch-now|setup|open-chrome)|browser-extension(?:\/(?:activity|mode|sites))?|work-threads|tasks(?:\/[\w-]+)?|task-allow\/(?:remove|clear))$/.exec(target);
   if (bot) return { scope: "bot", botId: bot[1]! };
-  const group = /^\/api\/groups\/([\w-]+)\/(?:messages|interrupt|read|tasks(?:\/[\w-]+)?|project(?:\/[\w-]+)*|board(?:\/[\w-]+)*|activity|usage|room-shares|requests(?:\/[\w-]+)*)$/.exec(target);
+  const group = /^\/api\/groups\/([\w-]+)\/(?:send-actions|queue\/[\w-]+|messages|interrupt|read|tasks(?:\/[\w-]+)?|project(?:\/[\w-]+)*|board(?:\/[\w-]+)*|activity|usage|room-shares|requests(?:\/[\w-]+)*)$/.exec(target);
   if (group) return { scope: "group", groupId: group[1]! };
   return null;
 }
@@ -492,13 +520,33 @@ export function routeRefusal(caller: RouteCaller, routeClassName?: RouteClass): 
  *  - GET /api/cloud/devices and POST /api/cloud/devices/forget: any paired device lists the home's devices (30 a minute) or
  *    forgets itself; answered before this function, so the `devices/<id>` sensitivity below never applies to them.
  *  - POST /api/cloud/devices/:id/owner/revoke: "make this browser chat-only" (revokeOwnerFactor). It matches the
- *    `devices/[^/]+` sensitive pattern below, so it needs a step-up (owner-desktop, owner-phone or passkey browser) and is
- *    denied for a remembered-owner caller (it is a write outside the three allowed). */
-export type CloudRouteDecision = "allow" | "deny" | "step-up required";
+ *    `devices/[^/]+` sensitive pattern below, so it needs a step-up (owner-desktop or owner-phone), and a fresh emailed
+ *    code for the owner's browser (browser-owner-policy.ts). */
+/** Open HighLevel review values remain desktop-only. */
+export const HIGHLEVEL_REVIEW_ROUTE = /^\/api\/highlevel\/reviews\//;
+export type CloudRouteDecision = "allow" | "deny" | "step-up required" | "email-code required";
+/** What the auth layer has verified about THIS request, for the owner's browser. */
+export interface CloudRouteContext {
+  /** A verified `murage-owner-act-v1` proof for exactly this request. */
+  proof?: "ok";
+  /** The door proof is within DOOR_FRESH_MS (an emailed code, not a trusted-site renewal). */
+  doorFresh?: boolean;
+  /** An engine sign in terminal upgrade carrying a redeemed single-use ticket. */
+  engineTicket?: boolean;
+}
 export function cloudRouteDecision(method: string, targetRoute: string, scope: import("./cloud-sessions.ts").CloudScope | "owner-browser" | "remembered-owner" | "anonymous",
-  body: unknown, steppedUp = false): CloudRouteDecision {
+  body: unknown, steppedUp = false, context: CloudRouteContext = {}): CloudRouteDecision {
   const entry = routePolicy(method,targetRoute);
+  // State stays readable on a chat-only Cloud browser, but it cannot mutate
+  // these owner receipts. Remembered-owner credentials cannot access this API.
+  const turnStateRead = method === "GET" && /^\/api\/bots\/[\w-]+\/turn-state$/.test(targetRoute);
+  const sendAction = method === "POST" && /^\/api\/(?:bots|groups)\/[\w-]+\/send-actions$/.test(targetRoute);
+  const queueRemove = method === "DELETE" && /^\/api\/(?:bots|groups)\/[\w-]+\/queue\/[\w-]+$/.test(targetRoute);
+  if ((turnStateRead || sendAction || queueRemove) && scope === "remembered-owner") return "deny";
+  if ((sendAction || queueRemove) && scope === "browser") return "deny";
   const write = !["GET","HEAD","OPTIONS"].includes(method);
+  // Antigravity codes are accepted only by the ticketed terminal relay. The retired chat endpoint stays closed even to step-up.
+  if (/^\/api\/bots\/[\w-]+\/engine-signin\/code$/.test(targetRoute)) return "deny";
   if (targetRoute === "/api/desktop-secret") return "deny";
   // Installation-wide health is the owner's alone, whatever a scope may read elsewhere.
   if (SENTINEL_OWNER_ROUTE.test(targetRoute)) return sentinelCloudDecision(method, scope);
@@ -524,16 +572,15 @@ export function cloudRouteDecision(method: string, targetRoute: string, scope: i
   if (scope === "service") return entry && ["health","internal","media","extension"].includes(entry.class) ? "allow" : "deny";
   // An engine sign-in terminal is a credential flow even though it opens with a
   // GET upgrade: owner-desktop only, and always behind a step-up assertion.
-  if (entry?.class === "engine-login") return scope !== "owner-desktop" ? "deny" : steppedUp ? "allow" : "step-up required";
-  // A remembered owner browser READS what the owner's phone reads plus the decision log, the team map and the setup
-  // checklist, and SENDS chat (the three writes). It never acts: no approvals, no engine commands, no desktop surface, no
-  // step-up of any kind — a rule that answers `deny` can never be upgraded by anything the stolen profile holds (§5.3, H1).
-  if (scope === "remembered-owner") {
-    if (sensitive) return "deny";
-    if (!write) return REMEMBERED_OWNER_READS.test(targetRoute) || cloudSettingsRead(method, targetRoute)
-      || (entry && ["conversation","companion","health","media"].includes(entry.class)) ? "allow" : "deny";
-    return REMEMBERED_OWNER_WRITES.some(([m, p]) => m === method && p.test(targetRoute)) ? "allow" : "deny";
+  if (scope !== "owner-desktop" && HIGHLEVEL_REVIEW_ROUTE.test(targetRoute)) return "deny";
+  if (entry?.class === "engine-login") {
+    if (scope === "remembered-owner") return context.engineTicket ? "allow" : "deny";
+    return scope !== "owner-desktop" ? "deny" : steppedUp ? "allow" : "step-up required";
   }
+  // The owner's browser (scope remembered-owner: a live emailed-code factor, or a legacy passkey row, which is inert) acts like the
+  // owner's phone with its own per-route table: plain, a fresh door proof, a fresh emailed code bound to the request, or refused.
+  // It is never the computer, and no step-up assertion upgrades it (browser-owner-policy.ts).
+  if (scope === "remembered-owner") return rememberedOwnerDecision(method, targetRoute, entry, body, context);
   // An owner browser (passkey device of the home owner) has the desktop owner's route access: every route the desktop session reaches, with the same step-up on the same sensitive writes. The credential terminal (engine-login) is already owner-desktop only above.
   if (scope === "owner-browser") return sensitive && !steppedUp ? "step-up required" : "allow";
   if (scope === "browser") {
@@ -543,9 +590,23 @@ export function cloudRouteDecision(method: string, targetRoute: string, scope: i
   }
   // Folder decisions name paths from every conversation (FUIGO-TRUST-V2 S7): requestSurface counts a Cloud phone as `desktop`, so this route refuses it here, on every method and whatever it signs.
   if (scope === "owner-phone" && (credential || elevated || targetRoute === "/api/folder-trust")) return "deny";
+  // A HighLevel review's values are the owner's desktop app's alone (HL-S2-WRITES (c)); the handler's ownerAppSurface
+  // refuses a Cloud phone too, this is the second check.
+  if (scope === "owner-phone" && HIGHLEVEL_REVIEW_ROUTE.test(targetRoute)) return "deny";
   if (sensitive && !steppedUp) return "step-up required";
   // Unknown targetRoutes keep the desktop default; concrete handler still decides 404.
   return "allow";
+}
+
+function rememberedOwnerDecision(method: string, targetRoute: string, entry: RoutePolicyEntry | undefined, body: unknown, context: CloudRouteContext): CloudRouteDecision {
+  // No entry: denied, unless the route is one the auth layer answers or a later lane adds (the rule says so).
+  if (!entry && !browserOwnerRule(method, targetRoute)?.entryless) return "deny";
+  const answer = browserOwnerTier(method, targetRoute, body);
+  if (answer.tier === "refused") return "deny";
+  if (answer.tier === "plain") return "allow";
+  if (context.proof === "ok") return "allow";
+  if (answer.tier === "fresh-door" && context.doorFresh) return "allow";
+  return "email-code required";
 }
 
 /** Read only bodies whose authority depends on their content. Upload and chat
@@ -557,7 +618,9 @@ export function cloudRouteNeedsBody(method: string, targetRoute: string): boolea
     || routeClass(method,targetRoute) === "desktop"
     // A step-up or credential write binds its assertion to the body, so it is read whatever its class (the train moved some owner-only writes to the companion class).
     || ["body", "browser-step-up", "step-up", "credential"].includes(routePolicy(method,targetRoute)?.cloudWrite ?? "")
-    || (method === "PATCH" && /^\/api\/bots\/[\w-]+(?:\/tasks\/[\w-]+)?$/.test(targetRoute));
+    || (method === "PATCH" && /^\/api\/bots\/[\w-]+(?:\/tasks\/[\w-]+)?$/.test(targetRoute))
+    // The owner's browser: a code or fresh-door route binds its proof to the body, and a field or action allowlist reads it.
+    || browserOwnerNeedsBody(method, targetRoute);
 }
 
 export function cloudSettingsRead(method: string, targetRoute: string): boolean {

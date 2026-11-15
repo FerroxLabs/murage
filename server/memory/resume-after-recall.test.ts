@@ -174,7 +174,13 @@ it("a room member turn resets the engine session before its bundle and never res
   expect(room).toContain("MEMORY_SESSION_RESET_UNAVAILABLE");
   expect(room).not.toContain("buildMemoryBundle(query");
   // no resume cursor reaches the engine, and the receipt never resumes a session
-  expect(room).not.toMatch(/resumeCursor/);
+  // Revoke-fence reads the old cursor only for the compare-and-reset durability fence.
+  // A cursor option must still never reach the engine on a room turn.
+  expect(room).not.toMatch(/\bresumeCursor\b/);
+  const commit = room.indexOf("commitFenceReset(bot.id, threadId, instance.instanceId,");
+  expect(commit).toBeGreaterThan(0);
+  expect(room.indexOf("await resetRoomMemberSession();", commit)).toBeGreaterThan(commit);
+  expect(room.indexOf("const bundle=await buildMemoryBundleAfterReset(")).toBeGreaterThan(commit);
   expect(room).not.toMatch(/\.resumes\(/);
   expect(room).not.toMatch(/steerBusyDesk|steerWithQuoteLineage|\.steer\(/);
   // the one steer call is the owner's send to a bot's own chat (acceptBotSend, 1.0.4 SL-I I4), limited to the bot's own task threads:

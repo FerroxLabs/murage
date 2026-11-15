@@ -12,7 +12,8 @@ import { Sun, Moon, Contrast } from "lucide-react";
 import {
   applyPreference,
   readPreference,
-  resolveSkin,
+  skinInUse,
+  themeStatusLabel,
   watchSystemSkin,
   type ThemePreference,
 } from "@/lib/skins";
@@ -29,7 +30,7 @@ export function SkinPicker() {
   const [preference, setPreference] = useState<ThemePreference>(readPreference);
   // Only Automatic needs this, and it is the one fact the control cannot show:
   // which way Automatic currently resolves.
-  const [resolved, setResolved] = useState(() => resolveSkin(readPreference()));
+  const [resolved, setResolved] = useState(() => skinInUse());
 
   // The same helper main.tsx registers at module scope. That one repaints the
   // app; this one keeps the caption line honest while Settings is open.
@@ -98,7 +99,7 @@ export function SkinPicker() {
           preference is explicit; the card is simply shorter. */}
       {preference === "auto" && (
         <p className="mt-2 text-[11px] text-ink-secondary">
-          Following your system, now {resolved === "dark" ? "Dark" : "Light"}.
+          {themeStatusLabel("auto", resolved)}
         </p>
       )}
     </div>

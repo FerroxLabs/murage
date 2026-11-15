@@ -53,7 +53,7 @@ const ONE = `When you draft anything for a client, use British spelling, keep it
 const SET = [
   ONE,
   `My working hours are 08:00 to 17:00 Austin time, Monday to Friday. Do not schedule, send or promise anything outside those hours unless I say so in the same message. Meetings default to 25 minutes, never back to back, and always with a video link.`,
-  `Our company is Ferrox Labs, a Florida LLC with its address in Austin, Texas. Never say Bangkok. Never mention The Forge, it is an old product. Privacy questions go to privacy@murage.ai and security reports to security@ferroxlabs.com; do not answer those yourself.`,
+  `Our company is Ferrox Labs, a Florida LLC with its address in Austin, Texas. Never say Bangkok. Never mention Old Model, it is an old product. Privacy questions go to privacy@murage.ai and security reports to security@ferroxlabs.com; do not answer those yourself.`,
   `When I ask for a summary, give one paragraph first, then a single table of what is done, in progress and pending, then an Important notes section. Lead every question you ask me with a verified recommendation and the reason for it; never give me a bare list of options.`,
   `Pricing: never sell on price, never quote a discount, never compare us with a competitor by name. If someone asks what Murage costs, point them to the pricing page and offer a call. The Agency plan and Cloud are coming; say coming, never give a date.`,
   `Tone for everything public: confident, plain, no exclamation marks, no emojis, no em dashes, frame every fix as a strength (what it can now do), and keep claims true. Sign-off on blog posts is "The Murage team"; on email it is my name only.`,

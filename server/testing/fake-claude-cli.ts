@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// @ts-expect-error The isolated replay harness is JavaScript test support.
+import { replayBrowserRead } from "../../scripts/web-read-replay/run.mjs";
 // Fake of the claude CLI's stream-json surface, for driver tests.
 // Reads the prompt from stdin (one stream-json line), then plays a
 // scripted session. Failure modes are toggled by env var, mirroring how
@@ -100,11 +102,17 @@
 //                      the `api-error` way (an error result with no cost
 //                      figure) and its later turns normally.
 //
+//   FAKE_CLAUDE_MANAGED_PERMISSION_LIMIT fixture-only effective policy cap, applied
+//                      after the startup environment as managed settings are.
 // Keep this file dependency-free — it runs as a bare `node` subprocess.
+import { consumePermissionResult } from "./claude-permission-consumer.ts";
 import { fixtureDumpEnvironment } from "./fixture-dump.ts";
+import { serveToolMailbox } from "../memory/testing/field-tool-mailbox.ts";
+import { fixtureRequested } from "./fixture-request.ts";
 import { fakeReviewReply } from "./fake-review.ts";
 import { callFirstCustomTool, claudeMcpLaunch, customToolReply, customToolServer, lostServerEnv } from "./fake-custom-tool.ts";
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
+import { replayWebRead } from "./fake-web-read.ts";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 
@@ -192,14 +200,6 @@ const FIXTURE_SCREEN_IMAGE = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADU
 // A room turn's prompt is the room transcript followed by the harness's
 // "(Reply to the conversation above as NAME.)" trailer, so its current request
 // is the last transcript line before that trailer.
-const ROOM_REPLY_TRAILER = /^\(Reply to the conversation above as .+\.\)$/;
-const fixtureRequested = (text: string, marker: string) => {
-  const lines = text.trimEnd().split("\n");
-  if (lines.length > 1 && ROOM_REPLY_TRAILER.test(lines.at(-1) ?? "")) { lines.pop(); while (lines.length > 1 && !lines.at(-1)?.trim()) lines.pop(); }
-  return (lines.pop() ?? "").includes(marker);
-};
-
-// What a real CLI prints when it refuses the isolation flags (rig, 2.1.281 and 2.1.295: stderr, exit 1).
 function refuseLaunchFlags(): void {
   if (process.env.FAKE_CLAUDE_REFUSE === "unknown-option") {
     process.stderr.write("error: unknown option '--strict-mcp-config'\n");
@@ -321,6 +321,18 @@ if (process.env.FAKE_CLAUDE_PRE_ACCEPT_TRANSIENTS && process.env.FAKE_CLAUDE_STA
   }
 }
 
+// Die mid-prompt: read the first chunk of the prompt, then exit with transient stderr while the rest of a large prompt is still being written, so
+// the driver sees a write that failed while IN FLIGHT (some bytes went out). FAKE_CLAUDE_DIE_MID_PROMPT=1.
+if (process.env.FAKE_CLAUDE_DIE_MID_PROMPT) {
+  countLaunch(); // a test with FAKE_CLAUDE_STATE reads how many launches there were
+  // the init line goes out first (as FAKE_CLAUDE_INIT_AT_START does) so the driver reaches its prompt write while this process is alive
+  process.stdout.write(JSON.stringify({ type: "system", subtype: "init", session_id: "fake-die-mid-prompt", model: "fake" }) + "\n");
+  // small control lines the driver sends first do not count: only a chunk of the big prompt does
+  let seen = 0;
+  process.stdin.on("data", (chunk) => { seen += chunk.length; if (seen > 32768) process.stderr.write("claude: API error: read ECONNRESET\n", () => process.exit(5)); });
+  await new Promise(() => {});
+}
+
 // Line-driven, like the real CLI under --input-format stream-json: each user
 // message starts a turn; a message that arrives WHILE a turn is playing is
 // folded into it (the real CLI delivers it before the next model call — the
@@ -372,6 +384,9 @@ const armSteerGate = () => {
   const gate = process.env.FAKE_CLAUDE_STEER_GATE;
   if (!gate || steerGateArmed) return;
   steerGateArmed = true;
+  // Retained-prompt cancellation still services the S2 control barrier.
+  // Backpressure begins at the next user frame, not at its preceding controls.
+  if (process.env.FAKE_CLAUDE_STEER_GATE_CONTROLS === "1") return;
   process.stdin.pause();
   const poll = setInterval(() => {
     if (!existsSync(gate)) return;
@@ -447,79 +462,106 @@ const auqResultText = (questions: AuqQuestion[], answers: Record<string, unknown
     : `The user answered: ${list}. Read the answers carefully — they may request clarification, changes, or that you not proceed — and follow what they actually say.`;
 };
 
-/** Call the --permission-prompt-tool exactly as the CLI does: spawn its MCP
- * server from --mcp-config, initialize, tools/call, read the text result. */
-const callPermissionPromptTool = (args: Record<string, unknown>): Promise<string | null> => {
-  const promptTool = argAfter("--permission-prompt-tool");
+const permissionChildren = new Set<ChildProcess>();
+process.stdin.on("end", () => { for (const child of permissionChildren) child.stdin?.end(); });
+type PermissionSession = { readonly failed: boolean; ready: Promise<void>; request: (method: string, params: unknown) => Promise<any>; callResult: (name: string, args: Record<string, unknown>) => Promise<any>; call: (name: string, args: Record<string, unknown>) => Promise<string>; close: () => void };
+const permissionSessions = new Map<string, PermissionSession>();
+let mcpChildStartedAt = 0;
+/** The CLI owns one initialized MCP session per server, with independent
+ * request ids for concurrent calls. A second tool call is not a reconnect. */
+const mcpSession = (name: string): PermissionSession | null => {
   const configPath = argAfter("--mcp-config");
-  const match = promptTool ? /^mcp__(.+?)__(.+)$/.exec(promptTool) : null;
-  if (!match || !configPath) return Promise.resolve(null);
-  const config = (startupMcpConfig ?? JSON.parse(readFileSync(configPath, "utf8"))) as { mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }> };
-  const mounted = config.mcpServers?.[match[1]!];
-  if (!mounted) return Promise.resolve(null);
-  // FAKE_CLAUDE_PERM_SOCKET: the proxy is handed a broker path nothing listens on (a broker outage, or a path the
-  // launcher's shell mangled on the way, as Git Bash did to the Windows pipe in 1.0.3).
-  const lostBroker = process.env.FAKE_CLAUDE_PERM_SOCKET;
-  const server = lostBroker && mounted.args?.length ? { ...mounted, args: [...mounted.args.slice(0, -1), lostBroker] } : mounted;
-  return new Promise((resolve, reject) => {
-    // started as the real CLI starts it: through CLAUDE_CODE_SHELL_PREFIX when one is set (claudeMcpLaunch)
+  if (!configPath) return null;
+  let session = permissionSessions.get(name);
+  if (!session) {
+    const config = (startupMcpConfig ?? JSON.parse(readFileSync(configPath, "utf8"))) as { mcpServers?: Record<string, { command: string; args?: string[]; env?: Record<string, string> }> };
+    const mounted = config.mcpServers?.[name];
+    if (!mounted) return null;
+    const lostBroker = process.env.FAKE_CLAUDE_PERM_SOCKET;
+    const server = lostBroker && mounted.args?.length && !mounted.args.includes("--server")
+      ? { ...mounted, args: [...mounted.args.slice(0, -1), lostBroker] } : mounted;
     const launch = claudeMcpLaunch({ command: server.command, args: server.args ?? [], env: server.env ?? {} });
-    const child = spawn(launch.command, launch.args, { env: { ...process.env, ...launch.env }, stdio: ["pipe", "pipe", "pipe"] });
-    let buffered = "";
-    let stderr = "";
-    let answered = false;
+    const child = spawn(launch.command, launch.args, { windowsHide: true, env: { ...process.env, ...launch.env }, stdio: ["pipe", "pipe", "pipe"] });
+    mcpChildStartedAt = Date.now();
+    permissionChildren.add(child);
+    child.once("close", () => permissionChildren.delete(child));
+    let buffered = "", stderr = "";
+    let nextId = 1;
+    let failure: Error | undefined;
+    const pending = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
+    const fail = (error: Error) => {
+      failure ??= error;
+      for (const request of pending.values()) request.reject(failure);
+      pending.clear();
+    };
     const send = (message: unknown) => child.stdin.write(JSON.stringify(message) + "\n");
-    child.on("error", reject);
-    // The server must answer `initialize` promptly; a tool call after that may wait on a person for as long as it likes.
-    // One that never answers fails the call with the reason, instead of holding the turn until the suite's own timeout.
-    const startDeadline = setTimeout(() => {
-      if (answered) return;
-      answered = true;
-      child.kill();
-      reject(new Error(`the ${match[1]} server did not answer initialize within ${Number(process.env.FAKE_CLAUDE_MCP_START_MS) || 30_000} ms${stderr.trim() ? `: ${stderr.trim()}` : ""}`));
-    }, Number(process.env.FAKE_CLAUDE_MCP_START_MS) || 30_000);
-    startDeadline.unref();
+    const request = (method: string, params: unknown): Promise<any> => new Promise((resolve, reject) => {
+      if (failure) { reject(failure); return; }
+      const id = nextId++;
+      pending.set(id, { resolve, reject });
+      try { send({ jsonrpc: "2.0", id, method, params }); } catch (error) { fail(error as Error); }
+    });
+    child.on("error", fail);
+    child.stdin.on("error", fail);
+    child.on("exit", (code, signal) => fail(new Error(`the ${name} server exited (${signal ?? `code ${code}`})${stderr.trim() ? `: ${stderr.trim()}` : ""}`)));
+    child.stdout.on("end", () => fail(new Error(`the ${name} server closed its output`)));
     child.stderr.setEncoding("utf8");
     child.stderr.on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-2000); });
-    // A server that exits before answering fails the call, as the real CLI reports a server that did not come up:
-    // the turn ends with the reason instead of waiting on a reply that cannot come.
-    child.on("exit", (code, signal) => {
-      if (!answered) reject(new Error(`the ${match[1]} server exited before answering (${signal ?? `code ${code}`})${stderr.trim() ? `: ${stderr.trim()}` : ""}`));
-    });
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
       buffered += chunk;
       let nl;
       while ((nl = buffered.indexOf("\n")) !== -1) {
-        const line = buffered.slice(0, nl);
-        buffered = buffered.slice(nl + 1);
-        let message: { id?: number; result?: { content?: Array<{ text?: string }> } };
-        try {
-          message = JSON.parse(line);
-        } catch {
-          continue;
-        }
-        if (message.id === 1) {
-          clearTimeout(startDeadline);
-          // what the real CLI reports when the server's own env was lost on the way (1.0.3: no MCP server came up)
-          const lost = lostServerEnv(child.pid, server.env ?? {});
-          if (lost.length) {
-            answered = true;
-            child.kill();
-            process.stderr.write(`Error: MCP tool ${promptTool} not found. Available MCP tools: none (the ${match[1]} server lost ${lost.join(", ")})\n`, () => process.exit(1));
-            return;
-          }
-          send({ jsonrpc: "2.0", method: "notifications/initialized" });
-          send({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: match[2], arguments: args } });
-        } else if (message.id === 2) {
-          answered = true;
-          child.stdin.end();
-          resolve(message.result?.content?.[0]?.text ?? "");
-        }
+        const line = buffered.slice(0, nl); buffered = buffered.slice(nl + 1);
+        let message: { id?: number; result?: unknown; error?: { message?: string } };
+        try { message = JSON.parse(line); } catch { continue; }
+        const reply = message.id === undefined ? undefined : pending.get(message.id);
+        if (!reply) continue;
+        pending.delete(message.id!);
+        if (message.error) reply.reject(new Error(message.error.message ?? "MCP request failed"));
+        else reply.resolve(message.result);
       }
     });
-    send({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "fake-claude", version: "1" } } });
-  });
+    const timeoutMs = Number(process.env.FAKE_CLAUDE_MCP_START_MS) || 30_000;
+    const deadline = setTimeout(() => { fail(new Error(`the ${name} server did not initialize/list within ${timeoutMs} ms`)); child.kill(); }, timeoutMs);
+    deadline.unref();
+    const ready = (async () => {
+      try {
+        await request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "fake-claude", version: "1" } });
+        const lost = lostServerEnv(child.pid, server.env ?? {});
+        if (lost.length) {
+          child.kill();
+          process.stderr.write(`Error: MCP server ${name} not available. Available MCP tools: none (the ${name} server lost ${lost.join(", ")})\n`, () => process.exit(1));
+          throw new Error(`the ${name} server lost its environment`);
+        }
+        send({ jsonrpc: "2.0", method: "notifications/initialized" });
+        const listed = await request("tools/list", {});
+        // Optional fixture observation of the actual native shim response.
+        // It never launches another proxy or changes the admitted session.
+        if (process.env.FAKE_CLAUDE_MCP_LIST_LOG) appendFileSync(process.env.FAKE_CLAUDE_MCP_LIST_LOG,
+          JSON.stringify({ pid: process.pid, name, tools: (listed?.tools ?? []).map((tool: { name: string }) => tool.name) }) + "\n");
+      } finally { clearTimeout(deadline); }
+    })();
+    session = { get failed() { return failure !== undefined; }, ready, request, callResult: async (tool, input) => { await ready; return request("tools/call", { name: tool, arguments: input }); }, call: async (tool, input) => {
+      const result = await request("tools/call", { name: tool, arguments: input });
+      return result?.content?.[0]?.text ?? "";
+    }, close: () => { fail(new Error(`the ${name} session was reconnected`)); child.stdin.end(); } };
+    permissionSessions.set(name, session);
+  }
+  return session;
+};
+serveToolMailbox(process.env.FIELD_REPLAY_MAILBOX, async (server, name, args) => {
+  const session = mcpSession(server);
+  if (!session) throw new Error(`Missing MCP server ${server}`);
+  return session.callResult(name, args);
+});
+const callPermissionPromptTool = async (args: Record<string, unknown>): Promise<string | null> => {
+  const match = /^mcp__(.+?)__(.+)$/.exec(argAfter("--permission-prompt-tool") ?? "");
+  if (!match) return null;
+  const session = mcpSession(match[1]!);
+  if (!session) return null;
+  await session.ready;
+  return session.call(match[2]!, args);
 };
 
 const playAskUserQuestion = async (): Promise<void> => {
@@ -553,22 +595,88 @@ const playAskUserQuestion = async (): Promise<void> => {
   finishIfDone();
 };
 
+/** Real MCP continuation followed by the fixture's four real shell calls. */
+const playWebRead = async (prompt: string, url: string, browser = false): Promise<void> => {
+  let ok = false;
+  const toolOutput = (name: string, input: unknown, output: unknown, failed = false) => {
+    const toolUseId = `web_${process.pid}_${Date.now()}_${Math.random()}`;
+    out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name, input }] } });
+    out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolUseId, is_error: failed, content: typeof output === "string" ? output : JSON.stringify(output) }] } });
+  };
+  try {
+    const servers = (startupMcpConfig as any)?.mcpServers ?? {};
+    const agents = Object.entries(servers).find(([name]) => browser ? name === "browser" || name.endsWith("-browser") : name === "agents" || name.endsWith("-agents"));
+    if (!agents) throw Error("Replay agents mount missing");
+    const [name, server] = agents as [string, { command: string; args: string[]; env: Record<string, string> }];
+    // Readiness already owns this initialized mounted connection. Reuse it
+    // through the whole replay and shell sequence, until driver retirement.
+    const session = mcpSession(name);
+    if (!session) throw Error("Replay MCP session missing");
+    await session.ready;
+    const receipt = await (browser ? replayBrowserRead : replayWebRead)(claudeMcpLaunch(server), url, (input: any, output: unknown) => toolOutput(`mcp__${name}__${browser ? input.name : "web_read"}`, input, output), session.request);
+    const commands = prompt.split("\n").filter(line => /^(cd |ls |curl |python3 )/.test(line));
+    if (commands.length !== 4) throw Error("Replay command sequence missing");
+    for (const command of commands) {
+      const permission = await callPermissionPromptTool({ tool_name: "Bash", input: { command }, tool_use_id: `shell_${Date.now()}` });
+      if (permission && JSON.parse(permission).behavior !== "allow") throw Error(`Replay shell refused: ${permission}`);
+      const result = await new Promise<{ code: number | null; text: string }>((resolve, reject) => {
+        const prefix = process.env.CLAUDE_CODE_SHELL_PREFIX;
+        const child = spawn(prefix || "/bin/sh", prefix ? [command] : ["-c", command], { env: { ...process.env, PATH: "/usr/bin:/bin" }, stdio: ["ignore", "pipe", "pipe"] });
+        let text = ""; child.stdout.on("data", x => { text += x; }); child.stderr.on("data", x => { text += x; });
+        child.once("error", reject); child.once("exit", code => resolve({ code, text }));
+      });
+      toolOutput("Bash", { command }, result.text, result.code !== 0);
+      if (result.code !== 0) throw Error("Replay shell failed");
+    }
+    out({ type: "assistant", message: { content: [{ type: "text", text: JSON.stringify(receipt) }] } }); ok = true;
+  } catch (error) { out({ type: "assistant", message: { content: [{ type: "text", text: `Replay failed: ${String(error)}` }] } }); }
+  out({ type: "result", is_error: !ok, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+  turnRunning = false; finishIfDone();
+};
+
 /** `__fixture_permission_tool__`: ask the permission prompt tool about one
  * ordinary tool call (FAKE_CLAUDE_PERM_TOOL / FAKE_CLAUDE_PERM_INPUT), the
  * way the CLI does for anything its permission mode does not cover, and say
  * what came back. Without a prompt tool the CLI would just run it (bypass). */
+let sdkBashHook: string | undefined;
+const sdkHookWaiting = new Map<string, (response: any) => void>();
 const playPermissionTool = async (): Promise<void> => {
   const tool = process.env.FAKE_CLAUDE_PERM_TOOL ?? "Bash";
-  const input = process.env.FAKE_CLAUDE_PERM_INPUT ? (JSON.parse(process.env.FAKE_CLAUDE_PERM_INPUT) as Record<string, unknown>) : { command: ["rm", "-rf", "~/Documents"].join(" ") };
+  const rawInput = process.env.FAKE_CLAUDE_PERM_INPUT_FILE ? readFileSync(process.env.FAKE_CLAUDE_PERM_INPUT_FILE, "utf8") : process.env.FAKE_CLAUDE_PERM_INPUT;
+  const input = rawInput ? (JSON.parse(rawInput) as Record<string, unknown>) : { command: ["rm", "-rf", "~/Documents"].join(" ") };
   const toolUseId = `toolu_fake_perm_${process.pid}_${Date.now()}`;
   out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: tool, input }] } });
   let verdict = "ran without asking";
   // the real CLI puts a deny's message in the tool result, as the model reads it
   let resultText = verdict;
   try {
-    const reply = await callPermissionPromptTool({ tool_name: tool, input, tool_use_id: toolUseId });
+    // W4 SDK 0.3.307 / Claude 2.1.307: the main permission flow reads a
+    // whole-tool ask rule before checkPermissions, except sandbox autoallow.
+    // SDK-host hooks run first even with settings hooks disabled. This opt-in
+    // fake models both paths; no command is ever executed.
+    const sdkSettings = process.env.FAKE_CLAUDE_SDK_ACCEPT_EDITS === "1"
+      ? JSON.parse(readFileSync(argAfter("--settings")!, "utf8")) as { permissions?: { ask?: string[] } }
+      : undefined;
+    const sdkAllows = sdkSettings !== undefined && tool === "Bash" && argAfter("--permission-mode") === "acceptEdits" && (process.env.FAKE_CLAUDE_SDK_SANDBOX === "1" || !sdkSettings.permissions?.ask?.includes("Bash"));
+    let hookDecision: { permissionDecision?: string; updatedInput?: Record<string, unknown> } | undefined;
+    if (sdkSettings && tool === "Bash" && sdkBashHook) {
+      const id = `hook-${toolUseId}`;
+      const answer = new Promise<any>(resolve => sdkHookWaiting.set(id, resolve));
+      out({ type: "control_request", request_id: id, request: { subtype: "hook_callback", callback_id: sdkBashHook,
+        input: { hook_event_name: "PreToolUse", tool_name: tool, tool_input: input }, tool_use_id: toolUseId } });
+      hookDecision = (await answer)?.response?.hookSpecificOutput;
+    }
+    const reply = hookDecision?.permissionDecision === "allow" || hookDecision?.permissionDecision === "deny"
+      ? JSON.stringify({ behavior: hookDecision.permissionDecision, updatedInput: hookDecision.updatedInput })
+      : sdkAllows ? null : await callPermissionPromptTool({ tool_name: tool, input, tool_use_id: toolUseId });
     if (reply !== null) {
-      const decision = JSON.parse(reply) as { behavior?: string; message?: string };
+      const decision: { behavior?: string; message?: string; updatedInput?: Record<string, unknown> } = process.env.FAKE_CLAUDE_PERM_WRITE === "1"
+        ? consumePermissionResult({ content: [{ type: "text", text: reply }] }, { ...process.env, ...(process.env.FAKE_CLAUDE_MANAGED_PERMISSION_LIMIT ? { MAX_MCP_OUTPUT_TOKENS: process.env.FAKE_CLAUDE_MANAGED_PERMISSION_LIMIT } : {}) }, Buffer.byteLength(reply))
+        : JSON.parse(reply);
+      if (decision.behavior === "allow" && tool === "Write" && process.env.FAKE_CLAUDE_PERM_WRITE === "1") {
+        const judged = decision.updatedInput ?? input;
+        writeFileSync(String(judged.file_path), String(judged.content));
+      }
       verdict = decision.behavior === "allow" ? "allowed" : "denied";
       resultText = verdict === "denied" && decision.message ? decision.message : verdict;
     }
@@ -599,12 +707,12 @@ const playCustomTool = async (name: string, prompt: JsonValue): Promise<void> =>
   const toolUseId = `toolu_fake_custom_${process.pid}_${Date.now()}`;
   const outcome = server
     ? await callFirstCustomTool("claude", name, { command: server.command, args: server.args ?? [], env: server.env ?? {} }, promptText(prompt),
-      claudeMcpLaunch({ command: server.command, args: server.args ?? [], env: server.env ?? {} }))
+      claudeMcpLaunch({ command: server.command, args: server.args ?? [], env: server.env ?? {} }), mcpSession(name) ?? undefined)
     : { tools: [], text: `no ${name} server was mounted`, isError: true };
   out({ type: "assistant", message: { content: [{ type: "tool_use", id: toolUseId, name: `mcp__${name}__${outcome.tool ?? "unknown"}`, input: {} }] } });
   out({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: toolUseId, is_error: outcome.isError, content: outcome.text }] } });
   out({ type: "assistant", message: { content: [{ type: "text", text: customToolReply(outcome) }] } });
-  out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+  out({ type: "result", is_error: process.env.FAKE_CUSTOM_TOOL_FAIL_TURN === "1" && outcome.isError, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
   turnRunning = false;
   finishIfDone();
 };
@@ -634,15 +742,28 @@ const playBackground = async (): Promise<void> => {
   const helperLabels = ["Check the billing logs", "Read the onboarding docs", "Compare the pricing pages"];
   const labelOf = (id: string) => (process.env.FAKE_CLAUDE_BG_STAGGER_DIR ? helperLabels[ids.indexOf(id) % helperLabels.length]! : `Helper ${id}`);
   const live = new Set<string>();
-  const changed = () => out({ type: "system", subtype: "background_tasks_changed", tasks: [...live].map((id) => ({ task_id: id, task_type: "local_agent", description: labelOf(id) })) });
-  out({ type: "assistant", message: { content: [{ type: "text", text: "Three helpers are reading." }] } });
+  const changed = (emit: typeof out = out) => emit({ type: "system", subtype: "background_tasks_changed", tasks: [...live].map((id) => ({ task_id: id, task_type: "local_agent", description: labelOf(id) })) });
+  // Stop/dispose fixtures await a helper event before ending a held turn.
+  // Keep its opening events and usage-bearing result in one stdout write,
+  // preserving their wire order instead of racing separate writes with Stop.
+  const opening: unknown[] = [];
+  const queueOpening = (frame: unknown) => { opening.push(frame); };
+  queueOpening({ type: "assistant", message: { content: [{ type: "text", text: "Three helpers are reading." }] } });
   for (const id of ids) {
     live.add(id);
-    changed();
-    out({ type: "system", subtype: "task_started", task_id: id, tool_use_id: `toolu_${id}`, description: labelOf(id), subagent_type: "Explore", is_backgrounded: true, spawn_depth: 1, task_type: "local_agent" });
+    changed(queueOpening);
+    queueOpening({ type: "system", subtype: "task_started", task_id: id, tool_use_id: `toolu_${id}`, description: labelOf(id), subagent_type: "Explore", is_backgrounded: true, spawn_depth: 1, task_type: "local_agent" });
   }
-  out({ type: "result", subtype: "success", is_error: false, stop_reason: "end_turn", terminal_reason: "completed", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 },
-    subagent_stats: { spawned: count, started_in_background: count, completed: 0, failed: 0 } });
+  const firstResult = { type: "result", subtype: "success", is_error: false, stop_reason: "end_turn", terminal_reason: "completed", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 },
+    subagent_stats: { spawned: count, started_in_background: count, completed: 0, failed: 0 } };
+  if (process.env.FAKE_CLAUDE_BG_RESULT_ON_STOP === "1") {
+    // The helpers are already running when the parent stops them. Publish
+    // their opening frames before the held marker; only the result is delayed.
+    process.stdout.write(opening.map((frame) => JSON.stringify(frame) + "\n").join(""));
+    // Deterministically put the paid result behind the parent's Stop mark.
+    // Flush it before exit, as an already-written OS pipe can do in production.
+    process.once("SIGTERM", () => process.stdout.write(JSON.stringify(firstResult) + "\n", () => process.exit(143)));
+  } else { queueOpening(firstResult); process.stdout.write(opening.map((frame) => JSON.stringify(frame) + "\n").join("")); }
   for (let i = 0; i < askCount; i += 1) {
     const toolUseId = `toolu_fake_bg_${process.pid}_${i}`;
     out({ type: "system", subtype: "task_progress", task_id: ids[0], tool_use_id: `toolu_${ids[0]}`, description: "Reading", usage: { total_tokens: 10, tool_uses: i + 1, duration_ms: 5 }, last_tool_name: "Read" });
@@ -689,6 +810,7 @@ const playBackground = async (): Promise<void> => {
 };
 
 let exitGateTimer: ReturnType<typeof setInterval> | undefined;
+let slowExitScheduled = false;
 // FAKE_CLAUDE_FOLLOWUP_DELAY_MS: the follow-up starts this long after `result`
 // (input arriving meanwhile joins it); FAKE_CLAUDE_FOLLOWUP_NOTICE=1: a
 // background task's synthetic result comes first.
@@ -720,7 +842,18 @@ const finishIfDone = () => {
     exitGateTimer ??= setInterval(finishIfDone, 10);
     return;
   }
-  if (exitGateTimer) clearInterval(exitGateTimer);
+  if (slowExitScheduled) return;
+  if (exitGateTimer) { clearInterval(exitGateTimer); exitGateTimer = undefined; }
+  if (Number(process.env.FAKE_CLAUDE_SIGTERM_DELAY_MS) > 0) {
+    slowExitScheduled = true;
+    exitGateTimer = setInterval(() => {
+      const gate = process.env.FAKE_CLAUDE_SIGTERM_GATE;
+      if (gate && !existsSync(gate)) return;
+      clearInterval(exitGateTimer);
+      setTimeout(() => process.exit(0), Number(process.env.FAKE_CLAUDE_SIGTERM_DELAY_MS));
+    }, 10);
+    return;
+  }
   process.exit(0);
 };
 
@@ -751,6 +884,16 @@ let elicitSent = false;
 const elicitWaiting = new Set<string>();
 let elicitResume: (() => void) | null = null;
 const playTurn = (prompt: JsonValue) => {
+  // Retention controls need real MCP children established before init. The
+  // POSIX probe deliberately excludes children from init's own clock second;
+  // this opt-in models startup before the first model round trip, without
+  // mocking process evidence or exempting a tool's later background child.
+  const baselineAge = Number(process.env.FAKE_CLAUDE_MCP_BASELINE_MS ?? 0);
+  const baselineWait = baselineAge - (Date.now() - mcpChildStartedAt);
+  if (!initAnnounced && mcpChildStartedAt && baselineWait > 0) {
+    setTimeout(() => playTurn(prompt), baselineWait);
+    return;
+  }
   turnRunning = true;
   steered = [];
   foldOpen = true;
@@ -788,7 +931,10 @@ const playTurn = (prompt: JsonValue) => {
     }
     // every --settings file as the CLI read it at start (the driver removes its private overlay when the process ends)
     const settingsFiles = argv.flatMap((arg, i) => (arg === "--settings" && argv[i + 1] ? [argv[i + 1]!] : [])).map((path) => { try { return JSON.parse(readFileSync(path, "utf8")) as unknown; } catch { return null; } });
-    const dump = { pid: process.pid, argv, env: fixtureDumpEnvironment(), prompt, systemPrompt, mcpConfig, settingsFiles, credFile: readCredFile(), promptWallMs: Date.now(), cwd: process.cwd(), cwdEntries: readdirSync(process.cwd()), ...(procedureProbe?{procedureProbe}:{}), ...(process.env.FAKE_CLAUDE_MCP_READY_MS ? { mcpAtPrompt: mcpStates(), promptAtMs: Date.now() - mcpStartedAt } : {}) };
+    let fixtureMounts: unknown;
+    const server = Object.values((mcpConfig as {mcpServers?:Record<string,{env?:Record<string,string>}>}|null)?.mcpServers ?? {}).find(server=>server.env?.MURAGE_CRED_FILE);
+    try { if (server?.env?.MURAGE_CRED_FILE) fixtureMounts = JSON.parse(readFileSync(server.env.MURAGE_CRED_FILE + '.fixture-mounts.json', 'utf8')); } catch { /* only an instrumented fixture owns this sidecar */ }
+    const dump = { pid: process.pid, argv, env: fixtureDumpEnvironment(), prompt, systemPrompt, mcpConfig, fixtureMounts, settingsFiles, credFile: readCredFile(), promptWallMs: Date.now(), cwd: process.cwd(), cwdEntries: readdirSync(process.cwd()), ...(procedureProbe?{procedureProbe}:{}), ...(process.env.FAKE_CLAUDE_MCP_READY_MS ? { mcpAtPrompt: mcpStates(), promptAtMs: Date.now() - mcpStartedAt } : {}) };
     writeFileSync(process.env.FAKE_CLAUDE_DUMP, JSON.stringify(dump, null, 2));
     // FAKE_CLAUDE_DUMP_HISTORY: the same dump as one line per dumped turn, so a spec waits for its own turn even when a later
     // turn (another bot's, or a redispatch) has already replaced the single latest-turn file
@@ -948,7 +1094,7 @@ const playTurn = (prompt: JsonValue) => {
   if (process.env.FAKE_CLAUDE_SLOW_SERVER && !slowServerStarted) {
     slowServerStarted = true;
     const late = process.env.FAKE_CLAUDE_SLOW_SERVER === "live" ? "sleep 30" : "true";
-    const server = spawn("sh", ["-c", `sleep 2.4; ${late} & exec sleep 60`], { stdio: "ignore" });
+    const server = spawn("sh", ["-c", `sleep 2.4; ${late} & exec sleep 60`], { windowsHide: true, stdio: "ignore" });
     process.on("exit", () => { try { server.kill("SIGKILL"); } catch { /* already gone */ } });
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 2_000);
   }
@@ -1075,12 +1221,16 @@ const playTurn = (prompt: JsonValue) => {
       // Gate release models a completed reply. An empty result deliberately
       // exercises the product's empty-turn error and cannot model settlement.
       out({ type: "assistant", message: { content: [{ type: "text", text: "Fixture turn finished." }] } });
-      out({ type: "result", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
+      out({ type: "result", subtype: "success", is_error: false, stop_reason: "end_turn", total_cost_usd: 0, usage: { input_tokens: 1, output_tokens: 1 } });
       turnRunning = false;
       finishIfDone();
     }, gate ? 10 : 1_000);
     return;
   }
+
+  const browserReplay = promptText(prompt).includes("__fixture_browser_read__:");
+  const webReplay = /__fixture_(?:web|browser)_read__:(http:\/\/127\.0\.0\.1:\d+\/sales)/.exec(promptText(prompt));
+  if (webReplay) { void playWebRead(promptText(prompt), webReplay[1], browserReplay); return; }
 
   if (mode === "ask-user-question" || fixtureRequested(promptText(prompt), "__fixture_ask_user_question__")) {
     void playAskUserQuestion();
@@ -1104,7 +1254,7 @@ const playTurn = (prompt: JsonValue) => {
     // A real tool starts a model round trip after init. Give the driver time to
     // take its init-time snapshot first (init is already on the pipe).
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
-    const kid = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { stdio: "ignore" });
+    const kid = spawn(process.execPath, ["-e", "setInterval(()=>{},1000)"], { windowsHide: true, stdio: "ignore" });
     if (process.env.FAKE_CLAUDE_CHILD_PID && kid.pid) writeFileSync(process.env.FAKE_CLAUDE_CHILD_PID, String(kid.pid));
     process.on("exit", () => { try { kid.kill("SIGKILL"); } catch { /* already gone */ } });
   }
@@ -1173,7 +1323,7 @@ const playTurn = (prompt: JsonValue) => {
     const content: Array<
       { type: "text"; text: string } | { type: "tool_use"; id: string; name: string }
     > = [{ type: "text", text }];
-    if (index === replyParts.length - 1) content.push({ type: "tool_use", id: "tu-1", name: "Bash" });
+    if (index === replyParts.length - 1 && process.env.FAKE_CLAUDE_TEXT_ONLY !== "1") content.push({ type: "tool_use", id: "tu-1", name: "Bash" });
     out({
       type: "assistant",
       message: {
@@ -1324,12 +1474,30 @@ const mcpTimeoutMs = Number(process.env.MCP_TIMEOUT) > 0 ? Number(process.env.MC
 const mcpReadyMs: Record<string, number> = process.env.FAKE_CLAUDE_MCP_READY_MS ? JSON.parse(process.env.FAKE_CLAUDE_MCP_READY_MS) : {};
 const mcpReconnectMs: Record<string, number> = process.env.FAKE_CLAUDE_MCP_RECONNECT_MS ? JSON.parse(process.env.FAKE_CLAUDE_MCP_RECONNECT_MS) : {};
 const mcpOverride = new Map<string, "connected" | "failed">();
+const relayReady = new Map<string, "pending" | "connected" | "failed">();
+const relayNames = new Set(Object.entries((startupMcpConfig as { mcpServers?: Record<string, { args?: string[] }> } | null)?.mcpServers ?? {})
+  .filter(([, server]) => server.args?.includes("--server")).map(([name]) => name));
+const initializeRelay = async (name: string): Promise<void> => {
+  relayReady.set(name, "pending");
+  try {
+    const session = mcpSession(name);
+    if (!session) throw new Error(`Missing MCP server ${name}`);
+    await session.ready;
+    relayReady.set(name, "connected");
+  } catch (error) { relayReady.set(name, "failed"); throw error; }
+};
 const mcpServerNames = (): string[] => Object.keys((startupMcpConfig as { mcpServers?: Record<string, unknown> } | null)?.mcpServers ?? {});
 const mcpState = (name: string): string => {
+  if (permissionSessions.get(name)?.failed) return "failed";
   const forced = mcpOverride.get(name);
   if (forced) return forced;
   const elapsed = Date.now() - mcpStartedAt;
   const ready = mcpReadyMs[name] ?? 0;
+  if (relayNames.has(name)) {
+    if (!relayReady.has(name)) void initializeRelay(name).catch(() => {});
+    if (relayReady.get(name) === "failed") return "failed";
+    if (relayReady.get(name) !== "connected") return elapsed >= mcpTimeoutMs ? "failed" : "pending";
+  }
   if (ready >= 0 && elapsed >= ready) return "connected";
   return elapsed >= mcpTimeoutMs ? "failed" : "pending";
 };
@@ -1354,6 +1522,10 @@ const drainStdin = () => {
     if ((control as { type?: string } | null)?.type === "control_response") {
       if (process.env.FAKE_CLAUDE_ELICIT_LOG) appendFileSync(process.env.FAKE_CLAUDE_ELICIT_LOG, `${line}\n`);
       const answered = (control as { response?: { request_id?: string } }).response?.request_id;
+      if (answered && sdkHookWaiting.has(answered)) {
+        const resolve = sdkHookWaiting.get(answered)!; sdkHookWaiting.delete(answered);
+        resolve((control as any).response);
+      }
       if (answered && elicitWaiting.delete(answered) && elicitWaiting.size === 0 && elicitResume) {
         const resume = elicitResume;
         elicitResume = null;
@@ -1362,6 +1534,7 @@ const drainStdin = () => {
       continue;
     }
     if (control?.type === "control_request") {
+      if (control.request?.subtype === "initialize") sdkBashHook = (control.request as any).hooks?.PreToolUse?.find((row: any) => row.matcher === "Bash")?.hookCallbackIds?.[0];
       if (process.env.FAKE_CLAUDE_CONTROL_LOG) appendFileSync(process.env.FAKE_CLAUDE_CONTROL_LOG, `${JSON.stringify({ ...control, at: Date.now() - mcpStartedAt })}\n`);
       // FAKE_CLAUDE_MCP_STATUS: "error" refuses mcp_status as an unknown
       // request (an older build); "silent" never answers it.
@@ -1383,9 +1556,11 @@ const drainStdin = () => {
       }
       if (control.request?.subtype === "mcp_reconnect") {
         const name = String(control.request.serverName ?? "");
+        permissionSessions.get(name)?.close();
+        permissionSessions.delete(name);
         const after = mcpReconnectMs[name] ?? 0;
         stdinHeld = true;
-        setTimeout(() => {
+        setTimeout(async () => {
           // FAKE_CLAUDE_MCP_RECONNECT_NEEDS_CRED=1: the restarted bridge lists
           // its tools with the credential file as it is now; an empty file is
           // refused, as the harness refuses a tools/list without a token.
@@ -1393,7 +1568,10 @@ const drainStdin = () => {
           const unauthorized = process.env.FAKE_CLAUDE_MCP_RECONNECT_NEEDS_CRED === "1"
             && !(cred && typeof cred === "object" && Object.keys((cred as Record<string, Record<string, string>>)[name] ?? {}).length);
           if (process.env.FAKE_CLAUDE_CONTROL_LOG) appendFileSync(process.env.FAKE_CLAUDE_CONTROL_LOG, `${JSON.stringify({ reconnected: name, unauthorized, at: Date.now() - mcpStartedAt })}\n`);
-          const fails = after < 0 || unauthorized;
+          let fails = after < 0 || unauthorized;
+          if (!fails && relayNames.has(name)) {
+            try { await initializeRelay(name); } catch { fails = true; }
+          }
           mcpOverride.set(name, fails ? "failed" : "connected");
           out(fails
             ? { type: "control_response", response: { subtype: "error", request_id: control.request_id, error: unauthorized ? `MCP server "${name}": tools/list unauthorized` : `MCP server "${name}" connection timed out after ${mcpTimeoutMs}ms` } }
@@ -1424,6 +1602,17 @@ const drainStdin = () => {
 };
 process.stdin.on("data", (c) => {
   buf += c;
+  if (steerGateArmed && process.env.FAKE_CLAUDE_STEER_GATE_CONTROLS === "1"
+    && /^\s*\{\s*"type"\s*:\s*"user"/.test(buf) && !existsSync(process.env.FAKE_CLAUDE_STEER_GATE!)) {
+    process.stdin.pause();
+    const poll = setInterval(() => {
+      if (!existsSync(process.env.FAKE_CLAUDE_STEER_GATE!)) return;
+      clearInterval(poll);
+      drainStdin();
+      process.stdin.resume();
+    }, 10);
+    return;
+  }
   drainStdin();
 });
 process.stdin.on("end", () => {

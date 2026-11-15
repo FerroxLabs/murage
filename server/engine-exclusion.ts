@@ -23,7 +23,25 @@ import type { HeldFile } from "./engine-plan-core.ts";
 /** An opaque handle the addon owns (Windows). JS never reads it; it only hands it back to the addon's handle functions. */
 export type NativeHandle = object;
 
+export interface IoGrantState {
+ rawBytes:number; threadRawBytes:number; backgroundProcess:number; live:boolean; usedBytes:number; capBytes:number; refusedWrites:number;
+ ceilingMiss:number; wallTime:number; pageSize:number; readBytes:number; threadReadBytes:number; chargedBytes:number;
+}
 export interface ExclusionAddon {
+  /** Password admission requires OS core dump prevention in this process. */
+  disableCoreDumps?(): boolean;
+  ioFgBegin?():void;
+  ioFgEnd?():IoGrantState;
+  ioGrantBegin?(bytes:number,expiresAt:number):void;
+  ioGrantEnd?():IoGrantState;
+  ioGrantSnapshot?():IoGrantState;
+  ioGrantCharge?(bytes:number):void;
+  ioAllBg?():void;
+  ioMeterUnknown?():void;
+  ioMeterAdd?(source:string,bytes:number):void;
+  ioMeterBytes?(source:string):number;
+  ioMeterTotal?():number|null;
+  ioMeterSnapshot?():{total:number;known:boolean;buckets:Array<[string,number]>};
   /** Takes the engine's whole-file lock on `fd`, waiting up to one second. False if another process keeps it. (macOS, Linux) */
   lock(fd: number): boolean;
   /** Every process on this computer. A process that could not be inspected is listed with null where it could not be read. */
@@ -62,7 +80,7 @@ export interface ExclusionAddon {
   bootId?(): string | null;
   /** Windows: WinVerifyTrust's answer for a file's Authenticode signature, on a worker thread: { status (Get-AuthenticodeSignature's
    * names), publisher (the signer's simple name when Valid), code }. Absent in an older build. */
-  authenticode?(path: string): Promise<{ status: string; publisher: string; code: number }>;
+  authenticode?(path: string): Promise<{ status: string; publisher: string; subject?: string; code: number }>;
   /** Windows: removes `path` and everything under it by handle, never following a symlink or junction and never resolving a path
    * below `path` again (link-removal.ts). true removed, false nothing there; throws with a Node errno name as `code`.
    * `beforeFolder` (tests) runs after each folder is opened and before it is listed. Absent in an older build. */
@@ -98,6 +116,18 @@ export interface ExclusionAddon {
   /** Windows (DELETION-WHILE-OPEN-107): another process's working folder, from its PEB; null when it cannot be read. Absent in an older
    * build: the open-home pass then does not run on Windows (engine-closed.ts holdersClearOf fails closed). */
   cwdOf?(pid: number): string | null;
+  // Windows, version 11 (CONTRACTS-B 1.3, native/engine-exclusion/anchored-win.c): the anchored opens the Claude Code import reads through.
+  // The shapes are WinAnchor in server/claude-code-import.ts; they are `unknown` here so this file stays free of that one.
+  anchorBegin?(home: string, budgetMs: number): unknown;
+  anchorOpen?(parent: unknown, name: string, want: "dir" | "file"): unknown;
+  anchorList?(dir: unknown): unknown;
+  anchorRead?(file: unknown, position: number, length: number): Buffer;
+  anchorStat?(handle: unknown): unknown;
+  anchorClose?(handle: unknown): void;
+  anchorEnd?(session: unknown): boolean;
+  /** Test-hooks build only (-DANCHOR_TEST_HOOKS, never packaged): the shipped loader and after-pack refuse an addon that exports either. */
+  anchorTestStall?(eventName: string): void;
+  anchorTestFail?(query: string): void;
 }
 
 /** A running process as the addon reports it. `mine`: this user's (null: could not be told). `exe` "" is a process with no program
@@ -121,8 +151,8 @@ export interface FileWriters { writers: Array<{ pid: number; index: number }>; u
 export type Barrier = "full" | "fallback" | "none";
 
 /** 7: fullSync says which barrier it gave. 8: the Windows calls that replaced PowerShell. 9: domainSids, and jobAssign ends a
- * process it cannot open. 10: removes and verifies the Windows shutdown privileges. */
-export const ADDON_VERSION = 10;
+ * process it cannot open. 10: removes and verifies the Windows shutdown privileges. 11: the Windows anchored-open helper (anchor*). */
+export const ADDON_VERSION = 11;
 
 /** The override is for tests only: not in a packaged app, and never outside a test process. */
 export function overrideAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -146,17 +176,29 @@ function candidates(): string[] {
 const HANDLE_FUNCTIONS = ["openFile", "handleRead", "handleWrite", "handleSync", "handleLock", "handleMarkDelete", "handleId", "handleSize", "handleClose"] as const;
 /** Windows, version 10: the native calls and shutdown privilege removal. A packaged build that lacks one is refused when it is assembled
  * (scripts/engine-exclusion-resource.mjs). */
-export const WINDOWS_NATIVE_FUNCTIONS = ["authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "dropShutdownPrivileges", "speechVoices", "speechToWave"] as const;
+export const WINDOWS_NATIVE_FUNCTIONS = ["authenticode", "jobCreate", "jobAssign", "jobClose", "jobStop", "processStart", "driveInfo", "fileOwnerSid", "accountSid", "machineSid", "domainSids", "dropShutdownPrivileges", "speechVoices", "speechToWave", "anchorBegin", "anchorOpen", "anchorList", "anchorRead", "anchorStat", "anchorClose", "anchorEnd"] as const;
 
-function usable(addon: Partial<ExclusionAddon>): addon is ExclusionAddon {
+/** Every export only the test-hooks build has (R8, R16). The loader refuses a build exporting ANY name that starts with the prefix, so a new
+ * hook cannot ship by being left off this list; the list names each one so each is tested on its own. */
+export const ANCHOR_TEST_PREFIX = "anchorTest";
+export const ANCHOR_TEST_EXPORTS = ["anchorTestStall", "anchorTestStallOpen", "anchorTestRelease", "anchorTestFail", "anchorTestWhy", "anchorTestDropPrivileges", "anchorTestStallMs", "anchorTestStallExit", "anchorTestStats", "anchorTestCorruptName", "anchorTestDeadlineAtPost", "anchorTestHeapMark", "anchorTestHeapCheck", "anchorTestHeapLeaks", "anchorTestHeapCanary", "anchorTestSchedule", "anchorTestWaitSettled", "anchorTestGateReset"] as const;
+
+/** Whether an addon may be used (test seam: tests hand it a plain object). */
+export function addonIsUsable(addon: Partial<ExclusionAddon>, override = false): addon is ExclusionAddon { return usable(addon, override); }
+
+function usable(addon: Partial<ExclusionAddon>, override = false): addon is ExclusionAddon {
   if (typeof addon.lock !== "function" || typeof addon.processes !== "function" || typeof addon.renameNoReplace !== "function" || typeof addon.version !== "function") return false;
   try { if (addon.version() !== ADDON_VERSION) return false; } catch { return false; }
+  // R16: a build that exports a test hook is loaded only through the test-only override, never from a packaged location.
+  if (!override && Object.keys(addon).some((name) => name.startsWith(ANCHOR_TEST_PREFIX))) return false;
   if (process.platform === "win32") for (const name of [...HANDLE_FUNCTIONS, ...WINDOWS_NATIVE_FUNCTIONS]) if (typeof addon[name] !== "function") return false;
   if (process.platform !== "win32" && (typeof addon.writers !== "function" || typeof addon.fullSync !== "function")) return false;
   return true;
 }
 
 let loaded: ExclusionAddon | null | undefined;
+let loadedPath:string|undefined;
+export function exclusionAddonPath():string|undefined { loadExclusionAddon(); return loadedPath; }
 
 /** The addon for one of the Windows calls that replaced a PowerShell start. Never a silent fallback: without it the call throws a
  * plain sentence (a packaged build always carries it; a source checkout without a build refuses the feature). */
@@ -167,7 +209,7 @@ export function requireWindowsAddon(): ExclusionAddon {
 }
 
 /** Looks for the addon again on the next use (tests that switch between the stand-in and the real build). */
-export function forgetExclusionAddon(): void { loaded = undefined; }
+export function forgetExclusionAddon(): void { loaded = undefined; loadedPath=undefined; }
 
 /** The addon, or null when it is not there or will not load. Looked for once. */
 export function loadExclusionAddon(): ExclusionAddon | null {
@@ -178,13 +220,28 @@ export function loadExclusionAddon(): ExclusionAddon | null {
     if (!existsSync(file)) continue;
     try {
       const addon = require(file) as Partial<ExclusionAddon>;
-      if (usable(addon)) {
-        loaded = addon;
+      const explicit = overrideAllowed() ? process.env.MURAGE_ENGINE_EXCLUSION_PATH?.trim() : undefined;
+      if (usable(addon, explicit !== undefined && explicit !== "" && file === explicit)) {
+        loaded = addon; loadedPath=file;
         break;
       }
     } catch { /* the next candidate */ }
   }
   return loaded;
+}
+
+/** Metering is independent of the engine-lock stand-in: select a qualified binary with a VFS entry point. */
+export function loadIoMeterAddon():{addon:ExclusionAddon;path:string}|null {
+  const require=createRequire(import.meta.url);
+  for(const file of candidates()){
+    if(!existsSync(file))continue;
+    try{
+      const addon=require(file) as Partial<ExclusionAddon>;
+      const explicit=overrideAllowed()?process.env.MURAGE_ENGINE_EXCLUSION_PATH?.trim():undefined;
+      if(usable(addon,Boolean(explicit&&file===explicit))&&addon.ioMeterAdd&&addon.ioMeterTotal&&addon.ioMeterBytes)return {addon,path:file};
+    }catch{/* a source checkout without a native build remains explicitly unqualified */}
+  }
+  return null;
 }
 
 /** A file the addon holds, as the rest of the deletion code sees it: every call goes into the addon, on the handle it owns. */

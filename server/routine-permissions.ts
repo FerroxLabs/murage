@@ -1,13 +1,15 @@
+import { permissionsForNoLimitsOrigin } from './no-limits-origin.ts';
+import { inheritedPermissions } from "./permission-inheritance.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// A routine keeps the approval ceiling chosen at creation or by an owner
-// edit. Runs use the lower of that ceiling and the bot's current level.
+// Below No limits, routines keep the approval ceiling chosen at creation or
+// by an owner edit. No limits replaces inherited defaults, while explicit lower choices survive.
 // Older routines receive a ceiling when the manager loads them.
 //
 // This only says WHICH level a routine run is judged at. What each level
 // lets through is still decided in one place, server/auto-approve.ts, where
-// the key guard and stop line hold at every level for routine runs.
+// No limits retains only the wipe check; lower levels keep their guards.
 
 import { autoVerdict, type AutoApprover, type AutoContext, type AutoVerdict, type FullAccessOrigin } from "./auto-approve.ts";
 import type { SendTurnInput } from "./contracts.ts";
@@ -36,19 +38,19 @@ function isMode(value: unknown): value is RoutinePermissionMode {
 export function botPermissionMode(bot: AutoApprover | null | undefined): RoutinePermissionMode {
   // a draft-only bot (server/draft-only.ts) is at Ask whatever its flags say
   if ((bot as { draftOnly?: true } | null | undefined)?.draftOnly === true) return "ask";
+  bot = bot && inheritedPermissions(bot);
   if (bot?.autoApprove !== true) return "ask";
   if (bot.fullAccess !== true) return "auto";
   return bot.noLimits === true ? "unlimited" : "full";
 }
 
-/** The lower of the stored ceiling and the bot's current level. A routine
- * awaiting migration still uses the bot's current level. */
+/** Inherited routines follow No limits; an explicit owner ceiling stays lower. */
 export function effectiveRoutinePermissionMode(
-  routine: { permissionMode?: RoutinePermissionMode },
+  routine: { permissionMode?: RoutinePermissionMode; permissionExplicit?: boolean },
   bot: AutoApprover | null | undefined,
 ): RoutinePermissionMode {
   const current = botPermissionMode(bot);
-  const ceiling = loadRoutinePermissionMode(routine.permissionMode) ?? current;
+  const ceiling = current === "unlimited" && routine.permissionExplicit !== true ? current : loadRoutinePermissionMode(routine.permissionMode) ?? current;
   return ROUTINE_PERMISSION_MODES[Math.min(ROUTINE_PERMISSION_MODES.indexOf(ceiling), ROUTINE_PERMISSION_MODES.indexOf(current))]!;
 }
 
@@ -58,15 +60,27 @@ export function applyRoutinePermissionMode<T extends AutoApprover>(bot: T, mode:
   if ((bot as { draftOnly?: true }).draftOnly === true) mode = "ask";
   return {
     ...bot,
+    permissionExplicit: true,
     autoApprove: mode !== "ask",
     fullAccess: mode === "full" || mode === "unlimited",
     noLimits: mode === "unlimited",
   };
 }
 
+/** Apply ceilings already resolved at admission. They cannot become inherited
+ * defaults when projected for a service, continuation, or wake. */
+export function applyResolvedRoutineCeilings<T extends AutoApprover>(bot: T, modes: readonly (RoutinePermissionMode | null | undefined)[]): T {
+  let effective = bot;
+  for (const permissionMode of modes) if (permissionMode) effective = applyRoutinePermissionMode(effective,
+    effectiveRoutinePermissionMode({ permissionMode, permissionExplicit: true }, effective));
+  return effective;
+}
+
 /** Server-owned ancestry carried across an immediate or queued peer contact. */
 export interface RoutinePeerSource {
   permissionMode: RoutinePermissionMode;
+  /** This is a resolved turn ceiling, never an inherited stored default. */
+  permissionExplicit?: boolean;
   triggerSource: "manual" | "schedule";
 }
 
@@ -81,7 +95,7 @@ export function peerTurnAuthority(peer: AutoApprover, parentRun: RoutinePeerSour
   mode: RoutinePermissionMode; origin: FullAccessOrigin; unattended: boolean;
 } {
   return {
-    mode: effectiveRoutinePermissionMode(parentRun, peer),
+    mode: effectiveRoutinePermissionMode({ ...parentRun, permissionExplicit: true }, peer),
     origin: "routine",
     unattended: parentRun.triggerSource === "schedule",
   };
@@ -89,9 +103,9 @@ export function peerTurnAuthority(peer: AutoApprover, parentRun: RoutinePeerSour
 
 /** Every turn reaches the broker, without changing other instance modes. An Ask turn also says so (askLevel), so an
  *  engine that cannot ask before every change runs it read-only (server/drivers/ask-stop.ts). */
-export function turnPermissionEnforcement(bot: AutoApprover): Pick<SendTurnInput, "routeAsks" | "stopLine" | "askLevel"> {
+export function turnPermissionEnforcement(bot: AutoApprover): Pick<SendTurnInput, "routeAsks" | "stopLine" | "askLevel" | "noLimits"> {
   const mode = botPermissionMode(bot);
-  return mode === "ask" ? { routeAsks: true, askLevel: true } : mode === "auto" ? { routeAsks: true } : { stopLine: true };
+  return mode === "ask" ? { routeAsks: true, askLevel: true } : mode === "auto" ? { routeAsks: true } : mode === "unlimited" ? { stopLine: true, noLimits: true } : { stopLine: true };
 }
 
 /** AMEND-13 Rule 76b: a routine's remembered keys reach only the bot the
@@ -112,20 +126,25 @@ export function routineRunGrants(run: { runId: string; botId: string; alwaysAllo
 export function routineTurnApproval(input: {
   bot?: AutoApprover;
   speaker?: AutoApprover;
-  run?: { permissionMode?: RoutinePermissionMode; alwaysAllow?: readonly string[] } | null;
+  run?: { permissionMode?: RoutinePermissionMode; permissionExplicit?: boolean; alwaysAllow?: readonly string[] } | null;
   tool: string;
   summary: string;
   context?: AutoContext;
 }): { mode: RoutinePermissionMode; verdict: AutoVerdict } {
-  const actor = input.bot ?? input.speaker ?? {};
-  const mode = input.run ? effectiveRoutinePermissionMode(input.run, actor) : botPermissionMode(actor);
-  return {
-    mode,
-    verdict: autoVerdict(input.run ? applyRoutinePermissionMode(actor, mode) : actor, input.tool, input.summary, {
+  const actor = permissionsForNoLimitsOrigin(input.context?.noLimitsOrigin ?? (input.context?.unattended === true ? 'routine' : 'owner-routine'),input.bot ?? input.speaker ?? {});
+  // Delivery/wake sources already resolved a ceiling against their owner.
+  // Preserve that lower bound when projecting it onto a No limits bot.
+  const run = input.run && "triggerSource" in input.run ? { ...input.run, permissionExplicit: true } : input.run;
+  const mode = run ? effectiveRoutinePermissionMode(run, actor) : botPermissionMode(actor);
+  const verdict = autoVerdict(input.run ? applyRoutinePermissionMode(actor, mode) : actor, input.tool, input.summary, {
       ...input.context,
-      ...(input.run ? { automated: true, routineLevel: true, routineAllow: input.run.alwaysAllow } : {}),
-    }),
-  };
+      ...(input.run ? { automated: true, routineLevel: true, noLimitsOrigin:"routine" as const, routineAllow: input.run.alwaysAllow } : {}),
+    });
+  // With no bound run, an unattended request cannot use a routine's owner
+  // authority. Preserve that explanation when BASE has no more specific hold.
+  if (!input.run && input.context?.unattended && verdict.source === 'no-grant'
+    && botPermissionMode(input.bot ?? input.speaker) !== 'ask') return {mode,verdict:{...verdict,source:'unattended-block'}};
+  return {mode,verdict};
 }
 
 /** Missing levels are pinned by the manager. Invalid stored values use Ask. */

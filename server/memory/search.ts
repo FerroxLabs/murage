@@ -1,3 +1,4 @@
+import { eligibleViewPage, lexicalViewPage, pendingViewPage, RecallWorkBudget } from './recall-view-index.ts';
 import { readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { database } from "../database.ts";
 import { assertMemoryAccess, inMemoryAccessPass, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
@@ -9,13 +10,11 @@ import { isLineageLimit } from "./replay-lineage.ts";
 import type { LineageAllowance } from "./lineage-allowance.ts";
 import type { IndexHit } from "./index.ts";
 import { byScore, compareRefs } from "./ref-order.ts";
-import { eligibleAfter } from "./eligibility.ts";
 import { createHash } from "node:crypto";
 import { MemoryQueryCache } from "./cache.ts";
 import { selectMemoryEvidence } from "./relevance.ts";
-import { keywordMemoryHits, recentMemoryHits } from "./recent.ts";
-import { lexicalPage, lexicalPageSliced, memoryIndexReaderState, RECALL_FIRST_PAGE, vectorlessAmong } from "./index-reader.ts";
-import { pendingProjectionRefsAfter } from "./projection.ts";
+import { keywordMemoryHits, recentMemoryHitsSliced } from "./recent.ts";
+import { lexicalPage, ownerIndexHandle, memoryIndexReaderState, RECALL_FIRST_PAGE, vectorlessAmong } from "./index-reader.ts";
 import { causeOf, logSwallowed } from "./worker-log.ts";
 import { rateLimited } from "../observe.ts";
 import { noteRecallMode } from "./recall-budget.ts";
@@ -77,7 +76,7 @@ const RECENT_READABLE=20;
 /** How often a search whose data moved under it reads its accepted records again before it answers nothing. */
 const REVALIDATION_ROUNDS=3;
 const yieldTurn=()=>new Promise<void>(resolve=>setImmediate(resolve));
-export async function searchMemory(query:string,access:MemoryAccess,bridge:MemorySearchBridge,given:{allowance:LineageAllowance;limit?:number;historical?:boolean;cursor?:string;signal?:AbortSignal;profile?:boolean;lexical?:((...args:Parameters<typeof lexicalPage>)=>ReturnType<typeof lexicalPage>|Promise<ReturnType<typeof lexicalPage>>)|null;evolutionPolicy?:MemoryEvolutionPolicy;withheldMessage?:(threadId:string,messageId:string,allowance:LineageAllowance)=>boolean;caller?:RecallCaller;telemetry?:(facts:SearchTelemetry)=>void}){
+export async function searchMemory(query:string,access:MemoryAccess,bridge:MemorySearchBridge,given:{workBudget?:RecallWorkBudget;allowance:LineageAllowance;limit?:number;historical?:boolean;cursor?:string;signal?:AbortSignal;profile?:boolean;lexical?:((...args:Parameters<typeof lexicalPage>)=>ReturnType<typeof lexicalPage>|Promise<ReturnType<typeof lexicalPage>>)|null;evolutionPolicy?:MemoryEvolutionPolicy;withheldMessage?:(threadId:string,messageId:string,allowance:LineageAllowance)=>boolean;caller?:RecallCaller;telemetry?:(facts:SearchTelemetry)=>void}){
   // the reader's transcript rule, defaulted for a reader whose audience is not the owner (readable.ts withReaderRule)
   const options=withReaderRule(access,given);
   const serviceStarted=performance.now();
@@ -90,13 +89,14 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   const deadlineAt=Date.now()+budgetMs;
   const signal=AbortSignal.any([options.signal??new AbortController().signal,AbortSignal.timeout(budgetMs)]);
   assertMemoryAccess(access);
+  const workBudget=options.workBudget??new RecallWorkBudget(8192);
   const evolutionPolicy=options.evolutionPolicy??readMemoryEvolutionPolicy();
   if(!query.trim()||Buffer.byteLength(query)>4096)throw new Error("INVALID_MEMORY_QUERY");
   const limit=Math.min(20,Math.max(1,options.limit??10));
   // The cursor a reader holds is a token only this reader can use; the helper pages by the id behind it.
   const rawCursor=openMemoryCursor(options.cursor??"",access,options.historical??false);
   const meta=database().prepare("SELECT data_revision FROM memory_meta WHERE id=1").get()!;
-  const cacheKey=createHash("sha256").update(JSON.stringify([query,limit,access.scopeIds,access.policyRevision,access.deletionEpoch,meta.data_revision,options.historical??false,rawCursor])).digest("hex");
+  const cacheKey=createHash("sha256").update(JSON.stringify([query,limit,access.view,access.botId,access.threadId,access.humanPrincipal,memoryAccessNotOwnerAudience(access),access.policyRevision,access.deletionEpoch,meta.data_revision,options.historical??false,rawCursor])).digest("hex");
   const cached=queryCache.get(cacheKey);
   const bridgeStarted=performance.now();
   // The helper (embedding and vectors) is asked first so it works while this process reads the words; the words never wait for it.
@@ -105,15 +105,18 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   const helperAbort=new AbortController();
   const helperSignal=AbortSignal.any([signal,helperAbort.signal]);
   const helper=cached?null:(()=>{
-    try{return withinDeadline(bridge.search({query,scopeIds:[...access.scopeIds],policyRevision:access.policyRevision,deletionEpoch:access.deletionEpoch,historical:options.historical??false,cursor:rawCursor,limit,semantic:true,deadlineAt,...options.profile?{profile:true}:{}},helperSignal),helperSignal);}
+    try{return withinDeadline(bridge.search({query,scopeIds:[],view:access.view,reader:{botId:access.botId,threadId:access.threadId,humanPrincipal:access.humanPrincipal,notOwnerAudience:memoryAccessNotOwnerAudience(access)},policyRevision:access.policyRevision,deletionEpoch:access.deletionEpoch,historical:options.historical??false,cursor:rawCursor,limit,semantic:true,deadlineAt,...options.profile?{profile:true}:{}},helperSignal),helperSignal);}
     catch(error){return Promise.reject(error);}
   })();
   helper?.catch(()=>{});
   // The word list leaves out, inside the index query and before any limit, the records no reader can read (state, forgotten,
   // evidence withdrawn, outside the reader's scopes), and stops at the search's own deadline with a page flagged partial
   // (msearch review round 6). Reader-specific refusals are still decided record by record below.
-  const lexicalSource=options.lexical===undefined?((q:string,scopes:readonly string[],limit:number,offset?:number)=>lexicalPageSliced(q,scopes,limit,offset,yieldTurn,{eligible:true,historical:options.historical??false,deadlineAt,...options.signal?{signal:options.signal}:{}})):options.lexical;
-  const direct=lexicalSource?await lexicalSource(query,access.scopeIds,RECALL_FIRST_PAGE):null;
+  const lexicalSource=options.lexical===null?null:((q:string,_scopes:readonly string[],limit:number,offset=0)=>
+    options.lexical ? options.lexical(q,[],limit,offset) : lexicalViewPage(database(),q,access.view,limit,offset,workBudget));
+  assertMemoryAccess(access);
+  ownerIndexHandle();
+  const direct=lexicalSource?await lexicalSource(query,[],RECALL_FIRST_PAGE):null;
   const lexicalReady=direct!==null;
   // The word scan reached its deadline: what it ranked is the best of what it read, and the answer says so.
   let scanCut=Boolean(direct?.partial);
@@ -139,7 +142,7 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
     if(!lexicalReady&&!options.historical){
       const left=hydrationLimitMs-(performance.now()-serviceStarted)-KEYWORD_HYDRATION_RESERVE_MS;
       if(left>0){
-        keyword=(await keywordMemoryHits(query,access,{budgetMs:left,...options.signal?{signal:options.signal}:{}})).hits;
+        keyword=(await keywordMemoryHits(query,access,{workBudget,budgetMs:left,...options.signal?{signal:options.signal}:{}})).hits;
         options.signal?.throwIfAborted();assertMemoryAccess(access);
       }
     }
@@ -148,10 +151,12 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
       :{hits:keyword,vectorRows:0,degradedReason:"MEMORY_RECALL_UNAVAILABLE",coverageComplete:false};
   }
   finally{if(cutoff)clearTimeout(cutoff);}
-  if(!lexicalReady&&helperAnswered&&["missing","unreadable"].includes(memoryIndexReaderState()))result={...result,coverageComplete:false};
+  if(helperAnswered&&["missing","unreadable"].includes(memoryIndexReaderState()))result={...result,coverageComplete:false};
   const bridgeDone=performance.now();
   assertMemoryAccess(access);
-  const recent=options.historical?[]:recentMemoryHits(query,access);
+  const recentScan=options.historical?{hits:[],complete:true}:await recentMemoryHitsSliced(query,access,{workBudget,deadlineAt:serviceStarted+hydrationLimitMs-KEYWORD_HYDRATION_RESERVE_MS,...options.signal?{signal:options.signal}:{}});
+  const recent=recentScan.hits;
+  scanCut ||= !recentScan.complete;
   // Authorization comes first, and everything a reader can observe is computed from what it may read. Every candidate, on
   // every path (helper, word index, recent, keyword fallback, historical), is read through readableMemoryRecord
   // (readable.ts): the same function memory_get and bundle hydration call, so search returns a version only when memory_get
@@ -166,7 +171,7 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   // Hydration stops at the limit for every caller and returns what it has, flagged partial. No candidate is exempt: a
   // search that starts late (a stalled event loop) answers partial or empty, inside the proxy's wait (P1, msearch review).
   const mode=options.historical?"historical" as const:"current" as const;
-  const readOptions={allowance:options.allowance,mode,agent:true,...options.withheldMessage?{withheldMessage:options.withheldMessage}:{}};
+  const readOptions={workBudget,allowance:options.allowance,mode,agent:true,...options.withheldMessage?{withheldMessage:options.withheldMessage}:{}};
   const keyOf=(ref:{id:string;version:number})=>`${ref.id}:${ref.version}`;
   const checked=new Map<string,{ref:{id:string;version:number};value:Readable|null}>();
   const hydrate=(ref:{id:string;version:number}):Readable|null=>{
@@ -196,9 +201,11 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
     const todo:Array<{id:string;version:number}>=[];
     for(const ref of refs){const key=keyOf(ref);if(!checked.has(key)&&!todo.some(other=>keyOf(other)===key))todo.push(ref);}
     if(!todo.length)return;
+    if(todo.length>workBudget.remaining){todo.length=workBudget.remaining;partial=true;}
+    workBudget.candidates(todo.length);
     if(partial||overTime()){partial=true;return;}
     stampAtAccept??=revisionStamp();
-    const plausible=inMemoryAccessPass(()=>plausiblyReadable(todo,access.scopeIds,mode,!audienceReader&&!memoryAccessNotOwnerAudience(access)));
+    const plausible=inMemoryAccessPass(()=>plausiblyReadable(todo,access.view,mode,!audienceReader&&!memoryAccessNotOwnerAudience(access)));
     const survivors:Array<{id:string;version:number}>=[];
     for(const ref of todo){if(plausible.has(keyOf(ref)))survivors.push(ref);else checked.set(keyOf(ref),{ref,value:null});}
     for(let at=0;at<survivors.length;){
@@ -255,7 +262,7 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
           offset+=batch.length;
           if(!more){listDone=true;break;}
           await yieldTurn();
-          const next=lexicalSource?await lexicalSource(query,access.scopeIds,WORD_PAGE,offset):null;
+          const next=lexicalSource?await lexicalSource(query,[],WORD_PAGE,offset):null;
           if(!next)break;
           if(next.partial)scanCut=true;
           if(next.bounded)boundedScan=true;
@@ -353,8 +360,8 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
     let pendingReadable=false;
     if(pendingScan){
       for(let after=0;;){
-        const refs=pendingProjectionRefsAfter(database(),access.scopeIds,after,PENDING_PAGE);
-        if(!refs.length)break;
+        const refs=pendingViewPage(database(),access.view,after,PENDING_PAGE,workBudget);
+        if(!refs.length){if(workBudget.remaining===0)partial=true;break;}
         await authorizeAll(refs);
         if(refs.some(ref=>readableOf(ref)!==null)){pendingReadable=true;break;}
         if(partial){pendingReadable=true;break;}
@@ -368,8 +375,8 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
    * hydration limit ended the walk first. Refused records are never counted. */
   async function readableAfter(start:string,model?:string):Promise<boolean|"unproven">{
     for(let cursor=start;;){
-      const rows=eligibleAfter(database(),access.scopeIds,options.historical??false,cursor,ELIGIBLE_PAGE);
-      if(!rows.length)return false;
+      const rows=eligibleViewPage(database(),access.view,cursor,ELIGIBLE_PAGE,workBudget);
+      if(!rows.length)return workBudget.remaining===0?"unproven":false;
       // Without a model to look under (or an index to look in) every record counts: more cautious, never less.
       const wanted=model!==undefined?vectorlessAmong(rows,model)??rows:rows;
       await authorizeAll(wanted);
@@ -419,6 +426,8 @@ export async function searchMemory(query:string,access:MemoryAccess,bridge:Memor
   if(cut||boundedScan||lists.recentReadable)coverage=false;
   // Only these fields are the answer. The helper's counts, memory use and timings stay in the process (telemetry above), and
   // the helper's cursor, an id that may name a record this reader cannot read, is replaced by a token only this reader can use.
+  // Final admission check follows every callback and all result construction work.
+  assertMemoryAccess(access);
   return {hits:selected,...degradedReason!==undefined?{degradedReason}:{},...coverage!==undefined?{coverageComplete:coverage}:{},...lists.paged?{nextCursor:sealMemoryCursor(result.resumeAfter!,access,options.historical??false)}:{},
     ...isPartial?{partial:true,recallMode:"keyword" as const}:{},...note?{note}:{},evolutionPolicyRevision:evolutionPolicy.revision,...lists.recentReadable?{recentFallback:true}:{},
     };

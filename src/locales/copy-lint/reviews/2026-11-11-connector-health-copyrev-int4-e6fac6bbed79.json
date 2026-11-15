@@ -1,0 +1,255 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "bld-connreconnect",
+  "date": "2026-11-11",
+  "base": "f6b9b86de72d64bd10f1d0363b7d44f58ae3af32",
+  "scope": "Sol review: 5 connectorHealth strings in 8 languages against plain words, no dashes, strengths for release fixes and no No limits in headlines. Original author bld-connreconnect; Sol copyrev-int4 corrected German unverified and Spanish and Portuguese computer wording before reviewing the final text. These messages describe current status and recovery, not release fix announcements.",
+  "strings": {
+    "en:connectorHealth.unverified": {
+      "text": "Murage could not check {app} just now. It will try again.",
+      "en": "Murage could not check {app} just now. It will try again.",
+      "verdict": "pass",
+      "note": "Names the app check and the retry in ordinary words. The temporary status is honest; it does not claim that the app needs reconnection."
+    },
+    "en:connectorHealth.signIn": {
+      "text": "{connector} needs you to sign in again",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "pass",
+      "note": "The heading names the affected app and the next action. No technical error, dash or permission level appears."
+    },
+    "en:connectorHealth.reconnect": {
+      "text": "Reconnect",
+      "en": "Reconnect",
+      "verdict": "pass",
+      "note": "A short verb labels the recovery button clearly and matches the action it opens."
+    },
+    "en:connectorHealth.reconnectApp": {
+      "text": "Reconnect {connector}",
+      "en": "Reconnect {connector}",
+      "verdict": "pass",
+      "note": "The accessible button label identifies the affected app with {connector}; it remains clear when several apps are listed."
+    },
+    "en:connectorHealth.computer": {
+      "text": "Reconnect it on your computer.",
+      "en": "Reconnect it on your computer.",
+      "verdict": "pass",
+      "note": "The immediately preceding heading names the app, so it has a clear antecedent. The sentence gives a short action and directs the person to their computer."
+    },
+    "de:connectorHealth.unverified": {
+      "text": "Murage konnte {app} gerade nicht prüfen. Murage versucht es später erneut.",
+      "en": "Murage could not check {app} just now. It will try again.",
+      "verdict": "pass",
+      "note": "Corrected Es wird es to an explicit Murage subject and a clear later retry. The temporary check result and {app} remain intact."
+    },
+    "de:connectorHealth.signIn": {
+      "text": "{connector} braucht eine erneute Anmeldung",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "pass",
+      "note": "A natural short German heading explains that {connector} needs another sign in, without a technical diagnosis or a permission level."
+    },
+    "de:connectorHealth.reconnect": {
+      "text": "Erneut verbinden",
+      "en": "Reconnect",
+      "verdict": "pass",
+      "note": "Erneut verbinden is a familiar action label; the infinitive is appropriate on a button."
+    },
+    "de:connectorHealth.reconnectApp": {
+      "text": "{connector} erneut verbinden",
+      "en": "Reconnect {connector}",
+      "verdict": "pass",
+      "note": "The app name followed by erneut verbinden reads naturally as a German action label and retains {connector}."
+    },
+    "de:connectorHealth.computer": {
+      "text": "Verbinde die App auf deinem Computer erneut.",
+      "en": "Reconnect it on your computer.",
+      "verdict": "pass",
+      "note": "The informal Verbinde and deinem fit the German voice. App and Computer make the recovery target and place explicit."
+    },
+    "es:connectorHealth.unverified": {
+      "text": "Murage no pudo comprobar {app} en este momento. Volverá a intentarlo.",
+      "en": "Murage could not check {app} just now. It will try again.",
+      "verdict": "pass",
+      "note": "Comprobar and volver a intentarlo explain the check and retry naturally. It keeps {app} and does not suggest an expired account."
+    },
+    "es:connectorHealth.signIn": {
+      "text": "Necesitas volver a iniciar sesión en {connector}",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "pass",
+      "note": "The informal necesitas heading gives a clear sign in action and preserves {connector}; no permission level or dash appears."
+    },
+    "es:connectorHealth.reconnect": {
+      "text": "Volver a conectar",
+      "en": "Reconnect",
+      "verdict": "pass",
+      "note": "Volver a conectar is a familiar Spanish button action, without jargon."
+    },
+    "es:connectorHealth.reconnectApp": {
+      "text": "Volver a conectar {connector}",
+      "en": "Reconnect {connector}",
+      "verdict": "pass",
+      "note": "The action names {connector}, so multiple reconnect buttons remain distinguishable."
+    },
+    "es:connectorHealth.computer": {
+      "text": "Vuelve a conectar la aplicación en tu ordenador.",
+      "en": "Reconnect it on your computer.",
+      "verdict": "pass",
+      "note": "Corrected conectarlo to conectar la aplicación, removing the unclear masculine pronoun. Tu ordenador states where to act."
+    },
+    "fr:connectorHealth.unverified": {
+      "text": "Murage n’a pas pu vérifier {app} pour le moment. Il réessaiera.",
+      "en": "Murage could not check {app} just now. It will try again.",
+      "verdict": "pass",
+      "note": "Vérifier and réessaiera explain the temporary check result and retry in natural French, with {app} preserved."
+    },
+    "fr:connectorHealth.signIn": {
+      "text": "Tu dois te reconnecter à {connector}",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "pass",
+      "note": "Tu dois uses the required informal voice. Se reconnecter à {connector} gives the heading a clear next action."
+    },
+    "fr:connectorHealth.reconnect": {
+      "text": "Reconnecter",
+      "en": "Reconnect",
+      "verdict": "pass",
+      "note": "Reconnecter is a short conventional French action label that matches the button."
+    },
+    "fr:connectorHealth.reconnectApp": {
+      "text": "Reconnecter {connector}",
+      "en": "Reconnect {connector}",
+      "verdict": "pass",
+      "note": "The infinitive and {connector} make the action clear for each affected app."
+    },
+    "fr:connectorHealth.computer": {
+      "text": "Reconnecte cette application sur ton ordinateur.",
+      "en": "Reconnect it on your computer.",
+      "verdict": "pass",
+      "note": "Reconnecte, cette application and ton ordinateur explicitly give the action, target and place in the informal voice."
+    },
+    "hi:connectorHealth.unverified": {
+      "text": "Murage अभी {app} की जाँच नहीं कर सका। वह फिर कोशिश करेगा।",
+      "en": "Murage could not check {app} just now. It will try again.",
+      "verdict": "pass",
+      "note": "जाँच and फिर कोशिश explain the check and retry in everyday Hindi. The message retains {app} and does not claim a sign in is required."
+    },
+    "hi:connectorHealth.signIn": {
+      "text": "{connector} में फिर से साइन इन करें",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "pass",
+      "note": "फिर से साइन इन करें is a familiar polite Hindi instruction. The heading identifies {connector} without a permission level."
+    },
+    "hi:connectorHealth.reconnect": {
+      "text": "फिर से कनेक्ट करें",
+      "en": "Reconnect",
+      "verdict": "pass",
+      "note": "फिर से कनेक्ट करें clearly labels the reconnect action with familiar Hindi usage."
+    },
+    "hi:connectorHealth.reconnectApp": {
+      "text": "{connector} को फिर से कनेक्ट करें",
+      "en": "Reconnect {connector}",
+      "verdict": "pass",
+      "note": "The को construction ties the reconnect action to {connector} and keeps the app placeholder unchanged."
+    },
+    "hi:connectorHealth.computer": {
+      "text": "इसे अपने कंप्यूटर पर फिर से कनेक्ट करें।",
+      "en": "Reconnect it on your computer.",
+      "verdict": "pass",
+      "note": "इसे refers to the app named in the heading. अपने कंप्यूटर पर and फिर से कनेक्ट करें give a familiar place and action."
+    },
+    "ja:connectorHealth.unverified": {
+      "text": "Murage は今、{app} を確認できませんでした。後でもう一度試します。",
+      "en": "Murage could not check {app} just now. It will try again.",
+      "verdict": "pass",
+      "note": "確認できませんでした and 後でもう一度試します accurately describe an unsuccessful check and later retry, with {app} preserved."
+    },
+    "ja:connectorHealth.signIn": {
+      "text": "{connector} に再度サインインしてください",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "pass",
+      "note": "The polite サインインしてください instruction names {connector}. It is suitable for this recovery heading and contains no permission level."
+    },
+    "ja:connectorHealth.reconnect": {
+      "text": "再接続",
+      "en": "Reconnect",
+      "verdict": "pass",
+      "note": "再接続 is the standard concise Japanese label for this button action."
+    },
+    "ja:connectorHealth.reconnectApp": {
+      "text": "{connector} を再接続",
+      "en": "Reconnect {connector}",
+      "verdict": "pass",
+      "note": "The を particle ties 再接続 to {connector}, identifying each app in a list of actions."
+    },
+    "ja:connectorHealth.computer": {
+      "text": "コンピューターで再接続してください。",
+      "en": "Reconnect it on your computer.",
+      "verdict": "pass",
+      "note": "The preceding heading supplies the app. コンピューターで再接続してください is a natural polite Japanese instruction with a clear place and action."
+    },
+    "pt-br:connectorHealth.unverified": {
+      "text": "O Murage não conseguiu verificar {app} agora. Ele tentará novamente.",
+      "en": "Murage could not check {app} just now. It will try again.",
+      "verdict": "pass",
+      "note": "Verificar and tentará novamente describe the check and retry in ordinary Brazilian Portuguese without inventing an account problem."
+    },
+    "pt-br:connectorHealth.signIn": {
+      "text": "Você precisa entrar novamente no {connector}",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "pass",
+      "note": "Entrar novamente gives the reader a familiar sign in action and retains {connector}; no permission level or dash appears."
+    },
+    "pt-br:connectorHealth.reconnect": {
+      "text": "Reconectar",
+      "en": "Reconnect",
+      "verdict": "pass",
+      "note": "Reconectar is the standard concise action label in Brazilian Portuguese."
+    },
+    "pt-br:connectorHealth.reconnectApp": {
+      "text": "Reconectar {connector}",
+      "en": "Reconnect {connector}",
+      "verdict": "pass",
+      "note": "Reconectar followed by {connector} identifies which app the button will reconnect."
+    },
+    "pt-br:connectorHealth.computer": {
+      "text": "Reconecte o app no seu computador.",
+      "en": "Reconnect it on your computer.",
+      "verdict": "pass",
+      "note": "Added o app as the missing reconnect object. No seu computador states where the person should complete the action."
+    },
+    "zh:connectorHealth.unverified": {
+      "text": "Murage 暂时无法检查 {app}，稍后会重试。",
+      "en": "Murage could not check {app} just now. It will try again.",
+      "verdict": "pass",
+      "note": "暂时无法检查 and 稍后会重试 accurately state the temporary check result and retry with everyday wording and {app} intact."
+    },
+    "zh:connectorHealth.signIn": {
+      "text": "请重新登录 {connector}",
+      "en": "{connector} needs you to sign in again",
+      "verdict": "pass",
+      "note": "请重新登录 names the next action for {connector}. The heading is concise and uses no permission level."
+    },
+    "zh:connectorHealth.reconnect": {
+      "text": "重新连接",
+      "en": "Reconnect",
+      "verdict": "pass",
+      "note": "重新连接 is a concise familiar label for the reconnect action."
+    },
+    "zh:connectorHealth.reconnectApp": {
+      "text": "重新连接 {connector}",
+      "en": "Reconnect {connector}",
+      "verdict": "pass",
+      "note": "The label combines 重新连接 with {connector}, identifying the app when several buttons appear."
+    },
+    "zh:connectorHealth.computer": {
+      "text": "请在电脑上重新连接。",
+      "en": "Reconnect it on your computer.",
+      "verdict": "pass",
+      "note": "The preceding heading supplies the app. 请在电脑上重新连接 is a concise polite instruction giving the place and action."
+    }
+  },
+  "files": {}
+}

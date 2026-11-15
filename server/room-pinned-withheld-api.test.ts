@@ -13,8 +13,9 @@ import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
 
 const FAKE_PI = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-pi-cli.ts");
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -33,7 +34,7 @@ const PIN_NOTE = "Bots were not given a pinned note: it uses a reply they no lon
 
 posixOnly("a pinned room note resting on a withheld reply", () => {
   beforeAll(async () => {
-    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
       const fs=await import('node:fs');const path=await import('node:path');
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
       cfg.instances.piDump={driver:'piAgent',displayName:'Recording pi fixture',config:{cli:${JSON.stringify(FAKE_PI)},fullAuto:true},
@@ -96,6 +97,10 @@ posixOnly("a pinned room note resting on a withheld reply", () => {
       for (let round = 1; round <= 8 && !found; round++) {
         await send(`question ${round} about the garden`);
         await expect.poll(async () => (await repliesBy(alpha.id)).length, { timeout: 15000 }).toBe(round);
+        // The rolling checkpoint is written by a background job that can trail the reply on a slower machine: wait (read-only, bounded)
+        // until it quotes this round's exact reply before looking for a candidate. A timeout fails the test here, with this message.
+        const latest = (await repliesBy(alpha.id)).at(-1)!.text;
+        await vi.waitFor(() => expect(checkpoint()?.text ?? "", `round ${round}: checkpoint never quoted the latest reply`).toContain(latest), { timeout: 15000, interval: 100 });
         found = await candidate();
       }
       expect(found).toBeDefined();

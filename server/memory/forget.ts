@@ -37,6 +37,10 @@ function forgetInTransaction(ticket: object, target: {kind:"source"|"record";id:
     const epoch=Number(db.prepare("SELECT deletion_epoch FROM memory_meta WHERE id=1").get()!.deletion_epoch);
     const rev=target.revision??null;
     db.prepare("INSERT INTO memory_tombstones VALUES(?,?,?,?,NULL,?,'owner-forget',?)").run(randomUUID(),target.kind,target.id,rev,epoch,Date.now());
+    // Memory screen B2 (spec r3 2.3): the pin goes in this commit, not at the job's affect step (memory-revocation.ts), which a large
+    // record leaves to the runner; the next turn then never selects a pin it may not read. A primary-key range over this record's
+    // versions; authority_pins_u moves the pin stamp, so the bundle's pin cache is not reused.
+    if(target.kind==="record")db.prepare("UPDATE memory_records SET owner_pinned=0 WHERE id=? AND (? IS NULL OR version=?) AND owner_pinned=1").run(target.id,rev,rev);
     // A room's notes (its checkpoint) quote room messages every member still
     // reads. Forgetting the notes forgets the notes: a reply made with them is
     // withheld for using them, but the messages they quoted are not forgotten

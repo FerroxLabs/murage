@@ -7,6 +7,8 @@
 import { useStore } from "@/state/store";
 import { useEngineReading } from "@/components/today/use-engine-health";
 import { t } from "@/lib/i18n";
+import { isCloudHome } from "@/lib/cloud-workspace";
+import { FLUX_NOT_READY_COPY } from "../../../shared/provider-error";
 import { firstRunOwnsMainView } from "@/lib/first-run";
 import { useSetupView } from "@/components/FirstRunChrome";
 import type { HealthIssueLevel } from "../../../shared/health-levels";
@@ -15,7 +17,7 @@ import type { EngineHealthRow, FluxHealthState, HealthStatus } from "@/component
 /** The level from the engine reading alone: a signed-out or missing engine, or Flux used up, is the owner's to fix. */
 export function healthFromEngines(engine: EngineHealthRow | null, flux: FluxHealthState, answered: boolean): HealthStatus {
   if (flux === "allowance-used-up") return { level: "act", line: t("ux.l2a.tag.fluxUsedUp") };
-  if (flux === "key-problem") return { level: "act", line: t("ux.l2a.tag.fluxKey") };
+  if (flux === "key-problem") return { level: "act", line: isCloudHome() ? FLUX_NOT_READY_COPY : t("ux.l2a.tag.fluxKey") };
   if (engine?.state === "signed-out") return { level: "act", line: t("ux.l2a.tag.signedOut", { engine: engine.label }) };
   if (engine?.state === "missing") return { level: "act", line: t("ux.l2a.tag.missing", { engine: engine.label }) };
   if (engine?.state === "limit" || engine?.state === "off") return { level: "watch", line: t(engine.state === "limit" ? "ux.l2a.tag.limit" : "ux.l2a.tag.off", { engine: engine.label }) };

@@ -1,5 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
+// Native mount producer owner: tri3-g1. Email fixture consumer owner: new3-g2d.
 // Linux CI only. Bot email (BOT-EMAIL-MURAGE-109) through isolated servers, each with its own temporary HOME/data and fake engine.
 //   1. Dark launch: no Flux key, no email. Every /api/email route is the one not-available refusal, a bot's turn credential is refused
 //      before any route, the turn lists no email tools, and nothing about email is written to the conversation.
@@ -12,11 +13,12 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
 import { turnSecret } from "../turn-credential.ts";
 import { EMAIL_OWNER_COPY } from "../../shared/email-copy.ts";
+import { withTurnSecrets } from "../testing/fixture-dump.ts";
 
 type Fixture = { fixture: VerificationServer; headers: Record<string, string>; model: string };
 
 async function launch(instrumentationSource?: string): Promise<Fixture> {
-  const fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';${instrumentationSource ?? ""}` });
+  const fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';process.env.MURAGE_TEST_EMAIL_STORE='memory';${instrumentationSource ?? ""}` });
   const headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": (await (await fetch(new URL("/api/desktop-secret", fixture.info.url))).json() as { secret: string }).secret };
   const instances = await (await fetch(new URL("/api/instances", fixture.info.url), { headers })).json() as any;
   return { fixture, headers, model: instances.instances.find((engine: any) => engine.instanceId === "verification").models.options[0].id };
@@ -30,7 +32,7 @@ async function api(f: Fixture, method: string, path: string, body?: unknown) {
   expect(answer.status, `${method} ${path}: ${JSON.stringify(answer.body)}`).toBeLessThan(300);
   return answer.body;
 }
-const dump = (f: Fixture) => { try { return existsSync(f.fixture.fixtureDumpPath) ? JSON.parse(readFileSync(f.fixture.fixtureDumpPath, "utf8")) : null; } catch { return null; } };
+const dump = (f: Fixture) => { try { return existsSync(f.fixture.fixtureDumpPath) ? withTurnSecrets(JSON.parse(readFileSync(f.fixture.fixtureDumpPath, "utf8"))) : null; } catch { return null; } };
 function agentsEnv(value: any): Record<string, string> | undefined {
   if (!value || typeof value !== "object") return undefined;
   if (typeof value.env?.MURAGE_COMMS_TOKEN === "string" || typeof value.env?.MURAGE_CRED_FILE === "string") return value.env;
@@ -51,6 +53,10 @@ async function holdTurn(f: Fixture, bot: { id: string; threadId: string }, marke
   await api(f, "POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: `${marker}\n__fixture_hold_authority__` });
   await expect.poll(() => JSON.stringify(dump(f)?.prompt ?? "").includes(marker), { timeout: 20000 }).toBe(true);
   const held = dump(f);
+  expect(held.fixtureMounts).toBeDefined();
+  for (const server of Object.values(held.wireMcpConfig.mcpServers) as Array<{ env?: Record<string, string> }>) {
+    for (const key of ["MURAGE_COMMS_TOKEN", "MURAGE_BOT_ID", "MURAGE_THREAD_ID", "MURAGE_EMAIL"]) expect(server.env?.[key]).toBeUndefined();
+  }
   try { await during(agentsEnv(held.mcpConfig)!, held); }
   finally {
     writeFileSync(join(f.fixture.fixtureFinishGateDir, String(held.pid)), "");
@@ -81,8 +87,8 @@ describe.skipIf(process.platform !== "linux")("bot email dark launch through an 
       // F18: the bot's own turn credential never reaches an owner route, with or without the desktop marker
       expect([403, 404]).toContain((await call(f, "GET", "/api/email/status", undefined, { authorization: `Bearer ${token}` })).status);
       expect(await call(f, "GET", "/api/email/status", undefined, { ...f.headers, authorization: `Bearer ${token}` })).toEqual({ status: 403, body: { error: EMAIL_OWNER_COPY.ownerOnly } });
-      // the tool route itself refuses while off
-      expect((await internal(f, "/api/internal/email/email_send", token, { to: ["a@b.test"], subject: "x", text: "y" })).status).toBe(403);
+      // An entirely off feature answers one plain settings line without a card.
+      expect(await internal(f, "/api/internal/email/email_send", token, { to: ["a@b.test"], subject: "x", text: "y" })).toEqual({ status: 200, body: { text: "Email is off. Turn it on in Settings > Bot email." } });
     });
     const rows = (await api(f, "GET", `/api/threads/${bot.threadId}/messages`)).messages as any[];
     expect(rows.some(row => row.card?.emailSend || row.card?.emailTrustOffer || row.murage?.status?.key === "email_outcome")).toBe(false);

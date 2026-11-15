@@ -1,0 +1,1 @@
+{"transport": "chat", "status": 400, "headers": {}, "body": {"error": {"code": "tool_use_failed", "state": "batch_rate", "retry_after": 60}}}

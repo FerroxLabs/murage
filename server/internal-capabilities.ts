@@ -1,11 +1,12 @@
 import { assertHumanPrincipal, type HumanPrincipal } from "./human-principals.ts";
-import { randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { forgetAllVenueReadTurns, forgetVenueReadTurn } from "./venue-read-turns.ts";
 import { forgetAllVenuePostTurns, forgetVenuePostTurn } from "./venue-post-turns.ts";
 import { forgetAllEmailTurns, forgetEmailTurn } from "./email/email-turns.ts";
 import { forgetAllPhoneTurns, forgetPhoneTurn } from "./phone-calls/phone-turns.ts";
+import { assertConsumingBinding, type ConsumingTurnBinding } from "./consuming-turn-response.ts";
 
-export type InternalCapabilityKind = "agents" | "connectors" | "computer" | "memory" | "mcp" | "device" | "highlevel";
+export type InternalCapabilityKind = "agents" | "connectors" | "computer" | "memory" | "mcp" | "device" | "highlevel" | "turn-release";
 export type InternalCapability = Readonly<{
   botId: string;
   threadId: string;
@@ -34,6 +35,7 @@ type Reservation = { commit(): boolean; release(): void };
 /** Which capability kind a /api/internal/ path needs. One place, so the mapping
  * is tested and a new service cannot quietly fall through to "agents". */
 export function requiredInternalKind(path: string): InternalCapabilityKind {
+  if (path === "/api/internal/turn-release/v1/verdict") return "turn-release";
   if (path.startsWith("/api/internal/memory/")) return "memory";
   if (path.startsWith("/api/internal/connectors/")) return "connectors";
   if (path.startsWith("/api/internal/mcp-remote/")) return "mcp";
@@ -47,10 +49,13 @@ export function requiredInternalKind(path: string): InternalCapabilityKind {
 
 /** Ephemeral authority for one dispatched turn. No claim is persisted or logged. */
 export class InternalCapabilities {
+  readonly #releaseControls = new WeakMap<InternalCapability, Readonly<{ binding: ConsumingTurnBinding; instanceId: string }>>();
   readonly #now: () => number;
   readonly #orphanMs: number;
   readonly #tombstoneLimit: number;
   readonly #tokens = new Map<string, InternalCapability>();
+  /** 7C P3: dead credentials of retired generations, by token digest, so a stale token can be told from garbage (401, not the sealed binding 409). Bounded, oldest first; holds no live authority. */
+  readonly #retired = new Map<string, Readonly<{ threadId: string; generation: string }>>();
   readonly #generations = new Map<string, Generation>();
   readonly #providers = new Map<string, { threadId: string; generation: string }>();
   readonly #completed = new Set<string>();
@@ -94,6 +99,25 @@ export class InternalCapabilities {
     this.#tokens.set(token, claim);
     owner.claims.add(claim);
     return token;
+  }
+
+  /** Separate authority: ordinary tool tokens cannot mint or use release verdicts.
+   * The binding is retained here by identity, never reconstructed from the body. */
+  mintReleaseControl(binding: ConsumingTurnBinding, instanceId: string): string {
+    assertConsumingBinding(binding);
+    const { botId, threadId, dispatchGeneration: generation } = binding.identity;
+    const owner = this.#generations.get(threadId);
+    if (!owner || owner.botId !== botId || owner.id !== generation || !/^[A-Za-z0-9_-]{1,128}$/.test(instanceId)) throw new Error("MEMORY_CONTEXT_REVOKED");
+    const claim: InternalCapability = Object.freeze({ botId, threadId, generation, kind: "turn-release", depth: 0,
+      skillAuthoring: false, humanPrincipal: owner.humanPrincipal, expiresAt: this.#now() + this.#orphanMs });
+    const token = randomBytes(24).toString("hex");
+    this.#tokens.set(token, claim); owner.claims.add(claim);
+    this.#releaseControls.set(claim, Object.freeze({ binding, instanceId }));
+    return token;
+  }
+
+  releaseControl(claim: InternalCapability) {
+    return claim.kind === "turn-release" && this.isActive(claim) ? this.#releaseControls.get(claim) : undefined;
   }
 
   resolve(header: string | string[] | undefined): InternalCapability | null {
@@ -190,12 +214,23 @@ export class InternalCapabilities {
     // and its phone-mount record (BOT-CALLS-1020 3b)
     forgetPhoneTurn(generation);
     for (const [token, claim] of this.#tokens) {
-      if (claim.threadId === threadId && claim.generation === generation) this.#tokens.delete(token);
+      if (claim.threadId === threadId && claim.generation === generation) { this.#tokens.delete(token); this.#retire(token, claim); }
     }
     if (this.#generations.get(threadId)?.id === generation) this.#generations.delete(threadId);
     for (const [key, owner] of this.#providers) {
       if (owner.threadId === threadId && owner.generation === generation) this.#providers.delete(key);
     }
+  }
+
+  #retire(token: string, claim: InternalCapability): void {
+    this.#retired.set(createHash("sha256").update(token).digest("hex"), Object.freeze({ threadId: claim.threadId, generation: claim.generation }));
+    if (this.#retired.size > 4096) this.#retired.delete(this.#retired.keys().next().value!);
+  }
+
+  /** The thread and generation a header's token belonged to before its generation was retired; null for live, expired or unknown tokens. Reads no binding. */
+  retiredOwner(header: string | string[] | undefined): Readonly<{ threadId: string; generation: string }> | null {
+    if (typeof header !== "string" || !/^Bearer [a-f0-9]{48}$/.test(header)) return null;
+    return this.#retired.get(createHash("sha256").update(header.slice(7)).digest("hex")) ?? null;
   }
 
   revokeThread(threadId: string): void {

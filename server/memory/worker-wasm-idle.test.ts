@@ -14,13 +14,17 @@ vi.mock("./embeddings.ts", () => ({ MemoryEmbeddings: class {
   embed(texts: string[]) { return Promise.resolve(texts.map(() => [1])); }
 } }));
 vi.mock("./index.ts", () => ({ MemoryIndex: class {
+  static async create() { return new this(); }
+  resetDone() { return null; }
+  stopInfo() { return null; }
   rebuilt = false;
   prepareModel() {}
+  async applyBatch() { this.upsert(); return { status: "done" as const }; }
   upsert() {}
   search() { return { hits: [], vectorRows: 0 }; }
   purgeRolledCheckpoints() { return { removed: 0, examined: 0, merged: false, done: true }; }
   maintenanceOwed() { return false; }
-  close() { state.closed++; }
+  async prepareExit() { state.closed++; }
 } }));
 vi.mock("./eligibility.ts", () => ({ MemoryEligibility: class { read() { return { allowed: [], capacity: false }; } warm() {} close() {} } }));
 
@@ -29,8 +33,8 @@ async function withWorker(run: (ctx: { emit: (m: unknown) => void; sent: Array<{
   const realProcess = process, listeners = new Map<string, (message: unknown) => void>(), sent: Array<{ type: string; requestId?: string }> = [], exits: number[] = [];
   const workerProcess = Object.create(realProcess) as NodeJS.Process;
   Object.defineProperties(workerProcess, {
-    on: { value: (event: string, listener: (message: unknown) => void) => { if (event === "message" || event === "disconnect") { listeners.set(event, listener); return workerProcess; } return realProcess.on(event, listener); } },
-    send: { value: (message: { type: string; requestId?: string }) => { sent.push(message); return true; } },
+    on: { value: (event: string, listener: (message: unknown) => void) => { if (event === "message" || event === "disconnect") { listeners.set(event, listener); return workerProcess; } return workerProcess; } },
+    send: { value: (message: { type: string; requestId?: string }, cb?: (e: Error | null) => void) => { if (typeof cb === "function") cb(null); sent.push(message); return true; } },
     exit: { value: (code: number) => { exits.push(code); } },
     resourceUsage: { value: () => realProcess.resourceUsage() },
   });
@@ -38,7 +42,7 @@ async function withWorker(run: (ctx: { emit: (m: unknown) => void; sent: Array<{
   try {
     await import("./worker.ts");
     const emit = listeners.get("message")!;
-    emit({ type: "init", indexPath: "/unused/index", authorityPath: "/unused/authority", modelDirectory: "/unused/model", wasmIdleExitMs: 60, manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] } });
+    await emit({ type: "init", indexPath: "/unused/index", authorityPath: "/unused/authority", modelDirectory: "/unused/model", wasmIdleExitMs: 60, manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] } });
     await run({ emit, sent, exits });
   } finally { vi.unstubAllGlobals(); vi.resetModules(); }
 }
@@ -49,7 +53,7 @@ it("a helper holding a WebAssembly model asks to exit when idle, and exits only 
     await vi.waitFor(() => expect(sent.some(m => m.type === "idle-exit-request")).toBe(true), { timeout: 3000 });
     expect(exits).toEqual([]);
     emit({ type: "idle-exit" });
-    expect(exits).toEqual([0]);
+    await vi.waitFor(() => expect(exits).toEqual([0]));
     expect(state.closed).toBe(1);
   });
 });

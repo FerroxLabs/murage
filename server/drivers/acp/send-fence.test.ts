@@ -97,7 +97,7 @@ import { execFileSync } from "node:child_process";
 describe("U0 send-fence.ts loads under node strip-only mode", () => {
   it("has no TypeScript parameter properties or enums (kimi-signin and the verification server load core.ts imports this way)", () => {
     const url = new URL("./send-fence.ts", import.meta.url).href;
-    const out = execFileSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", `import { SendStoppedError, createSendFences } from ${JSON.stringify(url)}; console.log(new SendStoppedError("x").site, typeof createSendFences)`], { encoding: "utf8" });
+    const out = execFileSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", `import { SendStoppedError, createSendFences } from ${JSON.stringify(url)}; console.log(new SendStoppedError("x").site, typeof createSendFences)`], { windowsHide: true, encoding: "utf8" });
     expect(out.trim()).toBe("x function");
   });
 });

@@ -8,7 +8,8 @@ import { cloudCopy } from "./cloud-copy";
 import { desktopCallerHeaders } from "./live-events";
 
 export const doorCopy = {
-  opening: "Opening your Murage home",
+  opening: "Opening Murage",
+  stillOpening: "Still opening. A few more seconds.",
   expired: "This link has expired. Go back to murage.ai and press Open Murage again.",
   tooManyTries: "Too many tries. Wait a few minutes, then press Open Murage again.",
   tooManyBrowsers: "This home already has ten browsers connected. Remove one on your Murage Cloud page under Devices, then press Open Murage again.",
@@ -245,7 +246,7 @@ export async function refreshSession(): Promise<boolean> {
   return false;
 }
 
-export type EnterResult = "signed-in" | "expired" | "too-many" | "hold" | "failed";
+export type EnterResult = "signed-in" | "expired" | "too-many" | "too-many-tries" | "hold" | "failed";
 /** The remembered-owner state the last successful enter answered: whether this browser is now an owner browser and, for a
  *  remembered-owner factor, when it expires. The device list UI reads it; a stolen cookie never sets it (no enter). */
 let lastOwner: { owner: boolean; ownerUntil?: number } = { owner: false };
@@ -257,7 +258,7 @@ export async function enterWithTicket(ticket: string): Promise<EnterResult> {
   const proof = await sign(device.privateKey, `murage-door-v2:${ticket}`);
   const assertionProof = await sign(device.assertionPrivateKey, `murage-door-v2-assertion:${ticket}`);
   const entered = await post("/api/cloud/enter", { ticket, device: { deviceId: device.deviceId, publicKey: await pemOf(device.publicKey), assertionKey: await pemOf(device.assertionPublicKey), proof, assertionProof } });
-  if (entered.status === 429) return "expired";
+  if (entered.status === 429) return "too-many-tries";
   if (entered.status === 403) {
     const reason = entered.body?.reason;
     return reason === "too_many_devices" ? "too-many" : reason === "hold_required" ? "hold" : reason === "expired" ? "expired" : "failed";

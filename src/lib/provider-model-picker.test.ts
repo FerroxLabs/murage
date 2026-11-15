@@ -20,21 +20,23 @@ import {
   orderedPickerModels,
   pickerHeadings,
   pickerZone,
-  CUSTOM_MODELS_GROUP,
-  LOCAL_MODELS_GROUP,
-  NO_LOCAL_SERVER_ROW,
-  NO_MODEL_CHOSEN,
   pickerCountLine,
   pickerEmptyState,
-  pickerTriggerTitle,
-  contextLabel,
   localPickerRows,
   localRowLabel,
   localRowNote,
   localToolsWarning,
+  showNoLocalServerRow,
+} from "./provider-model-picker-dialog";
+import {
+  CUSTOM_MODELS_GROUP,
+  LOCAL_MODELS_GROUP,
+  NO_LOCAL_SERVER_ROW,
+  NO_MODEL_CHOSEN,
+  pickerTriggerTitle,
+  contextLabel,
   pickerModels,
   pickerConnectionsToRefresh,
-  showNoLocalServerRow,
   unavailableSelectionLabel,
   type PickerEngine,
   type PickerModel,
@@ -45,7 +47,8 @@ import { fileURLToPath } from "node:url";
 import { preloadModelMetadata } from "./model-metadata";
 // The snapshot is its own chunk since 1.0.18 (BUNDLE-HEADROOM-1018); these tests read it.
 beforeAll(() => preloadModelMetadata());
-const pickerSource =readFileSync(fileURLToPath(new URL("../components/ModelPicker.tsx", import.meta.url)), "utf8");
+// The chip and its lazy dialog (1.0.19 slice P) are one picker: read both.
+const pickerSource = ["../components/ModelPicker.tsx", "../components/ModelPickerDialog.tsx"].map((file) => readFileSync(fileURLToPath(new URL(file, import.meta.url)), "utf8")).join("\n");
 
 function fluxConnection(): PublicProviderConnection {
   const ids=["flux-auto","flux-reasoning","flux-standard","flux-fast","flux-pinned-glm-5-3","future-vendor-choice"];
@@ -451,7 +454,8 @@ describe("the picker's section order", () => {
     const ordered = orderedPickerModels(fleet, "", [], []);
     expect(ordered.map(row => row.label)).toEqual([
       "Flux Auto", "Flux Fast", "Flux Standard", "Flux Reasoning",
-      "Claude Opus 5", "Claude Sonnet 5",
+      // MAIN RULING 1114-MODEL-ORDER: this unpriced engine fixture keeps its vendor order.
+      "Claude Sonnet 5", "Claude Opus 5",
       "Flux Pinned Claude Opus 5",
       "GPT-5",
     ]);
@@ -482,6 +486,32 @@ describe("the picker's section order", () => {
     const second = conn("flux-2", "flux-auto", "Flux Auto", "Flux Router (work)", "flux");
     const autos = orderedPickerModels([...fleet, second], "", [], []).filter(row => row.label === "Flux Auto");
     expect(autos).toHaveLength(3);
+  });
+
+  it("applies the exact screenshot through the real picker adapter", () => {
+    const rows = [
+      ["fable-5", 50], ["fable-5-1", 50], ["fable-5-2", 50],
+      ["haiku-4-5", 5], ["haiku-5-5", 0.5], ["opus-5", 25], ["opus-5-5", 25],
+      ["sonnet-5", 15], ["sonnet-5-5", 15],
+    ].map(([name, price]) => ({ ...native(`claude-${name}`, `Claude ${name}${name === "haiku-4-5" ? " (latest)" : ""}`), pricing: { outputPerMillion: Number(price), source: "fixture", updatedAt: 1 } }));
+    const ordered = orderedPickerModels(rows, "", [], []);
+    expect(ordered.map(row => row.selection.model)).toEqual([
+      "claude-fable-5-2", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5",
+      "claude-fable-5-1", "claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5",
+    ]);
+    expect(ordered.at(-1)!.label).not.toContain("latest");
+  });
+
+  it.each([false, true])("preserves billing accounts for pinned and Favorites rows (favorites=%s)", starred => {
+    const first = conn("personal", "flux-pinned-claude-fable-5-1", "Claude Fable 5.1", "Personal", "flux");
+    const second = conn("work", first.selection.model, first.label, "Work", "flux");
+    const favorites = starred ? [first.key, second.key] : [];
+    for (const selected of [first, second]) {
+      const ordered = orderedPickerModels([first, second, { ...first }], "", favorites, [], selected.key);
+      expect(ordered.map(row => row.selection.connectionId)).toEqual(["personal", "work"]);
+      expect(ordered.map(row => row.key)).toContain(selected.key);
+      expect(new Set(ordered.map(row => row.label)).size).toBe(2);
+    }
   });
 
   it("never hides a pinned route, even beside a native model of the same name", () => {

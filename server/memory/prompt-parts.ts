@@ -105,11 +105,11 @@ export const memoryRefs = (refs: readonly MemoryRef[]): LineageRef[] => refs.map
 
 /** A Murage tool's result for the turn running on `consumingThreadId`: its refs join that turn (DESIGN-WRITETIME 2.2, tool results).
  * A tool called outside any turn (the owner's UI) records nothing. */
-export function turnToolText(consumingThreadId: string | undefined, text: string, lineageOf: readonly LineageRef[]): ToolText {
-  const tool = toolText(text, lineageOf);
-  const turn = consumingThreadId ? currentTurnLineage(consumingThreadId) : undefined;
-  if (turn && tool.lineageOf.length) addTurnParents(turn, tool.lineageOf);
-  return tool;
+export function turnToolText(consumingThreadId: string | TurnLineage | undefined, text: string, lineageOf: readonly LineageRef[]): ToolText {
+  // The argument is retained for source compatibility, never used to resolve a
+  // newest turn. The response's immutable binding supplies the consuming target.
+  const result = toolText(text, lineageOf);
+  return typeof consumingThreadId === "object" ? Object.freeze({ ...result, consumingTurn: consumingThreadId }) : result;
 }
 
 /** A Murage object a bot wrote in the turn running on `writerThreadId` (a note, a card, a summary, a suggestion, a skill, a file): a

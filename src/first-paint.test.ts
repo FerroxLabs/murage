@@ -140,6 +140,15 @@ describe("the first paint", () => {
     expect(reached).toContain("src/lib/connected-apps-preload.ts");
   });
 
+  it("loads guided setup and its job picker with the first setup transcript card", () => {
+    const reached = staticallyReached(graph);
+    for (const path of ["src/components/FirstRunCard.tsx", "src/components/FirstRunJobsCard.tsx"]) {
+      expect(reached, path).not.toContain(path);
+      expect(graph.inputs[path], path).toBeDefined();
+    }
+    expect(importsOf("src/components/LazyChatCards.tsx").filter((edge) => edge.path === "src/components/FirstRunCard.tsx").map((edge) => edge.kind)).toEqual(["dynamic-import"]);
+  });
+
   it("loads Today's first-run card in its own chunk, only while setup is going (UX-L7 part 2, 1.0.19)", () => {
     const reached = staticallyReached(graph);
     expect(reached).not.toContain("src/components/today/FirstRunTodayCard.tsx");
@@ -286,9 +295,30 @@ describe("the first paint", () => {
     expect(snapshot.map((edge) => edge.kind)).toEqual(["dynamic-import"]);
     const reached = staticallyReached(graph);
     expect([...reached].filter((path) => path.endsWith("model-metadata.json?raw"))).toEqual([]);
-    // the lookup rules and the picker are the first paint, and small
+    // the lookup rules and the picker's pill are the first paint, and small
     for (const file of ["src/lib/model-metadata.ts", "src/lib/provider-model-picker.ts", "src/components/ModelPicker.tsx"]) {
       expect(reached, file).toContain(file);
+    }
+  });
+
+  it("draws the model picker's pill with the chat and loads its dialog on the first open (1.0.19)", () => {
+    const reached = staticallyReached(graph);
+    // the dialog, its groups and rows, and the zone and order rules behind them
+    for (const file of ["src/components/ModelPickerDialog.tsx", "src/lib/provider-model-picker-dialog.ts"]) {
+      expect(reached, file).not.toContain(file);
+      expect(graph.inputs[file], file).toBeDefined();
+    }
+    // one door into the dialog: a dynamic import from the pill
+    expect(importsOf("src/components/ModelPicker.tsx").filter((edge) => edge.path === "src/components/ModelPickerDialog.tsx").map((edge) => edge.kind)).toEqual(["dynamic-import"]);
+  });
+
+  it("leaves the Settings and picker words to Settings and the picker dialog (1.0.19)", () => {
+    const reached = staticallyReached(graph);
+    const pack = Object.keys(graph.inputs).filter((path) => path.startsWith("src/locales/en-settings/"));
+    expect(pack.sort()).toEqual(["src/locales/en-settings/picker.json", "src/locales/en-settings/settings.json"]);
+    for (const file of ["src/lib/settings-copy.ts", ...pack]) {
+      expect(reached, file).not.toContain(file);
+      expect(graph.inputs[file], file).toBeDefined();
     }
   });
 

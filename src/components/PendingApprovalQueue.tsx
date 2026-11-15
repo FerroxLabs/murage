@@ -8,6 +8,8 @@ import { onSelectApprovalRequest } from "@/lib/approval-focus";
 import type { Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { nextSelection, queueStatusWords, requestsWaiting, selectRequest, type QueueSelection, type QueueStatus } from "@/lib/approval-queue";
+import { chatRequestKey } from "@/lib/approve-all";
+import { ApproveAllButton } from "./ApproveAll";
 import { PendingApprovalActions, PendingApprovalPanel, approvalLabel, useApprovalBar, type Pending } from "./PendingApproval";
 
 export interface QueueEntry {
@@ -153,9 +155,10 @@ export function PendingApprovalQueue({
 
   const selected = approvals.find((pending) => pending.requestId === selectedId);
   if (!selected) return null;
+  const chatKeys = approvals.map((pending) => chatRequestKey(threadId, pending));
   const entries = approvalQueueEntries(approvals, { whoFor, routineFor, statusFor: (id) => statuses[id] ?? "waiting" });
   return (
-    <div data-approval-queue={bar ? "bar" : "panel"} className={cn("mb-2 flex flex-col overflow-hidden rounded-2xl border border-accent/40 bg-card", !bar && "max-h-[70dvh]")}>
+    <div data-approval-queue={bar ? "bar" : "panel"} className={cn("mb-2 flex flex-col overflow-hidden rounded-2xl border border-accent/40 bg-card max-md:-mx-2", !bar && "max-h-[70dvh]")}>
       {approvals.length > 1 ? (
         <ApprovalQueueList
           entries={entries}
@@ -170,6 +173,13 @@ export function PendingApprovalQueue({
       ) : (
         <span className="sr-only" aria-live="polite">{notice ? `${notice} ` : ""}{requestsWaiting(approvals.length)}</span>
       )}
+      {/* NOLIM-1019 N3 / Rev 3.3: two or more waiting approvals in this chat show Approve all here too (the server shows it
+          only in the desktop app and the owner's phone app). A press previews this thread's shown cards by request id and
+          answers the ones the server lists as eligible; a wipe, another person's request or a card with no class stays
+          for its own Allow. */}
+      {approvals.length > 1 && <div className="px-4 pb-2" data-approve-all-chat>
+        <ApproveAllButton scope="thread" threadId={threadId} ready={chatKeys} listed={chatKeys} refreshes={0} />
+      </div>}
       <PendingApprovalPanel pending={selected} who={whoFor(selected)} bot={botFor(selected)} threadId={threadId} />
       {approvals.map((pending) => (
         <div key={pending.requestId} hidden={pending.requestId !== selectedId} data-request-actions={pending.requestId}>

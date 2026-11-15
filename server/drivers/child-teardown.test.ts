@@ -182,6 +182,27 @@ describe("ChildTeardown", () => {
 });
 
 describe("TurnTeardowns", () => {
+  it("a pooled child handed back to a pool and parked again keeps one lease name for its life", async () => {
+    const teardowns = new TurnTeardowns(confirmFake);
+    const child = fakeChild(7);
+    teardowns.track("thread", "acp-process-1", child).detach();
+    // a closed lease is remembered, so a second track of the same name refuses ...
+    expect(() => teardowns.track("thread", "acp-process-1", child)).toThrow("PROVIDER_LEASE_ALREADY_TRACKED");
+    // ... except for a hand-back, which is no close: the live child is parked again under its own name
+    teardowns.handedBack("acp-process-1");
+    const again = teardowns.track("thread", "acp-process-1", child);
+    expect(teardowns.pending("thread")).toBe(true);
+    child.emit("close", 0, null);
+    await expect(teardowns.wait("thread", "acp-process-1", budget)).resolves.toEqual({ closeConfirmed: true });
+    expect(again.closed).toBe(true);
+    // a real close stays remembered: the same name is never leased again
+    expect(() => teardowns.track("thread", "acp-process-1", fakeChild(8))).toThrow("PROVIDER_LEASE_ALREADY_TRACKED");
+    // and a live lease is never forgotten by a hand-back call
+    const live = fakeChild(9);
+    teardowns.track("thread", "acp-process-2", live);
+    teardowns.handedBack("acp-process-2");
+    expect(() => teardowns.track("thread", "acp-process-2", live)).toThrow("PROVIDER_LEASE_ALREADY_TRACKED");
+  });
   it("scopes waits to the exact turn and forgets a child once it closed", async () => {
     const teardowns = new TurnTeardowns(confirmFake);
     const old = fakeChild(1), current = fakeChild(2), other = fakeChild(3);

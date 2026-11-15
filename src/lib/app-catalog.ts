@@ -6,6 +6,9 @@
 // a card for every connection whether or not the loaded list carries it.
 // server/app-catalog.ts holds the catalog itself.
 
+import { t } from "./i18n";
+import type { LocaleKey } from "../locales";
+
 export type SignIn = "managed" | "own" | "none";
 
 export interface AppCard {
@@ -27,9 +30,16 @@ export type CatalogFallbackReason =
 /** The whole catalog's size as people read it, rounded down so it stays
  * true for a while: 1,634 is "1,600+ apps". Null until the service said. */
 export function appCountLabel(total: number | null | undefined): string | null {
+  const parts = appCountParts(total);
+  return parts ? t(`plugins.appCount.${parts.form}` as LocaleKey, { count: parts.count }) : null;
+}
+
+/** The count and which plural form of the sentence it takes: one app, a few apps, or a rounded "1,600+". The words
+ * themselves live in the language packs (plugins.appCount.*, plugins.browseAll.*), so "1 apps" cannot happen. */
+export function appCountParts(total: number | null | undefined): { form: "one" | "other" | "plus"; count: string } | null {
   if (typeof total !== "number" || !Number.isFinite(total) || total < 1) return null;
-  if (total < 100) return `${Math.floor(total)} apps`;
-  return `${(Math.floor(total / 100) * 100).toLocaleString("en-US")}+ apps`;
+  if (total < 100) { const count = Math.floor(total); return { form: count === 1 ? "one" : "other", count: String(count) }; }
+  return { form: "plus", count: (Math.floor(total / 100) * 100).toLocaleString("en-US") };
 }
 
 /** The panel's one-line claim: the live count once the catalog has said it,

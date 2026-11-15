@@ -22,7 +22,7 @@ export interface FolderTrustStatus {
   folder?: string;
   gated: boolean;
   sources: string[];
-  record: { decision: "trust" | "reject"; decidedAt: number; source: "picker" | "card" | "upgrade" } | null;
+  record: { decision: "trust" | "reject"; consent?: 2; decidedAt: number; source: "picker" | "card" | "upgrade" } | null;
   /** The user's own Fuigo install trusts this workspace (its
    * trusted_folders.toml): the engine applies the folder's files whatever
    * Murage remembers, so the note says so instead of a Murage decision. */
@@ -77,6 +77,7 @@ export function folderTrustStatusLabel(status: FolderTrustStatus): string | null
   if (status.engineGates === false) return t("folderTrust.statusNotGated");
   if (!status.gated || (!status.sources.length && !record && !upstream)) return t("folderTrust.statusNothing");
   if (upstream) return t("folderTrust.statusUpstream");
+  if (record?.decision === "trust" && record.consent !== 2 && status.trustGeneration === 2) return t("folderTrust.rowUnstamped");
   if (record) return record.decision === "trust" ? t("folderTrust.statusTrusted") : t("folderTrust.statusUntrusted");
   return t("folderTrust.statusUndecided");
 }
@@ -86,6 +87,7 @@ export function folderTrustStatusKind(status: FolderTrustStatus): string {
   if (status.refused) return "refused";
   if (status.engineGates === false) return "not-gated";
   if (status.upstreamTrusted) return "upstream";
+  if (status.record?.decision === "trust" && status.record.consent !== 2 && status.trustGeneration === 2) return "legacy";
   return status.record?.decision ?? (status.gated ? "undecided" : "none");
 }
 
@@ -101,6 +103,8 @@ function verdictKey(status: FolderTrustStatus): string {
     status.upstreamTrusted === true,
     status.gated,
     status.record?.decision ?? null,
+    status.record?.consent ?? null,
+    status.trustGeneration ?? null,
     [...status.sources].sort(),
   ]);
 }

@@ -4,6 +4,7 @@
 // INVALID_RESTORE_MESSAGE through 1.0.8. These tests walk every card kind the
 // product writes or reads, prove the validator accepts each real writer's
 // output, and run one such card through capture, restore and review.
+import { openFixtureApproval } from "./testing/approval-card.ts";
 import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -139,7 +140,7 @@ it("an unknown card kind or an unknown mcpEnable field is still refused", () => 
 it("an installation holding a Turn on card backs up, restores and opens for review with the card intact", async () => {
   const f = backupFixture(); roots.push(f.parent);
   const card = mcpEnableCard("acme", stdio, mcpEntryRev("acme", stdio), bot);
-  const message = { ...row("turn-on", card), at: 2, parentId: "message" };
+  const message = openFixtureApproval(f.db, "thread", { ...row("turn-on", card), at: 2, parentId: "message" });
   f.db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run("thread", "turn-on", 2, "bot", "options", null, JSON.stringify(message));
   f.db.exec("UPDATE thread_state SET active_leaf_id='turn-on'");
   f.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");

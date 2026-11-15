@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -21,7 +21,7 @@ afterEach(() => { for (const fn of cleanup.reverse()) fn(); vi.useRealTimers(); 
 function child() {
   return Object.assign(new EventEmitter(), { connected: true, send: vi.fn(), kill: vi.fn(), stdio: [null, null, null, new PassThrough()] });
 }
-function fixture(replies: Array<Response | (() => Promise<Response>)> = [], broker?: Parameters<typeof createSupervisorPort>[0]["remintConnectedApps"]) {
+function fixture(replies: Array<Response | (() => Promise<Response>)> = [], broker?: Parameters<typeof createSupervisorPort>[0]["remintConnectedApps"], fluxSubkeyDir?: string) {
   const directory = mkdtempSync(join(tmpdir(), "home-session-"));
   const store = new SealedSecretStore(directory, "fixture-home", Buffer.alloc(32, 7));
   store.patch({ fluxApiKey: "fixture-flux" });
@@ -32,7 +32,7 @@ function fixture(replies: Array<Response | (() => Promise<Response>)> = [], brok
   const modelSignInFactory = vi.fn((options: Parameters<typeof createHomeModelSignIn>[0]) => (manager = createHomeModelSignIn({ ...options, env: {}, fetch: fetcher as typeof fetch })));
   const remint = vi.fn<NonNullable<Parameters<typeof createSupervisorPort>[0]["remintConnectedApps"]>>(broker ?? (async () => ({ fluxComposioBrokerToken: "fixture-broker" })));
   const portFactory = vi.fn((options: Parameters<typeof createSupervisorPort>[0]) => (port = createSupervisorPort({ ...options, remintConnectedApps: remint, now: Date.now })));
-  const session = createHomeSupervisorSession({ store, bootstrapSecret: "fixture-bootstrap", modelSignInFactory, portFactory });
+  const session = createHomeSupervisorSession({ store, bootstrapSecret: "fixture-bootstrap", modelSignInFactory, portFactory, fluxSubkeyDir, fluxPollerUid: process.getuid?.() });
   cleanup.push(() => { session.close(); removeTempDirSync(directory); });
   return { session, store, writes, close, fetcher, remint, modelSignInFactory, portFactory, manager, port };
 }
@@ -40,6 +40,69 @@ const settle = () => vi.advanceTimersByTimeAsync(0);
 const attach = (h: ReturnType<typeof fixture>, c: ReturnType<typeof child>) => h.session.attachChild(c as unknown as ChildProcess);
 const ready = (c: ReturnType<typeof child>) => c.emit("message", { type: "murage:cloud-model-signin-ready" });
 const modelMessages = (c: ReturnType<typeof child>) => c.send.mock.calls.map(([message]) => message).filter(message => message.type === "murage:model-signin");
+
+describe("finding 8: the Flux sub-key hand-off is acknowledged only after the key is sealed", () => {
+  const KEY = `sk-flux-home-${"k".repeat(30)}`;
+  it("a failed seal keeps the hand-off and writes no receipt; the next cycle seals, writes the receipt, then removes the hand-off", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "subkey-session-")); chmodSync(dir, 0o770);
+    writeFileSync(join(dir, "key.json"), JSON.stringify({ key: KEY, generation: 2, expiresAt: "2030-01-01T00:00:00Z", capUsd: 30, op_id: "renew:home-1:3:7" }), { mode: 0o640 });
+    const h = fixture([], undefined, dir);
+    cleanup.push(() => removeTempDirSync(dir));
+    const real = SealedSecretStore.prototype.patch.bind(h.store);
+    h.writes.mockImplementationOnce(() => { throw new Error("seal failed"); });
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(existsSync(join(dir, "key.json"))).toBe(true);
+    expect(existsSync(join(dir, "receipt.json"))).toBe(false);
+    expect(h.store.getAll().fluxApiKey).toBe("fixture-flux");
+    h.writes.mockImplementation(real);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(h.store.getAll().fluxApiKey).toBe(KEY);
+    expect(JSON.parse(readFileSync(join(dir, "receipt.json"), "utf8"))).toEqual({ op_id: "renew:home-1:3:7", generation: 2 });
+    expect(existsSync(join(dir, "key.json"))).toBe(false);
+  });
+});
+
+describe("a stale Flux hand-off never replaces a newer sealed key", () => {
+  const OLD = `sk-flux-home-${"o".repeat(30)}`, NEWER = `sk-flux-home-${"n".repeat(30)}`;
+  const handoff = (dir: string, generation: number, key: string, op_id: string, at: number) => {
+    const file = join(dir, "key.json");
+    writeFileSync(file, JSON.stringify({ key, generation, expiresAt: "2030-01-01T00:00:00Z", capUsd: 30, op_id }), { mode: 0o640 });
+    utimesSync(file, at / 1000, at / 1000);
+  };
+  const setup = () => {
+    const dir = mkdtempSync(join(tmpdir(), "subkey-stale-")); chmodSync(dir, 0o770);
+    const h = fixture([], undefined, dir);
+    cleanup.push(() => removeTempDirSync(dir));
+    return { dir, h };
+  };
+  it("a lower key generation than the sealed one is dropped: key kept, receipt written so the poller clears it, hand-off removed", async () => {
+    const { dir, h } = setup();
+    handoff(dir, 5, NEWER, "renew:home-1:3:5", Date.now());
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(h.store.getAll().fluxApiKey).toBe(NEWER);
+    handoff(dir, 4, OLD, "renew:home-1:3:4", Date.now());
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(h.store.getAll().fluxApiKey).toBe(NEWER);
+    expect(JSON.parse(readFileSync(join(dir, "receipt.json"), "utf8"))).toEqual({ op_id: "renew:home-1:3:4", generation: 4 });
+    expect(existsSync(join(dir, "key.json"))).toBe(false);
+  });
+  it("a hand-off written before the owner saved a different key is dropped; one written after is applied", async () => {
+    const { dir, h } = setup();
+    const written = Date.now() - 10_000;
+    handoff(dir, 2, OLD, "renew:home-1:3:2", written);
+    // the owner saves a rotated key through the supervisor port before the next scan
+    h.port.handle({ type: "murage:cloud-credential-write", requestId: "r1", credentials: { fluxApiKey: NEWER } }, 0);
+    await settle();
+    expect(h.store.getAll().fluxApiKey).toBe(NEWER);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(h.store.getAll().fluxApiKey).toBe(NEWER);
+    expect(JSON.parse(readFileSync(join(dir, "receipt.json"), "utf8"))).toEqual({ op_id: "renew:home-1:3:2", generation: 2 });
+    expect(existsSync(join(dir, "key.json"))).toBe(false);
+    handoff(dir, 3, OLD, "renew:home-1:3:3", Date.now() + 1_000);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(h.store.getAll().fluxApiKey).toBe(OLD);
+  });
+});
 
 describe("home supervisor lifetime", () => {
   it("retains one manager, port and forced broker backoff across exit-75 restarts", async () => {

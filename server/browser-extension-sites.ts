@@ -1,3 +1,4 @@
+import { writeFileSync as countedWriteFileSync } from "./counted-fs.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The approved-sites list for Murage for Chrome (spec 2.3): one rule per bot, per browser profile and
 // origin, kept in DATA_DIR/browser-extension/sites.json. The folder is a reserved component, so the
@@ -5,7 +6,7 @@
 //
 // Nothing reads this store yet: the permission service takes it up later. Until then it only holds
 // what the owner chose and what a version 1 state.json carried (migrateFromBindings, spec 8).
-import fs from "node:fs";
+import * as fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createPrivateWindowsDirectory, readPrivateWindowsJson, writePrivateWindowsJson } from "../electron/browser-extension-windows.mjs";
@@ -161,7 +162,7 @@ export class BrowserExtensionSites {
     if (process.platform === "win32") { writePrivateWindowsJson(this.file, content); return; }
     // The same atomic write the connection state uses: a private temp file, then a rename over the target.
     const temp = `${this.file}.${randomUUID()}.tmp`;
-    try { fs.writeFileSync(temp, JSON.stringify(content), { mode: 0o600, flag: "wx" }); fs.renameSync(temp, this.file); }
+    try { countedWriteFileSync(temp, JSON.stringify(content), { mode: 0o600, flag: "wx" }); fs.renameSync(temp, this.file); }
     finally { fs.rmSync(temp, { force: true }); }
   }
 }

@@ -177,6 +177,7 @@ it("the direct turn replays through filterDirectReplay and resets a retained ses
   expect(direct).toContain("filterDirectReplay(allowance,threadId,activeMessages,access,skipTranscript,replayOptions)");
   expect(direct).toMatch(/needsReplay=!resumeCursor \|\| revoked/);
   // the retained session is checked under this turn's allowance (the session id argument's spelling is not the point)
-  expect(direct).toMatch(/if \(resumeCursor && retainedSessionInvalid\(allowance, threadId, instanceId, [^,]+, offWhy\b/);
+  // MAIN RULING INT-CONFLICT-DEFAULT a0a7856460 84f97983e8: the same retained-session check also receives its current reader and admits the additional pack-forced reset.
+  expect(direct).toMatch(/if \(resumeCursor && \(packNeedsFreshSession \|\| retainedSessionInvalid\(allowance, threadId, instanceId, [^,]+, offWhy, sessionReader\)\)/);
   expect(direct).toContain("MEMORY_SESSION_RESET_UNAVAILABLE");
 });

@@ -21,6 +21,7 @@ export const PHONE_JOBS_ENGINES: Readonly<Record<string, PhoneJobsEngineStatus>>
   hermesAgent: { mounts: true, where: ACP + " via acp/hermes.ts" },
   clineAgent: { mounts: true, where: ACP + " via acp/cline.ts" },
   museCode: { mounts: true, where: "server/drivers/muse-code.ts buildMcpServers into session/start config.mcpServers (capability sessionMcp)" },
+  deepseekAgent: { mounts: true, where: ACP + " via acp/deepseek.ts" },
   copilotAgent: { mounts: true, where: ACP + " via acp/copilot.ts" },
   customAcp: { mounts: true, where: ACP + " via acp/custom.ts" },
   antigravityAgent: {

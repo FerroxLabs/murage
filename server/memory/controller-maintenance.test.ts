@@ -1,3 +1,4 @@
+import {settleFixtureIndexGrant} from "./testing/helper-permits.ts";
 // R2: the parking maintenance decision sits on a path every dispatch reaches,
 // projection batches included, so a projection queue that never empties cannot
 // starve it. The real MemoryWorkerController runs with a stand-in worker.
@@ -29,7 +30,7 @@ beforeEach(() => {
   controller = new MemoryWorkerController();
   internals = controller as unknown as Internals;
   internals.child = { kill() {}, on() {}, send: (message: any) => {
-    if (message.type === "index") { batches++; internals.onWorkerMessage(internals.child, { type: "index-result", requestId: message.requestId, records: message.records, embeddingStatus: "indexed" }); }
+    if (message.type === "index") { settleFixtureIndexGrant(message,event=>internals.onWorkerMessage(internals.child,event)); batches++; internals.onWorkerMessage(internals.child, { type: "index-result", requestId: message.requestId, records: message.records, embeddingStatus: "indexed" }); }
   } };
   internals.ready = true;
 });

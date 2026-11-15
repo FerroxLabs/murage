@@ -23,7 +23,7 @@ export type WhatsNewAction =
   | "teams" | "rooms" | "blocks" | "packs" | "shapes" | "gemini" | "longwork"
   | "memory" | "routing" | "engines" | "chrome" | "speed" | "desktops" | "library"
   | "allChats" | "draftOnly" | "venues" | "ownWords" | "fuigo" | "backups"
-  | "needsYou" | "health";
+  | "needsYou" | "health" | "skills";
 
 /** The pictures in src/assets/whats-new, by file name. */
 export type WhatsNewArt =
@@ -191,6 +191,32 @@ export const WHATS_NEW_MORE_1018: string[] = [
   "Stop works, and usage is counted, on every engine that is not ACP",
 ];
 
+/** 1.0.19, from release-notes/1.0.19.md: a hero and the list, no tiles. */
+const WHATS_NEW_MORE_1019: string[] = [
+  "The whole library, within reach. Browse 2,247 skills across 141 topics. Search, pick a topic, or narrow to On your bots or Your copies. Every skill is reachable, down to the last one in a large topic.",
+  "Read before you add. Open a skill to read its full instructions and see its files. Add or remove bots puts every choice in one place. Save as my copy keeps your edits yours, and Go back to the original returns a skill to the library version.",
+  "Settings, all in one place. Pages grouped around you, your bots and the app, with search in your own words. When nothing matches, ask your Chief of Staff with the words you typed.",
+  "Pick how Murage reaches you. Choose notifications, job receipts, badges, the bot bubble, the edge dock and a shortcut. The chooser shows what your computer supports. Allow, Deny or Reply right from a banner, and on Mac a pill follows you.",
+  "Bots read the whole page. A bot follows a web result to the full page, and a read card shows its source and keeps your access choice.",
+  "Review the whole change. At Ask, read the proposed change to a bot's instructions before you allow it. Allow applies that one change, and a waiting review is still there after a restart. Approve all counts the requests in your view and keeps each answer with its chat.",
+  "Fuigo 1.0.43 is the engine on board, and engine and tool lists reflect your setup.",
+  "Fuigo keeps both copies of a history file when two share a name during an upgrade, so your chats carry over.",
+  "Flux counts work across retries, and Stop ends a waiting retry before another request starts. Flux remembers what you ask it to save.",
+  "Model lists put the strongest and newest models first, with older versions under their own divider. Claude defaults to Sonnet 5.5, and Fable 5.2 joins the list.",
+  "Your chosen access level carries through bots, apps, email, the browser and engine tools. Guests and other people's turns stay at Ask.",
+  "At No limits, a final check asks before a direct disk wipe or deleting a whole protected folder, and everyday cleanup runs straight through.",
+  "Connected apps tell you when to sign in again, and scheduled work names the connection it needs.",
+  "Windows opens a ready page or a setup screen that refreshes.",
+  "Search opens quickly, and long chats leave the rest of the app room to run.",
+  "Withdrawing a bot's memory holds after a restart, and withheld memory stays out of prompts.",
+  "Notices stay quiet while Murage already has your attention, and update notices return when you come back to the window.",
+  "Diagnostics leave out private text and unknown labels. Flux routing for Auto rooms starts off, and Settings explains what is sent. Memory learning tells you when it sends chat content to Flux. Dictation explains its use of your model before it starts.",
+  "Stop ends work that is waiting on your approval, and the request closes with it.",
+  "Restore remembers the job you started, and Windows saves restored files to disk as it goes.",
+  "When a restore includes a bot's email address, you choose Keep or Remove, and you can review the choice in Settings. Deleting a bot names its email address, and you type the bot's name to confirm.",
+  "When a bot makes a report, its reply names the file it created, including reports run by a routine.",
+];
+
 const PAGE_0161: WhatsNewPageContent = {
   hero: { art: "team-hero", alt: "A constellation of orange orbs of light, each joined to every other by fine threads", fit: "object-cover", title: "Your team, in step.", body: "Every bot in a room sees what its teammates said, on every engine. Images get saved looks and reference packs, and long work runs until it is done.", action: "teams", button: "Open Teams" },
   tiles: WHATS_NEW_TILES,
@@ -238,6 +264,11 @@ export const WHATS_NEW_PAGES: Readonly<Record<string, WhatsNewPageContent>> = {
     hero: { art: "tile-one-place", alt: "Thin threads of orange light gathering into one small glowing glass dish", fit: SQUARE_HERO, title: "Approve in one tap", body: "Answer a waiting request right inside Needs you, or Approve all for the stack. A refusal still shows its reason.", action: "needsYou", button: "Open Needs you" },
     tiles: [],
     more: WHATS_NEW_MORE_1018,
+  },
+  "1.0.19": {
+    hero: { art: "tile-packs", alt: "A fan of blank violet glass panes", fit: SQUARE_HERO, title: "A Skills Library for every bot", body: "Murage 1.0.19 is out for Mac, Windows and Linux, with a Skills Library of 2,247 skills you can search, read, make your own and hand to any bot. Open any skill to read its instructions and files, choose which bots use it, and save your own copy. Settings now sit in one place, and you choose how Murage reaches you.", action: "skills", button: "Open Skills" },
+    tiles: [],
+    more: WHATS_NEW_MORE_1019,
   },
 };
 

@@ -11,6 +11,7 @@
 // HEADLESS ONLY: the data directory is a throwaway temp HOME, the port comes
 // from the fixture band clear of the live app's 8799, Telegram is the fetch
 // fixture in testing/telegram-fetch-preload.mjs and every engine is a fake.
+// Fixture consumer owner: c4-misc-a2; mount observer owner: tri3-g2; native relay owner: c3-drivers.
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,10 +22,14 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { withTurnSecrets } from "./testing/fixture-dump.ts";
 import { raiseLevel } from "./testing/raise-level.ts";
+import { fixtureDisplayReply, fixtureMessageEvidence } from "./testing/display-fixture.ts";
+import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
+import { LEDGER_REFUSAL_LINE } from "./ledger-refusal.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
 const IDLE_LOAD_PRELOAD = pathToFileURL(join(SERVER_DIR, "testing", "idle-load-preload.mjs")).href;
+const MOUNT_PRELOAD = pathToFileURL(join(SERVER_DIR, "testing", "mount-evidence-preload.mjs")).href;
 const TELEGRAM_PRELOAD = pathToFileURL(join(SERVER_DIR, "testing", "telegram-fetch-preload.mjs")).href;
 const TELEGRAM_OWNER = 777;
 const TELEGRAM_TOKEN = "123:abcdefghijklmnopqrstuvwxyz123456";
@@ -39,26 +44,34 @@ let desktopHeaders: Record<string, string>;
 let child: ChildProcess;
 let home: string;
 let holderDump: string;
+let finishGateDir: string;
 let telegramDir: string;
 let stderr = "";
 
 const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
+  // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 / 3ad2b8f428: submit the displayed opaque action; durable assertions retain the original request identity.
+  if (method === "POST" && path.endsWith("/respond")) body = fixtureDisplayReply(join(home, ".murage", "messages.db"), body);
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
-  return { status: res.status, body: await res.json().catch(() => null) };
+  const text = await res.text();
+  let responseBody: any;
+  try { responseBody = JSON.parse(text); } catch { responseBody = text; }
+  return { status: res.status, body: responseBody };
 };
 const api = (method: string, path: string, body?: unknown) => request(method, path, body);
 const desktopApi = (method: string, path: string, body?: unknown) => request(method, path, body, desktopHeaders);
 const phoneApi = (method: string, path: string, body?: unknown) => request(method, path, body, pairedPhone);
 const botState = async (botId: string) => (await desktopApi("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === botId);
 const taskState = async (botId: string, threadId: string) => (await botState(botId)).tasks.find((task: any) => task.threadId === threadId);
-const threadMessages = async (threadId: string) => ((await desktopApi("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []) as any[];
+// MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 / 3ad2b8f428: evidence comes only from actual displayed row ids; the helper separately proves native ids are absent from HTTP.
+const threadMessages = async (threadId: string) => fixtureMessageEvidence(join(home, ".murage", "messages.db"), (await desktopApi("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []);
 const cardFor = async (threadId: string, requestId: string) => (await threadMessages(threadId)).find((m) => m.card?.requestId === requestId)?.card ?? null;
 const listWebhooks = async () => (await desktopApi("GET", "/api/webhooks")).body.webhooks as any[];
-const receipts = () => (JSON.parse(readFileSync(join(home, ".murage", "routines.json"), "utf8")).routineRequestReceipts ?? []) as any[];
+// MAIN RULING INT-CONFLICT-DEFAULT c0261fd8c6: durable receipts include committed generation-scoped journal overlays; retain every original receipt assertion.
+const receipts = () => (readRoutinesWithRuns(join(home, ".murage", "routines.json")).routineRequestReceipts ?? []) as any[];
 
 async function poll<T>(read: () => Promise<T | null | undefined>, ms: number): Promise<T | null> {
   const deadline = Date.now() + ms;
@@ -72,7 +85,9 @@ async function poll<T>(read: () => Promise<T | null | undefined>, ms: number): P
 
 async function boot() {
   stderr = "";
-  child = spawn(process.execPath, ["--import", TELEGRAM_PRELOAD, "--import", IDLE_LOAD_PRELOAD, join(SERVER_DIR, "index.ts")], {
+  // Carry the fake-engine test override into this child process (the native cage has its own suite).
+  child = spawn(process.execPath, ["--import", "data:text/javascript," + encodeURIComponent("process.env.NODE_ENV='test';globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;"), "--import", MOUNT_PRELOAD, "--import", TELEGRAM_PRELOAD, "--import", IDLE_LOAD_PRELOAD, join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -102,6 +117,10 @@ async function boot() {
   const proof = await api("GET", "/api/desktop-secret");
   expect(proof.status).toBe(200);
   desktopHeaders = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.body.secret };
+  // MAIN RULING INT-CONFLICT-DEFAULT: this owner-automation fixture uses the
+  // real optional-recall setting, preserving its owner/service and Stop checks.
+  // A cold recall fallback must not replace the held owner's tool-bearing turn.
+  expect((await desktopApi("POST", "/api/memory/action", { action: "configure", mode: "off" })).status).toBe(200);
 }
 
 async function makeBot(name: string) {
@@ -118,7 +137,7 @@ async function waitIdle(botId: string, threadId: string, ms = 20_000) {
   }, ms);
 }
 
-async function dumpedToken(): Promise<Record<string, string>> {
+async function dumpedToken(agentsExpected = true): Promise<Record<string, string>> {
   const dump = await poll(async () => {
     try {
       return withTurnSecrets(JSON.parse(readFileSync(holderDump, "utf8")));
@@ -127,6 +146,12 @@ async function dumpedToken(): Promise<Record<string, string>> {
     }
   }, 30_000);
   expect(dump, `the held turn never started. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
+  if (!agentsExpected) {
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: the person's turn has no owner agents mount; keep both direct ingress refusals and every zero-effect assertion.
+    expect(dump.mcpConfig.mcpServers.agents).toBeUndefined();
+    // The real native turn has no owner service capability to forward.
+    return {};
+  }
   return { authorization: `Bearer ${dump.mcpConfig.mcpServers.agents.env.MURAGE_COMMS_TOKEN}` };
 }
 
@@ -140,6 +165,12 @@ async function heldTurn(bot: { id: string }, threadId: string): Promise<Record<s
 async function stopTurn(botId: string, threadId: string) {
   await desktopApi("POST", `/api/bots/${botId}/interrupt`, { threadId });
   await waitIdle(botId, threadId);
+}
+
+async function finishTurn(botId: string, threadId: string) {
+  const { pid } = JSON.parse(readFileSync(holderDump, "utf8")) as { pid: number };
+  writeFileSync(join(finishGateDir, String(pid)), "1");
+  expect(await waitIdle(botId, threadId), "the fake's clean reply did not settle").not.toBeNull();
 }
 
 const proposeWebhook = (bot: { id: string }, threadId: string, auth: Record<string, string>, name: string, eventTypes?: string[]) =>
@@ -157,9 +188,11 @@ const proposeAction = (bot: { id: string }, threadId: string, auth: Record<strin
 
 /** Both proposal families from one turn are refused with the one plain line, and leave no card. */
 /** `refusal` is the line expected; a turn for someone else may meet an earlier refusal of its own (no grant), still a 403. */
-async function expectRefused(bot: { id: string }, threadId: string, auth: Record<string, string>, label: string, refusal: string | null = REFUSED) {
+async function expectRefused(bot: { id: string }, threadId: string, auth: Record<string, string>, label: string, refusal: string | null = REFUSED, expectedStatus: 403 | 409 = 403) {
   for (const proposed of [await proposeRoutine(bot, threadId, auth, `${label} routine`), await proposeWebhook(bot, threadId, auth, `${label} webhook`)]) {
-    expect(proposed.status, `${label}: ${JSON.stringify(proposed.body)}`).toBe(403);
+    // MAIN RULING INT-CONFLICT-DEFAULT 6a9dfe7db8: authenticated service refusals stay 403; a turn with no service capability receives the exact context-free 409, with zero effects.
+    expect(proposed.status, `${label}: ${JSON.stringify(proposed.body)}`).toBe(expectedStatus);
+    if (expectedStatus === 409) expect(proposed.body).toBe(LEDGER_REFUSAL_LINE);
     if (refusal) expect(proposed.body.error).toBe(refusal);
   }
   expect((await threadMessages(threadId)).some((m) => m.card?.routineRequest), `${label} left a card`).toBe(false);
@@ -183,6 +216,8 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
     home = mkdtempSync(join(tmpdir(), "murage-automations-chat-"));
     expect(home.startsWith(tmpdir())).toBe(true);
     holderDump = join(home, "fake-claude-dump.json");
+    finishGateDir = join(home, "finish-fake");
+    mkdirSync(finishGateDir);
     telegramDir = join(home, "telegram-fixture");
     mkdirSync(telegramDir);
     mkdirSync(join(home, ".murage"), { recursive: true });
@@ -190,7 +225,7 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
       engineDiscovery: "explicit",
       instances: {
         // holds every turn open so the test can call the bot's own tools
-        holder: { driver: "claudeAgent", environment: { FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: holderDump }, config: { cli: FAKE_CLAUDE } },
+        holder: { driver: "claudeAgent", environment: { FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: holderDump, FAKE_CLAUDE_FINISH_GATE_DIR: finishGateDir }, config: { cli: FAKE_CLAUDE } },
       },
     }));
     await boot();
@@ -200,6 +235,60 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
     await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(home);
   });
+
+  it.each(["No limits", "Full access", "Always allow"])("marked routine delete follows owner permission at %s", async (level) => {
+    const bot = await makeBot(`Routine ${level}`);
+    if (level !== "Always allow") expect((await raiseLevel(desktopApi, bot.id, level === "No limits"
+      ? { noLimits: true, acknowledgeNoLimits: true } : { fullAccess: true, acknowledgeFullAccess: true })).status).toBe(200);
+    expect((await desktopApi("PATCH", `/api/bots/${bot.id}`, {
+      fullAccessSetupRequests: true,
+      alwaysAllow: ["propose_routine", "propose_routine_action", "schedule_routine", "manage_routine"],
+    })).status).toBe(200);
+    expect((await taskState(bot.id, bot.threadId)).alwaysAllow).toEqual(expect.arrayContaining(["propose_routine", "propose_routine_action", "manage_routine"]));
+    const created = await desktopApi("POST", "/api/routines", {
+      botId: bot.id, name: "Morning pictures", prompt: "Draw the sunrise", enabled: false,
+      schedule: { type: "interval", everyMinutes: 60, anchorAt: Date.now() + 86_400_000 },
+    });
+    expect(created.status).toBe(201);
+    const auth = await heldTurn(bot, bot.threadId);
+    // A real own-tool read marks this turn as outside tool before the proposal.
+    await request("GET", `/api/internal/skills?fromBotId=${bot.id}&fromThreadId=${bot.threadId}`, undefined, auth);
+    const proposed = await proposeAction(bot, bot.threadId, auth, { action: "delete", routineId: created.body.routine.id });
+    expect(proposed.status, JSON.stringify(proposed.body)).toBe(201);
+    // MAIN RULING NL-WIPE-ONLY-FIXTURES: eligible owner No limits ignores outside marks; lower levels keep the complete owner-click journey.
+    if (level === "No limits") {
+      expect(proposed.body.autoApproved).toBe(true);
+      expect((await desktopApi("GET", "/api/routines")).body.routines.some((r: any) => r.id === created.body.routine.id)).toBe(false);
+      expect((await threadMessages(bot.threadId)).filter(m => m.card?.routineRequest)).toHaveLength(0);
+    } else {
+      expect(proposed.body.autoApproved).not.toBe(true);
+      const shown = await cardFor(bot.threadId, proposed.body.requestId);
+      expect(shown.routineRequest).toMatchObject({ outsideRead: true, outsideSource: "outside tool" });
+      expect(shown.subtitle).toContain("Earlier, this chat read outside content (outside tool).");
+      expect(shown.title).toBe('Delete “Morning pictures”?');
+      expect(shown.answered).toBeUndefined();
+      expect((await threadMessages(bot.threadId)).filter(m => m.card?.routineRequest)).toHaveLength(1);
+      expect((await desktopApi("GET", "/api/routines")).body.routines.some((r: any) => r.id === created.body.routine.id)).toBe(true);
+      // The filing mark is not an input the bot can clear, nor can it supply misleading card copy.
+      const spoofed = await proposeAction(bot, bot.threadId, auth, { action: "delete", routineId: created.body.routine.id, outsideRead: false, name: "Evening pictures" });
+      expect(spoofed.status).toBe(400);
+      // MAIN RULING INT-CONFLICT-DEFAULT dae96bbd09 8bfe905cabf: strict registered replies reject a forged extra ownerConfirmed field before authority; a valid-shaped agent reply still receives the original 403.
+      expect((await request("POST", `/api/threads/${bot.threadId}/respond`, {
+        requestId: proposed.body.requestId, behavior: "allow", ownerConfirmed: true,
+      }, auth)).status).toBe(400);
+      expect((await request("POST", `/api/threads/${bot.threadId}/respond`, {
+        requestId: proposed.body.requestId, behavior: "allow",
+      }, auth)).status).toBe(403);
+      expect((await desktopApi("GET", "/api/routines")).body.routines.some((r: any) => r.id === created.body.routine.id)).toBe(true);
+      const approved = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, { requestId: proposed.body.requestId, behavior: "allow" });
+      expect(approved.status, JSON.stringify(approved.body)).toBe(200);
+      expect((await desktopApi("GET", "/api/routines")).body.routines.some((r: any) => r.id === created.body.routine.id)).toBe(false);
+      expect((await cardFor(bot.threadId, proposed.body.requestId)).answered).toBe("allow");
+      await stopTurn(bot.id, bot.threadId);
+      console.info("routinecard owner-click evidence", JSON.stringify({ level, pendingCard: shown,
+        routineExistedBeforeAllow: true, ownerResponse: approved.body, routineExistsAfterAllow: false }));
+    }
+  }, 60_000);
 
   it("a webhook from chat: one card, Confirm makes it with no usable link, nothing secret reaches the bot or the transcript; Undo from the phone removes it once", async () => {
     const bot = await makeBot("Hooks");
@@ -211,7 +300,8 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
     expect(shown).toMatchObject({ tool: "create_webhook", options: ["Confirm", "Cancel"], routineRequest: { kind: "webhook", operation: { action: "create" } } });
     expect(shown.answered).toBeUndefined();
     expect(await listWebhooks()).toHaveLength(0);
-    await stopTurn(bot.id, bot.threadId);
+    // MAIN RULING INT-CONFLICT-DEFAULT: normal completion preserves queued cards; Stop cancels them.
+    await finishTurn(bot.id, bot.threadId);
 
     // the paired phone without its credential may not confirm
     expect((await request("POST", `/api/bots/${bot.id}/respond`, { threadId: bot.threadId, requestId: proposed.body.requestId, behavior: "allow" }, { "x-murage-companion": "1" })).status).toBe(403);
@@ -247,7 +337,21 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
     expect((await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, { requestId: "not-a-card", behavior: "undo" })).status).toBe(400);
   }, 90_000);
 
-  it("Ask and Auto show the card; Full access applies an owner turn's webhook with its receipt; after a minted link Undo answers changed_since", async () => {
+  it("Stop cancels an uncommitted automation card and a later Allow has zero effects", async () => {
+    const bot = await makeBot("Cancelled setup");
+    const auth = await heldTurn(bot, bot.threadId);
+    const proposed = await proposeWebhook(bot, bot.threadId, auth, "Cancelled hook");
+    expect(proposed.status).toBe(201);
+    expect((await cardFor(bot.threadId, proposed.body.requestId)).answered).toBeUndefined();
+    const before = await listWebhooks();
+    await stopTurn(bot.id, bot.threadId);
+    const refused = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, { requestId: proposed.body.requestId, behavior: "allow" });
+    expect(refused.status, JSON.stringify(refused.body)).toBe(409);
+    expect(await listWebhooks()).toEqual(before);
+    expect(receipts().some(row => row.requestId === proposed.body.requestId)).toBe(false);
+  }, 90_000);
+
+  it("Ask and Auto show the card; Full access applies an owner turn's webhook at clean settle with its receipt; after a minted link Undo answers changed_since", async () => {
     const bot = await makeBot("Levels");
     let auth = await heldTurn(bot, bot.threadId);
     const asked = await proposeWebhook(bot, bot.threadId, auth, "Ask hook");
@@ -270,14 +374,24 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
     expect((await desktopApi("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { fullAccess: true })).status).toBe(200);
     auth = await heldTurn(bot, bot.threadId);
     const onFull = await proposeWebhook(bot, bot.threadId, auth, "Full hook");
-    expect(onFull.status, JSON.stringify(onFull.body)).toBe(201);
-    expect(onFull.body.autoApproved).toBe(true);
-    expect(JSON.stringify(onFull.body)).not.toMatch(/whsec_/);
-    expect((await cardFor(bot.threadId, onFull.body.requestId)).answered).toBe("allow");
-    const made = (await listWebhooks()).find((w) => w.name === "Full hook");
-    expect(made).toBeTruthy();
-    expect(receipts().find((row) => row.requestId === onFull.body.requestId)).toMatchObject({ kind: "webhook", before: { absent: true }, resultId: made.id });
-    await stopTurn(bot.id, bot.threadId);
+    let made: any;
+    try {
+      expect(onFull.status, JSON.stringify(onFull.body)).toBe(201);
+      // BOT-CREATE-OUTSIDE-1019 r3.2 section 6.7.8 / D6: filing never applies setup mid-reply.
+      expect(onFull.body.autoApproved).not.toBe(true);
+      expect(onFull.body.startsWhen).toBe("reply-ends");
+      expect(JSON.stringify(onFull.body)).not.toMatch(/whsec_/);
+      expect((await cardFor(bot.threadId, onFull.body.requestId)).answered).toBeUndefined();
+      expect(await listWebhooks()).toEqual([]);
+      await finishTurn(bot.id, bot.threadId);
+      expect((await cardFor(bot.threadId, onFull.body.requestId)).answered).toBe("allow");
+      made = (await listWebhooks()).find((w) => w.name === "Full hook");
+      expect(made).toBeTruthy();
+      expect(receipts().find((row) => row.requestId === onFull.body.requestId)).toMatchObject({ kind: "webhook", before: { absent: true }, resultId: made.id });
+    } finally {
+      // A failed setup assertion must release the held owner turn before scheduled-run coverage.
+      if ((await taskState(bot.id, bot.threadId))?.busy) await stopTurn(bot.id, bot.threadId);
+    }
 
     // the owner mints the first link: the record moved, so Undo refuses and changes nothing
     const minted = await desktopApi("POST", `/api/webhooks/${made.id}/rotate`);
@@ -298,7 +412,8 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
     let auth = await heldTurn(bot, bot.threadId);
     const created = await proposeRoutine(bot, bot.threadId, auth, "Brief");
     expect(created.status).toBe(201);
-    await stopTurn(bot.id, bot.threadId);
+    // MAIN RULING INT-CONFLICT-DEFAULT: normal completion preserves queued cards; Stop cancels them.
+    await finishTurn(bot.id, bot.threadId);
     const applied = await desktopApi("POST", `/api/bots/${bot.id}/respond`, { threadId: bot.threadId, requestId: created.body.requestId, behavior: "allow" });
     expect(applied.status).toBe(200);
     const routineId = applied.body.resultId as string;
@@ -307,7 +422,8 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
     auth = await heldTurn(bot, bot.threadId);
     const pause = await proposeAction(bot, bot.threadId, auth, { action: "pause", routineId });
     expect(pause.status).toBe(201);
-    await stopTurn(bot.id, bot.threadId);
+    // MAIN RULING INT-CONFLICT-DEFAULT: normal completion preserves queued cards; Stop cancels them.
+    await finishTurn(bot.id, bot.threadId);
     expect((await desktopApi("PATCH", `/api/routines/${routineId}`, { name: "Owner brief" })).status).toBe(200);
     const stale = await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, { requestId: pause.body.requestId, behavior: "allow" });
     expect(stale.status).toBe(409);
@@ -318,7 +434,8 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
     auth = await heldTurn(bot, bot.threadId);
     const update = await proposeAction(bot, bot.threadId, auth, { action: "update", routineId, changes: { name: "Bot brief", instructions: "Summarize it shorter." } });
     expect(update.status).toBe(201);
-    await stopTurn(bot.id, bot.threadId);
+    // MAIN RULING INT-CONFLICT-DEFAULT: normal completion preserves queued cards; Stop cancels them.
+    await finishTurn(bot.id, bot.threadId);
     expect((await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, { requestId: update.body.requestId, behavior: "allow" })).status).toBe(200);
     expect((await api("GET", "/api/routines")).body.routines.find((r: any) => r.id === routineId)).toMatchObject({ name: "Bot brief", prompt: "Summarize it shorter." });
     const undone = await desktopApi("POST", `/api/bots/${bot.id}/respond`, { threadId: bot.threadId, requestId: update.body.requestId, behavior: "undo" });
@@ -327,7 +444,8 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
 
     auth = await heldTurn(bot, bot.threadId);
     const removal = await proposeAction(bot, bot.threadId, auth, { action: "delete", routineId });
-    await stopTurn(bot.id, bot.threadId);
+    // MAIN RULING INT-CONFLICT-DEFAULT: normal completion preserves queued cards; Stop cancels them.
+    await finishTurn(bot.id, bot.threadId);
     expect((await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, { requestId: removal.body.requestId, behavior: "allow" })).status).toBe(200);
     expect(await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, { requestId: removal.body.requestId, behavior: "undo" }))
       .toMatchObject({ status: 409, body: { error: "Undo is not offered for delete or run now." } });
@@ -405,7 +523,7 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
     arrives(3, "set up a webhook for me too");
     const otherRun = await poll(async () => (await channelRuns()).find((run) => run.id !== ownerRun!.id && run.threadId), 30_000);
     expect(otherRun, `no channel run for the other person. stderr: ${stderr.slice(-1500)}`).not.toBeNull();
-    await expectRefused(chief, otherRun!.threadId, await dumpedToken(), "Someone else", null);
+    await expectRefused(chief, otherRun!.threadId, await dumpedToken(false), "Someone else", null, 409);
     await desktopApi("POST", `/api/routine-runs/${otherRun!.id}/cancel`);
   }, 300_000);
 
@@ -415,7 +533,8 @@ describe.skipIf(process.platform === "win32")("SL-J automations from chat over H
     const applied = await proposeWebhook(bot, bot.threadId, auth, "Before restart");
     const waiting = await proposeWebhook(bot, bot.threadId, auth, "Still waiting");
     expect([applied.status, waiting.status]).toEqual([201, 201]);
-    await stopTurn(bot.id, bot.threadId);
+    // MAIN RULING INT-CONFLICT-DEFAULT: normal completion preserves queued cards; Stop cancels them.
+    await finishTurn(bot.id, bot.threadId);
     expect((await desktopApi("POST", `/api/threads/${bot.threadId}/respond`, { requestId: applied.body.requestId, behavior: "allow" })).status).toBe(200);
     const made = (await listWebhooks()).find((w) => w.name === "Before restart");
     expect(made).toBeTruthy();

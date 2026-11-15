@@ -16,8 +16,9 @@ const tx = (key: string, params?: Record<string, string | number>) => t(`memoryH
 const lastActivity = (at: number | null) => at === null ? tx("noActivity") : tx("lastActivity", { when: new Date(at).toLocaleString() });
 
 /** A fold that opens and closes with a button (aria-expanded), not a <details>. The body stays in the page, hidden, so it is found by search and by assistive tools. */
-export function Disclosure({ label, children, defaultOpen = false, className = "", onOpenChange }: { label: ReactNode; children: ReactNode; defaultOpen?: boolean; className?: string; onOpenChange?: (open: boolean) => void }) {
-  const [open, setOpen] = useState(defaultOpen), region = useId();
+export function Disclosure({ label, children, defaultOpen = false, open: controlledOpen, className = "", onOpenChange }: { label: ReactNode; children: ReactNode; defaultOpen?: boolean; open?: boolean; className?: string; onOpenChange?: (open: boolean) => void }) {
+  const [localOpen, setOpen] = useState(defaultOpen), region = useId();
+  const open = controlledOpen ?? localOpen;
   return <div className={`rounded-lg border border-hairline/40 p-3 ${className}`}>
     <button type="button" aria-expanded={open} aria-controls={region} onClick={() => { setOpen(!open); onOpenChange?.(!open); }} className="flex min-h-10 w-full items-center justify-between gap-2 text-left text-[13px] font-medium focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">
       <span>{label}</span><ChevronDown size={14} aria-hidden className={`shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
@@ -53,6 +54,6 @@ function HealthBody({ status }: { status: HealthStatus }) {
 }
 /** Health of memory. On the Memory page it sits open inside Advanced (`open`); in a bot's compact view it is a fold. */
 export function MemoryHealth({ status, open = false }: { status: HealthStatus; open?: boolean }) {
-  if (open) return <section aria-label={tx("ariaLabel")} className="rounded-lg border border-hairline/40 p-3"><h3 id="memory-health-heading" data-setting-control="memory-health-heading" className="text-[14px] font-medium">{tx("heading")}</h3><HealthBody status={status} /></section>;
+  if (open) return <section aria-label={tx("ariaLabel")} className="rounded-lg border border-hairline/40 p-3"><h3 id="memory-health-title" data-setting-control="memory-health-heading" className="text-[14px] font-medium">{tx("heading")}</h3><HealthBody status={status} /></section>;
   return <Disclosure label={tx("disclosure")}><HealthBody status={status} /></Disclosure>;
 }

@@ -43,7 +43,7 @@ const TEST_SUPPORT: AcpSupport = {
   spawnArgs: () => [],
   pickAuthMethod: () => null,
   authFailure: "continue",
-  isAuthenticated: () => true,
+  isAuthenticated: () => true, fluxReach: () => "elsewhere" as const
 };
 const ReplayDriver = createAcpDriver({ ...TEST_SUPPORT, driverKind: "u2ReplayTest", resendsReasoningReply: true });
 const PlainDriver = createAcpDriver(TEST_SUPPORT);

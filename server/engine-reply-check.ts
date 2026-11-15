@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -8,7 +9,10 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, lstatSync, mkdirSync, readdirSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { posix, win32 } from "node:path";
+import { redactSecretsForSink } from "./redact.ts";
 import { DATA_DIR } from "./config.ts";
+import { environmentProbeProgram } from "./env-path.ts";
+import { execCliSync } from "./procs.ts";
 import { ENGINE_REPLY_PROMPT } from "./drivers/cli-memory-learning.ts";
 import { CLAUDE_MANAGED_MCP_CONFLICT } from "./drivers/claude-guards.ts";
 
@@ -44,14 +48,21 @@ export function engineLine(text: unknown): string | undefined {
 export function replyCheckFailure(error: unknown, name: string): EngineReplyCheck {
   const failure = (error ?? {}) as { message?: unknown; engineLine?: unknown; code?: unknown; limit?: unknown; status?: unknown; signedOut?: unknown };
   const raw = typeof failure.engineLine === "string" ? failure.engineLine : typeof failure.message === "string" ? failure.message : "";
+  // Classification is execution policy: evaluate the original engine words.
+  const result: EngineReplyResult = REFUSAL_CODES.has(failure.code) ? "refused"
+    : failure.limit === true || failure.status === 429 || LIMIT_WORDS.test(raw) ? "limit"
+    : failure.signedOut === true || SIGNIN_WORDS.test(raw) ? "signin"
+    : failure.status === 401 && !POLICY_WORDS.test(raw) ? "signin" : "refused";
+  // S17: the whole raw text reaches the shared policy BEFORE the private
+  // second layer removes links, flattens newlines or truncates to one line.
+  const safe = redactSecretsForSink(raw);
   const internal = /^MEMORY_(?:EXTRACTION|ENGINE)_/.test(raw);
-  const line = internal ? undefined : engineLine(raw);
-  if (REFUSAL_CODES.has(failure.code)) return { result: "refused", line: line ?? `${name} refused this request.` };
-  if (failure.limit === true || failure.status === 429 || LIMIT_WORDS.test(raw)) return { result: "limit", line: line ?? `${name} is at its plan limit.` };
-  if (failure.signedOut === true || SIGNIN_WORDS.test(raw)) return { result: "signin" };
-  if (failure.status === 401 && !POLICY_WORDS.test(raw)) return { result: "signin" };
-  if (raw === "MEMORY_EXTRACTION_TIMEOUT" || raw === "MEMORY_EXTRACTION_ABORTED") return { result: "refused", line: `${name} did not answer in time. Try again.` };
-  return { result: "refused", line: line ?? `${name} did not answer. Try again.` };
+  const line = internal ? undefined : engineLine(safe);
+  if (result === "signin") return { result };
+  if (REFUSAL_CODES.has(failure.code)) return { result, line: line ?? `${name} refused this request.` };
+  if (result === "limit") return { result, line: line ?? `${name} is at its plan limit.` };
+  if (raw === "MEMORY_EXTRACTION_TIMEOUT" || raw === "MEMORY_EXTRACTION_ABORTED") return { result, line: `${name} did not answer in time. Try again.` };
+  return { result, line: line ?? `${name} did not answer. Try again.` };
 }
 
 // ---- The folder a set-up check runs in (ENGINE-CHECK-FOLDER-1018) ----
@@ -90,12 +101,16 @@ export const engineCheckHost = {
     };
   })(),
   /** icacls on Windows only: arguments in, output out. */
-  icacls: (args: string[]): string => execFileSync("icacls", args, { encoding: "utf8", windowsHide: true, timeout: 15_000 }),
+  icacls: (args: string[]): string => execFileSync("icacls", [...args], { encoding: "utf8", windowsHide: true, timeout: 15_000 }),
   /** The owner SID of a folder on Windows (null when it cannot be read). The path travels in the environment, never in a command string. */
   owner: (folder: string): string | null => {
     try {
-      const out = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", "(Get-Acl -LiteralPath $env:MURAGE_CHECK_PATH).GetOwner([System.Security.Principal.SecurityIdentifier]).Value"],
-        { encoding: "utf8", windowsHide: true, timeout: 20_000, env: { ...process.env, MURAGE_CHECK_PATH: folder } }).trim();
+      const executable = environmentProbeProgram("powershell.exe", "win32");
+      if (!executable) return null;
+      const result = execCliSync(executable, ["-NoProfile", "-NonInteractive", "-Command", "(Get-Acl -LiteralPath $env:MURAGE_CHECK_PATH).GetOwner([System.Security.Principal.SecurityIdentifier]).Value"],
+        withHideInherit({ windowsHide: true, timeout: 20_000, maxBuffer: 1024 * 1024, env: { ...process.env, MURAGE_CHECK_PATH: folder } }));
+      if (result.error || result.status !== 0) return null;
+      const out = result.stdout.toString("utf8").trim();
       return /^S-1-[0-9-]+$/.test(out) ? out : null;
     } catch { return null; }
   },

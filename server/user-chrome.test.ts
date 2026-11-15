@@ -51,3 +51,7 @@ describe("the owner's Chrome endpoint", () => {
     expect(userChromeDataDir("linux", { XDG_CONFIG_HOME: "/xdg" }, "/home/a")).toBe(join("/xdg", "google-chrome"));
   });
 });
+it('EP11 ten simultaneous polls share exactly one attach attempt',async()=>{
+ const {UserChromeBinds}=await import('./user-chrome.ts');const binds=new UserChromeBinds<number>();let finish!:(n:number)=>void;let calls=0;
+ const pending=new Promise<number>(resolve=>{finish=resolve;});const attempts=Array.from({length:10},()=>binds.run('a',async()=>{calls++;return pending;}));expect(new Set(attempts).size).toBe(1);expect(calls).toBe(1);finish(7);expect(await Promise.all(attempts)).toEqual(Array(10).fill(7));
+});

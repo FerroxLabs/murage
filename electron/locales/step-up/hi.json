@@ -1,5 +1,5 @@
 {
-  "@source": "57c41d0f4509791921344f3d826b6015ceced077",
+  "@source": "968d807cca562a743b79127e48954176f04baabf",
   "label.cloudPairing": "अपने Cloud होम में नया डिवाइस जोड़ना",
   "label.cloudDevicesAccount": "अपने Cloud होम के डिवाइस या खाते को बदलना",
   "label.modelSigninStart": "अपने Cloud होम पर मॉडल का साइन-इन शुरू करना",
@@ -8,6 +8,7 @@
   "label.modelSigninRemove": "अपने Cloud होम से मॉडल कनेक्शन हटाना",
   "label.ownServer": "आपके बॉट जिस सर्वर को कंप्यूटर की तरह इस्तेमाल करते हैं, उसे बदलना",
   "label.engineLogin": "अपने Cloud होम पर किसी इंजन में साइन इन या साइन आउट करना",
+  "label.engineSigninCode": "अपने Cloud होम पेज पर किसी बॉट के लिए Antigravity साइन-इन पूरा करना",
   "label.botCreate": "बॉट बनाना",
   "label.botDelete": "बॉट और उसकी बातचीत हटाना",
   "label.botSettings": "बॉट की सेटिंग बदलना",
@@ -50,6 +51,7 @@
   "label.teamsImportExport": "टीम इंपोर्ट या एक्सपोर्ट करना",
   "label.teamLibraryGithub": "GitHub से टीम डाउनलोड करना",
   "label.teamLibraryGrok": "Grok Bot को लाना",
+  "label.moveInGrok": "Downloads से Grok Bots लाएँ",
   "label.packagesImportExport": "पैकेज इंपोर्ट या एक्सपोर्ट करना",
   "label.starterProfiles": "स्टार्टर प्रोफ़ाइल इंस्टॉल करना",
   "label.moveLend": "बॉट के काम को टीमों के बीच ले जाना या उधार देना",
@@ -59,6 +61,7 @@
   "label.localModels": "लोकल मॉडल बदलना",
   "label.claudeAccounts": "Claude खाता बदलना",
   "label.chatChannels": "Telegram, Slack या Discord कनेक्शन बदलना",
+  "label.signal": "Signal कनेक्शन बदलें",
   "label.whatsapp": "WhatsApp कनेक्शन बदलना",
   "label.memory": "मेमोरी बदलना",
   "label.skillsCollection": "स्किल संग्रह बदलना",
@@ -131,5 +134,7 @@
   "dialog.close": "बंद करें",
   "prepare.voiceFinishing": "Murage एक आवाज़ वाला जवाब पूरा कर रहा है।",
   "prepare.voiceFinishingDetail": "लगभग {minutes} मिनट बाद फिर से कोशिश करें। आपकी चैट और यादें पहले जैसी हैं।",
-  "prepare.quit": "बंद करें"
+  "prepare.quit": "बंद करें",
+  "label.claudeCodeImport": "Claude Code से स्किल और टूल सर्वर आयात करें",
+  "label.restoreBackup": "किसी मौजूदा बैकअप से रीस्टोर करें"
 }

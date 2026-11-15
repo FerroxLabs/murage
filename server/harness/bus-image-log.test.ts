@@ -7,7 +7,7 @@
 // clean; the sweep's own adversarial verifier caught it.
 import { describe, expect, it } from "vitest";
 
-import { EventBus } from "./bus.ts";
+import { AdmittedEventBus as EventBus } from "../testing/admitted-event-bus.ts";
 
 describe("the canonical event log", () => {
   const bigImage = "A".repeat(50_000);

@@ -1,9 +1,9 @@
+import { frameViewPage, RecallWorkBudget } from './recall-view-index.ts';
+import { recallViewHasScope } from './recall-view.ts';
 import { authorityStamp, pinStamp } from "./authority-epoch.ts";
-import { ownerPinIndexPresent } from "./schema.ts";
 import { readMemoryEvolutionPolicy, type MemoryEvolutionPolicy } from "./evolution-policy.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { database } from "../database.ts";
-import { drainMarkerForTurn } from "./send-fence.ts";
 import type { MemoryBundle, MemoryEvidenceHandle } from "../../shared/memory.ts";
 import { MEMORY_HANDLE_LIMIT, MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE, memoryHandle, memoryHandlePosition, memoryRequestPrefix } from "../../shared/memory.ts";
 import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, ownerReaderScopeSets, type MemoryAccess, type MemoryRoster } from "./policy.ts";
@@ -72,7 +72,10 @@ function noteBriefLeftOut(botId: string, stage: string, error: unknown): void {
 }
 /** A trusted bundle: what it was built for and from. `recall` holds the recall hits (re-proven at dispatch on recall's own proof budget, as at
  * build); a continuity brief is known by its kind. */
-const bundles = new WeakMap<MemoryBundle, {access: MemoryAccess; records: BundleRecord[]; recall: ReadonlySet<BundleRecord>; withheldMessage?: (threadId: string, messageId: string, allowance: LineageAllowance) => boolean}>();
+const bundles = new WeakMap<MemoryBundle, {access: MemoryAccess; records: BundleRecord[]; fenceOmissions?: number; recall: ReadonlySet<BundleRecord>; withheldMessage?: (threadId: string, messageId: string, allowance: LineageAllowance) => boolean}>();
+/** Counts omissions observed by this build's real recall/source gates. No ids or text escape. */
+export function bundleFenceOmissionCount(bundle: MemoryBundle | undefined): number { return bundle ? bundles.get(bundle)?.fenceOmissions ?? 0 : 0; }
+
 
 /** Hydrate authoritative bytes only; an approved projection does not expose its private parents. Every check is
  * readableMemoryRecord's (readable.ts), the one function memory_get, bundle hydration and search share. */
@@ -90,7 +93,7 @@ export function hydrateDisclosedMemoryRecord(id: string, version: number, access
   }
 }
 /** memory_get's extra reader rules: a bot's own tool call (no owner-authored continuity) and its transcript rule. */
-export type HydrateOptions = Pick<MemoryReadOptions, "allowance" | "agent" | "withheldMessage">;
+export type HydrateOptions = Pick<MemoryReadOptions, "allowance" | "agent" | "withheldMessage" | "workBudget">;
 
 function hydrate(id: string, version: number, access: MemoryAccess, allowSuperseded: boolean, options: HydrateOptions): BundleRecord {
   const reading = withReaderRule(access, options);
@@ -234,19 +237,29 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   options = withReaderRule(access, options);
   const evolutionPolicy=options.evolutionPolicy??readMemoryEvolutionPolicy();
   // every record read here is judged with options.withheldMessage by this function itself (below), so the reads take null, not the default
-  const allowance=options.allowance, reading={allowance,withheldMessage:null};
+  const frameWork=new RecallWorkBudget(8192);frameWork.candidates(2);
+  const allowance=options.allowance, reading={allowance,withheldMessage:null,workBudget:frameWork};
   // the search spends `recall`; every hit the bundle hydrates and re-proves is paid from `recallProof` (D3: never the search's)
-  const recall=options.recallAllowance??recallBudget(), recallProof=options.recallProofAllowance??recallProofBudget(), recallReading={allowance:recallProof,withheldMessage:null};
+  const recall=options.recallAllowance??recallBudget(), recallProof=options.recallProofAllowance??recallProofBudget(), recallReading={allowance:recallProof,withheldMessage:null,workBudget:frameWork};
   // the owner's continuity brief is read and re-proven on its own budget (U29): pins or recall that spent the turn's do not leave it out,
   // and a brief that is left out says so in the log
-  const briefAllowance=options.briefAllowance??briefBudget(), briefReading={allowance:briefAllowance,withheldMessage:null};
+  const briefAllowance=options.briefAllowance??briefBudget(), briefReading={allowance:briefAllowance,withheldMessage:null,workBudget:frameWork};
   const briefRecords=new Set<BundleRecord>();
   const readingFor=(kind:string)=>kind==="continuity-brief"?briefReading:reading;
   const briefLeftOut=(error:unknown,stage:string)=>noteBriefLeftOut(access.botId,stage,error);
   let recallPartial=false;
+  const omittedMemoryLines = new Set<string>();
+  const omittedRecords = new Set<string>();
+  const noteRecordOmitted = (id: unknown, version: unknown) => { omittedRecords.add(String(id) + "\0" + String(version)); };
+  const inputWithheld = options.withheldMessage;
+  if (inputWithheld) options = { ...options, withheldMessage: (thread, id, reading) => {
+    const held = inputWithheld(thread, id, reading);
+    if (held) omittedMemoryLines.add(thread + "\0" + id);
+    return held;
+  } };
   assertMemoryAccess(access);
   options.signal?.throwIfAborted();
-  drainMarkerForTurn(database());
+
   const available = options.availableContextTokens ?? 20480;
   if (!Number.isSafeInteger(available) || available < 0) throw new Error("INVALID_MEMORY_CONTEXT_BUDGET");
   // Remembered words may take a tenth of the context, at most 2048, above the
@@ -261,10 +274,18 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   const room = accessIncludesRoom(access);
   // The owner's pins: a partial index serves them once the upkeep has made it (ownerPinIndexPresent: one keyed read of the pinned records of the reader's scopes); until then reading them
   // walks every active record of the reader's scopes (41 ms with 20,000 captured chunks). They change only when a pinned record is added, changed or removed, which the pin stamp counts (authority-epoch.ts).
-  const pinKey = JSON.stringify([access.scopeIds, room]), pinAt = pinStamp();
+  // Projection producer: recall-scope; mandatory-pin consumer: c3-memory-side.
+  // A new pin can precede asynchronous view upkeep. Refuse this turn until the
+  // projection reaches the current log, and bind cached pins to that watermark.
+  const projection=db.prepare(`SELECT watermark,(SELECT coalesce(max(sequence),0) FROM memory_recall_changes) AS latest
+    FROM memory_recall_views WHERE view_id=? AND generation=?`).get(access.view.viewId,access.view.generation);
+  if (!projection || Number(projection.watermark)<Number(projection.latest)) throw new Error('MEMORY_RECALL_UNAVAILABLE');
+  const pinKey = JSON.stringify([access.view, room, Number(projection.watermark)]), pinAt = pinStamp();
+  const pinRefs=frameViewPage(db,access.view,null,2048,frameWork);
+  const pinKeys=JSON.stringify(pinRefs.map(ref=>[ref.id,ref.version]));
   const cachedPins = pinAt === undefined ? undefined : pinCache.get(pinKey);
-  const pinRows = cachedPins && cachedPins.stamp === pinAt ? cachedPins.rows : db.prepare(`SELECT id,version FROM memory_records r${ownerPinIndexPresent(db) ? " INDEXED BY memory_records_pinned" : ""} WHERE state='active' AND owner_pinned=1 AND r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND scope_id IN (SELECT value FROM json_each(?))
-    ${room ? "AND NOT EXISTS (SELECT 1 FROM memory_record_details d WHERE d.record_id=r.id AND d.record_version=r.version AND d.partition='identity')" : ""} ORDER BY id,version`).all(JSON.stringify(access.scopeIds));
+  const pinRows = cachedPins && cachedPins.stamp === pinAt ? cachedPins.rows : db.prepare(`SELECT r.id,r.version FROM json_each(?) j JOIN memory_records r ON r.id=json_extract(j.value,'$[0]') AND r.version=json_extract(j.value,'$[1]') WHERE state='active' AND owner_pinned=1 AND r.kind NOT IN ${PIP_ALL_KINDS_SQL}
+    ${room ? "AND NOT EXISTS (SELECT 1 FROM memory_record_details d WHERE d.record_id=r.id AND d.record_version=r.version AND d.partition='identity')" : ""} ORDER BY r.id,r.version`).all(pinKeys);
   if (pinAt !== undefined && cachedPins?.stamp !== pinAt && pinStamp() === pinAt) {
     if (pinCache.size >= 64) pinCache.delete(pinCache.keys().next().value!);
     pinCache.set(pinKey, { stamp: pinAt, rows: pinRows.map(row => ({ id: row.id, version: row.version })) });
@@ -276,7 +297,9 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   const deliverable = pinRows.filter(row => {
     const id = String(row.id), version = Number(row.version);
     if (!pinRestsOnWithheldReply(allowance,id,version,options.withheldMessage)) return true;
-    withheldPins.push({id,version}); return false;
+    // B2 (spec r3 2.3): withheld because the owner forgot it (its own tombstone): left out with no notice. Probed only on this path.
+    if (!pinForgotten(db,id,version)) withheldPins.push({id,version});
+    return false;
   });
   // 1.0.4: pins past the handle limit or the budget are left out, trailing ones first, and the owner is told (droppedPins); the turn
   // still runs. An install already over the share after the upgrade, or a small local model, keeps answering.
@@ -291,6 +314,8 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
         // A pin whose check ran out of allowance is not a broken pin: it is withheld for now (checking), as the filter above withholds
         // one, and the warmer finishes its lineage; the turn goes on. Only a pin that is really unreadable stops the turn.
         // 1.0.2: a pin the write-time lookup reads "checking" (a revoke still in its window) is the same: withheld for now
+        // Memory screen B2 (spec r3 2.3): a pin the owner forgot is left out and the turn goes on, with no notice (he chose it).
+        if (ownerForgotPin(db,error,String(row.id),Number(row.version))) continue;
         if (isLineageLimit(error) || (allowance.hit && error instanceof Error && /^MEMORY_(EVIDENCE|RECORD)_UNAVAILABLE$/.test(error.message))) { withheldPins.push({id:String(row.id),version:Number(row.version)}); continue; }
         throw new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch");
       }
@@ -307,13 +332,15 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   };
   // Compact private continuity is engine-independent and precedes optional
   // general recall. Long canon remains searchable instead of filling every turn.
-  const identityRows=db.prepare(`SELECT r.id,r.version,r.kind,r.scope_id,r.created_at,d.entities,d.claim_status FROM memory_records r
+  const identityRefs=frameViewPage(db,access.view,['continuity-brief','reveal-state','relation','commitment','self-trait'],1024,frameWork);
+  const identityKeys=JSON.stringify(identityRefs.map(ref=>[ref.id,ref.version]));
+  const identityRows=db.prepare(`SELECT r.id,r.version,r.kind,r.scope_id,r.created_at,d.entities,d.claim_status FROM json_each(?1) j JOIN memory_records r ON r.id=json_extract(j.value,'$[0]') AND r.version=json_extract(j.value,'$[1]')
     JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version
     JOIN memory_scopes s ON s.id=r.scope_id
     WHERE r.state='active' AND (r.owner_pinned=0 OR r.kind='continuity-brief') AND d.partition='identity'
-    AND s.kind='bot' AND s.owner_key=? AND s.id IN (SELECT value FROM json_each(?))
+    AND s.kind='bot' AND s.owner_key=?2
     AND r.kind IN (${options.continuity ? "'continuity-brief','reveal-state','relation','commitment','self-trait'" : "'continuity-brief','reveal-state'"})
-    ORDER BY CASE r.kind WHEN 'continuity-brief' THEN 0 WHEN 'reveal-state' THEN 1 WHEN 'relation' THEN 2 WHEN 'commitment' THEN 3 WHEN 'self-trait' THEN 4 ELSE 5 END,r.created_at DESC,r.id`).all(access.botId,JSON.stringify(access.scopeIds));
+    ORDER BY CASE r.kind WHEN 'continuity-brief' THEN 0 WHEN 'reveal-state' THEN 1 WHEN 'relation' THEN 2 WHEN 'commitment' THEN 3 WHEN 'self-trait' THEN 4 ELSE 5 END,r.created_at DESC,r.id`).all(identityKeys,access.botId);
   // Continuity rows (PIP A11) fill in two passes, in priority order, whole rows
   // only, each pass stopping at the first row that does not fit so a later row
   // never takes an earlier one's place. Pass one: up to half of what is left of
@@ -352,7 +379,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
         add(record,identity,continuityCeiling);
         if (selected.length === before) continuityOpen = false; else placed.add(record);
       }
-      catch (error) { assertMemoryAccess(access); degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; if (isPipOwnerKind(String(row.kind))) continuityTotal++; if (row.kind === "continuity-brief") briefLeftOut(error,"read"); }
+      catch (error) { assertMemoryAccess(access); noteRecordOmitted(row.id,row.version); degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; if (isPipOwnerKind(String(row.kind))) continuityTotal++; if (row.kind === "continuity-brief") briefLeftOut(error,"read"); }
     }
   });
   /** Standing of an owner row for §2.2: disputed by the stored claim status, contested when counter occasions are open and not yet kept. */
@@ -377,7 +404,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
         if (record.kind === "continuity-brief") { brief.push(record); briefRecords.add(record); }
         else if (isPipOwnerKind(record.kind)) { continuityTotal++; const meta = {id:record.id,tier:record.pipTier ?? "attested",reinforcedAt:reinforcedAtOf(row.entities,Number(row.created_at)),...standingOf(record.id,row)}; ownerMeta.set(record,meta); owner.push({record,section:"self",...meta}); }
         else reveal.push(record);
-      } catch (error) { assertMemoryAccess(access); degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; if (isPipOwnerKind(String(row.kind))) continuityTotal++; if (row.kind === "continuity-brief") briefLeftOut(error,"read"); }
+      } catch (error) { assertMemoryAccess(access); noteRecordOmitted(row.id,row.version); degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; if (isPipOwnerKind(String(row.kind))) continuityTotal++; if (row.kind === "continuity-brief") briefLeftOut(error,"read"); }
     }
     const base = sz(selected), R = Math.max(0, budget - base), half = base + Math.floor(R / 2);
     // Render cache (§2.1): the same inputs replay the same selection. The key adds the budget and the pin base
@@ -497,7 +524,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     return row ? threadCheckpointId(String(row.id),access.threadId) : "";
   }).filter(Boolean))];
   // Driven from the thread's own checkpoint ids by primary key; the scope condition only filters (an index on the scope would walk every chunk it holds).
-  const checkpoints = db.prepare("SELECT r.id,r.version FROM json_each(?) j JOIN memory_records r ON r.id=j.value WHERE r.state='active' AND r.owner_pinned=0 AND r.kind='checkpoint' AND +r.scope_id IN (SELECT value FROM json_each(?)) ORDER BY r.created_at DESC LIMIT 1").all(JSON.stringify(ownCheckpoints),JSON.stringify(access.scopeIds));
+  const checkpoints = db.prepare("SELECT r.id,r.version FROM json_each(?) j JOIN memory_records r ON r.id=j.value WHERE r.state='active' AND r.owner_pinned=0 AND r.kind='checkpoint'  ORDER BY r.created_at DESC LIMIT 1").all(JSON.stringify(ownCheckpoints)).filter(row=>{ const scope=db.prepare("SELECT scope_id FROM memory_records WHERE id=? AND version=?").get(row.id,row.version); return scope && recallViewHasScope(db,access.view,String(scope.scope_id)); });
   inMemoryAccessPass(() => {
     for (const row of checkpoints) {
       try {
@@ -505,7 +532,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
         if (options.withheldMessage && recordRestsOnWithheldMessage(allowance,record.id,record.version,options.withheldMessage)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
         if (tokens(render([...selected,record])) <= checkpointCeiling) add(record,checkpoint);
         else deferredCheckpoints.push(record);
-      } catch { assertMemoryAccess(access); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; }
+      } catch { assertMemoryAccess(access); noteRecordOmitted(row.id,row.version); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; }
     }
   });
   if (query.trim()) {
@@ -519,7 +546,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
     // MEMORY.md, its team brief) is not recalled again as imported chunks.
     const ownSources = new Set([...ownMessageSources(db,access.threadId,options.excludeMessageIds),...(options.excludeSourceIds ?? [])]);
     try {
-      const result = await searchMemory(query,access,bridge,{limit:20,signal:options.signal,evolutionPolicy,withheldMessage:options.withheldMessage,allowance:recall});
+      const result = await searchMemory(query,access,bridge,{limit:20,signal:options.signal,evolutionPolicy,withheldMessage:options.withheldMessage,allowance:recall,workBudget:frameWork});
       degradedReason = result.degradedReason ?? degradedReason;
       if ((result as {partial?: boolean}).partial) recallPartial = true;
       inMemoryAccessPass(() => {
@@ -532,7 +559,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
             if (options.withheldMessage && recordRestsOnWithheldMessage(recallProof,record.id,record.version,options.withheldMessage)) throw new Error("MEMORY_EVIDENCE_UNAVAILABLE");
             if (!citesOnly(record,ownSources)) add(record,evidence);
           }
-          catch (error) { assertMemoryAccess(access); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; if (isLineageLimit(error) || recallProof.hit) recallPartial = true; }
+          catch (error) { assertMemoryAccess(access); noteRecordOmitted(hit.id,hit.version); degradedReason = "MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE"; if (isLineageLimit(error) || recallProof.hit) recallPartial = true; }
         }
       });
     } catch (error) {
@@ -546,9 +573,9 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
       for (const hit of episodeHits(db,access.botId,query)) {
         try {
           const record = hydrateMemoryRecord(hit.id,hit.version,access,recallReading);
-          if (options.withheldMessage && recordRestsOnWithheldMessage(recallProof,record.id,record.version,options.withheldMessage)) continue;
+          if (options.withheldMessage && recordRestsOnWithheldMessage(recallProof,record.id,record.version,options.withheldMessage)) { noteRecordOmitted(record.id,record.version); continue; }
           if (!citesOnly(record,ownSources)) add(record,evidence);
-        } catch (error) { assertMemoryAccess(access); if (isLineageLimit(error) || recallProof.hit) recallPartial = true; }
+        } catch (error) { assertMemoryAccess(access); noteRecordOmitted(hit.id,hit.version); if (isLineageLimit(error) || recallProof.hit) recallPartial = true; }
       }
     }
   }
@@ -597,14 +624,18 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
         if (evidence.includes(record) && (isLineageLimit(error) || recallProof.hit)) recallPartial = true;
         if (briefRecords.has(record)) briefLeftOut(error,"proof");
         const withheldPin = record.pinned && pinRestsOnWithheldReply(allowance,record.id,record.version,options.withheldMessage);
-        if (record.pinned && !withheldPin) throw new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch");
-        if (withheldPin) {
+        // B2 (spec r3 2.3): a pin forgotten while this turn was built is dropped like a withheld one, but not told as withheld
+        const forgottenPin = record.pinned && (withheldPin ? pinForgotten(db,record.id,record.version) : ownerForgotPin(db,error,record.id,record.version));
+        if (record.pinned && !withheldPin && !forgottenPin) throw new Error("MEMORY_PIN_UNAVAILABLE: repair or unpin the owner constraint before dispatch");
+        if (forgottenPin && pinned.includes(record)) pinned.splice(pinned.indexOf(record),1);
+        if (withheldPin && !forgottenPin) {
           withheldPins.push({id:record.id,version:record.version});
           pinned.splice(pinned.indexOf(record),1);
         }
+        noteRecordOmitted(record.id,record.version);
         selected.splice(selected.indexOf(record),1);
         for (const list of [identity,checkpoint,evidence]) { const index=list.indexOf(record); if (index>=0) list.splice(index,1); }
-        if (!withheldPin) degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE";
+        if (!withheldPin && !forgottenPin) degradedReason="MEMORY_OPTIONAL_EVIDENCE_UNAVAILABLE";
       }
     }
   });
@@ -623,7 +654,7 @@ export async function buildMemoryBundle(query: string, access: MemoryAccess, bri
   for (const row of bundle.sourceVersions) Object.freeze(row);
   Object.freeze(bundle.recordVersions); Object.freeze(bundle.sourceVersions);
   Object.freeze(pinned); Object.freeze(identity); Object.freeze(checkpoint); Object.freeze(evidence); Object.freeze(bundle);
-  bundles.set(bundle,{access,records:selected,recall:new Set(evidence),...options.withheldMessage?{withheldMessage:options.withheldMessage}:{}});
+  bundles.set(bundle,{access,records:selected,fenceOmissions:omittedMemoryLines.size + new Set([...omittedRecords,...withheldPins.map(pin=>pin.id + "\0" + pin.version)]).size + (degradedReason && !omittedRecords.size ? 1 : 0),recall:new Set(evidence),...options.withheldMessage?{withheldMessage:options.withheldMessage}:{}});
   // MURAGE_TURN_TRACE: one line per build, so a dispatch that builds twice shows it.
   turnTrace(access.threadId).mark("memory.bundle.built");
   return bundle;
@@ -652,6 +683,15 @@ function citesOnly(record: BundleRecord, sources: Set<string>): boolean {
 
 /** The owner's pinned records per reader, and the pin stamp they were read at. */
 const pinCache = new Map<string, { stamp: string; rows: Array<{ id: unknown; version: unknown }> }>();
+/** A pin whose read was refused because the owner forgot it (an owner tombstone on the record or this version). Runs only on that refusal,
+ * one probe of UNIQUE(target_type,target_id,revision): the normal turn reads nothing more. */
+function ownerForgotPin(db: ReturnType<typeof database>, error: unknown, id: string, version: number): boolean {
+  if (!(error instanceof Error) || error.message !== "MEMORY_RECORD_UNAVAILABLE") return false;
+  return pinForgotten(db, id, version);
+}
+function pinForgotten(db: ReturnType<typeof database>, id: string, version: number): boolean {
+  return Boolean(db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?) LIMIT 1").get(id, version));
+}
 /** The authority stamp at which a bundle last passed the record loop below, per bundle. */
 const bundleCheckedAt = new WeakMap<object, string>();
 /** Must run immediately before the adapter call, after all other asynchronous setup.

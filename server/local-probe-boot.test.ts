@@ -53,6 +53,7 @@ describe.skipIf(process.platform === "win32")("packaged boot never probes a user
     }));
     let stdout = "", stderr = "";
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_TURN_TRACE: "1", MURAGE_DATA_DIR: join(home, ".murage"), MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1", MURAGE_DEV_DESKTOP_SECRET: SECRET },
       stdio: ["ignore", "pipe", "pipe"],

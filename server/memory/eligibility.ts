@@ -1,4 +1,6 @@
-import { DatabaseSync } from "node:sqlite";
+import { eligibleViewPage, lexicalViewPage, RecallWorkBudget } from './recall-view-index.ts';
+import { assertRecallView, type RecallViewHandle, type RecallViewBinding } from './recall-view.ts';
+import { DatabaseSync } from "../sqlite-open.ts";
 import { MemoryQueryCache } from "./cache.ts";
 import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 import { DENIED_RECORD_SCOPE, DENIED_SOURCE } from "./deny.ts";
@@ -39,6 +41,7 @@ export function eligibleAfter(db:DatabaseSync,scopeIds:readonly string[],histori
 }
 export class MemoryEligibility {
   private db:DatabaseSync;
+  private viewBudget=new RecallWorkBudget(8192);
   private cache=new MemoryQueryCache<Array<{id:string;version:number}>>();
   constructor(path:string){this.db=new DatabaseSync(path,{readOnly:true});}
   warm(scopeIds:string[]){
@@ -46,9 +49,17 @@ export class MemoryEligibility {
     const meta=this.db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta WHERE id=1").get()!;
     this.read({scopeIds,policyRevision:Number(meta.policy_revision),deletionEpoch:Number(meta.deletion_epoch),historical:false,cursor:""});
   }
-  read(input:{scopeIds:string[];policyRevision:number;deletionEpoch:number;historical:boolean;cursor:string}){
+  read(input:{view?:RecallViewHandle;reader?:RecallViewBinding;scopeIds:string[];policyRevision:number;deletionEpoch:number;historical:boolean;cursor:string}){
     const meta=this.db.prepare("SELECT policy_revision,deletion_epoch,data_revision FROM memory_meta WHERE id=1").get()!;
     if(meta.policy_revision!==input.policyRevision||meta.deletion_epoch!==input.deletionEpoch)throw new Error("MEMORY_CONTEXT_REVOKED");
+    if(input.view) {
+      if(!input.reader)throw new Error('MEMORY_RECALL_UNAVAILABLE');
+      assertRecallView(this.db,input.view,input.reader);
+      this.viewBudget=new RecallWorkBudget(8192);
+      const rows=eligibleViewPage(this.db,input.view,input.cursor,Math.min(eligibleLimits.chunk,4096)+1,this.viewBudget);
+      const chunk=Math.min(eligibleLimits.chunk,4096),over=rows.length>chunk;
+      return {allowed:rows.slice(0,chunk).map(({id,version})=>({id,version})),capacity:over,nextCursor:over?encodeEligibleCursor(rows[chunk-1]):undefined};
+    }
     const scopes=this.db.prepare(`SELECT DISTINCT scope_id FROM memory_records WHERE scope_id IN (SELECT value FROM json_each(?)) AND state IN ${input.historical?"('active','archived','superseded')":"('active')"}`).all(JSON.stringify(input.scopeIds)).map(r=>String(r.scope_id)).sort();
     const key=JSON.stringify([scopes,meta.data_revision,meta.policy_revision,meta.deletion_epoch,input.historical,input.cursor]);
     let rows=this.cache.get(key);
@@ -60,6 +71,8 @@ export class MemoryEligibility {
     const chunk=eligibleLimits.chunk,over=rows.length>chunk;
     return {allowed:over?rows.slice(0,chunk):rows,capacity:over,nextCursor:over?encodeEligibleCursor(rows[chunk-1]):undefined};
   }
+  lexical(query:string,view:RecallViewHandle) { return lexicalViewPage(this.db,query,view,1000,0,this.viewBudget); }
+  validate(view:RecallViewHandle,reader:RecallViewBinding) {assertRecallView(this.db,view,reader);}
   /** Ids of every PIP record, any state: what the derived index must not hold. */
   pipRecordIds():string[]{
     return this.db.prepare(`SELECT DISTINCT r.id FROM memory_records r WHERE r.kind IN ${PIP_ALL_KINDS_SQL} ORDER BY r.id`).all().map(r=>String(r.id));

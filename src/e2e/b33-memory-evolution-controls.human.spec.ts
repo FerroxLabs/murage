@@ -1,7 +1,7 @@
 import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { DatabaseSync } from "node:sqlite";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";

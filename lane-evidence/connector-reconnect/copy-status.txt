@@ -1,0 +1,6 @@
+Full copy-final suite: 160 passed, 4 failed.
+31 deterministic findings in existing strings; 448 existing completeness findings.
+Review ledger and record completeness fail, including 32 new connectorHealth strings awaiting independent review.
+Scoped copy-review propose: 32 strings accepted, zero deterministic refusals.
+Raw full-suite output retained in the private job evidence directory.
+No reviewer identity, ledger, pending exception, or lint rule was changed.

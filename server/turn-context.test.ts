@@ -187,5 +187,6 @@ describe("TRANSCRIPT_REPLAY_DRIVER_KINDS", () => {
       expect(out.turnText).toContain("do not restate");
     }
     expect(replaysTranscriptNatively("claudeAgent")).toBe(false);
+    expect(replaysTranscriptNatively("museCode")).toBe(true);
   });
 });

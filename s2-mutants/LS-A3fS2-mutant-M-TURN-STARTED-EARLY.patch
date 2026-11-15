@@ -1,0 +1,10 @@
+--- a/server/drivers/claude.ts
++++ b/server/drivers/claude.ts
+@@ -4335,6 +4335,7 @@
+           if (held) { heldStarted.delete(threadId); emit({ ...held, turnId, eventId: newEventId(), createdAt: new Date().toISOString() } as RuntimeEvent); }
+           return started;
+         };
++        startLiveTurn(); // MUTANT: start before the S2 barrier
+         const gateStartedAt = Date.now();
+         if (live.s2Eligible && live.relay && live.stdinGate?.barrier === "open") {
+           const kept = live;

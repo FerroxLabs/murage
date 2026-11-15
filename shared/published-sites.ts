@@ -33,10 +33,10 @@ function one(value: unknown): PublishedSite | null {
 }
 
 /** The well-formed records in a stored list, one per site id (the newest wins). */
-export function readPublishedSites(value: unknown): PublishedSite[] {
+export function readPublishedSites(value: unknown, noLimits = false): PublishedSite[] {
   if (!Array.isArray(value)) return [];
   const bySite = new Map<string, PublishedSite>();
-  for (const item of value.slice(0, 200)) { const site = one(item); if (site) bySite.set(site.siteId, site); }
+  for (const item of noLimits ? value : value.slice(0, 200)) { const site = one(item); if (site) bySite.set(site.siteId, site); }
   return [...bySite.values()];
 }
 

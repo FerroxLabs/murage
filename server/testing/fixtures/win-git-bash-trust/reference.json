@@ -1,0 +1,73 @@
+{
+  "package": {
+    "url": "https://github.com/git-for-windows/git/releases/download/v2.51.2.windows.1/PortableGit-2.51.2-64-bit.7z.exe",
+    "bytes": 60097272,
+    "sha256": "f5764d546ff9a2511b50ec4e20424c5f4669de1695abc3fa4128e7f7d4a7b2cd"
+  },
+  "manifest": {
+    "schema": 1,
+    "referenceId": "gfw-2.51.2.windows.1-amd64-qa1",
+    "gitVersion": "2.51.2.windows.1",
+    "machine": 34404,
+    "layouts": [
+      {
+        "id": "GFW-BIN",
+        "entry": "bin/bash.exe",
+        "implementation": "usr/bin/bash.exe"
+      },
+      {
+        "id": "GFW-USR",
+        "entry": "usr/bin/bash.exe",
+        "implementation": "usr/bin/bash.exe"
+      }
+    ],
+    "members": [
+      {
+        "relative": "bin/bash.exe",
+        "bytes": 47008,
+        "sha256": "3e90094a809e73ba5d4dbd00c48d2eec702adcc68145a7d7f764fa9f26454444"
+      },
+      {
+        "relative": "usr/bin/bash.exe",
+        "bytes": 2553064,
+        "sha256": "fc362aae1f217d34d02237d99527839dd6cf85b37c7a0277109400bfa0faa594"
+      },
+      {
+        "relative": "usr/bin/cygpath.exe",
+        "bytes": 53959,
+        "sha256": "5e701f516240ef651896de22da94c3dd72c603108201276920dfcf3fae6502bd"
+      },
+      {
+        "relative": "usr/bin/env.exe",
+        "bytes": 44180,
+        "sha256": "b5d80f13e6b4b422a8c22d32be9cc1f5fd9b482fc60008ed80e513a2fa938cdc"
+      },
+      {
+        "relative": "usr/bin/msys-2.0.dll",
+        "bytes": 3360863,
+        "sha256": "b41bfda735cd7686ab4c2b56b4cc6a6fc6c33992b1739626be94d7ae1e8eed0b"
+      },
+      {
+        "relative": "usr/bin/msys-iconv-2.dll",
+        "bytes": 1098126,
+        "sha256": "5d890c42222c7b86519f7c368836cc2930f11dc975341b7ded30f26ef8770e0b"
+      },
+      {
+        "relative": "usr/bin/msys-intl-8.dll",
+        "bytes": 111181,
+        "sha256": "50f7de0c712d867ddca2c9eb8562ca6ee2d69e120e798ec6126ad29dd1ed5402"
+      },
+      {
+        "relative": "usr/bin/uname.exe",
+        "bytes": 35876,
+        "sha256": "1cba275ff8e0c81f48898f017758c558ee5951cb0448c36628580beffdf4ef89"
+      }
+    ],
+    "launchProtocol": 1
+  },
+  "evidence": {
+    "source": "DESIGN-r2.md section 2.2",
+    "runtimeQualification": "unmeasured",
+    "reproducedInBuilder": false
+  }
+}

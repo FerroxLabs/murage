@@ -36,6 +36,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { FLUX_RETRY_MAX_MS, fluxRetryDelayMs } from "./flux-key-health.ts";
 import { fluxKey } from "./flux-config.ts";
+import { authorizeFluxDispatch } from "./flux-start-gate.ts";
 
 export const DEV_FLUX_TOKEN_FILE = "flux-composio-broker-token.json";
 export const DEV_FLUX_TOKEN_LABEL = "murage-dev-harness";
@@ -169,7 +170,8 @@ export async function ensureDevFluxBrokerToken(options: DevFluxTokenOptions): Pr
     let rateLimited = false;
     let attempted = false;
     const baseFetch = options.fetchImpl ?? globalThis.fetch;
-    const fetchImpl: typeof fetch = (input, init) => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      await authorizeFluxDispatch(); // spend gate
       attempted = true;
       // Flux Memory: a broker call is background work, never an owner turn.
       return fluxFetch("composio-broker", input as string | URL, init, baseFetch);

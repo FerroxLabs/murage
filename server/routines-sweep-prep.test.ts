@@ -33,7 +33,10 @@ describe("incremental sweep", () => {
     const i = m as Internals;
     i.sweep(0);
     let reads = 0;
-    for (const raw of [i.runsRaw, i.routinesRaw]) for (let k = 0; k < raw.length; k++) { const v = raw[k]; Object.defineProperty(raw, k, { get() { reads++; return v; }, set(x) { raw[k] = x; }, configurable: true }); }
+    const iterate = i.runStore[Symbol.iterator].bind(i.runStore);
+    i.runStore[Symbol.iterator] = function* () { for (const run of iterate()) { reads++; yield run; } };
+    const raw = i.routinesRaw;
+    for (let k = 0; k < raw.length; k++) { const v = raw[k]; Object.defineProperty(raw, k, { get() { reads++; return v; }, set(x) { raw[k] = x; }, configurable: true }); }
     i.sweep(0);
     expect(reads).toBe(0);
   });
@@ -50,17 +53,34 @@ describe("incremental sweep", () => {
   });
 
   it("a run taken out other than by the history cap forces a full save", () => {
-    const { m } = make();
+    const { m, file } = make();
     const i = m as Internals;
     i.save({ runs: [], routines: [] });
     expect(i.fullSave).toBe(false);
+    const removed = i.runs[0].id;
     i.runs.splice(0, 1);
     i.sweep(0);
-    expect(i.fullSave).toBe(true);
+    // The explicit owner facade now completes the full transaction itself.
+    // Assert durable deletion, a stronger promise than a pending dirty flag.
+    expect(readRoutinesWithRuns(file).runs.map((run: { id: string }) => run.id)).not.toContain(removed);
+    expect(m.runById(removed)).toBeNull();
+    expect(i.fullSave).toBe(false);
   });
 });
 
 describe("preparePackageAddition", () => {
+  it("S9 package addition preserves an omitted permission level on disk and after publish", () => {
+    const {m,file,routines}=make();
+    const template={...JSON.parse(JSON.stringify(routines[0])),id:'svc-imported',enabled:false,nextRunAt:null};
+    delete template.permissionMode;delete template.permissionExplicit;
+    const batch=m.preparePackageAddition([template]);
+    const saved=JSON.parse(batch.bytes.toString('utf8')).routines.find((r:any)=>r.id===template.id);
+    expect(saved).not.toHaveProperty('permissionMode');expect(saved).not.toHaveProperty('permissionExplicit');
+    writeFileSync(file,batch.bytes);batch.publish();
+    expect(m.listRoutines().find(r=>r.id===template.id)).not.toHaveProperty('permissionMode');
+    expect(readRoutinesWithRuns(file).routines.find((r:any)=>r.id===template.id)).not.toHaveProperty('permissionMode');
+  });
+
   it("its bytes carry a fresh stateGeneration that publish records, so the next tick cannot clobber a cursor", () => {
     const { m, file, routines } = make();
     const i = m as Internals;

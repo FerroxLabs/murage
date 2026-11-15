@@ -1,3 +1,4 @@
+import { inertBot } from "./store.ts";
 // When a bot BELOW the Chief breaks, somebody on the team hears about it.
 //
 // Before this, a broken run reached the OWNER and stopped there: a failed
@@ -90,7 +91,7 @@ export const TEAM_INCIDENTS_THREAD_TITLE = "Team incidents";
  * In all three the harness falls back to telling the person. */
 export function chiefForBrokenBot<T extends TeamIncidentBot>(bots: readonly T[], bot: TeamIncidentBot): T | null {
   if (isWorkspaceChief(bot)) return null;
-  const onDuty = bots.filter((candidate) => candidate.id !== bot.id && !candidate.hidden && candidate.chiefOfStaff === true);
+  const onDuty = bots.filter((candidate) => candidate.id !== bot.id && !inertBot(candidate) && candidate.chiefOfStaff === true);
   // A lead handles its own section; it does not handle another lead.
   if (bot.chiefOfStaff !== true) {
     const sectionLead = onDuty.find((candidate) => !isWorkspaceChief(candidate) && sectionKey(candidate.section) === sectionKey(bot.section));

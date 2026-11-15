@@ -124,18 +124,24 @@ describe("Learn about me R5: Forget of a kept line", () => {
       for (let version = 2; version <= 65; version++) insertMemoryRecord(db, { id: kept.id, version, scopeId: scope, kind: "fact", text: `LAMR5-FIVE wording ${version}`, assertion: "owner-statement", state: version === 65 ? "active" : "superseded", validFrom: Date.now(), createdAt: Date.now() + version });
     });
     type Page = { records: Array<{ id: string; version: number; text: string }>; nextCursor?: string };
-    /** Every page of the owner list (and of a search when `query` is given): the rows of the kept line. */
+    /** Every page of the owner list (and of a search when `query` is given): the rows of the kept line. The memory screen lists current
+     * memories by default and the replaced wordings under `state: "superseded"` (MEMORY-UI-BUILD-SPEC r3 1.1: `state` keeps its meaning,
+     * default `active`, `superseded` = Replaced), so both are read: between them they hold every version the old list showed. */
     const shown = async (query?: string) => {
-      const rows: Page["records"] = []; let cursor: string | undefined;
-      for (let page = 0; page < 10; page++) {
-        const answer = await f.act({ action: "list", ...(query ? { query } : {}), ...(cursor ? { cursor } : {}) }) as Page;
-        rows.push(...answer.records.filter(row => row.id === kept.id));
-        if (!answer.nextCursor) break; cursor = answer.nextCursor;
+      const rows: Page["records"] = [];
+      for (const state of [undefined, "superseded"]) {
+        let cursor: string | undefined;
+        for (let page = 0; page < 10; page++) {
+          const answer = await f.act({ action: "list", ...(query ? { query } : {}), ...(state ? { state } : {}), ...(cursor ? { cursor } : {}) }) as Page;
+          rows.push(...answer.records.filter(row => row.id === kept.id));
+          if (!answer.nextCursor) break; cursor = answer.nextCursor;
+        }
       }
       return rows;
     };
     const before = await shown();
     expect(before.some(row => row.version === 1 && row.text.includes("LAMR5-FIVE"))).toBe(true);
+    expect(before.some(row => row.version === 65 && row.text.includes("LAMR5-FIVE"))).toBe(true);
     Object.assign(INLINE_REVOCATION, { rows: 0, ms: 0 });
     await f.act({ action: "forget", kind: "record", id: kept.id });
     expect(f.jobRows()).toBeGreaterThan(0);

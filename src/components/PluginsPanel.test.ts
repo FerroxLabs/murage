@@ -555,7 +555,7 @@ describe("the connected-apps lock", () => {
   });
 
   it("says exactly what unlocking buys, in English, under connectedApps.lock.*", () => {
-    // No count is claimed that the code can prove: "500+" was never verified
+    // No count is claimed before the catalog reports it
     // against the live catalogue, so the copy names apps instead of a number.
     expect(en["connectedApps.lock.title"]).toBe("Connect your apps");
     expect(en["connectedApps.lock.body"]).toBe(
@@ -810,7 +810,7 @@ describe("audit round 1, renderer", () => {
     expect(rows).toMatch(/if \(next\.width !== current\.width\) heights\.current\.clear\(\);/);
   });
   it("A10: the Browse all count is the count label, not a split claim", () => {
-    expect(panel).toContain("const countLabel = appCountLabel(catalog?.total);");
+    expect(panel).toContain("const browseAllParts = appCountParts(catalog?.total);");
     expect(panel).not.toMatch(/\.split\(","\)\[0\]/);
   });
 });

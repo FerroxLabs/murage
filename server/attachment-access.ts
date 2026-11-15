@@ -1,3 +1,4 @@
+import { inertBot } from "./store.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -131,7 +132,7 @@ export function messageJsonReferences(messageJson: string, name: string): boolea
  */
 export function remoteAttachmentCacheControl(store: Pick<AttachmentAccessStore, "bots">, name: string): string {
   const url = `/api/attachments/${name}`;
-  return store.bots.some(bot => bot.hidden !== true && bot.avatarUrl === url)
+  return store.bots.some(bot => !inertBot(bot) && bot.avatarUrl === url)
     ? "private, max-age=0, stale-while-revalidate=2592000"
     : "private, no-cache";
 }
@@ -149,7 +150,7 @@ export function attachmentVisibleToRemote(
   const visible = new Set(store.visibleThreadIds());
   if (referencing.some(threadId => visible.has(threadId))) return true;
   const url = `/api/attachments/${name}`;
-  if (store.bots.some(bot => bot.hidden !== true && bot.avatarUrl === url)) return true;
+  if (store.bots.some(bot => !inertBot(bot) && bot.avatarUrl === url)) return true;
   // Sent into any conversation: the upload exception is over, visibility alone decides.
   if (referencing.length > 0) { uploads.release(name); return false; }
   return uploads.allows(name, uploader);

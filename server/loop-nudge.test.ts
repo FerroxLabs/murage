@@ -1,3 +1,4 @@
+import { consumingFixture } from "./testing/consuming-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -7,11 +8,13 @@
 // codex.ts:1711/:1761, acp/core.ts:3288-3334, pi.ts:1051-1073).
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { RuntimeEvent } from "./contracts.ts";
 import { LOOP_NUDGE_NOTE, callArgs, createLoopNudge, loopCallKey, loopFailureText } from "./loop-nudge.ts";
 
 const T = "thread-1";
+const fixtures: ReturnType<typeof consumingFixture>[] = [];
+afterEach(() => { for (const fixture of fixtures.splice(0)) fixture.close(); });
 let seq = 0;
 const base = (itemId?: string) => ({ eventId: `e${++seq}`, provider: "claude" as const, threadId: T, createdAt: "2026-10-20T00:00:00Z", ...(itemId ? { itemId } : {}) });
 type Start = { title?: string; input?: unknown; toolIdentity?: { name?: string } };
@@ -31,7 +34,8 @@ const piFail: Done = { ok: false, result: { content: [] }, detail: "ENOENT: no s
 
 type Answer = boolean | "delivered" | "rejected" | "uncertain";
 function rig(opts: { steer?: (beforeWrite?: () => void) => Promise<Answer>; steerable?: boolean } = {}) {
-  const flags = { watching: true, waiting: false, stopping: false };
+  const fixture = consumingFixture({ audience: null }, { empty: true, threadId: T }); fixtures.push(fixture);
+  const flags = { watching: true, waiting: false, stopping: false, isolated: false, generation: "g1" };
   const rows: string[] = [];
   const logs: string[] = [];
   const steer = vi.fn(async (_threadId: string, _text: string, beforeWrite?: () => void) => {
@@ -44,7 +48,10 @@ function rig(opts: { steer?: (beforeWrite?: () => void) => Promise<Answer>; stee
     watching: () => flags.watching,
     waitingOnHuman: () => flags.waiting,
     stopping: () => flags.stopping,
+    isolated: () => flags.isolated,
+    generation: () => flags.generation,
     adapter: () => adapter,
+    fence: () => ({ reader: { audience: null }, retained: fixture.turn, db: fixture.f.db }),
     record: (threadId) => rows.push(threadId),
     log: (line) => logs.push(line),
     waitMs: 20,
@@ -303,4 +310,35 @@ describe("loop nudge (SL-N GATE)", () => {
     expect(index).toContain('stopping: (threadId) => directRuns.get(threadId)?.phase === "stopping",');
     expect(index).toContain("waitingOnHuman: (threadId) => watchdog.waitingOnHuman(threadId),");
   });
+});
+
+// ISO-13: observe the actual adapter write fence, including a held steer.
+it("ISO-13: an isolated run never receives a loop nudge", async () => {
+  const r = rig();
+  r.flags.isolated = true;
+  await r.fail(6, claudeBash("d"), claudeFail);
+  expect(r.steer).not.toHaveBeenCalled();
+  expect(r.rows).toEqual([]);
+});
+
+it.each(["isolated", "generation", "stopping", "watching"] as const)("ISO-13: a held nudge rechecks %s at the actual write", async field => {
+  let release!: () => void;
+  let writes = 0;
+  const r = rig({ steer: beforeWrite => new Promise<Answer>(resolve => {
+    release = () => {
+      try { beforeWrite?.(); writes++; resolve(true); } catch { resolve(false); }
+    };
+  }) });
+  await r.fail(4, claudeBash("d"), claudeFail);
+  const pending = r.call(claudeBash("d"), claudeFail);
+  if (field === "generation") r.flags.generation = "g2";
+  else r.flags[field] = field !== "watching";
+  release();
+  await pending;
+  expect(writes).toBe(0);
+  expect(r.rows).toEqual([]);
+  // A refused note does not get queued or retried after the fence changes back.
+  Object.assign(r.flags, { isolated: false, generation: "g1", stopping: false, watching: true });
+  await r.fail(4, claudeBash("d"), claudeFail);
+  expect(r.steer).toHaveBeenCalledTimes(1);
 });

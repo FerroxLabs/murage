@@ -1,3 +1,4 @@
+import { channelSigninCodeRefusal } from "../signin-code.ts";
 import { z } from "zod";
 import { channelReply } from "../reply-text.ts";
 
@@ -36,6 +37,8 @@ export function normalizeSlackMessage(raw: unknown, identity: SlackIdentity): Sl
 }
 
 export function slackPrompt(text: string): { prompt: string; response?: string } {
+  const refusal = channelSigninCodeRefusal(text);
+  if (refusal) return { prompt: "", response: refusal };
   if (/^\/(?:approve|deny|allow|reject|pair)(?:\s|$)/i.test(text) || /^(?:approve|deny|allow|reject|yes|no)$/i.test(text.trim()))
     return { prompt: "", response: channelReply("channelReply.approvalsInMurage", { channel: "Slack" }) };
   return { prompt: `[UNTRUSTED SLACK CHANNEL MESSAGE]\n${text}\n[/UNTRUSTED SLACK CHANNEL MESSAGE]` };

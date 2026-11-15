@@ -1,0 +1,32 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ scripts/highlevel-userscreate-red-verdict.test.mjs (1 test | 1 failed) 10ms
+   × BLOCK2 rejects collection failures and green or empty baseline runs as RED evidence 7ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  12:49:06
+   Duration  4.68s (transform 3.71s, setup 4.54s, import 5ms, tests 10ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  scripts/highlevel-userscreate-red-verdict.test.mjs > BLOCK2 rejects collection failures and green or empty baseline runs as RED evidence
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ scripts/highlevel-userscreate-red-verdict.test.mjs:10:42
+      8|   ] }] };
+      9|   expect(startingRedProven(valid, 1)).toBe(true);
+     10|   expect(startingRedProven(valid, null)).toBe(false);
+       |                                          ^
+     11|   expect(startingRedProven(valid, 254)).toBe(false);
+     12|   expect(startingRedProven({ numTotalTests: 0, numFailedTests: 0, test…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯

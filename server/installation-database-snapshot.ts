@@ -1,33 +1,43 @@
+import { initializeOwnWriteHolds, sanitizeOwnWriteHoldsForRestore } from "./own-write-holds.ts";
+import * as messageTableDefinitions from "./message-tables.ts";
+import { SCHEMA_1_0_1 } from "./schema-1.0.1.ts";
+import { cancelOpenRecords, assertBackupEmailActions, refreshBackupEmailPresentations } from './decision/records.ts';
 import { initializeChatsPreviewStorage } from "./thread-summary.ts";
 import { ensureForgetTable } from "./harness/event-log.ts";
 import { ensureScrubPassTable } from "./memory/scrub-state.ts";
+import { initializeFluxSpaces } from "./flux-memory-spaces.ts";
 import { initializeTeamIdentityTables } from "./team-identities.ts";
 import { initializeThreadSnooze } from "./thread-snooze.ts";
+import { initializeHighLevelThreadMarks } from "./highlevel/thread-marks.ts";
 import { createHash } from "node:crypto";
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, rmSync, statSync, writeSync, type Stats } from "node:fs";
+import { writeSync } from "./counted-fs.ts";
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, rmSync, statSync, type Stats } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { backup, DatabaseSync } from "node:sqlite";
+import { backup, DatabaseSync } from "./sqlite-open.ts";
 import { publishNoReplace } from "./publish-file.ts";
-import { claimCopyScratch, settleFtsCopy, sweepStaleCopyScratch } from "./settle-copy.ts";
+import { claimCopyScratch, settleFtsCopy, sweepStaleCopyScratch, RETIRED_SEARCH_TABLES } from "./settle-copy.ts";
 import { noteWrittenBytes, noteWrittenFile } from "./io-written.ts";
 import { acquireDataDirLeaseForProcess, dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
-import { isDiskFullError, validateMemorySchema } from "./memory/schema.ts";
+import { INDEX_OVERRUN_LEGACY_SCHEMA, ensureIndexOverrun, isDiskFullError, validateMemorySchema, ensureGH18Operations } from "./memory/schema.ts";
 import { InstallationTranscriptGraph } from "./installation-transcript-graph.ts";
 import { initializeArtifacts } from "./artifacts.ts";
 import { discardInboxProjection, initializeInbox, isInboxProjectionObject } from "./inbox.ts";
 import { LEGACY_OWED_TABLE_DDL, LEGACY_SHARED_OWED_INDEX, LEGACY_SHARED_OWED_INDEX_DDL } from "./room-request-owed.ts";
-import { ensureBrowserCheckIndex, initializeMessageTables } from "./message-tables.ts";
+import { ensureBrowserCheckIndex, initializeMessageTables, TURN_INDEX, TURN_INDEX_DDL, TURN_INDEX_PREVIOUS_DDLS } from "./message-tables.ts";
 import { initializeImageLibrary, initializeImageOperations } from "./image-operations-schema.ts";
 import { initializeProjectTables } from "./project-tables.ts";
 import { initializeMobilePush } from "./mobile-push-store.ts";
 import { initializeSharedRequestProvenance } from "./shared-provenance-schema.ts";
 import { initializePendingDelegations } from "./pending-delegations-schema.ts";
+import { initializeDelegationPacks } from "./delegation-pack/schema.ts";
 import { initializeProjectCardDelivery } from "./project-card-delivery-schema.ts";
 import { initializeOwnerSends } from "./send-store.ts";
+import { initializeSendAttempts } from "./send-attempt-state.ts";
 import { initializeBotCalls } from "./bot-calls-schema.ts";
 import { initializeAppTriggers } from "./app-trigger-store.ts";
 import { initializeTurnSourceHolds } from "./turn-source-holds.ts";
 import { initializeEmailTables } from "./email/email-store.ts";
+import { RESTORE_JOB_MARKS_DDL, RESTORE_BOOT_WAIT_DDL } from "./email/restore-job-marks-ddl.ts";
 import { initializeVenuePosts } from "./venue-post-held.ts";
 import { initializeRoomShares } from "./room-shares-schema.ts";
 import { initializeReplySchema } from "./tts/reply-schema.ts";
@@ -42,7 +52,7 @@ import { initializeAskRevocations } from "./phones/ask-revocations.ts";
 import { initializePhoneReceipts } from "./phones/receipts.ts";
 import { initializePhones } from "./phones/registry.ts";
 import { ADDED_TABLE_LIFECYCLE } from "./added-table-lifecycle.ts";
-import { APP_SCHEMA_102_ADDITIONS } from "./installation-app-schema-downgrade.ts";
+import { APP_SCHEMA_102_ADDITIONS, PENDING_DELEGATIONS_PRE_PACK_DDL, downgradeOwnerSendAskProof, downgradePhoneObjectsTo108 } from "./installation-app-schema-downgrade.ts";
 import { rowToMessage } from "./transcript-seq.ts";
 export { InstallationSnapshotError } from "./installation-snapshot-error.ts";
 
@@ -72,16 +82,36 @@ function count(db: DatabaseSync, sql: string): number {
  * A Map, not a plain object: archive names such as "constructor" or
  * "__proto__" must never match a property every object inherits. */
 const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Object.entries({
+  own_write_holds: { required: false, optional: [] },
   // seq: the per-thread sequence (transcript-seq.ts), new in 1.0.3; an archive from before it lacks the column and its index
-  messages: { required: true, optional: ["seq"] },
+  gh18_operations: { required: false, optional: [] },
+  messages: { required: true, optional: ["seq", "turn_id"] },
+  // L8/I0: optional for pre-1.0.19 archives; definitions come from the serving initializers.
+  send_attempts: { required: false, optional: [] },
+  send_attempt_bindings: { required: false, optional: [] },
+  send_actions: { required: false, optional: [] },
+  send_replay_exclusions: { required: false, optional: [] },
+  send_replay_epochs: { required: false, optional: [] },
+  send_replay_session_nodes: { required: false, optional: [] },
+  send_replay_sessions: { required: false, optional: [] },
+  turn_cleanup_owed: { required: false, optional: [] },
+  send_retirement_keys: { required: false, optional: [] },
+  retired_send_ids: { required: false, optional: [] },
+  turn_index_dirty: { required: false, optional: [] },
+  turn_index_state: { required: false, optional: [] },
+
   thread_state: { required: true, optional: [] },
   open_card: { required: false, optional: [] },
   turn_first: { required: false, optional: [] },
   transcript_index_state: { required: false, optional: [] },
+  // SQLite creates this exact bookkeeping table for search_intents AUTOINCREMENT.
+  sqlite_sequence: { required: false, optional: [] },
   // pending "Checking the browser" notes, kept by the message writers and filled in the background (message-tables.ts), new in 1.0.2
   browser_check_pending: { required: false, optional: [] },
   // the Flux Memory number hold of a thread (server/flux-capture-hold.ts, message-tables.ts), new in 1.0.4
   flux_capture_hold: { required: false, optional: [] },
+  // the memory index's durable stop and its reset (memory/schema.ts ensureIndexOverrun), new in 1.0.18: an archive from before it lacks it
+  index_overrun: { required: false, optional: [] },
   // where the background integrity pass has got to (memory/integrity-state.ts), new in 1.0.2; outside the memory schema
   upgrade_integrity_pass: { required: false, optional: ["lessons_floor", "feedback_floor", "events_floor"] },
   // where the 1.0.4 number scrub of earlier memory has got to (memory/scrub-state.ts), new in 1.0.4; outside the memory schema
@@ -145,8 +175,8 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   project_routine_authority: { required: false, optional: [] },
   room_requests: { required: false, optional: ["handoff", "shared_work"] },
   // every owner send, committed before it is acknowledged (server/send-store.ts), new in 1.0.2;
-  // notice (the code of what the person was told) was appended by ALTER during 1.0.2, and so was turn_id (the turn a steer went into); via, queue_only, via_device and attachments (a phone's share or ask line) were appended in 1.0.9
-  owner_sends: { required: false, optional: ["notice", "restore_held", "restore_gen", "stopped", "stop_gen", "action_id", "turn_id", "via", "queue_only", "via_device", "attachments"] },
+  // notice and turn_id were appended during 1.0.2; the phone columns in 1.0.9; via_proof (ask admission evidence) in 1.0.19.
+  owner_sends: { required: false, optional: ["notice", "restore_held", "restore_gen", "stopped", "stop_gen", "action_id", "turn_id", "via", "queue_only", "via_device", "attachments", "via_proof", "isolated", "late_refused"] },
   // the owner's deletion record and the restore generation (server/owner-deletions.ts, server/send-store.ts), new in 1.0.2
   owner_deleted_threads: { required: false, optional: [] },
   send_restore_generation: { required: false, optional: [] },
@@ -174,6 +204,8 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   push_relay_removals: { required: false, optional: [] },
   // routine provenance of shared requests (shared-provenance-schema.ts); an older archive lacks it
   shared_request_provenance: { required: false, optional: [] },
+  // 1.0.19 appends the authenticated owner proof; earlier queues have no proof.
+  pending_delegations: { required: false, optional: ["owner_rooted"] },
   // Tables added in 1.0.2 (shared_request_events, project_card_delivery_owed, ...) are not listed here: they are registered from
   // APP_SCHEMA_102_ADDITIONS.tables, the list the downgrade drops, by referenceSchema() below (owner_sends carries a column appended
   // later, so it is named above too).
@@ -195,6 +227,22 @@ const APP_TABLES = new Map<string, { required: boolean; optional: string[] }>(Ob
   app_event_batches: { required: false, optional: [] },
   app_event_run_events: { required: false, optional: [] },
   app_event_runs: { required: false, optional: [] },
+  // the restore job's marks (email/restore-job-effects.ts, Cloud 1.0.19 J2): created lazily by the first owner restore, so no initializer makes it.
+  // Accepted with its exact definition (created below from RESTORE_JOB_MARKS_DDL) so a home that finished a restore still backs up; the staged
+  // copy drops it (sanitizeStagedRestoreMarks), because a marker of THIS installation's restore means nothing in another installation.
+  restore_job_marks: { required: false, optional: [] },
+  restore_boot_wait: { required: false, optional: [] },
+  // Flux Memory spaces (server/flux-memory-spaces.ts), new in 1.0.6: the space salt, the keys Flux Memory is off for, the bot
+  // space and thread tag each capture went to, the capture receipts, the forgets owed for deleted conversations and bots, the
+  // tombstones of what is never captured again, the bot spaces at Flux's limit, and where a capture was accepted
+  flux_space_meta: { required: false, optional: [] },
+  flux_key_off: { required: false, optional: [] },
+  flux_mem_used: { required: false, optional: [] },
+  flux_mem_receipt: { required: false, optional: [] },
+  flux_mem_owed: { required: false, optional: [] },
+  flux_mem_tombstone: { required: false, optional: [] },
+  flux_mem_limit: { required: false, optional: [] },
+  flux_mem_proven: { required: false, optional: [] },
 }));
 
 type SchemaRow = { type: string; name: string; tbl_name: string; sql: string | null };
@@ -207,6 +255,8 @@ interface ReferenceObject { type: string; table: string; sql: Set<string | null>
 function normalizedSql(sql: unknown): string | null {
   return sql === null || sql === undefined ? null : String(sql).replace(/\s+/g, " ").replace(/ ?([(),]) ?/g, "$1").trim();
 }
+
+const RESTORE_PENDING_SQL = normalizedSql("CREATE TABLE restore_pending (reset_id TEXT PRIMARY KEY, operation TEXT NOT NULL, at INTEGER NOT NULL)");
 
 function columnShape(db: DatabaseSync, table: string): string[] {
   return db.prepare(`PRAGMA table_xinfo("${table}")`).all()
@@ -225,9 +275,28 @@ function referenceSchema(): Map<string, ReferenceObject> {
   const db = new DatabaseSync(":memory:");
   try {
     initializeChatsPreviewStorage(db);
-    initializeMessageTables(db); initializeTurnSourceHolds(db); ensureBrowserCheckIndex(db); ensureIntegrityPassTable(db); ensureScrubPassTable(db); ensureUpgradeAppTables(db); initializeInbox(db); initializeArtifacts(db);
+    initializeHighLevelThreadMarks(db);
+    initializeMessageTables(db); db.exec(TURN_INDEX_DDL); initializeTurnSourceHolds(db); ensureBrowserCheckIndex(db); ensureIntegrityPassTable(db); ensureScrubPassTable(db); ensureUpgradeAppTables(db); initializeInbox(db); initializeArtifacts(db);
     for (const { schema } of LEGACY_UPGRADE_TABLES.values()) db.exec(schema);
-    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); ensureForgetTable(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeProjectCardDelivery(db); initializePhones(db); initializeAskRevocations(db); initializePhoneReceipts(db); initializeOwnerSends(db); initializePendingDelegations(db); initializeBotCalls(db); initializeReplySchema(db); initializeAppTriggers(db); initializeEmailTables(db); initializeVenuePosts(db); initializeRoomShares(db);
+    // The serving initializer no longer owns legacy FTS. Keep archive references independently
+    // of it, including the quoted spelling SQLite produces on ALTER TABLE RENAME.
+    const legacySearchDdl = "MESSAGE_SEARCH_DDL" in messageTableDefinitions
+      ? String(messageTableDefinitions.MESSAGE_SEARCH_DDL)
+      : SCHEMA_1_0_1.find(object => object.name === "messages_fts")!.ddl!;
+    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='messages_fts'").get()) db.exec(legacySearchDdl);
+    for (const name of RETIRED_SEARCH_TABLES) {
+      db.exec(`ALTER TABLE messages_fts RENAME TO "${name}"`);
+      db.exec(legacySearchDdl);
+    }
+    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE name='search_intents'").get()) {
+      db.exec("CREATE TABLE search_intents(seq INTEGER PRIMARY KEY AUTOINCREMENT, nonce INTEGER NOT NULL, rowid INTEGER, thread_key TEXT, CHECK ((rowid IS NULL) <> (thread_key IS NULL)), CHECK (thread_key IS NULL OR length(CAST(thread_key AS BLOB)) <= 72))");
+    }
+
+    initializeImageOperations(db); initializeImageLibrary(db); initializeThreadSnooze(db); initializeProjectTables(db); ensureForgetTable(db); initializeTeamIdentityTables(db); initializeMobilePush(db); initializeSharedRequestProvenance(db); initializeFluxSpaces(db); initializeProjectCardDelivery(db); initializePhones(db); initializeAskRevocations(db); initializePhoneReceipts(db); initializeOwnerSends(db); initializeSendAttempts(db); initializePendingDelegations(db); initializeDelegationPacks(db); initializeBotCalls(db); initializeReplySchema(db); initializeAppTriggers(db); initializeEmailTables(db); initializeOwnWriteHolds(db); initializeVenuePosts(db); initializeRoomShares(db);
+    ensureGH18Operations(db);
+    db.exec(RESTORE_JOB_MARKS_DDL);
+    db.exec(RESTORE_BOOT_WAIT_DDL);
+    ensureIndexOverrun(db);
     const objects = new Map<string, ReferenceObject>();
     const rows = db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema").all() as SchemaRow[];
     const tables = new Map(APP_TABLES);
@@ -236,10 +305,34 @@ function referenceSchema(): Map<string, ReferenceObject> {
       if (!tables.has(row.tbl_name)) throw new Error(`initializer created an object outside APP_TABLES: ${row.name}`);
       objects.set(row.name, { type: row.type, table: row.tbl_name, sql: new Set([normalizedSql(row.sql)]), columns: row.type === "table" ? [columnShape(db, row.name)] : [] });
     }
+    // Archives from before lossless stop IDs still carry the INTEGER column.
+    // Accept only that exact predecessor; first app open migrates it to TEXT.
+    const overrunObject = objects.get("index_overrun");
+    if (overrunObject) {
+      const legacy = new DatabaseSync(":memory:");
+      try {
+        legacy.exec(INDEX_OVERRUN_LEGACY_SCHEMA);
+        overrunObject.sql.add(normalizedSql((legacy.prepare("SELECT sql FROM sqlite_schema WHERE name='index_overrun'").get() as SchemaRow).sql));
+        overrunObject.columns.push(columnShape(legacy, "index_overrun"));
+      } finally { legacy.close(); }
+    }
+    for (const sql of TURN_INDEX_PREVIOUS_DDLS) objects.get(TURN_INDEX)?.sql.add(normalizedSql(sql));
     // The Inbox projection's triggers read inbox_item_state.cleared_at, so they
     // would refuse the column drops below; they are recorded already, and an
     // archive old enough to lack the column predates the projection too.
     discardInboxProjection(db);
+    // A downgrade removes via_proof while the newer send metadata remains.
+    // Reopening appends that proof column after the metadata. Accept precisely
+    // the schema our initializer produces, retaining SQL and column checks.
+    const migratedSends = new DatabaseSync(":memory:");
+    try {
+      migratedSends.exec(String(rows.find(row => row.name === "owner_sends")!.sql));
+      migratedSends.exec("ALTER TABLE owner_sends DROP COLUMN via_proof");
+      initializeOwnerSends(migratedSends);
+      const object = objects.get("owner_sends")!;
+      object.sql.add(normalizedSql(migratedSends.prepare("SELECT sql FROM sqlite_schema WHERE name='owner_sends'").get()!.sql));
+      object.columns.push(columnShape(migratedSends, "owner_sends"));
+    } finally { migratedSends.close(); }
     // a child table an earlier 1.0.2 build wrote without its cascade is still the same table
     for (const [name, entry] of Object.entries(ADDED_TABLE_LIFECYCLE)) {
       if (entry.kind === "child") for (const legacy of entry.legacyDdl) objects.get(name)?.sql.add(normalizedSql(legacy));
@@ -258,7 +351,28 @@ function referenceSchema(): Map<string, ReferenceObject> {
         db.exec(`ALTER TABLE "${table}" DROP COLUMN "${column}"`);
         object.sql.add(normalizedSql((db.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name=?").get(table) as SchemaRow).sql));
         object.columns.push(columnShape(db, table));
+
       }
+    }
+    // A downgrade removes phone columns or ask proof. Reopening appends them
+    // in migration order, which differs from the fresh-install column order.
+    // Admit only the exact definitions produced by those serving migrations.
+    const ownerSends = objects.get("owner_sends")!;
+    for (const rewind of [downgradeOwnerSendAskProof, downgradePhoneObjectsTo108]) for (const settled of [false, true]) {
+      const legacy = new DatabaseSync(":memory:");
+      try {
+        initializeOwnerSends(legacy);
+        // Empty queues can drop newer metadata; settled rows retain it.
+        if (settled) legacy.exec("INSERT INTO owner_sends(kind,owner_id,thread_id,queue_id,fingerprint,status,created_at,updated_at) VALUES('bot','fixture','thread','queue','digest','delivered',1,1)");
+        rewind(legacy);
+        // A backup may run after the real downgrade, before the next app open.
+        // Keep its exact schema as well as the subsequently migrated schema.
+        ownerSends.sql.add(normalizedSql((legacy.prepare("SELECT sql FROM sqlite_schema WHERE name='owner_sends'").get() as SchemaRow).sql));
+        ownerSends.columns.push(columnShape(legacy, "owner_sends"));
+        initializeOwnerSends(legacy);
+        ownerSends.sql.add(normalizedSql((legacy.prepare("SELECT sql FROM sqlite_schema WHERE name='owner_sends'").get() as SchemaRow).sql));
+        ownerSends.columns.push(columnShape(legacy, "owner_sends"));
+      } finally { legacy.close(); }
     }
     // An archive written by an earlier build still carries the partial index the owed set replaced: accepted with exactly that text
     // (the app drops it on first open), never under another definition.
@@ -275,6 +389,17 @@ function referenceSchema(): Map<string, ReferenceObject> {
         legacy.exec(LEGACY_OWED_TABLE_DDL);
         owedObject.sql.add(normalizedSql((legacy.prepare("SELECT sql FROM sqlite_schema WHERE name='room_request_owed'").get() as SchemaRow).sql));
         owedObject.columns.push(columnShape(legacy, "room_request_owed"));
+      } finally { legacy.close(); }
+    }
+    // The pending-hand-off table before owner_rooted (fee454fb0) is accepted with exactly its text and columns: an archive from 1.0.2 carries
+    // it, and the app adds the column on first open (pending-delegations-schema.ts).
+    const pendingObject = objects.get("pending_delegations");
+    if (pendingObject) {
+      const legacy = new DatabaseSync(":memory:");
+      try {
+        legacy.exec(PENDING_DELEGATIONS_PRE_PACK_DDL);
+        pendingObject.sql.add(normalizedSql((legacy.prepare("SELECT sql FROM sqlite_schema WHERE name='pending_delegations'").get() as SchemaRow).sql));
+        pendingObject.columns.push(columnShape(legacy, "pending_delegations"));
       } finally { legacy.close(); }
     }
     reference = objects;
@@ -302,6 +427,9 @@ export function inspectInstallationDatabase(db: DatabaseSync) {
     // runs and the app rebuilds from the messages; its text is the app's to
     // change, so an archive's copy is never held to a byte-exact definition.
     if (isInboxProjectionObject(item)) continue;
+    // RESTORE-PARK r3.1 section 5 step 5: a Cloud export can still carry its one-row restore_pending marker (consumed at the next
+    // Cloud boot). It is accepted only in the exact form murage-commands writes, then dropped by the restore preparation.
+    if (item.tbl_name === "restore_pending" && (item.type === "table" ? normalizedSql(item.sql) === RESTORE_PENDING_SQL : item.type === "index" && item.sql === null)) continue;
     // A known NAME is not enough: an index kept under an allowed name but
     // made partial, unique, expression-based or re-targeted, or a table with a
     // CHECK, conflict clause or generated column, would survive activation
@@ -444,7 +572,7 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
     report("database-clean");
     // Every staged messages.db settles itself (SMOOTH-FTS-MERGE R6 section 3): the search index's deleted postings, the email
     // rows of a backup and every freed page leave the staged file before inspect, digest and publish. One VACUUM, always.
-    if (component === "messages.db") settleFtsCopy(staged, { check: false, beforeVacuum: sanitizeStagedEmailRows });
+    if (component === "messages.db") settleFtsCopy(staged, { check: false, beforeVacuum: db => { sanitizeStagedEmailRows(db); sanitizeOwnWriteHoldsForRestore(db); sanitizeStagedRestoreMarks(db); } });
     report("database-verify");
     const copied = new DatabaseSync(staged, { readOnly: true, timeout: 1000 });
     let counts;
@@ -482,16 +610,36 @@ async function snapshotSqliteWhileOwned<T extends object>(dataDir: string, desti
  * once its payload is gone (Astra r2 Medium). A database without the tables (email never on) is not touched. */
 export function sanitizeStagedEmailRows(db: DatabaseSync): { payloads: number; events: number; cards: number } {
   const has = (name: string) => Boolean(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
-  if (!has("email_payloads") && !has("email_events")) return { payloads: 0, events: 0, cards: 0 };
+  assertBackupEmailActions(db);
+  const hasCards = has("messages") && Boolean(db.prepare(`SELECT 1 FROM messages WHERE instr(json,'"emailSend"')>0 AND CASE WHEN json_valid(json) THEN json_type(json,'$.card.emailSend') END IS NOT NULL LIMIT 1`).get());
+  if (!has("email_payloads") && !has("email_events") && !hasCards) return { payloads: 0, events: 0, cards: 0 };
   const payloads = has("email_payloads") ? Number(db.prepare("DELETE FROM email_payloads").run().changes) : 0;
   const events = has("email_events") ? Number(db.prepare("DELETE FROM email_events").run().changes) : 0;
   // a row with damaged JSON is left as it is (json_valid first): sanitizing never fails a backup over one bad row
+  cancelOpenRecords(db, "Cancelled (backup)");
   const subtitle = "json_extract(json,'$.card.subtitle')";
   const cards = has("messages") ? Number(db.prepare(
-    `UPDATE messages SET json=json_set(json, '$.card.subtitle', CASE WHEN instr(${subtitle}, char(10)||char(10))>0 THEN substr(${subtitle}, 1, instr(${subtitle}, char(10)||char(10))-1) ELSE '' END, '$.card.emailSend.draft.text', '') ` +
-    `WHERE instr(json, '"emailSend"')>0 AND (CASE WHEN json_valid(json) THEN json_extract(json,'$.card.kind') END)='email-send'`,
+    `UPDATE messages SET json=json_remove(CASE WHEN json_extract(json,'$.card.approvalId') IS NULL AND json_type(json,'$.card.emailSend.draft.text') IS NOT NULL THEN json_set(json, '$.card.subtitle', CASE WHEN instr(${subtitle}, char(10)||char(10))>0 THEN substr(${subtitle}, 1, instr(${subtitle}, char(10)||char(10))-1) ELSE '' END, '$.card.emailSend.draft.text', '') ELSE json_set(json, '$.card.subtitle', CASE WHEN instr(${subtitle}, char(10)||char(10))>0 THEN substr(${subtitle}, 1, instr(${subtitle}, char(10)||char(10))-1) ELSE '' END) END,'$.card.detail') ` +
+    `WHERE instr(json, '"emailSend"')>0 AND (CASE WHEN json_valid(json) THEN json_type(json,'$.card.emailSend') END) IS NOT NULL`,
   ).run().changes) : 0;
+  refreshBackupEmailPresentations(db);
   return { payloads, events, cards };
+}
+
+/** The restore job's marks (swapped, prepared, blind) say where THIS installation's own restore stands; boot recovery reads them to finish or clear it.
+ * Carried into a backup they would travel into another installation's restore, where a stale "swapped" or "prepared" could steer recovery of a
+ * job that never ran there. They are dropped from the STAGED file only (the live source keeps them), on the settle's own connection so the VACUUM
+ * after it leaves no old page content. A database without the table (no owner restore yet) is not touched. */
+export function sanitizeStagedRestoreMarks(db: DatabaseSync): void {
+  // Durable replay is a receipt for this live native incarnation. A provider's
+  // context can advance after a snapshot, so a restored copy must rebuild it.
+  // Exclusions and epochs remain intact; only these positive stamps are reset.
+  if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='send_replay_sessions'").get())
+    db.exec("DELETE FROM send_replay_sessions");
+  if (db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='send_replay_session_nodes'").get())
+    db.exec("DELETE FROM send_replay_session_nodes");
+  db.exec("DROP TABLE IF EXISTS restore_boot_wait");
+  db.exec("DROP TABLE IF EXISTS restore_job_marks");
 }
 
 function snapshotDatabaseWhileOwned(dataDir: string, destination: string, onProgress?: BackupProgressReport) {

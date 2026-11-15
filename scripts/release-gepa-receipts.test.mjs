@@ -67,7 +67,7 @@ describe("release.yml GEPA receipts", () => {
   });
 
   it("keeps evidence artifacts out of the assembled asset set", () => {
-    const download = release.jobs.assemble.steps.find((step) => String(step.uses).startsWith("actions/download-artifact"));
+    const download = release.jobs.stage.steps.find((step) => String(step.uses).startsWith("actions/download-artifact"));
     expect(download.with.pattern).toBe("*-release");
     for (const job of ["mac", "windows", "linux"]) {
       const names = release.jobs[job].steps
@@ -95,11 +95,11 @@ describe("release.yml GEPA receipts", () => {
     expect(release.jobs.linux["timeout-minutes"]).toBeGreaterThanOrEqual(90);
   });
 
-  it("proves the release token can write before any signed build starts", () => {
-    const probe = release.jobs.prepare.steps.find((step) => String(step.name).startsWith("Prove the release token"));
-    expect(probe.if).toBe("steps.pin.outputs.should_release == 'true'");
-    expect(probe.env.GH_TOKEN).toBe("${{ secrets.RELEASES_PAT }}");
-    expect(probe.run).toContain("-F draft=true");
-    expect(probe.run).toContain("--method DELETE");
+  it("keeps release credentials out of every build and preparation job", () => {
+    for (const [name, job] of Object.entries(release.jobs)) {
+      if (name !== 'assemble') expect(JSON.stringify(job)).not.toContain('RELEASES_PAT');
+    }
+    expect(release.jobs.assemble.steps.some(step => step.run === 'node scripts/release-guard.mjs wait-stage')).toBe(true);
+    expect(release.jobs.stage.permissions.contents).toBe('read');
   });
 });

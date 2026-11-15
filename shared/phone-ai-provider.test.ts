@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { ENGINE_LABEL } from "../server/conversation-deletion.ts";
+import { deepseekDestinationAnswer } from "../server/drivers/acp/deepseek-destination.ts";
 import { aiProviderName } from "./phone-ai-provider.ts";
 
 const FIXED: Record<string, string> = {
   claude: "Anthropic", claudeAgent: "Anthropic", codex: "OpenAI", geminiAgent: "Google", antigravityAgent: "Google",
   grokAgent: "xAI", kimiAgent: "Moonshot AI", qwenAgent: "Alibaba Cloud", cursorAgent: "Cursor", droidAgent: "Factory", copilotAgent: "GitHub",
-  museCode: "Meta",
+  museCode: "Meta", deepseekAgent: "DeepSeek",
 };
 const ROUTERS = ["fuigoAgent", "piAgent", "opencodeGo", "hermesAgent", "openclawAgent", "clineAgent", "customAcp"];
 
@@ -20,6 +21,18 @@ describe("aiProviderName", () => {
     }
     expect(aiProviderName("claude")).toEqual({ id: "anthropic", name: "Anthropic" });
     expect(aiProviderName("grokAgent", { model: "claude-sonnet-4" }).name).toBe("xAI");
+  });
+  it("DeepSeek disclosure matches the native destination and rejects another provider", async () => {
+    const config = JSON.stringify([
+      { name: "@deepseek-ai/dsh-llm-deepseek-api-key", config: { baseURL: "https://api.deepseek.com/anthropic" } },
+      { name: "@deepseek-ai/dsh-acp", config: { provider: "deepseek-official", model: "deepseek-v4-flash" } },
+    ]);
+    const destination = await deepseekDestinationAnswer(config, { env: {}, cwd: "/fixture" });
+    expect(destination).toMatchObject({ provider: "deepseek-official", urls: ["https://api.deepseek.com/anthropic"] });
+    expect(destination.forModel?.('["another-provider","deepseek-v4-flash"]')).toEqual({ unknown: "deepseek-config" });
+    expect(aiProviderName("deepseekAgent")).toEqual({ id: "deepseek", name: "DeepSeek" });
+    expect(aiProviderName("deepseekAgent", { model: "claude-sonnet-4", endpointHost: "router.example.com" }))
+      .toEqual({ id: "deepseek", name: "DeepSeek" });
   });
   it("a router names the model's maker", () => {
     expect(aiProviderName("fuigoAgent", { model: "claude-sonnet-4" }).name).toBe("Anthropic");

@@ -1,3 +1,5 @@
+import { pendingViewPage } from './recall-view-index.ts';
+import type { RecallViewHandle } from './recall-view.ts';
 import type { DatabaseSync } from "node:sqlite";
 import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 import { RECORD_KEYS_TABLE, recordKeysPresent } from "./schema.ts";
@@ -40,7 +42,8 @@ export function pendingProjectionRefsIn(db:DatabaseSync,scopeIds:readonly string
 /** The next records after `after` (a receipt row id; 0 starts) in these scopes whose projection is still pending, in receipt
  * order, at most `limit`, with the row id to continue from. A reader's coverage is decided by walking this to the first record
  * it may read, however many it may not (search.ts), so the walk is keyed, never counted. */
-export function pendingProjectionRefsAfter(db:DatabaseSync,scopeIds:readonly string[],after:number,limit:number):Array<{id:string;version:number;rowid:number}> {
+export function pendingProjectionRefsAfter(db:DatabaseSync,scopeIds:readonly string[]|RecallViewHandle,after:number,limit:number):Array<{id:string;version:number;rowid:number}> {
+  if(!Array.isArray(scopeIds))return pendingViewPage(db,scopeIds as RecallViewHandle,after,limit);
   return db.prepare(`SELECT p.rowid AS rowid,r.id,r.version FROM memory_projection_receipts p
     JOIN memory_records r ON r.id=p.record_id AND r.version=p.record_version
     WHERE p.rowid>? AND ${PENDING} AND r.scope_id IN (SELECT value FROM json_each(?)) ORDER BY p.rowid LIMIT ?`).all(after,JSON.stringify(scopeIds),limit).map(row=>({id:String(row.id),version:Number(row.version),rowid:Number(row.rowid)}));

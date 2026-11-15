@@ -1,15 +1,32 @@
-import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fixtureDisplayReply, fixtureMessageEvidence } from "./testing/display-fixture.ts";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 
 let fixture: VerificationServer;
 let headers: Record<string, string> = {};
 const api = async (method: string, path: string, body?: unknown): Promise<any> => {
+  // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 / 3ad2b8f428: submit the actual opaque display action.
+  if (method === "POST" && path.endsWith("/respond")) body = fixtureDisplayReply(join(fixture.info.dataDir, "messages.db"), body);
   const res = await fetch(fixture.info.url + path, { method, headers: { "content-type": "application/json", ...headers }, ...(body ? { body: JSON.stringify(body) } : {}) });
   const value = await res.json(); expect(res.status, JSON.stringify(value)).toBeLessThan(300); return value;
 };
-const messages = async (threadId: string): Promise<any[]> => (await api("GET", `/api/threads/${threadId}/messages`)).messages;
+// MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 / 3ad2b8f428: inspect only displayed rows; the helper proves opaque handles and no public native ids.
+const messages = async (threadId: string): Promise<any[]> => fixtureMessageEvidence(join(fixture.info.dataDir, "messages.db"), (await api("GET", `/api/threads/${threadId}/messages`)).messages);
+/** On a turn that never settles: the thread's rows (shape only), the bot's busy state and the server log's tail, to stderr. */
+const dumpStall = async (botId: string, threadId: string, step: number) => {
+  const out: string[] = [`[f9-stall] step=${step} at=${new Date().toISOString()}`];
+  try {
+    const rows = ((await (await fetch(fixture.info.url + `/api/threads/${threadId}/messages`, { headers })).json()) as { messages?: any[] }).messages ?? [];
+    for (const row of rows) out.push(`[f9-stall] row kind=${row.kind} role=${row.role} turn=${row.turnId ?? "-"} terminal=${row.turnTerminal ? 1 : 0} engine=${row.engine?.instanceId ?? "-"} tool=${row.tool?.name ?? "-"} ok=${row.tool?.ok ?? "-"} status=${row.status ?? row.card?.status ?? "-"} text=${JSON.stringify(String(row.text ?? "").slice(0, 160))}`);
+    const bots = ((await (await fetch(fixture.info.url + "/api/bots?messages=0", { headers })).json()) as { bots?: any[] }).bots ?? [];
+    out.push(`[f9-stall] bot ${JSON.stringify(bots.find((item: any) => item.id === botId) ?? null).slice(0, 600)}`);
+  } catch (error) { out.push(`[f9-stall] api read failed: ${String(error)}`); }
+  try { out.push(`[f9-stall] server log tail:\n${readFileSync(fixture.info.logPath, "utf8").split("\n").slice(-200).join("\n")}`); }
+  catch (error) { out.push(`[f9-stall] log read failed: ${String(error)}`); }
+  console.error(out.join("\n"));
+};
 beforeAll(async () => {
   fixture = await launchVerificationServer({}, undefined, { instrumentationSource: `
     const fs = await import('node:fs'); const path = await import('node:path');
@@ -34,7 +51,13 @@ it("F9 drives engine A to B to A through the real isolated server and fake engin
   for (const [index, engine] of ["verification", "second", "verification"].entries()) {
     await api("PATCH", `/api/bots/${bot.id}`, { modelSelection: { instanceId: engine, model }, computer: "off", browser: false });
     await api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: `SWAP_STEP_${index}` });
-    await expect.poll(async () => (await messages(bot.threadId)).filter(row => row.turnTerminal).length, { timeout: 20000 }).toBe(index + 1);
+    try {
+      await expect.poll(async () => (await messages(bot.threadId)).filter(row => row.turnTerminal).length, { timeout: 20000 }).toBe(index + 1);
+    } catch (error) {
+      // F9 diagnostic (CI-REDS 1.0.18, test-only): a timed-out turn names its stall instead of only its count
+      await dumpStall(bot.id, bot.threadId, index);
+      throw error;
+    }
     await expect.poll(async () => !(await api("GET", "/api/bots?messages=0")).bots.find((item: any) => item.id === bot.id).busy, { timeout: 20000 }).toBe(true);
     const rows = await messages(bot.threadId), terminal = rows.filter(row => row.turnTerminal).at(-1);
     expect(terminal.engine.instanceId).toBe(engine);
@@ -46,7 +69,7 @@ it("F9 drives engine A to B to A through the real isolated server and fake engin
     if (index === 2) expect(JSON.stringify(dump.prompt)).toContain("Engine B");
     snapshots.push({ engine, rows, prompt: dump.prompt });
   }
-  writeFileSync(join(process.cwd(), ".engine-swap-workflow-evidence.json"), JSON.stringify({ fixture: fixture.info, snapshots }, null, 2));
+  console.info("Engine swap verification", JSON.stringify({ fixture: fixture.info, snapshots }));
 }, 60000);
 
 it("F3 folds real tool start, completion and options events with the turn stamp read by the guard", async () => {

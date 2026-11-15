@@ -1,0 +1,236 @@
+path	tier	oses	reason
+scripts/no-limits-live/baseline-f.test.mjs	gate	all	No limits release policy and evidence remain consistent
+scripts/no-limits-live/baseline.test.mjs	gate	all	No limits release policy and evidence remain consistent
+scripts/no-limits-live/field.test.mjs	gate	all	No limits release policy and evidence remain consistent
+scripts/no-limits-live/oracle.test.mjs	gate	all	No limits release policy and evidence remain consistent
+scripts/no-limits-live/readers.test.mjs	gate	all	No limits release policy and evidence remain consistent
+scripts/no-limits-live/release.test.mjs	gate	all	No limits release policy and evidence remain consistent
+scripts/no-limits-live/retry-observer.test.mjs	gate	all	No limits release policy and evidence remain consistent
+scripts/no-limits-live/review-blocks.test.mjs	gate	all	No limits release policy and evidence remain consistent
+scripts/no-limits-live/start-accounting.test.mjs	gate	all	No limits release policy and evidence remain consistent
+scripts/nolim-replay/j1-availability.test.mjs	gate	all	No limits release policy and evidence remain consistent
+scripts/nolim-replay/replay-contract.test.mjs	gate	all	No limits release policy and evidence remain consistent
+server/browser-host-test-seam.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/channels/signal/park-archive.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-atomic.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-authority.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-copy-inventory.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-discovery.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-downgrade-authority.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-downgrade.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-feature-baseline.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-fence.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-frozen.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-fs.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-parser.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-preflight.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-replacement.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-review.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-safety.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-state.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park-writer.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/park.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/channels/signal/runtime-signatures.test.ts	gate	all	Signal park preserves archives, authority and recovery boundaries
+server/cloud-home/email-keystore-r1.test.ts	gate	linux	Cloud home email, identity and startup preserve owner isolation
+server/cloud-home/email-keystore.test.ts	gate	linux	Cloud home email, identity and startup preserve owner isolation
+server/cloud-home/email-owner-reconcile.test.ts	gate	linux	Cloud home email, identity and startup preserve owner isolation
+server/cloud-home/email-owner-signin.test.ts	gate	linux	Cloud home email, identity and startup preserve owner isolation
+server/cloud-home/flux-device-code-client.test.ts	gate	linux	Cloud home email, identity and startup preserve owner isolation
+server/cloud-home/home-events-channel.test.ts	gate	linux	Cloud home email, identity and startup preserve owner isolation
+server/cloud-home/home-events-held.test.ts	gate	linux	Cloud home email, identity and startup preserve owner isolation
+server/cloud-home/home-events-race.test.ts	gate	linux	Cloud home email, identity and startup preserve owner isolation
+server/cloud-home/home-events-uidsplit.test.ts	gate	linux	Cloud home email, identity and startup preserve owner isolation
+server/cloud-home/image-excludes-testdata.test.ts	gate	linux	Cloud home email, identity and startup preserve owner isolation
+server/cloud-home/restore-startup-ports.test.ts	gate	linux	Cloud home email, identity and startup preserve owner isolation
+server/connector-set-aside.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-producers/browser-execution.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-producers/card-class.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-producers/denials.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-producers/email-lifecycle.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-producers/presentation.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-producers/queue.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-producers/renderer.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-producers/routine-receipt-scale.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-producers/routing.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-wiring/actor-wiring.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-wiring/base-workflow-parity.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-wiring/deny-e2e.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-wiring/fix-round2.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-wiring/question-e2e.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-wiring/review-regressions.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-wiring/server-fixture.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision-wiring/settle-e2e.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/afix-nlsym-b-h4.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/afix-nlsym-b2.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/authority-attacks.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/base-parity.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/budget.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/cancellation-batch.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/compatibility.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/contract.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/cost.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/engine-action.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/exec-mode.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/faults.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/gate-evidence.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/ingress.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/inventory.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/legacy-import.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/main-addendum.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/no-limits-queue-release-1019.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/decision/no-limits-release-1019.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/decision/no-limits-release-integrity-1019.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/decision/no-limits-release-rulings-1019.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/decision/no-limits-structured-1019.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/decision/no-limits-x2-full-access.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/decision/no-limits-x2.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/decision/no-limits-y3b-full-access.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/decision/no-limits-y3b.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/decision/no-limits-y3c.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/decision/planned-routine-wipe.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/producer-contract.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/producer-identity.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/record-presentation.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/records-crash.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/records-dedup.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/release-guard.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/review-blocks.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/routine-policy.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/sable-shapes.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/schema-lifecycle.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/seam.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/settle-faults.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/settle-states.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/starting-tree.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/decision/workflow-smoke.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/downgrade-restore-window.test.ts	gate	all	Recovery and downgrade preserve data and fence pending work
+server/drivers/acp-posture-switch.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/drivers/answer-idempotency.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/drivers/antigravity-posture-switch.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/drivers/claude-posture-switch.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/drivers/codex-posture-switch.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/drivers/muse-code-posture-switch.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/drivers/native-answer-ack.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/drivers/native-answer-retry.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/drivers/native-ask.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/drivers/no-limits-chat-release-1019.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/drivers/no-limits-codex-release-1019.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/drivers/no-limits-provider-release-1019.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/drivers/no-limits-release-inventory-1019.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/drivers/pi-posture-switch.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/drivers/request-delivery.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/email/exec-spec/keystore/exec-spec.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/exec-spec/keystore/flux276.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/exec-spec/keystore/harness-unobserved.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/exec-spec/keystore/i12-r32f.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/exec-spec/keystore/i6d-r32e.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/exec-spec/keystore/iter.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/exec-spec/keystore/k1k2-r32e.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/exec-spec/keystore/keystore-ci.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/exec-spec/keystore/r32g.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/exec-spec/keystore/r32h-opus.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/exec-spec/keystore/r32h-product.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/exec-spec/keystore/r32h.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/exec-spec/keystore/seeds-stalled.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/exec-spec/keystore/witness-pass.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/reconnect-r32h.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/reconnect-r32k.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/restore-backup-gate-j4.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/restore-backup-gate-j4b.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/restore-boot-wait-r7.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/restore-data-ops-j4c.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/restore-data-ops-j4d.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/restore-job-j2.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/restore-job-j3.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/restore-job-j5.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/restore-marks-roundtrip.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/email/rotation-durable.test.ts	gate	all	Email secrets, backup and restore preserve owner data and authority
+server/highlevel/approval-journal-native.test.ts	gate	all	HighLevel routing, scope and credentials preserve owner authority
+server/highlevel/credential-commit.test.ts	gate	all	HighLevel routing, scope and credentials preserve owner authority
+server/highlevel/s0-baseline-contract.test.ts	gate	all	HighLevel routing, scope and credentials preserve owner authority
+server/highlevel/s0-batch-contract.test.ts	gate	all	HighLevel routing, scope and credentials preserve owner authority
+server/highlevel/s0-planning-contract.test.ts	gate	all	HighLevel routing, scope and credentials preserve owner authority
+server/highlevel/s0-privacy-contract.test.ts	gate	all	HighLevel routing, scope and credentials preserve owner authority
+server/highlevel/scope-policy.test.ts	gate	all	HighLevel routing, scope and credentials preserve owner authority
+server/installation-boot-wait-schema.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/installation-downgrade-restore-holds.test.ts	gate	all	Recovery and downgrade preserve data and fence pending work
+server/installation-downgrade-restore-tables.test.ts	gate	all	Recovery and downgrade preserve data and fence pending work
+server/installation-restore-boot-wait.test.ts	gate	all	Recovery and downgrade preserve data and fence pending work
+server/installation-snapshot-schema-cover.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/memory/field-replay.e2e.test.ts	gate	all	Memory capture and replay preserve data and access boundaries
+server/memory/field-replay/review-regressions.test.ts	gate	all	Memory capture and replay preserve data and access boundaries
+server/memory/registered-request.test.ts	gate	all	Memory capture and replay preserve data and access boundaries
+server/memory/service-approval.test.ts	gate	all	Memory capture and replay preserve data and access boundaries
+server/no-limits-afix-b.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-afix-evidence.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-afix-lexer-recovery.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-afix-local-recovery.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-afix-review.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-afix-write-positions.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-archive-design-parity.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-archive-design.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-archive-destinations.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-archive-modes.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-archive-reader-parity.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-archive-unknown-cwd.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-block-fixes.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-collect.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-cwd-suffix.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-cwd.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-fs.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-gate-files.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-inspection.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-legacy-archive.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-legacy-readers.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-native-destinations.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-native-producers.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-one-rule-api.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-one-rule-inventory.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-one-rule-services.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-one-rule.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-operation.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-owner-integration.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-placement-role-parity.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-placement.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-producer-hazards.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-producers-afix-b2.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-producers.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-protected.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-r2-cwd.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-r2.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-receiver-b3.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-review-blocks.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-s1-archive-blocks.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-s1-archive-newlines.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-s1-archive.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-segment-contract.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-segment-cwd-scopes.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-segment-design.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-segment-heredoc-continuation.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-segment-structure.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-segment-structured-bodies.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-segment-unknown-prefix.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-segment-walk-parity.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-shell-import-graph.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-shell-role-preservation.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-symlink-fakes.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-symlink-r31.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-symlink.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-taint.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/no-limits-y3b-reader.test.ts	gate	all	No limits release policy and evidence remain consistent
+server/permission-level-parity.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/restore-path-inventory.test.ts	gate	all	Recovery and downgrade preserve data and fence pending work
+server/search-index-test-cleanup.test.ts	gate	all	Test fixtures and worker cleanup keep verification isolated
+server/search-worker-cleanup.test.ts	gate	all	Test fixtures and worker cleanup keep verification isolated
+server/shell/archive-roles.test.ts	gate	all	Shell parsing retains command and target roles for execution policy
+server/shell/getopt.test.ts	gate	all	Shell parsing retains command and target roles for execution policy
+server/shell/r2-contract.test.ts	gate	all	Shell parsing retains command and target roles for execution policy
+server/shell/roles.test.ts	gate	all	Shell parsing retains command and target roles for execution policy
+server/shell/segments.test.ts	gate	all	Shell parsing retains command and target roles for execution policy
+server/testing/fixture-reset-strict.test.ts	gate	all	Approval and execution policy stays enforced in production
+server/testing/git-fixture.test.ts	gate	all	Test fixtures and worker cleanup keep verification isolated
+server/turn-preparation-api.test.ts	gate	all	Approval and execution policy stays enforced in production
+src/components/RestoreJobCard.dom.test.ts	gate	all	Approval and execution policy stays enforced in production
+src/components/RestoreJobCard.test.ts	gate	all	Approval and execution policy stays enforced in production
+src/components/cloud/cloud-banner-waiting.test.ts	extended	linux	Presentation coverage; no data or authority boundary
+src/components/setup-feedback.dom.test.ts	extended	linux	Presentation coverage; no data or authority boundary

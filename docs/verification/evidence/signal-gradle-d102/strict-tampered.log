@@ -1,0 +1,36 @@
+Fetching distribution.
+Downloading file:/job/gradle-distribution.zip
+..............10%..............20%...............30%..............40%...............50%..............60%...............70%..............80%...............90%..............100%
+
+Welcome to Gradle 9.8.2!
+
+Here are the highlights of this release:
+ - Java 27 support
+ - Maven mirror settings reuse
+ - Linked problem locations in build output
+
+For more details see https://docs.gradle.org/9.8.2/release-notes.html
+
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/9.8.2/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build
+
+FAILURE: Build failed with an exception.
+
+* Where:
+Build file '/job/strict-tampered/source/buildSrc/build.gradle.kts' line: 5
+
+* What went wrong:
+Error resolving plugin [id: 'org.gradle.kotlin.kotlin-dsl', version: '6.7.6']
+> Dependency verification failed for configuration 'detachedConfiguration1'
+  One artifact failed verification: org.gradle.kotlin.kotlin-dsl.gradle.plugin-6.7.6.pom (org.gradle.kotlin.kotlin-dsl:org.gradle.kotlin.kotlin-dsl.gradle.plugin:6.7.6) from repository Gradle Central Plugin Repository
+  This can indicate that a dependency has been compromised. Please carefully verify the checksums.
+
+  Open this report for more details: file:///job/strict-tampered/source/build/reports/dependency-verification/at-1794387138750/dependency-verification-report.html
+
+* Try:
+> Run with --stacktrace option to get the stack trace.
+> Run with --info or --debug option to get more log output.
+> Run with --scan to get full insights from a Build Scan (powered by Develocity).
+> Get more help at https://help.gradle.org.
+
+BUILD FAILED in 10s

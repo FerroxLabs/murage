@@ -710,72 +710,74 @@
   },
   "beacon-affiliate-program": {
    "verdict": "clean",
-   "contentHash": "29469077904376051e99fbe42b99fde9e433553e2389b10d52809621707bb057",
+   "contentHash": "928c4626466738a1dc2f5efe3d30aeefc387deb1e25da18fe0df048a7002c5dc",
    "rules": []
   },
   "beacon-blog-content": {
    "verdict": "clean",
-   "contentHash": "7070b6c1c03dd5066bcd576028363c0edb0a6d5ed2fe33c77f3f1e1313e4efd3",
+   "contentHash": "b994a975da99585efe56f2824a385709d11fb30299fa4343609baaf2ca6807f4",
    "rules": []
   },
   "beacon-channel-strategy": {
    "verdict": "clean",
-   "contentHash": "a861bc27aa10a84277c202abb253747960de13c112da5390b626c5fba7c91d34",
+   "contentHash": "9fe22e4de51a9252ef3222972330bf065be8000d8ef0247e06ed5e0b31cef9ec",
    "rules": []
   },
   "beacon-email-sequences": {
    "verdict": "clean",
-   "contentHash": "e387662c1de2bddd38ff21fd3ec98777c4702363e679f702ae21187aa0111b94",
+   "contentHash": "bd4b251981dd5045be36bcf31cb60b71a2c132b56cdb256242a398ea41f5e5ac",
    "rules": []
   },
   "beacon-facebook": {
    "verdict": "clean",
-   "contentHash": "345964aa5e178a3ab0bcd7281456cb5cdf76f8b7741cf2cf8cb383991524f341",
+   "contentHash": "0de5feb969cb389126afc5163866bf78c1d93e5759b15d61bba50d7d93cfcf73",
    "rules": []
   },
   "beacon-funnel-build": {
    "verdict": "clean",
-   "contentHash": "50d5e4516758a5a0111d5bee817d78c61b5bdbfb2bc9f81fe385b9d319c34f53",
+   "contentHash": "4f40d4cdb4f9c02e68a67ab8fa996ace87f8fc407a184463b156025b8c7493c8",
    "rules": []
   },
   "beacon-instagram": {
    "verdict": "clean",
-   "contentHash": "732634c475aed4b813a894fd6938c1e73b5f0eacd54edd430636335f5b7402c6",
+   "contentHash": "7cfd9f811e701fe259c7c4b221fd1aaab213b06e46471a841159c2a36066ec3a",
    "rules": []
   },
   "beacon-linkedin": {
    "verdict": "clean",
-   "contentHash": "8b4c7575a1a17c3c4b9a3204dabfe5b77356f06701aec54ee881b17a7fbec6d9",
+   "contentHash": "20b6b3f3c96d9ed93a65b8d9477d296b23f03eb7f8b38278d94186b62b446bb9",
    "rules": []
   },
   "beacon-newsletter": {
    "verdict": "clean",
-   "contentHash": "c6527678eeef1c1f8e756fa3f2d157b3e3e0eedf4e5a4090da0db405507e2f83",
+   "contentHash": "43dd6961896833087272b894fa3ba1a0fdb4fec8c4417bbee8f9c30a2292a838",
    "rules": []
   },
   "beacon-paid-acquisition": {
    "verdict": "clean",
-   "contentHash": "3fff1efe53fc0cda30652fd824c5f777a82f6401e4cbd94179c1852246abf42b",
+   "contentHash": "2b890b7c23dff4a972c81eae8f5a74e15d6a20d3794748921728707bf74769d5",
    "rules": []
   },
   "beacon-podcast": {
-   "verdict": "clean",
-   "contentHash": "5eef770b64d061a055cdd06cc053d04d65b5f7c994e2bbb7d51b00079777948a",
-   "rules": []
+   "verdict": "review",
+   "contentHash": "d36ab25dff4e0e18fe8e227e4b966df935e0717f3af589bb7cbe00a29800be6e",
+   "rules": [
+    "skillspector:E4.1"
+   ]
   },
   "beacon-seo-organic": {
    "verdict": "clean",
-   "contentHash": "2b332977aced72e317e65f53b8b41ed6cbce5171de53301626b672f1ee33956d",
+   "contentHash": "b580f5a850873f001fc59eff259bca907ecd9a617ec537224de2a73cd984a484",
    "rules": []
   },
   "beacon-short-form-video": {
    "verdict": "clean",
-   "contentHash": "fa51e96572e6e35562776dc4842f3f51f631920b2657cd3f95051f491375ad10",
+   "contentHash": "0df742a77925948a432fcbc09bbc599255afa727122c820490d9c99ac0b736f1",
    "rules": []
   },
   "beacon-twitter-x": {
    "verdict": "clean",
-   "contentHash": "ffa1d42add8aac13b070165a9326aa6a0fe7f55976d546cbb38f5e6908561272",
+   "contentHash": "7eadcf741c17a2f94e548e991e94681197405d38332740cd3a927612505042df",
    "rules": []
   },
   "beat-maker": {
@@ -1941,7 +1943,7 @@
   },
   "concierge": {
    "verdict": "clean",
-   "contentHash": "1c6bb7a119358d9f3c8f376df97eecbbcfa0efb12d8eda7144caccbf52fc4fae",
+   "contentHash": "e846d251d6f23501a56124f545eda8cd04ae0102756681aa514162b16f394ad9",
    "rules": []
   },
   "conciseness-editing": {
@@ -3225,6 +3227,11 @@
     "skillspector:PE5.4",
     "skillspector:RA2_CODE.2"
    ]
+  },
+  "docs-auditor": {
+   "verdict": "clean",
+   "contentHash": "888eac5a7dbd51e2022f18176c6152e7ff30cfc9c9f3d69417c977b394356ad7",
+   "rules": []
   },
   "docs-site-builder": {
    "verdict": "clean",
@@ -5059,7 +5066,7 @@
   },
   "incident-response": {
    "verdict": "clean",
-   "contentHash": "0e0a2331ed30369d76f1573512cba2cbdda1a8eb8f31bfe6019de84f170a9b19",
+   "contentHash": "f2c7faf58429422deacb41ad0bef2f7b41a68443de15f9dcabd8cc19fb2af5f6",
    "rules": []
   },
   "incident-response-software-project": {
@@ -5771,22 +5778,22 @@
   },
   "lens-cohort-and-retention": {
    "verdict": "clean",
-   "contentHash": "3f6a9176327c81b6b56c2bb44f349c9731162c618f9760395d689ad4b61ec304",
+   "contentHash": "0719189d42d5c7d3ab2ffd539db0aad16e576dfee6379d20d80cf5f1fc82205d",
    "rules": []
   },
   "lens-funnel-diagnosis": {
    "verdict": "clean",
-   "contentHash": "5d0e3c868a08c78dff2d781e853759cc93bebcf5ed232eb3bd252f49581c0d75",
+   "contentHash": "39187845473d80c413119192d2ed71a24dca97b0690ce12cc11b128c5742adc1",
    "rules": []
   },
   "lens-marketing-attribution": {
    "verdict": "clean",
-   "contentHash": "e4978e991ebf201eef2ed7048ea515b3d575ab0c6eb14a198e9733b9f2018e82",
+   "contentHash": "4be7469c5a997dbe1268f41337c82cc33b6ae0ae8b0b970dc0c5cfe44b59ad01",
    "rules": []
   },
   "lens-north-star-and-experiments": {
    "verdict": "clean",
-   "contentHash": "8b7fdfc519b6935e65e739919a418ce7a54461579e25330933a9318ff448d194",
+   "contentHash": "9d38b63df1137897e89722565c4f846513865df3bed56092fa3568f8889258f1",
    "rules": []
   },
   "lesson-plan-design": {
@@ -8382,6 +8389,11 @@
    "contentHash": "a1c8779d36419358e7abd284643a85bd38b11f2d8107e70f37442a76294e15c8",
    "rules": []
   },
+  "repro-pack": {
+   "verdict": "clean",
+   "contentHash": "d3238d73603a1f9016ace31a587a035c410805ec076a1fa7e3504f962b22c0df",
+   "rules": []
+  },
   "requirements-analyst": {
    "verdict": "clean",
    "contentHash": "7131558cfcf830d5dc123213a93854106b1cab5b336c0ca97e7cf524acf65209",
@@ -8987,6 +8999,11 @@
    "contentHash": "f5b1b4e7c7587abc3181fb507298be129748a640bace0c9ef3c110c48b32cc9b",
    "rules": []
   },
+  "security-questionnaire": {
+   "verdict": "clean",
+   "contentHash": "65b557eff42de385a128d3009a0f79df25da14e12b5a40ebfb285967641982c2",
+   "rules": []
+  },
   "segmentation-design": {
    "verdict": "clean",
    "contentHash": "0724970cd333949be2719adf535cd479553cf38c2dc7c54fa6f638f92ef8349c",
@@ -9062,6 +9079,11 @@
    "contentHash": "2d67c70efed09d759755b339cf89f4fa2dbbad4e44f1d70d285c42a2b9d3a81e",
    "rules": []
   },
+  "seo-aeo-desk": {
+   "verdict": "clean",
+   "contentHash": "7edf71c3f1d84793989817a1d08f42cb84250d56d9453cb0de7360b2e6aa0324",
+   "rules": []
+  },
   "seo-blog-post": {
    "verdict": "clean",
    "contentHash": "3061a782afec7f11589921f3cdf7500472fb0d2eae4611c4bc9f3132f86d7bfb",
@@ -9099,7 +9121,7 @@
   },
   "service-mesh-operator": {
    "verdict": "clean",
-   "contentHash": "6d523c69ed7044e79e0f45d3f58711c35cf44aad0fbd199c76eeb9badc818033",
+   "contentHash": "c4409bb54653b357e5088724e9f653ba9e5402a35519028dc0a07b62bf697391",
    "rules": []
   },
   "set-up-monitoring": {
@@ -9436,7 +9458,7 @@
   },
   "spark-curriculum-architecture": {
    "verdict": "clean",
-   "contentHash": "7aa92c26bc62deb1499492a039cb12192c41a05a9ec67c50f0726ac10489df05",
+   "contentHash": "03f505718b5e71a461d21e52e0e90dd08366cd211e9a27c1e34919fd7f9c3f6b",
    "rules": []
   },
   "spark-engineer": {
@@ -10684,12 +10706,12 @@
   },
   "vault-agentic-geo": {
    "verdict": "clean",
-   "contentHash": "55b3d662f49adadf1400610d2d32132a18cd550e9ff77e918c8228b35d6e3bc2",
+   "contentHash": "7ca0e02151f59a66b118c36a3e795b7883a165f17b7450968359708b72af6897",
    "rules": []
   },
   "vault-marketplace-ops": {
    "verdict": "clean",
-   "contentHash": "950772bc1ec429755889d3d96cd4533670bfa784427a0186aeaada9b5245d8d2",
+   "contentHash": "5d3f3a85f433e6ab1d923f57f84f9bbf5ad4b86b49d63aa8a145193764f3ca1e",
    "rules": []
   },
   "vault-storefront-foundation": {
@@ -10724,7 +10746,7 @@
   },
   "verdict-flag-and-fix": {
    "verdict": "clean",
-   "contentHash": "58a75f157f478292a81cc73001e0cd7a24f734e0fba3f7b67e09a85a44b1050e",
+   "contentHash": "81239d4c66fca97c1476190d34776ab269e3b3c538349d2a69c1456e2bc2433c",
    "rules": []
   },
   "verdict-score-and-rank": {

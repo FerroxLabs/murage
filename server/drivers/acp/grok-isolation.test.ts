@@ -1,3 +1,6 @@
+// control: retain the isolated turn and mount admission used by server dispatch.
+import { CliMountRelay } from "../cli-mount-relay.ts";
+import { bindFixtureAdapter } from "../../testing/mcp-admission-fixture.ts";
 import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -7,7 +10,7 @@ import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readlinkSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { recordEvents } from "../../testing/events.ts";
 import { ensureDirs } from "../../config.ts";
 import { isolationStats, resetIsolationCache } from "../isolation-cache.ts";
@@ -86,13 +89,19 @@ describe("grok personal setup isolation", () => {
     const dump = join(home, "spawn.json");
     const instance = await GrokAgentDriver.create({ instanceId: "grok-iso", displayName: "Grok", enabled: true,
       config: GrokAgentDriver.decodeConfig({ cli, fullAuto: true }),
-      environment: { HOME: home, USERPROFILE: home, FAKE_ACP_MODE: "happy", FAKE_ACP_DUMP: dump, FAKE_ACP_VERSION: "grok 1.0.50 (fixture)",
+      environment: { HOME: home, USERPROFILE: home, FAKE_ACP_MODE: "happy", FAKE_ACP_MCP_LIST: "all:ready", FAKE_ACP_DUMP: dump, FAKE_ACP_VERSION: "grok 1.0.50 (fixture)",
         // Grok gates its first prompt on the MCP-ready announcement (grok.ts mcpReadyNotification), so the fixture sends it.
         FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized" } });
+    bindFixtureAdapter(instance.adapter);
     const recorder = recordEvents(instance.adapter);
+    let relay: CliMountRelay | undefined;
+    const createRelay = CliMountRelay.create;
+    const observeRelay = vi.spyOn(CliMountRelay, "create").mockImplementation(async (...args) => {
+      relay = await createRelay(...args); return relay;
+    });
     try {
       await instance.adapter.sendTurn({ threadId: "grok-iso-1", text: "hello", cwd: home,
-        integrations: { agents: { command: process.execPath, args: ["fixture-agents"], env: {} }, memory: { command: process.execPath, args: ["fixture-memory"], env: {} } } });
+        integrations: { agents: { command: process.execPath, args: [new URL("../../testing/fake-idle-mcp.mjs", import.meta.url).pathname, "fixture-agents"], env: {} }, memory: { command: process.execPath, args: [new URL("../../testing/fake-idle-mcp.mjs", import.meta.url).pathname, "fixture-memory"], env: {} } } });
       await recorder.until((event) => event.threadId === "grok-iso-1" && event.type === "turn.completed", 15000);
       const spawned = JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string> };
       for (const name of GROK_EXTERNAL_COMPAT_GATES) expect(spawned.env[name]).toBe("0");
@@ -110,11 +119,17 @@ describe("grok personal setup isolation", () => {
       expect(readlinkSync(join(scoped, "auth.json"))).toBe(join(home, ".grok", "auth.json"));
       expect(existsSync(join(scoped, "plugins"))).toBe(false);
       for (const i of shadows) { expect(i).toBeGreaterThan(agent); expect(i).toBeLessThan(stdio); }
-      const mounted = JSON.parse(readFileSync(`${dump}.mcp.json`, "utf8")) as Array<{ name: string; args: string[] }>;
+      const sessionMounts = JSON.parse(readFileSync(`${dump}.mcp.json`, "utf8")) as Array<{ name: string; args: string[] }>;
+      const mounted = sessionMounts.map(server => {
+        expect(server.args[0]).toMatch(/cli-mount-shim/);
+        const child = relay?.mounts.get(server.name)?.child;
+        expect(child).toBeDefined();
+        return { ...server, args: child!.spawnargs.slice(1) };
+      });
       expect(mounted.some((server) => server.args.includes("fixture-agents"))).toBe(true);
       expect(mounted.some((server) => server.args.includes("fixture-memory"))).toBe(true);
       expect(JSON.stringify(mounted)).not.toMatch(/tradingview|personal-mcp/);
-    } finally { recorder.stop(); await instance.dispose(); }
+    } finally { observeRelay.mockRestore(); recorder.stop(); await instance.dispose(); }
   }, 30000);
 
   it("filters config.toml: no [mcp_servers.*] or hooks, everything else byte for byte", () => {

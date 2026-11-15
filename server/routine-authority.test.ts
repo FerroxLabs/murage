@@ -1,17 +1,8 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// S3: creation and owner edits pin a ceiling; load pins legacy records once.
-// Fixtures use temporary files and never dispatch a turn. The reviewer runs
-// this file, routine-permissions tests and exact-command tests under Vitest.
-// S3b contract: RED regressions for gaps 1-6 and the current selector for gap 7.
-// Scope: adjacent tests and SendTurnInput.routeAsks only; no driver fixes.
-// Checks: inspect fake protocols, decision assertions and git diff on macOS.
-// Runtime checks: focused Vitest files and the routine-approvals Playwright spec
-// await an equipped checkout. No Node, pnpm, Vitest or network in this lane.
-// Stop after source review and a clean diff check. Runtime rounds/corrections: 0/0.
-// Written: all seven gaps, four named extraction seams, fake-CLI controls.
-// Evidence: source review, scope/comment checks and git diff --check passed; runtime results unobserved.
-// Next: implement the named decisions, then run the focused checks in an equipped checkout.
+// Owner edits preserve explicit ceilings. Inherited fallback levels follow
+// No limits, including legacy 1.0.18 Full records without explicit provenance.
+// Fixtures use temporary files and never dispatch a turn.
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -59,6 +50,7 @@ afterEach(() => {
 
 describe("routine authority", () => {
   // Gap 4: both server send paths must carry a permission-enforcement field at every level.
+  // MAIN RULING 2026-11-13 wipe-only: No limits is carried through dispatch; explicit lower choices survive.
   it("server turns carry routeAsks below Full and stopLine at Full", () => {
     // SEAM: turnPermissionEnforcement(bot) in routine-permissions.ts, extracted from both index.ts sendTurn builders after applying the effective routine level.
     const enforcement = (routinePermissions as typeof routinePermissions & {
@@ -68,21 +60,22 @@ describe("routine authority", () => {
     const profile = { autoApprove: true, fullAccess: true, noLimits: true };
     for (const mode of ["ask", "auto", "full", "unlimited"] as const) {
       const bot = routinePermissions.applyRoutinePermissionMode(profile, mode);
-      expect(enforcement!(bot), mode).toEqual(mode === "ask" ? { routeAsks: true, askLevel: true } : mode === "auto" ? { routeAsks: true } : { stopLine: true });
-      const capped = routinePermissions.applyRoutinePermissionMode(profile, effectiveRoutinePermissionMode({ permissionMode: mode }, profile));
+      expect(enforcement!(bot), mode).toEqual(mode === "ask" ? { routeAsks: true, askLevel: true } : mode === "auto" ? { routeAsks: true } : mode === "unlimited" ? { stopLine: true, noLimits: true } : { stopLine: true });
+      const capped = routinePermissions.applyRoutinePermissionMode(profile, effectiveRoutinePermissionMode({ permissionMode: mode, permissionExplicit: true }, profile));
       expect(enforcement!(capped), `routine ${mode}`).toEqual(enforcement!(bot));
     }
     expect(profile).toEqual({ autoApprove: true, fullAccess: true, noLimits: true });
   });
 
-  it.each([undefined, "inherit", null] as const)("pins creation at Ask for input %s when the bot later rises", (permissionMode) => {
+  it.each([undefined, "inherit", null] as const)("keeps an Ask fallback for input %s and inherits the bot's later No limits", (permissionMode) => {
     const bot = { autoApprove: false, fullAccess: false, noLimits: false };
     const f = fixture({ botMode: () => botPermissionMode(bot) });
     const manager = f.load();
     const routine = manager.create({ ...input, ...(permissionMode === undefined ? {} : { permissionMode }) });
     expect(routine.permissionMode).toBe("ask");
     Object.assign(bot, { autoApprove: true, fullAccess: true, noLimits: true });
-    expect(effectiveRoutinePermissionMode(manager.listRoutines()[0]!, bot)).toBe("ask");
+    // MAIN RULING 2026-11-13 wipe-only: an inherited Ask fallback follows No limits.
+    expect(effectiveRoutinePermissionMode(manager.listRoutines()[0]!, bot)).toBe("unlimited");
     expect(f.load().listRoutines()[0]!.permissionMode).toBe("ask");
     expect(JSON.parse(readFileSync(f.file, "utf8")).routines[0].permissionMode).toBe("ask");
   });
@@ -97,17 +90,31 @@ describe("routine authority", () => {
     expect(manager.listRoutines()[0]!.permissionMode).toBe("unlimited");
 
     const ask = manager.create({ ...input, permissionMode: "ask" });
-    Object.assign(bot, { fullAccess: true, noLimits: true });
+    Object.assign(bot, { fullAccess: true, noLimits: false });
     expect(effectiveRoutinePermissionMode(ask, bot)).toBe("ask");
     const renamed = manager.update(ask.id, { name: "Named archive check" })!;
     expect(renamed.permissionMode).toBe("ask");
     expect(effectiveRoutinePermissionMode(renamed, bot)).toBe("ask");
+    Object.assign(bot, { noLimits: true });
     const raised = manager.update(ask.id, { permissionMode: "unlimited" })!;
     expect(effectiveRoutinePermissionMode(raised, bot)).toBe("unlimited");
     expect(f.load().listRoutines().find((routine) => routine.id === ask.id)?.permissionMode).toBe("unlimited");
   });
 
-  it.each(["inherit", null] as const)("pins an explicit %s level edit to the bot at that moment", (permissionMode) => {
+  it("H2 No limits preserves a saved explicit Ask ceiling without rewriting its choice", () => {
+    const profile={autoApprove:true,fullAccess:true,noLimits:false};
+    const f=fixture({botMode:()=>botPermissionMode(profile)});
+    const manager=f.load();const routine=manager.create({...input,permissionMode:"ask"});
+    expect(effectiveRoutinePermissionMode(routine,profile)).toBe("ask");
+    profile.noLimits=true;
+    expect(effectiveRoutinePermissionMode(routine,profile)).toBe("ask");
+    expect(routine.permissionExplicit).toBe(true);
+    expect(f.load().listRoutines()[0]!.permissionMode).toBe("ask");
+    profile.noLimits=false;
+    expect(effectiveRoutinePermissionMode(routine,profile)).toBe("ask");
+  });
+
+  it.each(["inherit", null] as const)("keeps a fallback on %s and follows the bot at No limits", (permissionMode) => {
     const bot = { autoApprove: true, fullAccess: false, noLimits: false };
     const f = fixture({ botMode: () => botPermissionMode(bot) });
     const manager = f.load();
@@ -115,7 +122,8 @@ describe("routine authority", () => {
     const updated = manager.update(routine.id, { permissionMode })!;
     expect(updated.permissionMode).toBe("auto");
     Object.assign(bot, { fullAccess: true, noLimits: true });
-    expect(effectiveRoutinePermissionMode(updated, bot)).toBe("auto");
+    // MAIN RULING 2026-11-13 wipe-only: inherit/null clears the explicit ceiling.
+    expect(effectiveRoutinePermissionMode(updated, bot)).toBe("unlimited");
     expect(f.load().listRoutines()[0]!.permissionMode).toBe("auto");
   });
 
@@ -163,6 +171,23 @@ describe("routine authority", () => {
     expect(readFileSync(routinesPrePinFile(f.file), "utf8")).toBe(original);
     expect(atomic.atomicWriteCount(f.file)).toBe(1);
     expect(atomic.atomicWriteCount(routinesPrePinFile(f.file))).toBe(1);
+  });
+
+  // MAIN RULING 2026-11-13 wipe-only: 1.0.18 stored inherited Full too;
+  // only permissionExplicit proves an owner-selected lower routine ceiling.
+  it("legacy Full follows No limits through scheduled metadata while explicit Full survives", () => {
+    const f = fixture({ botMode: () => "unlimited" });
+    writeFileSync(f.file, JSON.stringify({ version: 1, routines: [
+      record("inherited", { permissionMode: "full" }),
+      record("explicit", { permissionMode: "full", permissionExplicit: true }),
+    ] }));
+    const routines = f.load().listRoutines();
+    const profile = { autoApprove: true, fullAccess: true, noLimits: true };
+    const inheritedRun = { ...routines[0]!, triggerSource: "schedule" };
+    const explicitRun = { ...routines[1]!, triggerSource: "schedule" };
+    expect(effectiveRoutinePermissionMode(inheritedRun, profile)).toBe("unlimited");
+    expect(effectiveRoutinePermissionMode(explicitRun, profile)).toBe("full");
+    expect(f.load().listRoutines()).toEqual(routines);
   });
 
   it("pins a legacy routine to Ask without a bot callback", () => {

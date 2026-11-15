@@ -1,0 +1,2031 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "Merged source lanes",
+  "date": "2026-11-12",
+  "base": "ca5978bf07aabdae66cc132969d26073f31f372b",
+  "scope": "int19m12 RC inherited review gaps",
+  "strings": {
+    "en:highlevel.titles.payments.invoices.list": {
+      "text": "List invoices",
+      "en": "List invoices",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.invoices.get": {
+      "text": "View an invoice",
+      "en": "View an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.invoice.create": {
+      "text": "Create a draft invoice",
+      "en": "Create a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.invoice.update": {
+      "text": "Update a draft invoice",
+      "en": "Update a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.invoice.send": {
+      "text": "Send an invoice",
+      "en": "Send an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.invoice.void": {
+      "text": "Void an invoice",
+      "en": "Void an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.invoice.delete": {
+      "text": "Delete an invoice",
+      "en": "Delete an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.invoice.recordPayment": {
+      "text": "Record a payment",
+      "en": "Record a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.invoice.text2pay": {
+      "text": "Create and send a payment request",
+      "en": "Create and send a payment request",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.orders.list": {
+      "text": "List orders",
+      "en": "List orders",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.orders.get": {
+      "text": "View an order",
+      "en": "View an order",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.transactions.list": {
+      "text": "List transactions",
+      "en": "List transactions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.transactions.get": {
+      "text": "View a transaction",
+      "en": "View a transaction",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.subscriptions.list": {
+      "text": "List subscriptions",
+      "en": "List subscriptions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.subscriptions.get": {
+      "text": "View a subscription",
+      "en": "View a subscription",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.products.list": {
+      "text": "List products",
+      "en": "List products",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.products.get": {
+      "text": "View a product",
+      "en": "View a product",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.titles.payments.refund": {
+      "text": "Refund a payment",
+      "en": "Refund a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.get": {
+      "text": "Read the location",
+      "en": "Read the location",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.tasks.search": {
+      "text": "Find tasks",
+      "en": "Find tasks",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.templates.list": {
+      "text": "List message templates",
+      "en": "List message templates",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.users.list": {
+      "text": "List users",
+      "en": "List users",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.users.get": {
+      "text": "Read a user",
+      "en": "Read a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.users.create": {
+      "text": "Add a user",
+      "en": "Add a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.users.update": {
+      "text": "Update a user",
+      "en": "Update a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.users.delete": {
+      "text": "Delete a user",
+      "en": "Delete a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.customFields.list": {
+      "text": "List custom fields",
+      "en": "List custom fields",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.customFields.get": {
+      "text": "Read a custom field",
+      "en": "Read a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.customFields.create": {
+      "text": "Create a custom field",
+      "en": "Create a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.customFields.update": {
+      "text": "Update a custom field",
+      "en": "Update a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.customFields.delete": {
+      "text": "Delete a custom field",
+      "en": "Delete a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.customValues.list": {
+      "text": "List custom values",
+      "en": "List custom values",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.customValues.get": {
+      "text": "Read a custom value",
+      "en": "Read a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.customValues.create": {
+      "text": "Create a custom value",
+      "en": "Create a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.customValues.update": {
+      "text": "Update a custom value",
+      "en": "Update a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.customValues.delete": {
+      "text": "Delete a custom value",
+      "en": "Delete a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.tags.list": {
+      "text": "List tags",
+      "en": "List tags",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.tags.get": {
+      "text": "Read a tag",
+      "en": "Read a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.tags.create": {
+      "text": "Create a tag",
+      "en": "Create a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.tags.update": {
+      "text": "Update a tag",
+      "en": "Update a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "en:highlevel.operation.location.tags.delete": {
+      "text": "Delete a tag",
+      "en": "Delete a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.invoices.list": {
+      "text": "Rechnungen auflisten",
+      "en": "List invoices",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.invoices.get": {
+      "text": "Rechnung ansehen",
+      "en": "View an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.invoice.create": {
+      "text": "Rechnungsentwurf erstellen",
+      "en": "Create a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.invoice.update": {
+      "text": "Rechnungsentwurf ändern",
+      "en": "Update a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.invoice.send": {
+      "text": "Rechnung senden",
+      "en": "Send an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.invoice.void": {
+      "text": "Rechnung stornieren",
+      "en": "Void an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.invoice.delete": {
+      "text": "Rechnung löschen",
+      "en": "Delete an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.invoice.recordPayment": {
+      "text": "Zahlung erfassen",
+      "en": "Record a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.invoice.text2pay": {
+      "text": "Zahlungsanforderung erstellen und senden",
+      "en": "Create and send a payment request",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.orders.list": {
+      "text": "Bestellungen auflisten",
+      "en": "List orders",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.orders.get": {
+      "text": "Bestellung ansehen",
+      "en": "View an order",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.transactions.list": {
+      "text": "Transaktionen auflisten",
+      "en": "List transactions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.transactions.get": {
+      "text": "Transaktion ansehen",
+      "en": "View a transaction",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.subscriptions.list": {
+      "text": "Abonnements auflisten",
+      "en": "List subscriptions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.subscriptions.get": {
+      "text": "Abonnement ansehen",
+      "en": "View a subscription",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.products.list": {
+      "text": "Produkte auflisten",
+      "en": "List products",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.products.get": {
+      "text": "Produkt ansehen",
+      "en": "View a product",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.titles.payments.refund": {
+      "text": "Zahlung erstatten",
+      "en": "Refund a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.get": {
+      "text": "Standort ansehen",
+      "en": "Read the location",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.tasks.search": {
+      "text": "Aufgaben suchen",
+      "en": "Find tasks",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.templates.list": {
+      "text": "Nachrichtenvorlagen auflisten",
+      "en": "List message templates",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.users.list": {
+      "text": "Benutzer auflisten",
+      "en": "List users",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.users.get": {
+      "text": "Benutzer ansehen",
+      "en": "Read a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.users.create": {
+      "text": "Benutzer hinzufügen",
+      "en": "Add a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.users.update": {
+      "text": "Benutzer bearbeiten",
+      "en": "Update a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.users.delete": {
+      "text": "Benutzer löschen",
+      "en": "Delete a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.customFields.list": {
+      "text": "Eigene Felder auflisten",
+      "en": "List custom fields",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.customFields.get": {
+      "text": "Eigenes Feld ansehen",
+      "en": "Read a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.customFields.create": {
+      "text": "Eigenes Feld erstellen",
+      "en": "Create a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.customFields.update": {
+      "text": "Eigenes Feld bearbeiten",
+      "en": "Update a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.customFields.delete": {
+      "text": "Eigenes Feld löschen",
+      "en": "Delete a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.customValues.list": {
+      "text": "Eigene Werte auflisten",
+      "en": "List custom values",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.customValues.get": {
+      "text": "Eigenen Wert ansehen",
+      "en": "Read a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.customValues.create": {
+      "text": "Eigenen Wert erstellen",
+      "en": "Create a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.customValues.update": {
+      "text": "Eigenen Wert bearbeiten",
+      "en": "Update a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.customValues.delete": {
+      "text": "Eigenen Wert löschen",
+      "en": "Delete a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.tags.list": {
+      "text": "Tags auflisten",
+      "en": "List tags",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.tags.get": {
+      "text": "Tag ansehen",
+      "en": "Read a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.tags.create": {
+      "text": "Tag erstellen",
+      "en": "Create a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.tags.update": {
+      "text": "Tag bearbeiten",
+      "en": "Update a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "de:highlevel.operation.location.tags.delete": {
+      "text": "Tag löschen",
+      "en": "Delete a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.invoices.list": {
+      "text": "Listar facturas",
+      "en": "List invoices",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.invoices.get": {
+      "text": "Ver una factura",
+      "en": "View an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.invoice.create": {
+      "text": "Crear un borrador de factura",
+      "en": "Create a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.invoice.update": {
+      "text": "Actualizar un borrador de factura",
+      "en": "Update a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.invoice.send": {
+      "text": "Enviar una factura",
+      "en": "Send an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.invoice.void": {
+      "text": "Anular una factura",
+      "en": "Void an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.invoice.delete": {
+      "text": "Eliminar una factura",
+      "en": "Delete an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.invoice.recordPayment": {
+      "text": "Registrar un pago",
+      "en": "Record a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.invoice.text2pay": {
+      "text": "Crear y enviar una solicitud de pago",
+      "en": "Create and send a payment request",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.orders.list": {
+      "text": "Listar pedidos",
+      "en": "List orders",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.orders.get": {
+      "text": "Ver un pedido",
+      "en": "View an order",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.transactions.list": {
+      "text": "Listar transacciones",
+      "en": "List transactions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.transactions.get": {
+      "text": "Ver una transacción",
+      "en": "View a transaction",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.subscriptions.list": {
+      "text": "Listar suscripciones",
+      "en": "List subscriptions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.subscriptions.get": {
+      "text": "Ver una suscripción",
+      "en": "View a subscription",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.products.list": {
+      "text": "Listar productos",
+      "en": "List products",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.products.get": {
+      "text": "Ver un producto",
+      "en": "View a product",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.titles.payments.refund": {
+      "text": "Reembolsar un pago",
+      "en": "Refund a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.get": {
+      "text": "Ver la ubicación",
+      "en": "Read the location",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.tasks.search": {
+      "text": "Buscar tareas",
+      "en": "Find tasks",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.templates.list": {
+      "text": "Listar plantillas de mensajes",
+      "en": "List message templates",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.users.list": {
+      "text": "Listar usuarios",
+      "en": "List users",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.users.get": {
+      "text": "Ver un usuario",
+      "en": "Read a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.users.create": {
+      "text": "Añadir un usuario",
+      "en": "Add a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.users.update": {
+      "text": "Actualizar un usuario",
+      "en": "Update a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.users.delete": {
+      "text": "Eliminar un usuario",
+      "en": "Delete a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.customFields.list": {
+      "text": "Listar campos personalizados",
+      "en": "List custom fields",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.customFields.get": {
+      "text": "Ver un campo personalizado",
+      "en": "Read a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.customFields.create": {
+      "text": "Crear un campo personalizado",
+      "en": "Create a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.customFields.update": {
+      "text": "Actualizar un campo personalizado",
+      "en": "Update a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.customFields.delete": {
+      "text": "Eliminar un campo personalizado",
+      "en": "Delete a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.customValues.list": {
+      "text": "Listar valores personalizados",
+      "en": "List custom values",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.customValues.get": {
+      "text": "Ver un valor personalizado",
+      "en": "Read a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.customValues.create": {
+      "text": "Crear un valor personalizado",
+      "en": "Create a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.customValues.update": {
+      "text": "Actualizar un valor personalizado",
+      "en": "Update a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.customValues.delete": {
+      "text": "Eliminar un valor personalizado",
+      "en": "Delete a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.tags.list": {
+      "text": "Listar etiquetas",
+      "en": "List tags",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.tags.get": {
+      "text": "Ver una etiqueta",
+      "en": "Read a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.tags.create": {
+      "text": "Crear una etiqueta",
+      "en": "Create a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.tags.update": {
+      "text": "Actualizar una etiqueta",
+      "en": "Update a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "es:highlevel.operation.location.tags.delete": {
+      "text": "Eliminar una etiqueta",
+      "en": "Delete a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.invoices.list": {
+      "text": "Lister les factures",
+      "en": "List invoices",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.invoices.get": {
+      "text": "Voir une facture",
+      "en": "View an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.invoice.create": {
+      "text": "Créer un brouillon de facture",
+      "en": "Create a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.invoice.update": {
+      "text": "Modifier un brouillon de facture",
+      "en": "Update a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.invoice.send": {
+      "text": "Envoyer une facture",
+      "en": "Send an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.invoice.void": {
+      "text": "Annuler une facture",
+      "en": "Void an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.invoice.delete": {
+      "text": "Supprimer une facture",
+      "en": "Delete an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.invoice.recordPayment": {
+      "text": "Enregistrer un paiement",
+      "en": "Record a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.invoice.text2pay": {
+      "text": "Créer et envoyer une demande de paiement",
+      "en": "Create and send a payment request",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.orders.list": {
+      "text": "Lister les commandes",
+      "en": "List orders",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.orders.get": {
+      "text": "Voir une commande",
+      "en": "View an order",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.transactions.list": {
+      "text": "Lister les transactions",
+      "en": "List transactions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.transactions.get": {
+      "text": "Voir une transaction",
+      "en": "View a transaction",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.subscriptions.list": {
+      "text": "Lister les abonnements",
+      "en": "List subscriptions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.subscriptions.get": {
+      "text": "Voir un abonnement",
+      "en": "View a subscription",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.products.list": {
+      "text": "Lister les produits",
+      "en": "List products",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.products.get": {
+      "text": "Voir un produit",
+      "en": "View a product",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.titles.payments.refund": {
+      "text": "Rembourser un paiement",
+      "en": "Refund a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.get": {
+      "text": "Afficher le site",
+      "en": "Read the location",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.tasks.search": {
+      "text": "Rechercher des tâches",
+      "en": "Find tasks",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.templates.list": {
+      "text": "Lister les modèles de messages",
+      "en": "List message templates",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.users.list": {
+      "text": "Lister les utilisateurs",
+      "en": "List users",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.users.get": {
+      "text": "Afficher un utilisateur",
+      "en": "Read a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.users.create": {
+      "text": "Ajouter un utilisateur",
+      "en": "Add a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.users.update": {
+      "text": "Modifier un utilisateur",
+      "en": "Update a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.users.delete": {
+      "text": "Supprimer un utilisateur",
+      "en": "Delete a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.customFields.list": {
+      "text": "Lister les champs personnalisés",
+      "en": "List custom fields",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.customFields.get": {
+      "text": "Afficher un champ personnalisé",
+      "en": "Read a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.customFields.create": {
+      "text": "Créer un champ personnalisé",
+      "en": "Create a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.customFields.update": {
+      "text": "Modifier un champ personnalisé",
+      "en": "Update a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.customFields.delete": {
+      "text": "Supprimer un champ personnalisé",
+      "en": "Delete a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.customValues.list": {
+      "text": "Lister les valeurs personnalisées",
+      "en": "List custom values",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.customValues.get": {
+      "text": "Afficher une valeur personnalisée",
+      "en": "Read a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.customValues.create": {
+      "text": "Créer une valeur personnalisée",
+      "en": "Create a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.customValues.update": {
+      "text": "Modifier une valeur personnalisée",
+      "en": "Update a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.customValues.delete": {
+      "text": "Supprimer une valeur personnalisée",
+      "en": "Delete a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.tags.list": {
+      "text": "Lister les étiquettes",
+      "en": "List tags",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.tags.get": {
+      "text": "Afficher une étiquette",
+      "en": "Read a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.tags.create": {
+      "text": "Créer une étiquette",
+      "en": "Create a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.tags.update": {
+      "text": "Modifier une étiquette",
+      "en": "Update a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "fr:highlevel.operation.location.tags.delete": {
+      "text": "Supprimer une étiquette",
+      "en": "Delete a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.invoices.list": {
+      "text": "चालानों की सूची देखें",
+      "en": "List invoices",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.invoices.get": {
+      "text": "चालान देखें",
+      "en": "View an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.invoice.create": {
+      "text": "चालान का ड्राफ़्ट बनाएँ",
+      "en": "Create a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.invoice.update": {
+      "text": "चालान का ड्राफ़्ट बदलें",
+      "en": "Update a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.invoice.send": {
+      "text": "चालान भेजें",
+      "en": "Send an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.invoice.void": {
+      "text": "चालान रद्द करें",
+      "en": "Void an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.invoice.delete": {
+      "text": "चालान हटाएँ",
+      "en": "Delete an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.invoice.recordPayment": {
+      "text": "भुगतान दर्ज करें",
+      "en": "Record a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.invoice.text2pay": {
+      "text": "भुगतान का अनुरोध बनाएँ और भेजें",
+      "en": "Create and send a payment request",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.orders.list": {
+      "text": "ऑर्डर की सूची देखें",
+      "en": "List orders",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.orders.get": {
+      "text": "ऑर्डर देखें",
+      "en": "View an order",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.transactions.list": {
+      "text": "लेनदेन की सूची देखें",
+      "en": "List transactions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.transactions.get": {
+      "text": "लेनदेन देखें",
+      "en": "View a transaction",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.subscriptions.list": {
+      "text": "सदस्यताओं की सूची देखें",
+      "en": "List subscriptions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.subscriptions.get": {
+      "text": "सदस्यता देखें",
+      "en": "View a subscription",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.products.list": {
+      "text": "उत्पादों की सूची देखें",
+      "en": "List products",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.products.get": {
+      "text": "उत्पाद देखें",
+      "en": "View a product",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.titles.payments.refund": {
+      "text": "भुगतान वापस करें",
+      "en": "Refund a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.get": {
+      "text": "स्थान देखें",
+      "en": "Read the location",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.tasks.search": {
+      "text": "काम खोजें",
+      "en": "Find tasks",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.templates.list": {
+      "text": "संदेशों के नमूने देखें",
+      "en": "List message templates",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.users.list": {
+      "text": "उपयोगकर्ताओं की सूची देखें",
+      "en": "List users",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.users.get": {
+      "text": "उपयोगकर्ता देखें",
+      "en": "Read a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.users.create": {
+      "text": "उपयोगकर्ता जोड़ें",
+      "en": "Add a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.users.update": {
+      "text": "उपयोगकर्ता बदलें",
+      "en": "Update a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.users.delete": {
+      "text": "उपयोगकर्ता हटाएँ",
+      "en": "Delete a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.customFields.list": {
+      "text": "कस्टम फ़ील्ड की सूची देखें",
+      "en": "List custom fields",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.customFields.get": {
+      "text": "कस्टम फ़ील्ड देखें",
+      "en": "Read a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.customFields.create": {
+      "text": "कस्टम फ़ील्ड बनाएँ",
+      "en": "Create a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.customFields.update": {
+      "text": "कस्टम फ़ील्ड बदलें",
+      "en": "Update a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.customFields.delete": {
+      "text": "कस्टम फ़ील्ड हटाएँ",
+      "en": "Delete a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.customValues.list": {
+      "text": "कस्टम मानों की सूची देखें",
+      "en": "List custom values",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.customValues.get": {
+      "text": "कस्टम मान देखें",
+      "en": "Read a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.customValues.create": {
+      "text": "कस्टम मान बनाएँ",
+      "en": "Create a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.customValues.update": {
+      "text": "कस्टम मान बदलें",
+      "en": "Update a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.customValues.delete": {
+      "text": "कस्टम मान हटाएँ",
+      "en": "Delete a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.tags.list": {
+      "text": "टैग की सूची देखें",
+      "en": "List tags",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.tags.get": {
+      "text": "टैग देखें",
+      "en": "Read a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.tags.create": {
+      "text": "टैग बनाएँ",
+      "en": "Create a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.tags.update": {
+      "text": "टैग बदलें",
+      "en": "Update a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "hi:highlevel.operation.location.tags.delete": {
+      "text": "टैग हटाएँ",
+      "en": "Delete a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.invoices.list": {
+      "text": "請求書の一覧を表示",
+      "en": "List invoices",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.invoices.get": {
+      "text": "請求書を表示",
+      "en": "View an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.invoice.create": {
+      "text": "請求書の下書きを作成",
+      "en": "Create a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.invoice.update": {
+      "text": "請求書の下書きを更新",
+      "en": "Update a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.invoice.send": {
+      "text": "請求書を送信",
+      "en": "Send an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.invoice.void": {
+      "text": "請求書を無効にする",
+      "en": "Void an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.invoice.delete": {
+      "text": "請求書を削除",
+      "en": "Delete an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.invoice.recordPayment": {
+      "text": "支払いを記録",
+      "en": "Record a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.invoice.text2pay": {
+      "text": "支払いリクエストを作成して送信",
+      "en": "Create and send a payment request",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.orders.list": {
+      "text": "注文の一覧を表示",
+      "en": "List orders",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.orders.get": {
+      "text": "注文を表示",
+      "en": "View an order",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.transactions.list": {
+      "text": "取引の一覧を表示",
+      "en": "List transactions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.transactions.get": {
+      "text": "取引を表示",
+      "en": "View a transaction",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.subscriptions.list": {
+      "text": "定期購入の一覧を表示",
+      "en": "List subscriptions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.subscriptions.get": {
+      "text": "定期購入を表示",
+      "en": "View a subscription",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.products.list": {
+      "text": "商品の一覧を表示",
+      "en": "List products",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.products.get": {
+      "text": "商品を表示",
+      "en": "View a product",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.titles.payments.refund": {
+      "text": "支払いを返金",
+      "en": "Refund a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.get": {
+      "text": "拠点を表示",
+      "en": "Read the location",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.tasks.search": {
+      "text": "タスクを検索",
+      "en": "Find tasks",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.templates.list": {
+      "text": "メッセージテンプレートの一覧を表示",
+      "en": "List message templates",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.users.list": {
+      "text": "ユーザーの一覧を表示",
+      "en": "List users",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.users.get": {
+      "text": "ユーザーを表示",
+      "en": "Read a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.users.create": {
+      "text": "ユーザーを追加",
+      "en": "Add a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.users.update": {
+      "text": "ユーザーを更新",
+      "en": "Update a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.users.delete": {
+      "text": "ユーザーを削除",
+      "en": "Delete a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.customFields.list": {
+      "text": "カスタム項目の一覧を表示",
+      "en": "List custom fields",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.customFields.get": {
+      "text": "カスタム項目を表示",
+      "en": "Read a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.customFields.create": {
+      "text": "カスタム項目を作成",
+      "en": "Create a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.customFields.update": {
+      "text": "カスタム項目を更新",
+      "en": "Update a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.customFields.delete": {
+      "text": "カスタム項目を削除",
+      "en": "Delete a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.customValues.list": {
+      "text": "カスタム値の一覧を表示",
+      "en": "List custom values",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.customValues.get": {
+      "text": "カスタム値を表示",
+      "en": "Read a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.customValues.create": {
+      "text": "カスタム値を作成",
+      "en": "Create a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.customValues.update": {
+      "text": "カスタム値を更新",
+      "en": "Update a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.customValues.delete": {
+      "text": "カスタム値を削除",
+      "en": "Delete a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.tags.list": {
+      "text": "タグの一覧を表示",
+      "en": "List tags",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.tags.get": {
+      "text": "タグを表示",
+      "en": "Read a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.tags.create": {
+      "text": "タグを作成",
+      "en": "Create a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.tags.update": {
+      "text": "タグを更新",
+      "en": "Update a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "ja:highlevel.operation.location.tags.delete": {
+      "text": "タグを削除",
+      "en": "Delete a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.invoices.list": {
+      "text": "Listar faturas",
+      "en": "List invoices",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.invoices.get": {
+      "text": "Ver uma fatura",
+      "en": "View an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.invoice.create": {
+      "text": "Criar um rascunho de fatura",
+      "en": "Create a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.invoice.update": {
+      "text": "Atualizar um rascunho de fatura",
+      "en": "Update a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.invoice.send": {
+      "text": "Enviar uma fatura",
+      "en": "Send an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.invoice.void": {
+      "text": "Anular uma fatura",
+      "en": "Void an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.invoice.delete": {
+      "text": "Excluir uma fatura",
+      "en": "Delete an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.invoice.recordPayment": {
+      "text": "Registrar um pagamento",
+      "en": "Record a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.invoice.text2pay": {
+      "text": "Criar e enviar uma solicitação de pagamento",
+      "en": "Create and send a payment request",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.orders.list": {
+      "text": "Listar pedidos",
+      "en": "List orders",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.orders.get": {
+      "text": "Ver um pedido",
+      "en": "View an order",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.transactions.list": {
+      "text": "Listar transações",
+      "en": "List transactions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.transactions.get": {
+      "text": "Ver uma transação",
+      "en": "View a transaction",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.subscriptions.list": {
+      "text": "Listar assinaturas",
+      "en": "List subscriptions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.subscriptions.get": {
+      "text": "Ver uma assinatura",
+      "en": "View a subscription",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.products.list": {
+      "text": "Listar produtos",
+      "en": "List products",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.products.get": {
+      "text": "Ver um produto",
+      "en": "View a product",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.titles.payments.refund": {
+      "text": "Reembolsar um pagamento",
+      "en": "Refund a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.get": {
+      "text": "Ver a unidade",
+      "en": "Read the location",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.tasks.search": {
+      "text": "Buscar tarefas",
+      "en": "Find tasks",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.templates.list": {
+      "text": "Listar modelos de mensagens",
+      "en": "List message templates",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.users.list": {
+      "text": "Listar usuários",
+      "en": "List users",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.users.get": {
+      "text": "Ver um usuário",
+      "en": "Read a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.users.create": {
+      "text": "Adicionar um usuário",
+      "en": "Add a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.users.update": {
+      "text": "Atualizar um usuário",
+      "en": "Update a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.users.delete": {
+      "text": "Excluir um usuário",
+      "en": "Delete a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.customFields.list": {
+      "text": "Listar campos personalizados",
+      "en": "List custom fields",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.customFields.get": {
+      "text": "Ver um campo personalizado",
+      "en": "Read a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.customFields.create": {
+      "text": "Criar um campo personalizado",
+      "en": "Create a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.customFields.update": {
+      "text": "Atualizar um campo personalizado",
+      "en": "Update a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.customFields.delete": {
+      "text": "Excluir um campo personalizado",
+      "en": "Delete a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.customValues.list": {
+      "text": "Listar valores personalizados",
+      "en": "List custom values",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.customValues.get": {
+      "text": "Ver um valor personalizado",
+      "en": "Read a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.customValues.create": {
+      "text": "Criar um valor personalizado",
+      "en": "Create a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.customValues.update": {
+      "text": "Atualizar um valor personalizado",
+      "en": "Update a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.customValues.delete": {
+      "text": "Excluir um valor personalizado",
+      "en": "Delete a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.tags.list": {
+      "text": "Listar etiquetas",
+      "en": "List tags",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.tags.get": {
+      "text": "Ver uma etiqueta",
+      "en": "Read a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.tags.create": {
+      "text": "Criar uma etiqueta",
+      "en": "Create a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.tags.update": {
+      "text": "Atualizar uma etiqueta",
+      "en": "Update a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "pt-br:highlevel.operation.location.tags.delete": {
+      "text": "Excluir uma etiqueta",
+      "en": "Delete a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.invoices.list": {
+      "text": "列出账单",
+      "en": "List invoices",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.invoices.get": {
+      "text": "查看账单",
+      "en": "View an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.invoice.create": {
+      "text": "创建账单草稿",
+      "en": "Create a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.invoice.update": {
+      "text": "更新账单草稿",
+      "en": "Update a draft invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.invoice.send": {
+      "text": "发送账单",
+      "en": "Send an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.invoice.void": {
+      "text": "作废账单",
+      "en": "Void an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.invoice.delete": {
+      "text": "删除账单",
+      "en": "Delete an invoice",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.invoice.recordPayment": {
+      "text": "记录付款",
+      "en": "Record a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.invoice.text2pay": {
+      "text": "创建并发送付款请求",
+      "en": "Create and send a payment request",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.orders.list": {
+      "text": "列出订单",
+      "en": "List orders",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.orders.get": {
+      "text": "查看订单",
+      "en": "View an order",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.transactions.list": {
+      "text": "列出交易",
+      "en": "List transactions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.transactions.get": {
+      "text": "查看交易",
+      "en": "View a transaction",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.subscriptions.list": {
+      "text": "列出订阅",
+      "en": "List subscriptions",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.subscriptions.get": {
+      "text": "查看订阅",
+      "en": "View a subscription",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.products.list": {
+      "text": "列出产品",
+      "en": "List products",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.products.get": {
+      "text": "查看产品",
+      "en": "View a product",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.titles.payments.refund": {
+      "text": "退还付款",
+      "en": "Refund a payment",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.get": {
+      "text": "查看地点",
+      "en": "Read the location",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.tasks.search": {
+      "text": "查找任务",
+      "en": "Find tasks",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.templates.list": {
+      "text": "列出消息模板",
+      "en": "List message templates",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.users.list": {
+      "text": "列出用户",
+      "en": "List users",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.users.get": {
+      "text": "查看用户",
+      "en": "Read a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.users.create": {
+      "text": "添加用户",
+      "en": "Add a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.users.update": {
+      "text": "更新用户",
+      "en": "Update a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.users.delete": {
+      "text": "删除用户",
+      "en": "Delete a user",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.customFields.list": {
+      "text": "列出自定义字段",
+      "en": "List custom fields",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.customFields.get": {
+      "text": "查看自定义字段",
+      "en": "Read a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.customFields.create": {
+      "text": "创建自定义字段",
+      "en": "Create a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.customFields.update": {
+      "text": "更新自定义字段",
+      "en": "Update a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.customFields.delete": {
+      "text": "删除自定义字段",
+      "en": "Delete a custom field",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.customValues.list": {
+      "text": "列出自定义值",
+      "en": "List custom values",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.customValues.get": {
+      "text": "查看自定义值",
+      "en": "Read a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.customValues.create": {
+      "text": "创建自定义值",
+      "en": "Create a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.customValues.update": {
+      "text": "更新自定义值",
+      "en": "Update a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.customValues.delete": {
+      "text": "删除自定义值",
+      "en": "Delete a custom value",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.tags.list": {
+      "text": "列出标签",
+      "en": "List tags",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.tags.get": {
+      "text": "查看标签",
+      "en": "Read a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.tags.create": {
+      "text": "创建标签",
+      "en": "Create a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.tags.update": {
+      "text": "更新标签",
+      "en": "Update a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "zh:highlevel.operation.location.tags.delete": {
+      "text": "删除标签",
+      "en": "Delete a tag",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "stepup/en:label.signal": {
+      "text": "Change the Signal connection",
+      "en": "Change the Signal connection",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "stepup/de:label.signal": {
+      "text": "Die Signal-Verbindung ändern",
+      "en": "Change the Signal connection",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "stepup/es:label.signal": {
+      "text": "Cambiar la conexión de Signal",
+      "en": "Change the Signal connection",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "stepup/fr:label.signal": {
+      "text": "Modifier la connexion Signal",
+      "en": "Change the Signal connection",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "stepup/hi:label.signal": {
+      "text": "Signal कनेक्शन बदलें",
+      "en": "Change the Signal connection",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "stepup/ja:label.signal": {
+      "text": "Signal の接続を変更する",
+      "en": "Change the Signal connection",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "stepup/pt-br:label.signal": {
+      "text": "Alterar a conexão do Signal",
+      "en": "Change the Signal connection",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    },
+    "stepup/zh:label.signal": {
+      "text": "更改 Signal 连接",
+      "en": "Change the Signal connection",
+      "verdict": "pass",
+      "note": "Reviewed action and object against English, including draft, send, refund and delete distinctions; Signal label names a connection change."
+    }
+  },
+  "files": {}
+}

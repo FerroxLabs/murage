@@ -14,6 +14,7 @@ import { respondFromPush } from "./mobile-push-respond.ts";
 import { AnsweredWhere, createPushWarn } from "./mobile-push-hooks.ts";
 import { pushRiskFor, ratePushRevision } from "./mobile-push-risk.ts";
 import { PushStore, initializeMobilePush } from "./mobile-push-store.ts";
+import { fixtureFunctionSource } from "./testing/runtime-source-fixture.ts";
 
 const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 const notifyBody = source.slice(source.indexOf("function notify(notification"), source.indexOf("/** Delivery is best-effort and only for an approval"));
@@ -27,12 +28,18 @@ describe("push wiring in the harness", () => {
   });
   it("rates every engine permission it could push, from the stop line and the credential check", () => {
     // the engine's own tool input and the workspace go in too (device finding 2026-09-27)
-    // (input and name come through pushRiskCall, which reads a wrapped or stamped call's inner tool)
+    // The canonical action reads a wrapped or stamped call's inner tool.
     const rate = source.match(/pushStore\.rateRisk\(event\.threadId, event\.requestId, pushRiskFor\(stopHit, event\.tool, event\.summary, \{([^\n]*?)\}\), Date\.now\(\)\)/)?.[1] ?? "";
-    for (const part of ["...pushRiskCall({ ...event, engine: event.toolEngine })", "filePaths: event.filePaths", "inside: pushWriteInside(asker.id, event.threadId, event)", "truncated: inputCut"]) expect(rate).toContain(part);
-    expect(source).toMatch(/function pushRiskCall\(event: GrantCall\)[^\n]*\n[^\n]*stampedToolCall\(event\)/);
+    // MAIN RULING INT-CONFLICT-DEFAULT 17c2db7e27 / ea89d16d526: the canonical verdict unwraps the frozen grant call inline; retain every rated input and the exact unwrap mapping.
+    for (const part of ["...call", "filePaths: event.filePaths", "inside: pushWriteInside(asker.id, event.threadId, event)", "truncated: inputCut"]) expect(rate).toContain(part);
+    const verdict = fixtureFunctionSource(source, "decisionEngineApprovalAction");
+    expect(verdict).toContain("const stamped = stampedToolCall(grantCall);");
+    expect(verdict).toContain("const call = !stamped ? { input: event.toolCall?.input, name: stamped === null ? 'use tool' : event.toolCall?.name }");
+    expect(verdict).toContain(": { input: stamped.input, name: [stamped.name, event.toolCall?.name].filter(Boolean).join(' ') };");
+    // MAIN RULING INT-CONFLICT-DEFAULT 17c2db7e27 / ea89d16d526: the retired helper stays absent; the complete live unwrap above remains exact.
+    expect(source).not.toMatch(/function pushRiskCall\(/);
     expect(source.indexOf("pushStore.rateRisk(")).toBeGreaterThan(source.indexOf("const stopHit = permission && asker"));
-    expect(source).toMatch(/try \{ pushStore\.rateRisk\(event\.threadId[^\n]*\} catch \(error\) \{ pushWarn\("rate-permission", error\); \}/);
+    expect(source).toMatch(/try \{ pushStore\.rateRisk\(event\.threadId[^\n]*\} catch \(error\) \{ pushWarn\(["']rate-permission["'], error\); \}/);
   });
   it("a cut tool input rates the live card risky too", () => {
     const live = source.slice(source.indexOf("function pushLiveContent("), source.indexOf("function pushBadge("));
@@ -48,8 +55,11 @@ describe("push wiring in the harness", () => {
     expect(source).toContain("risk: (threadId, requestId, revision) => pushStore.risk(threadId, requestId, revision)");
   });
   it("a question notification carries its request and card ids", () => {
-    expect(source).toContain('permission && !questionAsk ? "approval" : "question",');
-    expect(source).toMatch(/event\.summary,\s*\n\s*event\.requestId \? \{ requestId: event\.requestId, messageId: message\.id \} : undefined,/);
+    // MAIN RULING INT-CONFLICT-DEFAULT 17c2db7e27 / 1bdf426716c: the canonical presenter branches by the settled decision kind and supplies the actual presented card id.
+    const decision = fixtureFunctionSource(source, "handleDecisionRequest");
+    // MAIN RULING INT-CONFLICT-DEFAULT 1bdf426716c / 55b9a90712f: the presenter also carries its frozen turn identity; the same request and visible card remain required.
+    expect(decision).toContain("if (outcome.kind === 'card') notifyApproval(presented.botId, threadId, requestId, presented.chatMessageId, frozenEvent?.turnId);");
+    expect(decision).toContain("notify(buildNotification('question', bot, threadId, view.subtitle, { requestId, messageId: presented.chatMessageId }))");
   });
   it("resolves on a card patch and records where the answer came from, neither able to fail the patch or the answer", () => {
     const patch = source.slice(source.indexOf('case "message.patch":'), source.indexOf('case "thread":'));

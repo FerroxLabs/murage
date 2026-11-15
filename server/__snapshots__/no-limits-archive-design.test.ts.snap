@@ -1,0 +1,1656 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Full access 7z a /etc/a ./in > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7z a /etc/a ./in",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7z d /etc/a member > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7z d /etc/a member",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7z e ./a -o./out > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7z e ./a -o./out",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7z l ./a -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7z l ./a -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access 7z t ./a -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7z t ./a -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access 7z u /etc/a ./in > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7z u /etc/a ./in",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7z x ./a /etc/hosts > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7z x ./a /etc/hosts",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7z x ./a -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7z x ./a -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access 7z x ./a -so -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7z x ./a -so -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access 7za a /etc/a ./in > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7za a /etc/a ./in",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7za d /etc/a member > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7za d /etc/a member",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7za e ./a -o./out > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7za e ./a -o./out",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7za l ./a -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7za l ./a -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access 7za t ./a -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7za t ./a -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access 7za u /etc/a ./in > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7za u /etc/a ./in",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7za x ./a /etc/hosts > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7za x ./a /etc/hosts",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7za x ./a -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7za x ./a -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access 7za x ./a -so -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7za x ./a -so -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access 7zr a /etc/a ./in > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zr a /etc/a ./in",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7zr d /etc/a member > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zr d /etc/a member",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7zr e ./a -o./out > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zr e ./a -o./out",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7zr l ./a -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zr l ./a -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access 7zr t ./a -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zr t ./a -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access 7zr u /etc/a ./in > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zr u /etc/a ./in",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7zr x ./a /etc/hosts > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zr x ./a /etc/hosts",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7zr x ./a -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zr x ./a -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access 7zr x ./a -so -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zr x ./a -so -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access 7zz a /etc/a ./in > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zz a /etc/a ./in",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7zz d /etc/a member > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zz d /etc/a member",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7zz e ./a -o./out > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zz e ./a -o./out",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7zz l ./a -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zz l ./a -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access 7zz t ./a -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zz t ./a -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access 7zz u /etc/a ./in > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zz u /etc/a ./in",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7zz x ./a /etc/hosts > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zz x ./a /etc/hosts",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access 7zz x ./a -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zz x ./a -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access 7zz x ./a -so -o/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "7zz x ./a -so -o/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access bsdtar --extract --file=./a --directory=/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "bsdtar --extract --file=./a --directory=/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access bsdtar -cM -f/etc/first -f./second ./input > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "bsdtar -cM -f/etc/first -f./second ./input",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access bsdtar -cf./out -C/etc hosts > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "bsdtar -cf./out -C/etc hosts",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access bsdtar -df./a -C/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "bsdtar -df./a -C/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access bsdtar -tf./a -C/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "bsdtar -tf./a -C/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access bsdtar -xOf./a -C/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "bsdtar -xOf./a -C/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access bsdtar -xPf./a ../etc/hosts > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "bsdtar -xPf./a ../etc/hosts",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access bsdtar -xPf./a /etc/hosts > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "bsdtar -xPf./a /etc/hosts",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access bsdtar -xf./a -C/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "bsdtar -xf./a -C/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access bsdtar xfC ./a /etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "bsdtar xfC ./a /etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access cpio --create --file=/etc/a > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "cpio --create --file=/etc/a",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access cpio --extract --directory=/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "cpio --extract --directory=/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access cpio -i > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "cpio -i",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access cpio -idmv -D/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "cpio -idmv -D/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access cpio -it -D/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "cpio -it -D/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access cpio -o -F/etc/a > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "cpio -o -F/etc/a",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access cpio -p /etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "cpio -p /etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access gtar --extract --file=./a --directory=/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "gtar --extract --file=./a --directory=/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access gtar -cM -f/etc/first -f./second ./input > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "gtar -cM -f/etc/first -f./second ./input",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access gtar -cf./out -C/etc hosts > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "gtar -cf./out -C/etc hosts",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access gtar -df./a -C/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "gtar -df./a -C/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access gtar -tf./a -C/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "gtar -tf./a -C/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access gtar -xOf./a -C/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "gtar -xOf./a -C/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access gtar -xPf./a ../etc/hosts > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "gtar -xPf./a ../etc/hosts",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access gtar -xPf./a /etc/hosts > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "gtar -xPf./a /etc/hosts",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access gtar -xf./a -C/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "gtar -xf./a -C/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access gtar xfC ./a /etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "gtar xfC ./a /etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --
+tar -xf "|" -C./out > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --
+tar -xf "|" -C./out",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --
+tar -xf "|" -C/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --
+tar -xf "|" -C/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --
+tar -xf /tmp/a -C ./out > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --
+tar -xf /tmp/a -C ./out",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --
+tar -xf /tmp/a -C /etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --
+tar -xf /tmp/a -C /etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --
+unzip /tmp/a.zip -d ./out > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --
+unzip /tmp/a.zip -d ./out",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --
+unzip /tmp/a.zip -d /etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --
+unzip /tmp/a.zip -d /etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --; echo "; touch /etc/x" > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --; echo "; touch /etc/x"",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --; tar -xf ";" -C ./out > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --; tar -xf ";" -C ./out",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --; tar -xf ";" -C /etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --; tar -xf ";" -C /etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --; tar -xf "a;b" -C ./out > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --; tar -xf "a;b" -C ./out",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --; tar -xf "a;b" -C /etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --; tar -xf "a;b" -C /etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --; tar -xf '&&' --directory=./out > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --; tar -xf '&&' --directory=./out",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --; tar -xf '&&' --directory=/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --; tar -xf '&&' --directory=/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --; tar -xf \\; -C ./out > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --; tar -xf \\; -C ./out",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --; tar -xf \\; -C /etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --; tar -xf \\; -C /etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --; unzip ";" -d ./out > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --; unzip ";" -d ./out",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access set --; unzip ";" -d /etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "set --; unzip ";" -d /etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access tar --extract --file=./a --directory=/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "tar --extract --file=./a --directory=/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access tar -cM -f/etc/first -f./second ./input > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "tar -cM -f/etc/first -f./second ./input",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access tar -cf./out -C/etc hosts > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "tar -cf./out -C/etc hosts",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access tar -df./a -C/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "tar -df./a -C/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access tar -tf./a -C/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "tar -tf./a -C/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access tar -xOf./a -C/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "tar -xOf./a -C/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access tar -xPf./a ../etc/hosts > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "tar -xPf./a ../etc/hosts",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access tar -xPf./a /etc/hosts > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "tar -xPf./a /etc/hosts",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access tar -xf./a -C/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "tar -xf./a -C/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access tar xfC ./a /etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "tar xfC ./a /etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access unzip ./a.zip /etc/hosts > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "unzip ./a.zip /etc/hosts",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access unzip ./a.zip -d ./out > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "unzip ./a.zip -d ./out",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": "auto-approved Bash (full access)",
+    "source": "full-access",
+  },
+}
+`;
+
+exports[`Full access unzip ./a.zip -d/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "unzip ./a.zip -d/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access unzip -l ./a.zip -d/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "unzip -l ./a.zip -d/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access unzip -p ./a.zip -d/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "unzip -p ./a.zip -d/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;
+
+exports[`Full access unzip -t ./a.zip -d/etc > keeps the baseline verdict bytes 1`] = `
+{
+  "command": "unzip -t ./a.zip -d/etc",
+  "cwd": "/w",
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "verdict": {
+    "approve": null,
+    "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level.",
+    "reason": "protected-path",
+    "rule": "protected-path",
+    "source": "always-ask",
+  },
+}
+`;

@@ -1,3 +1,4 @@
+import { memoryAccessHasScope } from './policy.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -33,7 +34,7 @@ function priorHolds(db: DatabaseSync, handle: MemoryEvidenceHandle, needle: Buff
   if (handle.endByte - handle.startByte !== needle.length) return false;
   const row = db.prepare(`SELECT s.scope_id,s.message_id,v.payload FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=?
     WHERE s.id=? AND s.revision=? AND s.state='active' AND NOT (s.kind IN ('tool-outcome','activity') AND s.outcome='failed')`).get(handle.revision, handle.sourceId, handle.revision);
-  if (!row || !access.scopeIds.includes(String(row.scope_id)) || (messageId !== undefined && String(row.message_id) !== messageId)) return false;
+  if (!row || !memoryAccessHasScope(access,String(row.scope_id)) || (messageId !== undefined && String(row.message_id) !== messageId)) return false;
   try {
     const text: unknown = JSON.parse(String(row.payload)).text;
     return typeof text === "string" && Buffer.from(text).subarray(handle.startByte, handle.endByte).equals(needle);
@@ -56,7 +57,7 @@ function resolveOne(db: DatabaseSync, item: QuotedEvidence, access: MemoryAccess
   let echo: MemoryEvidenceHandle | undefined;
   for (const row of rows) {
     // only lines this turn may read: the same scope rule every citation is checked against again on save
-    if (!access.scopeIds.includes(String(row.scope_id))) continue;
+    if (!memoryAccessHasScope(access,String(row.scope_id))) continue;
     let text: unknown;
     try { text = JSON.parse(String(row.payload)).text; } catch { continue; }
     if (typeof text !== "string") continue;

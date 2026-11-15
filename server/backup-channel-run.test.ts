@@ -22,7 +22,7 @@ import { stageInstallationStateWhileOwned } from "./installation-state-snapshot.
 import { inventoryFidelity } from "./installation-fidelity-snapshot.ts";
 import { writeEncryptedInstallationBackup, restoreEncryptedInstallationNew } from "./installation-encrypted-backup.ts";
 import { reviewInstallation } from "./installation-activation.ts";
-import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
+import { backupFixture, testAgeKeys, optionalBackupAgeUnavailable } from "./testing/backup-fixture.ts";
 import { ROUTINE_RUN_STATUSES, ROUTINE_RUN_TRIGGERS } from "../shared/record-values.ts";
 import { assertInstallationRecords } from "./installation-record-validation.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -86,7 +86,7 @@ it("accepts every run status and trigger the runtime declares", () => {
   expect(() => assertInstallationRecords("routines.json", { version: 1, routines: [], runs })).not.toThrow();
 });
 
-it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("a channel run survives an encrypted backup and restore, paused", async () => {
+it.skipIf(optionalBackupAgeUnavailable())("a channel run survives an encrypted backup and restore, paused", async () => {
   const f = backupFixture(), keys = testAgeKeys();
   const routines = manager(f.data);
   channelMessage(routines, "telegram", 1);

@@ -26,8 +26,9 @@ it('constructs one dependency hold for repeated checks, then sees deletion withi
  db.prepare("UPDATE memory_records SET state='active' WHERE id=?").run(id);
  db.prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES('F','chat','engine','S',?,'[]','[]',(SELECT policy_revision FROM memory_meta),(SELECT deletion_epoch FROM memory_meta),0,'delivered',1)").run(JSON.stringify([{id,version:1}]));
  recordSessionRoots('chat','engine','S',outputRootsFor(LineageAllowance.tool(),[]));stampFreshSession(db,'chat','engine','S');
+ // 2fe571bb91: the dependency hold now records notebook ids and kinds too.
  const prepare=db.prepare;let queries=0;
- db.prepare=function(sql){const statement=prepare.call(this,sql);if(sql.startsWith('SELECT DISTINCT s.owner_key')){statement.all=new Proxy(statement.all,{apply(target,receiver,args){queries++;return Reflect.apply(target,receiver,args);}});}return statement;};
+ db.prepare=function(sql){const statement=prepare.call(this,sql);if(sql.startsWith('SELECT DISTINCT s.id,s.kind,s.owner_key')){statement.all=new Proxy(statement.all,{apply(target,receiver,args){queries++;return Reflect.apply(target,receiver,args);}});}return statement;};
  const check=()=>continuationMemoryRevoked(LineageAllowance.tool(),'chat','engine','S',access);
  try {
   inMemoryAccessPass(()=>{for(let i=0;i<6;i++)expect(check()).toBe(false);});

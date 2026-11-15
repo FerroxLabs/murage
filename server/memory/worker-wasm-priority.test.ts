@@ -18,8 +18,12 @@ vi.mock("./embeddings.ts",()=>({MemoryEmbeddings:class {
   }
 }}));
 vi.mock("./index.ts",()=>({MemoryIndex:class {
+  static async create() { return new this(); }
+  resetDone() { return null; }
+  stopInfo() { return null; }
   rebuilt=false;
   prepareModel(){}
+  async applyBatch(records: Array<{text:string}>) { this.upsert(records); return { status: "done" as const }; }
   upsert(records:Array<{text:string}>){state.indexed.push(...records.map(record=>record.text));}
   vector(){}
   search(){return {hits:[],vectorRows:0};}
@@ -39,15 +43,15 @@ async function withWorker(run: (ctx: { emit: (m: unknown) => void; sent: Array<{
   const realProcess = process, listeners = new Map<string, (message: unknown) => void>(), sent: Array<{ type: string; requestId?: string }> = [];
   const workerProcess = Object.create(realProcess) as NodeJS.Process;
   Object.defineProperties(workerProcess, {
-    on: { value: (event: string, listener: (message: unknown) => void) => { if (event === "message" || event === "disconnect") { listeners.set(event, listener); return workerProcess; } return realProcess.on(event, listener); } },
-    send: { value: (message: { type: string; requestId?: string }) => { sent.push(message); return true; } },
+    on: { value: (event: string, listener: (message: unknown) => void) => { if (event === "message" || event === "disconnect") { listeners.set(event, listener); return workerProcess; } return workerProcess; } },
+    send: { value: (message: { type: string; requestId?: string }, cb?: (e: Error | null) => void) => { if (typeof cb === "function") cb(null); sent.push(message); return true; } },
     resourceUsage: { value: () => realProcess.resourceUsage() },
   });
   vi.stubGlobal("process", workerProcess);
   try {
     await import("./worker.ts");
     const emit = listeners.get("message")!;
-    emit({ type: "init", indexPath: "/unused/index", authorityPath: "/unused/authority", modelDirectory: "/unused/model", manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] } });
+    await emit({ type: "init", indexPath: "/unused/index", authorityPath: "/unused/authority", modelDirectory: "/unused/model", manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] } });
     await run({ emit, sent });
   } finally {
     for (let i = 0; i < 12; i++) { while (state.release.length) state.release.shift()!(); await Promise.resolve(); }

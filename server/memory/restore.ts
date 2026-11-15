@@ -1,7 +1,10 @@
+import "../../shared/win-hide-child-process.mjs";
 // Offline helpers: no runtime configuration, Store or provider imports.
 import { existsSync, lstatSync } from "node:fs";
+import { mergeDestinationHighLevelMarks } from "../highlevel/thread-marks-restore.ts";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "../sqlite-open.ts";
+import { dropRecallViewSchema, ensureRecallViewSchema, ensureExternalRecallEpoch } from './recall-view-schema.ts';
 import { migrateMemorySchema, validateMemorySchema } from "./schema.ts";
 import { reconcilePipStances } from "./pip-stance.ts";
 import { purgeForgottenEvolutionCopies } from "./evolution-forgetting.ts";
@@ -19,11 +22,13 @@ export { RECORD_TOMBSTONE_AFFECTED, RECORD_TOMBSTONE_REVOCATION_SCAN_TAIL };
 export function mergeOriginalMemoryDeletions(original: string, candidate: string) {
   const review=readRestoreReview(candidate);
   if(review?.version!==1||review.status!=="review-required"||!Array.isArray(review.modifications))throw new Error("INVALID_RESTORE_MEMORY_REVIEW");
+  const marksRetained=mergeDestinationHighLevelMarks(original,candidate);
   const result=mergeDestinationMemoryDeletions(original,candidate);
   // A connected-app action the original left unresolved keeps blocking its repeat in the restored installation.
   const ledger=mergeDestinationConnectedLedger(original,candidate);
   detachRestoredLedgerAccounts(candidate);
   const modifications=[...review.modifications,{component:"messages.db",action:`Current original memory ledger: ${result.history}; ${result.merged} tombstones retained before selection`},
+    ...(marksRetained?[{component:"messages.db",action:`${marksRetained} permanent HighLevel conversation marks retained before selection`}]:[]),
     ...(ledger.merged?[{component:"connected-app-ledger.db",action:`${ledger.merged} connected app records from the original installation kept, still marked as possibly sent`}]:[])];
   writeFileAtomic(join(candidate,RESTORE_REVIEW_FILE),JSON.stringify({...review,modifications})+"\n",{mode:0o600});
   return result;
@@ -158,13 +163,19 @@ export const RECORD_TOMBSTONE_REVOCATION_TAIL = `UPDATE memory_disclosures SET s
 
 /** Caller owns the surrounding offline restore transaction. */
 export function pauseRestoredMemory(db: DatabaseSync) {
+  // Recall rows and even an incomplete recall schema in a backup are disposable.
+  // Remove only the closed registered derived inventory, before validating authority.
+  dropRecallViewSchema(db);
   if (!validateMemorySchema(db).size) return false;
+  ensureRecallViewSchema(db);
+  if (Number(db.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE type='table' AND name IN ('team_identities','project_settings')").get()!.n)===2) ensureExternalRecallEpoch(db);
   db.exec("UPDATE memory_meta SET mode='paused',policy_revision=policy_revision+1 WHERE id=1;");
   parkRetiredLeasedJobs(db);
   db.prepare("UPDATE memory_jobs SET status='pending',lease_owner=NULL,lease_until=0,lease_generation=lease_generation+1 WHERE status='leased'").run();
   revokeAllDisclosures(db,"restore");
   db.prepare("UPDATE memory_projection_receipts SET lexical_status=CASE WHEN (SELECT r.state FROM memory_records r WHERE r.id=record_id AND r.version=record_version)='active' THEN 'pending' ELSE 'pending-archive' END,embedding_status='pending' WHERE lexical_status!='delete-pending'").run();
-  applyMemoryTombstones(db);return true;
+  applyMemoryTombstones(db);
+  return true;
 }
 
 /** Existing destination is held by the installation restore lease. */
@@ -175,8 +186,9 @@ export function mergeDestinationMemoryDeletions(destination: string, candidate: 
   if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1)throw new Error("UNSAFE_MEMORY_LEDGER");
   let rows: Array<Record<string,unknown>>, denyRows: Array<Record<string,unknown>> = [], identity:string, epoch:number;
   // A damaged or newer-schema destination is exactly the case the app tells
-  // people to restore for (audit A-2): the restore goes ahead, and the review
-  // says the destination's deletion ledger could not be read.
+  // people to restore for (audit A-2): memory salvage may proceed, and the review
+  // records that its deletion ledger could not be read. Installation replacement
+  // separately requires preservation of permanent HighLevel marks.
   try {
     const source=new DatabaseSync(original,{readOnly:true});
     try {
