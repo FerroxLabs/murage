@@ -1,6 +1,6 @@
 import { database, transaction } from "../database.ts";
 import { isPipKind } from "./pip-kinds.ts";
-import { requireMemoryOwner, readCorrectionTarget, approveCorrection, assertGenericMemoryTarget } from "./authority.ts";
+import { requireMemoryOwner, readCorrectionTarget, approveCorrection, assertGenericMemoryTarget, assertNotForgotten } from "./authority.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
 import { contentStampOf, PagedScan, storeAtMost } from "./status-scan.ts";
 import { STATUS_SCAN_INTERVAL_MS } from "./health.ts";
@@ -8,6 +8,8 @@ import { STATUS_SCAN_INTERVAL_MS } from "./health.ts";
 function transition(ticket:object,id:string,version:number,from:"active"|"archived",to:"active"|"archived"){
   requireMemoryOwner(ticket);
   transaction(db=>{
+    // Memory screen B2 (spec r3 2.5): a forgotten record is never made active again, before or after its job ends.
+    if(to==="active")assertNotForgotten(db,id);
     const row=db.prepare("SELECT * FROM memory_records WHERE id=? AND version=? AND state=?").get(id,version,from);
     if(!row)throw new Error("MEMORY_VERSION_CONFLICT");
     // I-10: a PIP row is never archived or restored here; refused before any receipt rewrite, revision bump or revoke.

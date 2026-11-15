@@ -9,11 +9,12 @@
 // into a private .incoming-<uuid> folder and renamed into place, so a half
 // written skill is never listed.
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { DATA_DIR } from "./config.ts";
-import { DESCRIPTION_MAX, isSkillName, parseSkillMd, SKILL_NAME_MAX } from "./skills.ts";
+import { DESCRIPTION_MAX, isSkillName, LIBRARY_ASSET_LIMITS, parseSkillMd, SKILL_NAME_MAX } from "./skills.ts";
 import { scanSkill } from "./skill-guard/scan.ts";
 import type { SkillScan } from "./skill-guard/types.ts";
 
@@ -27,17 +28,20 @@ export interface CollectionSkill {
   /** What the owner calls it, when they named it in the editor. */
   displayName?: string;
   description: string;
-  source: { kind: SkillSourceKind; label: string };
+  source: { kind: SkillSourceKind; label: string; originalRef?: string };
   importedAt: string;
   /** Set when the owner edited it here. */
   updatedAt?: string;
   /** Paths of the files kept, SKILL.md first. */
   files: string[];
+  /** Opaque supporting files copied from the shipped library, kept byte for byte. */
+  assetFiles?: string[];
   /** Files that were not text and so were not kept. */
   skipped: string[];
   scan: SkillScan;
 }
 type SkillFile = { path: string; content: string };
+type SkillAsset = { path: string; content: Buffer };
 type Refusal = { error: string; code: "invalid" | "too-big" };
 
 const root = () => join(DATA_DIR, "skill-collection");
@@ -100,14 +104,19 @@ export function listCollection(): CollectionSkill[] {
   return Object.values(readRecords()).sort((a, b) => a.name.localeCompare(b.name));
 }
 
-export function getCollectionSkill(name: string): (CollectionSkill & { text: string; contents: SkillFile[] }) | null {
+export function getCollectionSkill(name: string): (CollectionSkill & { text: string; contents: SkillFile[]; assets: SkillAsset[] }) | null {
   if (!isSkillName(name)) return null;
   const record = readRecords()[name];
   if (!record) return null;
   const contents: SkillFile[] = [];
+  const assets: SkillAsset[] = [];
   for (const path of record.files) {
     const relative = safeRelative(path);
     if (!relative) continue;
+    if (record.assetFiles?.includes(relative)) {
+      assets.push({ path: relative, content: readFileSync(join(root(), name, relative)) });
+      continue;
+    }
     try {
       contents.push({ path: relative, content: readFileSync(join(root(), name, relative), "utf8") });
     } catch {
@@ -115,16 +124,29 @@ export function getCollectionSkill(name: string): (CollectionSkill & { text: str
     }
   }
   const text = contents.find((file) => file.path === "SKILL.md")?.content;
-  return text === undefined ? null : { ...record, text, contents };
+  return text === undefined ? null : { ...record, text, contents, assets };
 }
 
 export function importCollectionSkill(
   input: SkillFile[],
   source: CollectionSkill["source"],
-  options: { replace?: boolean; skipped?: string[]; keep?: Partial<Pick<CollectionSkill, "displayName" | "importedAt" | "updatedAt">> } = {},
+  options: { replace?: boolean; skipped?: string[]; assets?: SkillAsset[]; keep?: Partial<Pick<CollectionSkill, "displayName" | "importedAt" | "updatedAt">> } = {},
 ): CollectionSkill | { error: string; code: "invalid" | "too-big" | "exists" } {
   const normalized = normalizeSkillFiles(input);
   if ("error" in normalized) return normalized;
+  // Only internal library-copy callers supply assets. Imports keep their
+  // existing text-only policy; opaque files never become instructions.
+  const assets = options.assets ?? [];
+  const paths = new Set(normalized.files.map((file) => file.path));
+  let assetBytes = 0;
+  for (const asset of assets) {
+    assetBytes += asset.content.length;
+    if (safeRelative(asset.path) !== asset.path || !asset.path.startsWith("assets/") || paths.has(asset.path)
+      || asset.content.length > LIBRARY_ASSET_LIMITS.fileBytes || assets.length > LIBRARY_ASSET_LIMITS.files || assetBytes > LIBRARY_ASSET_LIMITS.totalBytes) {
+      return { error: "That skill has invalid supporting files.", code: "invalid" };
+    }
+    paths.add(asset.path);
+  }
   const skillMd = normalized.files[0]!;
   const parsed = parseSkillMd(skillMd.content);
   if ("error" in parsed) return { error: `That skill's instructions can't be read: ${parsed.error}`, code: "invalid" };
@@ -136,7 +158,7 @@ export function importCollectionSkill(
   const incoming = join(root(), `.incoming-${randomUUID()}`);
   mkdirSync(incoming, { recursive: true, mode: 0o700 });
   try {
-    for (const file of normalized.files) {
+    for (const file of [...normalized.files, ...assets]) {
       const target = join(incoming, file.path);
       mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
       writeFileSync(target, file.content, { mode: 0o600, flag: "wx" });
@@ -155,7 +177,8 @@ export function importCollectionSkill(
     description: parsed.description,
     source,
     importedAt: new Date().toISOString(),
-    files: normalized.files.map((file) => file.path),
+    files: [...normalized.files, ...assets].map((file) => file.path),
+    ...(assets.length ? { assetFiles: assets.map((file) => file.path) } : {}),
     skipped: options.skipped ?? [],
     scan,
     ...options.keep,
@@ -207,14 +230,16 @@ export function copyName(name: string): string {
  *  under a new name, labelled with the original's name. */
 export function duplicateIntoCollection(
   files: SkillFile[],
-  original: { name: string; displayName: string; description: string },
+  original: { name: string; displayName: string; description: string; originalRef?: string },
   wanted?: string,
+  assets: SkillAsset[] = [],
 ): CollectionSkill | { error: string; code: "invalid" | "too-big" | "exists" } {
   const name = wanted && isSkillName(wanted) && !readRecords()[wanted] ? wanted : copyName(original.name);
   const skillMd = files.find((file) => file.path === "SKILL.md");
   if (!skillMd) return { error: "That skill has no instructions to copy.", code: "invalid" };
   const copied = files.map((file) => (file === skillMd ? { path: "SKILL.md", content: rewriteSkillHeader(file.content, { name, description: original.description }) } : file));
-  return importCollectionSkill(copied, { kind: "copy", label: original.displayName.slice(0, 200) }, {
+  return importCollectionSkill(copied, { kind: "copy", label: original.displayName.slice(0, 200), ...(original.originalRef ? { originalRef: original.originalRef } : {}) }, {
+    assets,
     keep: original.displayName !== original.name ? { displayName: `${original.displayName} (copy)`.slice(0, 120) } : undefined,
   });
 }
@@ -224,7 +249,7 @@ export function duplicateIntoCollection(
 export function updateCollectionSkill(
   name: string,
   edit: { displayName?: string; description: string; body: string },
-): (CollectionSkill & { text: string; contents: SkillFile[] }) | { error: string; code: "invalid" | "too-big" | "exists" | "missing" } {
+): (CollectionSkill & { text: string; contents: SkillFile[]; assets: SkillAsset[] }) | { error: string; code: "invalid" | "too-big" | "exists" | "missing" } {
   const current = getCollectionSkill(name);
   if (!current) return { error: "No such skill.", code: "missing" };
   const description = edit.description.replace(/\s+/g, " ").trim();
@@ -235,6 +260,7 @@ export function updateCollectionSkill(
   const saved = importCollectionSkill(files, current.source, {
     replace: true,
     skipped: current.skipped,
+    assets: current.assets,
     keep: { importedAt: current.importedAt, updatedAt: new Date().toISOString(), ...(displayName && displayName !== name ? { displayName } : {}) },
   });
   if ("error" in saved) return saved;

@@ -1,7 +1,11 @@
+import { CONNECTOR_SAFE_READS, CONNECTOR_PROBE_INTERVAL_MS } from "../shared/connector-safe-reads.ts";
+import en from "../src/locales/en.json" with { type: "json" };
+import { channelReplyLanguage, channelReplyPacks } from "./channels/reply-text.ts";
 // Connected apps run through the Flux Router broker (and, for installs that
 // still hold a Worker identity, the legacy broker until it is claimed). No key
 // a person typed in is ever read here: a stored own key stays on disk, unused.
 import { toolSlugsOf, withScopeHint, type ScopeRoute } from "./connector-scope-hint.ts";
+import { accountedFetch, reserveUpstreamRequest } from "./memory/upstream-reader.ts";
 import { withForeignTimesNote } from "./connector-time-note.ts";
 import { ownerTimeZone } from "./owner-time-zone.ts";
 import { DATA_DIR, type AppConfig } from "./config.ts";
@@ -23,6 +27,10 @@ import {
   connectedAppRepeatNote,
   connectedAppToolId,
   connectedAppRequirements,
+  normalizedCallRows,
+  dispatchedCall,
+  accountsForRow as resolveAccountsForRow,
+  type ConnectedAppRequirement,
   isConnectedAppLookup,
   connectedAppUnknownText,
   connectedAppUnrecordedText,
@@ -46,12 +54,14 @@ import {
   waitForOperation,
   type ConnectedAppOperation,
   type OperationOutcome,
-  type RelayReply,
+  type RelayReply as BaseRelayReply,
 } from "./connected-app-operations.ts";
-import { classifyConnectedAppCall } from "../shared/connected-app-readonly.ts";
+type RelayReply = BaseRelayReply & { brokerFailure?: boolean };
+
+import { classifyConnectedAppCall, isVerifiedReadTool } from "../shared/connected-app-readonly.ts";
 import { SqliteOperationJournal, defaultJournalFile } from "./connected-app-journal.ts";
 import { devFluxTokenApplies, devFluxTokenInFlight, ensureDevFluxBrokerToken, readDevFluxTokenDocument, resetDevFluxTokenState } from "./flux-composio-dev-token.ts";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import * as net from "node:net";
 import { fluxRetryDelayMs } from "./flux-key-health.ts";
 import { z } from "zod";
@@ -72,6 +82,7 @@ import {
 } from "./connected-inventory.ts";
 import {
   accountKeyOf,
+  connectorHealthStore,
   clearAllHealth,
   clearNeedsReconnect,
   healthMark,
@@ -86,13 +97,17 @@ import { catalogApp, knownApps, loadCatalog, type CatalogApp, type CatalogBacken
 import { isFluxHost, setFluxUsageHeaders } from "./flux-usage-tags.ts";
 
 export interface ConnectedAccountSummary {
+  checkState?: "unverified";
   id: string;
   alias?: string;
   status: string;
+  needsReconnect?: boolean;
   /** Why the provider ended a sign-in, and when it began: kept so a card can
    * say "expired" or "refused" instead of the provider's status word. */
   statusReason?: string;
   createdAt?: string;
+  /** Provider grant expiry in Unix milliseconds, independent of inventory status. */
+  expiresAt?: number;
 }
 
 export interface ConnectorServiceState {
@@ -119,6 +134,7 @@ const connectorServiceSchema = z.object({
     status: z.string(),
     statusReason: z.string().optional(),
     createdAt: z.string().optional(),
+    expiresAt: z.number().finite().optional(),
   })).optional(),
 });
 const connectorServicesResponseSchema = z.object({ services: z.record(z.string(), connectorServiceSchema).optional() });
@@ -143,6 +159,7 @@ export interface ComposioMcpIntegration {
 }
 
 interface IntegrationContext {
+  noLimits?: boolean;
   harnessUrl: string;
   commsToken: string;
   botId: string;
@@ -195,6 +212,7 @@ let managedBrokerAccess: { url: string; token: string } | null | undefined;
 // override turns it on) and the harness-only broker token minted from the
 // stored Flux key. `undefined` = no desktop message yet, read the env.
 let managedFluxBrokerUrl: string | undefined;
+let managedFluxOwner: string | null | undefined;
 let managedFluxAccess: { url: string; token: string } | null | undefined;
 let managedLegacyClaim: LegacyClaim | undefined;
 let managedAccountKind: AccountKind | null | undefined;
@@ -236,16 +254,21 @@ function normalizeManagedBrokerUrl(value: string): string {
  * that follows is the same install's re-mint, so the remembered list moves to
  * the new owner instead of being dropped (a rejection is not an owner change). */
 let tokenRejectedAwaitingReplacement = false;
+let healthOwnerAwaitingReplacement: string | null = null;
 
 /** Called after the managed credentials changed. */
 function credentialsChanged(): void {
   if (tokenRejectedAwaitingReplacement && inventoryOwner({} as AppConfig) !== null) {
     tokenRejectedAwaitingReplacement = false;
     toolResponseCache.clear();
-    rekeyInventory(inventoryOwner({} as AppConfig));
+    const nextOwner = inventoryOwner({} as AppConfig)!;
+    rekeyInventory(nextOwner);
+    if (healthOwnerAwaitingReplacement) connectorHealthStore().rekey(healthOwnerAwaitingReplacement, nextOwner);
+    healthOwnerAwaitingReplacement = null;
     return;
   }
   tokenRejectedAwaitingReplacement = false;
+  healthOwnerAwaitingReplacement = null;
   clearInventoryAndToolCache();
 }
 
@@ -257,13 +280,27 @@ let applyingBrokerMessage = false;
 
 export function applyManagedBrokerMessage(message: unknown): boolean {
   const before = managedCredentialMark();
+  const previousOwner = inventoryOwner({} as AppConfig);
+  const previousFlux = fluxBrokerCandidate();
+  const previousProof = managedFluxOwner === undefined ? process.env.MURAGE_FLUX_COMPOSIO_OWNER : managedFluxOwner;
   applyingBrokerMessage = true;
   try {
     return applyManagedBrokerMessageInner(message);
   } finally {
     applyingBrokerMessage = false;
-    // A new or removed token is a new owner: the old owner's list goes.
-    if (managedCredentialMark() !== before) credentialsChanged();
+    // A successful mint carries the fingerprint of the stored key that
+    // minted it. A matching fingerprint proves renewal, including at boot.
+    const nextOwner = inventoryOwner({} as AppConfig);
+    if (managedCredentialMark() !== before || nextOwner !== previousOwner) {
+      const previousWasFlux = previousFlux && previousOwner === backendFingerprint(previousProof ? "inventory-managed-owner" : "inventory-managed", previousFlux.url, previousProof || previousFlux.token);
+      const nextIsFlux = managedFluxAccess && nextOwner === backendFingerprint("inventory-managed-owner", managedFluxAccess.url, managedFluxOwner ?? "");
+      const sameOwner = previousWasFlux && nextIsFlux && managedFluxOwner && previousFlux?.url === managedFluxAccess?.url
+        && ((previousProof && previousProof === managedFluxOwner) || (!previousProof && previousFlux?.token === managedFluxAccess?.token));
+      if (sameOwner && previousOwner) {
+        const next = inventoryOwner({} as AppConfig);
+        if (next) { connectorHealthStore().rekey(previousOwner, next); rekeyInventory(next); toolResponseCache.clear(); }
+      } else credentialsChanged();
+    }
   }
 }
 
@@ -279,6 +316,7 @@ function applyManagedBrokerMessageInner(message: unknown): boolean {
   const data = parsed.data;
   setManagedBrokerAccess(data.access);
   if (Object.hasOwn(data, "fluxBrokerUrl") || Object.hasOwn(data, "fluxAccess")) {
+    managedFluxOwner = typeof data.fluxOwner === "string" && /^[a-f0-9]{16}$/.test(data.fluxOwner) ? data.fluxOwner : null;
     setFluxBrokerAccess(data.fluxAccess ?? null, typeof data.fluxBrokerUrl === "string" ? data.fluxBrokerUrl : "");
   }
   if (Object.hasOwn(data, "legacyClaim")) {
@@ -314,6 +352,7 @@ export function setFluxBrokerAccess(access: unknown, url: string): void {
   const before = managedCredentialMark();
   const nested = applyingBrokerMessage;
   try {
+    if (!nested) managedFluxOwner = null; // A bare replacement carries no same-owner proof.
     setFluxBrokerAccessInner(access, url);
   } finally {
     if (!nested && managedCredentialMark() !== before) credentialsChanged();
@@ -339,6 +378,7 @@ export function resetManagedBrokerState(): void {
   managedBrokerAccess = undefined;
   managedFluxBrokerUrl = undefined;
   managedFluxAccess = undefined;
+  managedFluxOwner = undefined;
   managedLegacyClaim = undefined;
   managedAccountKind = undefined;
   managedTokenError = undefined;
@@ -348,6 +388,7 @@ export function resetManagedBrokerState(): void {
   unreachableLoggedAt.clear();
   lastProbeCause = null;
   clearAllHealth();
+  idleProbeAt.clear();
   fluxReadiness = null;
   fluxReadinessProbe = null;
   fluxAccountStatus = null;
@@ -589,7 +630,7 @@ async function probeFluxReadiness(url: string): Promise<void> {
   let cause: string | null = null;
   for (let attempt = 0; ; attempt++) {
     try {
-      const response = await fetch(`${url}/health`, { redirect: "error", signal: AbortSignal.timeout(FLUX_PROBE_TIMEOUT_MS) });
+      const response = await accountedFetch(`${url}/health`, { redirect: "error", signal: AbortSignal.timeout(FLUX_PROBE_TIMEOUT_MS) });
       const body = response.status === 200 ? await response.json().catch(() => null) : null;
       ready = body !== null && typeof body === "object" && (body as { ready?: unknown }).ready === true;
       cause = ready ? null : response.status === 200 ? "HTTP 200 health not ready" : `HTTP ${response.status}`;
@@ -699,7 +740,8 @@ async function responseCode(response: Response): Promise<string | undefined> {
   try {
     const body = (await response.clone().json()) as { code?: unknown } | null;
     return typeof body?.code === "string" ? body.code : undefined;
-  } catch {
+  } catch (error) {
+    if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
     return undefined;
   }
 }
@@ -716,10 +758,10 @@ async function responseCode(response: Response): Promise<string | undefined> {
  * It also has to stay honest about the OTHER way in. Somebody running their
  * own connected-apps key is a real and supported case, so the sentence still
  * says a key of their own will do, without naming whose key it is: the
- * catalogue is "500+ apps", named by example, everywhere a person can read it.
+ * catalog is named by example, everywhere a person can read it.
  */
 export const BROKER_UNAVAILABLE =
-  "Connected apps need Flux Router. Connect Flux Router and 500+ apps come with it, Gmail, Slack, Notion and GitHub among them. Your own connected-apps key works too, if you have one.";
+  "Connected apps need Flux Router. Connect Flux Router and your apps come with it, Gmail, Slack, Notion and GitHub among them. Your own connected-apps key works too, if you have one.";
 
 /** What a connector call says while connected apps cannot be reached at the
  * moment (a dropped connection, the service restarting) and a sign-in exists.
@@ -755,6 +797,7 @@ async function observeBrokerResponse(broker: BrokerAccess, response: Response, o
       // panel still opens at once. Only the tool answers go.
       toolResponseCache.clear();
       invalidateInventory(inventoryOwner({} as AppConfig));
+      healthOwnerAwaitingReplacement = inventoryOwner({} as AppConfig);
       tokenRejectedAwaitingReplacement = true;
       const tokenFingerprint = brokerTokenFingerprint(broker.token);
       if (devFluxTokenEligible(broker.url)) {
@@ -1141,7 +1184,7 @@ export function requiredAppsSystemPrompt(
  * used to read the broker directly, which left every caller responsible for
  * gating itself — and a caller that forgot would have quietly spent the
  * broker owner's money on behalf of someone holding their own key. */
-async function brokerRequest(cfg: AppConfig, path: string, init?: RequestInit): Promise<Response> {
+export async function brokerRequest(cfg: AppConfig, path: string, init?: RequestInit): Promise<Response> {
   const broker = activeBroker(cfg);
   if (!broker) throw new Error(fluxSignedInButUnreachable(cfg) ? BROKER_UNREACHABLE : BROKER_UNAVAILABLE);
   const headers = new Headers(init?.headers);
@@ -1151,7 +1194,8 @@ async function brokerRequest(cfg: AppConfig, path: string, init?: RequestInit): 
   if (init?.body) headers.set("content-type", "application/json");
   // a broker on Flux Router: the usage tags say what the call is for (flux-usage-tags.ts)
   if (isFluxHost(broker.url)) setFluxUsageHeaders(headers, { feature: "other" });
-  const response = await fetch(`${broker.url}${path}`, {
+  reserveUpstreamRequest(typeof init?.body === "string" ? Buffer.byteLength(init.body) : 0);
+  const response = await accountedFetch(`${broker.url}${path}`, {
     ...init,
     headers,
     signal: init?.signal ?? AbortSignal.timeout(30_000),
@@ -1163,7 +1207,10 @@ async function brokerRequest(cfg: AppConfig, path: string, init?: RequestInit): 
 }
 
 async function responseError(res: Response, fallback: string) {
-  const raw = await res.text().catch(() => "");
+  const raw = await res.text().catch(error => {
+    if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
+    return "";
+  });
   try {
     const body = JSON.parse(raw);
     return String(body?.message ?? body?.error?.message ?? body?.error ?? fallback);
@@ -1437,7 +1484,7 @@ export async function relayMcp(
   payload: JsonValue,
   transportSessionId?: string,
   beforeDispatch?: () => void,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; noRetry?: boolean; observe?: boolean } = {},
 ): Promise<RelayReply> {
   if (!isToolsList(payload)) return relayMcpUpstream(cfg, payload, transportSessionId, beforeDispatch, false, options);
   const owner = inventoryOwner(cfg);
@@ -1489,13 +1536,13 @@ export async function relayMcp(
   return bundledProvisionalReply(id);
 }
 
-async function relayMcpUpstream(
+export async function relayMcpUpstream(
   cfg: AppConfig,
   payload: JsonValue,
   transportSessionId?: string,
   beforeDispatch?: () => void,
   bypassCache = false,
-  options: { timeoutMs?: number } = {},
+  options: { timeoutMs?: number; noRetry?: boolean; observe?: boolean } = {},
 ): Promise<RelayReply> {
   // Every call re-checks readiness the way a turn start does (never waiting
   // on a probe already running), so a 503 earlier in this turn, which clears
@@ -1546,15 +1593,17 @@ async function relayMcpUpstream(
   const forwarded = transportSessionId && transportSessionBackends.get(transportSessionId) === identity ? transportSessionId : undefined;
   if (forwarded) headers.set("mcp-session-id", forwarded);
   if (isFluxHost(url)) setFluxUsageHeaders(headers, { feature: "other" });
-  beforeDispatch?.();
   let response: Response;
   const body = JSON.stringify(payload);
+  reserveUpstreamRequest(Buffer.byteLength(body));
+  beforeDispatch?.();
   let tries = 0;
   try {
     for (;;) {
       tries++;
       try {
-        response = await fetch(url, {
+        if (tries > 1) reserveUpstreamRequest(Buffer.byteLength(body));
+        response = await accountedFetch(url, {
           method: "POST",
           headers,
           body,
@@ -1575,7 +1624,7 @@ async function relayMcpUpstream(
         // tried twice more, 0.5 s then 1.5 s apart. A failure after the request
         // may have left is never sent again: its outcome is unknown.
         const backoff = TOOL_CALL_BACKOFF_MS[tries - 1];
-        if (broker?.kind === "flux" && error instanceof TypeError && neverConnected(error) && backoff !== undefined) { await sleep(backoff); continue; }
+        if (!options.noRetry && broker?.kind === "flux" && error instanceof TypeError && neverConnected(error) && backoff !== undefined) { await sleep(backoff); continue; }
         throw error;
       }
     }
@@ -1599,7 +1648,7 @@ async function relayMcpUpstream(
     await response.body?.cancel().catch(() => {});
     if (broker?.kind === "flux") logUnreachable("tool call", `HTTP ${response.status} redirect`);
     const answer = jsonRpcFailure(payload, BROKER_UNREACHABLE);
-    return { status: answer !== null ? 200 : 502, bytes: new TextEncoder().encode(JSON.stringify(answer ?? { error: "redirect" })), contentType: "application/json", delivery: "unknown" };
+    return { status: answer !== null ? 200 : 502, bytes: new TextEncoder().encode(JSON.stringify(answer ?? { error: "redirect" })), contentType: "application/json", brokerFailure: true, delivery: "unknown" };
   }
   // Read before any body is consumed: only the broker saying so, in so many
   // words, makes a 5xx "nothing was sent".
@@ -1625,7 +1674,7 @@ async function relayMcpUpstream(
     const answer = plain === null ? null : jsonRpcFailure(payload, plain);
     if (answer !== null) {
       await response.body?.cancel().catch(() => {});
-      return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(answer)), contentType: "application/json", delivery: refusal! };
+      return { status: 200, bytes: new TextEncoder().encode(JSON.stringify(answer)), contentType: "application/json", brokerFailure: true, delivery: refusal! };
     }
   }
   const declared = Number(response.headers.get("content-length") ?? "0");
@@ -1633,7 +1682,7 @@ async function relayMcpUpstream(
   const bytes = new Uint8Array(await response.arrayBuffer());
   if (bytes.byteLength > 20 * 1024 * 1024) throw new Error("Connected-app response exceeded 20 MB");
   assertCurrent();
-  if (broker && response.ok) observeAppAnswer(cfg, payload, bytes);
+  if (broker && response.ok && options.observe !== false) await observeAppAnswer(cfg, payload, bytes, options.noRetry === true);
   if (cacheKey && cachePolicy && response.status === 200) rememberToolResponse(cacheKey, cachePolicy.ttlMs, response.headers.get("content-type"), bytes);
   if (forwarded) rememberTransportSession(forwarded, identity);
   const nextSession = response.headers.get("mcp-session-id") ?? undefined;
@@ -1649,14 +1698,9 @@ async function relayMcpUpstream(
 }
 
 // ── Which app needs signing in again ────────────────────────────────────
-// A tool call that comes back as an authorization failure marks THAT app
-// (connected-app-health.ts); a call to it that succeeds clears the mark. The
-// broker being dark, its token being rejected and a dropped connection are
-// whole-broker cases above and never mark an app. A 403 (a missing permission
-// scope, a policy refusal, from the app or from the broker) is not a sign-in
-// failure: signing in again would not change it, so it never marks an app
-// either; only a 401, a rejected or expired grant, or an explicit reconnect
-// signal does.
+// Inventory status identifies lapsed accounts. Structured upstream 401 also
+// identifies the selected account; a fixed credential preflight may use 403.
+// Flux project-key authentication and transport failures are broker outages.
 
 /** The tool slugs a request names, or none for a lookup or a non-call. */
 function toolsNamedBy(payload: JsonValue): string[] {
@@ -1672,22 +1716,79 @@ function toolsNamedBy(payload: JsonValue): string[] {
   return /^COMPOSIO_/.test(bare) ? [] : [bare];
 }
 
-function noteNeedsReconnect(cfg: AppConfig, slug: string, cause: string): void {
+function noteNeedsReconnect(cfg: AppConfig, slug: string, cause: string, accounts?: Array<{ id: string; alias?: string }>): void {
   const owner = inventoryOwner(cfg);
   if (!owner) return;
   const held = peekInventory(owner);
-  const fresh = markNeedsReconnect(owner, slug, cause, held?.[slug] ? accountKeyOf(held[slug]!.accounts) : null);
-  if (fresh) console.warn(`connected apps: ${safeCause(slug)} needs reconnecting: ${safeCause(cause)}`);
+  connectorHealthStore().batch(() => {
+    const fresh = markNeedsReconnect(owner, slug, cause, held?.[slug] ? accountKeyOf(held[slug]!.accounts) : null);
+    const previous = healthMark(owner, slug)?.accounts ?? [];
+    const selected = accounts ?? ((held?.[slug]?.accounts.length ?? 0) === 1 ? held![slug]!.accounts : []);
+    const merged = new Map(previous.map(a => [a.id, a]));
+    for (const { id, alias } of selected) merged.set(id, { id, ...(alias ? { alias } : {}) });
+    updateMark(owner, slug, { accounts: [...merged.values()] });
+    if (fresh) console.warn(`connected apps: ${safeCause(slug)} needs reconnecting: ${safeCause(cause)}`);
+  });
 }
 
-function observeAppAnswer(cfg: AppConfig, payload: JsonValue, bytes: Uint8Array): void {
+async function observeAppAnswer(cfg: AppConfig, payload: JsonValue, bytes: Uint8Array, probe: boolean): Promise<void> {
   const tools = toolsNamedBy(payload);
   if (!tools.length) return;
-  const requestId = (payload as { id?: unknown } | null)?.id;
-  const reading = readAppAnswer(tools, requestId, bytes);
   const owner = inventoryOwner(cfg);
-  for (const [slug, cause] of reading.failed) noteNeedsReconnect(cfg, slug, cause);
-  if (owner) for (const slug of reading.ok) if (!reading.failed.has(slug)) clearNeedsReconnect(owner, slug);
+  const reading = readAppAnswer(tools, (payload as { id?: unknown }).id, bytes);
+  if (reading.brokerAuth) return;
+  // Flux forwards provider failures without a stable error code. Refresh the
+  // authoritative account statuses on EVERY tool error, including generic ones.
+  if (reading.errors.size) {
+    try { await connectedInventory(cfg, { force: true, fresh: true }); }
+    catch { /* A failed inventory read is not proof of an account lapse. */ }
+  }
+  if (owner !== inventoryOwner(cfg)) return;
+  recordAppAnswer(cfg, payload, bytes, probe);
+}
+
+function accountsForRow(owner: string, slug: string, row: ConnectedAppRequirement): Array<{ id: string; alias?: string }> {
+  return resolveAccountsForRow(peekInventory(owner)?.[slug]?.accounts ?? [], healthMark(owner, slug)?.accounts ?? [], row);
+}
+
+function clearAccount(owner: string, slug: string, id: string): void {
+  connectorHealthStore().clearUnverified(owner, slug, id);
+  const mark = healthMark(owner, slug);
+  if (!mark) return;
+  const remaining = (mark.accounts ?? []).filter(account => account.id !== id);
+  if (remaining.length) updateMark(owner, slug, { accounts: remaining });
+  else clearNeedsReconnect(owner, slug);
+}
+
+function recordAppAnswer(cfg: AppConfig, payload: JsonValue, bytes: Uint8Array, probe: boolean): void {
+  const request = payload as { id?: unknown; params?: { name?: string; arguments?: unknown } };
+  const call = normalizedCallRows(request.params?.name ?? "", request.params?.arguments);
+  const owner = inventoryOwner(cfg);
+  // Scan-only requirements do not establish response row correspondence.
+  if (!owner || !call.complete) return;
+  const outcomes = new Map<string, { slug: string; account: { id: string; alias?: string }; failed?: string; ok: boolean; unknown: boolean }>();
+  for (const row of call.rows) {
+    const reading = readAppAnswer([row.tool], request.id, bytes, call.rows.length > 1 ? row.index : undefined);
+    if (reading.brokerAuth) return;
+    const slug = row.tool.split("_")[0]!.toLowerCase();
+    const status = reading.authStatus.get(slug);
+    const failed = status === 401 || (probe && status === 403) ? `HTTP ${status}` : undefined;
+    for (const account of accountsForRow(owner, slug, row)) {
+      const key = JSON.stringify([slug, account.id]);
+      const held = outcomes.get(key) ?? { slug, account, ok: false, unknown: false };
+      if (failed) held.failed = failed;
+      held.ok ||= reading.ok.has(slug);
+      held.unknown ||= reading.errors.has(slug) && !failed;
+      outcomes.set(key, held);
+    }
+  }
+  connectorHealthStore().batch(() => {
+    for (const { slug, account, failed, ok, unknown } of outcomes.values()) {
+      if (failed) noteNeedsReconnect(cfg, slug, failed, [account]);
+      else if (unknown) connectorHealthStore().setUnverified(owner, slug, account.id);
+      else if (ok) clearAccount(owner, slug, account.id);
+    }
+  });
 }
 
 /** The inventory with each app that needs signing in again marked so. A mark
@@ -1700,28 +1801,55 @@ function withAppHealth<T extends { connected: boolean; status?: string; needsRec
   cfg: AppConfig,
   owner: string | null,
   services: Record<string, T>,
+  authoritative = true,
 ): Record<string, T> {
   if (!owner) return services;
   const slugs = needsReconnectSlugs(owner);
-  if (!slugs.length) return services;
   const out = { ...services };
+  for (const [slug, service] of Object.entries(out)) {
+    out[slug] = { ...service, accounts: service.accounts?.map(account => ({ ...account,
+      ...(connectorHealthStore().unverified[JSON.stringify([owner, slug, account.id])] !== undefined ? { checkState: "unverified" as const } : {}),
+    })) };
+  }
   for (const slug of slugs) {
     const service = out[slug];
     const mark = healthMark(owner, slug);
-    if (!service || !mark) continue;
-    if (!service.connected) { clearNeedsReconnect(owner, slug); continue; }
+    if (!mark) continue;
+    if (!service) {
+      out[slug] = { connected: false, pending: false, status: "NEEDS_RECONNECT", needsReconnect: true,
+        accounts: (mark.accounts ?? []).map(account => ({ ...account, status: "EXPIRED" })) } as unknown as T;
+      continue;
+    }
+    // Disappearing accounts are not proof of a new sign-in.
     const key = accountKeyOf(service.accounts);
-    if (mark.accountKey === null) updateMark(owner, slug, { accountKey: key });
-    else if (key !== mark.accountKey) {
+    if (mark.accountKey === null) { if (authoritative) updateMark(owner, slug, { accountKey: key }); }
+    else if (authoritative && key !== mark.accountKey) {
       const before = new Set(mark.accountKey.split(",").filter(Boolean));
       const gained = key.split(",").some((id) => id !== "" && !before.has(id));
       const present = new Set((service.accounts ?? []).map((account) => account.id));
       const retire = gained ? (mark.replaces ?? []).filter((id) => present.has(id)) : [];
+      const active = new Set(key.split(",").filter(Boolean));
+      const remaining = (mark.accounts ?? []).filter(account => {
+        if (active.has(account.id) && !before.has(account.id)) return false;
+        if (gained && (!present.has(account.id) || mark.replaces?.includes(account.id))) return false;
+        return true;
+      });
+      if (!gained || remaining.length) {
+        if (remaining.length !== mark.accounts?.length) updateMark(owner, slug, { accounts: remaining });
+        out[slug] = { ...service, status: "NEEDS_RECONNECT", needsReconnect: true };
+        continue;
+      }
       clearNeedsReconnect(owner, slug);
       if (retire.length) void retireReplacedAccounts(cfg, slug, retire);
       continue;
     }
     out[slug] = { ...service, status: "NEEDS_RECONNECT", needsReconnect: true };
+  }
+  for (const slug of slugs) {
+    const service = out[slug];
+    if (!service) continue;
+    const failed = new Set(healthMark(owner, slug)?.accounts?.map(a => a.id) ?? []);
+    out[slug] = { ...service, accounts: service.accounts?.map(account => ({ ...account, needsReconnect: failed.has(account.id) })) };
   }
   return out;
 }
@@ -1752,14 +1880,24 @@ export function appsNeedingReconnect(cfg: AppConfig): Array<{ slug: string; labe
   const owner = inventoryOwner(cfg);
   if (!owner || !needsReconnectSlugs(owner).length) return [];
   const held = peekInventory(owner);
-  const services = held ? withAppHealth(cfg, owner, held as Record<string, InventoryServices[string] & { needsReconnect?: boolean }>) : {};
-  return Object.entries(services)
-    .filter(([, service]) => (service as { needsReconnect?: boolean }).needsReconnect)
-    .map(([slug, service]) => ({
-      slug,
-      label: reconnectLabel(slug),
-      accounts: (service.accounts ?? []).filter((account) => /^active$/i.test(account.status)).map((account) => ({ id: account.id, ...(account.alias ? { alias: account.alias } : {}) })),
-    }));
+  if (held) withAppHealth(cfg, owner, held);
+  return needsReconnectSlugs(owner).map(slug => ({
+    slug, label: reconnectLabel(slug),
+    accounts: healthMark(owner, slug)?.accounts ?? (held?.[slug]?.accounts ?? []).map(({ id, alias }) => ({ id, ...(alias ? { alias } : {}) })),
+  }));
+}
+
+/** Pending incidents survive a restart and do not depend on an inventory cache. */
+export function reconnectIncidents(cfg: AppConfig) {
+  const owner = inventoryOwner(cfg);
+  return owner ? appsNeedingReconnect(cfg).flatMap(app => {
+    const mark = healthMark(owner, app.slug)!;
+    return app.accounts.length ? app.accounts.map(account => {
+      const incident = mark.accountIncidents?.[account.id] ?? mark;
+      return { ...app, owner, ...mark, ...incident, notifiedAt: incident.notifiedAt,
+        accounts: [account], due: connectorHealthStore().due(owner, app.slug, account.id) };
+    }) : [{ ...app, owner, ...mark, due: connectorHealthStore().due(owner, app.slug) }];
+  }) : [];
 }
 
 /** What a bot is told when an app's sign-in no longer works: that app needs
@@ -1805,7 +1943,7 @@ function neverConnected(error: TypeError): boolean {
 }
 
 /** Codes the Flux broker answers a 503 with only when it turned the request
- * away before dispatching anything (flux-router 523958cb). */
+ * away before dispatching anything (the reviewed Flux router contract). */
 const FLUX_PRE_SEND_CODES = new Set(["apps_unavailable", "composio_unavailable", "capability_unavailable"]);
 
 /** What the broker's error body says about whether anything was dispatched. */
@@ -1816,7 +1954,8 @@ async function dispatchEvidence(response: Response): Promise<{ dispatched?: bool
       ...(body?.dispatched === false ? { dispatched: false } : {}),
       ...(typeof body?.code === "string" ? { code: body.code } : {}),
     };
-  } catch {
+  } catch (error) {
+    if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
     return {};
   }
 }
@@ -1878,6 +2017,32 @@ function textReply(id: unknown, text: string, isError = false): RelayReply {
   return jsonReply({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text }], ...(isError ? { isError: true } : {}) } });
 }
 
+/** A filtered multi-call still answers the original request: remap only the
+ * broker's result envelopes, never indexes inside fetched application data. */
+function originalCallRowIndexes(content: unknown[], indexes: number[]): unknown[] {
+  const row = (value: unknown) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    const entry = value as Record<string, unknown>;
+    if (typeof entry.tool_slug !== "string" && typeof entry.toolSlug !== "string") return value;
+    if (typeof entry.index !== "number" || !Number.isInteger(entry.index) || indexes[entry.index] === undefined) return value;
+    return { ...entry, index: indexes[entry.index] };
+  };
+  const envelope = (value: unknown): unknown => {
+    if (Array.isArray(value)) return value.map(row);
+    if (!value || typeof value !== "object") return value;
+    const top = value as Record<string, unknown>;
+    const data = top.data && typeof top.data === "object" && !Array.isArray(top.data) ? top.data as Record<string, unknown> : undefined;
+    return { ...(typeof top.tool_slug === "string" || typeof top.toolSlug === "string" ? row(top) as object : top),
+      ...(Array.isArray(top.results) ? { results: top.results.map(row) } : {}),
+      ...(Array.isArray(data?.results) ? { data: { ...data, results: data.results.map(row) } } : {}) };
+  };
+  return content.map(part => {
+    if (!part || typeof part !== "object" || typeof (part as { text?: unknown }).text !== "string") return part;
+    try { return { ...part, text: JSON.stringify(envelope(JSON.parse((part as { text: string }).text))) }; }
+    catch { return part; }
+  });
+}
+
 /** A kept answer handed to a later request: its id, with a note first. */
 function keptReply(op: ConnectedAppOperation, reply: RelayReply, id: unknown, now: number): RelayReply {
   const ago = Math.max(0, Math.round((now - op.startedAt) / 1000));
@@ -1921,7 +2086,12 @@ function withScopeRefusalNote(op: ConnectedAppOperation, reply: RelayReply): Rel
 
 /** What a request receives once an operation has an outcome. `first` is the
  * request that started it, which gets the broker's own bytes unchanged. */
+const operationReaderRefusals = new WeakMap<ConnectedAppOperation, unknown>();
+function assertOperationReader(op: ConnectedAppOperation): void {
+  if (operationReaderRefusals.has(op)) throw operationReaderRefusals.get(op);
+}
 function outcomeReply(op: ConnectedAppOperation, outcome: OperationOutcome, id: unknown, first: boolean): RelayReply {
+  assertOperationReader(op);
   if (outcome.kind === "answered") {
     connectedAppOperations.delivered(op);
     // The journal keeps the broker's raw answer; the note is added here, on the way to the bot, every time it is read.
@@ -1963,6 +2133,7 @@ async function statusReply(scope: string, id: unknown, args: unknown, waitMs: nu
   const handle = typeof input.handle === "string" ? input.handle.trim() : "";
   const op = handle ? connectedAppOperations.byHandle(scope, handle) : undefined;
   if (!op) return textReply(id, connectedAppNoRecordText(handle || "(none)"));
+  assertOperationReader(op);
   // The handle proves which bot asked, not that it may still see this: the
   // bot's grants as they are now must cover what the action used.
   authorizeStored?.(provenanceOf(op));
@@ -1999,6 +2170,10 @@ export async function relayConnectedAppCall(
   beforeDispatch: (() => void) | undefined,
   options: {
     botId: string; waitMs?: number; lifetimeMs?: number; statusWaitMs?: number;
+    scheduled?: boolean;
+    noLimits?: boolean;
+    routineId?: string; routineRevision?: number;
+    onReconnect?: (message: string) => void;
     /** Throws when the bot may no longer use what a stored action used. */
     authorizeStored?: (used: ConnectedAppProvenance) => void;
     /** Called when an action's answer from the app is handed to the bot (first, joined or collected). */
@@ -2028,13 +2203,65 @@ export async function relayConnectedAppCall(
   }
   const action = connectedAppActionCall(payload);
   if (!action) return relayMcp(cfg, payload, transportSessionId, beforeDispatch);
+  beforeDispatch?.();
+  if (options.scheduled) {
+    const slugs = [...new Set(toolsNamedBy(payload).map(tool => tool.split("_")[0]!.toLowerCase()))];
+    if (slugs.length) await checkIdleConnectorHealth(cfg, slugs);
+    beforeDispatch?.();
+  }
+  const blocked = reconnectAppsForCall(cfg, payload);
+  if (blocked.length) {
+    if (options.noLimits) {
+      const owner = inventoryOwner(cfg)!;
+      const normalized = normalizedCallRows(action.name, action.args);
+      const incidents = appsNeedingReconnect(cfg);
+      const failedRows = new Set<number>();
+      const lines = new Map<string, string>();
+      for (const row of normalized.rows) {
+        const slug = row.tool.split("_")[0]!.toLowerCase();
+        const incident = incidents.find(app => app.slug === slug);
+        if (!incident) continue;
+        for (const account of accountsForRow(owner, slug, row)) {
+          if (!incident.accounts.some(failed => failed.id === account.id)) continue;
+          failedRows.add(row.index);
+          lines.set(JSON.stringify([slug, account.id]), `Reconnect ${reconnectLabel(slug)} (${account.alias ?? account.id}) in App Settings → Connections → Connected apps.`);
+        }
+      }
+      const note = [...lines.values()].join("\n");
+      const call = dispatchedCall(action.name, action.args);
+      if (normalized.complete && call.rows.length > failedRows.size) {
+        // Keep the original wrapper and batch options, removing only rows for
+        // disconnected accounts. Healthy accounts still reach the broker.
+        const indexes = call.rows.map((_, index) => index).filter(index => !failedRows.has(index));
+        const body = { ...call.body, tools: indexes.map(index => call.rows[index]!) };
+        const args = action.args as Record<string, JsonValue>;
+        const inputKey = ["tool_input", "toolInput"].find(key => args[key] === call.body);
+        const arguments_ = inputKey ? { ...args, [inputKey]: body } : body;
+        const healthy = await relayConnectedAppCall(cfg, { ...message!, params: { ...params!, arguments: arguments_ } } as JsonValue, transportSessionId, beforeDispatch, options);
+        const answer = replyMessage(healthy, action.id);
+        if (answer?.result && typeof answer.result === "object") {
+          const result = answer.result as { content?: unknown[] };
+          return { ...healthy, ...jsonReply({ ...answer, result: { ...result, content: [{ type: "text", text: note }, ...originalCallRowIndexes(Array.isArray(result.content) ? result.content : [], indexes)] } }) };
+        }
+        // Preserve errors and delivery evidence when the healthy dispatch fails.
+        return { ...healthy, ...textReply(action.id, `${note}\n${new TextDecoder().decode(healthy.bytes)}`, Boolean(answer?.error)) };
+      }
+      return { ...textReply(action.id, note), delivery: "not-sent" };
+    }
+    const reconnectMessage = reconnectFailureText(blocked);
+    options.onReconnect?.(reconnectMessage);
+    return { ...textReply(action.id, reconnectMessage + reconnectPromptFor(blocked.map(reconnectLabel)), true), delivery: "not-sent" };
+  }
   const waitMs = Math.max(0, Math.min(options.waitMs ?? CONNECTED_APP_ACTION_TIMEOUT_MS, CONNECTED_APP_ACTION_TIMEOUT_MS));
   // Identity is the tool and its effect-bearing arguments; the model's
   // commentary (`thought`, step labels) changes on every retry and is left out.
   const key = operationKey(connectedAppToolId(action.name), connectedAppEffectArgs(action.args));
   // Only a call whose every action is a verified read runs fresh each time;
   // writes, unknown tools, mixed batches and code tools keep the one-send guard.
-  const fresh = classifyConnectedAppCall(action.name, action.args) === "read";
+  const fresh = options.noLimits === true || classifyConnectedAppCall(action.name, action.args) === "read"
+    // A direct provider read names its entire operation too. It must be able
+    // to verify recovery immediately rather than replaying a cached auth error.
+    || isVerifiedReadTool(connectedAppToolId(action.name));
   const existing = fresh ? undefined : connectedAppOperations.blocking(scope, key);
   if (existing) {
     // Same tool, same arguments, same bot and account: never a second send.
@@ -2056,8 +2283,49 @@ export async function relayConnectedAppCall(
       // anything else that came back (foreign ids, empty, malformed) leaves the
       // outcome unknown, so repeats stay blocked until CHECK or run_again.
       async () => {
-        const reply = await relayMcp(cfg, payload, transportSessionId, () => { beforeDispatch?.(); sent = true; }, { timeoutMs: options.lifetimeMs ?? CONNECTED_APP_OPERATION_LIFETIME_MS });
+        try {
+        const reply = await relayMcp(cfg, payload, transportSessionId, () => {
+          beforeDispatch?.(); sent = true;
+          const owner = inventoryOwner(cfg);
+          if (options.scheduled && owner && options.routineId && options.routineRevision !== undefined) {
+            const slugs = [...new Set(toolsNamedBy(payload).map(tool => tool.split("_")[0]!.toLowerCase()))];
+            if (slugs.length) connectorHealthStore().learnRoutine(owner, options.routineId, options.routineRevision, slugs);
+          }
+        }, { timeoutMs: options.lifetimeMs ?? CONNECTED_APP_OPERATION_LIFETIME_MS });
+        const reading = readAppAnswer(toolsNamedBy(payload), action.id, reply.bytes);
+        const failed = reading.errors.size ? reconnectAppsForCall(cfg, payload) : [];
+        if (reading.brokerAuth) return { ...reply, ...textReply(action.id, BROKER_UNREACHABLE, true) };
+        if (failed.length) {
+          const text = options.noLimits
+            ? `${failed.map(reconnectLabel).join(', ')} is disconnected; turn it on in App Settings → Connections → Connected apps.`
+            : reconnectFailureText(failed);
+          // A signed-out capability is off at No limits: one status line,
+          // without the legacy tool-error flag or raw provider error blocks.
+          if (options.noLimits) {
+            const mixed = normalizedCallRows(action.name, action.args).rows.length > 1 ? replyMessage(reply, action.id) : undefined;
+            if (mixed?.result && typeof mixed.result === "object") {
+              const result = mixed.result as { content?: unknown[] };
+              // A disconnected row must not hide a connected account's answer.
+              return { ...reply, ...jsonReply({ ...mixed, result: { ...result, isError: false,
+                content: [{ type: "text", text }, ...(Array.isArray(result.content) ? result.content : [])] } }) };
+            }
+            return { ...reply, ...textReply(action.id, text) };
+          }
+          if (!options.noLimits) options.onReconnect?.(text);
+          const message = replyMessage(reply, action.id);
+          // Preserve mixed batch rows and their per-account attribution. The
+          // explicit error flag and plain note make failure visible to every engine.
+          if (message?.result && typeof message.result === "object") {
+            const result = message.result as { content?: unknown[] };
+            return { ...reply, ...jsonReply({ ...message, result: { ...result, isError: true, content: [{ type: "text", text }, ...(Array.isArray(result.content) ? result.content : [])] } }) };
+          }
+          return { ...reply, ...textReply(action.id, text, true) };
+        }
         return reply.delivery || answersRequest(reply, action.id) ? reply : { ...reply, delivery: "unknown" as const };
+        } catch (error) {
+          if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") operationReaderRefusals.set(op, error);
+          throw error;
+        }
       },
       () => sent,
       (() => {
@@ -2076,6 +2344,9 @@ export async function relayConnectedAppCall(
   // ran out, then a restart before any status check, still leaves its record (the same key is never kept twice).
   void op.done.then((settled) => reportAnswered(op, settled, options.onAnswered), () => undefined);
   const outcome = await waitForOperation(op, waitMs);
+  // The first wait may also outlast the bot's grants (a native HighLevel grant added meanwhile, HL-S2-WRITES (e)):
+  // look again before anything of the action is handed over, as the joined call does.
+  options.authorizeStored?.(provenanceOf(op));
   reportAnswered(op, outcome, options.onAnswered);
   return outcome ? outcomeReply(op, outcome, action.id, true) : textReply(action.id, connectedAppPendingText(op.label, op.handle, false));
 }
@@ -2093,30 +2364,165 @@ function inventoryOwner(_cfg: AppConfig): string | null {
   const claim = legacyClaim().state;
   const legacyIdentityLive = legacy !== null && (claim === "none" || claim === "offered" || claim === "pending");
   const access = flux && !legacyIdentityLive ? flux : legacy ?? flux ?? workerBrokerCredential();
+  const proof = managedFluxOwner === undefined ? process.env.MURAGE_FLUX_COMPOSIO_OWNER : managedFluxOwner;
+  if (access && access === flux && typeof proof === "string" && /^[a-f0-9]{16}$/.test(proof)) {
+    return backendFingerprint("inventory-managed-owner", access.url, proof);
+  }
   return access ? backendFingerprint("inventory-managed", access.url, access.token) : null;
 }
 
-function loadInventory(cfg: AppConfig, owner: string): () => Promise<InventoryServices> {
+function loadInventory(cfg: AppConfig, owner: string, signal?: AbortSignal): () => Promise<InventoryServices> {
   return async () => {
+    const version = inventoryVersion(owner);
     // A background refresh re-checks the broker first, so an outage that has
     // ended is noticed without anyone opening a panel.
     await primeBrokerReadiness({ turn: true });
     const services = await fetchConnectedServices(cfg);
     // The key or token may have changed while this was in flight: what came
     // back belongs to whoever owns the call NOW, so it is not this owner's.
-    if (inventoryOwner(cfg) !== owner) throw new Error("Connected-app configuration changed; retry the request");
+    if (signal?.aborted || inventoryOwner(cfg) !== owner) throw new Error("Connected-app configuration changed; retry the request");
+    // Let the cache settle/revalidate an invalidated fetch, without applying
+    // health decisions from its obsolete response.
+    if (inventoryVersion(owner) !== version) return services;
+    connectorHealthStore().batch(() => {
+      const previous = peekInventory(owner);
+      for (const key of Object.keys(connectorHealthStore().unverified)) {
+        const [heldOwner, slug, id] = JSON.parse(key) as [string, string, string];
+        if (heldOwner !== owner) continue;
+        const before = previous?.[slug]?.accounts.find(account => account.id === id);
+        const after = services[slug]?.accounts.find(account => account.id === id);
+        // A label edit is not credential recovery. Status/expiry/removal is.
+        if (before && (!after || before.status !== after.status || before.expiresAt !== after.expiresAt)) connectorHealthStore().clearUnverified(owner, slug, id);
+      }
+      for (const [slug, service] of Object.entries(services)) {
+        for (const account of service.accounts) if (account.expiresAt !== undefined && account.expiresAt <= Date.now()) account.status = "EXPIRED";
+        const failed = service.accounts.filter(a => !/^ACTIVE$/i.test(a.status));
+        if (failed.length || /^(EXPIRED|REVOKED|NEEDS_RECONNECT)$/i.test(service.status)) {
+          markNeedsReconnect(owner, slug, "sign-in no longer accepted", accountKeyOf(service.accounts));
+          const merged = new Map((healthMark(owner, slug)?.accounts ?? []).map(a => [a.id, a]));
+          for (const { id, alias } of failed.length ? failed : service.accounts) merged.set(id, { id, ...(alias ? { alias } : {}) });
+          updateMark(owner, slug, { accounts: [...merged.values()] });
+        }
+      }
+      withAppHealth(cfg, owner, services);
+    });
     return services;
   };
+}
+
+type PreflightOutcome = "stale" | "unknown" | "reconnect" | "healthy" | "outage";
+
+// Serialize post-probe refreshes so cache invalidation cannot make one
+// concurrent preflight join a fetch that began before its probe finished.
+let postProbeRefresh: Promise<unknown> = Promise.resolve();
+async function postProbeInventory(cfg: AppConfig, owner: string): Promise<InventoryRead> {
+  const abort = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => { abort.abort(); reject(new Error("Inventory check timed out")); }, 5_000);
+  });
+  const work = postProbeRefresh.catch(() => {}).then(async () => {
+    if (abort.signal.aborted || inventoryOwner(cfg) !== owner) throw new Error("Stale inventory check");
+    invalidateInventory(owner);
+    return connectedInventory(cfg, { force: true, fresh: true, signal: abort.signal });
+  });
+  const bounded = Promise.race([work, deadline]);
+  postProbeRefresh = bounded.catch(() => {});
+  try { return await bounded; } finally { clearTimeout(timer); }
+}
+
+async function preflightAccount(cfg: AppConfig, owner: string, slug: string, account: { id: string; alias?: string }): Promise<PreflightOutcome> {
+  let outcome: "transport" | "http" | "brokerAuth" | "upstreamAuth" | "toolError" | "ok" = "transport";
+  let status: number | undefined;
+  const { tool, args } = CONNECTOR_SAFE_READS[slug]!;
+  const id = `health-${randomUUID()}`;
+  try {
+    const reply = await relayMcp(cfg, { jsonrpc: "2.0", id, method: "tools/call", params: {
+      name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { sync_response_to_workbench: false, tools: [{ tool_slug: tool, account: account.id, arguments: args }] },
+    } }, undefined, undefined, { timeoutMs: 5_000, noRetry: true, observe: false });
+    const reading = readAppAnswer([tool], id, reply.bytes);
+    status = reading.authStatus.get(slug);
+    outcome = reply.brokerFailure || reply.status < 200 || reply.status >= 300 ? "http"
+      : reading.brokerAuth ? "brokerAuth" : status === 401 || status === 403 ? "upstreamAuth"
+      : reading.errors.size || !reading.ok.has(slug) ? "toolError" : "ok";
+  } catch { /* Every probe outcome still requires the awaited refresh below. */ }
+  let read: InventoryRead | undefined;
+  try { read = await postProbeInventory(cfg, owner); }
+  catch { /* Uncertainty preserves the incident and cannot restore healthy UI. */ }
+  if (inventoryOwner(cfg) !== owner) return "stale";
+  const unknown = () => { connectorHealthStore().setUnverified(owner, slug, account.id); return "unknown" as const; };
+  if (!read?.services || read.revalidating) return unknown();
+  const current = read.services[slug]?.accounts.find(candidate => candidate.id === account.id);
+  if (!current || !/^active$/i.test(current.status)) {
+    noteNeedsReconnect(cfg, slug, current ? `status ${current.status}` : "account removed", [account]); return "reconnect";
+  }
+  if (outcome === "brokerAuth") return "outage";
+  if (outcome === "upstreamAuth") {
+    noteNeedsReconnect(cfg, slug, `HTTP ${status}`, [account]); return "reconnect";
+  }
+  if (outcome === "ok") { clearAccount(owner, slug, account.id); return "healthy"; }
+  return unknown();
+}
+
+// Scheduled work shares a durable hourly account budget and in-flight checks.
+const idleProbeAt = new Map<string, number>();
+const idleProbeFlights = new Map<string, Promise<void>>();
+export async function checkIdleConnectorHealth(cfg: AppConfig, toolkits: readonly string[]): Promise<void> {
+  if (!toolkits?.length) return;
+  const owner = inventoryOwner(cfg);
+  if (!owner) return;
+  const inventory = peekInventory(owner) ?? await connectedServices(cfg, { fresh: true });
+  if (inventoryOwner(cfg) !== owner) return;
+  const accounts = Object.entries(inventory).flatMap(([slug, service]) =>
+    toolkits.includes(slug) && CONNECTOR_SAFE_READS[slug]
+      ? service.accounts.filter(a => /^active$/i.test(a.status)).map(account => ({ slug, account, key: JSON.stringify([owner, slug, account.id]) })) : []);
+  const selected = accounts.filter(({ key }) => idleProbeFlights.has(key) || Date.now() - (idleProbeAt.get(key) ?? -Infinity) >= CONNECTOR_PROBE_INTERVAL_MS);
+  for (let offset = 0; offset < selected.length; offset += 4) await Promise.all(selected.slice(offset, offset + 4).map(({ slug, account, key }) => {
+    const flight = idleProbeFlights.get(key);
+    if (flight) return flight;
+    if (inventoryOwner(cfg) !== owner || Date.now() - (idleProbeAt.get(key) ?? -Infinity) < CONNECTOR_PROBE_INTERVAL_MS) return;
+    idleProbeAt.set(key, Date.now());
+    if (!connectorHealthStore().claimProbe(owner, slug, account.id, Date.now())) return;
+    const work = preflightAccount(cfg, owner, slug, account).then(() => {}).finally(() => { idleProbeFlights.delete(key); });
+    idleProbeFlights.set(key, work);
+    return work;
+  }));
+}
+
+export function scheduledConnectorToolkits(cfg: AppConfig, routines: readonly { id: string; updatedAt: number; enabled: boolean; nextRunAt: number | null }[], now: number): string[] {
+  const owner = inventoryOwner(cfg);
+  return owner ? connectorHealthStore().scheduledToolkits(owner, routines, now) : [];
+}
+
+/** Guard and attribution resolve precisely the same normalized accounts. */
+function reconnectAppsForCall(cfg: AppConfig, payload: JsonValue): string[] {
+  const request = payload as { params?: { name?: string; arguments?: unknown } };
+  const { rows } = normalizedCallRows(request.params?.name ?? "", request.params?.arguments);
+  const owner = inventoryOwner(cfg);
+  if (!owner) return [];
+  return appsNeedingReconnect(cfg).filter(app => rows.some(row => {
+    if (row.tool.split("_")[0]?.toLowerCase() !== app.slug) return false;
+    return accountsForRow(owner, app.slug, row).some(account => app.accounts.some(failed => failed.id === account.id));
+  })).map(app => app.slug);
+}
+
+function reconnectFailureText(slugs: readonly string[]): string {
+  const pack = channelReplyPacks[channelReplyLanguage()];
+  return slugs.map(slug => {
+    const label = reconnectLabel(slug);
+    return `${(pack?.["connectorHealth.signIn"] || en["connectorHealth.signIn"]).replace("{connector}", label)}. ${(pack?.["connectorHealth.reconnectApp"] || en["connectorHealth.reconnectApp"]).replace("{connector}", label)}.`;
+  }).join(" ");
 }
 
 /** The remembered inventory, answered at once when there is one (stale ones
  * refresh behind it). With nothing remembered it waits up to `waitMs` and then
  * answers `services: null, revalidating: true`. */
-export async function connectedInventory(cfg: AppConfig, options: InventoryReadOptions = {}): Promise<InventoryRead> {
+export async function connectedInventory(cfg: AppConfig, options: InventoryReadOptions & { signal?: AbortSignal } = {}): Promise<InventoryRead> {
   const owner = inventoryOwner(cfg);
   if (!owner) throw new Error(BROKER_UNAVAILABLE);
-  const read = await readInventory(owner, loadInventory(cfg, owner), { waitMs: 3_000, ...options });
-  return read.services ? { ...read, services: withAppHealth(cfg, owner, read.services) } : read;
+  const read = await readInventory(owner, loadInventory(cfg, owner, options.signal), { waitMs: 3_000, ...options });
+  if (options.signal?.aborted || inventoryOwner(cfg) !== owner) throw new Error("Stale inventory check");
+  return read.services ? { ...read, services: withAppHealth(cfg, owner, read.services, !read.revalidating) } : read;
 }
 
 export type PanelInventory =
@@ -2137,6 +2543,15 @@ export async function connectedPanelInventory(cfg: AppConfig, options: { force?:
   return { kind: "ok", read: await connectedInventory(cfg, { force: options.force }) };
 }
 
+/** The slugs the owner holds a connection on, from what is remembered (no broker call). The catalog never hides these as duplicates. */
+export function rememberedConnectedSlugs(cfg: AppConfig): Set<string> | null {
+  const owner = inventoryOwner(cfg);
+  if (!owner || !hasInventory(owner)) return null;
+  const held = peekInventory(owner);
+  if (held === null) return null;
+  return new Set(Object.entries(held).filter(([, state]) => state.connected || state.accounts?.length).map(([slug]) => slug));
+}
+
 /** True when a connected-apps list is already remembered, so a view can show it without a broker call. */
 export function hasRememberedConnected(cfg: AppConfig): boolean {
   const owner = inventoryOwner(cfg);
@@ -2149,7 +2564,7 @@ export async function connectedServices(cfg: AppConfig, options: { fresh?: boole
   const owner = inventoryOwner(cfg);
   if (!owner) throw new Error(BROKER_UNAVAILABLE);
   const read = await readInventory(owner, loadInventory(cfg, owner), { fresh: options.fresh });
-  return withAppHealth(cfg, owner, read.services ?? {});
+  return withAppHealth(cfg, owner, read.services ?? {}, !read.revalidating);
 }
 
 /** Something this app did may have changed the list: refetch it. `drop` for a
@@ -2246,6 +2661,8 @@ export async function removeService(cfg: AppConfig, slug: string) {
   const response = await brokerRequest(cfg, `/v1/connectors/${encodeURIComponent(slug)}`, { method: "DELETE" });
   if (!response.ok) await throwBrokerError(response, `Connected apps: HTTP ${response.status}`);
   const answer = removalResponseSchema.parse(await response.json());
+  const owner = inventoryOwner(cfg);
+  if (owner) clearNeedsReconnect(owner, slug);
   invalidateConnected(cfg, { drop: true });
   connectionsRemoved();
   return answer;
@@ -2261,6 +2678,13 @@ export async function removeAccount(cfg: AppConfig, slug: string, accountId: str
   );
   if (!response.ok) await throwBrokerError(response, `Connected apps: HTTP ${response.status}`);
   const answer = removalResponseSchema.parse(await response.json());
+  const owner = inventoryOwner(cfg);
+  const mark = owner ? healthMark(owner, slug) : undefined;
+  if (owner && mark?.accounts) {
+    const remaining = mark.accounts.filter(account => account.id !== accountId);
+    if (remaining.length) updateMark(owner, slug, { accounts: remaining });
+    else clearNeedsReconnect(owner, slug);
+  }
   invalidateConnected(cfg, { drop: true });
   connectionsRemoved();
   return answer;
@@ -2305,7 +2729,7 @@ export async function authorizeService(cfg: AppConfig, slug: string, requestedAl
   if (owner && options.reconnect && validAccountId(options.reconnect) && healthMark(owner, slug)) {
     const services = await connectedServices(cfg, { fresh: true }).catch(() => null);
     const account = services?.[slug]?.accounts.find((entry) => entry.id === options.reconnect);
-    if (account && /^active$/i.test(account.status)) replaces = [account.id];
+    if (account) replaces = [account.id];
   }
   const post = (label: string | undefined) => {
     const request: RequestInit = { method: "POST" };

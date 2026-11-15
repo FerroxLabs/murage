@@ -1,20 +1,23 @@
+import { continuationSessionVerdict } from "./continuation-settle.ts";
+import { recallViewContains } from './recall-view.ts';
 import { sourceDenied } from "./deny.ts";
 import { verdictStore } from "./verdict-store.ts";
 import { database, onDatabaseClose, transaction } from "../database.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
-import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, lineageReaderScopes, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
+import { accessIncludesRoom, assertMemoryAccess, inMemoryAccessPass, lineageReaderAudience, memoryAccessIsOwnerAudience, memoryAccessNotOwnerAudience, type MemoryAccess } from "./policy.ts";
 import { assertMemoryBundle, hydrateDisclosedMemoryRecord } from "./bundle.ts";
 import { authorityParts, authorityStamp, softChangedSince } from "./authority-epoch.ts";
 import { integrityUntrusted, isLineageLimit, LineageAllowance, contentRevoked, messageCopy, messageSourceForgotten, outputRootsBad, recordSessionRoots, preLineageSessionRevoked, replayExclusions, sessionLineageBad, sessionOutputRoots, type Disclosure, type ReplayAudience, type ReplayMessage } from "./replay-lineage.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
-import { denyGeneration, denyLookup, denyReadMeter, doorEpochVerdict, lineageLive, sessionLookup } from "./deny-read.ts";
+import { denyGeneration, denyLookup, denyReadMeter, doorEpochVerdict, lineageLive } from "./deny-read.ts";
 import { totalChanges } from "./revoke-marker.ts";
-import { STALE_MEM_LSN, type LineageReader, type LineageRef } from "./lineage-types.ts";
+import { STALE_MEM_LSN, type LineageReader, type LineageRef, type TurnLineage } from "./lineage-types.ts";
 import { withSecondLook } from "./lineage-allowance.ts";
-import { addTurnParents, currentLsn, extendLineage, runningTurnFor } from "./lineage-write.ts";
+import { addTurnParents, checkedOpenTurns, currentLsn, extendLineage, runningTurnFor } from "./lineage-write.ts";
 import { noteReceiptOutput, noteReceiptSession, wakeFlipMarker } from "./receipt-outputs.ts";
 import { threadNo } from "./thread-no.ts";
 import { sessionKeyOf } from "./session-incarnation.ts";
+import { captureSendReplayProof, replayCopyRoots, sendReplaySessionCurrent } from "./replay-lineage.ts";
 
 /** Persist before dispatch; records contain references, never duplicated memory text. */
 export function prepareMemoryDisclosure(bundle: MemoryBundle, access: MemoryAccess, driverInstance: string) {
@@ -118,11 +121,11 @@ type Hold = {
   /** newest receipt rowid the session's receipts were judged up to */
   upTo: number;
   seen: Seen;
-  /** ids of the sources the session cites, of the sources its cited records rest on, and (as record:<id>) of the records it cites */
+  /** ids of cited and supporting sources, record:<id> citations, scope:<id> notebooks and thread:<id> dependencies */
   sourceIds: Set<string>;
   /** the scopes the reader held when the hold was made: a reader holding every one of them (and more: a task or a room added since,
    * SCOPED-REVOKES R4) is answered by it, since everything that hydrated under fewer scopes hydrates under more; a narrower reader is not */
-  scopeIds: readonly string[];
+  view: import('./recall-view.ts').RecallViewHandle;
 };
 // the holds live in the VerdictStore (TURNSTART r14 S1'): read recorded, every removal counted, admitted records' holds pinned
 let SESSION_HOLDS_MAX = 512;
@@ -136,6 +139,10 @@ const sessionHoldKey = (threadId: string, driverInstance: string, nativeSession:
 function continuationMemoryRevokedWork(allowance: LineageAllowance, threadId: string, driverInstance: string, nativeSession: string, access: MemoryAccess, why?: { reason?: string }): boolean {
   assertMemoryAccess(access);
   if (threadId !== access.threadId) throw new Error("MEMORY_SCOPE_DENIED");
+  if (!sendReplaySessionCurrent(threadId, driverInstance, nativeSession)) {
+    if (why) why.reason = "send-replay-changed";
+    return true;
+  }
   // the write-time session predicate first, before any hold (S6): deny_session, the session's forgotten set, its pending window. A revoke bumps
   // deny_generation, not the authority stamp a hold rests on, so a hold never answers for it. O(1) seeks.
   // S6 rule 29: the door epoch before the lineageLive bypass, so a file with no line rows still resets every retained session once
@@ -144,17 +151,20 @@ function continuationMemoryRevokedWork(allowance: LineageAllowance, threadId: st
   if (lineageLive(database())) {
     // the owner's own direct chat is judged by content (an audience-only revoke never resets it, 1.0.2 Keep all P0); any other reader keeps
     // every mark, audience-only ones included
-    const verdict = sessionLookup(database(), { threadId, driverInstance, nativeSession }, ownerDirectChat(threadId, access) ? { audience: null } : { audience: { owner: memoryAccessIsOwnerAudience(access), scopeIds: lineageReaderScopes(access) } });
-    if (verdict.state !== "shown") { if (why && !why.reason) why.reason = verdict.state === "checking" ? "checking" : `writetime-${verdict.reason}`; return true; }
+    const verdict = continuationSessionVerdict(database(), { threadId, driverInstance, nativeSession }, ownerDirectChat(threadId, access) ? { audience: null } : { audience: lineageReaderAudience(access) }, allowance);
+    if (verdict.state !== "shown") { if (why && !why.reason) why.reason = verdict.state === "checking" ? `checking:${verdict.reason}` : `writetime-${verdict.reason}`; return true; }
   }
   const parts = authorityParts(), key = sessionHoldKey(threadId, driverInstance, nativeSession, access);
   let hold = verdictStore.getHold(key) as Hold | undefined;
-  if (hold && !hold.scopeIds.every(scope => access.scopeIds.includes(scope))) { verdictStore.loseHold(key, "scope"); hold = undefined; }
+  if (hold && !recallViewContains(database(),access.view,hold.view)) { verdictStore.loseHold(key, "scope"); hold = undefined; }
   if (parts && hold && hold.stamp === parts.stamp) { verdictStore.touchHold(key); return false; }
   let resume: Hold | undefined;
   if (parts && hold && hold.hard === parts.hard) {
     const touched = softChangedSince(hold.seq);
-    if (touched && ![...touched].some(id => hold.sourceIds.has(id) || hold.seen.threadDependenciesIncomplete && id.startsWith("thread:"))) resume = hold;
+    if (touched && ![...touched].some(id => hold.sourceIds.has(id)
+      || hold.seen.threadDependenciesIncomplete && (id.startsWith("thread:") || id.startsWith("scope:"))
+      // Legacy replay roots name threads, not their notebooks. Their unknown scope dependencies still need a full proof.
+      || (hold.seen.rootThreads?.size ?? 0) > 0 && id.startsWith("scope:"))) resume = hold;
   }
   verdictStore.loseHold(key, "consumed");
   // One pass: the reader's audience is worked out once, not once per cited record.
@@ -181,13 +191,17 @@ function continuationMemoryRevokedWork(allowance: LineageAllowance, threadId: st
         // Do not reuse a soft thread-change proof unless that ancestry is known.
         if (database().prepare("SELECT 1 FROM memory_derivations WHERE (child_id,child_version) IN (SELECT value->>0,value->>1 FROM json_each(?)) LIMIT 1").get(JSON.stringify(pairs))) progress.seen.threadDependenciesIncomplete = true;
         // Drive from the bounded citations. Starting at conversation scopes lets the planner walk all history.
-        for (const row of database().prepare("SELECT DISTINCT s.owner_key FROM json_each(?) p CROSS JOIN memory_records r ON r.id=p.value->>0 AND r.version=p.value->>1 CROSS JOIN memory_scopes s ON s.id=r.scope_id WHERE s.kind='conversation'").all(JSON.stringify(pairs))) sourceIds.add(`thread:${String(row.owner_key)}`);
+        for (const row of database().prepare("SELECT DISTINCT s.id,s.kind,s.owner_key FROM json_each(?) p CROSS JOIN memory_records r ON r.id=p.value->>0 AND r.version=p.value->>1 CROSS JOIN memory_scopes s ON s.id=r.scope_id").all(JSON.stringify(pairs))) {
+          sourceIds.add(`scope:${String(row.id)}`);
+          if (row.kind === "conversation") sourceIds.add(`thread:${String(row.owner_key)}`);
+        }
         for (const row of database().prepare("SELECT DISTINCT source_id FROM memory_evidence WHERE (record_id,record_version) IN (SELECT value->>0,value->>1 FROM json_each(?))").all(JSON.stringify(pairs))) newSources.add(String(row.source_id));
       }
       for (const id of newSources) sourceIds.add(id);
       sourceIds.add(`thread:${threadId}`);
       // Every source actually judged for these receipts, plus the session's replay roots.
-      for (const row of database().prepare("SELECT thread_id,kind FROM memory_sources WHERE id IN (SELECT value FROM json_each(?))").all(JSON.stringify([...newSources]))) {
+      for (const row of database().prepare("SELECT scope_id,thread_id,kind FROM memory_sources WHERE id IN (SELECT value FROM json_each(?))").all(JSON.stringify([...newSources]))) {
+        sourceIds.add(`scope:${String(row.scope_id)}`);
         sourceIds.add(`thread:${String(row.thread_id)}`);
         if (row.kind === "bring-in") progress.seen.threadDependenciesIncomplete = true;
       }
@@ -196,7 +210,7 @@ function continuationMemoryRevokedWork(allowance: LineageAllowance, threadId: st
       if (!closeHooked) { closeHooked = true; onDatabaseClose(resetSessionHolds); }
       // past SESSION_HOLDS_MAX the oldest unpinned hold goes, a counted loss of its thread (TURNSTART r14 S1', H1)
       // a type argument, not an angle-bracket assertion: the crash children run this file under node --experimental-strip-types
-      verdictStore.setHold<Hold>(key, { stamp: parts.stamp, hard: parts.hard, seq: parts.seq, upTo: progress.upTo, seen: progress.seen, sourceIds, scopeIds: access.scopeIds }, SESSION_HOLDS_MAX);
+      verdictStore.setHold<Hold>(key, { stamp: parts.stamp, hard: parts.hard, seq: parts.seq, upTo: progress.upTo, seen: progress.seen, sourceIds, view: access.view }, SESSION_HOLDS_MAX);
     }
   }
   return revoked;
@@ -279,7 +293,7 @@ function fullContinuationCheck(allowance: LineageAllowance, threadId: string, dr
   if (held.over) { if (why) why.reason = held.unproven ? "lineage-warming" : "root-ceiling"; return true; }
   for (const root of held.roots) (progress.seen.rootThreads ??= new Set()).add(root.slice(0, root.indexOf("\u0000")));
   const rootsWhy: { reason?: string } = {};
-  if (outputRootsBad(allowance, held, rootsWhy)) { if (why) why.reason = rootsWhy.reason === "checking" ? "checking" : allowance.hit ? "lineage-warming" : "session-roots"; return true; }
+  if (outputRootsBad(allowance, held, rootsWhy)) { if (why) why.reason = rootsWhy.reason === "checking" ? "checking:root" : allowance.hit ? "lineage-warming" : "session-roots"; return true; }
   if (preLineageSessionRevoked(rows.length || !progress.resumed ? rows : [{}], threadId, driverInstance, nativeSession)) { if (why) why.reason = "pre-lineage"; return true; }
   return false;
 }
@@ -374,7 +388,7 @@ export function linkMemoryDisclosureOutput(bundleId: string, messageId: string) 
  * scopes are the ones the footprint rule compares (a non-owner reader must hold every scope a line's memory ancestry read from). */
 export function lineageReaderOf(access: MemoryAccess): LineageReader {
   // (SL-E r3.2 R1: a linked person's turn reads its scopes together with S(P), memory/policy.ts lineageReaderScopes)
-  return { audience: { owner: memoryAccessIsOwnerAudience(access) && !memoryAccessNotOwnerAudience(access), scopeIds: lineageReaderScopes(access) } };
+  return { audience: lineageReaderAudience(access) };
 }
 /** The write-time layer of a replay check (S4): the lines of `messages` denyLookup does not show this reader. A line that reads "checking" is
  * also added to `checking`. Until write-time lineage is written on this file (lineageLive) the read-time judge alone decides; from then on a
@@ -424,7 +438,7 @@ function readerAudience(allowance: LineageAllowance, access: MemoryAccess, seen?
     // generation: that renews every turn and defeated the cache (1.0.2 r2 P2). The live capability is checked by assertMemoryAccess
     // before and after every replay (filterMemoryReplay), so a stale generation cannot ride a kept verdict.
     // kept verdicts are shared only by a reader judged on its own: one carrying `seen` has its answers shaped by what the pass saw before
-    ...(seen ? {} : { cacheKey: JSON.stringify([access.botId, access.policyRevision, access.deletionEpoch, access.scopeIds, access.humanPrincipal, memoryAccessIsOwnerAudience(access), memoryAccessNotOwnerAudience(access)]) }),
+    ...(seen ? {} : { cacheKey: JSON.stringify([access.botId, access.policyRevision, access.deletionEpoch, access.view, access.threadId, access.humanPrincipal, memoryAccessIsOwnerAudience(access), memoryAccessNotOwnerAudience(access)]) }),
     revoked: row => {
     const key = JSON.stringify([row.state, row.policy_revision, row.deletion_epoch, row.record_versions, row.source_versions]);
     let verdict = verdicts.get(key);
@@ -508,6 +522,8 @@ export function filterDirectReplay<T extends ReplayMessage & {kind?: string; tex
   // The lines among `fresh` this reader may be shown (as a withheld line, for
   // the owner's own chat when the caller gives one).
   const judge = (fresh: T[]): T[] => {
+    const attempts = captureSendReplayProof(threadId, fresh.map(m => m.id), replayCopyRoots(fresh));
+    fresh = fresh.filter(m => !attempts.excludedIds.has(m.id));
     if (!ownerChat) return filterMemoryReplay(allowance, threadId, fresh, access, { failClosed: true });
     const pendingIds = new Set<string>();
     const held = roomReplayWithheld(allowance, threadId, fresh, pendingIds);
@@ -689,11 +705,17 @@ export function receiptLineageRef(db: ReturnType<typeof database>, bundleId: str
 
 /** A receipt the running turn of (thread, bot) was handed (a frame, a lookup): it joins that turn's parents, so every note, record or session
  * the turn writes carries it. Outside a turn nothing is recorded. */
-export function receiptJoinsTurn(threadId: string, botId: string, bundleId: string): void {
-  const turn = runningTurnFor(threadId, botId);
+export function receiptJoinsTurn(threadId: string, botId: string, bundleId: string, exactTurn?: TurnLineage): void {
+  // Legacy admission callers explicitly address all live turns of this member;
+  // response preparation additionally checks them against its immutable binding
+  // in captureTurnParentAdditions. No newest-thread fallback is permitted.
+  const turn = exactTurn ?? runningTurnFor(threadId, botId);
   if (!turn) return;
+  if (turn.threadId !== threadId) throw new Error("MEMORY_CONTEXT_REVOKED");
+  checkedOpenTurns(turn);
   const ref = receiptLineageRef(database(), bundleId);
-  if (ref) addTurnParents(turn, [ref]);
+  if (!ref) throw new Error("MEMORY_CONTEXT_REVOKED");
+  addTurnParents(turn, [ref]);
 }
 
 /** A receipt turned 'revoked' here is queued by the v10 flip trigger (receipt-outputs.ts): wake the marker so it is committed soon (until

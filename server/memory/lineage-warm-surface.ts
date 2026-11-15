@@ -7,7 +7,7 @@
 // E2 -> recall -> E1 on the turn's own inputs, a cold legacy answer, the bot reply).
 // Module cycle: lineage-warm.ts re-exports this file and this file imports lineage-warm.ts; nothing here touches LW at load time.
 import { mkdirSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "../sqlite-open.ts";
 import { installWriteRevisionTriggers } from "../app-write-revision.ts";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";

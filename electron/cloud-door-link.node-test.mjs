@@ -418,7 +418,7 @@ test("main.mjs logs a reason only for a Cloud link, queues every source, and wir
   assert.match(second, /queueCloudLink\(cloudLink\)/);
   assert.ok(second.indexOf("CLOSED_DUE_FLAG") < second.indexOf("doorLinkFromCommandLine"));
   // Drains: the window's load, the end of startup, the live flip.
-  assert.match(main, /did-finish-load", \(\) => \{ deliverPackageInstall\(win\); cloudLinks\.drain\(\); \}/);
+  assert.match(main, /did-finish-load", \(\) => \{ deliverPackageInstall\(win\); cloudLinks\.drain\(\); appReadiness\.flush\(win\.webContents\); \}/);
   assert.match(main, /desktopStartup\.then\(\(\) => cloudLinks\.drain\(\)\)/);
   assert.match(main, /onActiveChange\(\(live\) => \{ if \(live\) cloudLinks\.drain\(\); \}\)/);
   // The handoff runs first thing at ready; the Linux handler at ready; the not-live words are main's own.

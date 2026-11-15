@@ -102,6 +102,9 @@ posixOnly("phone authority wiring through the real server (S11)", () => {
     ` });
     mkdirSync(askDir(), { recursive: true });
     await connect();
+    // MAIN RULING INT-CONFLICT-DEFAULT: reuse the reviewed phone lifecycle fixture.
+    // Keep phone authority independent of optional cold recall; recall retains its own gates.
+    expect((await api("POST", "/api/memory/action", { action: "configure", mode: "off" })).status).toBe(200);
     expect((await api("PATCH", "/api/config", { features: { phoneTools: true } })).status).toBe(200);
     // one registered phone that reports everything (the registration fixture the native twins read), registered through the real route
     const registration = JSON.parse(readFileSync(join(SERVER_DIR, "..", "apps", "mobile", "contract", "phone-jobs.json"), "utf8")).registration.valid;
@@ -124,12 +127,15 @@ posixOnly("phone authority wiring through the real server (S11)", () => {
 
   it("1b: with the feature off the same idle send does not mint", async () => {
     expect((await api("PATCH", "/api/config", { features: { phoneTools: false } })).status).toBe(200);
-    const bot = await createBot("Phone s11 off", "src-a1", false);
-    expect((await send(bot, "hello with the feature off")).status).toBe(202);
-    await settleTurns(bot.threadId, 1);
-    expect(minted(bot.threadId)).toHaveLength(0);
-    await idle(bot.id);
-    expect((await api("PATCH", "/api/config", { features: { phoneTools: true } })).status).toBe(200);
+    try {
+      const bot = await createBot("Phone s11 off", "src-a1", false);
+      expect((await send(bot, "hello with the feature off")).status).toBe(202);
+      await settleTurns(bot.threadId, 1);
+      expect(minted(bot.threadId)).toHaveLength(0);
+      await idle(bot.id);
+    } finally {
+      expect((await api("PATCH", "/api/config", { features: { phoneTools: true } })).status).toBe(200);
+    }
   }, 90000);
 
   it("2: an owner send steered into a running turn does not mint; a fresh send after the turn ends does (D22)", async () => {
@@ -248,12 +254,25 @@ posixOnly("phone authority wiring through the real server (S11)", () => {
     reset(); arm("limit");
     expect((await send(live1, "limit with no backup")).status).toBe(202);
     await settleTurns(live1.threadId, 1);
-    const cardOf = async (threadId: string) => { let found: any; await expect.poll(async () => (found = (await messages(threadId)).find((m) => m.card?.tool === "murage_limit_offer")) !== undefined, { timeout: 30000 }).toBe(true).catch(async (error) => { console.log("S11 diag card", await snapshot(threadId)); throw error; }); return found.card; };
+    const cardOf = async (threadId: string) => {
+      let shown: any;
+      await expect.poll(async () => {
+        shown = (await messages(threadId)).find(m => m.card?.tool === "murage_limit_offer");
+        return shown !== undefined;
+      }, { timeout: 30000 }).toBe(true).catch(async error => { console.log("S11 diag card", await snapshot(threadId)); throw error; });
+      // Choose only an option the owner actually saw, through that row's handle.
+      expect(shown.card.requestId).toBeUndefined();
+      expect(shown.card.requestHandle).toBe(`p.${shown.id}`);
+      return shown.card;
+    };
     const card = await cardOf(live1.threadId);
     const label = card.options.find((option: string) => /^Backup a9a/.test(option)) ?? card.options.find((option: string) => option !== "Wait");
     expect(label).toBeTruthy();
     await idle(live1.id);
-    expect((await api("POST", `/api/threads/${live1.threadId}/respond`, { requestId: card.requestId, behavior: "answer", message: label })).status).toBe(200);
+    // MAIN RULING INT-CONFLICT-DEFAULT: use the renderer's displayed handle
+    // and visible option index. Native request ids never enter this fixture.
+    const answered = await api("POST", `/api/threads/${live1.threadId}/respond`, { requestHandle: card.requestHandle, limitOptionIndex: card.options.indexOf(label) });
+    expect(answered.status, JSON.stringify(answered.body)).toBe(200);
     await expect.poll(() => minted(live1.threadId).length, { timeout: 30000 }).toBe(2);
     await idle(live1.id);
 
@@ -266,7 +285,7 @@ posixOnly("phone authority wiring through the real server (S11)", () => {
     await idle(restarted.id);
     await fixture.restart();
     await connect();
-    expect((await api("POST", `/api/threads/${restarted.threadId}/respond`, { requestId: card2.requestId, behavior: "answer", message: label2 })).status).toBe(200);
+    expect((await api("POST", `/api/threads/${restarted.threadId}/respond`, { requestHandle: card2.requestHandle, limitOptionIndex: card2.options.indexOf(label2) })).status).toBe(200);
     await expect.poll(() => turns(restarted.threadId).length, { timeout: 30000 }).toBe(2);
     // the carry did not survive the restart: the resend turn holds no authority and is told so
     expect(minted(restarted.threadId)).toHaveLength(1);
@@ -357,6 +376,9 @@ posixOnly("phone authority wiring through the real server (S11)", () => {
 
   it("12: the device route answers only the turn's own device token, per call, and a stale or other-kind token gets nothing", async () => {
     const bot = await createBot("Phone s13 route", "src-m2");
+    // The route-authorization fixture uses the reviewed lifecycle Auto premise;
+    // Ask's separate own-write review would hold even an invalid device call.
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true, computer: "off" })).status).toBe(200);
     reset(); arm("hold");
     expect((await send(bot, "held turn")).status).toBe(202);
     await live();

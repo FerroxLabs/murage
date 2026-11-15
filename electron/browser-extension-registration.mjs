@@ -5,11 +5,19 @@ import { createHash, randomUUID } from 'node:crypto';
 import { readHostConfig } from './browser-extension-host.mjs';
 import { createWindowsBrowserLauncher, windowsRegistrationAdapter, readPrivateWindowsJson, writePrivateWindowsJson } from './browser-extension-windows.mjs';
 import { registrationPlan, unixLauncher, installRegistration, removeRegistration, browserRegistrationFamily, sharedRegistrationBrowsers, browserInstallEvidence } from '../scripts/browser-extension-host-registration.mjs';
+import { rebaseStoredPath, lexicalKey } from '../shared/stored-root-path.mjs';
 const hash = value => createHash('sha256').update(value).digest('hex');
 export class BrowserRegistrationError extends Error {
   constructor(code, message) { super(message); this.name = 'BrowserRegistrationError'; this.code = code; }
 }
 const fail = (code, message = 'Browser helper setup needs repair. No existing registration was adopted.') => { throw new BrowserRegistrationError(code, message); };
+/** Match only the constructors that Murage owns, using the target platform's path rules. */
+export function ownedRegistrationDirectoryParts(options, directory, platform = process.platform) {
+  if (typeof options.dataDir !== 'string' || typeof directory !== 'string') return null;
+  const paths = platform === 'win32' ? path.win32 : path;
+  const candidates = [['browser-extension', 'native-host'], ...(platform === 'win32' ? [['bx-run']] : [])];
+  return candidates.find(parts => lexicalKey(paths.join(options.dataDir, ...parts), platform) === lexicalKey(directory, platform)) ?? null;
+}
 function input(options) {
   if (options.ownerConfirmed !== true) fail('owner_consent_required', 'Confirm browser helper setup in Murage first.');
   if (!['chrome', 'edge', 'brave', 'chromium'].includes(options.browser)) fail('invalid_browser');
@@ -121,6 +129,32 @@ export async function connectOwnerBrowser(options) {
     const manifestText = JSON.stringify(plan.manifest, null, 2) + '\n';
     const previous = await readReceipt(state.receiptPath, state.platform);
     if (previous) {
+      // S5 site 20: a copied receipt keeps proving its bytes. Rebuild the OS registration only from the recorded root
+      // and this module's exact directory constructor; never open the old launcher or adopt a foreign OS entry.
+      const directoryParts = ownedRegistrationDirectoryParts(options, state.directory, state.platform);
+      if (previous.launcherPath !== state.launcherPath && directoryParts && Array.isArray(options.previousDataDirs)) {
+        const context = { dataDir: options.dataDir, previous: options.previousDataDirs.slice(0, 4), platform: state.platform };
+        const next = rebaseStoredPath(previous.launcherPath, root => [state.paths.join(root, ...directoryParts, state.paths.basename(state.launcherPath))], context);
+        const priorRoot = context.previous.find(root => lexicalKey(state.paths.join(root, ...directoryParts, state.paths.basename(state.launcherPath)), state.platform) === lexicalKey(previous.launcherPath, state.platform));
+        if (!('path' in next) || next.path !== state.launcherPath || !priorRoot) fail('registration_ownership_conflict');
+        const oldDirectory = state.paths.join(priorRoot, ...directoryParts);
+        const oldState = { ...state, directory: oldDirectory, launcherPath: previous.launcherPath };
+        const oldPlan = receiptPlan(previous, { ...options, configPath: previous.configPath }, oldState);
+        const copiedManifest = state.platform === 'win32' ? state.paths.join(state.directory, state.paths.basename(previous.manifestPath)) : previous.manifestPath;
+        const copiedScript = previous.hostScriptPath === state.paths.join(oldDirectory, `native-host-${state.family}.mjs`) ? state.paths.join(state.directory, `native-host-${state.family}.mjs`) : previous.hostScriptPath;
+        await requireOwnedFiles({ ...previous, launcherPath: state.launcherPath, manifestPath: copiedManifest, hostScriptPath: copiedScript }, state);
+        if (previous.status !== 'installed') fail('registration_repair_required');
+        if (state.platform === 'win32') {
+          const adapter = windowsRegistrationAdapter();
+          await adapter.removeIfEqual(oldPlan.registry, oldPlan.manifest);
+          await fs.unlink(copiedManifest);
+        } else await removeRegistration(oldPlan);
+        await fs.unlink(state.launcherPath);
+        if (state.platform === 'win32') await fs.unlink(`${state.launcherPath}.launch`);
+        if (copiedScript !== previous.hostScriptPath && previous.hostScriptHash) await fs.unlink(copiedScript);
+        await fs.unlink(state.receiptPath);
+        return connectOwnerBrowser(options);
+      }
       receiptPlan(previous, options, state); await requireOwnedFiles(previous, state);
       if (previous.status !== 'installed' || previous.manifestHash !== hash(manifestText) || previous.electronPath !== electronPath || previous.hostScriptPath !== hostScriptPath || (launcher && previous.launcherHash !== hash(launcher))) fail('registration_repair_required', 'Remove this owned helper registration, then Connect again to use the new build.');
       // An updated AppImage keeps its file path; its helper script may change.

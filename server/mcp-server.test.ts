@@ -394,6 +394,22 @@ describe("MCP tool execution", () => {
     expect(result).toMatchObject({ status: "needs-user", messages: [{ text: "Approve?" }] });
   });
 
+  it.each([false, true])("waits on an opaque permission handle when busy=%s", async busy => {
+    const fetcher = async (path: string) => {
+      if (path === "/api/bots?messages=0") return {
+        bots: [{ id: "bot-1", busy, activity: "working", threadId: "task-1", tasks: [] }],
+      };
+      if (path === "/api/threads/task-1/messages?limit=10") return {
+        messages: [{ id: "m1", role: "bot", kind: "options", card: { requestHandle: "p.m1", title: "Approve?" } }],
+      };
+      throw new Error(`unexpected path ${path}`);
+    };
+    const result: any = await handleToolCall("wait_for_conversation", {
+      target_type: "bot", target_id: "bot-1", timeout_seconds: 1,
+    }, fetcher);
+    expect(result).toMatchObject({ status: "needs-user", taskId: "task-1" });
+  });
+
   it("returns the status, the waited task and a short tail, never the owner's whole task list", async () => {
     const tasks = Array.from({ length: 300 }, (_, i) => ({ threadId: `task-${i}`, title: `Task ${i}`, createdAt: i }));
     const fetcher = vi.fn(async (path: string) => {

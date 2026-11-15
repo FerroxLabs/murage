@@ -142,7 +142,11 @@ it("the image-await check and the live steer both go through the full session va
   // queues it, and that turn's own pre-submit check decides)
   const gateAt = source.indexOf("const memorySessionHolds = steerable && steerSessionHolds();");
   const steerAt = source.indexOf("memorySessionHolds, {", gateAt);
-  expect(source.slice(gateAt - 300, gateAt)).toMatch(/const steerable = !isEngineCommand && !unprovenSend && Boolean\(instance && cardSteeringMode\(instance\.adapter\) === "steer"\);/);
+  // MAIN RULING 1115-SOURCE-PINS (A7): an isolated direct run steers only while its answer turn is live, and an S2 pending adapter
+  // can be the steer target; the gate is still the same !isEngineCommand && !unprovenSend conjunction, then the full session check
+  expect(source.slice(gateAt - 400, gateAt)).toMatch(/const steerable = !isEngineCommand && !unprovenSend && \(!directRuns\.get\(threadId\)\?\.isolated \|\| answerTurnLive\(\)\) && Boolean\(steerAdapter && cardSteeringMode\(steerAdapter\) === "steer"\);/);
+  expect(source).toContain("reason=steer-refused sealed");
+  expect(source).toContain('noteContinuationReset(threadId, currentAtStart.modelSelection.instanceId, "steer-refused session-invalid");');
   expect(gateAt).toBeGreaterThan(holdsAt);
   expect(steerAt).toBeGreaterThan(gateAt);
   expect(source.slice(steerAt, steerAt + 200)).toContain("holds: steerSessionHolds,");
@@ -174,7 +178,13 @@ it("a room member turn resets the engine session before its bundle and never res
   expect(room).toContain("MEMORY_SESSION_RESET_UNAVAILABLE");
   expect(room).not.toContain("buildMemoryBundle(query");
   // no resume cursor reaches the engine, and the receipt never resumes a session
-  expect(room).not.toMatch(/resumeCursor/);
+  // Revoke-fence reads the old cursor only for the compare-and-reset durability fence.
+  // A cursor option must still never reach the engine on a room turn.
+  expect(room).not.toMatch(/\bresumeCursor\b/);
+  const commit = room.indexOf("commitFenceReset(bot.id, threadId, instance.instanceId,");
+  expect(commit).toBeGreaterThan(0);
+  expect(room.indexOf("await resetRoomMemberSession();", commit)).toBeGreaterThan(commit);
+  expect(room.indexOf("const bundle=await buildMemoryBundleAfterReset(")).toBeGreaterThan(commit);
   expect(room).not.toMatch(/\.resumes\(/);
   expect(room).not.toMatch(/steerBusyDesk|steerWithQuoteLineage|\.steer\(/);
   // the one steer call is the owner's send to a bot's own chat (acceptBotSend, 1.0.4 SL-I I4), limited to the bot's own task threads:

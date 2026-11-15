@@ -1,0 +1,36 @@
+COMMAND node_modules/.bin/vitest run server/decision/inventory.test.ts -t M68
+
+ RUN  v4.1.12 /work
+
+ ❯ server/decision/inventory.test.ts (3 tests | 1 failed | 2 skipped) 15ms
+   ↓ R2 M9 raw-writer and per-file producer inventory pins all existing sites
+   × L5 M68 credential card producer and fresh raw writer mutations are detected 11ms
+   ↓ replay authority adapter is restricted to tests and replay scripts
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 2 skipped (3)
+   Start at  06:32:02
+   Duration  5.11s (transform 3.89s, setup 4.68s, import 285ms, tests 15ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/inventory.test.ts > L5 M68 credential card producer and fresh raw writer mutations are detected
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ server/decision/inventory.test.ts:14:92
+     12| });
+     13| it('L5 M68 credential card producer and fresh raw writer mutations are…
+     14|  expect(inventory(`store.appendMessage(t,{kind:'secret',card:factory()…
+       |                                                                                            ^
+     15|  expect(inventory(`db.prepare('INSERT INTO messages(thread_id,json) VA…
+     16|  expect(inventory(`store.appendMessage(t,{kind:'options',card:factory(…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

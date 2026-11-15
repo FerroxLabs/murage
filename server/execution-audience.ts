@@ -1,3 +1,5 @@
+import { serviceThreadNoLimits } from './service-no-limits.ts';
+import { noLimitsAppliesTo } from './no-limits-origin.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { join } from "node:path";
@@ -20,11 +22,13 @@ import { scopeRow } from "./memory/scope-id.ts";
 
 export type PartitionRef = { kind: "home" } | { kind: "team"; teamId: string } | { kind: "project"; groupId: string } | { kind: "room"; groupId: string } | { kind: "general" };
 export type Partition = PartitionRef | { kind: "isolated"; threadId: string } | { kind: "project"; groupId: string; homeMember: boolean };
-let currentStore: Store | undefined;
+export const EXECUTION_STORE_KEYS = ["bots", "groups", "bot", "group", "taskByThread", "threadIdsForBot", "createTask", "patchTask", "createSharedWorkTask", "ensureProjectDesk", "projectBotForTask", "activeTextLines", "releaseTaskProcedures", "releaseGroupProcedures"] as const;
+export type ExecutionStorePort = Pick<Store, typeof EXECUTION_STORE_KEYS[number]>;
+let currentStore: ExecutionStorePort | undefined;
 let turnLookup: (generation: string) => { botId: string; threadId: string } | undefined = () => undefined;
 export function setExecutionTurnLookup(lookup: typeof turnLookup): void { turnLookup = lookup; }
-export function setExecutionStore(store: Store): void { currentStore = store; }
-export function executionStore(): Store | undefined { return currentStore; }
+export function setExecutionStore(store: ExecutionStorePort | undefined): void { currentStore = store; }
+export function executionStore(): ExecutionStorePort | undefined { return currentStore; }
 const home = (): PartitionRef => ({ kind: "home" });
 export const isHomePartition = (p: Partition) => p.kind === "home" || p.kind === "project" && "homeMember" in p && p.homeMember;
 function identity(label: string) { return label ? database().prepare("SELECT * FROM team_identities WHERE label=? AND retired_at IS NULL").get(label) : undefined; }
@@ -62,11 +66,16 @@ export function markPartitions(store: Pick<Store, "bots" | "groups">): boolean {
   }
   return changed;
 }
-export function threadPartition(bot: BotRecord, threadId: string): Partition {
+type PartitionLookup = { tasks: Map<string, TaskRecord>; groups: Map<string, GroupRecord> };
+export function threadPartition(bot: BotRecord, threadId: string): Partition { return partitionFor(bot, threadId); }
+function partitionFor(bot: BotRecord, threadId: string, lookup?: PartitionLookup): Partition {
   const store = currentStore;
-  const task = bot.tasks?.find(t => t.threadId === threadId);
-  const group = store?.groups.find(g => g.threadId === threadId || g.tasks?.some(t => t.threadId === threadId));
-  const desk = task?.channelProjectDesk ?? store?.bots.flatMap(member => member.tasks ?? []).find(t => t.threadId === threadId)?.channelProjectDesk;
+  const task = lookup ? lookup.tasks.get(threadId) : store?.taskByThread && store.bot(bot.id)?.tasks === bot.tasks ? store.taskByThread(bot.id, threadId) : bot.tasks?.find(t => t.threadId === threadId);
+  const group = lookup ? lookup.groups.get(threadId) : store?.groups.find(g => g.threadId === threadId || g.tasks?.some(t => t.threadId === threadId));
+  const firstTask = lookup ? undefined : store?.taskByThread
+    ? store.bots.map(member => store.taskByThread(member.id, threadId)).find(candidate => candidate !== undefined)
+    : store?.bots.flatMap(member => member.tasks ?? []).find(candidate => candidate.threadId === threadId);
+  const desk = task?.channelProjectDesk ?? firstTask?.channelProjectDesk;
   const project = desk && store?.groups.find(g => g.id === desk.groupId && g.memberIds.includes(bot.id));
   const projectGroup = project || (group && projectExists(group.id) ? group : undefined);
   if (projectGroup && store) return { kind: "project", groupId: projectGroup.id, homeMember: homeSpace(bot, projectGroup, store) && !projectGroup.partitionedFor?.[bot.id] };
@@ -104,13 +113,13 @@ export function effectiveAudience(bot: BotRecord, threadId: string, tag: Executi
  * work on it, in the bot's home partition, and with the owner as its human. Anything else (unknown thread, shared, project
  * or partitioned) is false, so callers fail closed. */
 export function isOwnUnsharedThread(bot: BotRecord | undefined, threadId: string): boolean {
-  const task = bot?.tasks?.find(t => t.threadId === threadId);
+  const task = bot && currentStore?.taskByThread && currentStore.bot(bot.id)?.tasks===bot.tasks ? currentStore.taskByThread(bot.id,threadId) : bot?.tasks?.find(t => t.threadId === threadId);
   return Boolean(bot && task && !task.sharedWork && threadPartition(bot, threadId).kind === "home"
     && JSON.stringify(threadHumanPrincipal(threadId)) === JSON.stringify(OWNER));
 }
 /** isOwnUnsharedThread's shape without its owner clause: a task of the bot, no shared work on it, in the bot's home partition. */
 function isUnsharedHomeTask(bot: BotRecord | undefined, threadId: string): boolean {
-  const task = bot?.tasks?.find(t => t.threadId === threadId);
+  const task = bot && currentStore?.taskByThread && currentStore.bot(bot.id)?.tasks===bot.tasks ? currentStore.taskByThread(bot.id,threadId) : bot?.tasks?.find(t => t.threadId === threadId);
   return Boolean(bot && task && !task.sharedWork && threadPartition(bot, threadId).kind === "home");
 }
 /** SL-E E2 (r3 section 10): true only when both threads are positively the `reader`'s own unshared conversations, read live now: the reader is
@@ -135,7 +144,8 @@ export function homeThread(bot: BotRecord): TaskRecord {
 }
 function homeThreadScoped(bot: BotRecord): TaskRecord {
   const store = currentStore; if (!store) throw new Error("Execution store is unavailable");
-  const active = bot.tasks?.find(t => t.threadId === bot.threadId);
+  const indexed = store as Partial<Store>;
+  const active = indexed.taskByThread && store.bot(bot.id)?.tasks === bot.tasks ? indexed.taskByThread(bot.id, bot.threadId) : bot.tasks?.find(t => t.threadId === bot.threadId);
   if (bot.partitionedAt === undefined && active && isLocalOwner(threadHumanPrincipal(active.threadId))) return active;
   const owner = OWNER;
   const ownerKey = JSON.stringify(owner);
@@ -161,13 +171,65 @@ export function defaultThreadId(bot: BotRecord): string {
 export function sourceExecutionAudience(botId: string | undefined, threadId: string, parentRequestId?: string, boundOnly = false): ExecutionAudience | null {
   return boundOnly && !parentRequestId ? null : requestExecutionAudience(botId, threadId, parentRequestId);
 }
-export function audienceTask(store: Store, botOrId: BotRecord | string, principal: HumanPrincipal, tag: ExecutionAudience | null = null): TaskRecord | null {
+export function audienceTask(store: ExecutionStorePort, botOrId: BotRecord | string, principal: HumanPrincipal, tag: ExecutionAudience | null = null, sourceThreadId?: string, sourceBotId?: string): TaskRecord | null {
   assertHumanPrincipal(principal);
   const bot = typeof botOrId === "string" ? store.bot(botOrId) : botOrId; if (!bot) return null;
+  // The request already owns its authority. Select the admitted bot's current
+  // owner chat without consulting the source turn or its current permissions.
+  if (tag?.admission) {
+    if (!validExecutionAudience(tag) || tag.admission.toBotId !== bot.id || !isWorkspaceOwner(tag.admission.principal)) return null;
+    assertHumanPrincipal(tag.admission.principal);
+    return withBindingScope(() => {
+      const active = bot.tasks?.find(task => task.threadId === bot.threadId);
+      if (active && ownerNoLimitsTask(bot, active)) return active;
+      // One index and one selection pass: newer guest chats must not cause a
+      // complete task/partition scan or a binding query per candidate on retry.
+      const tasks = new Map((bot.tasks ?? []).map(task => [task.threadId, task]));
+      const groups = new Map<string, GroupRecord>();
+      for (const group of store.groups) {
+        if (!groups.has(group.threadId)) groups.set(group.threadId, group);
+        for (const task of group.tasks ?? []) if (!groups.has(task.threadId)) groups.set(task.threadId, group);
+      }
+      const lookup = { tasks, groups };
+      let owned: TaskRecord | undefined;
+      for (const task of bot.tasks ?? []) {
+        if ((!owned || task.createdAt > owned.createdAt) && ownerNoLimitsTask(bot, task, lookup)) owned = task;
+      }
+      if (owned) return owned;
+      const created = store.createTask(bot.id, "Direct chat", false);
+      if (created) bindHumanThread(created.threadId, OWNER);
+      return created;
+    });
+  }
   if (!isLocalOwner(principal)) return humanTask(store, bot.id, principal);
-  if (tag?.kind === "team" && !isHomeTeam(bot, tag.team)) return sharedWithTeam(bot, tag.team) ? store.createSharedWorkTask(bot.id, tag.team) : null;
-  if (tag?.kind === "project") { const group = store.groups.find(g => g.id === tag.projectId && g.memberIds.includes(bot.id)); return group ? store.ensureProjectDesk(bot.id, group.id, group.name) : null; }
+  // The source is supplied by the authenticated dispatch, never by a tool body.
+  // All partitions on this installation belong to this owner. An owner No limits
+  // ask may use the target's own conversation when it has no desk in the source.
+  const ownerReach = sourceThreadId !== undefined && ownerNoLimitsSource(store, sourceBotId, sourceThreadId);
+  if (tag?.kind === "team" && !isHomeTeam(bot, tag.team)) return sharedWithTeam(bot, tag.team) ? store.createSharedWorkTask(bot.id, tag.team) : ownerReach ? homeThread(bot) : null;
+  if (tag?.kind === "project") { const group = store.groups.find(g => g.id === tag.projectId && g.memberIds.includes(bot.id)); return group ? store.ensureProjectDesk(bot.id, group.id, group.name) : ownerReach ? homeThread(bot) : null; }
   return homeThread(bot);
+}
+/** Shared owner predicate for peer admission and destination selection. */
+export function ownerNoLimitsSource(store: ExecutionStorePort, botId: string | undefined, threadId: string): boolean {
+  if (!isWorkspaceOwner(threadHumanPrincipal(threadId))) return false;
+  // Room turns are bound to a producer, not to a bot task. Read that live
+  // authority with the authenticated bot identity before consulting task policy.
+  if (botId && serviceThreadNoLimits(threadId, botId)) return true;
+  if (!botId) return false;
+  return noLimitsAppliesTo(isLocalOwner(threadHumanPrincipal(threadId)) ? 'owner' : 'owner-channel', store.projectBotForTask(botId, threadId));
+}
+/** An admitted owner ask may follow this bot's owner chats, never shared or other people's work. */
+function ownerNoLimitsDestination(bot: BotRecord, threadId: string): boolean {
+  const task = bot.tasks?.find(task => task.threadId === threadId);
+  return !!task && ownerNoLimitsTask(bot, task);
+}
+function ownerNoLimitsTask(bot: BotRecord, task: TaskRecord, lookup?: PartitionLookup): boolean {
+  if (task.sharedWork || task.channelProjectDesk?.archivedAt !== undefined) return false;
+  const principal = threadHumanPrincipal(task.threadId);
+  if (!isWorkspaceOwner(principal)) return false;
+  try { assertHumanPrincipal(principal); } catch { return false; }
+  return isHomePartition(partitionFor(bot, task.threadId, lookup));
 }
 export function partitionRoots(bot: BotRecord, partition: Partition, dataDir = DATA_DIR): string[] {
   const id = bot.id;
@@ -186,7 +248,8 @@ export function managedOutputWorkspace(dataDir: string, botId: string, threadId:
   return partitionRoots(bot ?? { id: botId } as BotRecord, isHomePartition(partition) ? home() : partition, dataDir)[0];
 }
 export function issueExecutionAudience(botId: string | undefined, threadId: string, rootRequestId: string): ExecutionAudience | null {
-  const bot = botId ? currentStore?.bot(botId) : currentStore?.bots.find(b => b.tasks?.some(t => t.threadId === threadId));
+  const indexed = currentStore as Partial<Store> | null;
+  const bot = botId ? currentStore?.bot(botId) : currentStore?.bots.find(bot => indexed?.taskByThread ? indexed.taskByThread(bot.id, threadId) !== undefined : bot.tasks?.some(task => task.threadId === threadId));
   const partition = bot ? threadPartition(bot, threadId) : undefined;
   if (partition?.kind === "team") return { v: 1, kind: "team", human: "owner", team: partition.teamId, rootRequestId };
   const group = currentStore?.groups.find(g => g.threadId === threadId || g.tasks?.some(t => t.threadId === threadId));
@@ -203,13 +266,39 @@ export function requestExecutionAudience(botId: string | undefined, threadId: st
 }
 /** Admission assigns the new shared root's actual row id, never a model value. */
 export function issueWorkAudience(fromBotId: string | undefined, toBotId: string | undefined, threadId: string, tag: ExecutionAudience | null, requestId: string, ownerAudience: boolean): ExecutionAudience | null {
-  if (tag || !fromBotId || !toBotId || !currentStore?.bot(fromBotId)) return tag;
+  if (!fromBotId || !toBotId || !currentStore?.bot(fromBotId)) return tag;
+  // A descendant gets its own admission; an ancestor's proof is never portable.
+  if (tag?.admission && tag.admission.requestId !== requestId) {
+    const { admission: _ancestorAdmission, ...audience } = tag;
+    tag = audience;
+  }
+  // Admission records the target bot and authenticated principal even when an
+  // ordinary room has no source audience. The queued request owns this proof;
+  // draining must not depend on the source turn still being alive.
+  if (ownerAudience && ownerNoLimitsSource(currentStore, fromBotId, threadId)) {
+    const target = currentStore.bot(toBotId);
+    const principal = threadHumanPrincipal(threadId);
+    if (target) {
+      const rootRequestId = tag?.rootRequestId ?? requestId;
+      return {
+        v: 1, kind: "home", human: "owner", rootRequestId,
+        admission: { kind: "owner-no-limits-admitted", level: "no-limits", admittedAt: Date.now(), principal, requestId, fromBotId, sourceThreadId: threadId, toBotId },
+      };
+    }
+  }
+  if (tag) return tag;
   const allowed = authorizeWork({ edge: "peer", requesterBotId: fromBotId, requesterThreadId: threadId, targetBotId: toBotId, tag: null, ownerAudience, verb: "ask" });
   return allowed.ok && allowed.issue ? { ...allowed.issue, rootRequestId: requestId } : null;
 }
 export function validExecutionAudience(value: unknown): value is ExecutionAudience {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const v = value as Record<string, unknown>, id = (x: unknown) => typeof x === "string" && /^[\w-]+$/.test(x);
+  if (Object.hasOwn(v, "admission")) {
+    const a = v.admission as Record<string, unknown> | null;
+    const p = a?.principal as Record<string, unknown> | null;
+    if (!a || a.kind !== "owner-no-limits-admitted" || a.level !== "no-limits" || !Number.isFinite(a.admittedAt) || Number(a.admittedAt) <= 0 || !p || typeof p.personId !== "string" || typeof p.bindingId !== "string" || !Number.isInteger(p.revision)
+      || ![a.requestId, a.fromBotId, a.sourceThreadId, a.toBotId].every(id)) return false;
+  }
   return v.v === 1 && v.human === "owner" && id(v.rootRequestId) && (v.kind === "home" || v.kind === "team" && id(v.team) || v.kind === "project" && id(v.projectId));
 }
 
@@ -220,6 +309,22 @@ export type WorkEdge =
   | { edge: "deliver"; requestId?: string; generation?: string; fromBotId: string; destinationThreadId: string; ownerOrigin?: boolean };
 export type WorkRefusal = "not_reachable" | "shared_paused" | "sharing_removed" | "team_deleted" | "binding_mismatch" | "archived";
 type WorkResult = { ok: true; clause: 1 | 2 | 3 | 4 | 5 | "owner" | "finishing"; issue?: ExecutionAudience } | { ok: false; code: WorkRefusal; line: string; retry: "queue" | "never" };
+/** Authorize the queue item's own admission, whether or not a room request exists.
+ * The caller supplies the persisted queue identity; source permissions are never read. */
+export function authorizeQueuedAdmission(input: { requestId: string; fromBotId: string; sourceThreadId: string; targetBotId: string; targetThreadId?: string; tag: ExecutionAudience; notOwnerAudience?: boolean }): WorkResult {
+  const refuse = (code: WorkRefusal): WorkResult => ({ ok: false, code, line: "This bot cannot be reached from here.", retry: code === "shared_paused" ? "queue" : "never" });
+  const admission = input.tag.admission;
+  if (!validExecutionAudience(input.tag) || !admission || admission.requestId !== input.requestId
+    || admission.fromBotId !== input.fromBotId || admission.sourceThreadId !== input.sourceThreadId
+    || admission.toBotId !== input.targetBotId || input.notOwnerAudience || !isWorkspaceOwner(admission.principal)) return refuse("binding_mismatch");
+  try { assertHumanPrincipal(admission.principal); } catch { return refuse("not_reachable"); }
+  const target = currentStore?.bot(input.targetBotId), sender = currentStore?.bot(input.fromBotId);
+  if (!target || !sender) return refuse("not_reachable");
+  if (target.hidden) return refuse("archived");
+  if (!input.targetThreadId || !ownerNoLimitsDestination(target, input.targetThreadId)) return refuse("binding_mismatch");
+  if (loadConfig().features?.botsSharedAcrossTeams === false && sectionKey(sender.section) !== sectionKey(target.section)) return refuse("shared_paused");
+  return { ok: true, clause: 4 };
+}
 export function requestSourceThread(requestId: string, db = database()): string | undefined {
   const row = db.prepare("SELECT parent_id,return_thread_id,root_thread_id,work_item_id FROM room_requests WHERE id=?").get(requestId);
   if (!row) return undefined;
@@ -270,12 +375,20 @@ export function authorizeWork(input: WorkEdge, continuing = false): WorkResult {
   const liveTurn = "generation" in input && input.generation ? turnLookup(input.generation) : undefined;
   if (liveTurn && (liveTurn.botId !== target.id || input.edge === "resume" && liveTurn.threadId !== input.threadId)) return refuse("binding_mismatch");
   const tag = input.edge === "peer" || input.edge === "dispatch" ? input.tag : row?.execution_audience ? JSON.parse(String(row.execution_audience)) as ExecutionAudience : input.edge === "resume" && liveTurn ? issueExecutionAudience(target.id, input.threadId, input.generation) : null;
+  // A live owner No limits turn reaches peers across rosters and partitions.
+  // Keep an entirely disabled cross-team sharing feature off.
+  if (input.edge === "peer" && input.ownerAudience && ownerNoLimitsSource(store, input.requesterBotId, input.requesterThreadId)) {
+    if (loadConfig().features?.botsSharedAcrossTeams === false && sectionKey(store.bot(input.requesterBotId)?.section) !== sectionKey(target.section)) {
+      return refuse("shared_paused", "Sharing across teams is off. Turn it on in Settings → Features.");
+    }
+    return { ok: true, clause: 4 };
+  }
   const sourceBot = input.edge === "peer" ? store.bot(input.requesterBotId) : undefined;
   const sourcePartition = sourceBot && input.edge === "peer" ? threadPartition(sourceBot, input.requesterThreadId) : undefined;
   const requestedTeam = tag?.kind === "team" ? tag.team : sourcePartition?.kind === "team" ? sourcePartition.teamId : sourceBot ? identity(sectionKey(sourceBot.section))?.team_id : undefined;
   const peerWork = input.edge === "peer" && requestedTeam ? target.tasks?.find(t => t.sharedWork?.teamId === requestedTeam && !t.sharedWork.quarantined) : undefined;
   const threadId = input.edge === "dispatch" ? input.targetThreadId : input.edge === "resume" ? input.threadId : row?.target_thread_id ? String(row.target_thread_id) : liveTurn?.threadId ?? peerWork?.threadId ?? (input.edge === "deliver" && input.generation ? target.tasks?.find(t => t.sharedWork?.finishing?.generation === input.generation)?.threadId : undefined);
-  const task = target.tasks?.find(t => t.threadId === threadId);
+  const task = threadId === undefined ? undefined : currentStore?.taskByThread && currentStore.bot(target.id)?.tasks === target.tasks ? currentStore.taskByThread(target.id, threadId) : target.tasks?.find(t => t.threadId === threadId);
   const work = task?.sharedWork;
   if ((work || tag?.kind === "team") && row?.not_owner_audience === 1) return refuse("not_reachable");
   if (task?.channelProjectDesk?.archivedAt !== undefined) return refuse("archived", "This project conversation is archived.");
@@ -318,8 +431,16 @@ export function authorizeWork(input: WorkEdge, continuing = false): WorkResult {
     }
     if (input.edge === "dispatch" && input.kind === "card") return { ok: true, clause: 1 };
     if (row?.from_kind === "bot" && row.from_bot_id) {
-      const parent = row.parent_id ? database().prepare("SELECT target_thread_id FROM room_requests WHERE id=?").get(row.parent_id) : undefined;
+      const parent = row.parent_id ? database().prepare("SELECT target_thread_id, execution_audience FROM room_requests WHERE id=?").get(row.parent_id) : undefined;
       const sourceThread = parent?.target_thread_id ?? row.return_thread_id ?? row.root_thread_id;
+      // This proof was issued by admission, copied to the request and queue,
+      // and bound to this target bot. Never reconstruct it from a source
+      // turn or the sender's current No limits setting after the turn has ended.
+      const admission = tag?.admission;
+      if (admission) {
+        return authorizeQueuedAdmission({ requestId: String(row.id), fromBotId: String(row.from_bot_id), sourceThreadId: String(sourceThread),
+          targetBotId: target.id, targetThreadId: threadId, tag: tag!, notOwnerAudience: row.not_owner_audience === 1 });
+      }
       return authorizeWork({ edge: "peer", requesterBotId: String(row.from_bot_id), requesterThreadId: String(sourceThread), targetBotId: target.id, verb: "ask", tag, ownerAudience: row.not_owner_audience !== 1, unattended: Number(row.unattended) === 1, parentRequestId: typeof row.parent_id === "string" ? row.parent_id : undefined }, running);
     }
     // Murage and routine rows are project system work, like cards: common checks and the binding rule only (Claude r3 #1).

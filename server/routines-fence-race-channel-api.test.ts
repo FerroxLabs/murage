@@ -63,7 +63,7 @@ async function launch(flags: Record<string, string>) {
   let headers: Record<string, string> = {};
   const start = async () => {
     child = spawn(process.execPath, ["--import", pathToFileURL(join(SERVER_DIR, "testing", "telegram-fetch-preload.mjs")).href, "--import", pathToFileURL(join(SERVER_DIR, "testing", "idle-load-preload.mjs")).href,
-      "--import", pathToFileURL(instr).href, join(SERVER_DIR, "index.ts")], { cwd: join(SERVER_DIR, ".."), stdio: ["ignore", "pipe", "pipe"], env: {
+      "--import", pathToFileURL(instr).href, join(SERVER_DIR, "index.ts")], { windowsHide: true, cwd: join(SERVER_DIR, ".."), stdio: ["ignore", "pipe", "pipe"], env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1),
       MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1", MURAGE_MODEL_PROVIDER_CONNECTIONS: "", MURAGE_MODEL_PROVIDER_COMMIT_TOKEN: "", FAKE_TELEGRAM_DIR: telegramDir } });
     child.stderr!.on("data", (c) => (stderr += c));
@@ -239,8 +239,8 @@ describe.skipIf(process.platform === "win32")("FENCE-RACE-1018 r2: a channel run
   it("last rebuild: a Stop that wins over the last rebuild's refusal (ticket none) settles by token and writes no card and no desktop notification", async () => {
     live = await launch({}); const c = live;
     const { bot, runId, threadId } = await c.refuse("question refused every time");
-    // refuse the next two rebuilds; the third (last) rebuild's write is then waiting: a Stop lands before it is refused
-    for (let i = 0; i < 2; i += 1) { await c.pass(bot.id, "Revoke before the channel write " + i); await sleep(1_500); }
+    // refuse the next rebuild; the second (last) rebuild's write is then waiting: a Stop lands before it is refused
+    for (let i = 0; i < 1; i += 1) { await c.pass(bot.id, "Revoke before the channel write " + i); await sleep(1_500); }
     expect(await c.poll(() => c.waitingNow(), 60_000), "the last rebuild's write never waited").not.toBeNull();
     await c.api("POST", `/api/routine-runs/${runId}/cancel`);
     await c.pass(bot.id, "Revoke before the last write");

@@ -19,6 +19,7 @@ import { join, sep } from "node:path";
 import { createInterface } from "node:readline/promises";
 import { createHarness, linkChannelOwner, promoteFixtureChief, ROOT, sleep, waitFor, type Harness } from "./channel-live-harness.ts";
 import { LIVE_MODEL_RUNS, loadEngine, loadManifestFile, loadSecrets, ManifestError, redactEngine, type AdmittedEngine, type Manifest, type Platform, type RedactedEngine } from "./channel-live-inputs.ts";
+import type { DisplayAction } from "../shared/audience-wire.ts";
 import { scanFolderTrustSources } from "../server/folder-trust.ts";
 import { assertRealEngineIdentity, taskIdentityProblems, type B08EngineDescriptor, type DescribedInstance } from "../src/e2e/b08-template-behavior-fixture.ts";
 
@@ -518,9 +519,9 @@ export function buttonTaskProblems(data: string, chiefId: string, run: any): str
 export function fixtureFolderTrustProblems(harness: Pick<Harness, "root" | "data">, chiefId: string, run: any, task: any, card: any): string[] {
   const reject = (reason: string) => [reason];
   if (!run?.threadId || run.botId !== chiefId || task?.threadId !== run.threadId) return reject("folder trust does not belong to the current Chief run task");
-  if (!card?.folderTrust || card.answered || card.dismissed || card.expired || !card.requestId || card.tool
-    || card.questions?.length !== 1 || card.questions[0].id !== "folderTrust"
-    || card.questions[0].allowOther !== false || !card.questions[0].options?.some((option: any) => option.label === "Trust this folder"))
+  if (!card?.folderTrust || card.answered || card.dismissed || card.expired || !/^q\.[A-Za-z0-9-]+$/.test(card.requestHandle ?? "") || (card.tool && card.tool !== "folder_trust")
+    || card.questions?.length !== 1 || card.questions[0].handle !== "q.0"
+    || card.questions[0].allowOther !== false || card.questions[0].options?.filter((option: any, index: number) => option.label === "Trust this folder" && option.handle === `o.0.${index}`).length !== 1)
     return reject("unexpected approval; only a live host folderTrust question is fixture setup");
   const sources = card.folderTrust.sources;
   if (!Array.isArray(sources) || !sources.length || sources.length > 2 || new Set(sources).size !== sources.length) return reject("folder trust has unapproved sources");
@@ -581,9 +582,9 @@ export async function handleFixtureReplySetup(harness: Harness, platform: Platfo
   const messages = await harness.request("GET", `/api/threads/${run.threadId}/messages?limit=200`);
   if (messages.status !== 200) throw new LiveStop("could not inspect channel reply prerequisites");
   // Only a card observed pending for this exact run can later count as its owner decision.
-  for (const [requestId, action] of ownerActions) {
+  for (const [requestHandle, action] of ownerActions) {
     if (action.runId !== run.id || action.settled) continue;
-    const message = (messages.body?.messages ?? []).find((item: any) => item.id === action.messageId && item.card?.requestId === requestId);
+    const message = (messages.body?.messages ?? []).find((item: any) => item.id === action.messageId && item.card?.requestHandle === requestHandle);
     if (!message || action.threadId !== run.threadId) throw new LiveStop("observed owner action disappeared or changed identity");
     const card = message.card;
     if (card.expired || card.dismissed) throw new LiveStop("owner action expired or was dismissed without an owner decision");
@@ -591,39 +592,45 @@ export async function handleFixtureReplySetup(harness: Harness, platform: Platfo
       const decisions = card.tool ? ["allow", "deny"] : ["answer", "skipped"];
       if (!decisions.includes(card.answered)) throw new LiveStop("owner action has an unrecognized resolution");
       action.settled = true;
-      harness.record("reply-owner-decision", { runId: run.id, threadId: run.threadId, requestId, messageId: message.id, behavior: card.answered });
+      harness.record("reply-owner-decision", { runId: run.id, threadId: run.threadId, requestHandle, messageId: message.id, behavior: card.answered });
     }
   }
-  const pending = (messages.body?.messages ?? []).filter((message: any) => message.card?.requestId && !message.card.answered && !message.card.dismissed && !message.card.expired);
+  const pending = (messages.body?.messages ?? []).filter((message: any) => message.card && !message.card.answered && !message.card.dismissed && !message.card.expired
+    && (message.card.requestHandle || message.card.requestId || message.card.folderTrust));
   let waitingForOwner = false;
   for (const message of pending) {
+    const requestHandle = message.card.requestHandle;
+    const kind = Array.isArray(message.card.questions) ? "q" : "p";
+    if (typeof message.id !== "string" || !/^[A-Za-z0-9-]+$/.test(message.id) || requestHandle !== `${kind}.${message.id}`)
+      throw new LiveStop("owner action has an invalid identity");
     if (!message.card.folderTrust) {
-      const requestId = message.card.requestId;
-      if (![run.id, run.threadId, message.id, requestId].every(value => typeof value === "string" && /^[A-Za-z0-9_.:-]{1,128}$/.test(value)))
+      if (![run.id, run.threadId, message.id, requestHandle].every(value => typeof value === "string" && /^[A-Za-z0-9_.:-]{1,128}$/.test(value)))
         throw new LiveStop("owner action has an invalid identity");
-      const observed = ownerActions.get(requestId);
+      const observed = ownerActions.get(requestHandle);
       if (observed && (observed.runId !== run.id || observed.threadId !== run.threadId || observed.messageId !== message.id || observed.settled))
         throw new LiveStop("owner action request identity was reused");
       if (!observed) {
-        ownerActions.set(requestId, { runId: run.id, threadId: run.threadId, messageId: message.id, settled: false });
+        ownerActions.set(requestHandle, { runId: run.id, threadId: run.threadId, messageId: message.id, settled: false });
         const kind = message.card.tool ? "permission" : "question";
         // Tool inputs, titles, question text and answers can contain secrets. Show only routing identity.
-        harness.record("reply-owner-action-pending", { runId: run.id, threadId: run.threadId, requestId, messageId: message.id, kind });
-        notify(`\nOWNER ACTION REQUIRED (${kind}): review the actual card in the isolated Murage at ${harness.url}, thread ${run.threadId}, request ${requestId}, or its supported provider card. The runner will not approve it. The original reply/run deadline remains in force.\n`);
+        harness.record("reply-owner-action-pending", { runId: run.id, threadId: run.threadId, requestHandle, messageId: message.id, kind });
+        notify(`\nOWNER ACTION REQUIRED (${kind}): review the actual card in the isolated Murage at ${harness.url}, thread ${run.threadId}, request ${requestHandle}, or its supported provider card. The runner will not approve it. The original reply/run deadline remains in force.\n`);
       }
       waitingForOwner = true;
       continue;
     }
     const problems = fixtureFolderTrustProblems(harness, chiefId, run, task, message.card);
     if (problems.length) {
-      harness.record("fixture-setup-refused", { runId: run.id, threadId: run.threadId, requestId: message.card.requestId, reasons: problems });
+      harness.record("fixture-setup-refused", { runId: run.id, threadId: run.threadId, requestHandle: message.card.requestHandle, reasons: problems });
       throw new LiveStop(problems.join("; "));
     }
-    if (handled.has(message.card.requestId)) throw new LiveStop("fixture folder trust remains pending after its one setup response");
-    handled.add(message.card.requestId);
-    const answer = await harness.request("POST", `/api/bots/${chiefId}/respond`, { threadId: run.threadId, requestId: message.card.requestId,
-      behavior: "answer", answers: [{ id: "folderTrust", selected: ["Trust this folder"] }] });
-    harness.record("fixture-folder-trust", { runId: run.id, threadId: run.threadId, requestId: message.card.requestId,
+    if (handled.has(message.card.requestHandle)) throw new LiveStop("fixture folder trust remains pending after its one setup response");
+    handled.add(message.card.requestHandle);
+    const question = message.card.questions[0];
+    const option = question.options.find((option: any) => option.label === "Trust this folder");
+    const action: DisplayAction = { requestHandle, action: "answer", answers: [{ questionHandle: question.handle, optionHandles: [option.handle] }] };
+    const answer = await harness.request("POST", `/api/threads/${run.threadId}/respond`, action);
+    harness.record("fixture-folder-trust", { runId: run.id, threadId: run.threadId, requestHandle: message.card.requestHandle,
       sources: message.card.folderTrust.sources, http: answer.status, outcome: answer.body?.outcome, authority: "isolated generated task-folder setup only" });
     if (answer.status !== 200 || answer.body?.outcome !== "answered") throw new LiveStop("fixture folder trust response was not accepted");
   }

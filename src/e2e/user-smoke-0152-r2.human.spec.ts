@@ -23,7 +23,7 @@
 import { test, expect, type Locator, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -32,7 +32,7 @@ import { userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { crc32, deflateSync } from "node:zlib";
-import { openSidebar, SEND_KEY } from "./fixtures.ts";
+import { dismissFirstRunWelcome, openSidebar, SEND_KEY } from "./fixtures.ts";
 import { fakeLlamaCompletion, fakeLlamaToolStream } from "./fake-llama-completion";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { laneDataDir } from "./lane-data-dir";
@@ -222,7 +222,7 @@ const workspaceOf = async (who: Bot) => (await api(`/api/artifacts/workspace?bot
 
 async function openApp(page: Page, { width = 1440, height = 900, skin = "light" } = {}) {
   await page.setViewportSize({ width, height });
-  await page.addInitScript((skin) => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", skin); }, skin);
+  await page.addInitScript((skin) => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", skin); localStorage.setItem("help.seen.chat.level-chip", "1"); }, skin);
   // A person uses the app once it has finished loading. The engine list is
   // the slowest part of that (about 3 s with the real CLIs probed); a send
   // before it lands is the startup race recorded in 0152-USER-SMOKE.md.
@@ -388,6 +388,9 @@ test("05 CTA1: no key → dimmed app grid behind 'Connect your apps', 'Add Flux 
   });
   for (const skin of ["light", "dark"] as const) {
     await openApp(page, { width: 1100, height: 800, skin });
+    // A fresh install first offers the full-window welcome. Enter the app the
+    // way a person does before opening the sidebar behind that screen.
+    await dismissFirstRunWelcome(page);
     const panel = await openConnectedApps(page);
     await expect(panel.getByText("Connect your apps", { exact: true })).toBeVisible({ timeout: 20_000 });
     const lock = panel.locator("[data-connected-apps-lock]");

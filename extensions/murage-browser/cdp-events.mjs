@@ -1,23 +1,29 @@
 // Trusted transport metadata only. Never forward headers, bodies, cookies or console values.
-export function scopedCdpEvent(method, params, tab) {
+export function scopedCdpEvent(method, params, tab, noLimits = false) {
   const pick = (source, keys) => Object.fromEntries(keys.filter(key => source?.[key] !== undefined).map(key => [key, source[key]]));
   const text = (value, max) => String(value ?? '').replace(/[\u0000-\u001f\u007f]/g, ' ').slice(0, max);
-  const url = raw => { try { const value = new URL(raw); return value.origin === tab.origin ? value.origin + value.pathname : ''; } catch { return ''; } };
+  const url = raw => { try { const value = new URL(raw); return (noLimits || value.origin === tab.origin) ? value.origin + value.pathname : ''; } catch { return ''; } };
   switch (method) {
+    case 'Target.attachedToTarget':
+      if (!noLimits || params.targetInfo?.type !== 'iframe' || typeof params.sessionId !== 'string') return null;
+      return { sessionId: params.sessionId, targetInfo: { ...pick(params.targetInfo, ['targetId', 'type', 'attached']), url: url(params.targetInfo.url) }, waitingForDebugger: false };
+    case 'Target.detachedFromTarget': return noLimits ? pick(params, ['sessionId', 'targetId']) : null;
+    case 'Page.frameAttached': return noLimits ? pick(params, ['frameId', 'parentFrameId']) : null;
+    case 'Page.frameDetached': return noLimits ? pick(params, ['frameId', 'reason']) : null;
     case 'Page.frameNavigated':
-      if (!params.frame || params.frame.parentId) return null;
-      return { frame: { ...pick(params.frame, ['id', 'loaderId', 'mimeType']), securityOrigin: tab.origin, url: url(params.frame.url) } };
+      if (!params.frame || (!noLimits && params.frame.parentId)) return null;
+      return { frame: { ...pick(params.frame, ['id', 'parentId', 'loaderId', 'mimeType']), securityOrigin: noLimits ? (() => { try { return new URL(params.frame.url).origin; } catch { return ''; } })() : tab.origin, url: url(params.frame.url) } };
     case 'Page.frameStartedLoading': case 'Page.frameStoppedLoading':
-      return params.frameId === tab.frameId ? pick(params, ['frameId']) : null;
+      return (noLimits || params.frameId === tab.frameId) ? pick(params, ['frameId']) : null;
     // A JavaScript dialog blocks its page. The text is the page's own words and is capped; no URL leaves.
     case 'Page.javascriptDialogOpening':
       return { ...pick(params, ['type', 'hasBrowserHandler']), message: text(params.message, 500), url: '', ...(params.defaultPrompt !== undefined ? { defaultPrompt: text(params.defaultPrompt, 200) } : {}) };
     case 'Page.javascriptDialogClosed': return pick(params, ['result']);
     case 'Page.loadEventFired': case 'Page.domContentEventFired': return pick(params, ['timestamp']);
-    case 'Page.lifecycleEvent': return params.frameId === tab.frameId ? pick(params, ['frameId', 'loaderId', 'name', 'timestamp']) : null;
+    case 'Page.lifecycleEvent': return (noLimits || params.frameId === tab.frameId) ? pick(params, ['frameId', 'loaderId', 'name', 'timestamp']) : null;
     case 'Runtime.executionContextCreated': {
       const c = params.context;
-      if (!c || c.auxData?.frameId !== tab.frameId) return null;
+      if (!c || (!noLimits && c.auxData?.frameId !== tab.frameId)) return null;
       return { context: { ...pick(c, ['id', 'name']), origin: url(c.origin), auxData: pick(c.auxData, ['frameId', 'isDefault', 'type']) } };
     }
     case 'Runtime.executionContextDestroyed': return tab.contextIds?.has(params.executionContextId) ? pick(params, ['executionContextId']) : null;

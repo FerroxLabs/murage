@@ -71,6 +71,10 @@ function forgottenReplies(threadId: string, messages: readonly Message[], withhe
 export function roomTranscriptWithoutMemory(allowance: LineageAllowance, threadId: string, messages: readonly Message[], ownerAudience: boolean, pinnedMessageId?: string, unprovenInOwnerRoom = false, options: { byId?: MessageById; whole?: boolean; reader?: LineageReader } = {}): { messages: Message[]; withheld: Set<string>; forgotten: Set<string>; checking: Set<string>; checked: Set<string> } | undefined {
   // `whole`: a direct conversation's replay window, already bounded by the caller (botWindow); a room is cut to what a member prompt shows.
   const candidates = options.whole ? [...messages] : promptCandidates(messages, pinnedMessageId, GROUP_CONTEXT_MESSAGES, options.byId);
+  if (options.reader?.audience !== undefined && options.reader.audience !== null) {
+    const verdicts = denyLookup(database(), { threadId, lines: candidates.map(m => ({ messageId: m.id, author: m.role === "user" ? "owner" as const : "generated" as const, withheldFromBots: Boolean(m.withheldFromBots) })) }, options.reader);
+    return { messages: candidates.filter(m => verdicts.get(m.id)?.state === "shown"), withheld: new Set(), forgotten: new Set(), checking: new Set(), checked: new Set(candidates.map(m => m.id)) };
+  }
   // A thread with no receipt of its own may still hold replies built on
   // memory from elsewhere (v6 output roots, e.g. cross-thread working
   // context): those are checked too (Astra r4 #3).

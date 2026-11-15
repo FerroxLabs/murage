@@ -79,7 +79,7 @@ describe("every module the main process's import graph reaches is packaged", () 
     expect(packagedImportGraph([electronEntries()[0]]).files).toContain("shared/windows-sddl.mjs");
   });
 
-  it.each(["shared/windows-sddl.mjs", "shared/backup-space.mjs"])("would have caught the %s break", omitted => {
+  it.each(["shared/windows-sddl.mjs", "shared/backup-space.mjs", "shared/agy-oauth-link.mjs", "shared/stored-root-path.mjs"])("would have caught the %s break", omitted => {
     const reached = packagedImportGraph([electronEntries()[0]]).files;
     expect(reached).toContain(omitted);
     withConfig(reached.filter(file => file !== omitted), config => {

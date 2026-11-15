@@ -1,8 +1,8 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
-// NOLIMITS-WALK-CRIT (designs/NOLIMITS-WALK-CRIT.md): a shell `-c` form the reader does not follow asks, on
-// an owner No limits turn too. r1b: clusters of l/i/x/e/v/u with one c, and `-o errexit`-style pairs (not
+// NOLIMITS-WALK-CRIT (designs/NOLIMITS-WALK-CRIT.md): a shell `-c` form the reader does not follow reads unreadable, and a wipe or
+// substitution inside it cards on an owner No limits turn (NOLIM 1.0.19: a harmless script in it now runs). r1b: clusters of l/i/x/e/v/u with one c, and `-o errexit`-style pairs (not
 // fish), still read. busybox, toybox, csh and tcsh always ask. Fixture strings are inert data, never executed.
 import { describe, expect, it, vi } from "vitest";
 
@@ -10,9 +10,11 @@ process.env.HOME = "/home/tester";
 process.env.USERPROFILE = "/home/tester";
 vi.resetModules();
 const { autoVerdict } = await import("./auto-approve.ts");
+const { alwaysAskCommand } = await import("./always-ask.ts");
+const { expectNoLimitsOwnerOutcome } = await import("./testing/no-limits-1019.ts");
 
 const NO_LIMITS = { id: "owned", autoApprove: true, fullAccess: true, noLimits: true };
-// 1.0.20 (NOLIMITS-MEANS-IT slice 2): today's No limits, the 1.0.20 lane off (its rows: nolimits-means-it-1020.test.ts)
+// Sean 2026-11-12: wipe-only No limits; non-command arguments remain data.
 const OWNER = { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, noPreRunSeamAtNoLimits: true } as const;
 const verdict = (cmd: string, commandCwd?: string) => autoVerdict(NO_LIMITS, "Bash", cmd, { ...OWNER, commandText: cmd, ...(commandCwd ? { commandCwd } : {}) });
 
@@ -83,13 +85,23 @@ const READ_SHAPES = [
 
 describe("NOLIMITS-WALK-CRIT: launcher shapes the reader does not follow keep their card", () => {
   it.each(BYPASSES)("%s with a substitution", (shape) => {
-    expect(verdict(shape.replace("P", SUB)).approve).toBeNull();
+    const substituted=verdict(shape.replace("P", SUB));
+    if(["bash -c true -c 'P'","bash -- -c 'P'"].includes(shape))expect(substituted.approve).toBeTruthy();
+    else expect(substituted.approve).toBeNull();
   });
   it.each(BYPASSES)("%s with a plain wipe", (shape) => {
-    expect(verdict(shape.replace("P", "rm -rf /")).approve).toBeNull();
+    const result=verdict(shape.replace("P", "rm -rf /"));
+    // After a completed Bash -c script, or after --, this is an argument rather than code.
+    if(["bash -c true -c 'P'","bash -- -c 'P'"].includes(shape))expect(result.approve).toBeTruthy();
+    else expect(result.approve).toBeNull();
   });
-  it.each(["busybox ls", "tcsh -c 'echo hi'", "bash -oc errexit 'echo hi'", "bash -xo errexit -c 'ls'", "bash -cO x 'ls'", "bash -cp 'ls'", "fish -dc 'ls'", "fish -o errexit -c 'ls'", "fish -cvi true", "fish -ic true", "fish -c true --command=ls", "zsh -cs 'ls'", "bash +x -c 'ls'", "bash -c -c 'ls'"])("%s asks even when harmless", (cmd) => {
-    expect(verdict(cmd)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" });
+  it.each(["busybox ls", "tcsh -c 'echo hi'", "bash -oc errexit 'echo hi'", "bash -xo errexit -c 'ls'", "bash -cO x 'ls'", "bash -cp 'ls'", "fish -dc 'ls'", "fish -o errexit -c 'ls'", "fish -cvi true", "fish -ic true", "fish -c true --command=ls", "zsh -cs 'ls'", "bash +x -c 'ls'", "bash -c -c 'ls'"])("%s: the reader still names it unreadable, and No limits runs it when harmless", (cmd) => {
+    // NOLIM 1.0.19: unreadable is not a wipe row; a shape the reader does not follow with a harmless script runs on the owner's turn.
+    // The rows above (a substitution or a plain wipe inside the same shapes) keep their card.
+    const rule = alwaysAskCommand(cmd)?.rule;
+    expect(rule, cmd).toBe("unreadable");
+    expectNoLimitsOwnerOutcome(verdict(cmd), cmd, rule);
+    expect(verdict(cmd).approve, cmd).toBeTruthy();
   });
 });
 
@@ -106,7 +118,12 @@ describe("NOLIMITS-WALK-CRIT: the plain -c form reads as before", () => {
     (cmd) => expect(verdict(cmd).approve).not.toBeNull(),
   );
   it.each(["bash -c 'P'", "bash -lc 'P'", "sh -c 'echo ok; P'", ...READ_SHAPES])("%s keeps its card for a wipe in the script", (shape) => {
-    expect(verdict(shape.replace("P", "rm -rf /")).approve).toBeNull();
-    expect(verdict(shape.replace("P", SUB)).approve).toBeNull();
+    const result=verdict(shape.replace("P", "rm -rf /"));
+    // After a completed Bash -c script, or after --, this is an argument rather than code.
+    if(["bash -c true -c 'P'","bash -- -c 'P'"].includes(shape))expect(result.approve).toBeTruthy();
+    else expect(result.approve).toBeNull();
+    const substituted=verdict(shape.replace("P", SUB));
+    if(["bash -c true -c 'P'","bash -- -c 'P'"].includes(shape))expect(substituted.approve).toBeTruthy();
+    else expect(substituted.approve).toBeNull();
   });
 });

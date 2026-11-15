@@ -1,3 +1,5 @@
+import { catchUpViewPage } from './recall-view-index.ts';
+import { recallViewHasScope, type RecallViewHandle } from './recall-view.ts';
 import { sourceDenied } from "./deny.ts";
 import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
@@ -138,7 +140,7 @@ export interface ClaimOptions { /** Lock wait before the claim gives up; BUSY me
   /** Recent-scopes mode only: a newest job older than this is left to the worker (a standing backlog is not a turn's business). */ recentWithinMs?: number;
   /** Claim exactly this job (a primary-key read), if it is claimable: no scope search, no claim-index read. A starting turn's own capture. */ jobId?: string }
 
-export function claimMemoryJob(worker: string, now = Date.now(), recentScopes?: readonly string[], options: ClaimOptions = {}): MemoryWork | null {
+export function claimMemoryJob(worker: string, now = Date.now(), recentScopes?: readonly string[] | RecallViewHandle, options: ClaimOptions = {}): MemoryWork | null {
   const started = performance.now();
   try {
     // a branch move still being flipped (branch-change.ts) leaves sources on the wrong side: nothing is claimed until it is done
@@ -230,7 +232,7 @@ function pickFromWindows(db: DatabaseSync, now: number): bigint | null {
   notifyMemoryWork();
   return null;
 }
-function claimOnce(worker: string, now: number, recentScopes: readonly string[] | undefined, busyMs: number, exclude?: ClaimOptions["exclude"], recentWithinMs?: number, onlyJobId?: string): MemoryWork | null {
+function claimOnce(worker: string, now: number, recentScopes: readonly string[] | RecallViewHandle | undefined, busyMs: number, exclude?: ClaimOptions["exclude"], recentWithinMs?: number, onlyJobId?: string): MemoryWork | null {
   // Idle guard: with nothing open this is one indexed probe, not a write transaction. A claim by id is its own probe (the primary key).
   if (onlyJobId === undefined && !database().prepare(MEMORY_CLAIM_SQL.anyOpen).get(now,now)) return null;
   return transaction(db => {
@@ -241,8 +243,17 @@ function claimOnce(worker: string, now: number, recentScopes: readonly string[] 
     let rid: bigint | null | undefined;
     if (onlyJobId !== undefined) {
       rid = bigStatement(db,MEMORY_CLAIM_SQL.byId).get(now,now,onlyJobId)?.rid as bigint | undefined;
+    } else if (recentScopes && !Array.isArray(recentScopes)) {
+      const view=recentScopes as RecallViewHandle;
+      const candidates=catchUpViewPage(db,view,Number.MAX_SAFE_INTEGER,CLAIM_WINDOW);
+      for(const candidate of candidates) {
+        const row=db.prepare(`SELECT j.rowid AS rid,s.scope_id FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision
+          WHERE j.id=? AND j.stage='capture' AND ${claimWhere('?','?')}
+          AND NOT (s.thread_id=? AND s.message_id IN (SELECT value FROM json_each(?)))`).get(candidate.id,now,now,exclude?.threadId??'',JSON.stringify(exclude?.messageIds??[]));
+        if(row && recallViewHasScope(db,view,String(row.scope_id))){rid=BigInt(row.rid as number);break;}
+      }
     } else if (recentScopes) {
-      rid = memoryClaimIndex.recent(db, now, recentScopes, exclude?.messageIds.length ? { exclude: { threadId: exclude.threadId, messageIds: new Set(exclude.messageIds) } } : {});
+      rid = memoryClaimIndex.recent(db, now, recentScopes as readonly string[], exclude?.messageIds.length ? { exclude: { threadId: exclude.threadId, messageIds: new Set(exclude.messageIds) } } : {});
       // Only when the index gave up: a turn's catch-up is for messages written a moment ago, which the index
       // always has (new rows are scanned by rowid); anything older is the worker's.
       if (rid === undefined) {
@@ -284,7 +295,7 @@ function claimOnce(worker: string, now: number, recentScopes: readonly string[] 
       const generation=Number(row.lease_generation)+1;
       db.prepare("UPDATE memory_jobs SET status='leased',lease_owner=?,lease_generation=?,lease_until=?,policy_revision=?,deletion_epoch=? WHERE id=?")
         .run(worker,generation,now+30000,meta.policy_revision,meta.deletion_epoch,row.id);
-      memoryClaimIndex.leased(rid!, String(row.scope_id), now+30000);
+      if(!recentScopes || Array.isArray(recentScopes))memoryClaimIndex.leased(rid!, String(row.scope_id), now+30000);
       return {id:jobId,sourceId:String(row.source_id),revision:Number(row.source_revision),leaseGeneration:generation,
         policyRevision:Number(meta.policy_revision),deletionEpoch:Number(meta.deletion_epoch),scopeId:String(row.scope_id),stage:String(row.stage),kind:String(row.kind),speaker:String(row.speaker),outcome:String(row.outcome),cursor,totalBytes,text};
     } catch (error) {

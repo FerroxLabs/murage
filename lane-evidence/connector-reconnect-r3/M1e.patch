@@ -1,0 +1,11 @@
+--- server/composio.ts
++++ server/composio.ts
+@@ -2350,7 +2350,7 @@
+   try { read = await postProbeInventory(cfg, owner); }
+   catch { /* Uncertainty preserves the incident and cannot restore healthy UI. */ }
+   if (inventoryOwner(cfg) !== owner) return "stale";
+-  const unknown = () => { connectorHealthStore().setUnverified(owner, slug, account.id); return "unknown" as const; };
++  const unknown = () => { clearAccount(owner, slug, account.id); connectorHealthStore().setUnverified(owner, slug, account.id); return "unknown" as const; };
+   if (!read?.services || read.revalidating) return unknown();
+   const current = read.services[slug]?.accounts.find(candidate => candidate.id === account.id);
+   if (!current || !/^active$/i.test(current.status)) {

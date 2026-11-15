@@ -295,7 +295,12 @@ describe.skipIf(process.platform !== "linux")("Linux DEB upgrade hook", () => {
   });
 
   it("resolves the test root before applying the temporary-directory boundary", () => {
-    const escaped = path.join(fs.realpathSync(os.tmpdir()), "..", path.relative("/", root));
+    const { appRoot } = fixture();
+    const alias = path.join(appRoot, "outside");
+    fs.symlinkSync(root, alias, "dir");
+    // Every component exists, even when the checkout is several directories
+    // below /home. realpath must resolve the link before checking /tmp.
+    const escaped = path.join(appRoot, "..", path.basename(appRoot), "outside");
     const result = runHook(escaped);
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("must stay under /tmp");

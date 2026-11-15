@@ -18,6 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { fixtureDisplayedResponse, fixtureDisplayRequest } from "./testing/display-http-fixture.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -31,12 +32,14 @@ let home: string;
 let stderr = "";
 
 const request = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
+  const evidenceDatabase = join(home, ".murage", "messages.db");
+  body = fixtureDisplayRequest(evidenceDatabase, path, body);
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { ...desktopHeaders, ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
-  return { status: res.status, body: await res.json().catch(() => null) };
+  return { status: res.status, body: fixtureDisplayedResponse(evidenceDatabase, await res.json().catch(() => null)) };
 };
 
 type Bot = { id: string; threadId: string };
@@ -104,6 +107,7 @@ describe.skipIf(process.platform === "win32")("the Needs you door answers from a
       },
     }));
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

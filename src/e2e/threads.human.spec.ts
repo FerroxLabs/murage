@@ -1,7 +1,7 @@
 import { test,expect,type Page } from "./page-error-guard";
 import { createServer,type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { launchVerificationServer,type VerificationServer } from "../../scripts/control-murage.ts";
@@ -61,7 +61,7 @@ test("New task follows the bot's model after click and reload, even from a chat 
   const before=await state();
   const selection={...before.tasks.find((task:any)=>task.threadId===second).modelSelection,effort:"high"};
   await api("PATCH",`/api/bots/${botId}/tasks/${second}`,{modelSelection:selection});
-  await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));await page.goto(origin);
+  await page.addInitScript(()=>{localStorage.setItem("murage-email-gate","skipped");localStorage.setItem("help.seen.chat.level-chip","1");});await page.goto(origin);
   const sidebar=await openSidebar(page);await sidebar.getByText("Threads UI fixture",{exact:true}).click();
   const invitation=page.getByRole("complementary",{name:"Let your bots pick the right model",exact:true});
   if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();
@@ -119,7 +119,7 @@ test("thread controls, sends, Stop and read state follow the visible conversatio
     const {effort:_effort,...plain}=own;
     await api("PATCH",`/api/bots/${botId}/tasks/${threadId}`,{modelSelection:plain});
   }
-  await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));await page.goto(origin);
+  await page.addInitScript(()=>{localStorage.setItem("murage-email-gate","skipped");localStorage.setItem("help.seen.chat.level-chip","1");});await page.goto(origin);
   const sidebar=await openSidebar(page);await sidebar.getByText("Threads UI fixture",{exact:true}).click();
   const invitation=page.getByRole("complementary",{name:"Let your bots pick the right model",exact:true});
   if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();

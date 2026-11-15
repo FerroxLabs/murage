@@ -55,6 +55,7 @@ describe.skipIf(process.platform === "win32")("C3: an ACP permission card across
       instances: { asker: { driver: "grokAgent", environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: "printf 'tick' >> notes/log.md" }, config: { cli: FAKE_CLI, fullAuto: false } } },
     }));
     child = spawn(process.execPath, ["--import", pathToFileURL(join(home, "fake-engine-setup.mjs")).href, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

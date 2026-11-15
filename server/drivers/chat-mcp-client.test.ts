@@ -1,3 +1,4 @@
+import { fixtureMcpServers } from "../testing/mcp-admission-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
@@ -5,11 +6,13 @@ import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // The hardened chat MCP client (OPENAI-TOOLS-109 section 3) against a real stdio child: a small fake MCP server written to a
 // temp dir and run with this node, started through the client's default spawnCli path. Hermetic: no DATA_DIR, no network.
 import { mkdtempSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { spawn } from "node:child_process";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
+import * as processes from "../procs.ts";
 import type { ChildTeardown } from "./child-teardown.ts";
 import {
   CHAT_MCP_FAILED_MESSAGE, ChatMcpError, chatMcpChildEnv, mountSecrets, openChatMcpServers, type ChatMcpSession,
@@ -100,7 +103,7 @@ const entry = (mode = "normal", log?: string): Record<string, unknown> => ({
   env: { FAKE_MODE: mode, ENTRY_TOKEN, ...(log ? { FAKE_LOG: log } : {}) },
 });
 const open = async (servers: Record<string, unknown>, options: Parameters<typeof openChatMcpServers>[1] = {}) => {
-  const result = await openChatMcpServers(servers, { cwd: fixtureBotFolder(),
+  const result = await openChatMcpServers(fixtureMcpServers(servers), { cwd: fixtureBotFolder(),
     ...options,
     onSpawn: (server, teardown) => { spawned.push(teardown); options.onSpawn?.(server, teardown); },
   });
@@ -170,6 +173,39 @@ describe("mountSecrets", () => {
 });
 
 describe("openChatMcpServers", () => {
+  it("hides the default MCP child while retaining all three protocol pipes", async () => {
+    const launched = vi.spyOn(processes, "spawnCli");
+    try {
+      const { sessions, failed } = await open({ fake: entry() });
+      expect(failed).toEqual([]);
+      expect(sessions).toHaveLength(1);
+      expect(launched).toHaveBeenCalled();
+      const [command, args, options] = launched.mock.calls[0]!;
+      expect(command).toBe(process.execPath);
+      expect(args).toContain(script);
+      expect(options).toMatchObject({
+        windowsHide: true, stdio: ["pipe", "pipe", "pipe"], env: expect.any(Object),
+      });
+    } finally { launched.mockRestore(); }
+  });
+  it("adds the release receipt channel only to an explicitly marked MCP child", async () => {
+    // This transport fixture observes the options and opens a real IPC pipe.
+    // Release permit admission has its own dispatcher and relay fixtures.
+    const launched = vi.spyOn(processes, "spawnCli").mockImplementation((command, args, options) =>
+      spawn(command, args, { ...options, detached: process.platform !== "win32" }) as ReturnType<typeof processes.spawnCli>);
+    try {
+      const server = entry();
+      server.env = { ...server.env as Record<string, string>, MURAGE_RELEASE_INSTANCE: "fixture" };
+      const { sessions, failed } = await open({ fake: server });
+      expect(failed).toEqual([]);
+      expect(sessions).toHaveLength(1);
+      expect(launched.mock.calls[0]![2]).toMatchObject({
+        windowsHide: true, stdio: ["pipe", "pipe", "pipe", "ipc"],
+        env: expect.objectContaining({ MURAGE_RELEASE_INSTANCE: "fixture" }),
+      });
+      expect(launched.mock.results[0]!.value.channel).toBeDefined();
+    } finally { launched.mockRestore(); }
+  });
   it("a real child gets only the allowlisted env plus its own token, and stderr never surfaces", async () => {
     const { sessions, failed } = await open({ fake: entry() });
     expect(failed).toEqual([]);
@@ -189,22 +225,23 @@ describe("openChatMcpServers", () => {
     expect(sessions[0]!.tools[1]!.inputSchema).toEqual({ type: "object", properties: {} });
   });
 
-  it("returns sessions in config order; a malformed envelope and a missing command fail that server only", async () => {
-    const { sessions, failed } = await open({ first: entry(), nocmd: { args: ["x"], env: {} }, broken: entry("badjson"), last: entry() });
+  // control: these are independent fixture turns, so a malformed server cannot retarget another turn.
+  it("returns sessions in config order; a malformed envelope fails its independent fixture turn", async () => {
+    const { sessions, failed } = await open({ first: entry(), broken: entry("badjson"), last: entry() });
     expect(sessions.map((session) => session.server)).toEqual(["first", "last"]);
-    expect(failed).toEqual(["nocmd", "broken"]);
+    expect(failed).toEqual(["broken"]);
     expect(spawned).toHaveLength(3);
   });
 
-  it("an entry with no string command is failed without spawning", async () => {
+  // red-at-4df086541: invalid configuration fails admission before any sibling spawn.
+  it("an entry with no string command refuses before spawning", async () => {
     const spawnCalls: string[] = [];
     const reported: string[] = [];
-    const { sessions, failed } = await openChatMcpServers(
+    await expect(openChatMcpServers(
       { a: { args: [] }, b: { command: 7 }, c: null },
       { cwd: fixtureBotFolder(), spawn: (command) => { spawnCalls.push(command); throw new Error("must not spawn"); }, onSpawn: (server) => reported.push(server) },
-    );
-    expect(sessions).toEqual([]);
-    expect(failed).toEqual(["a", "b", "c"]);
+    )).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(() => fixtureMcpServers({ a: { args: [] } })).toThrow("MEMORY_CONTEXT_REVOKED");
     expect(spawnCalls).toEqual([]);
     expect(reported).toEqual([]);
   });
@@ -281,7 +318,7 @@ describe("ChatMcpSession.callTool", () => {
     const lines = logLines(log);
     const callLine = lines.find((line) => line.method === "tools/call");
     const cancelled = lines.find((line) => line.method === "notifications/cancelled");
-    expect(cancelled?.params).toEqual({ requestId: callLine?.id, reason: "cancelled" });
+    expect(cancelled?.params).toEqual({ requestId: callLine?.id });
     session.close(); // idempotent
     expect(session.closed).toBe(true);
   });
@@ -295,6 +332,6 @@ describe("ChatMcpSession.callTool", () => {
     expect(session.closed).toBe(true);
     await expect(session.teardown.wait(budget)).resolves.toEqual({ closeConfirmed: true });
     expect(logLines(log).some((line) => line.method === "notifications/cancelled"
-      && (line.params as { reason?: string }).reason === "timed out")).toBe(true);
+      && Object.keys(line.params as object).join() === "requestId")).toBe(true);
   });
 });

@@ -65,7 +65,10 @@ dnf -y --setopt=install_weak_deps=False --enablerepo=powertools install \
   xz-5.2.4-4.el8_6 tar-1.30-13.el8_10 perl-5.26.3-423.el8_10.1
 tar -xJf bubblewrap-0.13.1.tar.xz --no-same-owner
 tar -xJf libcap-2.76.tar.xz --no-same-owner
-make -C libcap-2.76/libcap libcap.a
+# This archive is linked into an executable, never loaded as a shared object.
+# Avoid global-dynamic TLS references that add ld-linux to DT_NEEDED.
+# Pass the flag through CC to retain libcap's include paths and hardening CFLAGS.
+make -C libcap-2.76/libcap libcap.a CC='gcc -ftls-model=initial-exec'
 mkdir pkgconfig toolchain
 cat > pkgconfig/libcap.pc <<'EOF'
 Name: libcap

@@ -41,6 +41,7 @@ async function spawnFixture(...args: string[]): Promise<{ code: number; stdout: 
     // The backlog runs deliberately emit megabytes; the default 1 MB maxBuffer
     // would kill the child itself and confuse that with the crash under test.
     const { stdout, stderr } = await run(process.execPath, [FIXTURE, ...args], {
+      windowsHide: true,
       timeout: 20_000,
       maxBuffer: 64 * 1024 * 1024,
     });

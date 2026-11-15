@@ -1,3 +1,6 @@
+import "../shared/win-hide-child-process.mjs";
+import {exitWithChildIoReceipt} from "./io-child-receipts.ts";
+import { proxyTransportLost, proxyFetch } from "./proxy-turn-release.ts";
 // Harness-owned connected-apps MCP bridge.
 //
 // Provider CLIs only see this stdio server. Ordinary MCP traffic is relayed
@@ -13,7 +16,7 @@ import { dirname } from "node:path";
 import { CACHE_MAX_AGE_MS, cacheEnvFromProcess, clearMountIncomplete, CONNECTOR_LIST_DEADLINE_MS, markMountIncomplete, markMountReady, type MountRef, INITIAL_TOOLS_ASK_HARNESS, INITIAL_TOOLS_IN_FILE, initialToolsFileName, privateCacheDir as privateDirOf, pruneCacheDir, generationLabel, readCacheEntry, readGeneration, removeCacheEntry, writeCacheEntry } from "./connector-cache.ts";
 import { STANDARD_SESSION_TOOLS } from "./composio-standard-tools.ts";
 import { CRED_FILE_ENV, turnSecret } from "./turn-credential.ts";
-import { markMcpListedAfterFlush } from "./mcp-listed.ts";
+import { createMcpCatalogWriter, type McpRequest } from "./mcp-listed.ts";
 import {
   CONNECTED_APP_RELAY_GRACE_MS,
   CONNECTED_APP_STATUS_TOOL,
@@ -22,10 +25,9 @@ import {
   CONNECTED_APP_WAIT_HEADER,
   connectedAppActionCall,
   connectedAppCallTimeoutMs,
-  connectedAppTimeoutText,
   isConnectedAppLookup,
 } from "../shared/connected-app-calls.ts";
-import { exposedMessage, serviceMessage, usesLegacyNames, withoutServiceName } from "../shared/connected-app-names.ts";
+import { exposedMessage, serviceMessage, usesLegacyNames } from "../shared/connected-app-names.ts";
 
 type Json = Record<string, unknown>;
 
@@ -55,8 +57,6 @@ const CALL_LIMITS = {
 // at the bound this bridge sends it. The bridge waits a grace longer, so the
 // server's answer is the one the bot gets.
 const ACTION_GRACE_MS = positive(process.env.MURAGE_CONNECTOR_GRACE_MS) ?? CONNECTED_APP_RELAY_GRACE_MS;
-const timedOut = (error: unknown): boolean =>
-  error instanceof DeadlineError || (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError"));
 const REOPEN_TIMEOUT_MS = 15_000;
 
 function parsedHeaders(): Record<string, string> {
@@ -146,8 +146,7 @@ function catalogueOf(response: Json): Json | null {
   const tools = result.tools.filter(isTool);
   if (tools.length === result.tools.length) return response;
   const dropped = result.tools.filter((tool) => !isTool(tool));
-  const named = dropped.slice(0, 8).map((tool) => (isPlainObject(tool) && typeof tool.name === "string" && tool.name ? tool.name : "(unnamed)"));
-  try { process.stderr.write(`[murage-connectors] tools/list dropped=${dropped.length} without a name or object inputSchema: ${named.join(", ")}${dropped.length > named.length ? ", …" : ""}\n`); } catch { /* logging never fails a list */ }
+  try { process.stderr.write(`connector dropped=${dropped.length}\n`); } catch { /* counts only */ }
   // The relay put the bridge's own status tool beside the service's (withStatusTool); it is not the service's catalogue.
   const serviceTools = tools.filter((tool) => tool.name !== CONNECTED_APP_STATUS_TOOL);
   return serviceTools.length === 0 ? null : { ...response, result: { ...result, tools } };
@@ -297,7 +296,7 @@ function announceIfChanged(response: Json): void {
   const json = toolsJsonOf(response);
   if (json === servedToolsJson) return;
   servedToolsJson = json;
-  send({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
+  notify({ jsonrpc: "2.0", method: "notifications/tools/list_changed" });
 }
 const mountRef = (): MountRef | null => {
   const scope = currentScope();
@@ -360,8 +359,8 @@ function discover(asked: ListScope | null, askedGeneration: string, deadlineAt: 
 
 /** One line per tools/list this bridge answers: what the engine was given, how many tools, and the
  * upstream HTTP status when there was one. Never a token, a header or a tool argument. */
-function logList(outcome: "real" | "remembered" | "provisional" | "standin" | "error", toolCount: number, http?: number): void {
-  try { process.stderr.write(`[murage-connectors] tools/list outcome=${outcome} tools=${toolCount}${http ? ` http=${http}` : ""}\n`); } catch { /* logging never fails a list */ }
+function logList(_outcome: "real" | "remembered" | "provisional" | "standin" | "error", toolCount: number, _http?: number): void {
+  try { process.stderr.write(`connector tools=${toolCount}\n`); } catch { /* logging never fails a list */ }
 }
 /** A 4xx the service decided (sign-in, access, a request limit), as opposed to a missing session or a slow answer. */
 const isRefusalStatus = (http: number): boolean => http >= 400 && http < 500 && http !== 404 && http !== 408 && http !== 425;
@@ -393,7 +392,7 @@ const httpStatusOf = (error: unknown): number | undefined => {
  * is marked so the driver starts a fresh one at the next turn. The scope and
  * connection generation are captured before anything is fetched, and checked
  * again before anything is SENT. */
-async function answerToolsList(id: unknown): Promise<void> {
+async function answerToolsList(req: McpRequest, id: unknown): Promise<void> {
   if (!UPSTREAM) throw new Error("connected apps are unavailable");
   const deadlineAt = deadlineIn(TOOLS_LIST_LIVE_MS);
   const asked = currentScope();
@@ -406,11 +405,11 @@ async function answerToolsList(id: unknown): Promise<void> {
     engineHoldsBundled = false;
     noteRealServed();
     logList("remembered", remembered.length);
-    send(reply);
+    send(req, reply);
     void refreshToolsList();
     return;
   }
-  if (remembered) { memoryList = null; sendInitialList(id, deadlineAt, askedGeneration); return; }
+  if (remembered) { memoryList = null; sendInitialList(req, id, deadlineAt, askedGeneration); return; }
   let found: Discovery | typeof expired = expired;
   for (;;) {
     found = await raceDeadline(discover(asked, askedGeneration, deadlineAt, id), deadlineAt);
@@ -418,7 +417,7 @@ async function answerToolsList(id: unknown): Promise<void> {
     if (found !== expired && found.kind === "expired" && timeLeft(deadlineAt) > HELD_RETRY_MS) continue;
     break;
   }
-  if (found === expired || found.kind === "expired") { sendInitialList(id, deadlineAt, askedGeneration); return; }
+  if (found === expired || found.kind === "expired") { sendInitialList(req, id, deadlineAt, askedGeneration); return; }
   if (found.kind === "threw") {
     const http = httpStatusOf(found.error);
     // The service refusing the list (a 4xx: sign-in, access, a request limit) is a decision, not an outage: answered as an error, but the
@@ -430,7 +429,7 @@ async function answerToolsList(id: unknown): Promise<void> {
     }
     // Any other upstream failure (an HTTP error, a slow or unreachable service) never mounts nothing:
     // the engine gets the initial list, the mount is marked incomplete and the real list follows.
-    sendInitialList(id, deadlineAt, askedGeneration, http);
+    sendInitialList(req, id, deadlineAt, askedGeneration, http);
     return;
   }
   // The same refusal, put into words by the harness (HTTP 200 with a JSON-RPC
@@ -440,15 +439,15 @@ async function answerToolsList(id: unknown): Promise<void> {
   if (refusal) {
     noteProvisionalServed();
     logList("error", 0, refusal.http);
-    throw new Error(refusal.message);
+    throw new ConnectorApplicationRefusal(refusal.message);
   }
   // An error reply or an unreadable one on the first list is never the engine's whole catalogue.
-  if (found.kind === "unreadable" || found.kind === "error") { sendInitialList(id, deadlineAt, askedGeneration); return; }
+  if (found.kind === "unreadable" || found.kind === "error") { sendInitialList(req, id, deadlineAt, askedGeneration); return; }
   // The fence applies to what is SENT, not only to what is kept: a reply
   // fetched under a scope or connection generation that is no longer
   // current is discarded, and the engine is shown the current initial list.
-  if (!stillCurrent(asked, askedGeneration)) { sendInitialList(id, deadlineAt, askedGeneration); return; }
-  if (!("response" in found)) { sendInitialList(id, deadlineAt, askedGeneration); return; }
+  if (!stillCurrent(asked, askedGeneration)) { sendInitialList(req, id, deadlineAt, askedGeneration); return; }
+  if (!("response" in found)) { sendInitialList(req, id, deadlineAt, askedGeneration); return; }
   const response = found.response;
   if (found.kind === "provisional") {
     servedToolsJson = toolsJsonOf(response);
@@ -456,17 +455,17 @@ async function answerToolsList(id: unknown): Promise<void> {
     noteProvisionalServed();
     void followProvisionalList();
     logList("provisional", listToolsOf(response.result as Json).length);
-    send(toolsReply(id, response.result as Json));
+    send(req, toolsReply(id, response.result as Json));
     return;
   }
   // A publication that lost the race with a disconnect (or an access change) is not shown either.
-  if (!publishList(asked, askedGeneration, response.result as Json)) { sendInitialList(id, deadlineAt, askedGeneration); return; }
+  if (!publishList(asked, askedGeneration, response.result as Json)) { sendInitialList(req, id, deadlineAt, askedGeneration); return; }
   realListSeen = true;
   servedToolsJson = toolsJsonOf(response);
   engineHoldsBundled = false;
   noteRealServed();
   logList("real", listToolsOf(response.result as Json).length);
-  send(toolsReply(id, response.result as Json));
+  send(req, toolsReply(id, response.result as Json));
 }
 /** True once the engine was handed the bundled stand-in and has not been given a real list since. */
 let engineHoldsBundled = false;
@@ -478,9 +477,9 @@ let degradedNoticeOwed = false;
  * restricted bot's list from policy at once); if even that fails, the mount
  * fails recoverably: an error now, a fresh process (and so a fresh handover)
  * on the next turn. Never an empty list. */
-function sendInitialList(id: unknown, deadlineAt: number, askedGeneration: string, http?: number): void {
+function sendInitialList(req: McpRequest, id: unknown, deadlineAt: number, askedGeneration: string, http?: number): void {
   const initial = initialTools(askedGeneration);
-  if (!initial) { void sendAuthoritativeList(id, deadlineAt); return; }
+  if (!initial) { void sendAuthoritativeList(req, id, deadlineAt); return; }
   servedBundledOnly = true;
   const degraded = offersBundledStandIn();
   if (degraded) { engineHoldsBundled = true; degradedNoticeOwed = true; }
@@ -489,16 +488,14 @@ function sendInitialList(id: unknown, deadlineAt: number, askedGeneration: strin
   servedToolsJson = JSON.stringify(listToolsOf(reply.result as Json));
   noteProvisionalServed();
   logList("standin", initial.length, http);
-  send(reply);
+  send(req, reply);
   void refreshToolsList();
 }
 /** sendAuthoritativeList is still fetching the answer to a tools/list. */
-let authoritativeListPending = false;
-async function sendAuthoritativeList(id: unknown, deadlineAt: number): Promise<void> {
-  authoritativeListPending = true;
-  try { await sendAuthoritativeListNow(id, deadlineAt); } finally { authoritativeListPending = false; }
+async function sendAuthoritativeList(req: McpRequest, id: unknown, deadlineAt: number): Promise<void> {
+  await sendAuthoritativeListNow(req, id, deadlineAt);
 }
-async function sendAuthoritativeListNow(id: unknown, deadlineAt: number): Promise<void> {
+async function sendAuthoritativeListNow(req: McpRequest, id: unknown, deadlineAt: number): Promise<void> {
   const asked = currentScope();
   const askedGeneration = currentGeneration();
   if (timeLeft(deadlineAt) > 0) {
@@ -510,16 +507,14 @@ async function sendAuthoritativeListNow(id: unknown, deadlineAt: number): Promis
       engineHoldsBundled = false;
       noteRealServed();
       logList("real", listToolsOf(found.response.result as Json).length);
-      send(toolsReply(id, found.response.result as Json));
-      markMcpListedAfterFlush();
+      send(req, toolsReply(id, found.response.result as Json));
+
       return;
     }
   }
   logList("error", 0);
-  const failure = jsonRpcError(id, RECOVERABLE_MOUNT_TEXT);
-  process.stdout.write(`${JSON.stringify(failure)}\n`, () => process.exit(1));
+  proxyTransportLost("connectors");
 }
-const RECOVERABLE_MOUNT_TEXT = "Connected apps could not be loaded this turn. They will be ready next turn.";
 
 let upstreamSessionId = "";
 /** The background upstream initialize (and its initialized notice): settles
@@ -531,7 +526,11 @@ let upstreamOpening: Promise<void> = Promise.resolve();
  * own ids and name never reach the model, whichever path built the answer. */
 /** A session an earlier release started keeps its older tool names listed (shared/connected-app-names.ts). */
 const LEGACY_NAMES = usesLegacyNames(process.env);
-const send = (message: Json, options: { lookup?: boolean } = {}) => process.stdout.write(`${JSON.stringify(exposedMessage(message, { ...options, legacyNames: LEGACY_NAMES }))}\n`);
+const catalog = createMcpCatalogWriter(process.env, process.stdout, "connectors");
+const fatal = () => { process.exitCode = 1; process.stdin.destroy(); };
+const send = (req: McpRequest, message: Json, options: { lookup?: boolean } = {}) => { void req.respond(exposedMessage(message, { ...options, legacyNames: LEGACY_NAMES })).catch(fatal); };
+/** A frame that answers no request (a notification). */
+const notify = (message: Json) => { void catalog.send(exposedMessage(message, { legacyNames: LEGACY_NAMES })).catch(fatal); };
 
 /** The harness marks a tools/list answer provisional (its `_meta`) when it is
  * the bundled standard list served before the connection service answered, or
@@ -621,9 +620,9 @@ let credentialPollLogged = false;
 const credentialStamp = (file: string): string => {
   try { const st = statSync(file); return `${st.mtimeMs}:${st.size}:${st.ino}`; } catch { return ""; }
 };
-function pollCredentialsForTurnStart(file: string, why: string): void {
+function pollCredentialsForTurnStart(file: string, _why: string): void {
   if (credentialPoll || !provisionalOutstanding) return;
-  if (!credentialPollLogged) { credentialPollLogged = true; process.stderr.write(`[murage-connectors] credential watcher unavailable (${why}); polling every ${CRED_POLL_MS / 1000}s while tools are being recovered\n`); }
+  if (!credentialPollLogged) { credentialPollLogged = true; process.stderr.write("connector watcher failures=1\n"); }
   let last = credentialStamp(file);
   const stopPoll = (): void => { if (credentialPoll) clearInterval(credentialPoll); credentialPoll = null; };
   credentialPoll = setInterval(() => {
@@ -674,9 +673,13 @@ function initializeResult(id: unknown, protocolVersion: unknown): Json {
   };
 }
 
+/** A completed sign-in/access/limit decision is a gated application reply.
+ * It does not grant recovery from a failed transport or an invalid frame. */
+class ConnectorApplicationRefusal extends Error {}
+
 async function readBounded(response: Response): Promise<string> {
   const declared = Number(response.headers.get("content-length") ?? "0");
-  if (declared > MAX_RESPONSE_BYTES) throw new Error("connector response exceeded 20 MB");
+  if (declared > Math.min(MAX_RESPONSE_BYTES, 8 * 1024 * 1024)) throw new Error("connector response exceeded 20 MB");
   if (!response.body) return "";
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
@@ -686,7 +689,7 @@ async function readBounded(response: Response): Promise<string> {
     const { done, value } = await reader.read();
     if (done) break;
     size += value.byteLength;
-    if (size > MAX_RESPONSE_BYTES) {
+    if (size > Math.min(MAX_RESPONSE_BYTES, 8 * 1024 * 1024)) {
       await reader.cancel();
       throw new Error("connector response exceeded 20 MB");
     }
@@ -743,13 +746,13 @@ async function reopenUpstreamSession(deadlineAt: number, cancel?: AbortSignal): 
 
 /** One upstream round trip that ends, session recovery included, by `deadlineAt`
  * (absolute, epoch ms). A relative timeout is never taken. */
-async function relay(message: Json, deadlineAt: number = deadlineIn(RELAY_TIMEOUT_MS), retried = false, cancel?: AbortSignal): Promise<Json | null> {
+export async function relay(message: Json, deadlineAt: number = deadlineIn(RELAY_TIMEOUT_MS), retried = false, cancel?: AbortSignal): Promise<Json | null> {
   if (!UPSTREAM) throw new Error("connected apps are unavailable");
   if (timeLeft(deadlineAt) <= 0) throw new DeadlineError();
   const sentSession = upstreamSessionId;
   const remaining = timeLeft(deadlineAt);
   const action = connectedAppActionCall(message) !== null;
-  const response = await fetch(UPSTREAM, {
+  const response = await proxyFetch("connectors", UPSTREAM, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -787,16 +790,20 @@ async function relay(message: Json, deadlineAt: number = deadlineIn(RELAY_TIMEOU
     // Bounded and best-effort: a body that will not read must not turn a
     // useful status into an exception of its own.
     let detail = "";
-    try {
-      detail = (await response.text()).replace(/\s+/g, " ").trim().slice(0, 300);
-    } catch {
-      detail = "";
-    }
-    throw new Error(
-      `connector service returned HTTP ${response.status}${detail ? `: ${detail}` : ""}`,
-    );
+    try { detail = (await readBounded(response)).replace(/\s+/g, " ").trim().slice(0, 300); }
+    catch (error) { proxyTransportLost("connectors"); throw error; }
+    const message = `connector service returned HTTP ${response.status}${detail ? `: ${detail}` : ""}`;
+    if (isRefusalStatus(response.status)) throw new ConnectorApplicationRefusal(message);
+    proxyTransportLost("connectors");
+    throw new Error(message);
   }
-  const parsed = parseUpstream(await readBounded(response), message.id);
+  let parsed: Json | null;
+  try {
+    parsed = parseUpstream(await readBounded(response), message.id);
+    if (message.id !== undefined && (!parsed || parsed.jsonrpc !== "2.0" || parsed.id !== message.id
+      || ("result" in parsed) === ("error" in parsed))) throw new Error("invalid upstream response");
+  }
+  catch (error) { proxyTransportLost("connectors"); throw error; }
   // The bridge's own status tool sits beside the service's tools, whichever path asked for the list.
   if (message.method === "tools/list" && parsed) withStatusTool(parsed);
   return parsed;
@@ -834,20 +841,25 @@ function connectorAdds(args: unknown): ConnectorRequest[] {
   });
 }
 
-async function showConnectorCards(items: ConnectorRequest[]): Promise<void> {
-  const response = await fetch(`${HARNESS}/api/internal/connectors/request`, {
+async function showConnectorCards(items: ConnectorRequest[], statusOnly = false): Promise<string | undefined> {
+  const response = await proxyFetch("connectors", `${HARNESS}/api/internal/connectors/request`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${token()}` },
-    body: JSON.stringify({ botId: BOT_ID, threadId: THREAD_ID, items, slugs: [...new Set(items.map((item) => item.slug))], resumeKey: randomUUID() }),
+    body: JSON.stringify({ botId: BOT_ID, threadId: THREAD_ID, statusOnly, items, slugs: [...new Set(items.map((item) => item.slug))], resumeKey: randomUUID() }),
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) {
-    const body = (await response.json().catch(() => ({}))) as { error?: unknown };
+    const body = (await response.json().catch(error => {
+      if ((error as { code?: string })?.code === "MEMORY_CONTEXT_REVOKED") throw error;
+      return {};
+    })) as { error?: unknown };
     throw new Error(String(body.error ?? `could not show connection card (HTTP ${response.status})`));
   }
+  const body = await response.json() as { pending?: boolean; message?: string };
+  return body.pending === false && typeof body.message === "string" ? body.message : undefined;
 }
 
-async function handle(message: Json): Promise<void> {
+async function handle(message: Json, req: McpRequest): Promise<void> {
   const id = message.id;
   const method = String(message.method ?? "");
   resumeProbeForActiveTurn(); // a request in an active turn with the stand-in still held restarts bounded recovery
@@ -875,7 +887,7 @@ async function handle(message: Json): Promise<void> {
     if (UPSTREAM) upstreamOpening = relay(message, deadlineIn(INITIALIZE_RELAY_TIMEOUT_MS)).then(() => {}, () => {});
     if (id !== undefined) {
       const params = (message.params ?? {}) as Json;
-      send(initializeResult(id, params.protocolVersion));
+      send(req, initializeResult(id, params.protocolVersion));
     }
     return;
   }
@@ -884,16 +896,22 @@ async function handle(message: Json): Promise<void> {
     const name = String(params.name ?? "");
     const requests = /MANAGE_CONNECTIONS$/i.test(name) ? connectorAdds(params.arguments) : [];
     if (requests.length) {
-      await showConnectorCards(requests);
+      const notice = await showConnectorCards(requests);
+      if (notice) { send(req, textResult(id, notice)); return; }
       const labels = requests.map((item) => item.alias ? `${item.slug} (${item.alias})` : item.slug).join(", ");
-      send(textResult(
+      send(req, textResult(
         id,
         `Murage showed the user a secure connection card for ${labels}. End this turn now. The app will continue the task automatically after the connection finishes.`,
       ));
       return;
     }
     if (/WAIT_FOR_CONNECTIONS$/i.test(name)) {
-      send(textResult(id, "Murage is handling connection completion and will continue the task automatically."));
+      const notice = await showConnectorCards([], true);
+      if (notice) {
+        send(req, textResult(id, notice));
+        return;
+      }
+      send(req, textResult(id, "Murage is handling connection completion and will continue the task automatically."));
       return;
     }
   }
@@ -910,13 +928,13 @@ async function handle(message: Json): Promise<void> {
     // driver's MCP wait may end (mcp-listed.ts); an answer still being fetched
     // by sendAuthoritativeList marks it there. An upstream failure on the first list is answered with the
     // initial list (marked incomplete), never an error or an empty list; only an access refusal is an error.
-    if (method === "tools/list" && id !== undefined) { await answerToolsList(id); if (!authoritativeListPending) markMcpListedAfterFlush(); return; }
+    if (method === "tools/list" && id !== undefined) { await answerToolsList(req, id); return; }
     // Only the bundled list was served and the real one has not come: wait a
     // little for it, then say plainly that connected apps are still loading.
     if (method === "tools/call" && servedBundledOnly && !realListSeen) {
       await Promise.race([refreshToolsList(), new Promise((resolve) => setTimeout(resolve, STILL_LOADING_WAIT_MS))]);
       if (!realListSeen) {
-        if (id !== undefined) send(textResult(id, STILL_LOADING_TEXT, true));
+        if (id !== undefined) send(req, textResult(id, STILL_LOADING_TEXT, true));
         return;
       }
     }
@@ -940,28 +958,15 @@ async function handle(message: Json): Promise<void> {
       degradedNoticeOwed = false;
       const result = (response.result ?? {}) as Json;
       const content = Array.isArray(result.content) ? (result.content as unknown[]) : [];
-      send({ ...response, result: { ...result, content: [...content, { type: "text", text: DEGRADED_NOTICE }] } });
+      send(req, { ...response, result: { ...result, content: [...content, { type: "text", text: DEGRADED_NOTICE }] } });
       return;
     }
-    if (response) send(response, { lookup: method === "tools/call" && isConnectedAppLookup(String(((message.params ?? {}) as Json).name ?? "")) });
-    else send(textResult(id, "connector service returned an unreadable response", true));
+    if (response) send(req, response, { lookup: method === "tools/call" && isConnectedAppLookup(String(((message.params ?? {}) as Json).name ?? "")) });
+    else proxyTransportLost("connectors");
   } catch (error) {
-    if (id === undefined) return;
-    if (method === "tools/call" && timedOut(error)) {
-      // A clear, bounded answer the bot can act on. A lookup stopped and may
-      // be tried again. An action is still running on the server, which never
-      // sends the same action twice, so the bot is told so, not given an error.
-      const params = (message.params ?? {}) as Json;
-      const action = connectedAppActionCall(message) !== null;
-      send(textResult(id, connectedAppTimeoutText(String(params.name ?? ""), params.arguments, callTimeoutMs), !action));
-      return;
-    }
-    const messageText = timedOut(error)
-      ? `connected apps did not answer within ${Math.round(callTimeoutMs / 1000)} seconds`
-      // The service's or the bridge's own words, never an app's data: said without the service's name.
-      : withoutServiceName(error instanceof Error ? error.message : String(error));
-    if (method === "tools/call") send(textResult(id, messageText, true));
-    else send(jsonRpcError(id, messageText));
+    if (error instanceof ConnectorApplicationRefusal) {
+      if (id !== undefined) send(req, method === "tools/call" ? textResult(id, error.message, true) : jsonRpcError(id, error.message));
+    } else proxyTransportLost("connectors");
   }
 }
 
@@ -977,12 +982,13 @@ input.on("line", (line) => {
   } catch {
     return;
   }
-  void handle(message).catch((error) => {
+  const req = catalog.observeRequest(trimmed);
+  void req.published.then(() => handle(message, req)).catch((error) => {
     if (message.id === undefined) return;
     const method = String(message.method ?? "");
     const messageText = error instanceof Error ? error.message : String(error);
-    if (method === "tools/call") send(textResult(message.id, messageText, true));
-    else send(jsonRpcError(message.id, messageText));
+    if (method === "tools/call") send(req, textResult(message.id, messageText, true));
+    else send(req, jsonRpcError(message.id, messageText));
   });
 });
-input.on("close", () => process.exit(0));
+input.on("close", () => void exitWithChildIoReceipt(0));

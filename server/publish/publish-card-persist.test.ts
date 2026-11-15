@@ -10,6 +10,7 @@ import { closeDatabase } from "../database.ts";
 import { Store } from "../store.ts";
 import { validInstallationMessagePayload } from "../installation-message-validation.ts";
 import { readPublishCard } from "../../shared/publish-card.ts";
+import { legacyEmailDecisionFixture } from "../email/testing/legacy-decision-fixture.ts";
 import { PublishOperations } from "./publish-ops.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
@@ -36,6 +37,7 @@ it("a publish card, with its progress, is a valid stored message and survives a 
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture" })); const bot = store.createBot();
   const operations = new PublishOperations({ store, waiting: () => {}, token: () => "tok", fetchImpl: netlify, sleep: async () => {}, workspaceFor: () => workspace });
   const actor = { botId: bot.id, threadId: bot.threadId, generation: randomUUID(), signal: new AbortController().signal, assertActive: () => {} };
+  Object.assign(actor, { authority: await legacyEmailDecisionFixture({ kind: "publish", store, botId: bot.id, threadId: bot.threadId, generation: actor.generation }) });
   const job = operations.publish(actor, { folder: "site", name: "shop" });
   await vi.waitFor(() => expect(store.messagesFor(bot.threadId).some(m => m.card?.kind === "publish")).toBe(true));
   const pendingCard = store.messagesFor(bot.threadId).find(m => m.card?.kind === "publish")!;

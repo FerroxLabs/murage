@@ -13,6 +13,7 @@ const validate = `import importlib.util,json,os,sys
 spec=importlib.util.spec_from_file_location("launcher_fixture",sys.argv[1])
 module=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
+module.IMMUTABLE_LINK_EXTRA=tuple(p for p in os.environ.get("TEST_LINK_ROOTS","").split(":") if p)
 result=module.validate_request(json.loads(sys.argv[2]),manifest_path=sys.argv[3],manifest_uid=os.getuid(),engine_root=sys.argv[4],cache_root=sys.argv[5])
 print(json.dumps({"command":result[3],"env":result[5]}))`;
 let root: string, engineRoot: string, home: string, command: string, manifest: string, digest: string;
@@ -25,7 +26,7 @@ beforeEach(() => {
 });
 afterEach(() => removeTempDirSync(root));
 function request(executable = command): { engine: string; bot: string; command: string; args: string[]; cwd: string; env: Record<string, string> } { return { engine: "claudeAgent", bot: "fixture-bot", command: executable, args: MINIMAL_ARGV.claudeAgent, cwd: home, env: { LD_AUDIT: "/fixture/audit.so", LD_DEBUG_OUTPUT: "/fixture/debug", NODE_OPTIONS: "--require /fixture/loader.js", LANG: "C.UTF-8" } }; }
-function check(input = request()) { return JSON.parse(execFileSync("python3", ["-I", "-c", validate, launcher, JSON.stringify(input), manifest, engineRoot, join(root, "digest-cache")], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] })); }
+function check(input = request()) { return JSON.parse(execFileSync("python3", ["-I", "-c", validate, launcher, JSON.stringify(input), manifest, engineRoot, join(root, "digest-cache")], { windowsHide: true, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, TEST_LINK_ROOTS: root } })); }
 it("validates the exact listed executable digest and strips every LD variable", () => {
   const result = check(); expect(result.command).toBe(command); expect(result.env.LANG).toBe("C.UTF-8");
   expect(Object.keys(result.env).filter(key => key.startsWith("LD_"))).toEqual([]); expect(result.env.NODE_OPTIONS).toBeUndefined();
@@ -76,12 +77,44 @@ it("accepts a trusted filesystem link but refuses its writable lookup ancestor",
   chmodSync(alias, 0o777); expect(() => check(request(join(alias, "native")))).toThrow();
 });
 
+// Lane G two-slot layout: opt/murage -> murage-releases/current -> A. The manifest lists the /opt/murage/... spelling; the
+// launcher resolves the command to the slot, so a listed entry must match by canonical target.
+function slotLayout(): { linked: string; slotBin: string } {
+  const opt = join(root, "opt"); mkdirSync(join(opt, "murage-releases", "A", "bin"), { recursive: true });
+  const slotBin = join(opt, "murage-releases", "A", "bin", "fixture-cli");
+  copyFileSync(command, slotBin); chmodSync(slotBin, 0o755);
+  symlinkSync("A", join(opt, "murage-releases", "current")); symlinkSync("murage-releases/current", join(opt, "murage"));
+  return { linked: join(opt, "murage", "bin", "fixture-cli"), slotBin };
+}
+it("accepts an engine listed through the /opt/murage slot symlink, and returns the resolved slot path", () => {
+  const { linked, slotBin } = slotLayout();
+  writeFileSync(manifest, JSON.stringify({ claudeAgent: [{ path: linked, sha256: digest }] }));
+  expect(check(request(linked)).command).toBe(slotBin);
+  expect(check(request(slotBin)).command).toBe(slotBin);
+});
+it("still refuses an unlisted binary under the slot layout", () => {
+  const { linked, slotBin } = slotLayout();
+  writeFileSync(join(root, "opt", "murage-releases", "A", "bin", "other"), readFileSync(slotBin), { mode: 0o755 });
+  writeFileSync(manifest, JSON.stringify({ claudeAgent: [{ path: linked, sha256: digest }] }));
+  expect(() => check(request(join(root, "opt", "murage", "bin", "other")))).toThrow();
+  writeFileSync(manifest, JSON.stringify({ claudeAgent: [{ path: linked, sha256: "0".repeat(64) }] }));
+  expect(() => check(request(linked))).toThrow();
+});
+it("refuses a manifest entry whose path goes through a group or world writable ancestor", () => {
+  const { slotBin } = slotLayout();
+  const loose = join(root, "loose"); mkdirSync(loose); symlinkSync(slotBin, join(loose, "cli")); chmodSync(loose, 0o777);
+  writeFileSync(manifest, JSON.stringify({ claudeAgent: [{ path: join(loose, "cli"), sha256: digest }] }));
+  expect(() => check(request(slotBin))).toThrow();
+  chmodSync(loose, 0o770); expect(() => check(request(slotBin))).toThrow();
+  chmodSync(loose, 0o755); expect(check(request(slotBin)).command).toBe(slotBin);
+});
+
 it("validates the native Fuigo and browser manifest entries through actual Python", () => {
   writeFileSync(manifest, JSON.stringify({ fuigoAgent: [{ path: command, sha256: digest }], browser: [{ path: command, sha256: digest }] }));
   const source = `import importlib.util,json,os,sys
 spec=importlib.util.spec_from_file_location("l",sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
 print(json.dumps([m.manifest_command(engine,sys.argv[2],sys.argv[3],os.getuid()) for engine in ["fuigoAgent","browser"]]))`;
-  expect(JSON.parse(execFileSync("python3", ["-I", "-c", source, launcher, command, manifest], { encoding: "utf8" }))).toEqual([command, command]);
+  expect(JSON.parse(execFileSync("python3", ["-I", "-c", source, launcher, command, manifest], { windowsHide: true, encoding: "utf8" }))).toEqual([command, command]);
 });
 it("refuses a foreign-owned ancestor (synthetic stat identity, actual validation)", () => {
   const source = `import importlib.util,os,sys,types
@@ -89,7 +122,7 @@ spec=importlib.util.spec_from_file_location("l",sys.argv[1]);m=importlib.util.mo
 original=m.os.lstat
 m.os.lstat=lambda path: types.SimpleNamespace(st_uid=os.getuid()+1,st_mode=original(path).st_mode) if path==sys.argv[4] else original(path)
 m.manifest_command("claudeAgent",sys.argv[2],sys.argv[3],os.getuid())`;
-  expect(() => execFileSync("python3", ["-I", "-c", source, launcher, command, manifest, join(root, "bin")], { stdio: "pipe" })).toThrow();
+  expect(() => execFileSync("python3", ["-I", "-c", source, launcher, command, manifest, join(root, "bin")], { windowsHide: true, stdio: "pipe" })).toThrow();
 });
 
 // Digest cache (PC-01). The harness counts full-file hashes and lets each case mutate state between calls.
@@ -111,7 +144,7 @@ def attempt():
 function cache(body: string, expected = digest) {
   writeFileSync(manifest, JSON.stringify({ browser: [{ path: command, sha256: expected }] }));
   const source = cacheHarness + body;
-  return JSON.parse(execFileSync("python3", ["-I", "-c", source, launcher, command, manifest, join(root, "digest-cache"), expected], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  return JSON.parse(execFileSync("python3", ["-I", "-c", source, launcher, command, manifest, join(root, "digest-cache"), expected], { windowsHide: true, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
 }
 it("hashes once, then serves the second call from the digest cache", () => {
   expect(cache("print(json.dumps([attempt(),attempt(),attempt()]))")).toEqual([[true, 1], [true, 0], [true, 0]]);
@@ -174,4 +207,136 @@ try: m.recheck_stamp(cmd,stamps[cmd],uid);changed=False
 except ValueError: changed=True
 print(json.dumps([warm,changed,hashed[0]-before]))`);
   expect(out).toEqual([false, true, 0]);
+});
+
+// immutable_path walks every hop (Astra slotfix #4): each link followed and each directory entered, the ancestors of every
+// link target included, must be root-or-owner owned and not group or world writable.
+const walk = `import importlib.util,json,os,sys,types
+spec=importlib.util.spec_from_file_location("l",sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+m.IMMUTABLE_LINK_EXTRA=tuple(p for p in os.environ.get("TEST_LINK_ROOTS","").split(":") if p)
+foreign=sys.argv[3] if len(sys.argv)>3 else None
+original=m.os.lstat
+if foreign:
+    m.os.lstat=lambda path: types.SimpleNamespace(st_uid=os.getuid()+1,st_mode=original(path).st_mode) if path==foreign else original(path)
+try: print(json.dumps({"ok":m.immutable_path(sys.argv[2],os.getuid())}))
+except (ValueError,OSError) as error: print(json.dumps({"refused":str(error)}))`;
+function walked(path: string, foreign?: string, linkRoots = root): { ok?: string; refused?: string } {
+  return JSON.parse(execFileSync("python3", ["-I", "-c", walk, launcher, path, ...(foreign ? [foreign] : [])], { encoding: "utf8", env: { ...process.env, TEST_LINK_ROOTS: linkRoots } }));
+}
+it("immutable_path refuses a root-owned link whose target runs through an untrusted intermediate hop, and accepts the real layouts", () => {
+  // /opt/grant -> <untrusted>/alias, alias (owned by someone else) -> the trusted binary: only the intermediate hop is bad.
+  const untrusted = join(root, "untrusted"); mkdirSync(untrusted); symlinkSync(command, join(untrusted, "alias"));
+  const grant = join(root, "grant"); symlinkSync(join(untrusted, "alias"), grant);
+  expect(walked(grant).ok).toBe(command);                       // everything is ours and tight: accepted
+  chmodSync(untrusted, 0o777); expect(walked(grant).refused).toBeTruthy();   // world-writable hop on the way
+  chmodSync(untrusted, 0o770); expect(walked(grant).refused).toBeTruthy();
+  chmodSync(untrusted, 0o755); expect(walked(grant).ok).toBe(command);
+  expect(walked(grant, untrusted).refused).toBeTruthy();         // a foreign-owned hop
+  expect(walked(grant, join(untrusted, "alias")).refused).toBeTruthy(); // a foreign-owned link in the middle
+  // the final target's own ancestors, reached only through a link, are checked as well
+  // (b) a link that leaves the release and system trees is refused even when every hop is tight and owned by us
+  expect(walked(grant, undefined, join(root, "bin")).refused).toBeTruthy();
+  expect(walked(grant, undefined, [join(root, "bin"), untrusted].join(":")).ok).toBe(command);
+  const outer = join(root, "outer"); symlinkSync(join(untrusted, "alias"), outer);
+  chmodSync(untrusted, 0o777); expect(walked(join(outer)).refused).toBeTruthy(); chmodSync(untrusted, 0o755);
+  // /bin -> /usr/bin style directory links and the Lane G slot layout are accepted
+  symlinkSync("bin", join(root, "bin2")); expect(walked(join(root, "bin2", "fixture-cli")).ok).toBe(command);
+  expect(walked(join(root, "bin2", "fixture-cli"), undefined, "").refused).toBeTruthy();   // no extra root: a tmp link is outside the trees
+  const { linked, slotBin } = slotLayout(); expect(walked(linked).ok).toBe(slotBin);
+  expect(walked("/bin/sh").ok).toMatch(/^\/(usr\/)?bin\/(dash|bash|sh|busybox)$/);
+});
+
+// Slot containment holds on every resolved step, not only on each link's lexical target (Astra slotfix r2): in a root-owned,
+// production-path in-memory tree, A/bin/entry -> pivot/../B/bin/native with A/bin/pivot -> .. is lexically inside A but
+// walks into B, and is refused; the real layouts (fixed pointers, in-slot relative links, system links) still resolve.
+const memWalk = `import importlib.util,json,stat,sys,types
+spec=importlib.util.spec_from_file_location("l",sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+links=json.loads(sys.argv[2]);dirs=set(["/"])
+for p in list(links)+json.loads(sys.argv[3]):
+    while p!="/":
+        p=m.os.path.dirname(p);dirs.add(p)
+files=set(json.loads(sys.argv[3]))
+def lstat(p):
+    if p in links: return types.SimpleNamespace(st_uid=0,st_mode=stat.S_IFLNK|0o777)
+    if p in dirs: return types.SimpleNamespace(st_uid=0,st_mode=stat.S_IFDIR|0o755)
+    if p in files: return types.SimpleNamespace(st_uid=0,st_mode=stat.S_IFREG|0o755)
+    raise FileNotFoundError(p)
+m.os.lstat=lstat;m.os.readlink=lambda p: links[p]
+out={}
+for path in json.loads(sys.argv[4]):
+    try: out[path]=m.immutable_path(path,0)
+    except (ValueError,OSError): out[path]=None
+print(json.dumps(out))`;
+it("immutable_path keeps every resolved step inside the slot a link lives in", () => {
+  const R = "/opt/murage-releases";
+  const links = { "/opt/murage": "murage-releases/current", [`${R}/current`]: "A", [`${R}/A/bin/entry`]: "pivot/../B/bin/native",
+    [`${R}/A/bin/pivot`]: "..", [`${R}/A/bin/node`]: "../lib/node/node", [`${R}/A/bin/abs`]: `${R}/A/lib/node/node`,
+    [`${R}/A/bin/up`]: "../../B/bin/native", "/usr/bin/py": "/etc/alternatives/py", "/etc/alternatives/py": "/usr/bin/python3",
+    "/usr/bin/esc": "pivot2/../../../opt/murage-releases/B/bin/native", "/usr/bin/pivot2": "..", [`${R}/current2`]: "B/../A" };
+  const files = [`${R}/A/lib/node/node`, `${R}/B/bin/native`, "/usr/bin/python3"];
+  const paths = ["/opt/murage/bin/entry", `${R}/A/bin/entry`, "/opt/murage/bin/node", `${R}/A/bin/abs`, `${R}/A/bin/up`, "/usr/bin/py",
+    "/usr/bin/esc", `${R}/A/bin/pivot/lib/node/node`, "/opt/murage/bin/pivot/../B/bin/native", `${R}/A/bin/./node`];
+  const out = JSON.parse(execFileSync("python3", ["-I", "-c", memWalk, launcher, JSON.stringify(links), JSON.stringify(files), JSON.stringify(paths)], { encoding: "utf8" }));
+  expect(out["/opt/murage/bin/entry"]).toBeNull();          // the pivot chain walks from A into B
+  expect(out[`${R}/A/bin/entry`]).toBeNull();
+  expect(out[`${R}/A/bin/up`]).toBeNull();                   // a plain .. out of the slot
+  expect(out["/usr/bin/esc"]).toBeNull();                    // a system link pivoting out of the system trees
+  expect(out["/opt/murage/bin/node"]).toBe(`${R}/A/lib/node/node`);
+  expect(out[`${R}/A/bin/abs`]).toBe(`${R}/A/lib/node/node`);
+  expect(out["/usr/bin/py"]).toBe("/usr/bin/python3");       // through /etc/alternatives
+  expect(out[`${R}/A/bin/pivot/lib/node/node`]).toBe(`${R}/A/lib/node/node`);   // a .. link that stays in the slot
+  expect(out["/opt/murage/bin/pivot/../B/bin/native"]).toBeNull();   // a .. in the path itself, after a slot link (Grok r3)
+  expect(out[`${R}/A/bin/./node`]).toBeNull();               // the path is spelled canonically or refused
+});
+
+// The sandbox sees the release at its canonical slot path and /opt/murage as a link to it, so exec_slot's realpath check holds
+// inside bwrap (the real-sandbox run is deploy/cloud-home/qualify/slot-sandbox-run.sh).
+const bindHarness = `import importlib.util,json,os,sys,tempfile
+spec=importlib.util.spec_from_file_location("l",sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+slot="/opt/murage-releases/A";real=m.os.path.isdir
+m.os.path.isdir=lambda p: True if p==slot else real(p)
+m.RELEASE_LINK="/nonexistent-release-link"
+out={"named":m.release_bind_args(slot+"/bin/claude"),"stray":m.release_bind_args("/opt/murage-releases/C/bin/claude")}
+m.RELEASE_LINK=tempfile.mkdtemp();out["plain"]=m.release_bind_args(m.RELEASE_LINK+"/bin/x");out["plainDir"]=m.RELEASE_LINK
+m.RELEASE_LINK="/nonexistent-release-link";out["none"]=m.release_bind_args(None)
+print(json.dumps(out))`;
+it("release_bind_args binds the stamped command's slot at its own path with /opt/murage linked to it", () => {
+  const out = JSON.parse(execFileSync("python3", ["-I", "-c", bindHarness, launcher], { encoding: "utf8" }));
+  expect(out.named).toEqual(["--ro-bind", "/opt/murage-releases/A", "/opt/murage-releases/A", "--symlink", "/opt/murage-releases/A", "/opt/murage"]);
+  expect(out.stray).toEqual([]);   // only slots A and B are ever bound by name
+  expect(out.plain).toEqual(["--ro-bind", out.plainDir, "/opt/murage"]);
+  expect(out.none).toEqual([]);
+});
+
+// A slot flip in the middle of a launch: the command is validated and stamped on slot A, then `current` is flipped to B.
+// Nothing may run B's bytes: the stamped A file is still exactly the stamped inode, and a fresh validation of the same
+// /opt/murage spelling now resolves to B and is refused on its digest.
+const flipHarness = `import importlib.util,json,os,sys
+spec=importlib.util.spec_from_file_location("l",sys.argv[1]);m=importlib.util.module_from_spec(spec);spec.loader.exec_module(m)
+m.IMMUTABLE_LINK_EXTRA=(sys.argv[4],)
+linked,manifest,root=sys.argv[2],sys.argv[3],sys.argv[4];uid=os.getuid();stamps={}
+out={}
+resolved=m.manifest_command("claudeAgent",linked,manifest,uid,cache_root=root+"/cache",stamps=stamps)
+out["resolvedA"]=resolved
+current=root+"/opt/murage-releases/current"
+os.remove(current);os.symlink("B",current)
+out["nowResolvesTo"]=os.path.realpath(linked)
+try: m.recheck_stamp(resolved,stamps[resolved],uid);out["recheckStamped"]="ok"
+except ValueError as error: out["recheckStamped"]=str(error)
+try: m.manifest_command("claudeAgent",linked,manifest,uid,cache_root=root+"/cache2",stamps={});out["freshValidate"]="ok"
+except ValueError as error: out["freshValidate"]=str(error)
+# the stamped file is still A's bytes: the launcher would exec exactly this inode
+out["stampedIsA"]=os.stat(resolved).st_ino==stamps[resolved][1]
+print(json.dumps(out))`;
+it("a slot flip after validation never lets B's bytes run: the stamped A inode still verifies, a fresh validation of the same spelling is refused", () => {
+  const { linked, slotBin } = slotLayout();
+  const bDir = join(root, "opt", "murage-releases", "B", "bin"); mkdirSync(bDir, { recursive: true });
+  writeFileSync(join(bDir, "fixture-cli"), Buffer.concat([fixtureEngineBytes(), Buffer.from("B")]), { mode: 0o755 });
+  writeFileSync(manifest, JSON.stringify({ claudeAgent: [{ path: linked, sha256: digest }] }));
+  const out = JSON.parse(execFileSync("python3", ["-I", "-c", flipHarness, launcher, linked, manifest, root], { encoding: "utf8" }));
+  expect(out.resolvedA).toBe(slotBin);
+  expect(out.nowResolvesTo).toBe(join(root, "opt", "murage-releases", "B", "bin", "fixture-cli"));
+  expect(out.recheckStamped).toBe("ok");
+  expect(out.stampedIsA).toBe(true);
+  expect(out.freshValidate).toMatch(/not listed|digest mismatch/);
 });

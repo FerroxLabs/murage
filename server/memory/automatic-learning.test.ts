@@ -183,3 +183,14 @@ it("Keep preserves fictional identity disclaimers",async()=>{
  expect(db.prepare("SELECT confidence_basis FROM memory_record_details WHERE record_id=?").get(row.id)?.confidence_basis).toBe(basis);
  expect(db.prepare("SELECT kept_at FROM memory_learning_events WHERE id=?").get(event.id)?.kept_at).not.toBeNull();
 });
+
+it('S16 No limits grounded background learning bypasses a default review hold',async()=>{
+ const {setMemoryCaptureRoster}=await import('./capture-scope.ts');
+ const bot={id:'bot',threadId:'thread',autoApprove:true,fullAccess:true,noLimits:true,permissionExplicit:true};
+ setMemoryCaptureRoster(()=>({bots:[bot],groups:[]}));
+ try{
+  const text='I prefer concise fixture answers.',job=capture(text);
+  await consolidateMemorySource(job,extract(text,'owner-statement'),signal(),{reviewOnly:true});
+  expect(record()).toMatchObject({state:'active',text});
+ }finally{setMemoryCaptureRoster(null);}
+});

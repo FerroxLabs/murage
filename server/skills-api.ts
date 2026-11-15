@@ -10,12 +10,13 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 
+import { skillActDigest } from "./cloud-home/owner-code.ts";
 import { deleteCollectionSkill, duplicateIntoCollection, getCollectionSkill, importCollectionSkill, listCollection, updateCollectionSkill, type CollectionSkill } from "./skill-collection.ts";
 import { fetchSkillFromLink, readSkillZip } from "./skill-import-sources.ts";
 import { attachedSkillOn, isChiefForAttached, loadBundledSkills, type BundledSkill } from "./skill-library.ts";
 import { scanSkill } from "./skill-guard/scan.ts";
-import { browseFacets, searchSkills, skillIndexStats, skillsByFacet } from "./skill-search.ts";
-import { checkLibrarySkill, currentSkillScan, installSkill, installSkillFromLibrary, isSkillName, listSkills, removeSkill, setSkillEnabled, SKILL_LIBRARY_ROOT, type SkillListing } from "./skills.ts";
+import { browseFacets, librarySkillRows, searchSkillPage, skillIndexStats } from "./skill-search.ts";
+import { checkLibrarySkill, currentSkillScan, installSkill, installSkillFromLibrary, isSkillName, listSkills, readLibraryAssets, removeSkill, setSkillEnabled, SKILL_LIBRARY_ROOT, type SkillListing } from "./skills.ts";
 import type { SkillScan, SkillVerdict } from "./skill-guard/types.ts";
 
 export interface SkillsApiBot {
@@ -33,6 +34,10 @@ export interface SkillsApiRequest {
   path: string;
   url: URL;
   readBody: () => Promise<unknown>;
+  /** Set only for an owner's browser on a home: the code gate for one act. Null when the request carries a code for exactly that act. */
+  ownerCode?: (act: string) => Promise<SkillsApiResponse | null>;
+  /** The route's act string (routeActDigest of method, path and body); the switch-on act binds the scanned content to it. */
+  routeAct?: string;
   bots: () => SkillsApiBot[];
   /** Persist a built-in's switch on a bot record. */
   setBuiltinSkill?: (botId: string, id: string, on: boolean) => void;
@@ -123,12 +128,12 @@ function builtinSummary(id: string, bots: SkillsApiBot[]): SkillSummary | null {
 
 /** Every bot with this collection skill gets the new files, through the same gate as a first install: a clean
  *  skill that was on stays on; one that now needs a look is left off until the owner confirms it; Blocked is off. */
-function pushCollectionToBots(name: string, ref: string, saved: { contents: Array<{ path: string; content: string }>; scan: SkillScan }, users: SkillSummary["usedBy"]): { needsLook: string[]; failed: string[] } {
+function pushCollectionToBots(name: string, ref: string, saved: { contents: Array<{ path: string; content: string }>; assets: Array<{ path: string; content: Buffer }>; scan: SkillScan }, users: SkillSummary["usedBy"]): { needsLook: string[]; failed: string[] } {
   const needsLook: string[] = [];
   const failed: string[] = [];
   for (const user of users) {
     removeSkill(user.botId, name);
-    const installed = installSkill(user.botId, ref, saved.contents);
+    const installed = installSkill(user.botId, ref, saved.contents, { assets: saved.assets });
     if ("error" in installed) {
       failed.push(user.botName);
       continue;
@@ -161,6 +166,84 @@ function collectionSummary(skill: CollectionSkill, bots: SkillsApiBot[]): SkillS
   return { ref, name: skill.displayName || skill.name, description: skill.description, kind: "collection", verdict: skill.scan.verdict, source: sourceLabel(skill.source), usedBy: usedBy(ref, bots) };
 }
 
+export interface SkillListItem {
+  id: string;
+  name: string;
+  description: string;
+  topics: string[];
+  bots: Array<{ id: string; name: string }>;
+  mine: boolean;
+}
+
+const TOPIC_LABELS: Record<string, string> = {
+  "health-wellness": "Health & Wellness", "home-household": "Home & Household",
+  devops: "DevOps", seo: "SEO", api: "APIs", apis: "APIs",
+  "ui-design": "UI Design", "ux-research": "UX Research", "ai-agents": "AI Agents", "e-commerce": "E-commerce",
+};
+
+/** The whole browse taxonomy, and the effective library with the owner's
+ * copies. Bot manifests are read once per request, never once per row. */
+export async function handleLibrarySkillsApi(request: SkillsApiRequest): Promise<SkillsApiResponse | null> {
+  if (request.method !== "GET") return null;
+  if (request.path === "/api/library/topics") {
+    const [facets, stats] = await Promise.all([browseFacets(), skillIndexStats()]);
+    if (!stats.available) return { status: 503, body: { error: "The skills library could not be read. Try again.", code: "library-unavailable" } };
+    return { status: 200, body: {
+      topics: facets.map(({ term, count }) => ({ term, label: TOPIC_LABELS[term] ?? term.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()), count })),
+      totalSkills: stats.count,
+    } };
+  }
+  if (request.path !== "/api/library/skills") return null;
+  const params = request.url.searchParams;
+  const filter = params.get("filter") ?? "all";
+  const offset = Number(params.get("offset") ?? 0);
+  const limit = Number(params.get("limit") ?? 50);
+  if (!["all", "onBots", "mine"].includes(filter) || !Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) {
+    return { status: 400, body: { error: "Choose a filter and a page of 1 to 200 skills.", code: "invalid" } };
+  }
+  const term = (params.get("term") ?? "").trim().toLowerCase();
+  const query = (params.get("q") ?? "").trim().toLowerCase();
+  if (query.length > 200) return { status: 400, body: { error: "Search for up to 200 characters.", code: "invalid" } };
+  let library: Awaited<ReturnType<typeof librarySkillRows>>;
+  try { library = await librarySkillRows(); }
+  catch { return { status: 503, body: { error: "The skills library could not be read. Try again.", code: "library-unavailable" } }; }
+  const originals = new Map(library.map((skill) => [`${LIBRARY}${skill.id}`, skill]));
+  const collection = listCollection();
+  const overridden = new Set(collection.filter((skill) => skill.updatedAt).map((skill) => skill.source.originalRef).filter(Boolean));
+  const users = new Map<string, SkillListItem["bots"]>();
+  for (const bot of request.bots()) {
+    for (const skill of listSkills(bot.id)) {
+      if (!skill.enabled) continue;
+      const ref = skill.source.startsWith(LIBRARY) ? skill.source.split("@")[0]! : skill.source;
+      const list = users.get(ref) ?? [];
+      list.push({ id: bot.id, name: bot.name });
+      users.set(ref, list);
+    }
+  }
+  const items: SkillListItem[] = library.filter((skill) => !overridden.has(`${LIBRARY}${skill.id}`) || users.has(`${LIBRARY}${skill.id}`)).map((skill) => ({
+    id: `${LIBRARY}${skill.id}`, name: skill.name, description: skill.description, topics: skill.terms,
+    bots: users.get(`${LIBRARY}${skill.id}`) ?? [], mine: false,
+  }));
+  for (const skill of collection) {
+    const ref = `${COLLECTION}${skill.name}`;
+    items.push({ id: ref, name: skill.displayName || skill.name, description: skill.description,
+      topics: originals.get(skill.source.originalRef ?? "")?.terms ?? [], bots: users.get(ref) ?? [], mine: true });
+  }
+  const matching = items.filter((skill) => (!term || skill.topics.includes(term))
+    && (!query || `${skill.name} ${skill.description} ${skill.topics.join(" ")}`.toLowerCase().includes(query))
+    && (filter !== "mine" || skill.mine) && (filter !== "onBots" || skill.bots.length > 0))
+    .sort((a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id));
+  return { status: 200, body: { items: matching.slice(offset, offset + limit), total: matching.length, offset } };
+}
+
+/** Settings keeps its existing strings and per-bot switches. The Library
+ * reader asks for file sizes and just the bots using this skill. */
+function detailView(request: SkillsApiRequest, detail: Record<string, unknown>, files: Array<{ path: string; size: number }>, users: SkillSummary["usedBy"]) {
+  if (request.url.searchParams.get("view") !== "library") return detail;
+  return { ...detail, id: detail.ref, mine: detail.kind === "collection", files,
+    bots: users.filter((bot) => bot.enabled).map((bot) => ({ id: bot.botId, name: bot.botName })) };
+}
+
 function librarySummary(hit: { id: string; name: string; description: string }, bots: SkillsApiBot[]): SkillSummary {
   const ref = `${LIBRARY}${hit.id}`;
   const verdict = shippedVerdict(hit.id) ?? libraryScan(hit.id)?.scan.verdict ?? "clean";
@@ -182,7 +265,9 @@ function libraryInUse(bots: SkillsApiBot[]): Array<{ id: string; name: string; d
 
 const refPattern = /^(collection|library|builtin):([a-z0-9][a-z0-9-]{0,127})$/;
 function parseRef(raw: string): { kind: "collection" | "library" | "builtin"; name: string; ref: string } | null {
-  const match = refPattern.exec(decodeURIComponent(raw));
+  let decoded: string;
+  try { decoded = decodeURIComponent(raw); } catch { return null; }
+  const match = refPattern.exec(decoded);
   if (!match || !isSkillName(match[2]!)) return null;
   return { kind: match[1] as "collection" | "library" | "builtin", name: match[2]!, ref: `${match[1]}:${match[2]}` };
 }
@@ -206,15 +291,18 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
     const yoursCollection = listCollection().filter(matchesQuery).map((skill) => collectionSummary(skill, bots));
     const yoursLibrary = libraryInUse(bots).filter(matchesQuery).map((hit) => librarySummary(hit, bots));
     const [stats, facets] = await Promise.all([skillIndexStats(), browseFacets().catch(() => [])]);
-    const hits = q ? await searchSkills(q, 50) : category ? await skillsByFacet(category, 50) : [];
-    const yoursRefs = new Set(yoursLibrary.map((s) => s.ref));
+    const result = await searchSkillPage({ q, term: category,
+      offset: Number(request.url.searchParams.get("offset")),
+      limit: request.url.searchParams.has("limit") ? Number(request.url.searchParams.get("limit")) : undefined,
+    });
     return {
       status: 200,
       body: {
         yours: [...yoursCollection, ...yoursLibrary].sort((a, b) => a.name.localeCompare(b.name)),
-        library: hits.map((hit) => librarySummary(hit, bots)).filter((s) => !yoursRefs.has(s.ref)),
+        library: result.skills.map((hit) => librarySummary(hit, bots)),
+        pagination: result.pagination,
         builtins: category ? [] : Object.keys(BUILTIN_WORDS).map((id) => builtinSummary(id, bots)).filter((s): s is SkillSummary => Boolean(s) && matchesQuery(s!)),
-        categories: facets.slice(0, 12).map((facet) => ({ name: facet.term, count: facet.count })),
+        categories: facets.map((facet) => ({ name: facet.term, count: facet.count })),
         libraryReady: stats.available,
       },
     };
@@ -259,12 +347,14 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
     const input = z.object({ name: z.string().max(200).optional() }).strict().safeParse((await request.readBody().catch(() => ({}))) ?? {});
     if (!input.success) return { status: 400, body: { error: "name must be a skill name", code: "invalid" } };
     let files: Array<{ path: string; content: string }>;
-    let original: { name: string; displayName: string; description: string };
+    let assets: Array<{ path: string; content: Buffer }> = [];
+    let original: { name: string; displayName: string; description: string; originalRef?: string };
     if (ref.kind === "collection") {
       const skill = getCollectionSkill(ref.name);
       if (!skill) return { status: 404, body: { error: "No such skill." } };
       files = skill.contents;
-      original = { name: skill.name, displayName: skill.displayName || skill.name, description: skill.description };
+      assets = skill.assets;
+      original = { name: skill.name, displayName: skill.displayName || skill.name, description: skill.description, originalRef: skill.source.originalRef };
     } else if (ref.kind === "builtin") {
       const found = builtin(ref.name);
       if (!found) return { status: 404, body: { error: "No such skill." } };
@@ -273,11 +363,16 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
     } else {
       const library = libraryScan(ref.name);
       if (!library) return { status: 404, body: { error: "No such skill." } };
-      // The library keeps only reviewed instructions: they are what is copied.
+      const checked = checkLibrarySkill(ref.name, SKILL_LIBRARY_ROOT);
+      if ("error" in checked) return { status: 503, body: checked };
+      const supporting = checked.assetsDirectory ? readLibraryAssets(checked.assetsDirectory) : [];
+      if ("error" in supporting) return { status: 503, body: { ...supporting, code: "assets-unavailable" } };
+      assets = supporting;
+      // Instructions remain separate from opaque shipped supporting files.
       files = [{ path: "SKILL.md", content: library.text }];
-      original = { name: ref.name, displayName: libraryName(ref.name), description: library.description };
+      original = { name: ref.name, displayName: libraryName(ref.name), description: library.description, originalRef: ref.ref };
     }
-    const copied = duplicateIntoCollection(files, original, input.data.name);
+    const copied = duplicateIntoCollection(files, original, input.data.name, assets);
     if ("error" in copied) return { status: copied.code === "exists" ? 409 : 400, body: copied };
     return { status: 201, body: { skill: { ...collectionSummary(copied, request.bots()), scan: copied.scan } } };
   }
@@ -290,10 +385,34 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
     if (!input.success) return { status: 400, body: { error: "Send a description and the instructions.", code: "invalid" } };
     const bots = request.bots();
     const ref = `${COLLECTION}${name}`;
-    const users = usedBy(ref, bots);
+    const current = getCollectionSkill(name)!;
+    const original = current.source.originalRef ? parseRef(current.source.originalRef) : null;
+    const originalUsers = original?.kind === "library" ? usedBy(original.ref, bots) : [];
+    const usersByBot = new Map(usedBy(ref, bots).map((user) => [user.botId, user]));
+    for (const user of originalUsers) {
+      const existing = usersByBot.get(user.botId);
+      usersByBot.set(user.botId, { ...user, enabled: user.enabled || (existing?.enabled ?? false) });
+    }
+    for (const user of originalUsers) {
+      const existing = listSkills(user.botId).find((skill) => skill.name === name);
+      if (existing && existing.source !== ref) return { status: 409, body: { error: `${user.botName} already has a different skill called ${name}.`, code: "name-taken" } };
+    }
+    if (request.ownerCode && originalUsers.some((user) => user.enabled)) {
+      // Cloud auth already verified the existing edit route's body-bound
+      // approval. Reuse that act: a proof can only be spent once, and a
+      // second, content-bound act cannot pass the outer route gate.
+      const refusal = await request.ownerCode(request.routeAct ?? "");
+      if (refusal) return refusal;
+    }
+    const users = [...usersByBot.values()];
     const saved = updateCollectionSkill(name, input.data);
     if ("error" in saved) return { status: saved.code === "missing" ? 404 : 400, body: saved };
     const { needsLook, failed } = pushCollectionToBots(name, ref, saved, users);
+    // Saving a library copy replaces that original on the bots that used it.
+    // Keep an original on any bot whose copy could not be installed.
+    if (original?.kind === "library" && original.name !== name) {
+      for (const user of originalUsers) if (!failed.includes(user.botName)) removeSkill(user.botId, original.name);
+    }
     return { status: 200, body: { skill: { ...collectionSummary(saved, request.bots()), scan: saved.scan }, needsLook, failed } };
   }
 
@@ -309,6 +428,109 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
     for (const user of users) removeSkill(user.botId, name);
     deleteCollectionSkill(name);
     return { status: 200, body: { removedFrom: users.map((u) => u.botName) } };
+  }
+
+  const revert = /^\/api\/skills\/([^/]+)\/revert$/.exec(path);
+  if (revert && method === "POST") {
+    const ref = parseRef(revert[1]!);
+    const copy = ref?.kind === "collection" ? getCollectionSkill(ref.name) : null;
+    const original = copy?.source.kind === "copy" && copy.source.originalRef ? parseRef(copy.source.originalRef) : null;
+    if (!ref || !copy || original?.kind !== "library") return { status: 404, body: { error: "This skill has no library original.", code: "no-original" } };
+    const library = libraryScan(original.name);
+    const checked = checkLibrarySkill(original.name, SKILL_LIBRARY_ROOT);
+    if (!library || "error" in checked) return { status: 404, body: { error: "The library original is no longer available.", code: "no-original" } };
+    const assets = checked.assetsDirectory ? readLibraryAssets(checked.assetsDirectory) : [];
+    if ("error" in assets) return { status: 409, body: assets };
+    const input = z.object({ acknowledged: z.string().regex(/^[a-f0-9]{64}$/).optional() }).strict()
+      .safeParse((await request.readBody().catch(() => ({}))) ?? {});
+    if (!input.success) return { status: 400, body: { error: "Send the skill check you acknowledged.", code: "invalid" } };
+    const users = usedBy(ref.ref, request.bots());
+    if (users.some((user) => user.enabled && !request.bots().find((bot) => bot.id === user.botId)?.canUseSkills)) {
+      return { status: 409, body: { error: "This bot's engine can't use skills.", code: "engine" } };
+    }
+    if (users.some((user) => user.enabled)) {
+      if (library.scan.verdict === "blocked") return { status: 409, body: { error: "The library original was blocked by the skill check.", code: "blocked", scan: library.scan } };
+      if (library.scan.verdict === "review" && input.data.acknowledged !== library.scan.contentHash) return { status: 409, body: { error: "The library original needs a look before it can be switched on.", code: "needs-review", scan: library.scan } };
+      if (request.ownerCode) {
+        const refusal = await request.ownerCode(skillActDigest(request.routeAct ?? "", library.scan.contentHash));
+        if (refusal) return refusal;
+      }
+    }
+    // Preflight every bot before changing any. Keep the copy and its switches
+    // until all original installs succeeded, so a refusal never loses it.
+    const prior = users.map((user) => ({ user, existing: listSkills(user.botId).find((skill) => skill.name === original.name) }));
+    for (const { user, existing } of prior) {
+      if (existing && existing.source !== ref.ref && !existing.source.startsWith(`${original.ref}@`)) return { status: 409, body: { error: `${user.botName} already has a different skill called ${original.name}.`, code: "name-taken" } };
+    }
+    const changed: typeof prior = [];
+    const removedCopies: typeof users = [];
+    const rollback = () => {
+      const failed: Array<{ id: string; name: string; error: string }> = [];
+      const attempt = (user: typeof users[number], operation: () => object) => {
+        try {
+          const result = operation();
+          if (!("error" in result) || typeof result.error !== "string") return true;
+          failed.push({ id: user.botId, name: user.botName, error: result.error });
+        } catch (error) {
+          failed.push({ id: user.botId, name: user.botName, error: error instanceof Error ? error.message : String(error) });
+        }
+        return false;
+      };
+      const restoreCopy = (user: typeof users[number]) => {
+        const now = listSkills(user.botId).find((skill) => skill.name === ref.name);
+        if (now?.source !== ref.ref && !attempt(user, () => installSkill(user.botId, ref.ref, copy.contents, { assets: copy.assets }))) return;
+        if (now?.enabled !== user.enabled) attempt(user, () => setSkillEnabled(user.botId, ref.name, user.enabled, { acknowledged: currentSkillScan(user.botId, ref.name)?.contentHash }));
+      };
+      for (const user of [...removedCopies].reverse()) restoreCopy(user);
+      for (const { user, existing } of [...changed].reverse()) {
+        const now = listSkills(user.botId).find((skill) => skill.name === original.name);
+        if (!existing) {
+          if (now) attempt(user, () => removeSkill(user.botId, original.name));
+        } else if (existing.source === ref.ref) {
+          if (now?.source === ref.ref) continue;
+          if (now && !attempt(user, () => removeSkill(user.botId, original.name))) continue;
+          restoreCopy(user);
+        } else if (now?.enabled !== existing.enabled) {
+          attempt(user, () => setSkillEnabled(user.botId, original.name, existing.enabled));
+        }
+      }
+      return failed;
+    };
+    const recover = (cause: { error: string }): SkillsApiResponse => {
+      const recoveryFailed = rollback();
+      return { status: 409, body: recoveryFailed.length ? {
+        error: "Some bots could not be restored. Your copy has been kept.", code: "recovery-incomplete", cause: cause.error, recoveryFailed,
+      } : cause };
+    };
+    try {
+      for (const entry of prior) {
+        const { user, existing } = entry;
+        changed.push(entry);
+        if (existing?.source === ref.ref) {
+          const removed = removeSkill(user.botId, ref.name);
+          if ("error" in removed) return recover(removed);
+        }
+        if (!existing || existing.source === ref.ref) {
+          const installed = installSkillFromLibrary(user.botId, original.name, SKILL_LIBRARY_ROOT);
+          if ("error" in installed) return recover(installed);
+        }
+        if (user.enabled && (!existing?.enabled || existing.source === ref.ref)) {
+          const on = setSkillEnabled(user.botId, original.name, true, { acknowledged: input.data.acknowledged });
+          if ("error" in on) return recover(on);
+        }
+      }
+      if (ref.name !== original.name) for (const user of users) {
+        // A disk error can occur after the manifest was changed, so record
+        // the attempt first and inspect its actual state during recovery.
+        removedCopies.push(user);
+        const removed = removeSkill(user.botId, ref.name);
+        if ("error" in removed) return recover(removed);
+      }
+    } catch (error) {
+      return recover({ error: error instanceof Error ? error.message : String(error) });
+    }
+    deleteCollectionSkill(ref.name);
+    return { status: 200, body: { id: original.ref, reverted: true, movedBots: users.map((user) => ({ id: user.botId, name: user.botName })) } };
   }
 
   const forBot = /^\/api\/skills\/([^/]+)\/bots\/([\w-]+)$/.exec(path);
@@ -343,8 +565,13 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
       if (!skill) return { status: 404, body: { error: "No such skill." } };
       if (skill.scan.verdict === "blocked") return { status: 409, body: { error: "This skill was blocked by the skill check and can't be switched on.", code: "blocked", scan: skill.scan } };
       if (skill.scan.verdict === "review" && acknowledged !== skill.scan.contentHash) return { status: 409, body: { error: "This skill needs a look before it can be switched on.", code: "needs-review", scan: skill.scan } };
+      // A browser owner's yes binds the content that was scanned: a skill changed between the code and the retry needs a new code.
+      if (request.ownerCode) {
+        const refusal = await request.ownerCode(skillActDigest(request.routeAct ?? "", skill.scan.contentHash));
+        if (refusal) return refusal;
+      }
       if (!existing) {
-        const installed = installSkill(bot.id, ref.ref, skill.contents);
+        const installed = installSkill(bot.id, ref.ref, skill.contents, { assets: skill.assets });
         if ("error" in installed) return { status: 409, body: installed };
       }
       // The bot keeps the instructions, a part of what was reviewed: the
@@ -371,21 +598,29 @@ export async function handleSkillsApi(request: SkillsApiRequest): Promise<Skills
       const skill = getCollectionSkill(ref.name);
       if (!skill) return { status: 404, body: { error: "No such skill." } };
       const summary = collectionSummary(skill, bots);
-      return { status: 200, body: { ...summary, text: skill.text, files: skill.files, skipped: skill.skipped, scan: skill.scan, bots: forBots(summary.usedBy), ...(skill.updatedAt ? { updatedAt: skill.updatedAt } : {}) } };
+      return { status: 200, body: detailView(request, { ...summary, originalRef: skill.source.originalRef, text: skill.text, files: skill.files, skipped: skill.skipped, scan: skill.scan, bots: forBots(summary.usedBy), ...(skill.updatedAt ? { updatedAt: skill.updatedAt } : {}) },
+        [...skill.contents.map((file) => ({ path: file.path, size: Buffer.byteLength(file.content, "utf8") })),
+          ...skill.assets.map((file) => ({ path: file.path, size: file.content.length }))], summary.usedBy) };
     }
     if (ref.kind === "builtin") {
       const found = builtin(ref.name);
       const summary = builtinSummary(ref.name, bots);
       if (!found || !summary) return { status: 404, body: { error: "No such skill." } };
       const chiefs = bots.filter(isChief).map((bot) => ({ botId: bot.id, botName: bot.name, canUseSkills: true, enabled: attachedSkillOn(bot, ref.name) }));
-      return { status: 200, body: { ...summary, text: found.skill.instructions, files: ["SKILL.md"], skipped: [], scan: found.scan, bots: chiefs } };
+      return { status: 200, body: detailView(request, { ...summary, text: found.skill.instructions, files: ["SKILL.md"], skipped: [], scan: found.scan, bots: chiefs },
+        [{ path: "SKILL.md", size: Buffer.byteLength(found.skill.instructions, "utf8") }], summary.usedBy) };
     }
     const library = libraryScan(ref.name);
     if (!library) return { status: 404, body: { error: "No such skill." } };
     const summary = librarySummary({ id: ref.name, name: ref.name, description: library.description }, bots);
+    const checked = checkLibrarySkill(ref.name, SKILL_LIBRARY_ROOT);
+    const assets = !("error" in checked) && checked.assetsDirectory ? readLibraryAssets(checked.assetsDirectory) : [];
+    if ("error" in assets) return { status: 503, body: { ...assets, code: "assets-unavailable" } };
+    const files = [{ path: "SKILL.md", size: Buffer.byteLength(library.text, "utf8") },
+      ...assets.map((file) => ({ path: file.path, size: file.content.length }))];
     return {
       status: 200,
-      body: { ...summary, verdict: library.scan.verdict, text: library.text, files: ["SKILL.md"], skipped: [], scan: library.scan, bots: forBots(summary.usedBy) },
+      body: detailView(request, { ...summary, verdict: library.scan.verdict, text: library.text, files: ["SKILL.md"], skipped: [], scan: library.scan, bots: forBots(summary.usedBy) }, files, summary.usedBy),
     };
   }
 

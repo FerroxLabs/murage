@@ -15,14 +15,19 @@ import { backupAgePinForTarget } from "../../shared/backup-age-pin.ts";
  * so it skips too. A pinned host without MURAGE_BACKUP_TEST_AGE_DIR still
  * fails loudly. */
 export const rawAgeHost = backupAgePinForTarget(process.platform, process.arch) !== null;
+/** Local unsupported hosts may skip; CI and release runs on pinned hosts
+ * must exercise encryption or fail for missing fixture tools. */
+export function optionalBackupAgeUnavailable(env:NodeJS.ProcessEnv=process.env,pinnedHost=rawAgeHost):boolean {
+  return !pinnedHost || (!env.MURAGE_BACKUP_TEST_AGE_DIR && !env.CI && env.MURAGE_RELEASE_GATE !== '1');
+}
 export function testAgeKeys(){
   const directory=process.env.MURAGE_BACKUP_TEST_AGE_DIR;
   if(!directory)throw Error("MURAGE_BACKUP_TEST_AGE_DIR must name the verified fixture tool directory");
   const keygen=join(directory,"age-keygen");
   const pin=backupAgePinForTarget(process.platform,process.arch);
   if(!pin||createHash("sha256").update(readFileSync(keygen)).digest("hex")!==pin.keygenSha256)throw Error("Unverified fixture key generator");
-  const identity=execFileSync(keygen,[],{encoding:"utf8",env:{PATH:""},stdio:["ignore","pipe","pipe"],maxBuffer:4096});
-  const recipient=execFileSync(keygen,["-y"],{input:identity,encoding:"utf8",env:{PATH:""},stdio:["pipe","pipe","pipe"],maxBuffer:4096}).trim();
+  const identity=execFileSync(keygen,[],{ windowsHide: true,encoding:"utf8",env:{PATH:""},stdio:["ignore","pipe","pipe"],maxBuffer:4096});
+  const recipient=execFileSync(keygen,["-y"],{ windowsHide: true,input:identity,encoding:"utf8",env:{PATH:""},stdio:["pipe","pipe","pipe"],maxBuffer:4096}).trim();
   return{ageExecutable:join(directory,"age"),identity,recipient};
 }
 export function backupFixture(){

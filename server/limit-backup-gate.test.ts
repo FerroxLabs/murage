@@ -3,6 +3,8 @@
 //
 // U22 G20: the one limit-backup gate, and the place each of the 13 call sites asks it (designs/U22-HIDDEN-BACKUP-CHOKEPOINT.md).
 // Each site test names the hole it closes: a hidden or removed engine offered, saved, restored or started.
+import ts from "typescript";
+import vm from "node:vm";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -99,7 +101,8 @@ describe("every limit-backup site asks the one gate", () => {
     expect(card).toContain("This conversation is gone.");
   });
   it("#3 the automatic failover says why a saved backup did not take over", () => {
-    const direct = between("function onDirectLimitTurnCompleted(", "bus.subscribe(");
+    // MAIN RULING INT-CONFLICT-DEFAULT 8430339793 a62419d6d5: observe the same execution subscription after the audience split; retain every gate/order assertion.
+    const direct = between("function onDirectLimitTurnCompleted(", "bus.subscribeExecution(");
     expect(direct).toContain("backupVerdict(turn.selection, backup, now)");
     // presence first: a missing call (-1) must never pass an ordering check
     const why = direct.indexOf("backupRefusalOf(verdict.reason, turn.selection, backup)");
@@ -110,8 +113,13 @@ describe("every limit-backup site asks the one gate", () => {
   });
   it("#4 r5: the card's choices are checked in the same synchronous step that posts it", () => {
     // postKept filters inside the continuation that calls appendMessage: no continuation sits between the check and the post
-    const direct = between("void postKept(limitChoicesFor(turn.selection, now), (c) => backupUsable(turn.selection, c.selection, Date.now()), (choices) => {", "}).catch(");
-    expect(direct.indexOf("store.appendMessage")).toBeGreaterThan(-1);
+    // MAIN RULING INT-CONFLICT-DEFAULT bfd0af6461 c93def1029: the final synchronous callback presents the registered service card; its outer authority preparation is awaited.
+    const posted = between("await postKept(limitChoicesFor(turn.selection, now), (choice) => backupUsable(turn.selection, choice.selection, Date.now()), (choices) => {", "\n      });");
+    const direct = posted.slice(posted.indexOf("(choices) => {") + "(choices) => {".length);
+    expect(direct.indexOf("queue.open(")).toBeGreaterThan(-1);
+    expect(direct.indexOf("queue.presentNow(")).toBeGreaterThan(direct.indexOf("queue.open("));
+    expect(direct.indexOf("queue.presentNow(request, request.outcome.ref, () => {})")).toBeGreaterThan(-1);
+    expect(direct).toContain("authority: { claim, proof, identity }");
     expect(direct).not.toMatch(/\bawait\b|\.then\(/);
     expect(source).not.toContain("keptAfter(limitChoicesFor(");
   });
@@ -125,9 +133,21 @@ describe("every limit-backup site asks the one gate", () => {
     expect(reply).toBeGreaterThan(cut);
     expect(route.slice(cut, reply)).not.toMatch(/\bawait\b/);
   });
-  it("r5 Low: a room goal keeps the backup's own refusal line in its result", () => {
-    expect(source).toContain("orchestration.result.stopReason = (e.stopReason === \"submission_refused\" && lateBackupLine) || (e.stopReason ?? null);");
-    expect(source).not.toContain("orchestration.result.stopReason = e.stopReason ?? null;");
+  it("r5 Low: executes the production room result expression and keeps the backup refusal", () => {
+    const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
+    let expression: string | undefined;
+    const visit = (node: ts.Node) => {
+      if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && node.left.getText(ast) === "orchestration.result.stopReason") expression = node.right.getText(ast);
+      ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    expect(expression).toBeDefined();
+    const actual = (stopReason: string | undefined, lateBackupLine?: string, fluxTerminal = false) => vm.runInNewContext(`(${expression})`, {e:{stopReason},lateBackupLine,fluxTerminal});
+    expect(actual("submission_refused", "Kimi is hidden.")).toBe("Kimi is hidden.");
+    expect(actual("submission_refused")).toBe("submission_refused");
+    expect(actual("other", "Kimi is hidden.")).toBe("other");
+    expect(actual(undefined)).toBeNull();
+    expect(actual("submission_refused", "Kimi is hidden.", true)).toBe("flux_refusal");
   });
   it("#5 the listing cuts a hidden engine before its snapshot", () => {
     const list = between("async function limitChoicesFor(", "function failOverThread(");
@@ -578,16 +598,48 @@ describe("every limit-backup site asks the one gate", () => {
     expect(resolver).toMatch(/targetAllowed: \(rowId\) =>/);
     expect(resolver).toContain("backupVerdict(row.from, row.to)");
   });
-  it("#11/#12 the direct and room dispatch boundaries ask the gate after setup", () => {
-    const boundaries = source.split("beforeSubmit: () => submissionBoundary.beforeSubmit(() => {");
-    expect(boundaries.length).toBe(3);
-    for (const after of boundaries.slice(1)) expect(after.slice(0, 600)).toContain("assertBackupStillUsable(");
-    // r4 M1: the provenance the resolver carried, never the chat re-read at dispatch
-    expect(boundaries[1].slice(0, 900)).toContain("assertBackupStillUsable(turnSelection.backupFrom, turnSelection.selection, Date.now())");
-    expect(boundaries[2].slice(0, 900)).toContain("assertBackupStillUsable(roomTurnSelection.backupFrom, roomTurnSelection.selection, Date.now())");
-    const boundary = between("function assertBackupStillUsable(", "\n}\n");
-    expect(boundary).toContain("assertBackupAtDispatch(backupVerdict, backupFrom, selection, now, backupRefusalOf)");
-    expect(boundary).not.toMatch(/store\.|limitFailovers\./);
+  it("#11/#12 executes the shipped direct and room write callbacks against live gate state after setup", async () => {
+    const ast = ts.createSourceFile("index.ts", source, ts.ScriptTarget.Latest, true);
+    const declarations = new Map<string, ts.VariableDeclaration>();
+    const wrappers: ts.ArrowFunction[] = [];
+    let gateFunction: ts.FunctionDeclaration | undefined;
+    const visit = (node: ts.Node) => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && ["validateDirectSubmission", "validateRoomSubmission"].includes(node.name.text)) declarations.set(node.name.text, node);
+      if (ts.isPropertyAssignment(node) && node.name.getText(ast) === "beforeSubmit" && ts.isArrowFunction(node.initializer)) wrappers.push(node.initializer);
+      if (ts.isFunctionDeclaration(node) && node.name?.text === "assertBackupStillUsable") gateFunction = node;
+      ts.forEachChild(node, visit);
+    };
+    visit(ast);
+    expect([...declarations.keys()].sort()).toEqual(["validateDirectSubmission", "validateRoomSubmission"]);
+    expect(gateFunction).toBeDefined();
+    for (const [name, declaration] of declarations) {
+      const wrapper = wrappers.find(node => ts.isCallExpression(node.body) && node.body.arguments.some(arg => ts.isIdentifier(arg) && arg.text === name));
+      expect(wrapper, `${name} must reach the actual beforeSubmit hook`).toBeDefined();
+      let hidden = false;
+      const verdict = vi.fn(backupGate({...pass, hidden: () => hidden}));
+      const accepted = vi.fn(), boundary = new TurnSubmissionBoundary();
+      const selection = {backupFrom:from,selection:kimi};
+      const context = vm.createContext({
+        assertBackupAtDispatch, backupVerdict:verdict, backupRefusalOf:() => "Kimi is hidden.", submissionBoundary:boundary,
+        validateOwnerLimitDispatch() {}, dispatchClaimId: 'fixture-generation',
+        providerRouteIsCurrent:() => true, providerRoute:undefined, limitTurns:{assertCanSubmit(){}}, packGuard:{assertCurrent(){}},
+        assertCursorNotSealed(){}, store:{taskByThread(){}}, bot:{id:"bot"}, threadId:"thread", instanceId:"engine", resumeCursor:undefined,
+        turnSelection:selection, roomTurnSelection:selection, opts:undefined, trace:{mark(){}}, memoryReceipt:{accepted},
+        abandoned:false, isCancelled:undefined, internalGeneration:1, internalTurnOwners:new Map([["thread",{generation:1}]]), internalCapabilities:{activeGeneration:() => 1},
+        // This callback fixture has no pinned owner send; the real new stale-send check still runs in production callbacks that carry one.
+        ownerSend:undefined,
+      });
+      const js = ts.transpileModule(`${gateFunction!.getText(ast)}\nconst ${name} = ${declaration.initializer!.getText(ast)}; globalThis.run = ${wrapper!.getText(ast)};`, {compilerOptions:{target:ts.ScriptTarget.ES2023,module:ts.ModuleKind.None}}).outputText;
+      vm.runInContext(js, context);
+      const run = context.run as () => void;
+      boundary.started(); run();
+      expect(accepted).toHaveBeenCalledOnce(); accepted.mockClear();
+      await Promise.resolve(); hidden = true;
+      expect(run).toThrow(BackupRefusedError);
+      expect(accepted).not.toHaveBeenCalled();
+      expect(verdict).toHaveBeenLastCalledWith(from,kimi,expect.any(Number));
+      expect(boundary.hasReleasedSubmission).toBe(true);
+    }
   });
   it("#13 the picker reads the hidden list after the snapshot await", async () => {
     // int1018 b8 1651c2e9e ported U22 G20/#13 onto the mapped instance scan (1d800ddbc): the registration and the hidden list are read
@@ -741,4 +793,16 @@ describe("limit-backup races, with the await held open", () => {
     expect(backupRefusalMessage(new Error("the engine refused"))).toBeUndefined();
     expect(new TurnSubmissionBoundary().refusedWith).toBeUndefined();
   });
+});
+
+
+// MAIN RULING INT-CONFLICT-DEFAULT c24d4d9fef / 8009bd1db9: keep the train's durable receipt; the final recheck and dispatch remain synchronous.
+it("the decision-owned backup answer rechecks and dispatches without an asynchronous gap", () => {
+  const answer = between("function answerLimitCard(", "\n}\n");
+  expect(answer).toContain("await consumeChoice()");
+  const finalDispatch = answer.slice(answer.indexOf("if (!accepted && await consumeChoice()"));
+  expect(finalDispatch).toContain("principal !== JSON.stringify(threadHumanPrincipal(threadId))");
+  expect(finalDispatch).toContain("failOverThread(");
+  expect(finalDispatch.slice(finalDispatch.indexOf("if (principal !=="), finalDispatch.indexOf("failOverThread("))).not.toMatch(/\bawait\b|\.then\(/);
+  expect(source).toContain("const queue = serviceQueue('event-limit')");
 });

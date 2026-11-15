@@ -13,9 +13,10 @@ import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { connectionId, database } from "../database.ts";
 import { BACKGROUND_BUSY_MS, DEFAULT_BUSY_MS, isDatabaseBusy, noteBusy, setBusy } from "../db-busy.ts";
-import { txScopeBegin, txScopeEnd } from "../tx-scope.ts";
+import { releaseTransaction, assertReleaseContext, joinReleaseTransaction, ReleaseCommitFailed, type ReleaseContext } from "./release-transaction.ts";
 import { noteIdentityEpoch } from "./provenance-stamp.ts";
-import { NOISY_SYSTEM_SUBJECTS, bumpLearningFence } from "./authority-epoch.ts";
+import { bumpLearningFence } from "./authority-epoch.ts";
+import { NOISY_SYSTEM_SUBJECTS } from "./noisy-subjects.ts";
 import { memoryLookup } from "./deny-read.ts";
 import { MemorySendFenced } from "./learning-send-fence.ts";
 
@@ -27,8 +28,8 @@ export class MemorySendBusy extends Error {
 export const isMemorySendBusy = (error: unknown): boolean =>
   error instanceof MemorySendBusy || (error as { message?: unknown } | null)?.message === MEMORY_SEND_BUSY;
 /** COMMIT failed after the gate released the call: the bytes may have left, so this attempt counts as released (never unsent). */
-export class MemorySendCommitFailed extends Error {
-  constructor() { super("MEMORY_SEND_COMMIT_FAILED"); this.name = "memory-send-commit-failed"; }
+export class MemorySendCommitFailed extends ReleaseCommitFailed {
+  constructor() { super(); this.message = "MEMORY_SEND_COMMIT_FAILED"; this.name = "memory-send-commit-failed"; }
 }
 
 // ---------------------------------------------------------------------------------------------------------------- counter (§3)
@@ -221,16 +222,10 @@ export interface LearningGate {
   readonly refused: boolean;
   /** The cheap early exit: throws the refusal when the words may no longer be sent. Releases nothing; refuses inside any transaction. */
   check(): void;
-  /** Check under BEGIN IMMEDIATE, release, run `emit` (which must hand the bytes to the engine before it returns), COMMIT, then return
-   *  its result. `emit` must not await before its write (learning-send-boundary.test.ts). */
-  send<R>(emit: () => R): R;
-  /** The adapter form (the Codex/ACP beforeSubmit hook, the Claude one-shot): check and release under the lock, COMMIT; the adapter's
-   *  synchronous chain then writes. */
-  admit(): void;
-  /** The adapter wrote the admitted bytes. */
-  wrote(): void;
-  /** The adapter halted after `admit` and before any write: the admission is withdrawn (once; never below what was written). */
-  notWritten(): void;
+  /** Sole release. A synchronous emitter may return an already-issued response
+   * promise; waiting for that response happens after the writer lock ends.
+   * Composed consuming checks run in validate before any attempt is charged. */
+  send<R>(emit: () => R, validate?: (context: ReleaseContext) => void): R;
 }
 
 /** The time BEGIN IMMEDIATE was held per release, in ms, kept for the lock-hold measurement (T18e). Bounded. */
@@ -238,11 +233,10 @@ const holdSamples: number[] = [];
 export function learningSendHoldSamples(): readonly number[] { return holdSamples; }
 function noteHold(ms: number) { if (holdSamples.length >= 4096) holdSamples.shift(); holdSamples.push(ms); }
 
-let gateOwnsTransaction = false;
 
 /** A gate over the words a learning call read after `at` was sampled, plus the rows it holds. One gate per learning call. */
 export function learningGate(purpose: LearningPurpose, at: LearningFenceSample | undefined, refs: HeldRefs = {}, options: LearningGateOptions = {}): LearningGate {
-  let released = 0, written = 0, refused = false, open = false;
+  let released = 0, refused = false;
   const refusal = (): Error => options.refuse?.() ?? new MemorySendFenced();
   const current = (db: DatabaseSync): boolean => {
     if (!at || !Number.isFinite(at.epoch) || !Number.isFinite(at.dataVersion)) return false;
@@ -255,54 +249,41 @@ export function learningGate(purpose: LearningPurpose, at: LearningFenceSample |
   };
   const fail = (): never => { refused = true; throw refusal(); };
   /** Private: valid only inside the gate's own BEGIN IMMEDIATE. */
-  const checkHeld = (db: DatabaseSync) => {
-    if (!gateOwnsTransaction || !db.isTransaction) throw new Error("LEARNING_GATE_CHECK_OUTSIDE_GATE");
+  const checkHeld = (db: DatabaseSync, context: ReleaseContext) => {
+    assertReleaseContext(context, db);
     let ok: boolean;
     try { ok = current(db); } catch { ok = false; }
     if (!ok) fail();
   };
-  /** Steps 0-4 under the lock; `then` runs after the release and before COMMIT (emit), or nothing (admit). */
-  const locked = <R>(then: (() => R) | undefined): R | undefined => {
+  const locked = <R>(emit: (context: ReleaseContext) => R, validate?: (context: ReleaseContext) => void): R => {
     const db = database();
-    // 0: a caller's own transaction could roll back what the check rests on
     if (db.isTransaction) fail();
-    let began = false, committed = false, scoped = false, started = false;
+    let started = false;
     let refund: (() => void) | undefined;
     const start = performance.now();
     try {
+      if (emit.constructor.name === "AsyncFunction") throw new Error("ASYNC_LEARNING_RELEASE");
       try { refund = options.preSend?.(); } catch (error) { if (isDatabaseBusy(error)) throw new MemorySendBusy(); throw error; }
       setBusy(db, BACKGROUND_BUSY_MS);
       noteIdentityEpoch(db);
-      try { db.exec("BEGIN IMMEDIATE"); began = true; }
-      catch (error) {
-        if (isDatabaseBusy(error)) { noteBusy("learning-send", performance.now() - start); throw new MemorySendBusy(); }
+      try {
+        return releaseTransaction(db, {
+          validate: context => {
+            checkHeld(db, context);
+            // Validation-only composition never owns BEGIN or charges a release.
+            if (validate) joinReleaseTransaction(context, db, () => validate(context));
+            if (options.onAdmit) joinReleaseTransaction(context, db, options.onAdmit);
+          },
+          onRelease: () => { released++; started = true; },
+          emit: context => ({ result: emit(context) }),
+          onHold: noteHold,
+        }).result;
+      } catch (error) {
+        if (error instanceof ReleaseCommitFailed) throw new MemorySendCommitFailed();
+        if (!started && isDatabaseBusy(error)) { noteBusy("learning-send", performance.now() - start); throw new MemorySendBusy(); }
         throw error;
       }
-      gateOwnsTransaction = true; txScopeBegin(); scoped = true;
-      const lockedAt = performance.now();
-      checkHeld(db);           // 2
-      options.onAdmit?.();     // 3 (nests as a SAVEPOINT through transaction())
-      released++;              // 4
-      started = true;
-      let out: R | undefined;
-      try { out = then?.(); }
-      finally {
-        try { db.exec("COMMIT"); committed = true; }
-        catch {
-          // the attempt was released: keep it, roll back what is left, and never call it unsent
-          try { if (db.isTransaction) db.exec("ROLLBACK"); } catch { /* the connection reports its own state */ }
-          began = false;
-          // eslint-disable-next-line no-unsafe-finally
-          throw new MemorySendCommitFailed();
-        }
-        began = false;
-        noteHold(performance.now() - lockedAt);
-      }
-      return out;
     } finally {
-      if (began) { try { if (db.isTransaction) db.exec("ROLLBACK"); } catch { /* reported by the caller's error */ } }
-      if (scoped) txScopeEnd(committed);
-      gateOwnsTransaction = false;
       if (!started && refund) { try { refund(); } catch { /* a failed refund keeps the durable charge */ } }
       try { setBusy(db, DEFAULT_BUSY_MS); } catch { /* handle closed */ }
     }
@@ -318,14 +299,7 @@ export function learningGate(purpose: LearningPurpose, at: LearningFenceSample |
       try { ok = current(db); } catch { ok = false; }
       if (!ok) fail();
     },
-    send<R>(emit: () => R): R { return locked(emit) as R; },
-    admit() { locked(undefined); open = true; },
-    wrote() { if (open) { written++; open = false; } },
-    notWritten() {
-      if (!open) return;
-      open = false;
-      if (released > written) released--;
-    },
+    send<R>(emit: () => R, validate?: (context: ReleaseContext) => void): R { return locked(emit, validate); },
   };
 }
 

@@ -7,7 +7,8 @@
 // activity/<bindingId>.ndjson, inside the reserved browser-extension component
 // that a backup never takes and a restore refuses.
 import { randomUUID } from "node:crypto";
-import { type BigIntStats, closeSync, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync, writeSync } from "node:fs";
+import { writeSync } from "./counted-fs.ts";
+import { type BigIntStats, closeSync, existsSync, fstatSync, fsyncSync, mkdirSync, openSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { renameWithRetry, syncParentDirectory, writeFileAtomic } from "./atomic.ts";
 import { redactPageOutput } from "./browser-output-redaction.ts";

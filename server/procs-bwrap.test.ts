@@ -24,6 +24,7 @@ vi.mock("./bwrap-process.ts", () => ({
   hostProcessIdentity: vi.fn((pid: number) => pid === state.root.pid ? state.root : pid === state.init.pid && state.initReadable ? state.init : undefined),
   resolveBwrapProcesses: vi.fn(() => state.resolved ? { init: state.init, engine: state.enginePresent ? state.engine : undefined } : {}),
   hostProcessGone: vi.fn(() => state.initGone),
+  hostProcessExited: vi.fn(() => state.initGone),
   hostProcessIsChild: vi.fn(() => state.engineMatches),
 }));
 import { awaitCliTreeStopped, CLI_FORCE_WAIT_MS, CLI_TERM_GRACE_MS, cliTreeConfirmedStopped, cliTreeStoppedSignal, engineProcessPid, forceCliTreeStopped, hostPowerRefused, killCliTree, spawnCli } from "./procs.ts";
@@ -176,6 +177,28 @@ describe.skipIf(process.platform !== "linux")("owned Linux bwrap stop ordering (
     expect(engineProcessPid(child)).toBeUndefined();
     expect(engineProcessPid(child)).toBe(state.engine.pid);
     expect(vi.mocked(hostProcessIdentity).mock.calls.filter(([pid]) => pid === state.init.pid)).toHaveLength(1);
+  });
+
+  it("confirms an init that exited before its delayed child-pid status record was delivered", async () => {
+    launch(false);
+    const retained = new TurnTeardowns();
+    retained.track("late-status-thread", "late-status-turn", child);
+    const released = vi.fn();
+    void retained.closed("late-status-thread", "late-status-turn").then(released);
+    // bwrap's real status bytes can be delivered after the init has exited.
+    // There is no starttime left to pin, but /proc proves the PID is gone.
+    state.initReadable = false;
+    state.initGone = true;
+    (child.stdio as unknown as PassThrough[])[BWRAP_STATUS_FD].emit("data", Buffer.from(JSON.stringify({ "child-pid": state.init.pid }) + '\n{"exit-code":0}\n'));
+    closeWrapper();
+    const stopped = awaitCliTreeStopped(child);
+    await vi.advanceTimersByTimeAsync(CLI_TERM_GRACE_MS + CLI_FORCE_WAIT_MS + 1);
+    expect(await stopped).toBe(true);
+    expect(cliTreeConfirmedStopped(child)).toBe(true);
+    expect(retained.pending("late-status-thread")).toBe(false);
+    expect(released).toHaveBeenCalledTimes(1);
+    expect(signals).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it("retries an unresolved reported init after wrapper close, retaining ownership until it exits", async () => {

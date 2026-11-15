@@ -42,6 +42,10 @@ import type { Message } from "./store.ts";
 import { steerWithQuoteLineage, type RunningTurnLineage } from "./steer-lineage.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
+import { bindFixtureTurn } from "./testing/consuming-fixture.ts";
+import { fixtureBoundTurn } from "./testing/mcp-admission-fixture.ts";
+import { fencedTurnInput } from "./drivers/engine-input.ts";
+import { buildPrompt, noneRef, promptPart } from "./memory/prompt-parts.ts";
 
 const FAKE_ACP = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-acp-cli.ts");
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -78,7 +82,12 @@ const CONTENT = { audience: null } as const;
 const wmsg = (id: string, extra: Partial<Message> = {}): Message => ({ id, role: "bot", kind: "text", text: id, at: Date.now(), ...extra });
 const verdictOf = (thread: string, id: string) => denyLookup(database(), { threadId: thread, lines: [{ messageId: id, author: "generated" }] }, CONTENT).get(id)!;
 const turns: TurnLineage[] = [];
-function openTurn(threadId: string, turnId: string): TurnLineage { const turn = openTurnLineage(database(), { threadId, turnId }); turns.push(turn); return turn; }
+const boundTurns = new WeakMap<TurnLineage, ReturnType<typeof bindFixtureTurn>>();
+function openTurn(threadId: string, turnId: string): TurnLineage {
+  const turn = openTurnLineage(database(), { threadId, turnId });
+  boundTurns.set(turn, bindFixtureTurn(database(), turn, "bot"));
+  turns.push(turn); return turn;
+}
 /** reply-1 (thread "chat") rests on a1, a bot line of thread "older": stored through appendMessage so both carry lineage rows. */
 function writtenReply() {
   appendMessage("older", { ...wmsg("m1"), role: "user" });
@@ -198,7 +207,7 @@ posixOnly("a steer's quoted reply is recorded at the write, not after the acknow
   it("a steer the fence refuses writes nothing and records nothing", async () => {
     await memoryDerivedReply();
     const { adapter, lineage } = await runningFuigo(300);
-    const delivery = await steerWithQuoteLineage(adapter, "desk", "Use it on the side door", true, { holds: () => false, steerId: "steer-3", lineage, quote: QUOTE });
+    const delivery = await steerWithQuoteLineage(adapter, "desk", "Use it on the side door", true, { holds: () => false, steerId: "steer-3", lineage, quote: QUOTE, turn: openTurn("desk", "t-desk") });
     expect(delivery).toBe("queue");
     expect(lineage.roots.roots.size).toBe(0);
     expect(sessionOutputRoots(LineageAllowance.tool(1_000_000_000), "desk", "fuigo-steer", "s-desk").roots.size).toBe(0);
@@ -214,6 +223,7 @@ posixOnly("a steer's quoted reply is recorded at the write, not after the acknow
       // the session itself still holds; the quote's source is revoked in between
       holds: () => { captureBranchChange(database(), "older", null); return true; },
       steerId: "steer-4", lineage, quote: QUOTE,
+      turn: openTurn("desk", "t-desk"),
     });
     // refused: the caller runs the line as its own turn, which renders the quote again
     expect(delivery).toBe("queue");
@@ -273,9 +283,14 @@ posixOnly("a Claude steer that waits for init is checked against its quote at th
         config: { cli, permissionMode: "acceptEdits" },
       });
       const lines = () => (existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : []);
-      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "desk", text: "one SLOW_INIT", warmIdentity: { botId: "bot", audience: "owner" } });
-      const lineage: RunningTurnLineage = { roots: { roots: new Set(), over: false }, instanceId: "claude-steer", startGeneration: 0, session: "claude-session", generation: "g-claude", turn: { threadId: "desk", turnId: "t-claude", turnLsn: 0, parents: [] } as unknown as RunningTurnLineage["turn"] };
       const turn = openTurn("desk", "t-desk");
+      // Initial owner text carries no stored source. Only an accepted quote
+      // may add a parent to the retained turn exercised below.
+      const initial = fencedTurnInput({ cwd: fixtureBotFolder(), threadId: "desk", warmIdentity: { botId: "bot", audience: "owner" }, releaseBinding: boundTurns.get(turn)!.binding,
+        prompt: buildPrompt(undefined, [promptPart("one SLOW_INIT", [noneRef("owner-turn")])]),
+      }, { db: database(), retained: turn, reader: CONTENT });
+      await instance.adapter.sendTurn(fixtureBoundTurn(initial));
+      const lineage: RunningTurnLineage = { roots: { roots: new Set(), over: false }, instanceId: "claude-steer", startGeneration: 0, session: "claude-session", generation: "g-claude", turn: { threadId: "desk", turnId: "t-claude", turnLsn: 0, parents: [] } as unknown as RunningTurnLineage["turn"] };
       const session = { threadId: "desk", driverInstance: "claude-steer", nativeSession: "claude-session" };
       writeSessionLineage(database(), session, turn);
       let fenced = 0;

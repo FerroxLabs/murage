@@ -1,8 +1,16 @@
+import { PERMISSION_CARD_KINDS, PERMISSION_CARD_KEYS } from "../../shared/permission-card.ts";
 import { useState } from "react";
 import { X } from "lucide-react";
 import { useStore, visibleMessages, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { readIntakeCard } from "@/lib/onboarding-intake";
+
+export function permissionCardRenderable(message:{kind?:string;card?:object}):boolean {
+  const card=message.card as Record<string,unknown>|undefined;
+  if(!card||!PERMISSION_CARD_KINDS.some(kind=>kind===message.kind)||!PERMISSION_CARD_KEYS.some(key=>card[key]!=null)&&card.emailTrustOffer==null)return true;
+  if(card.answered!=null||card.dismissed===true||card.orphaned===true)return true;
+  return typeof card.approvalId==='string'&&card.approvalId.length>0&&typeof card.requestRef==='string'&&card.requestRef.length>0&&typeof card.actionHash==='string'&&card.actionHash.length>0;
+}
 
 const LETTERS = ["A", "B", "C", "D", "E", "F"];
 
@@ -67,7 +75,7 @@ export function OptionCard({
   const transcript = bot ? visibleMessages(bot) : [];
   // Full thread, not the mounted window: a search-focus slice can omit the
   // later user message that means they already talked past this quiz.
-  if (!card || shouldHideOnboardingCard(message, transcript)) return null;
+  if (!permissionCardRenderable(message) || !card || shouldHideOnboardingCard(message, transcript)) return null;
 
   const answer = (text: string) => {
     if (!text.trim()) return;

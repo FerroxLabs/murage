@@ -1,18 +1,33 @@
+import "./perf-budget-setup.ts";
+import { takeReplayShadowDivergencesForTest } from "../memory/replay-shadow.ts";
 // Vitest setup — every test file gets a throwaway home directory so
 // DATA_DIR (~/.murage) never touches the real one. os.homedir()
 // reads HOME (POSIX) / USERPROFILE (Windows) at call time, and this file
 // runs before any test module imports server/config.ts.
-import { mkdtempSync } from "node:fs";
+import './signal-park-spawn-trace.ts';
+import { mkdtempSync, mkdirSync, readFileSync } from "node:fs";
+import { setTimeout as fixtureTimeout } from "node:timers";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, afterEach } from "vitest";
+import { afterAll, afterEach, beforeEach, expect, vi } from "vitest";
 
+// Security interpreter startup and ACL projections are expensive on Windows.
+// Cover every Signal test, including nested files; explicit test limits are
+// audited separately because Vitest gives them precedence over this default.
+if (process.platform === "win32" && /[\\/]channels[\\/]signal[\\/].*[.]test[.]ts$/.test(expect.getState().testPath ?? "")) {
+  const multiOperation=/[\\/](?:service|park-authority|park-replacement|park-downgrade)[.]test[.]ts$/.test(expect.getState().testPath ?? "");
+  vi.setConfig({ testTimeout: multiOperation ? 300_000 : 150_000, hookTimeout: 150_000 });
+}
+
+import { prepareWorkspaceTestDependencies } from "./workspace-dependencies.ts";
 import { settleTestHandles } from "../test-handle-registry.ts";
 import { removeTempDir } from "./cleanup.ts";
 import { scrubAmbientMurageEnv } from "./murage-env.mjs";
 import { installSafeWipeGuard } from "./safe-wipe.mjs";
 import { installNoFollowRmSync } from "../link-removal.ts";
+
+prepareWorkspaceTestDependencies();
 
 // Ambient Murage runtime keys (a bot's own terminal, a server in another
 // window) never reach a test or a child it spawns: each test sets the keys it
@@ -86,9 +101,41 @@ process.env.MURAGE_ENGINE_EXCLUSION_PATH = join(dirname(fileURLToPath(import.met
 // The crash journal of an engine-history rewrite (server/engine-redo.ts) lives in a throwaway folder of its own in tests.
 process.env.MURAGE_ENGINE_REDO_DIR = join(mkdtempSync(join(tmpdir(), "murage-test-redo-")), "engine-redo");
 
-const home = mkdtempSync(join(tmpdir(), "murage-test-home-"));
+const originalTmpEnv = { TMPDIR: process.env.TMPDIR, TEMP: process.env.TEMP, TMP: process.env.TMP };
+const workerRoot = mkdtempSync(join(tmpdir(), "murage-worker-"));
+const home = join(workerRoot, "home");
+mkdirSync(home);
 process.env.HOME = home;
 process.env.USERPROFILE = home;
+// Import containment and delayed effects share this worker's disposable roots.
+const workerTmp = workerRoot;
+process.env.MURAGE_FIXTURE_IMPORT_ROOT = workerRoot;
+process.env.TMPDIR = workerTmp;
+process.env.TEMP = workerTmp;
+process.env.TMP = workerTmp;
+process.env.DATA_DIR = join(home, ".murage");
+process.env.MURAGE_SENTINEL_STATE_DIR = join(home, "sentinel");
+for (const name of ["XDG_CONFIG_HOME", "XDG_CACHE_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_RUNTIME_DIR"]) process.env[name] = join(home, name.toLowerCase());
+// A real, isolated data root lets absence proofs use the owner-read resolution.
+mkdirSync(join(home, ".murage"));
+// Owners: c3-memory admission-window fixture; salv-tri-b real VFS for server fixtures.
+// MAIN INT-CONFLICT-DEFAULT: preserve the real native meter and memory phase gate.
+const fixtureTestPath = expect.getState().testPath ?? "";
+const memoryFixture = /[\\/]server[\\/]memory[\\/]/.test(fixtureTestPath);
+const launchesServerFixture = fixtureTestPath !== "" &&
+  /launchVerificationServer|(?:index-harness|control-murage|murage-env)[.]/.test(readFileSync(fixtureTestPath, "utf8"));
+if (memoryFixture || launchesServerFixture) {
+  const { prepareMemoryMeterFixture } = await import("../memory/testing/native-meter-fixture.ts");
+  prepareMemoryMeterFixture(home);
+  if (memoryFixture) beforeEach(async () => {
+    // Immediate-work fixtures must begin outside the real admission window's
+    // closing guard. Keep the real clock, byte caps and native enforcement;
+    // tests that deliberately drive a fake clock retain their chosen phase.
+    if (vi.isFakeTimers()) return;
+    const remaining = 60_000 - Date.now() % 60_000;
+    if (remaining <= 10_000) await new Promise<void>(resolve => fixtureTimeout(resolve, remaining + 1));
+  });
+}
 // MURAGE_DATA_DIR is an intentional production override, but tests must never
 // let it escape the throwaway home they are about to delete.
 delete process.env.MURAGE_DATA_DIR;
@@ -144,11 +191,28 @@ if (!process.env.MURAGE_CONTROL_PORT_OVERRIDE) {
 await import("../message-db.ts");
 await import("../wal-maintenance.ts");
 await import("../atomic.ts");
-afterEach(async () => { await settleTestHandles(); });
+afterEach(async () => {
+  await settleTestHandles();
+  if (memoryFixture) {
+    // Every old handle and checkpointer has left. The next isolated app must
+    // not inherit reservations or copy debt for a database just discarded by
+    // this fixture. Restarts within one test retain their real ledger.
+    const { ioBudget } = await import("../io-budget.ts");
+    ioBudget.resetAdmissionForFixture();
+  }
+});
 
 // Windows holds a directory that is a live process's cwd, and a just-killed
 // CLI lets go a beat after the kill call returns — see removeTempDir.
 afterAll(async () => {
   await settleTestHandles();
   await removeTempDir(home);
+  for (const [name, value] of Object.entries(originalTmpEnv)) { if (value === undefined) delete process.env[name]; else process.env[name] = value; }
+  await removeTempDir(workerRoot);
+});
+
+// A production caller may fail closed by catching an error. Such a catch must
+// never hide disagreement between the incremental and full replay algorithms.
+afterEach(() => {
+  expect(takeReplayShadowDivergencesForTest(), "REPLAY_SHADOW_DIVERGED invariant").toBe(0);
 });

@@ -26,7 +26,9 @@ const askDir = () => join(fixture.info.dataDir, "ask");
 const api = async (method: string, path: string, body?: unknown, extra: Record<string, string> | null = headers) => {
   const response = await fetch(`${fixture.info.url}${path}`, { method, headers: { "content-type": "application/json", ...(extra ?? {}) }, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await response.text();
-  return { status: response.status, body: (text ? JSON.parse(text) : {}) as any };
+  // A retired consuming turn answers fixed plaintext; live phone results remain JSON.
+  const parsedBody = text ? response.headers.get("content-type")?.includes("application/json") ? JSON.parse(text) : { error: text } : {};
+  return { status: response.status, body: parsedBody as any };
 };
 const connect = async () => {
   const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string };
@@ -41,13 +43,14 @@ const botState = async (id: string) => (await api("GET", "/api/bots?messages=0")
 const idle = async (id: string) => { await expect.poll(async () => (await botState(id))?.busy, { timeout: 30000 }).toBe(false); };
 const messages = async (threadId: string) => (await api("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages as any[];
 const arm = (name: string) => writeFileSync(join(askDir(), name), "");
-const release = () => writeFileSync(join(askDir(), "release"), "");
+const release = (turnId = "") => writeFileSync(join(askDir(), "release"), turnId);
 let counter = 0;
 const createBot = async (name: string, grant: Record<string, string>) => {
   const created = await api("POST", "/api/bots", { name, modelSelection: { instanceId: "tools", model: "ask-1" } });
   expect(created.status).toBe(201);
   const bot = created.body.bot as { id: string; threadId: string };
-  expect((await api("PATCH", `/api/bots/${bot.id}`, { phoneApps: grant })).status).toBe(200);
+  // Job lifecycle fixtures choose Auto; Ask now correctly waits for an own-write review before opening a job.
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true, computer: "off", phoneApps: grant })).status).toBe(200);
   return bot;
 };
 /** Starts an owner turn that stays open and returns its device token (the env the engine was handed). */
@@ -66,6 +69,21 @@ const state = async (p: Promise<unknown>) => Promise.race([p.then((v) => ({ sett
 const dumpRows = (threadId: string): any[] => {
   try { return readFileSync(join(askDir(), "dump.jsonl"), "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((row) => row.threadId === threadId && !row.steer); } catch { return []; }
 };
+const admissions = (botId: string) => {
+  try { return readFileSync(join(askDir(), "job-admissions.jsonl"), "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)).filter(row => row.botId === botId); }
+  catch { return []; }
+};
+const waitForAdmissions = async (botId: string, count: number) => {
+  await expect.poll(() => admissions(botId).length, { timeout: 30000 }).toBe(count);
+};
+const offerOf = async (botId: string) => {
+  let offer: any;
+  await expect.poll(async () => {
+    offer = (await phone("GET", "/api/phones/self/jobs")).body.jobs.find((job: any) => job.bot.id === botId);
+    return Boolean(offer);
+  }, { timeout: 30000 }).toBe(true);
+  return offer;
+};
 
 posixOnly("phone job routes through the real server (S12, S14)", () => {
   beforeAll(async () => {
@@ -74,6 +92,23 @@ posixOnly("phone job routes through the real server (S12, S14)", () => {
       const fs=await import('node:fs');const path=await import('node:path');
       const dataDir=process.env.MURAGE_DATA_DIR;
       const askDir=path.join(dataDir,'ask');fs.mkdirSync(askDir,{recursive:true});
+      // Observe actual request admission and body consumption; never grant or
+      // complete an operation on behalf of the product.
+      const {PhoneJobs}=await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "phones", "jobs.ts")).href)});
+      const requestJob=PhoneJobs.prototype.request;
+      PhoneJobs.prototype.request=function(input){
+        const result=requestJob.call(this,input);
+        fs.appendFileSync(path.join(askDir,'job-admissions.jsonl'),JSON.stringify({botId:input.authority.botId,operationId:result.operationId})+'\\n');
+        return result;
+      };
+      const {IncomingMessage}=await import('node:http');
+      const emit=IncomingMessage.prototype.emit,seenBodies=new WeakSet();
+      IncomingMessage.prototype.emit=function(event,...args){
+        if(event==='data'&&this.headers['x-fixture-body-gate']==='phone-late-body'&&this.listenerCount('data')>0&&!seenBodies.has(this)){
+          seenBodies.add(this);fs.writeFileSync(path.join(askDir,'device-body-read'),'read');
+        }
+        return emit.call(this,event,...args);
+      };
       const { BUILT_IN_DRIVERS } = await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "drivers", "builtIn.ts")).href)});
       const { makeAskDriver } = await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-ask-driver.ts")).href)});
       BUILT_IN_DRIVERS.push(makeAskDriver());
@@ -85,6 +120,9 @@ PHONE_JOBS_ENGINES.fakeAsk = { mounts: true, where: 'test fixture' };
     ` });
     mkdirSync(askDir(), { recursive: true });
     await connect();
+    // MAIN RULING INT-CONFLICT-DEFAULT: reuse the reviewed phone lifecycle fixture.
+    // Keep phone authority independent of optional cold recall; recall retains its own gates.
+    expect((await api("POST", "/api/memory/action", { action: "configure", mode: "off" })).status).toBe(200);
     expect((await api("PATCH", "/api/config", { features: { phoneTools: true } })).status).toBe(200);
     const registration = JSON.parse(readFileSync(join(SERVER_DIR, "..", "apps", "mobile", "contract", "phone-jobs.json"), "utf8")).registration.valid;
     expect((await phone("PUT", "/api/phones/self", registration)).status).toBe(200);
@@ -138,13 +176,14 @@ PHONE_JOBS_ENGINES.fakeAsk = { mounts: true, where: 'test fixture' };
     const tokenB = await holdTurn(bystander, "turn for the bystander");
     // the first calendar job is the head job: the phone takes it and leases it, so every later job waits behind it
     const leased = deviceCall(tokenA, CAL);
-    const head = (await phone("GET", "/api/phones/self/jobs")).body.jobs[0];
+    const head = await offerOf(bot.id);
     expect(head.action).toBe("calendar.read");
     expect((await phone("POST", `/api/phones/self/jobs/${head.operationId}/lease`, { offerId: head.offerId })).body.active).toBe(true);
     const queuedCalendar = deviceCall(tokenA, CAL);
     const queuedReminders = deviceCall(tokenA, REM);
     const bystanderCalendar = deviceCall(tokenB, CAL);
-    await quiet(800);
+    await waitForAdmissions(bot.id, 3);
+    await waitForAdmissions(bystander.id, 1);
     // narrowing: calendar goes, reminders stays
     expect((await api("PATCH", `/api/bots/${bot.id}`, { phoneApps: { reminders: "read" } })).status).toBe(200);
     expect((await leased).body).toMatchObject({ ok: false, code: "timeout" }); // may have run
@@ -157,8 +196,12 @@ PHONE_JOBS_ENGINES.fakeAsk = { mounts: true, where: 'test fixture' };
     expect((await api("PATCH", `/api/bots/${bot.id}`, { phoneApps: {} })).status).toBe(200);
     expect((await queuedReminders).body).toMatchObject({ ok: false, code: "denied" });
     expect(await state(bystanderCalendar)).toBe("pending");
-    release(); await quiet(500); release();
-    await idle(bot.id); await idle(bystander.id);
+    // Finish this fixture's unrelated job by its own grant revoke instead of
+    // waiting for the production request deadline to expire.
+    expect((await api("PATCH", `/api/bots/${bystander.id}`, { phoneApps: {} })).status).toBe(200);
+    expect((await bystanderCalendar).body).toMatchObject({ ok: false, code: "denied" });
+    release(dumpRows(bot.threadId).at(-1).turnId); await idle(bot.id);
+    release(dumpRows(bystander.threadId).at(-1).turnId); await idle(bystander.id);
     expect((await bystanderCalendar).status).toBeGreaterThan(0);
   }, 180000);
 
@@ -166,7 +209,7 @@ PHONE_JOBS_ENGINES.fakeAsk = { mounts: true, where: 'test fixture' };
     const bot = await createBot("Jobs complete", { calendar: "read" });
     const token = await holdTurn(bot, "turn that reads the calendar");
     const call = deviceCall(token, CAL);
-    const offer = (await phone("GET", "/api/phones/self/jobs")).body.jobs[0];
+    const offer = await offerOf(bot.id);
     expect(offer).toMatchObject({ action: "calendar.read", capability: "calendar", bot: { id: bot.id } });
     const byRef = await phone("GET", `/api/phones/self/jobs?eventRef=${createHash("sha256").update("murage-phone-job-event-ref/1\n" + offer.operationId).digest("hex")}`);
     expect(byRef.status).toBe(200);
@@ -191,11 +234,11 @@ PHONE_JOBS_ENGINES.fakeAsk = { mounts: true, where: 'test fixture' };
     const bot = await createBot("Jobs flag off", { calendar: "read" });
     const token = await holdTurn(bot, "turn that is open when phone tools are turned off");
     const leased = deviceCall(token, CAL);
-    const head = (await phone("GET", "/api/phones/self/jobs")).body.jobs[0];
+    const head = await offerOf(bot.id);
     expect(head?.action).toBe("calendar.read");
     expect((await phone("POST", `/api/phones/self/jobs/${head.operationId}/lease`, { offerId: head.offerId })).body.active).toBe(true);
     const queued = deviceCall(token, CAL);
-    await quiet(800);
+    await waitForAdmissions(bot.id, 2);
     expect(await state(leased)).toBe("pending");
     expect(await state(queued)).toBe("pending");
     const turnedOff = Date.now();
@@ -218,6 +261,8 @@ PHONE_JOBS_ENGINES.fakeAsk = { mounts: true, where: 'test fixture' };
   it("a phone call whose body is still arriving when phone tools are turned off opens no job", async () => {
     const bot = await createBot("Jobs flag off late body", { calendar: "read" });
     const token = await holdTurn(bot, "turn with a call still uploading when phone tools are turned off");
+    const entered = join(askDir(), "device-body-read");
+    rmSync(entered, { force: true });
     let finish: () => void = () => {};
     const gate = new Promise<void>((resolve) => { finish = resolve; });
     const text = JSON.stringify(CAL);
@@ -229,13 +274,16 @@ PHONE_JOBS_ENGINES.fakeAsk = { mounts: true, where: 'test fixture' };
         controller.close();
       },
     });
-    const sent = fetch(`${fixture.info.url}/api/internal/device/call`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}` }, body, duplex: "half" } as RequestInit);
-    await quiet(600);
-    expect((await api("PATCH", "/api/config", { features: { phoneTools: false } })).status).toBe(200);
+    const sent = fetch(`${fixture.info.url}/api/internal/device/call`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${token}`, "x-fixture-body-gate": "phone-late-body" }, body, duplex: "half" } as RequestInit);
     try {
+      await expect.poll(() => existsSync(entered), { timeout: 30000 }).toBe(true);
+      expect((await api("PATCH", "/api/config", { features: { phoneTools: false } })).status).toBe(200);
       finish();
-      expect((await sent).status).toBe(404);
+      // MAIN RULING: the phone RPC uses a typed off result at HTTP 200.
+      // Require that refusal and the empty job queue below, including across the body's await.
+      expect(await sent.then(async response => ({ status: response.status, body: await response.json() }))).toMatchObject({ status: 200, body: { ok: false, code: "off" } });
     } finally {
+      finish();
       expect((await api("PATCH", "/api/config", { features: { phoneTools: true } })).status).toBe(200);
     }
     expect((await phone("GET", "/api/phones/self/jobs")).body.jobs).toEqual([]);
@@ -246,7 +294,7 @@ PHONE_JOBS_ENGINES.fakeAsk = { mounts: true, where: 'test fixture' };
     const bot = await createBot("Jobs barrier", { calendar: "read" });
     const token = await holdTurn(bot, "turn that is open when the phone is removed");
     const call = deviceCall(token, CAL);
-    const offer = (await phone("GET", "/api/phones/self/jobs")).body.jobs[0];
+    const offer = await offerOf(bot.id);
     expect(offer).toBeTruthy();
     const revoked = await api("POST", "/api/phones/revoke", { deviceId: DEVICE, reason: "removed" }, companion);
     expect(revoked).toMatchObject({ status: 200, body: { revoked: 1 } });

@@ -6,6 +6,7 @@ import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // brief as a PIP kind, the I-10 guards, the deliver-once receipt listeners, the
 // continuity settings, the bundle order and render cache, and the copy rules.
 // Synthetic fixture text only.
+import { openTestIndex, put } from "./testing/open-index.ts";
 import { mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -118,7 +119,7 @@ describe("PIP kind list", () => {
   // I-15: every statement that reads memory_records names its kinds, excludes PIP kinds, or is an administrative
   // or point lookup. The pinned counts below fail when a reader is added or removed; review it against I-15,
   // then update the count. Readers that enumerate rows to a model or the owner are listed by purpose.
-  it("keeps the I-15 census of memory_records readers", () => {
+  it("keeps the I-15 census of memory_records readers", async () => {
     const root = new URL("../", import.meta.url);
     const counts: Record<string, number> = {};
     const files = [...readdirSync(new URL("./", import.meta.url)).filter(name => name.endsWith(".ts") && !name.endsWith(".test.ts")).map(name => `memory/${name}`), "skills.ts", "human-principals.ts"];
@@ -136,9 +137,13 @@ describe("PIP kind list", () => {
     // Nothing still imports the P1 names.
     for (const file of files) expect(readFileSync(new URL(file, root), "utf8"), file).not.toMatch(/\bPIP_KINDS(?:_SQL)?\b/);
     expect(counts).toEqual({
+      // Integration census: existing queued-approval point reads in authority (+4) and routes (+2)
+      // only read the exact candidate/target id. Behavioral fixtures also contain three SQL probes, never production readers.
+      "memory/baseline-binding.fixture.ts": 1, "memory/field-policy.fixture.ts": 2,
+      // B1 replaces the old tool-excerpt probe with the keyed residual join and adds page labels; its count stays 12.
       // +2 1.0.4 learn about me (rememberMemory): in the owner's preferences scope, a point lookup of the ledger-derived record id
       // (existence only), and the duplicate check, which names kind='fact' (the only kind it writes) and returns an id and version, no text
-      "memory/authority.ts": 13, "memory/automatic-learning.ts": 2, "memory/bring-in.ts": 2,
+      "memory/authority.ts": 17, "memory/automatic-learning.ts": 2, "memory/bring-in.ts": 2,
       // -2: bundle hydration, memory_get and every search path read through readableMemoryRecord (readable.ts: one point
       // lookup per read mode, PIP kinds refused for the bot's own tools)
       // revoke-bounded r3: capture.ts's bot deletion no longer lists the bot's records (its durable job's scope phase reads them in
@@ -155,7 +160,9 @@ describe("PIP kind list", () => {
       // +3 MEM-QUEUED-LEARNING-FENCE (r1 H1): the send gate re-checks each held `current` row by id and version (state, latest
       // version, and the text only to compare its digest under the write lock); point lookups; nothing read goes to a model or the owner
       "memory/learning-send.ts": 3,
-      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 12, "memory/owner-tail-index.ts": 3, "memory/record-keys.ts": 5, "memory/procedure-review.ts": 3,
+      "memory/learning-history.ts": 4, "memory/lessons.ts": 1, "memory/memory-moments.ts": 1, "memory/metrics.ts": 1, "memory/owner-list.ts": 12, "memory/owner-tail-index.ts": 3, "memory/record-keys.ts": 6, "memory/procedure-review.ts": 3,
+      // record-keys +1 (682a98a44a): the bounded predecessor probe reads a creation time and age key, no text;
+      // this is administrative key allocation, never a model or owner record reader.
       // record-keys +1 (io-hotpath): the rebuild start log reads max(rowid) only, an administrative count with no row, kind or text
       // owner-list +1 (1.0.15 MEMORY-TOOL-NAME-JUNK d57c1ba33, kept by review 676d6223a): visibleKeys looks up, by primary key, the unpinned
       // `source` keys of the browse slice it already holds; the statement names kind='source' AND assertion='tool-observation' and returns
@@ -173,9 +180,14 @@ describe("PIP kind list", () => {
       // +3: derivationAncestryCurrent reads parent states only, never text (revoke fix round 2)
       // revoke-bounded r3: +1 restore.ts (the installation-wide pass seeds a deleted bot's records by scope, ids and versions only)
       "memory/replay-lineage.ts": 12, "memory/restore.ts": 8, // revoke-bounded r2: the forget's record seeds moved to memory-revocation.ts, RECORD_TOMBSTONE_AFFECTED to revocation.ts; +1: the status scan counts records by state and adds up text lengths, never returning text
-      "memory/retention.ts": 9, "memory/reveal-capture.ts": 2, "memory/routes.ts": 8,
+      "memory/retention.ts": 9, "memory/reveal-capture.ts": 2, "memory/routes.ts": 10,
       // +1 write-time v10: the memory_flow_derivation trigger reads the parent's and the child's scope ids (no text)
-      "memory/schema.ts": 8, "memory/settings.ts": 3,
+      // settings +1 (1.0.16 memory screen B1, MEMORY-UI-BUILD-SPEC r3 1.6): inspect's `earlier`, the replaced wordings of the one record
+      // the owner opened (by id, versions below it, at most 64 read and 20 returned), masked; a forgotten record returns none and a
+      // version forgotten on its own is left out
+      // settings +1 (1.0.16 memory screen B2, MEMORY-UI-BUILD-SPEC r3 2.2): forget-pip reads the row's scope and kind by id (no text) and
+      // goes on only for a PIP kind, through deletePipRecord's version fence
+      "memory/schema.ts": 8, "memory/settings.ts": 5,
       // the background integrity pass checks that a learning event's record exists (a key lookup, no text), and the upgrade counts use max(rowid) (fast upgrade)
       "memory/integrity-pass.ts": 1, "memory/upgrade-counts.ts": 1, "memory/worker-controller.ts": 3, "skills.ts": 6, "human-principals.ts": 1,
       // B3: the lived family, episodes and reflection read only PIP kinds, named in their own statements.
@@ -254,34 +266,34 @@ describe("PIP kind list", () => {
       try { return TERMS.map(term => db.prepare("SELECT version,bm25(lexical) AS score FROM lexical WHERE lexical MATCH ? ORDER BY rank,id").all(`"${term}"`).map(r => r.score)); }
       finally { db.close(); }
     };
-    const project = (index: MemoryIndex) => {
+    const project = async (index: MemoryIndex) => {
       for (;;) {
         const batch = pendingProjectionRecords(database(), 16);
         if (!batch.length) return;
-        index.upsert(batch.map(row => ({ id: String(row.id), version: Number(row.version), scopeId: String(row.scopeId), text: row.state === "deleted" ? "" : String(row.text), deleted: row.state === "deleted", archived: row.state === "archived" })));
+        await put(index, batch.map(row => ({ id: String(row.id), version: Number(row.version), scopeId: String(row.scopeId), text: row.state === "deleted" ? "" : String(row.text), deleted: row.state === "deleted", archived: row.state === "archived" })));
         for (const row of batch) database().prepare("UPDATE memory_projection_receipts SET lexical_status='indexed',embedding_status='indexed' WHERE record_id=? AND record_version=?").run(row.id, row.version);
       }
     };
-    it("a legacy indexed brief leaves the index at open, and a new brief is never indexed", () => {
+    it("a legacy indexed brief leaves the index at open, and a new brief is never indexed", async () => {
       fact("moss", "harbour lantern schedule is posted on the door");
       fact("moss", "harbour lantern oil is bought on Tuesdays");
       const cleanPath = join(DATA_DIR, "clean-index.db"), path = join(DATA_DIR, "memory-index.db");
-      const clean = new MemoryIndex(cleanPath); opened.push(clean);
-      const dirty = new MemoryIndex(path); opened.push(dirty);
-      project(dirty);
+      const clean = await openTestIndex(cleanPath); opened.push(clean);
+      const dirty = await openTestIndex(path); opened.push(dirty);
+      await project(dirty);
       for (const row of database().prepare("SELECT id,version,scope_id,text FROM memory_records WHERE kind='fact'").all())
-        clean.upsert([{ id: String(row.id), version: Number(row.version), scopeId: String(row.scope_id), text: String(row.text), deleted: false }]);
+        await put(clean, [{ id: String(row.id), version: Number(row.version), scopeId: String(row.scope_id), text: String(row.text), deleted: false }]);
       // the pre-P2 state: the brief carried an indexed receipt and an index entry
       const legacy = writeBotIdentity(ticket, brief("harbour lantern harbour lantern harbour lantern quartz quartz oil"), roster);
       expect(database().prepare("SELECT count(*) AS n FROM memory_projection_receipts WHERE record_id=?").get(legacy.id)!.n).toBe(0);
       database().prepare("INSERT INTO memory_projection_receipts VALUES(?,1,0,'indexed','indexed',NULL)").run(legacy.id);
-      dirty.upsert([{ id: legacy.id, version: 1, scopeId: scopeOf("moss"), text: String(database().prepare("SELECT text FROM memory_records WHERE id=?").get(legacy.id)!.text), deleted: false }]);
+      await put(dirty, [{ id: legacy.id, version: 1, scopeId: scopeOf("moss"), text: String(database().prepare("SELECT text FROM memory_records WHERE id=?").get(legacy.id)!.text), deleted: false }]);
       expect(bm25(path)).not.toEqual(bm25(cleanPath));
       const eligibility = new MemoryEligibility(join(DATA_DIR, "messages.db")); opened.push(eligibility);
       expect(eligibility.pipRecordIds()).toEqual([legacy.id]);
-      expect(dirty.purgeRecords(eligibility.pipRecordIds())).toBeGreaterThan(0);
+      expect(await dirty.purgeRecords(eligibility.pipRecordIds())).toBeGreaterThan(0);
       expect(bm25(path)).toEqual(bm25(cleanPath));
-      expect(dirty.purgeRecords(eligibility.pipRecordIds())).toBe(0);
+      expect(await dirty.purgeRecords(eligibility.pipRecordIds())).toBe(0);
       // warm: a brief edit adds no receipt, so nothing is projected for it
       writeBotIdentity(ticket, brief("harbour lantern edited", "moss", 1), roster);
       expect(pendingProjectionRecords(database(), 16).filter(row => row.id === legacy.id)).toEqual([]);
@@ -301,7 +313,7 @@ describe("the brief is a PIP kind", () => {
     expect(on.continuity).toEqual({ brought: 0, total: 0 });
   });
 
-  it("takes no projection receipt and bumps no policy revision on write or edit", () => {
+  it("takes no projection receipt and bumps no policy revision on write or edit", async () => {
     const first = writeBotIdentity(ticket, brief(), roster);
     const before = meta();
     writeBotIdentity(ticket, brief("Moss keeps the log.", "moss", 1), roster);
@@ -368,7 +380,7 @@ describe("I-10 guards over every PIP kind", () => {
     expect(Number(database().prepare("SELECT count(*) AS n FROM memory_tombstones").get()!.n)).toBe(0);
   });
 
-  it("deletes a row of any PIP kind through the one version-fenced delete", () => {
+  it("deletes a row of any PIP kind through the one version-fenced delete", async () => {
     const scopeId = scopeOf("moss");
     for (const kind of ["pip-proposal", "pip-counter", "concern", "episode"]) {
       const id = synthetic(kind, "d");
@@ -411,7 +423,7 @@ describe("deliver-once listeners on the receipt", () => {
 });
 
 describe("continuity settings", () => {
-  it("validates strictly and clears on null or an empty object", () => {
+  it("validates strictly and clears on null or an empty object", async () => {
     expect(parseContinuityOptions(undefined)).toEqual({ ok: true, value: undefined });
     expect(parseContinuityOptions(null)).toEqual({ ok: true, value: undefined });
     expect(parseContinuityOptions({})).toEqual({ ok: true, value: undefined });
@@ -420,7 +432,7 @@ describe("continuity settings", () => {
     for (const bad of [[], "x", 3, { reflect: false }, { reflect: "true" }, { other: true }, { reflectModel: "" }, { reflectModel: 4 }, { reflectModel: "a\nb" }, { shadow: { since: 1 } }, { shadow: { modelSelection: {}, since: 1, dailyCap: 41 } }, { shadow: { modelSelection: {}, since: "x", dailyCap: 4 } }])
       expect(parseContinuityOptions(bad), JSON.stringify(bad)).toMatchObject({ ok: false });
   });
-  it("recognises the reflection pseudo thread", () => {
+  it("recognises the reflection pseudo thread", async () => {
     expect(isPipReflectThread("pip-reflect:moss:run1:lived:1")).toBe(true);
     for (const id of ["moss", "pip-shadow:moss", "", undefined, 4]) expect(isPipReflectThread(id)).toBe(false);
   });
@@ -586,30 +598,30 @@ describe("PIP render rules", () => {
     ] as const;
     expect(selfSlotOrder(rows).map(r => r.id)).toEqual(["a", "f", "b", "c", "e", "d"]);
   });
-  it("reserves a third of the slot for observed rows only when one exists", () => {
+  it("reserves a third of the slot for observed rows only when one exists", async () => {
     expect(observedReservation(600, true)).toBe(200);
     expect(observedReservation(601, true)).toBe(201);
     expect(observedReservation(600, false)).toBe(0);
   });
-  it("fades imported rows by half about every fourteen sessions", () => {
+  it("fades imported rows by half about every fourteen sessions", async () => {
     expect(importFadeMultiplier(0)).toBe(1);
     expect(importFadeMultiplier(-3)).toBe(1);
     expect(importFadeMultiplier(14)).toBeCloseTo(0.4966, 3);
     expect(importFadeMultiplier(28)).toBeLessThan(importFadeMultiplier(14));
   });
-  it("reads reinforcedAt from the entities and falls back to the creation time", () => {
+  it("reads reinforcedAt from the entities and falls back to the creation time", async () => {
     expect(reinforcedAtOf(JSON.stringify(["owner-private", "x", "reinforcedAt:1234"]), 5)).toBe(1234);
     expect(reinforcedAtOf(JSON.stringify(["owner-private", "x"]), 5)).toBe(5);
     expect(reinforcedAtOf("not json", 7)).toBe(7);
   });
-  it("cuts at the last sentence that fits", () => {
+  it("cuts at the last sentence that fits", async () => {
     const text = "One is here. Two is here. Three is here.";
     expect(cutAtSentence(text, 100)).toBe(text);
     expect(cutAtSentence(text, 26)).toBe("One is here. Two is here.");
     expect(cutAtSentence(text, 15)).toBe("One is here.");
     expect(cutAtSentence(text, 5)).toBeUndefined();
   });
-  it("labels each tier and facet", () => {
+  it("labels each tier and facet", async () => {
     expect(pipKindLabel("commitment", "observed")).toBe("Commitments (confirmed)");
     expect(pipKindLabel("self-trait", "observed")).toBe("About me (confirmed)");
     expect(pipKindLabel("relation", "attested")).toBe("How we work together");
@@ -629,7 +641,7 @@ describe("I-24 and the copy rules", () => {
     for (const [name, text] of [...files, ...docs]) expect(text.includes(EM_DASH), name).toBe(false);
     for (const value of [...Object.values(PIP_ATTRIBUTION), PIP_IMPORTED_SUFFIX]) expect(value).not.toContain(EM_DASH);
   });
-  it("avoids the words the copy rules forbid", () => {
+  it("avoids the words the copy rules forbid", async () => {
     for (const [name, text] of [...files.filter(([n]) => !n.endsWith(".test.ts")), ...docs]) {
       expect(text, name).not.toMatch(/\b(safe|safety|unsafe)\b/i);
       expect(text, name).not.toMatch(/always-on|self-evolving/i);

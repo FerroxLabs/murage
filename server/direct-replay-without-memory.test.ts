@@ -52,7 +52,8 @@ it("a direct reply made with memory the owner then forgot is withheld from the r
   expect(index).toMatch(/floor: memoryState\(\)\.mode === "active"(?: && [^?\n]+)? \? null\n\s+: \(rows\) => roomTranscriptWithoutMemory\(/);
   expect(index).toContain("projectCardRun: Boolean(opts?.projectCardRun)");
   const loop = readFileSync(fileURLToPath(new URL("./memory/turn-replay-inputs.ts", import.meta.url)), "utf8");
-  expect(loop).toContain("replayFloor = floor ? floor(activeMessages) : undefined;");
+  expect(loop).toContain("const checked = floor(batch);");
+  expect(loop).toContain("messages.push(...(checked?.messages ?? batch));");
   const replayDeclaration = loop.split("\n").find(line => line.includes("replayableMessages = (projectCardRun"));
   expect(replayDeclaration).toContain("projectCardRun ? [] : (replayFloor?.messages ?? activeMessages)");
   // Astra r1 #5: an owner line answering the withheld reply quotes the withheld line

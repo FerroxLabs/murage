@@ -1,8 +1,18 @@
+import { LEDGER_REFUSAL_LINE } from "../ledger-refusal.ts";
+const sealedProxyRefusal = { jsonrpc: "2.0", id: null, error: {
+  code: -32099, message: LEDGER_REFUSAL_LINE,
+  data: { code: "MEMORY_CONTEXT_REVOKED", terminal: true },
+} };
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { readMcpCatalog, registerCloudMcpCatalog, publishCloudMcpCatalog, publicationFailureFrame } from "../mcp-listed.ts";
+// control migration: real bound proxy ingress; existing assertions retained.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The real stdio proxy, run as a process against a stand-in for the harness relay.
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { boundProxyState, spawnBoundProxy } from "../testing/bound-proxy-fixture.ts";
 import { once } from "node:events";
-import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
+import { createServer, type IncomingHttpHeaders, type Server, type ServerResponse } from "node:http";
 import { dirname, join } from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -11,46 +21,60 @@ import { afterEach, describe, expect, it } from "vitest";
 const ENTRY = join(dirname(fileURLToPath(import.meta.url)), "remote-mcp-proxy.ts");
 let server: Server | null = null;
 let child: ChildProcessWithoutNullStreams | null = null;
+/** C11 v3.1 P-1: how many of the next catalog publications the stand-in refuses. */
+let refuseCatalogPosts = 0;
 
-afterEach(async () => {
-  child?.kill();
+async function stop() {
+  refuseCatalogPosts = 0;
+  if (child && child.exitCode === null && child.signalCode === null) {
+    const closed = once(child, "close"); child.kill(); await closed;
+  }
   child = null;
   if (server) await new Promise<void>((resolve) => server!.close(() => resolve()));
   server = null;
-});
+}
+afterEach(stop);
 
 type Posted = { url: string; headers: IncomingHttpHeaders; body: Record<string, any> };
-type Answer = { status?: number; contentType?: string; body?: string; headers?: Record<string, string> };
+type Answer = { status?: number; contentType?: string; body?: string; headers?: Record<string, string>; custom?: (res: ServerResponse) => void };
 
-async function start(answer: (posted: Posted) => Answer, argvName = "comfy") {
+async function start(answer: (posted: Posted) => Answer, argvName = "comfy", marker?: string, publication?: { path: string; threadId: string }) {
   const posted: Posted[] = [];
   server = createServer(async (req, res) => {
     let raw = "";
     for await (const chunk of req) raw += chunk;
     const entry: Posted = { url: req.url ?? "", headers: req.headers, body: raw ? JSON.parse(raw) : {} };
     posted.push(entry);
-    const reply = answer(entry);
+    const reply = publication && entry.url.startsWith("/api/internal/mcp-catalog/") && refuseCatalogPosts > 0 && refuseCatalogPosts--
+      ? { status: 403, body: "{}" }
+      : publication && entry.url.startsWith("/api/internal/mcp-catalog/")
+      ? { status: entry.headers.authorization === "Bearer turn-token-0123" && publishCloudMcpCatalog(entry.url.split("/").at(-1)!, publication.threadId, entry.body) ? 200 : 403, body: "{}" }
+      : answer(entry);
+    if (reply.custom) return reply.custom(res);
     res.writeHead(reply.status ?? 200, { "content-type": reply.contentType ?? "application/json", ...(reply.headers ?? {}) });
     res.end(reply.body ?? "");
   });
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
   const port = (server.address() as { port: number }).port;
-  child = spawn(process.execPath, ["--experimental-strip-types", ENTRY, "--server", argvName], {
-    env: { PATH: process.env.PATH ?? "", MURAGE_HARNESS_URL: `http://127.0.0.1:${port}`, MURAGE_MCP_TOKEN: "turn-token-0123" },
+  child = await spawnBoundProxy("remoteMcp", process.execPath, ["--experimental-strip-types", ENTRY, "--server", argvName], {
+    windowsHide: true,
+    env: { PATH: process.env.PATH ?? "", ...(marker ? { MURAGE_MCP_LISTED_FILE: marker } : {}), ...(publication ? { MURAGE_MCP_LISTED_URL: registerCloudMcpCatalog(publication.path, publication.threadId, `http://127.0.0.1:${port}`) } : {}), MURAGE_HARNESS_URL: `http://127.0.0.1:${port}`, MURAGE_MCP_TOKEN: "turn-token-0123" },
     stdio: ["pipe", "pipe", "pipe"],
   });
   const lines = readline.createInterface({ input: child.stdout });
   const queue: Array<Record<string, any>> = [];
+  const accepted: Array<Record<string, any>> = [];
   const waiters: Array<(value: Record<string, any>) => void> = [];
   lines.on("line", (line) => {
     const frame = JSON.parse(line);
+    accepted.push(frame);
     const waiter = waiters.shift();
     if (waiter) waiter(frame); else queue.push(frame);
   });
   const next = () => new Promise<Record<string, any>>((resolve) => { const queued = queue.shift(); if (queued) resolve(queued); else waiters.push(resolve); });
-  const write = (message: object) => child!.stdin.write(`${JSON.stringify(message)}\n`);
-  return { posted, next, write };
+  const write = (message: object) => child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
+  return { posted, next, write, accepted };
 }
 
 describe("the stdio proxy for one link server", () => {
@@ -103,30 +127,45 @@ describe("the stdio proxy for one link server", () => {
 
   for (const [label, status, code] of [["wrong-address 502", 502, "wrong-address"], ["a bare 404", 404, "wrong-address"], ["wrong-address 404", 404, "wrong-address"]] as const) {
     it(`does not retry ${label}: the call may already have run`, async () => {
-      const { posted, next, write } = await start((entry) => {
+      const { posted, next, write, accepted } = await start((entry) => {
         if (entry.body.method === "initialize") return { headers: { "mcp-session-id": "s" }, body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, result: {} }) };
         if (entry.body.method === "tools/call") return { status, body: label === "a bare 404" ? "" : JSON.stringify({ code }) };
         return { status: 202 };
       });
       write({ jsonrpc: "2.0", id: 1, method: "initialize", params: { capabilities: {} } });
       await next();
+      accepted.length = 0;
+      const terminal = Promise.race([once(child!, "close"), once(child!.stdout, "data")]);
       write({ jsonrpc: "2.0", id: 2, method: "tools/call", params: {} });
-      expect(await next()).toMatchObject({ id: 2, result: { isError: true } });
+      // red-at-4df086541: design 399; an unknown transport failure cannot
+      // become a tool result. Preserve the exact no-retry assertions below.
+      if (status >= 500 || label === "a bare 404") {
+        await terminal;
+        expect(accepted).toEqual([]);
+        // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be9 / 6a9dfe7db86: also require the authenticated fixed terminal receipt.
+        expect(boundProxyState(child!)).toEqual({ sealed: true, refusals: 1, terminal: sealedProxyRefusal });
+      } else expect(await next()).toMatchObject({ id: 2, result: { isError: true } });
       expect(posted.filter((entry) => entry.body.method === "tools/call")).toHaveLength(1);
       expect(posted.filter((entry) => entry.body.method === "initialize")).toHaveLength(1);
     });
   }
 
   it("retries a lost session only once", async () => {
-    const { posted, next, write } = await start((entry) => {
+    const { posted, next, write, accepted } = await start((entry) => {
       if (entry.body.method === "initialize") return { headers: { "mcp-session-id": "s" }, body: JSON.stringify({ jsonrpc: "2.0", id: entry.body.id, result: {} }) };
       if (entry.body.method === "tools/call") return { status: 502, body: JSON.stringify({ code: "session-gone" }) };
       return { status: 202 };
     });
     write({ jsonrpc: "2.0", id: 1, method: "initialize", params: { capabilities: {} } });
     await next();
+    accepted.length = 0;
+    const terminal = Promise.race([once(child!, "close"), once(child!.stdout, "data")]);
     write({ jsonrpc: "2.0", id: 2, method: "tools/call", params: {} });
-    expect(await next()).toMatchObject({ id: 2, result: { isError: true } });
+    // red-at-4df086541: exhausted session recovery is terminal (design 399).
+    await terminal;
+    expect(accepted).toEqual([]);
+    // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be9 / 6a9dfe7db86: also require the authenticated fixed terminal receipt.
+    expect(boundProxyState(child!)).toEqual({ sealed: true, refusals: 1, terminal: sealedProxyRefusal });
     expect(posted.filter((entry) => entry.body.method === "tools/call")).toHaveLength(2);
   });
 
@@ -156,7 +195,9 @@ describe("the stdio proxy for one link server", () => {
     ]);
   });
 
-  it("answers every id: a relay failure becomes the relay's sentence, never silence", async () => {
+  // red-at-4df086541: design line 399 makes relay transport loss terminal;
+  // the completed sign-in decision remains an ordinary gated policy refusal.
+  it("answers policy refusals and seals every relay transport failure", async () => {
     const { next, write } = await start((entry) => {
       if (entry.body.method === "tools/call") return { status: 401, body: JSON.stringify({ code: "sign-in-ended", error: "Your sign-in to cloud.comfy.org has ended. Sign in again." }) };
       if (entry.body.method === "tools/list") return { status: 502, body: "<html>upstream secret page</html>" };
@@ -165,34 +206,51 @@ describe("the stdio proxy for one link server", () => {
     });
     write({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "x" } });
     expect(await next()).toEqual({ jsonrpc: "2.0", id: 1, result: { content: [{ type: "text", text: "Your sign-in to cloud.comfy.org has ended. Sign in again." }], isError: true } });
-    write({ jsonrpc: "2.0", id: 2, method: "tools/list" });
-    const listed = await next();
-    expect(listed).toMatchObject({ id: 2, error: { code: -32000 } });
-    expect(JSON.stringify(listed)).not.toContain("upstream secret page");
-    write({ jsonrpc: "2.0", id: 3, method: "ping" });
-    expect(await next()).toMatchObject({ id: 3, error: { code: -32000 } });
-    write({ jsonrpc: "2.0", id: 4, method: "resources/list" });
-    expect(await next()).toMatchObject({ id: 4, error: { code: -32000 } });
-    write({ jsonrpc: "2.0", id: 5, method: "tools/call", params: {} });
-    expect(await next()).toMatchObject({ id: 5, result: { isError: true } });
+    await stop();
+    for (const [id, method, answer] of [
+      [2, "tools/list", { status: 502, body: "<html>upstream secret page</html>" }],
+      [3, "ping", { body: "   " }],
+      [4, "resources/list", { body: "not json at all" }],
+      [5, "tools/call", { body: "not json at all" }],
+    ] as const) {
+      const run = await start(() => answer);
+      const closed = once(child!, "close");
+      const replied = once(child!.stdout, "data");
+      run.write({ jsonrpc: "2.0", id, method, params: {} });
+      await Promise.race([closed, replied]);
+      expect(run.accepted).toEqual([]);
+      expect(JSON.stringify(run.accepted)).not.toContain("upstream secret page");
+      // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be9 / 6a9dfe7db86: also require the authenticated fixed terminal receipt.
+      expect(boundProxyState(child!)).toEqual({ sealed: true, refusals: 1, terminal: sealedProxyRefusal });
+      await stop();
+    }
   });
 
   it("an answer for a different id is not handed back as this one", async () => {
-    const { next, write } = await start((entry) => ({ body: JSON.stringify({ jsonrpc: "2.0", id: 9999, result: { wrong: true } }) + (entry.body.id ? "" : "") }));
+    const { accepted, write } = await start((entry) => ({ body: JSON.stringify({ jsonrpc: "2.0", id: 9999, result: { wrong: true } }) + (entry.body.id ? "" : "") }));
+    const closed = once(child!, "close");
+    const replied = once(child!.stdout, "data");
     write({ jsonrpc: "2.0", id: 1, method: "tools/list" });
-    const frame = await next();
-    expect(frame).toMatchObject({ id: 1, error: { code: -32000 } });
-    expect(JSON.stringify(frame)).not.toContain("wrong");
+    await Promise.race([closed, replied]);
+    // red-at-4df086541; design line 399: wrong-frame failure is terminal.
+    expect(accepted).toEqual([]);
+    expect(JSON.stringify(accepted)).not.toContain("wrong");
+    // MAIN RULING INT-CONFLICT-DEFAULT 0058cec1be9 / 6a9dfe7db86: also require the authenticated fixed terminal receipt.
+    expect(boundProxyState(child!)).toEqual({ sealed: true, refusals: 1, terminal: sealedProxyRefusal });
   });
 
-  it("ignores a reply frame from the engine and exits when stdin closes", async () => {
-    const { next, write } = await start(() => ({ status: 202 }));
+  it("refuses an unbound engine reply and exits when stdin closes", async () => {
+    const { accepted, posted, write } = await start(() => ({ status: 202 }));
+    const closed = once(child!, "close");
     write({ jsonrpc: "2.0", id: 50, result: {} });
     write({ jsonrpc: "2.0", id: 51, method: "tools/list" });
-    expect(await next()).toMatchObject({ id: 51 });
-    const closed = once(child!, "close");
     child!.stdin.end();
     await closed;
+    // red-at-4df086541; design lines 393–399 require an already-bound ID.
+    expect(accepted).toEqual([]);
+    expect(posted).toEqual([]);
+    // The parent refuses the unbound response before the child sees a frame.
+    expect(boundProxyState(child!)).toEqual({ sealed: true, refusals: 1 });
   });
 
   it("the server name is read from argv, and the token never appears on stdout", async () => {
@@ -254,7 +312,7 @@ describe("the stdio proxy forwards an elicitation", () => {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const port = (server.address() as { port: number }).port;
-    child = spawn(process.execPath, ["--experimental-strip-types", ENTRY, "--server", "spicy"], {
+    child = await spawnBoundProxy("remoteMcp", process.execPath, ["--experimental-strip-types", ENTRY, "--server", "spicy"], {
       env: { PATH: process.env.PATH ?? "", MURAGE_HARNESS_URL: `http://127.0.0.1:${port}`, MURAGE_MCP_TOKEN: "turn-token-0123" },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -267,7 +325,7 @@ describe("the stdio proxy forwards an elicitation", () => {
       if (waiter) waiter(frame); else queue.push(frame);
     });
     const next = () => new Promise<Record<string, any>>((resolve) => { const queued = queue.shift(); if (queued) resolve(queued); else waiters.push(resolve); });
-    const write = (message: object) => child!.stdin.write(`${JSON.stringify(message)}\n`);
+    const write = (message: object) => child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
     return { posted, next, write, answered };
   }
 
@@ -349,7 +407,7 @@ describe("the stdio proxy keeps each call's elicitations apart", () => {
     server.listen(0, "127.0.0.1");
     await once(server, "listening");
     const port = (server.address() as { port: number }).port;
-    child = spawn(process.execPath, ["--experimental-strip-types", ENTRY, "--server", "par"], {
+    child = await spawnBoundProxy("remoteMcp", process.execPath, ["--experimental-strip-types", ENTRY, "--server", "par"], {
       env: { PATH: process.env.PATH ?? "", MURAGE_HARNESS_URL: `http://127.0.0.1:${port}`, MURAGE_MCP_TOKEN: "turn-token-0123" },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -363,7 +421,7 @@ describe("the stdio proxy keeps each call's elicitations apart", () => {
         await new Promise<void>((resolve) => waiters.push(resolve));
       }
     };
-    const write = (message: object) => child!.stdin.write(`${JSON.stringify(message)}\n`);
+    const write = (message: object) => child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
     write({ jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: { elicitation: {} }, clientInfo: { name: "claude", version: "1" } } });
     await seen((frame) => frame.id === 1);
     write({ jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "x", arguments: { who: "a" } } });
@@ -380,3 +438,114 @@ describe("the stdio proxy keeps each call's elicitations apart", () => {
     expect(posted.find((entry) => entry.body.method === undefined && entry.body.id === 1)?.headers["mcp-session-id"]).toBe("sess-p");
   });
 });
+
+it("c11-cloud-remote-catalog observes streamed pagination and resource capability", async () => {
+  const marker = join(mkdtempSync(join(tmpdir(), "c11-remote-")), "generation.remote");
+  const { next, write } = await start(({ body }) => ({ contentType: "text/event-stream", body: `data: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result: body.method === "initialize" ? { capabilities: { resources: {}, tools: {} } } : body.params?.cursor ? { tools: [{ name: "last" }] } : { tools: [{ name: "first" }], nextCursor: "page2" } })}\n\n` }), "fixture", marker);
+  write({ id: 0, method: "initialize" }); await next();
+  write({ id: 1, method: "tools/list" }); await next();
+  await expect.poll(() => readMcpCatalog(marker)?.complete).toBe(false);
+  write({ id: "1", method: "tools/list", params: { cursor: "page2" } }); await next();
+  await expect.poll(() => readMcpCatalog(marker)).toMatchObject({ complete: true, resources: true, tools: ["first", "last"] });
+});
+
+it("c11-cloud-remote-catalog: namespace publication reaches only its registered driver path", async () => {
+  const marker = join(mkdtempSync(join(tmpdir(), "c11-cloud-catalog-")), "generation.remote");
+  const { next, write } = await start(({ body }) => ({ body: JSON.stringify({ jsonrpc: "2.0", id: body.id, result: body.method === "initialize" ? { capabilities: { tools: {}, resources: {} } } : { tools: [{ name: "served" }] } }) }), "fixture", "/not-mounted/generation.remote", { path: marker, threadId: "fixture-thread" });
+  write({ id: 0, method: "initialize" }); await next();
+  write({ id: 1, method: "tools/list" }); await next();
+  await expect.poll(() => readMcpCatalog(marker)).toMatchObject({ complete: true, resources: true, tools: ["served"] });
+  const url = registerCloudMcpCatalog(marker, "owner-thread", "http://127.0.0.1");
+  expect(publishCloudMcpCatalog(url.split("/").at(-1)!, "other-thread", readMcpCatalog(marker))).toBe(false);
+});
+
+it("P-1 a refused catalog publication on a streamed list replaces only that response: the frames around it are forwarded, one answer per id, and the proxy lives on", async () => {
+  const marker = join(mkdtempSync(join(tmpdir(), "c11-remote-p1-")), "generation.remote");
+  const note = (n: number) => ({ jsonrpc: "2.0", method: "notifications/message", params: { n } });
+  const { next, write } = await start(({ body }) => body.method === "initialize"
+    ? { body: JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { capabilities: { tools: {} } } }) }
+    : { contentType: "text/event-stream", body: [note(1), { jsonrpc: "2.0", id: body.id, result: { tools: [{ name: "t" }] } }, note(2)].map((frame) => `data: ${JSON.stringify(frame)}\n\n`).join("") },
+  "fixture", marker, { path: marker, threadId: "owner-thread" });
+  write({ id: 0, method: "initialize" }); await next();
+  refuseCatalogPosts = 1; // the next catalog POST (list 1's request publication) is refused
+  write({ id: 1, method: "tools/list" });
+  const first = [await next(), await next(), await next()];
+  expect(first.filter((frame) => frame.id === 1)).toHaveLength(1);
+  expect(first.find((frame) => frame.id === 1)).toEqual(publicationFailureFrame(1));
+  expect(first.filter((frame) => frame.method === "notifications/message").map((frame) => frame.params.n).sort()).toEqual([1, 2]);
+  // the proxy did not exit: the next list is answered, and the catalog certifies
+  write({ id: 2, method: "tools/list" });
+  const second = [await next(), await next(), await next()];
+  expect(second.filter((frame) => frame.id === 2)).toHaveLength(1);
+  expect(second.find((frame) => frame.id === 2)!.result.tools).toEqual([{ name: "t" }]);
+  await expect.poll(() => readMcpCatalog(marker)).toMatchObject({ complete: true, tools: ["t"] });
+  expect(child!.exitCode).toBeNull();
+});
+
+const sse = (frame: object) => `data: ${JSON.stringify(frame)}\n\n`;
+const publicationRig = (answer: (posted: Posted) => Answer) => {
+  const marker = join(mkdtempSync(join(tmpdir(), "c11-remote-p1x-")), "generation.remote");
+  return { marker, started: () => start(answer, "fixture", marker, { path: marker, threadId: "owner-thread" }) };
+};
+const initialized = ({ body }: Posted) => body.method === "initialize" ? { body: JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { capabilities: { tools: {} } } }) } : null;
+
+it("P-1a a JSON answer whose publication is refused gets exactly the publication envelope, and the next list certifies", async () => {
+  const { marker, started } = publicationRig((posted) => initialized(posted) ?? { body: JSON.stringify({ jsonrpc: "2.0", id: posted.body.id, result: { tools: [{ name: "t" }] } }) });
+  const { next, write } = await started();
+  write({ id: 0, method: "initialize" }); await next();
+  refuseCatalogPosts = 1;
+  write({ id: 1, method: "tools/list" });
+  expect(await next()).toEqual(publicationFailureFrame(1));
+  write({ id: 2, method: "tools/list" });
+  expect(await next()).toEqual({ jsonrpc: "2.0", id: 2, result: { tools: [{ name: "t" }] } });
+  await expect.poll(() => readMcpCatalog(marker)).toMatchObject({ complete: true, tools: ["t"] });
+  expect(child!.exitCode).toBeNull();
+}, 20_000);
+
+// the answer is the LAST event and has no trailing blank line: only the end-of-stream flush emits it
+const unterminated = ({ body }: Posted) => ({ contentType: "text/event-stream", body: `data: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { tools: [{ name: "flushed" }] } })}` });
+it("P-1b (ok) the SSE decoder's end-of-stream flush delivers an unterminated final answer", async () => {
+  const { marker, started } = publicationRig((posted) => initialized(posted) ?? unterminated(posted));
+  const { next, write } = await started();
+  write({ id: 0, method: "initialize" }); await next();
+  write({ id: 1, method: "tools/list" });
+  expect(await next()).toEqual({ jsonrpc: "2.0", id: 1, result: { tools: [{ name: "flushed" }] } });
+  await expect.poll(() => readMcpCatalog(marker)).toMatchObject({ complete: true, tools: ["flushed"] });
+}, 20_000);
+it("P-1b (fail) the same unterminated stream with the publication refused gives exactly the publication envelope", async () => {
+  const { started } = publicationRig((posted) => initialized(posted) ?? unterminated(posted));
+  const { next, write } = await started();
+  write({ id: 0, method: "initialize" }); await next();
+  refuseCatalogPosts = 1;
+  write({ id: 1, method: "tools/list" });
+  expect(await next()).toEqual(publicationFailureFrame(1));
+  expect(child!.exitCode).toBeNull();
+}, 20_000);
+
+it("P-1c an elicitation during a refused publication reaches the engine, its reply reaches the server, and id 1 gets exactly the publication envelope", async () => {
+  let release!: () => void;
+  const replied = new Promise<void>((resolve) => { release = resolve; });
+  const { started } = publicationRig((posted) => {
+    const { body } = posted;
+    if (body.method === "tools/list") {
+      return { custom: (res) => {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        res.write(sse({ jsonrpc: "2.0", id: "srv-1", method: "elicitation/create", params: { message: "Run it?", requestedSchema: { type: "object", properties: {} } } }));
+        void replied.then(() => res.end(sse({ jsonrpc: "2.0", id: body.id, result: { tools: [{ name: "t" }] } })));
+      } };
+    }
+    if (body.method === undefined && body.id === "srv-1") { release(); return { status: 202 }; }
+    return initialized(posted) ?? { status: 202 };
+  });
+  const { posted, next, write } = await started();
+  write({ id: 0, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: { elicitation: {} } } }); await next();
+  refuseCatalogPosts = 1;
+  write({ id: 1, method: "tools/list" });
+  const ask = await next();
+  expect(ask).toMatchObject({ method: "elicitation/create", params: { message: "Run it?" } });
+  write({ jsonrpc: "2.0", id: ask.id, result: { action: "accept" } });
+  expect(await next()).toEqual(publicationFailureFrame(1));
+  await replied;
+  expect(posted.find((entry) => entry.body.method === undefined && entry.body.id === "srv-1")?.body).toMatchObject({ result: { action: "accept" } });
+  expect(child!.exitCode).toBeNull();
+}, 20_000);

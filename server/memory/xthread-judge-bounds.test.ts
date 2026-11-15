@@ -6,6 +6,7 @@
 // 7 + 17(K + 1), K the statements of one page lookup (K <= 15); a record past the chain or line cap judges no line; a kept verdict
 // costs no page lookup; a search whose candidates the rule refuses stops at the allowance; an allowance spent across several affordable
 // lookups stops, withholds and keeps nothing.
+import { observeSqlReads } from "./testing/sql-read-observer.ts";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { database } from "../database.ts";
 import { lineageReaderOf, readerWithheldMessage } from "./disclosures.ts";
@@ -20,18 +21,12 @@ import { access, channelPerson, exchange, hits, QUERY, resetWorld, world } from 
 afterEach(() => { vi.restoreAllMocks(); });
 const big = () => LineageAllowance.tool(1_000_000_000);
 
-/** Counts every get and all of every statement prepared from now on, while `on`. */
+/** Counts every get, all and iterate of every statement prepared from now on, while `on`. */
 function trace() {
   const db = database(), real = db.prepare.bind(db);
   const state = { on: false, count: 0 };
-  vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
-    const statement = real(sql) as unknown as Record<"get" | "all", (...args: unknown[]) => unknown>;
-    for (const method of ["get", "all"] as const) {
-      const call = statement[method].bind(statement);
-      statement[method] = (...args: unknown[]) => { if (state.on) state.count++; return call(...args); };
-    }
-    return statement as unknown as ReturnType<typeof real>;
-  }) as typeof db.prepare);
+  const observer = { call() { if (state.on) state.count++; } };
+  vi.spyOn(db, "prepare").mockImplementation(sql => observeSqlReads(real(sql), sql, observer));
   return { state, measure<T>(run: () => T): { value: T; statements: number } { const before = state.count; state.on = true; try { return { value: run(), statements: state.count - before }; } finally { state.on = false; } } };
 }
 function record(id: string, scope: string, evidence: ReadonlyArray<string>): void {

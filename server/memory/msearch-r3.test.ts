@@ -7,6 +7,7 @@
 //  P2  a normal checkpoint rollover ran a whole-index FTS optimize and a truncating WAL checkpoint per batch.
 // Searches here run through the real index and the real eligibility read, the way the helper answers them, and compare
 // WHOLE responses between a world that holds the refused record and a world that does not.
+import { openTestIndex, put } from "./testing/open-index.ts";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -60,13 +61,13 @@ function helperBridge(index: MemoryIndex, vector: number[] | null): MemorySearch
     } finally { eligibility.close(); }
   } };
 }
-function world(records: IndexedMemory[], vectors: Record<string, number[]> = {}) {
+async function world(records: IndexedMemory[], vectors: Record<string, number[]> = {}) {
   closeMemoryIndexReader();
   rmSync(INDEX_PATH(), { force: true }); rmSync(`${INDEX_PATH()}-wal`, { force: true }); rmSync(`${INDEX_PATH()}-shm`, { force: true });
-  const index = new MemoryIndex(INDEX_PATH());
+  const index = await openTestIndex(INDEX_PATH());
   index.prepareModel("model");
-  index.upsert(records);
-  for (const record of records) if (vectors[record.id]) index.vector(record, "model", 0, vectors[record.id]);
+  await put(index, records);
+  for (const record of records) if (vectors[record.id]) await index.vector(record, "model", 0, vectors[record.id]);
   return index;
 }
 
@@ -81,10 +82,10 @@ describe("round 3 P1: a refused record leaves no trace in anything a reader sees
       add("kept", scope(), readable().text, true);
       add("refused", scope(), refused().text, false);
       const access = accessOf();
-      const without = world([readable()], vectors);
+      const without = await world([readable()], vectors);
       const absent = await searchMemory(QUERY, access, helperBridge(without, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), ...options, caller: "tool", limit: 20 });
       without.close();
-      const withIt = world([readable(), refused()], vectors);
+      const withIt = await world([readable(), refused()], vectors);
       const present = await searchMemory(QUERY, access, helperBridge(withIt, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), ...options, caller: "tool", limit: 20 });
       withIt.close();
       expect(absent.hits.map(hit => hit.id)).toEqual(["kept"]);
@@ -96,7 +97,7 @@ describe("round 3 P1: a refused record leaves no trace in anything a reader sees
 
   it("the answer carries no helper counts, memory figures or timings", async () => {
     add("kept", scope(), readable().text, true);
-    const index = world([readable()], vectors);
+    const index = await world([readable()], vectors);
     let seen: Record<string, unknown> = {};
     const answer = await searchMemory(QUERY, accessOf(), helperBridge(index, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), lexical: null, telemetry: facts => { seen = facts as unknown as Record<string, unknown>; } });
     index.close();
@@ -107,13 +108,13 @@ describe("round 3 P1: a refused record leaves no trace in anything a reader sees
   it("coverage is judged on records the reader may read: a refused record without a vector does not change it", async () => {
     add("kept", scope(), readable().text, true);
     add("refused", scope(), refused().text, false);
-    const index = world([readable()], { kept: [0.6, 0.8] });  // the refused record is eligible but has no vector
+    const index = await world([readable()], { kept: [0.6, 0.8] });  // the refused record is eligible but has no vector
     const answer = await searchMemory(QUERY, accessOf(), helperBridge(index, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), lexical: null });
     index.close();
     expect(answer.coverageComplete).toBe(true);
     expect(answer).not.toHaveProperty("recentFallback");
     add("waiting", scope(), "harbour lantern waiting for its vector", true);
-    const behind = world([readable()], { kept: [0.6, 0.8] });
+    const behind = await world([readable()], { kept: [0.6, 0.8] });
     // a different query: the first answer is cached by (query, data revision), and this fixture adds a record without moving the revision
     const incomplete = await searchMemory(`${QUERY} vector`, accessOf(), helperBridge(behind, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), lexical: null });
     behind.close();
@@ -176,7 +177,7 @@ describe("the helper's answer", () => {
     const { answerQuery } = await import("./worker-query.ts");
     const scope = ensureScope("bot", "a");
     add("kept", scope, "harbour lantern notes", true);
-    const index = world([entry("kept", scope, "harbour lantern notes")], { kept: [1, 0] });
+    const index = await world([entry("kept", scope, "harbour lantern notes")], { kept: [1, 0] });
     const eligibility = new MemoryEligibility(join(DATA_DIR, "messages.db"));
     const access = accessOf();
     const input: MemorySearchInput = { query: QUERY, scopeIds: [...access.scopeIds], policyRevision: access.policyRevision, deletionEpoch: access.deletionEpoch, historical: false, cursor: "", limit: 10, semantic: true };
@@ -206,14 +207,14 @@ describe("round 3 P2: refused candidates never crowd readable ones out", () => {
   }
   for (const [name, options] of [["the helper's lists", { lexical: null }], ["the main process's word index", {}]] as const) {
     it(`201 refused matches ahead of one readable match: the readable one is found (${name})`, async () => {
-      const index = world(crowded(201));
+      const index = await world(crowded(201));
       const answer = await searchMemory(QUERY, accessOf(), helperBridge(index, null), { allowance: LineageAllowance.tool(1_000_000_000), ...options, caller: "tool", limit: 20 });
       index.close();
       expect(answer.hits.map(hit => hit.id)).toEqual(["kept"]);
       expect(answer.hits[0].text).toBe(keptText);
     });
     it(`more refused matches than the budget covers: nothing leaks, and the answer says coverage is incomplete (${name})`, async () => {
-      const index = world(crowded(1200));
+      const index = await world(crowded(1200));
       const answer = await searchMemory(QUERY, accessOf(), helperBridge(index, null), { allowance: LineageAllowance.tool(1_000_000_000), ...options, caller: "tool", limit: 20 });
       index.close();
       expect(answer.hits.some(hit => hit.id.startsWith("refused"))).toBe(false);
@@ -229,38 +230,38 @@ describe("round 3 P2: a rollover deletion is the stepped maintenance's work, not
     db.exec = (sql: string) => { statements.push(sql); original(sql); };
     return statements;
   };
-  const seedRolled = (index: MemoryIndex) => index.upsert([1, 2, 3].map(version => ({ id: "checkpoint:t", version, scopeId: "s", text: `Working evidence: version ${version}`, deleted: false })));
+  const seedRolled = async (index: MemoryIndex) => await put(index, [1, 2, 3].map(version => ({ id: "checkpoint:t", version, scopeId: "s", text: `Working evidence: version ${version}`, deleted: false })));
 
-  it("deleting rolled checkpoint versions runs no optimize and no truncating checkpoint, and owes the stepped merge", () => {
-    const index = new MemoryIndex(INDEX_PATH());
-    seedRolled(index);
+  it("deleting rolled checkpoint versions runs no optimize and no truncating checkpoint, and owes the stepped merge", async () => {
+    const index = await openTestIndex(INDEX_PATH());
+    await seedRolled(index);
     const statements = sqlLog(index);
-    index.upsert([1, 2].map(version => ({ id: "checkpoint:t", version, scopeId: "s", text: "", deleted: true, rolled: true })));
+    await put(index, [1, 2].map(version => ({ id: "checkpoint:t", version, scopeId: "s", text: "", deleted: true, rolled: true })));
     expect(statements.filter(sql => /optimize|wal_checkpoint/i.test(sql))).toEqual([]);
     expect(index.maintenanceOwed()).toBe(true);
     // the stepped maintenance does the merge in short steps and then has nothing owed
     let steps = 0;
-    while (!index.purgeRolledCheckpoints().done) if (++steps > 10_000) throw new Error("the stepped maintenance did not finish");
+    while (!(await index.purgeRolledCheckpoints()).done) if (++steps > 10_000) throw new Error("the stepped maintenance did not finish");
     expect(index.maintenanceOwed()).toBe(false);
     index.close();
   });
 
   // 1.0.3 rehearsal 2: a forget used to merge the whole word index and truncate the log in its own batch, about 47 MB per 16
   // deletions on the owner's index. It now owes the merge to the same stepped maintenance a rollover does.
-  it("a forget owes the stepped merge too: no whole-index pass and no truncating checkpoint in its batch", () => {
-    const index = new MemoryIndex(INDEX_PATH());
-    seedRolled(index);
+  it("a forget owes the stepped merge too: no whole-index pass and no truncating checkpoint in its batch", async () => {
+    const index = await openTestIndex(INDEX_PATH());
+    await seedRolled(index);
     const statements = sqlLog(index);
-    index.upsert([{ id: "checkpoint:t", version: 3, scopeId: "s", text: "", deleted: true }]);
+    await put(index, [{ id: "checkpoint:t", version: 3, scopeId: "s", text: "", deleted: true }]);
     expect(statements.filter(sql => /optimize|wal_checkpoint/i.test(sql))).toEqual([]);
     expect(index.maintenanceOwed()).toBe(true);
     let steps = 0;
-    while (!index.purgeRolledCheckpoints().done) if (++steps > 10_000) throw new Error("the stepped maintenance did not finish");
+    while (!(await index.purgeRolledCheckpoints()).done) if (++steps > 10_000) throw new Error("the stepped maintenance did not finish");
     expect(index.maintenanceOwed()).toBe(false);
     index.close();
   });
 
-  it("only a rolled checkpoint version projects as a rollover deletion; a forgotten one and an archived fact do not", () => {
+  it("only a rolled checkpoint version projects as a rollover deletion; a forgotten one and an archived fact do not", async () => {
     const scope = ensureScope("bot", "a"), db = database();
     const put = (id: string, version: number, kind: string, state: string, status: string) => {
       db.prepare("INSERT INTO memory_records VALUES(?,?,?,?,?,'assistant-inference',?,0,0,NULL,NULL,0)").run(id, version, scope, kind, `${kind} ${id} ${version}`, state);

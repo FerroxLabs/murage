@@ -1,11 +1,12 @@
+import { recentViewPage, viewRecordText, RecallWorkBudget } from './recall-view-index.ts';
 import { randomUUID } from "node:crypto";
 import { BACKGROUND_BUSY_MS, database, DatabaseBusyError, isDatabaseBusy, withBusyBudget } from "../database.ts";
 import { assertMemoryAccess, type MemoryAccess } from "./policy.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { captureWork } from "./chunks.ts";
 import { refreshMemoryCheckpoint } from "./consolidate.ts";
-import { CURRENT_MEMORY, REACHABLE_RECORD } from "./eligibility.ts";
-import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
+import { CURRENT_MEMORY } from "./eligibility.ts";
+import { isPipKind, PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 import type { IndexHit } from "./index.ts";
 import { byScore } from "./ref-order.ts";
 
@@ -19,7 +20,7 @@ export function materializeRecentMemory(access: MemoryAccess, signal?: AbortSign
   const owner=`recall-${randomUUID()}`,start=performance.now();let completed=0;
   for(let n=0;n<2&&performance.now()-start<25;n++){
     signal?.throwIfAborted();assertMemoryAccess(access);
-    const work=claimMemoryJob(owner,Date.now(),access.scopeIds,{...exclude?.messageIds?.length?{exclude:{threadId:access.threadId,messageIds:exclude.messageIds}}:{},...exclude?.withinMs!==undefined?{recentWithinMs:exclude.withinMs}:{}});
+    const work=claimMemoryJob(owner,Date.now(),access.view,{...exclude?.messageIds?.length?{exclude:{threadId:access.threadId,messageIds:exclude.messageIds}}:{},...exclude?.withinMs!==undefined?{recentWithinMs:exclude.withinMs}:{}});
     if(!work)break;
     const result=captureWork(work);
     signal?.throwIfAborted();assertMemoryAccess(access,work.scopeId);
@@ -45,27 +46,53 @@ export const RECENT_TEXT_ROWS=512;
  * authorization, so refused matches in one scope could push another scope's readable match out of the answer (msearch review
  * round 6). The number of matches is bounded where they are read: RECENT_TEXT_ROWS text rows shared across the scopes (at least
  * 8 each), so this never grows with the table. */
-export function recentMemoryHits(query:string,access:MemoryAccess):IndexHit[]{
+export function recentMemoryHits(query:string,access:MemoryAccess,budget=new RecallWorkBudget()):IndexHit[]{
   assertMemoryAccess(access);
-  const terms=keywordTerms(query);
-  if(!terms.length)return [];
-  // The window is each of the reader's own scopes' newest rows. It used to be the newest rows of the whole table, so what
-  // other readers wrote decided whether this reader's unindexed records were still inside it.
-  const scopes=[...new Set(access.scopeIds)].sort();
-  const perScope=Math.max(32,Math.floor(RECENT_VISIT_ROWS/Math.max(1,scopes.length)));
-  // Every scope gets its share of the text reads, whatever an earlier scope held: rows are matched per scope, and what
-  // matched is selected across all of them afterwards (msearch review round 5: one scope's unrelated rows used up the
-  // allowance before a later scope was visited).
-  const share=Math.min(128,Math.max(8,Math.floor(RECENT_TEXT_ROWS/Math.max(1,scopes.length))));
-  const pick=database().prepare(`SELECT r.id,r.version,r.text FROM memory_records r
-    WHERE r.rowid IN (SELECT rowid FROM (SELECT rowid,kind FROM memory_records INDEXED BY memory_records_scope WHERE scope_id=? AND state='active' ORDER BY rowid DESC LIMIT ${perScope}) WHERE kind NOT IN ${PIP_ALL_KINDS_SQL} LIMIT 256)
-    AND ${CURRENT_MEMORY} AND ${REACHABLE_RECORD}
-    AND NOT EXISTS (SELECT 1 FROM memory_projection_receipts p WHERE p.record_id=r.id AND p.record_version=r.version AND p.lexical_status='indexed')
-    ORDER BY r.rowid DESC LIMIT ${share}`);
-  const matches:IndexHit[]=[];
-  for(const scope of scopes)matches.push(...keywordScore(pick.all(scope),terms));
-  // Best match first, ties by (record id, version): never by when a record was written.
+  const terms=keywordTerms(query);if(!terms.length)return [];
+  const db=database(),rows=recentViewPage(db,access.view,Number.MAX_SAFE_INTEGER,RECENT_VISIT_ROWS,budget),matches:IndexHit[]=[];
+  let texts=0;
+  for(const ref of rows) {
+    if(texts>=RECENT_TEXT_ROWS)break;
+    const row=db.prepare(`SELECT r.kind,r.state,EXISTS(SELECT 1 FROM memory_projection_receipts p WHERE p.record_id=r.id AND p.record_version=r.version AND p.lexical_status='indexed') AS indexed FROM memory_records r WHERE r.id=? AND r.version=?`).get(ref.id,ref.version);
+    if(!row || row.state!=='active' || Number(row.indexed) || isPipKind(String(row.kind)))continue;
+    const text=viewRecordText(db,ref,budget);if(text===null)break;texts++;
+    matches.push(...keywordScore([{...ref,text}],terms));
+  }
   return matches.sort(byScore);
+}
+
+/** Producer owner: recall-scope (admitted references and authority).
+ * Consumer owner: salv-tri-b (deadline slicing). The shared request allowance
+ * bounds both reference visits and payload bytes; no scope list is enumerated. */
+export const RECENT_VIEW_SLICE=64;
+export async function recentMemoryHitsSliced(query:string,access:MemoryAccess,options:{deadlineAt:number;signal?:AbortSignal;workBudget?:RecallWorkBudget}):Promise<{hits:IndexHit[];complete:boolean}>{
+  options.signal?.throwIfAborted();assertMemoryAccess(access);
+  const terms=keywordTerms(query);if(!terms.length)return {hits:[],complete:true};
+  const db=database(),budget=options.workBudget??new RecallWorkBudget(),hits:IndexHit[]=[];
+  let before=Number.MAX_SAFE_INTEGER,visited=0,texts=0;
+  const finish=(complete:boolean)=>{
+    options.signal?.throwIfAborted();assertMemoryAccess(access);
+    return {hits:hits.sort(byScore),complete:complete&&performance.now()<options.deadlineAt};
+  };
+  while(visited<RECENT_VISIT_ROWS && texts<RECENT_TEXT_ROWS){
+    options.signal?.throwIfAborted();assertMemoryAccess(access);
+    if(performance.now()>=options.deadlineAt || budget.remaining===0)return finish(false);
+    const limit=Math.min(RECENT_VIEW_SLICE,RECENT_VISIT_ROWS-visited,budget.remaining);
+    const rows=recentViewPage(db,access.view,before,limit,budget);visited+=rows.length;
+    for(const ref of rows){
+      options.signal?.throwIfAborted();
+      if(performance.now()>=options.deadlineAt)return finish(false);
+      const row=db.prepare(`SELECT r.kind,r.state,EXISTS(SELECT 1 FROM memory_projection_receipts p WHERE p.record_id=r.id AND p.record_version=r.version AND p.lexical_status='indexed') AS indexed FROM memory_records r WHERE r.id=? AND r.version=?`).get(ref.id,ref.version);
+      if(!row || row.state!=='active' || Number(row.indexed) || isPipKind(String(row.kind)))continue;
+      const text=viewRecordText(db,ref,budget);if(text===null)return finish(false);texts++;
+      hits.push(...keywordScore([{...ref,text}],terms));
+      if(texts>=RECENT_TEXT_ROWS)return finish(false);
+    }
+    if(rows.length<limit)return finish(true);
+    before=rows.at(-1)!.rowid;
+    await yieldTurn();
+  }
+  return finish(false);
 }
 
 function keywordTerms(query:string):string[]{
@@ -99,9 +126,29 @@ const yieldTurn=()=>new Promise<void>(resolve=>setImmediate(resolve));
  * window of current records, the row cap, the byte cap, the time budget or the signal. Writes nothing and returns
  * candidates only: searchMemory checks every hit against current state, access, identity, audience and withheld
  * sources exactly as it does any other hit. Best matches first, ties by (record id, version). */
-export async function keywordMemoryHits(query:string,access:MemoryAccess,options:{limit?:number;budgetMs?:number;signal?:AbortSignal}={}):Promise<KeywordScan>{
+export async function keywordMemoryHits(query:string,access:MemoryAccess,options:{limit?:number;budgetMs?:number;signal?:AbortSignal;workBudget?:RecallWorkBudget}={}):Promise<KeywordScan>{
   assertMemoryAccess(access);
-  return keywordScan(database(),query,access.scopeIds,options);
+  const started=performance.now(),deadline=started+Math.min(KEYWORD_FALLBACK_BUDGET_MS,options.budgetMs??KEYWORD_FALLBACK_BUDGET_MS);
+  const budget=options.workBudget??new RecallWorkBudget(),db=database(),terms=keywordTerms(query);
+  const scan:KeywordScan={hits:[],visited:0,bytes:0,slices:0,complete:false};let before=Number.MAX_SAFE_INTEGER,window=0;
+  while(budget.remaining>0 && window<KEYWORD_FALLBACK_WINDOW) {
+    assertMemoryAccess(access);
+    if(options.signal?.aborted || performance.now()>=deadline)break;
+    const rows=recentViewPage(db,access.view,before,Math.min(KEYWORD_FALLBACK_SLICE,KEYWORD_FALLBACK_MAX_ROWS-scan.visited),budget);
+    scan.slices++;scan.visited+=rows.length;
+    if(!rows.length){scan.complete=true;break;}
+    for(const ref of rows) {
+      const row=db.prepare('SELECT kind,state FROM memory_records WHERE id=? AND version=?').get(ref.id,ref.version);
+      if(!row || row.state!=='active' || isPipKind(String(row.kind)))continue;
+      if(window++>=KEYWORD_FALLBACK_WINDOW)break;
+      const bytesBefore=budget.bytes,text=viewRecordText(db,ref,budget);if(text===null)return scan;
+      scan.bytes+=budget.bytes-bytesBefore;scan.hits.push(...keywordScore([{...ref,text}],terms));
+    }
+    before=rows.at(-1)!.rowid;
+    if(rows.length<KEYWORD_FALLBACK_SLICE){scan.complete=true;break;}
+    await yieldTurn();
+  }
+  scan.hits.sort(byScore);scan.hits=scan.hits.slice(0,options.limit??50);return scan;
 }
 export async function keywordScan(db:ReturnType<typeof database>,query:string,scopeIds:readonly string[],options:{limit?:number;budgetMs?:number;signal?:AbortSignal}={}):Promise<KeywordScan>{
   const started=performance.now(),deadline=started+Math.max(0,Math.min(KEYWORD_FALLBACK_BUDGET_MS,options.budgetMs??KEYWORD_FALLBACK_BUDGET_MS));

@@ -1,3 +1,4 @@
+import { withLegacyFixtureDb, insertLegacyFixtureMessage } from '../testing/approval-card.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -222,10 +223,12 @@ it("r8 #4: reconciling an unchanged roster on a first upgrade (no owner index) m
 
 const fakeBus = () => ({ store: { bots: [], groups: [], patchMessagePoint: (thread: string, id: string, patch: Partial<Message>) => { const current = readMessage(thread, id); if (!current) return null; const next = { ...current, ...patch } as Message; updateMessage(thread, next); return next; } } }) as unknown as ApprovalBus;
 function openCards(db: DatabaseSync, n: number, tool: string) {
-  db.exec("BEGIN");
-  db.prepare(`WITH RECURSIVE k(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM k WHERE i<?) INSERT INTO messages(thread_id,id,at,role,kind,text,json)
-    SELECT 'other','c'||i,i,'bot','options','x',json_object('id','c'||i,'at',i,'role','bot','kind','options','text','x','parentId',NULL,'card',json_object('title','c','options',json_array(),'requestId','r'||i,'tool',?)) FROM k`).run(n, tool);
-  db.exec("COMMIT");
+  withLegacyFixtureDb(db, legacy => {
+    legacy.exec("BEGIN");
+    legacy.prepare(`WITH RECURSIVE k(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM k WHERE i<?) INSERT INTO messages(thread_id,id,at,role,kind,text,json)
+      SELECT 'other','c'||i,i,'bot','options','x',json_object('id','c'||i,'at',i,'role','bot','kind','options','text','x','parentId',NULL,'card',json_object('title','c','options',json_array(),'requestId','r'||i,'tool',?)) FROM k`).run(n, tool);
+    legacy.exec("COMMIT");
+  });
 }
 it("r8 #4: before listen the start reads one page of the open-card list, the same at 20,000 and 200,000 unrelated open cards; the rest is settled after listen", { timeout: 300_000 }, async () => {
   const read: number[] = [], after: number[] = [];
@@ -233,7 +236,7 @@ it("r8 #4: before listen the start reads one page of the open-card list, the sam
     fresh();
     const db = database();
     openCards(db, n, "Bash");
-    insertMessage("zz-owned", { id: "dead", at: n + 1, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "c", options: [], requestId: "gone", tool: "ask_bot" } } as never);
+    insertLegacyFixtureMessage("zz-owned", { id: "dead", at: n + 1, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "c", options: [], requestId: "gone", tool: "ask_bot" } } as never);
     db.exec("DELETE FROM open_card; DELETE FROM transcript_index_state WHERE name='open_card'");
     ensureOpenCardIndex(db);
     const owned = new Set(["zz-owned"]), kinds = [stalePeerCardKind(), staleHostConsentCardKind()], high = messagesHighWater();
@@ -251,20 +254,22 @@ it("r8 #4: before listen the start reads one page of the open-card list, the sam
 // ── #5: the list completed during the rowid sweep is handed over explicitly ────────────────────────────────────────────────────
 it("r8 #5: when the open-card list completes during the descending sweep, the old peer card is dismissed through the handoff (not orphaned), and a card of this run is untouched", async () => {
   const db = database();
-  db.exec("BEGIN");
-  const put = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)");
-  for (let i = 1; i <= 40_001; i++) {
-    const card = i === 40 ? { title: "c", options: [], requestId: "gone", tool: "ask_bot" } : undefined;
-    const message = { id: `m${i}`, at: i, role: "bot", kind: card ? "options" : "text", text: "x", parentId: null, ...(card ? { card } : {}) };
-    put.run("room", message.id, i, "bot", message.kind, "x", JSON.stringify(message));
-  }
-  db.exec("COMMIT");
+  withLegacyFixtureDb(db, legacy => {
+    legacy.exec("BEGIN");
+    const put = legacy.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)");
+    for (let i = 1; i <= 40_001; i++) {
+      const card = i === 40 ? { title: "c", options: [], requestId: "gone", tool: "ask_bot" } : undefined;
+      const message = { id: `m${i}`, at: i, role: "bot", kind: card ? "options" : "text", text: "x", parentId: null, ...(card ? { card } : {}) };
+      put.run("room", message.id, i, "bot", message.kind, "x", JSON.stringify(message));
+    }
+    legacy.exec("COMMIT");
+  });
   db.exec("DELETE FROM open_card; DELETE FROM transcript_index_state WHERE name='open_card'"); // the list is still being built at the start
   const owned = new Set(["room"]), bus = fakeBus(), high = messagesHighWater();
   // the first descending slice (the newest 20,000 rows) holds no card
   expect(dismissStalePeerCards(bus, { after: high - 20_000, upTo: high }, owned)).toBe(0);
   ensureOpenCardIndex(db); // the list completes now; the descending walk stops
-  insertMessage("room", { id: "this-run", at: 50_000, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "c", options: [], requestId: "live", tool: "ask_bot" } } as never);
+  insertLegacyFixtureMessage("room", { id: "this-run", at: 50_000, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "c", options: [], requestId: "live", tool: "ask_bot" } } as never);
   expect(await settleStaleCardsFromList(bus, [stalePeerCardKind()], null, high, owned, async () => {})).toBe(1);
   expect(readMessage("room", "m40")?.card).toMatchObject({ answered: "unavailable", dismissed: true });
   expect(readMessage("room", "m40")?.card?.orphaned).toBeUndefined();
@@ -281,7 +286,7 @@ it("r8 #6: deleting the newest conversation brings the sweep mark down with it, 
     for (let i = 1; i <= 50; i++) insertMessage("newest", { id: `n${i}`, at: n + i, role: "user", kind: "text", text: "x", parentId: null } as Message);
     keepCardSweepThrough(messagesHighWater()); // a start finished its sweep through the newest row
     deleteThread("newest");
-    insertMessage("q", { id: "question", at: n + 100, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "q", options: ["a"], requestId: "dead-run" } } as never);
+    insertLegacyFixtureMessage("q", { id: "question", at: n + 100, role: "bot", kind: "options", text: "ask", parentId: null, card: { title: "q", options: ["a"], requestId: "dead-run" } } as never);
     const high = messagesHighWater();
     expect(high).toBe(n + 1); // the freed number is reused
     const from = cardSweepThrough(high);

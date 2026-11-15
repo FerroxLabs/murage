@@ -174,6 +174,41 @@ const UNLIMITED: PinBudgets = { verdicts: Infinity, sessionSound: Infinity, thre
 export interface VerdictReads { get(key: string): Verdict | undefined; has(key: string): boolean }
 
 export class VerdictStore {
+  // Incremental replay producer owner: new3-g5. Retained proof ownership
+  // consumer owner: new3-g2d (TURNSTART r14's existing private-store contract).
+  #replaySessionPools = new WeakMap<object, unknown>();
+  #replayProofSessions = new WeakMap<object, unknown>();
+  replaySessionPool<P>(connection: object): P | undefined {
+    return this.#replaySessionPools.get(connection) as P | undefined;
+  }
+  setReplaySessionPool<P>(connection: object, pool: P): void {
+    this.#replaySessionPools.set(connection, pool);
+  }
+  replayProofSession<P>(proof: object): P | undefined {
+    return this.#replayProofSessions.get(proof) as P | undefined;
+  }
+  setReplayProofSession<P>(proof: object, session: P): void {
+    this.#replayProofSessions.set(proof, session);
+  }
+  // Replay session stamps are connection-local proof inputs, revalidated on every
+  // use. Keep their storage with the other retained session bookkeeping.
+  #replaySessions = new WeakMap<object, Map<string, unknown>>();
+  replaySession<P>(connection: object, key: string): P | undefined {
+    return this.#replaySessions.get(connection)?.get(key) as P | undefined;
+  }
+  setReplaySession<P>(connection: object, key: string, proof: P): void {
+    let sessions = this.#replaySessions.get(connection);
+    if (!sessions) this.#replaySessions.set(connection, sessions = new Map());
+    if (sessions.size >= 512) sessions.delete(sessions.keys().next().value!);
+    sessions.set(key, proof);
+  }
+  /** Bounded receipt persistence visits the same connection-owned proof cache. */
+  replaySessionEntries<P>(connection: object): readonly (readonly [string, P])[] {
+    return [...(this.#replaySessions.get(connection) ?? [])] as [string, P][];
+  }
+  forgetReplaySession(connection: object, key: string): void {
+    this.#replaySessions.get(connection)?.delete(key);
+  }
   readonly #verdicts = new Map<string, Verdict>();
   /** store bookkeeping (r14.1 X3 RETAINED): per dependency key, the kept verdicts that consulted it */
   readonly #dependents = new Map<string, Set<string>>();
@@ -589,6 +624,8 @@ export class VerdictStore {
 
   /** Tests: the store as at process start (pins, watches, counters and epochs included). */
   resetForTest(): void {
+    this.#replaySessionPools = new WeakMap(); this.#replayProofSessions = new WeakMap();
+    this.#replaySessions = new WeakMap();
     this.#verdicts.clear(); this.#dependents.clear(); this.#sessionSound.clear(); this.#threadGroupStore.clear(); this.#sessionHolds.clear();
     this.#lossOf.clear(); this.#watched.clear(); this.#proofLossOf.fill(0); this.#trace = null;
     for (const map of MAP_NAMES) this.#pins[map].clear();

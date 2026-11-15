@@ -37,10 +37,10 @@ final class NavigationPolicyTests: XCTestCase {
 
     /// What the iOS glue hands the policy: `url.absoluteString`.
     func testURLsFromFoundationDecideTheSame() throws {
-        let saved = try XCTUnwrap(WorkspaceOrigin(string: "https://mac.tailnet123.ts.net:8444"))
-        let own = try XCTUnwrap(URL(string: "blob:https://mac.tailnet123.ts.net:8444/0b6f9c1e"))
+        let saved = try XCTUnwrap(WorkspaceOrigin(string: "https://mac.tail000000.ts.net:8444"))
+        let own = try XCTUnwrap(URL(string: "blob:https://mac.tail000000.ts.net:8444/0b6f9c1e"))
         XCTAssertEqual(NavigationPolicy.decide(own.absoluteString, target: .mainFrame, saved: saved), .allow)
-        let page = try XCTUnwrap(URL(string: "https://mac.tailnet123.ts.net:8444/a b".replacingOccurrences(of: " ", with: "%20")))
+        let page = try XCTUnwrap(URL(string: "https://mac.tail000000.ts.net:8444/a b".replacingOccurrences(of: " ", with: "%20")))
         XCTAssertEqual(NavigationPolicy.decide(page.absoluteString, target: .mainFrame, saved: saved), .allow)
     }
 }

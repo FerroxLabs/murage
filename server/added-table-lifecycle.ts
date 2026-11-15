@@ -1,3 +1,5 @@
+import { ROUTINE_LINK_OBJECTS } from "./routine-message-links.ts";
+import { RETIRED_SEARCH_OBJECTS } from "./settle-copy.ts";
 import { THREAD_SUMMARY_TABLE, CHATS_GEN_TABLE } from "./thread-summary.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -22,6 +24,35 @@ const derived = (what: string): Lifecycle => ({ kind: "marker", reason: `derived
 const trigger = (name: string): Lifecycle => ({ kind: "marker", reason: `rows are kept and removed by the ${name} triggers with the request they follow` });
 
 export const ADDED_TABLE_LIFECYCLE: Readonly<Record<string, Lifecycle>> = {
+  turn_index_dirty: derived("turn index repair queue"),
+  turn_index_state: derived("turn index build state"),
+  send_attempts: { kind: "retained", by: "retireThread" },
+  send_attempt_bindings: { kind: "retained", by: "retireThread" },
+  send_actions: { kind: "retained", by: "retireThread" },
+  send_replay_exclusions: { kind: "retained", by: "retireThread" },
+  turn_cleanup_owed: { kind: "retained", by: "retireThread" },
+  owner_limit_card_epochs: { kind: "marker", reason: "immutable per-card cancellation epochs prevent an idle stopped card from being released by a later level callback" },
+  owner_limit_epochs: { kind: "marker", reason: "per-thread permanent Stop epochs prevent pending backup intent from regaining authority" },
+  owner_limit_applications: { kind: "marker", reason: "canonical per-source backup dispatch tombstones and stable send identities prevent duplicate submission" },
+  limit_failover_rows: { kind: "marker", reason: "indexed durable failover state and one-hop send identities replace the retained JSON store" },
+  send_replay_sessions: { kind: "marker", reason: "accepted native-session base proofs; fresh confirmation caps parents at 512; restore and downgrade discard them" },
+  send_replay_session_nodes: { kind: "marker", reason: "normalized bounded replay deltas; saveDurableReplayBase removes orphan cells at fresh confirmation; restore and downgrade discard them" },
+  send_replay_epochs: { kind: "marker", reason: "one revision per thread; retained so a replay cursor cannot regain excluded messages" },
+  send_retirement_keys: { kind: "marker", reason: "installation retirement keys retained so deleted send identities remain recognizable" },
+  retired_send_ids: { kind: "marker", reason: "permanent retirement digests prevent a deleted send or action from being admitted again" },
+  flux_space_meta: { kind: "marker", reason: "one local HMAC salt row; retained so captures and deletion retries keep the same opaque space names" },
+  flux_key_off: { kind: "marker", reason: "one status row per Flux key fingerprint; retained until a later successful account choice changes it" },
+  flux_mem_used: { kind: "marker", reason: "capture destinations retained so conversation deletion can forget every space it reached" },
+  flux_mem_receipt: { kind: "marker", reason: "accepted capture source ids retained for the durable forget worker fallback" },
+  flux_mem_owed: { kind: "marker", reason: "durable deletion retries removed by finishFluxForget after Flux confirms completion" },
+  flux_mem_tombstone: { kind: "marker", reason: "permanent deletion tombstones prevent a restored or late capture from reviving forgotten content" },
+  flux_mem_limit: { kind: "marker", reason: "one temporary account-limit marker per bot space and key, rechecked by a real turn after its deadline" },
+  flux_mem_proven: { kind: "marker", reason: "one route proof per bot space and key; retained so a later missing space is never recreated" },
+  gh18_operations: { kind: "marker", reason: "durable owner fresh-start idempotency and cursor recovery; retained for operation replay, dropped only by an explicit older-format export" },
+  ...Object.fromEntries(ROUTINE_LINK_OBJECTS.tables.map(name => [name, derived("routine message links maintained by message insert/update/delete triggers")])),
+  highlevel_thread_marks: { kind: "marker", reason: "one permanent privacy mark per HighLevel conversation; retained across thread deletion so history restoration cannot unmark it" },
+  search_intents: derived("message search queue"),
+  ...Object.fromEntries(RETIRED_SEARCH_OBJECTS.map(name => [name, { kind: "marker" as const, reason: "retired search postings; removed from private copies and by offline downgrade" }])),
   [THREAD_SUMMARY_TABLE]: { kind: "marker", reason: "one preview row per chat, rebuilt from the newest visible line when a line is forgotten" },
   [CHATS_GEN_TABLE]: { kind: "marker", reason: "the single generation row; epoch and rev fence preview data across changes and restore" },
   // the branch index, the line index and the keyed indexes (branch-index.ts, keyed-cards.ts, message-image-paths.ts): small tables the message writers keep and a thread's fill builds
@@ -49,10 +80,12 @@ export const ADDED_TABLE_LIFECYCLE: Readonly<Record<string, Lifecycle>> = {
   turn_source_holds: { kind: "marker", reason: "one small row per line withheld, forgotten or replaced; kept so every turn's starting entry in the log stays exact" },
   pending_delegations: { kind: "marker", reason: "a row lives until its hand-off finishes and is removed with it" },
   pending_delegations_import: { kind: "marker", reason: "one row: the one-time import of the older queue file" },
+  delegation_packs: { kind: "marker", reason: "one metadata row per delegation, retained after queue cleanup for replay; source or destination deletion and restore preparation own removal (L5b-1)" },
   // 1.0.9 phone tools and share and ask (server/phones/): small tables made only while the flag is on
   phone_registrations: { kind: "marker", reason: "one row per phone, replaced by its next report and removed when the phone is removed" },
   phone_revocations: { kind: "marker", reason: "one small row per removed or switched-off phone, kept so it stays refused" },
   phone_ask_revocations: { kind: "marker", reason: "one row per phone: the highest ask generation refused, which only ever grows" },
+  phone_ask_optins: { kind: "marker", reason: "one device-id disclosure choice per phone, preserved in backups, replaced at ask mint and removed when the phone is removed" },
   phone_receipts: { kind: "retained", by: "RETAIN_MS" },
   restore_holds: { kind: "marker", reason: "holds a restore keeps until the owner decides, cleared by that decision" },
   send_restore_generation: { kind: "marker", reason: "one counter row" },
@@ -67,18 +100,19 @@ export const ADDED_TABLE_LIFECYCLE: Readonly<Record<string, Lifecycle>> = {
   // bot email (server/email/email-store.ts), 1.0.9: created only when email is in use
   email_bindings: { kind: "marker", reason: "one row per bot with an email address; replaced by a tombstone when the address is removed" },
   venue_posts: { kind: "marker", reason: "one row per held Post in… post a bot made at Ask or Auto; the card is a view of it, a few small rows per owner answer" },
+  index_overrun: { kind: "marker", reason: "one row (id=1): the memory index's durable stop and the reset that answers it (worker-controller.ts noteIndexStop); it never grows" },
   room_shares: { kind: "marker", reason: "one row per share card a bot offered a room (CROSS-CHAT-READ); the card is a view of it, and expireRoomShares empties the excerpts of a card left unanswered" },
   // spoken replies (server/tts/reply-schema.ts), 1.0.18: metadata only, never source text, audio or a credential
   speech_clock: { kind: "marker", reason: "the single monotonic clock row the spoken-reply state reads and advances" },
   speech_threads: { kind: "marker", reason: "one revision counter row per conversation that has had an owner turn" },
   speech_accounts: { kind: "marker", reason: "one row per speech provider binding and credential version, with its hold time" },
   speech_plans: { kind: "marker", reason: "one row per speech account and plan fingerprint" },
-  speech_prompts: { kind: "marker", reason: "one row per owner prompt accepted in a direct chat or a room (tts/reply-state.ts acceptPrompt, prompt); nothing prunes it yet: open finding D24-SPEECH-RETENTION, owner MurageMain, 1.0.18" },
-  speech_generations: { kind: "marker", reason: "one row per eligible bot dispatch to the owner, direct or room (index.ts replyState.begin); nothing prunes it yet: open finding D24-SPEECH-RETENTION, owner MurageMain, 1.0.18" },
-  speech_settlements: { kind: "marker", reason: "one row per generation that completed with a reply message (tts/reply-state.ts settle); nothing prunes it yet: open finding D24-SPEECH-RETENTION, owner MurageMain, 1.0.18" },
-  speech_sessions: { kind: "marker", reason: "one row per spoken-reply session opened, a replacement on the same connection included; every start closes them all; nothing prunes it yet: open finding D24-SPEECH-RETENTION, owner MurageMain, 1.0.18" },
-  speech_attempts: { kind: "marker", reason: "one row per admitted speech attempt (a refusal before admission writes none); nothing prunes it yet: open finding D24-SPEECH-RETENTION, owner MurageMain, 1.0.18" },
-  speech_commands: { kind: "marker", reason: "one row per admitted or cancelled client command, kept so a repeat gets the same answer; nothing prunes it yet: open finding D24-SPEECH-RETENTION, owner MurageMain, 1.0.18" },
+  speech_prompts: { kind: "retained", by: "retainSpeechRows" },
+  speech_generations: { kind: "retained", by: "retainSpeechRows" },
+  speech_settlements: { kind: "retained", by: "retainSpeechRows" },
+  speech_sessions: { kind: "retained", by: "retainSpeechRows" },
+  speech_attempts: { kind: "retained", by: "retainSpeechRows" },
+  speech_commands: { kind: "retained", by: "retainSpeechRows" },
   email_sends: { kind: "marker", reason: "one row per email a bot wrote; settled rows are pruned by EmailStore.pruneSettledSends, open rows never" },
   email_payloads: { kind: "marker", reason: "the frozen bytes of an email, removed by EmailStore.pruneSettledSends 30 days after the send settles" },
   email_events: { kind: "marker", reason: "a cache of Flux email events for dedupe and reconcile, pruned by EmailStore.pruneEvents" },
@@ -86,6 +120,7 @@ export const ADDED_TABLE_LIFECYCLE: Readonly<Record<string, Lifecycle>> = {
   email_policy_sync: { kind: "marker", reason: "one row per bot: the email setting still to be written to Flux, confirmed in place" },
   email_trust: { kind: "marker", reason: "one row per (bot, address) the owner sent to: the earned-trust counter, a bounded list of times" },
   email_trusted: { kind: "marker", reason: "the owner's exact-address trusted list and block list per bot, changed only by the owner" },
+  email_parks: { kind: "marker", reason: "removals a restore parked until the owner decides Keep or Remove; deleted when the removal completes or Keep succeeds" },
   email_tombstones: { kind: "marker", reason: "removal intents and tombstones of email addresses; removed ones are pruned after 30 days by EmailStore.pruneTombstones" },
   shared_request_events: {
     kind: "child", parent: "room_requests", column: "request_id",

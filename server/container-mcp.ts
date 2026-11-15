@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 // Transparent stdio bridge into Cua Driver's official MCP server inside the
 // Local VM. This process defines no tools and parses no MCP messages; the
 // piping, drain-safe exit, and watchdog live in mcp-bridge.ts, shared with
@@ -8,11 +9,11 @@ import { turnSecret, turnSecretWired } from "./turn-credential.ts";
 
 const [runtime, container, socket] = process.argv.slice(2);
 if (!runtime || !["docker", "podman", "container"].includes(runtime)) {
-  process.stderr.write("invalid Local VM runtime\n");
+  process.stderr.write("bridge refusals=1\n");
   process.exit(2);
 }
 if (!container || !/^[a-zA-Z0-9_.-]+$/.test(container) || !socket?.startsWith("/run/user/1000/")) {
-  process.stderr.write("invalid Local VM connection\n");
+  process.stderr.write("bridge refusals=1\n");
   process.exit(2);
 }
 
@@ -22,6 +23,7 @@ const controlUrl = process.env.MURAGE_CONTROL_URL ?? "";
 const controlToken = () => turnSecret("MURAGE_CONTROL_TOKEN");
 
 runMcpBridge({
+  releaseRole: "containerMcp",
   command: runtime,
   args: cuaExecArgs(["mcp", "--socket", socket], { container, interactive: true }),
   label: "Cua Driver",

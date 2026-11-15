@@ -22,6 +22,17 @@ export const scanLimits = { chunks: 8, budgetMs: 700 };
 
 export function answerQuery(index: MemoryIndex, eligibility: MemoryEligibility, input: MemorySearchInput, vector: number[] | null, identity: string, degraded?: string, now: () => number = Date.now): { result: MemorySearchResult; eligibilityMs: number; timings: Record<string, number> } {
   const started = performance.now(), wallStart = now();
+  if(input.view) {
+    if(!input.reader)throw new Error('MEMORY_RECALL_UNAVAILABLE');
+    eligibility.validate(input.view,input.reader);
+    const allowed=eligibility.read(input),words=eligibility.lexical(input.query,input.view);
+    let found;
+    try {found=index.search(input.query,allowed.allowed,input.semantic?vector:null,identity,input.limit,{words:false,resident:false});}
+    catch {found=index.search(input.query,allowed.allowed,null,identity,input.limit,{words:false,resident:false});degraded='semantic-index-unavailable';}
+    eligibility.validate(input.view,input.reader);
+    return {result:{...found,lexicalRanked:words.hits.map(row=>[row.id,row.version] as RankedRef),
+      ...allowed.capacity?{resumeAfter:allowed.nextCursor}:{},coverageComplete:false,...degraded?{degradedReason:degraded}:{}},eligibilityMs:performance.now()-started,timings:found.timings};
+  }
   let eligible = eligibility.read(input);
   const eligibilityMs = performance.now() - started;
   let degradedReason = degraded;

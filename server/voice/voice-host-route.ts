@@ -1,3 +1,4 @@
+import { inertBot } from "../store.ts";
 // The HTTP door onto the voice host: `POST /api/bots/:id/voice-host`.
 //
 // A separate file for the same reason transcribe-route.ts is one: index.ts
@@ -219,7 +220,7 @@ export function voiceHostRoomState(
   const members = group.memberIds
     .filter((id) => id !== bot.id)
     .map((id) => deps.bot(id))
-    .filter((m): m is VoiceHostRouteBot => Boolean(m && !m.hidden))
+    .filter((m): m is VoiceHostRouteBot => Boolean(m && !inertBot(m)))
     .slice(0, ROOM_MEMBERS)
     .map((m) => ({ name: roomName(m.name), ...(m.description?.trim() ? { description: m.description } : {}) }));
   const workingName = group.busyBotId && group.busyBotId !== bot.id ? deps.bot(group.busyBotId)?.name : undefined;

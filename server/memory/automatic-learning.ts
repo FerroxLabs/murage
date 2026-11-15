@@ -1,3 +1,5 @@
+import { noLimitsAppliesTo } from '../no-limits-origin.ts';
+import { turnAudienceIsOwner } from '../owner-audience.ts';
 import { isLearnableSource, learnableSourceSettings } from "./learnable.ts";
 import { learningWriteDecision, learningSourceBot, learningEvidenceScopes, type LearningWriteDecision } from "./learning-guard.ts";
 import { recordLearningEvent } from "./learning-ledger.ts";
@@ -42,7 +44,9 @@ export function candidateReviewReason(db:DatabaseSync,id:string,version:number):
 export function pendingSaveNote(reason:string):string {
   return `Saved for the owner's review in Needs you. It is not active yet, so memory_search will not return it until the owner approves it. Reason: ${reason.trim().replace(/[.\s]+$/,"")}.`;
 }
-export function holdMemoryCandidate(db:DatabaseSync,id:string,reason:string){
+export function holdMemoryCandidate(db:DatabaseSync,id:string,reason:string, _authority:unknown=undefined){
+  // Autonomous learning has no executing owner actor. Requested saves resolve
+  // their live authority before entering the transaction in authority.ts.
   db.prepare("UPDATE memory_record_details SET confidence_basis=? WHERE record_id=? AND record_version=1 AND EXISTS(SELECT 1 FROM memory_records r WHERE r.id=memory_record_details.record_id AND r.version=memory_record_details.record_version AND r.state='candidate')").run(learningReviewReason(reason),id);
   return false;
 }
@@ -86,6 +90,9 @@ export function activateGroundedMemory(db: DatabaseSync, id: string, claimType?:
   if(record.supersedes_id&&!run?.superseding)return holdMemoryCandidate(db,id,"correction-review");
   const invitedCanon=claimType==="character-canon"&&support?.supported&&support.ownerInvitation&&support.ownerInvitationSourceId;
   const settings=readMemoryLearning(db);
+  // Background learning uses the same bot-level predicate as unattended tools.
+  const sourceThread=db.prepare("SELECT s.thread_id FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=? AND e.record_version=1 LIMIT 1").get(id)?.thread_id;
+  const noLimits=typeof sourceThread==="string" && turnAudienceIsOwner(sourceThread,{},db) && noLimitsAppliesTo("unattended",learningSourceBot(sourceThread));
   const evidence=db.prepare(`SELECT s.*,v.payload,e.start_byte,e.end_byte FROM memory_evidence e
     JOIN memory_sources s ON s.id=e.source_id AND s.revision=e.source_revision
     JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision
@@ -93,7 +100,7 @@ export function activateGroundedMemory(db: DatabaseSync, id: string, claimType?:
   const handles=db.prepare("SELECT source_id,source_revision FROM memory_evidence WHERE record_id=? AND record_version=1").all(id).map(row=>({sourceId:String(row.source_id),revision:Number(row.source_revision)}));
   // bot email (5.4): a candidate resting on a source written after reading outside mail waits for the owner, never activates on its own
   // (also a memory the bot saved during a marked turn: its record-origin binding, email-derived.ts)
-  if(recordEmailDerived(db,id,1))return holdMemoryCandidate(db,id,"external-mail");
+  if(!noLimits && recordEmailDerived(db,id,1))return holdMemoryCandidate(db,id,"external-mail");
   const invitation=invitedCanon?handles.find(h=>h.sourceId===support?.ownerInvitationSourceId):undefined;
   const reason=invitedCanon?(invitation?invitedCanonRefusal(db,handles,invitation,run?.botId):"not-active"):ownerLearningRefusal(db,handles);
   if(reason)return holdMemoryCandidate(db,id,reason);
@@ -104,10 +111,10 @@ export function activateGroundedMemory(db: DatabaseSync, id: string, claimType?:
   const bot=learningSourceBot(source.thread_id===null?null:String(source.thread_id));
   const decision=learningWriteDecision(db,{writer:"activation",target:"memory",evidenceScopeIds:learningEvidenceScopes(db,id,1),sourceId:String(source.id),sourceRevision:Number(source.revision),targetScopeId:String(record.scope_id),botId:bot?.id});
   const effective=decision.decision!=="auto"?decision:run?.decision??decision;
-  if(effective.decision!=="auto"){
+  if(effective.decision!=="auto" && !(noLimits && effective.decision==="owner-approval")){
     return holdMemoryCandidate(db,id,effective.reason);
   }
-  if(run?.reviewOnly || settings.reviewMode || !(claimType==="procedure"?settings.automaticProcedures:settings.automaticFacts))return holdMemoryCandidate(db,id,run?.reviewOnly?"default-review":settings.reviewMode?"review-mode":"automatic-off");
+  if(run?.reviewOnly && !noLimits || settings.reviewMode || !(claimType==="procedure"?settings.automaticProcedures:settings.automaticFacts))return holdMemoryCandidate(db,id,run?.reviewOnly && !noLimits?"default-review":settings.reviewMode?"review-mode":"automatic-off");
   const quote=Buffer.from(payload.text??"").subarray(Number(source.start_byte),Number(source.end_byte)).toString("utf8");
   if(quote!==record.text && !support?.supported)return false;
   const owner=source.speaker==="owner"&&(!invitedCanon||handles.every(h=>db.prepare("SELECT speaker FROM memory_sources WHERE id=? AND revision=?").get(h.sourceId,h.revision)?.speaker==="owner"));

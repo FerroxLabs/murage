@@ -20,6 +20,7 @@ let repo: string;
 
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "init.defaultBranch=main", ...args], {
+    windowsHide: true,
     cwd, env: { PATH: process.env.PATH, HOME: home, GIT_CONFIG_NOSYSTEM: "1" }, encoding: "utf8",
   }).trim();
 
@@ -103,7 +104,8 @@ describe("prompt-capable rows hold ahead of every standing answer", () => {
   it("Auto mode asks for sudo x, and Full access is unchanged", () => {
     expect(auto("sudo x")).toMatchObject({ approve: null, source: "prompt-guard", rule: "sudo" });
     expect(autoVerdict({ autoApprove: true, fullAccess: true }, "Bash", "sudo x", facts()).source).toBe("full-access");
-    expect(autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, "Bash", "sudo x", facts()).source).toBe("no-limits");
+    // MAIN RULING 2026-11-13 wipe-only: the No limits case needs an authenticated owner turn.
+    expect(autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, "Bash", "sudo x", { ...facts(), fullAccessOrigin: "owner" }).source).toBe("no-limits");
   });
 
   it("an exact-command grant for sudo x does not answer it, and no exact grant is offered", () => {

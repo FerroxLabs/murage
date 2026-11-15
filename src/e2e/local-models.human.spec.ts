@@ -18,7 +18,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { fileURLToPath } from "node:url";
@@ -109,7 +109,7 @@ const widths = [390, 1440] as const;
 
 async function open(page: Page, skin: string, width: number) {
   await page.setViewportSize({ width, height: 960 });
-  await page.addInitScript((skin) => { localStorage.setItem("murage-skin", skin); localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); }, skin);
+  await page.addInitScript((skin) => { localStorage.setItem("murage-skin", skin); localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("help.seen.chat.level-chip", "1"); }, skin);
   await page.goto(origin);
   await page.evaluate((skin) => { document.documentElement.dataset.skin = skin; }, skin);
 }

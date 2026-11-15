@@ -1,3 +1,6 @@
+import { fixtureAcpConfiguration } from "../../testing/acp-mount-configuration.ts";
+import { fileURLToPath as fixtureFilePath } from "node:url";
+const IDLE_MCP = fixtureFilePath(new URL("../../testing/fake-idle-mcp.mjs", import.meta.url));
 import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Fuigo × Murage. Four things are pinned here, and each of them is a bug
@@ -29,7 +32,6 @@ import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // half — its dump carries a fixed allowlist of variable names that does not
 // include FUIGO_API_KEY, so every assertion here would pass vacuously.
 import { TURN_ASK_RULES } from "../../../shared/ask-wording.ts";
-import { toolsMayBeLoadingNotice, toolsUnavailableNotice } from "../mcp-readiness.ts";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { cacheEnvFromProcess, markMountIncomplete } from "../../connector-cache.ts";
 import { tmpdir } from "node:os";
@@ -46,14 +48,21 @@ import { ensureDirs, NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance, SendTurnInput } from "../../contracts.ts";
 import { resetPathCacheForTests, restrictInstallScanDirsForTests } from "../../env-path.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
-import { recordEvents, type EventRecorder } from "../../testing/events.ts";
+import { recordAdmittedEvents as recordEvents, type EventRecorder } from "../../testing/admitted-events.ts";
 import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
-import { ensureFuigoLocalModel, FuigoAgentDriver, fuigoLocalKeyEnv, fuigoLocalSlug, FUIGO_EXTERNAL_MCP_GATES, isolateFuigoFromExternalMcp, parseFuigoModels, scrubFuigoCredentialEnv, STATIC_FUIGO_MODELS } from "./fuigo.ts";
+import { ensureFuigoLocalModel, FuigoAgentDriver, fuigoLocalKeyEnv, fuigoLocalSlug, FUIGO_EXTERNAL_MCP_GATES, isolateFuigoFromExternalMcp, parseFuigoModels, pointFuigoAtFlux, scrubFuigoCredentialEnv, STATIC_FUIGO_MODELS } from "./fuigo.ts";
+import { FLUX_OPENAI_BASE } from "../../flux-routing.ts";
 import { noteFluxKeyRefused, resetFluxKeyHealthForTests } from "../../flux-key-health.ts";
 import { fluxKeyState } from "../../flux-config.ts";
 import { acpVersionFailureDetail, createAcpDriver, FALLBACK_CAP_LINE, MCP_OWN_READY_WAIT_MS, MCP_READY_WAIT_MS, resetAcpMcpReadinessForTests, type AcpSupport } from "./core.ts";
 import { configureLocalServerStore, writeLocalServers } from "../../local-servers.ts";
 import { localHost } from "../local-inject.ts";
+
+// The Cloud-home test below reads the environment each spawn hands the turn launcher: on a home the real spawn goes through `sudo`
+// and the launcher, which a test machine does not have. The launcher's own contract is driven by server/cloud-home/*launcher*.test.ts.
+const launches = vi.hoisted(() => [] as Array<Record<string, string | undefined>>);
+const launchArgs = vi.hoisted(() => [] as string[][]);
+import * as cloudTurnProcess from "../../cloud-home/turn-process.ts";
 
 // The pinned bundle version, read from the packaging script (one source of truth).
 const FUIGO_VERSION = /FUIGO_VERSION = "(\d+\.\d+\.\d+)"/.exec(readFileSync(new URL("../../../scripts/prepare-fuigo.mjs", import.meta.url), "utf8"))![1]!;
@@ -103,7 +112,7 @@ import { delimiter, join } from "node:path";
 const argv = process.argv.slice(2);
 const kind = argv.includes("--version") ? "version" : argv[0] === "models" ? "models" : "agent";
 // Explicit fields only; credentials are fixture-dump.ts fingerprints, never values.
-const PLAIN = ["FUIGO_CONFIG", "FUIGO_ALLOW_UPSTREAM_HOSTS", "PATH", "HOME", "FUIGO_HOME", "FUIGO_MEMORY", "FUIGO_CLAUDE_SKILLS_ENABLED", "FUIGO_CLAUDE_RULES_ENABLED", "FUIGO_CLAUDE_AGENTS_ENABLED", "FUIGO_CLAUDE_MCPS_ENABLED", "FUIGO_CLAUDE_HOOKS_ENABLED", "FUIGO_CLAUDE_SESSIONS_ENABLED", "FUIGO_CURSOR_SKILLS_ENABLED", "FUIGO_CURSOR_RULES_ENABLED", "FUIGO_CURSOR_AGENTS_ENABLED", "FUIGO_CURSOR_MCPS_ENABLED", "FUIGO_CURSOR_HOOKS_ENABLED", "FUIGO_CURSOR_SESSIONS_ENABLED", "FUIGO_CODEX_SKILLS_ENABLED", "FUIGO_CODEX_RULES_ENABLED", "FUIGO_CODEX_AGENTS_ENABLED", "FUIGO_CODEX_MCPS_ENABLED", "FUIGO_CODEX_HOOKS_ENABLED", "FUIGO_CODEX_SESSIONS_ENABLED", "FUIGO_AGENTS_SKILLS_ENABLED", "OPENAI_BASE_URL", "OPENAI_MODEL", "FUIGO_SUBAGENTS", "FUIGO_WORKFLOWS", "FUIGO_SCHEDULER_BACKGROUND_LOOPS", "FUIGO_GOAL", "FUIGO_ENVRC_TIMEOUT_SECS", "FUIGO_AGENT", "FUIGO_WORKSPACE_REWIND_GIT"];
+const PLAIN = ["FUIGO_CONFIG", "FUIGO_ALLOW_UPSTREAM_HOSTS", "PATH", "HOME", "FUIGO_HOME", "FUIGO_MEMORY", "FUIGO_CLAUDE_SKILLS_ENABLED", "FUIGO_CLAUDE_RULES_ENABLED", "FUIGO_CLAUDE_AGENTS_ENABLED", "FUIGO_CLAUDE_MCPS_ENABLED", "FUIGO_CLAUDE_HOOKS_ENABLED", "FUIGO_CLAUDE_SESSIONS_ENABLED", "FUIGO_CURSOR_SKILLS_ENABLED", "FUIGO_CURSOR_RULES_ENABLED", "FUIGO_CURSOR_AGENTS_ENABLED", "FUIGO_CURSOR_MCPS_ENABLED", "FUIGO_CURSOR_HOOKS_ENABLED", "FUIGO_CURSOR_SESSIONS_ENABLED", "FUIGO_CODEX_SKILLS_ENABLED", "FUIGO_CODEX_RULES_ENABLED", "FUIGO_CODEX_AGENTS_ENABLED", "FUIGO_CODEX_MCPS_ENABLED", "FUIGO_CODEX_HOOKS_ENABLED", "FUIGO_CODEX_SESSIONS_ENABLED", "FUIGO_AGENTS_SKILLS_ENABLED", "OPENAI_BASE_URL", "OPENAI_MODEL", "FUIGO_WEB_FETCH", "FUIGO_SUBAGENTS", "FUIGO_WORKFLOWS", "FUIGO_SCHEDULER_BACKGROUND_LOOPS", "FUIGO_GOAL", "FUIGO_ENVRC_TIMEOUT_SECS", "FUIGO_AGENT", "FUIGO_WORKSPACE_REWIND_GIT", "FUIGO_API_BASE_URL", "FUIGO_MODELS_BASE_URL"];
 const CREDENTIALS = ["FUIGO_API_KEY", "FUIGO_CODE_API_KEY", "FLUX_API_KEY", "MURAGE_FLUX_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XAI_API_KEY",
   ...Object.keys(process.env).filter((key) => /^MURAGE_LOCAL_[A-Z0-9_]+_API_KEY$/.test(key))];
 const fingerprint = (value) => createHash("sha256").update(value).digest("hex");
@@ -121,6 +130,8 @@ if (kind === "models") {
   process.exit(Number(process.env.FUIGO_FAKE_MODELS_EXIT ?? 0));
 }
 const SID = "fake-fuigo-session";
+let handedServers = [];
+let mcpSettled = false, ownConnected = false;
 const send = (o) => process.stdout.write(JSON.stringify(o) + "\\n");
 if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "spawns.log"), process.pid + "\\n");
 // MCP readiness, as 1.0.19/1.0.20 report it: session/new answers first and
@@ -132,6 +143,7 @@ const order = (event) => {
   if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "order.log"), event + " " + Date.now() + "\\n");
 };
 const mcpReady = (sessionId) => {
+  if (sessionId === SID) mcpSettled = true;
   order("mcp-ready:" + sessionId);
   send({ jsonrpc: "2.0", method: "_fuigo/mcp_initialized", params: { sessionId, mcpToolCount: 1, elapsedMs: 1 } });
 };
@@ -241,6 +253,7 @@ process.stdin.on("data", (d) => {
     if (m.method === "initialize") ok({ protocolVersion: 1, authMethods: [{ id: "fuigo.api_key" }], ...(process.env.FUIGO_FAKE_RETRY_DISCARD ? { agentCapabilities: { _meta: { "fuigo/capabilities": { retryDiscard: { version: 1 } } } } } : {}) });
     else if (m.method === "authenticate") ok({});
     else if (m.method === "session/new") {
+      handedServers = m.params?.mcpServers ?? [];
       holdLock();
       if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "news.log"), "new\\n");
       if (process.env.FUIGO_FAKE_DUMP_DIR) writeFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "session.json"), JSON.stringify(m.params));
@@ -258,12 +271,12 @@ process.stdin.on("data", (d) => {
       // 2) connects after 150 ms. "stuck": nothing ever connects.
       if (hasMcp && (mcpMode === "external" || mcpMode === "stuck")) {
         send({ jsonrpc: "2.0", method: "_fuigo/mcp/init_progress", params: { sessionId: SID, total: 2, connected: 0 } });
-        if (mcpMode === "external") setTimeout(() => send({ jsonrpc: "2.0", method: "_fuigo/mcp/init_progress", params: { sessionId: SID, total: 2, connected: 1 } }), 150);
+        if (mcpMode === "external") setTimeout(() => { ownConnected = true; send({ jsonrpc: "2.0", method: "_fuigo/mcp/init_progress", params: { sessionId: SID, total: 2, connected: 1 } }); }, 150);
       }
       // "late": another server connects at once (the count reaches Murage's
       // mounts), but the all-settled notification only comes after 1.2 s.
       if (hasMcp && mcpMode === "late") {
-        setTimeout(() => send({ jsonrpc: "2.0", method: "_fuigo/mcp/init_progress", params: { sessionId: SID, total: 2, connected: 1 } }), 150);
+        setTimeout(() => { ownConnected = true; send({ jsonrpc: "2.0", method: "_fuigo/mcp/init_progress", params: { sessionId: SID, total: 2, connected: 1 } }); }, 150);
         setTimeout(() => mcpReady(SID), 1200);
       }
       if (hasMcp && mcpMode === "ready") {
@@ -273,6 +286,7 @@ process.stdin.on("data", (d) => {
       }
     }
     else if (m.method === "session/load") {
+      handedServers = m.params?.mcpServers ?? [];
       if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "load-attempts.log"), "load\\n");
       // FUIGO_FAKE_LOAD_POLICY_ERROR=1: Fuigo 1.0.38 refusing a load opened under another policy (-32602, data.policy_error)
       if (process.env.FUIGO_FAKE_LOAD_POLICY_ERROR === "1") {
@@ -308,6 +322,11 @@ process.stdin.on("data", (d) => {
       order("prompt");
       if (process.env.FUIGO_FAKE_DUMP_DIR) writeFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "prompt.json"), JSON.stringify(m.params));
       if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "prompts.log"), JSON.stringify(m.params) + "\\n");
+      if (process.env.FUIGO_FAKE_REFUSAL) {
+        const response = JSON.parse(process.env.FUIGO_FAKE_REFUSAL);
+        send({ jsonrpc: "2.0", id: m.id, ...response });
+        return;
+      }
       // FUIGO_FAKE_SCRIPT: a JSON array of raw messages sent in place of the "ok" chunk.
       if (process.env.FUIGO_FAKE_SCRIPT) for (const raw of JSON.parse(process.env.FUIGO_FAKE_SCRIPT)) send(raw);
       else send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID,
@@ -315,7 +334,15 @@ process.stdin.on("data", (d) => {
       // FUIGO_FAKE_HOLD_MS keeps the turn running so a test can steer it.
       const holdMs = Number(process.env.FUIGO_FAKE_HOLD_MS ?? 0);
       promptRunning = true;
+      const receiptDeadline = Date.now() + 3000;
       const finish = () => {
+        if (process.env.FUIGO_FAKE_REQUIRE_PEER_RECEIPT) {
+          const lines = path => existsSync(path) ? readFileSync(path, "utf8").trim().split("\\n").filter(Boolean).length : 0;
+          if (lines(process.env.FUIGO_FAKE_REQUIRE_PEER_RECEIPT) < lines(join(process.env.FUIGO_FAKE_DUMP_DIR, "spawns.log"))) {
+            if (Date.now() > receiptDeadline) throw new Error("fixture peer receipt missing");
+            setTimeout(finish, 10); return;
+          }
+        }
         promptRunning = false;
         // FUIGO_FAKE_PROMPT_HELPER=1: a background helper is still open when the prompt ends.
         if (process.env.FUIGO_FAKE_PROMPT_HELPER === "1") send({ jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: SID,
@@ -330,12 +357,14 @@ process.stdin.on("data", (d) => {
         if (stranded.length) runFallback(stranded.shift());
       };
       if (holdMs > 0) setTimeout(finish, holdMs); else finish();
-    } else if (m.method === "_fuigo/mcp/list" && process.env.FUIGO_FAKE_MCP_LIST) {
+    } else if (m.method === "_fuigo/mcp/list") {
+      // Explicit readiness scenarios retain their original no-list response.
+      if (!process.env.FUIGO_FAKE_MCP_LIST && process.env.FUIGO_FAKE_MCP && !mcpSettled && !(ownConnected && !handedServers.some(server => server.name === "murage_connectors"))) { ok({}); continue; }
       // Per-server status (fuigo-shell extensions/mcp.rs), double-wrapped as
       // real ext results are. A server reloaded with a fresh MURAGE_MCP_RECONNECT
       // marker takes FUIGO_FAKE_MCP_RECONNECT_TO (default: unchanged).
       if (process.env.FUIGO_FAKE_DUMP_DIR) appendFileSync(join(process.env.FUIGO_FAKE_DUMP_DIR, "mcp-list.log"), JSON.stringify(m.params) + "\\n");
-      const states = { ...JSON.parse(process.env.FUIGO_FAKE_MCP_LIST), ...reconnected };
+      const states = { ...(process.env.FUIGO_FAKE_MCP_LIST ? JSON.parse(process.env.FUIGO_FAKE_MCP_LIST) : Object.fromEntries(handedServers.map(server => [server.name, "ready"]))), ...reconnected };
       const extra = JSON.parse(process.env.FUIGO_FAKE_MCP_LIST_SESSION ?? "{}");
       ok({ result: { servers: Object.entries(states).map(([name, status]) => ({ name, type: "stdio", command: "x", source: "session", session: { enabled: true, status, ...extra[name] } })) } });
     } else if (m.method === "_fuigo/interject") {
@@ -524,7 +553,7 @@ describe("the system stack", () => {
   });
 
   it("is alias-free with memory mounted, so it is sent once while each turn's body carries that turn's own alias", async () => {
-    const memory = (): SendTurnInput["integrations"] => ({ memory: { command: process.execPath, args: ["memory"], env: {} } });
+    const memory = (): SendTurnInput["integrations"] => ({ memory: { command: process.execPath, args: [IDLE_MCP], env: {} } });
     const system = "You are Moss.";
     const sent = await turns([
       { text: "one", system, integrations: memory() },
@@ -811,6 +840,7 @@ describe("fuigo engine isolation from the owner's global MCP config", () => {
     for (const spawn of ["agent", "models"] as const) {
       const { env } = dump(spawn);
       for (const name of ["FUIGO_SUBAGENTS", "FUIGO_WORKFLOWS", "FUIGO_SCHEDULER_BACKGROUND_LOOPS", "FUIGO_GOAL"]) expect([spawn, name, env[name]]).toEqual([spawn, name, "0"]);
+      expect([spawn, env.FUIGO_WEB_FETCH]).toEqual([spawn, "0"]);
       expect([spawn, env.FUIGO_ENVRC_TIMEOUT_SECS]).toEqual([spawn, "0"]);
       expect([spawn, env.FUIGO_AGENT, env.FUIGO_WORKSPACE_REWIND_GIT]).toEqual([spawn, undefined, undefined]);
     }
@@ -909,6 +939,71 @@ describe("fuigo credential — transformEnv, not applyTurnEnv", () => {
       expect(dump("models").env.FUIGO_ALLOW_UPSTREAM_HOSTS).toBeUndefined();
       expect(dump("agent").env.FUIGO_ALLOW_UPSTREAM_HOSTS).toBeUndefined();
     } finally { delete process.env.FUIGO_ALLOW_UPSTREAM_HOSTS; }
+  });
+
+  it("a Cloud home points the turn and the catalog spawn at FLUX_OPENAI_BASE, never Fuigo's compiled default", async () => {
+    // A staging image rewrites FLUX_OPENAI_BASE to api-staging but cannot rewrite the Fuigo binary;
+    // without these names its Fuigo dialled the prod host and hung at the egress proxy.
+    // Observe the export already held by procs after test setup imports.
+    const launch = vi.spyOn(cloudTurnProcess, "cloudTurnLaunch").mockImplementation((_command, args, env) => {
+      launches.push({ ...env }); launchArgs.push([...args]); return null;
+    });
+    onTestFinished(() => launch.mockRestore());
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    process.env.FUIGO_API_BASE_URL = "https://somewhere-else.example/v1";
+    process.env.FUIGO_MODELS_BASE_URL = "https://somewhere-else.example/v1";
+    launches.length = 0; launchArgs.length = 0;
+    try {
+      await runTurn({ model: "flux-auto" });
+      // every spawn on a home (the turn and the catalog spawn) is handed the launcher with both base names on Flux's host.
+      // The two are told apart by their command line: the catalog spawn runs `models`, the agent spawn is anything else but a version probe.
+      const named = launches.filter(env => env.FUIGO_API_BASE_URL !== undefined || env.FUIGO_MODELS_BASE_URL !== undefined);
+      const catalog = launches.filter((_, i) => launchArgs[i]?.includes("models"));
+      const agent = launches.filter((_, i) => !launchArgs[i]?.includes("models") && !launchArgs[i]?.includes("--version"));
+      expect(catalog.length, `catalog spawn captured: ${JSON.stringify(launchArgs)}`).toBeGreaterThanOrEqual(1);
+      expect(agent.length, "agent spawn captured").toBeGreaterThanOrEqual(1);
+      for (const env of [...catalog, ...agent]) expect(env.FUIGO_API_BASE_URL, "every catalog and agent spawn names Flux").toBe(FLUX_OPENAI_BASE);
+      expect(named.length).toBeGreaterThanOrEqual(catalog.length + agent.length);
+      for (const env of named) {
+        expect(env.FUIGO_API_BASE_URL).toBe(FLUX_OPENAI_BASE);
+        expect(env.FUIGO_MODELS_BASE_URL).toBe(FLUX_OPENAI_BASE);
+        expect(env.OPENAI_BASE_URL).toBeUndefined();
+      }
+      expect(FLUX_OPENAI_BASE).toMatch(/^https:\/\/api(-staging)?\.fluxrouter\.ai\/v1$/);
+      // Provider-route precedence: an OPENAI_BASE_URL the owner's environment carries never wins over the Flux pin, on either spawn.
+      launches.length = 0; launchArgs.length = 0;
+      await runTurn({ model: "flux-auto", environment: { OPENAI_BASE_URL: "https://owner-route.example/v1" } });
+      expect(launches.length).toBeGreaterThanOrEqual(1);
+      for (const env of launches.filter(e => e.FUIGO_API_BASE_URL !== undefined)) {
+        expect(env.FUIGO_API_BASE_URL).toBe(FLUX_OPENAI_BASE);
+        expect(env.OPENAI_BASE_URL).not.toBe("https://owner-route.example/v1");
+      }
+    } finally { vi.unstubAllEnvs(); delete process.env.FUIGO_API_BASE_URL; delete process.env.FUIGO_MODELS_BASE_URL; }
+  });
+
+  it("a desktop keeps the configured FUIGO_API_BASE_URL and FUIGO_MODELS_BASE_URL", async () => {
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "");
+    process.env.FUIGO_API_BASE_URL = "https://somewhere-else.example/v1";
+    process.env.FUIGO_MODELS_BASE_URL = "https://somewhere-else.example/models";
+    try {
+      await runTurn({ model: "flux-auto" });
+      for (const kind of ["agent", "models"] as const) {
+        expect(dump(kind).env.FUIGO_API_BASE_URL).toBe("https://somewhere-else.example/v1");
+        expect(dump(kind).env.FUIGO_MODELS_BASE_URL).toBe("https://somewhere-else.example/models");
+      }
+    } finally { vi.unstubAllEnvs(); delete process.env.FUIGO_API_BASE_URL; delete process.env.FUIGO_MODELS_BASE_URL; }
+  });
+
+  it("pointFuigoAtFlux replaces every casing of both base names on Windows", () => {
+    const env: Record<string, string | undefined> = { Fuigo_Api_Base_Url: "http://127.0.0.1:9", FUIGO_MODELS_BASE_URL: "x" };
+    pointFuigoAtFlux(env, "win32");
+    expect(env).toEqual({ FUIGO_API_BASE_URL: FLUX_OPENAI_BASE, FUIGO_MODELS_BASE_URL: FLUX_OPENAI_BASE });
+  });
+
+  it("names no base when Murage has no key, so a user's own install keeps its own setup", async () => {
+    delete process.env.FLUX_API_KEY;
+    await runTurn({ model: "flux-auto", environment: { FUIGO_API_KEY: USER_OWN_FLUX_KEY } });
+    expect(dump("models").env.FUIGO_API_BASE_URL).toBeUndefined();
   });
 
   it("leaves a user's own credential alone when Murage has no key", async () => {
@@ -1190,13 +1285,16 @@ describe("fuigo binary resolution — the bundled engine", () => {
   });
 
   it("keeps bundled PATH when a browser MCP environment has its own PATH", async () => {
-    const browser = { command: process.execPath, args: ["browser-proxy.mjs"], env: { PATH: emptyBin, ELECTRON_RUN_AS_NODE: "1" } };
+    const browser = { command: process.execPath, args: [IDLE_MCP], env: { PATH: emptyBin, ELECTRON_RUN_AS_NODE: "1" } };
     const events = await runTurn({ model: "flux-auto", integrations: { browser } });
     expect(events.events.find((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
     expect(dump("agent").env.PATH.split(delimiter)[0]).toBe(bundleDir);
     const session = JSON.parse(readFileSync(join(dumps, "session.json"), "utf8"));
-    expect(session.mcpServers).toContainEqual({ name: "browser", command: browser.command, args: browser.args,
-      env: [{ name: "PATH", value: emptyBin }, { name: "ELECTRON_RUN_AS_NODE", value: "1" }] });
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: retain server configuration and verify native shim isolation.
+    expect(fixtureAcpConfiguration(instance!.adapter, session.mcpServers)).toContainEqual({ name: "browser", command: browser.command, args: browser.args,
+      // Catalog readiness adds its generated marker without replacing either caller env entry.
+      env: [{ name: "PATH", value: emptyBin }, { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+        { name: "MURAGE_MCP_LISTED_FILE", value: expect.stringMatching(/[/\\]murage-mcp-listed-[^/\\]+[/\\][a-f0-9-]{36}\.[a-f0-9]{32}$/) }] });
   });
 
   const snapshotDefault = async (cli = "fuigo") => {
@@ -1361,7 +1459,7 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
   // connected and tell the model "MCP servers currently connecting … do not
   // use" if prompted at once. The driver holds the prompt for
   // `_fuigo/mcp_initialized`, bounded by MCP_READY_WAIT_MS.
-  const AGENTS = { agents: { command: process.execPath, args: ["/fake/agents-proxy.js"], env: {} } };
+  const AGENTS = { agents: { command: process.execPath, args: [IDLE_MCP], env: {} } };
 
   afterEach(() => {
     resetAcpMcpReadinessForTests();
@@ -1435,16 +1533,15 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
     process.env.MURAGE_ACP_MCP_READY_MS = "400";
     const { threadId, turnId } = await start({ FUIGO_FAKE_MCP: "never" }, AGENTS);
     const done = await recorder!.until((e) => e.type === "turn.completed");
-    expect(done).toMatchObject({ ok: true });
-    const order = readOrder();
-    expect(order.map((row) => row.event)).toEqual(["new-response", "prompt"]);
-    expect(order[1]!.at - order[0]!.at).toBeGreaterThanOrEqual(350);
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: unready consuming mounts refuse before any prompt or reconnect can refresh authority.
+    expect(done).toMatchObject({ ok: false, stopReason: "memory-refused" });
+    expect(existsSync(join(dumps, "prompt.json"))).toBe(false);
+    expect(existsSync(join(dumps, "loads.log"))).toBe(false);
+    expect(JSON.stringify(recorder!.events)).toContain("I stopped this turn because some of its context is no longer available.");
     const rows = lifecycleEvents(threadId, turnId);
-    const timeoutAt = rows.findIndex((row) => row.event === "mcp_ready_timeout");
-    expect(timeoutAt).toBeGreaterThan(-1);
-    const promptAt = rows.findIndex((row) => row.event === "rpc_requested" && row.method === "session/prompt");
-    expect(timeoutAt).toBeLessThan(promptAt);
-    expect(rows.map((row) => row.event)).not.toContain("mcp_ready");
+    expect(rows.some(row => row.event === "mcp_ready_timeout")).toBe(true);
+    expect(rows.some(row => row.event === "rpc_requested" && row.method === "session/prompt")).toBe(false);
+    expect(readOrder().map(row => row.event)).toEqual(["new-response"]);
   });
 
   it("(g) R3: a hung external server does not hold the prompt once Murage's own mount is connected", async () => {
@@ -1467,16 +1564,19 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
     try {
       const { threadId, turnId, startedAt } = await start({ FUIGO_FAKE_MCP: "stuck" }, AGENTS);
       const done = await recorder!.until((e) => e.type === "turn.completed");
-      expect(done).toMatchObject({ ok: true });
-      const order = readOrder();
-      expect(order.map((row) => row.event)).toEqual(["new-response", "prompt"]);
-      expect(order[1]!.at - order[0]!.at).toBeGreaterThanOrEqual(450);
+      // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: unready consuming mounts refuse before any prompt or reconnect can refresh authority.
+      expect(done).toMatchObject({ ok: false, stopReason: "memory-refused" });
+      expect(existsSync(join(dumps, "prompt.json"))).toBe(false);
+      expect(existsSync(join(dumps, "loads.log"))).toBe(false);
+      expect(JSON.stringify(recorder!.events)).toContain("I stopped this turn because some of its context is no longer available.");
+      expect(Date.now() - startedAt).toBeGreaterThanOrEqual(450);
       expect(Date.now() - startedAt).toBeLessThan(MCP_OWN_READY_WAIT_MS);
-      expect(lifecycleEvents(threadId, turnId).map((row) => row.event)).toContain("mcp_ready_timeout");
+      expect(lifecycleEvents(threadId, turnId).filter(row => row.event === "mcp_ready_timeout")).toHaveLength(1);
+      expect(readOrder().map(row => row.event)).toEqual(["new-response"]);
     } finally { delete process.env.MURAGE_ACP_MCP_OWN_READY_MS; }
   });
 
-  const COMPOSIO = { composio: { command: process.execPath, args: ["/fake/composio-mcp.js"], env: {} } };
+  const COMPOSIO = { composio: { command: process.execPath, args: [IDLE_MCP], env: {} } };
 
   it("(h2) a connector turn is not released by another server connecting first; it waits for all-settled", async () => {
     const { threadId, turnId } = await start({ FUIGO_FAKE_MCP: "late" }, COMPOSIO);
@@ -1506,31 +1606,27 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
     process.env.MURAGE_ACP_MCP_READY_MS = "600";
     const { threadId, turnId, startedAt } = await start({ FUIGO_FAKE_MCP: "external" }, COMPOSIO);
     const done = await recorder!.until((e) => e.type === "turn.completed");
-    expect(done).toMatchObject({ ok: true });
-    const order = readOrder();
-    expect(order.map((row) => row.event)).toEqual(["new-response", "prompt"]);
-    expect(order[1]!.at - order[0]!.at).toBeGreaterThanOrEqual(550);
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: unready consuming mounts refuse before any prompt or reconnect can refresh authority.
+    expect(done).toMatchObject({ ok: false, stopReason: "memory-refused" });
+    expect(existsSync(join(dumps, "prompt.json"))).toBe(false);
+    expect(existsSync(join(dumps, "loads.log"))).toBe(false);
+    expect(JSON.stringify(recorder!.events)).toContain("I stopped this turn because some of its context is no longer available.");
+    expect(Date.now() - startedAt).toBeGreaterThanOrEqual(550);
     expect(Date.now() - startedAt).toBeLessThan(MCP_OWN_READY_WAIT_MS);
-    const events = lifecycleEvents(threadId, turnId).map((row) => row.event);
-    expect(events.filter((e) => e === "mcp_ready_timeout")).toHaveLength(1);
-    expect(events).not.toContain("mcp_ready_own");
-    // The bot is told, in the Claude driver's words, instead of guessing.
-    const text = (JSON.parse(readFileSync(join(dumps, "prompt.json"), "utf8")).prompt as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
-    expect(text).toContain(toolsMayBeLoadingNotice(["connected apps"]));
+    expect(lifecycleEvents(threadId, turnId).filter(row => row.event === "mcp_ready_timeout")).toHaveLength(1);
+    expect(readOrder().map(row => row.event)).toEqual(["new-response"]);
   });
 
   it("(i) connected apps still not ready: reconnected once, then the turn runs and the bot is told plainly", async () => {
     process.env.MURAGE_MCP_RECONNECT_WAIT_MS = "800";
     const { threadId, turnId } = await start({ FUIGO_FAKE_MCP: "ready", FUIGO_FAKE_MCP_LIST: JSON.stringify({ murage_connectors: "initializing", agents: "ready" }) }, { ...COMPOSIO, ...AGENTS });
     const done = await recorder!.until((e) => e.type === "turn.completed");
-    expect(done).toMatchObject({ ok: true, toolsUnavailable: ["connected apps"] });
-    const loads = readFileSync(join(dumps, "loads.log"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
-    expect(loads).toHaveLength(1);
-    const marked = loads[0].mcpServers.filter((server: { env?: Array<{ name: string }> }) => (server.env ?? []).some((item) => item.name === "MURAGE_MCP_RECONNECT"));
-    expect(marked.map((server: { name: string }) => server.name)).toEqual(["murage_connectors"]);
-    const text = (JSON.parse(readFileSync(join(dumps, "prompt.json"), "utf8")).prompt as Array<{ text?: string }>).map((part) => part.text ?? "").join("\n");
-    expect(text).toContain(toolsUnavailableNotice(["connected apps"]));
-    expect(lifecycleEvents(threadId, turnId).map((row) => row.event)).toContain("mcp_reconnect");
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: unready consuming mounts refuse before any prompt or reconnect can refresh authority.
+    expect(done).toMatchObject({ ok: false, stopReason: "memory-refused" });
+    expect(existsSync(join(dumps, "prompt.json"))).toBe(false);
+    expect(existsSync(join(dumps, "loads.log"))).toBe(false);
+    expect(JSON.stringify(recorder!.events)).toContain("I stopped this turn because some of its context is no longer available.");
+    expect(lifecycleEvents(threadId, turnId).some(row => row.event === "mcp_reconnect")).toBe(false);
   });
 
   it("(i2) the gate line says each server's status, the wait and the reason, and no engine text", async () => {
@@ -1547,35 +1643,36 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
       }),
     }, { ...COMPOSIO, ...AGENTS });
     const done = await recorder!.until((e) => e.type === "turn.completed");
-    expect(done).toMatchObject({ ok: true, toolsUnavailable: ["connected apps"] });
-    const gate = lines.filter((line) => line.startsWith("acp mcp gate"));
-    expect(gate).toHaveLength(1);
-    expect(gate[0]).toContain(`thread=${threadId} engine=fuigoAgent waitedMs=`);
-    expect(gate[0]).toContain("readiness=degraded");
-    expect(gate[0]).toContain("reconnected=murage_connectors backedOff=none missing=murage_connectors");
-    expect(gate[0]).toContain("notConnected=murage_connectors:unavailable reasons=murage_connectors:handshake-failed");
-    expect(gate[0]).toMatch(/tools=.*agents:2/);
-    expect(gate[0]).not.toContain("sk-live");
-    expect(gate[0]).not.toContain("jane");
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: unready consuming mounts refuse before any prompt or reconnect can refresh authority.
+    expect(done).toMatchObject({ ok: false, stopReason: "memory-refused" });
+    expect(existsSync(join(dumps, "prompt.json"))).toBe(false);
+    expect(existsSync(join(dumps, "loads.log"))).toBe(false);
+    expect(JSON.stringify(recorder!.events)).toContain("I stopped this turn because some of its context is no longer available.");
+    expect(done.threadId).toBe(threadId);
+    expect(lines.join("\n")).not.toContain("sk-live");
+    expect(lines.join("\n")).not.toContain("jane");
   });
 
   it("(j) a reconnect that brings connected apps up runs the turn with no notice", async () => {
     process.env.MURAGE_MCP_RECONNECT_WAIT_MS = "3000";
     await start({ FUIGO_FAKE_MCP: "ready", FUIGO_FAKE_MCP_LIST: JSON.stringify({ murage_connectors: "unavailable" }), FUIGO_FAKE_MCP_RECONNECT_TO: "ready" }, COMPOSIO);
     const done = await recorder!.until((e) => e.type === "turn.completed");
-    expect(done).toMatchObject({ ok: true });
-    expect((done as { toolsUnavailable?: string[] }).toolsUnavailable).toBeUndefined();
-    expect(readFileSync(join(dumps, "prompt.json"), "utf8")).not.toContain("[Murage:");
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: unready consuming mounts refuse before any prompt or reconnect can refresh authority.
+    expect(done).toMatchObject({ ok: false, stopReason: "memory-refused" });
+    expect(existsSync(join(dumps, "prompt.json"))).toBe(false);
+    expect(existsSync(join(dumps, "loads.log"))).toBe(false);
+    expect(JSON.stringify(recorder!.events)).toContain("I stopped this turn because some of its context is no longer available.");
   });
 
   it("(j2) FUIGO-SCOPE: a reconnect answered without the policy ack fails the turn before the prompt", async () => {
     process.env.MURAGE_MCP_RECONNECT_WAIT_MS = "3000";
     await start({ FUIGO_FAKE_MCP: "ready", FUIGO_FAKE_MCP_LIST: JSON.stringify({ murage_connectors: "unavailable" }), FUIGO_FAKE_MCP_RECONNECT_TO: "ready", FUIGO_FAKE_ACK_OFF: "reconnect" }, COMPOSIO);
     const done = await recorder!.until((e) => e.type === "turn.completed");
-    expect(done).toMatchObject({ ok: false });
-    expect(existsSync(join(dumps, "loads.log"))).toBe(true); // the reconnect load was sent and answered
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: unready consuming mounts refuse before any prompt or reconnect can refresh authority.
+    expect(done).toMatchObject({ ok: false, stopReason: "memory-refused" });
     expect(existsSync(join(dumps, "prompt.json"))).toBe(false);
-    expect(JSON.stringify(recorder!.events)).toMatch(/did not confirm your approval settings/);
+    expect(existsSync(join(dumps, "loads.log"))).toBe(false);
+    expect(JSON.stringify(recorder!.events)).toContain("I stopped this turn because some of its context is no longer available.");
   });
 
   it("(k) connected apps 'ready' by status but still on the stand-in list: reconnected once, and the bot is not told they are unavailable", async () => {
@@ -1587,22 +1684,20 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
     // the harness hands a cache folder with MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE=1 once it has checked the folder's ACL; on Windows a
     // folder without that is never used (connector-cache.ts privateCacheDir), so the test hands it the same way
     markMountIncomplete({ cache: cacheEnvFromProcess({ MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE: "1" }), identity, revision: "rev-1", thread: threadId });
-    const composio = { composio: { command: process.execPath, args: ["/fake/composio-mcp.js"], env: { MURAGE_CONNECTOR_IDENTITY: identity, MURAGE_CONNECTOR_REVISION: "rev-1", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE: "1" } } } as unknown as NonNullable<SendTurnInput["integrations"]>;
+    const composio = { composio: { command: process.execPath, args: [IDLE_MCP], env: { MURAGE_CONNECTOR_IDENTITY: identity, MURAGE_CONNECTOR_REVISION: "rev-1", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir, MURAGE_CONNECTOR_TOOLS_CACHE_PRIVATE: "1" } } } as unknown as NonNullable<SendTurnInput["integrations"]>;
     const { turnId } = await start({ FUIGO_FAKE_MCP: "ready", FUIGO_FAKE_MCP_LIST: JSON.stringify({ murage_connectors: "ready" }) }, composio, FuigoAgentDriver, threadId);
     const done = await recorder!.until((e) => e.type === "turn.completed");
-    expect(done).toMatchObject({ ok: true });
-    expect((done as { toolsUnavailable?: string[] }).toolsUnavailable).toBeUndefined(); // its tools work; only the list is provisional
-    const loads = readFileSync(join(dumps, "loads.log"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
-    expect(loads).toHaveLength(1);
-    const marked = loads[0].mcpServers.filter((server: { env?: Array<{ name: string }> }) => (server.env ?? []).some((item) => item.name === "MURAGE_MCP_RECONNECT"));
-    expect(marked.map((server: { name: string }) => server.name)).toEqual(["murage_connectors"]);
-    expect(lifecycleEvents(threadId, turnId).map((row) => row.event)).toContain("mcp_reconnect");
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: a provisional consuming catalog cannot reconnect using the spent admission.
+    expect(done).toMatchObject({ ok: false, stopReason: "memory-refused" });
+    expect(existsSync(join(dumps, "prompt.json"))).toBe(false);
+    expect(existsSync(join(dumps, "loads.log"))).toBe(false);
+    expect(lifecycleEvents(threadId, turnId).map(row => row.event)).not.toContain("mcp_reconnect");
   });
 
   it("(k2) connected apps 'ready' with a real list (no marker): no reconnect", async () => {
     const dir = mkdtempSync(join(tmpdir(), "murage-standin-"));
     onTestFinished(() => removeTempDirSync(dir));
-    const composio = { composio: { command: process.execPath, args: ["/fake/composio-mcp.js"], env: { MURAGE_CONNECTOR_IDENTITY: "e".repeat(32), MURAGE_CONNECTOR_REVISION: "rev-1", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir } } } as unknown as NonNullable<SendTurnInput["integrations"]>;
+    const composio = { composio: { command: process.execPath, args: [IDLE_MCP], env: { MURAGE_CONNECTOR_IDENTITY: "e".repeat(32), MURAGE_CONNECTOR_REVISION: "rev-1", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: dir } } } as unknown as NonNullable<SendTurnInput["integrations"]>;
     const { threadId, turnId } = await start({ FUIGO_FAKE_MCP: "ready", FUIGO_FAKE_MCP_LIST: JSON.stringify({ murage_connectors: "ready" }) }, composio);
     expect(await recorder!.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
     expect(existsSync(join(dumps, "loads.log"))).toBe(false);
@@ -1637,6 +1732,7 @@ describe("fuigo waits for MCP readiness before the first prompt", () => {
   it("(f) an ACP engine without the readiness notification prompts at once, servers or not", async () => {
     const other: AcpSupport = {
       driverKind: "otherAcpTest",
+      fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
       displayName: "Other ACP",
       models: { default: "", options: [] },
       defaultCli: "other-acp",
@@ -1684,13 +1780,13 @@ describe("Fuigo keeps one engine process per thread, opt-in (upstream #1575, MUR
     instance = await FuigoAgentDriver.create({
       instanceId: "fuigo-pool",
       displayName: "Fuigo",
-      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps },
+      environment: { HOME: home, FUIGO_FAKE_DUMP_DIR: dumps, FUIGO_FAKE_REQUIRE_PEER_RECEIPT: join(dumps, "peer-capabilities.jsonl") },
       enabled: true,
       config: { cli: fakeCli, fullAuto: false },
     });
     recorder = recordEvents(instance.adapter);
     const agents = (token: string): SendTurnInput["integrations"] => ({
-      agents: { command: process.execPath, args: ["never-started.js"], env: { MURAGE_COMMS_TOKEN: token } },
+      agents: { command: process.execPath, args: [IDLE_MCP], env: { MURAGE_COMMS_TOKEN: token, FIXTURE_REVISION_RECEIPT: join(dumps, "peer-capabilities.jsonl") } },
     });
     const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo-pool", text: "one", integrations: agents("turn-one") });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
@@ -1701,13 +1797,15 @@ describe("Fuigo keeps one engine process per thread, opt-in (upstream #1575, MUR
     expect(done).toMatchObject({ ok: true });
 
     const lines = (name: string) => readFileSync(join(dumps, name), "utf8").split("\n").filter(Boolean);
-    expect(lines("spawns.log")).toHaveLength(1);
+    // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: mounted turns have fresh native processes; only the server peer receives the current token.
+    expect(lines("spawns.log")).toHaveLength(2);
     const [load] = lines("loads.log").map((line) => JSON.parse(line));
     expect(lines("loads.log")).toHaveLength(1);
     expect(load).toMatchObject({ sessionId: "fake-fuigo-session", _meta: { noReplay: true } });
     const token = (load.mcpServers as Array<{ name: string; env: Array<{ name: string; value: string }> }>)
       .find((server) => server.name === "agents")?.env.find((entry) => entry.name === "MURAGE_COMMS_TOKEN")?.value;
-    expect(token).toBe("turn-two");
+    expect(token).toBeUndefined();
+    expect(lines("peer-capabilities.jsonl").map(line => JSON.parse(line)).at(-1).capability).toBe(fixtureCredentialFingerprint("turn-two"));
   });
 
   it("a warm second turn that picks a different model sends set_model with the new id before its prompt", async () => {
@@ -2201,7 +2299,10 @@ describe("a session open in only one Fuigo process (1.0.30)", () => {
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
     const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-fuigo-lock-stop", text: "two", resumeCursor: "fake-fuigo-session" });
     await untilLoads(2); // the old child is gone, the new one has loaded twice and is now in the backoff
-    await instance.adapter.interruptTurn("t-fuigo-lock-stop", first.turnId);
+    // MAIN RULING INT-CONFLICT-DEFAULT ce5110a6403 / eb01447e7d1: a stale exact-turn Stop cannot stop its successor; target the pending dispatch after proving that negative.
+    expect(await instance.adapter.interruptTurn("t-fuigo-lock-stop", first.turnId)).toMatchObject({ closeConfirmed: false, reason: "stop-failed" });
+    expect(recorder.events.some(e => e.type === "turn.completed" && e.turnId === second.turnId)).toBe(false);
+    await instance.adapter.interruptTurn("t-fuigo-lock-stop", second.turnId);
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
     await new Promise((r) => setTimeout(r, 3500)); // longer than the 3 s backoff: a third load would have happened by now
     expect(lines("spawns.log")).toHaveLength(2);
@@ -2257,7 +2358,7 @@ describe("1.0.18 (f): a Flux refusal in Fuigo's own retry notice is sent exactly
   const SID = "fake-fuigo-session";
   const retrying = (reason: string, attempt: number) => ({ jsonrpc: "2.0", method: "session/update", params: { sessionId: SID, update: { sessionUpdate: "retry_state", type: "retrying", attempt, reason } } });
   const log = (name: string) => existsSync(join(dumps, name)) ? readFileSync(join(dumps, name), "utf8").split("\n").filter(Boolean) : [];
-  // Recorded shape: LiteLLM flattens flux-router's 429 detail dict into the message as a Python repr; the code is only in `state`.
+  // Synthetic LiteLLM-like repr, not a binary capture; kept as defensive parser coverage.
   const FREE_CAP = "429 Too Many Requests: {'error': {'type': 'rate_limit_exceeded', 'state': 'free_cap_reached', 'message': \"Your account's monthly allowance is used up.\"}}";
   const HOLD = "429 Too Many Requests: Your credit is busy because other requests have temporarily reserved it. Retry in 2s.";
   const reply = { jsonrpc: "2.0", method: "session/update", params: { sessionId: SID, update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "answered" } } } };
@@ -2306,6 +2407,105 @@ describe("1.0.18 (f): a Flux refusal in Fuigo's own retry notice is sent exactly
     expect(rec.events.find((e) => e.type === "runtime.error")).toBeUndefined();
     expect(rec.events.find((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
   });
+
+  // INT1019-CLOUD R1.2: off a home the retry-notice refusal is exactly 1.0.19's. The home mapping is tested in cloud-retry-notice.test.ts
+  // (a home scrubs the fake CLI's script env, so a turn cannot be driven end to end here).
+  const withHeaders = (reason: string, headers: Record<string, string>) => {
+    const notice = retrying(reason, 1);
+    return { ...notice, params: { ...notice.params, update: { ...notice.params.update, headers } } };
+  };
+  const ownRefusal = (rec: EventRecorder) => rec.events.find((e) => e.type === "runtime.error") as unknown as { message: string; gatewayCode?: string; gatewayResetsAt?: number; httpStatus?: number } | undefined;
+  it("R1.2 off a home: the same 402 notice keeps the 1.0.19 gateway code", async () => {
+    const rec = await turn([withHeaders("API error (status 402 Payment Required): None: credit_exhausted", { "x-flux-hold-reason": "billing" })]);
+    expect(ownRefusal(rec)).toMatchObject({ gatewayCode: "credit_exhausted" });
+  });
 });
 
 useOutsideStoreFixture();
+
+// busyloop: synthetic ACP envelopes containing the reported Flux body.
+// These are relay regressions, not captures from the customer's Fuigo binary.
+// They do not establish whether that binary preserves the upstream cap signal.
+describe("busyloop synthetic Fuigo refusal relay", () => {
+  const monthly = "Your account's monthly free-tier token allowance is exhausted.";
+  // RULING-busyloop.md §3 B4: data.http_status:429 on -32003 and nested
+  // data.error.state are defensive shapes, never emitted by Fuigo 1.0.41.
+  const cases = [
+    ["synthetic-error.state", { error: { code: -32003, message: "API error (status 429 Too Many Requests)", data: { http_status: 429, error: { state: "free_cap_reached", message: monthly } } } }, "free_cap_reached", "freeCap"],
+    ["synthetic-top-level result state", { result: { stopReason: "failed", state: "free_cap_reached", http_status: 429, message: "Request refused" } }, "free_cap_reached", "freeCap"],
+    ["synthetic-JSON fragment", { error: { code: -32003, message: 'API error (status 429 Too Many Requests): {"state":"free_cap_reached"}', data: { error_kind: "rate_limited" } } }, "free_cap_reached", "freeCap"],
+    ["synthetic-LiteLLM message", { error: { code: -32003, message: "API error (status 429 Too Many Requests)", data: { error: { message: '{"error":{"state":"free_cap_reached"}}' } } } }, "free_cap_reached", "freeCap"],
+    ["synthetic-monthly words only", { error: { code: -32003, message: "API error (status 429 Too Many Requests): " + monthly } }, "free_cap_reached", "freeCap"],
+    ["synthetic-credit exhausted", { error: { code: -32003, message: "API error (status 402 Payment Required)", data: { state: "credit_exhausted" } } }, "credit_exhausted", "credit"],
+    ["synthetic-credit unresolved", { error: { code: -32003, message: "API error (status 402 Payment Required)", data: { error: { state: "credit_unresolved" } } } }, "credit_unresolved", "unresolved"],
+    ["synthetic-hold state", { error: { code: -32003, message: "API error (status 429 Too Many Requests)", data: { state: "hold" } } }, "hold", "hold"],
+  ] as const;
+  it.each(cases)("%s survives to the turn and its existing card", async (_name, response, code, reason) => {
+    const { LimitTurns, gatewayBusy } = await import("../../limit-continuation.ts");
+    const rec = await runTurn({ model: "flux-auto", environment: { FUIGO_FAKE_REFUSAL: JSON.stringify(response) } });
+    const error = rec.events.find(e => e.type === "runtime.error");
+    expect(error).toMatchObject({ gatewayCode: code, httpStatus: code.startsWith("credit_") ? 402 : 429 });
+    const turns = new LimitTurns();
+    turns.begin({ botId: "b", threadId: "t-fuigo", selection: { instanceId: "fuigo-test", model: "flux-auto" }, engineName: "Fuigo", driverKind: "fuigoAgent", viaGateway: false, sendIds: [], sourceMessageId: "m", sourceText: "hi", ownerDirect: true, routine: false, onFailover: false, activity: false });
+    for (const event of rec.events) turns.observe(event);
+    const turn = turns.get("t-fuigo")!;
+    expect(turn.httpStatus).toBe(code.startsWith("credit_") ? 402 : 429);
+    expect(gatewayBusy(turn, { resetsAt: null })).toBe(reason);
+  });
+});
+
+
+describe("busyloop failed-result hourly reset preservation", () => {
+  it.each([
+    ["message JSON", { message: '{"error":"hourly_burn_limit","retry_after":60}' }],
+    ["metadata", { message: "hourly_burn_limit", _meta: { retry_after: 60 } }],
+    ["error JSON", { error: '{"error":"hourly_burn_limit","retry_after":60}' }],
+    ["whole result", { state: "hourly_burn_limit", retry_after: 60 }],
+  ])("%s reaches the hourly card with the supplied reset time", async (_name, fields) => {
+    const { LimitTurns, gatewayBusy } = await import("../../limit-continuation.ts");
+    const before = Date.now();
+    const rec = await runTurn({ model: "flux-auto", environment: {
+      FUIGO_FAKE_REFUSAL: JSON.stringify({ result: { stopReason: "failed", http_status: 429, ...fields } }),
+    } });
+    const after = Date.now();
+    const error = rec.events.find(e => e.type === "runtime.error");
+    expect(error).toMatchObject({ gatewayCode: "hourly_burn_limit", httpStatus: 429 });
+    expect(error?.gatewayResetsAt).toBeGreaterThanOrEqual(before + 60_000);
+    expect(error?.gatewayResetsAt).toBeLessThanOrEqual(after + 60_000);
+    const turns = new LimitTurns();
+    turns.begin({ botId: "b", threadId: "t-fuigo", selection: { instanceId: "fuigo-test", model: "flux-auto" }, engineName: "Fuigo", driverKind: "fuigoAgent", viaGateway: false, sendIds: [], sourceMessageId: "m", sourceText: "hi", ownerDirect: true, routine: false, onFailover: false, activity: false });
+    for (const event of rec.events) turns.observe(event);
+    const turn = turns.get("t-fuigo")!;
+    expect(gatewayBusy(turn, { resetsAt: null })).toBe("hourly");
+    expect(turn.gatewayResetsAt).toBe(error?.gatewayResetsAt);
+  });
+});
+
+// Synthetic contract regressions; captured engine evidence lives in the replay file.
+describe("busyloop typed upstream contract (synthetic)", () => {
+  it.each([
+    ["typed credit overrides free-cap prose", { code: -32003, message: "monthly free-tier token allowance", data: { upstream: { state: "credit_exhausted", http_status: 402 } } }, "credit_exhausted", 402],
+    ["typed hold overrides free-cap data prose", { code: -32003, message: "Rate limited", data: { upstream: { state: "hold", http_status: 429 }, message: "monthly free-tier token allowance" } }, "hold", 429],
+    ["typed status overrides legacy status", { code: -32003, message: "Rate limited", data: { http_status: 500, upstream: { state: "free_cap_reached", http_status: 429 } } }, "free_cap_reached", 429],
+    ["RPC rate-limit code implies 429", { code: -32003, message: "Rate limited", data: { message: "monthly free-tier token allowance" } }, "free_cap_reached", 429],
+    ["typed error kind implies 429", { code: -32603, message: "Rate limited", data: { error_kind: "rate_limited", message: "monthly free-tier token allowance" } }, "free_cap_reached", 429],
+    ["explicit status wins over inferred 429", { code: -32003, message: "Rate limited", data: { http_status: 402, state: "credit_exhausted" } }, "credit_exhausted", 402],
+    ["malformed upstream falls back to prose", { code: -32003, message: "Rate limited", data: { upstream: { state: ["hold"], http_status: "402" }, message: "monthly free-tier token allowance" } }, "free_cap_reached", 429],
+  ])("%s", async (_name, error, gatewayCode, httpStatus) => {
+    const rec = await runTurn({ model: "flux-auto", environment: { FUIGO_FAKE_REFUSAL: JSON.stringify({ error }) } });
+    expect(rec.events.find(e => e.type === "runtime.error")).toMatchObject({ gatewayCode, httpStatus });
+  });
+});
+
+
+describe("busyloop typed retry notices (synthetic)", () => {
+  it.each(["retrying", "exhausted", "failed"])("%s preserves upstream state before conflicting reason text", async type => {
+    const rec = await runTurn({ model: "flux-auto", environment: { FUIGO_FAKE_SCRIPT: JSON.stringify([
+      { jsonrpc: "2.0", method: "_fuigo/session_notification", params: { sessionId: "fake-fuigo-session", update: {
+        sessionUpdate: "retry_state", type, attempt: 1, upstream: { state: "credit_exhausted", http_status: 402 }, reason: "monthly free-tier token allowance",
+      } } },
+    ]) } });
+    expect(rec.events.find(e => e.type === "runtime.error")).toMatchObject({ gatewayCode: "credit_exhausted", httpStatus: 402 });
+    expect(rec.events.find(e => e.type === "turn.completed")).toMatchObject({ ok: false });
+  });
+});

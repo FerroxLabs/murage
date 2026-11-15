@@ -11,6 +11,8 @@ import { ChildTeardown } from "./drivers/child-teardown.ts";
 
 const native = vi.hoisted(() => ({ spawn: vi.fn(), execFile: vi.fn() }));
 vi.mock("node:child_process", () => native);
+// This suite simulates Windows on POSIX; the real Windows process hook is installed only on Windows.
+vi.mock("../shared/win-hide-child-process.mjs", () => ({ withHideInherit: <T,>(options: T) => options }));
 vi.mock("./env-path.ts", () => ({ resolveCliSpawn: (command: string, args: string[]) => ({ command, args }) }));
 // The Windows job object is the engine-exclusion addon's (no PowerShell supervisor any more, murage-releases #1).
 const addon = vi.hoisted(() => ({ jobCreate: vi.fn(), jobAssign: vi.fn(), jobClose: vi.fn(), jobStop: vi.fn(), processes: vi.fn(), dropShutdownPrivileges: vi.fn(() => ({ ok: true })) }));
@@ -28,7 +30,7 @@ const REAL_LAUNCHER = fileURLToPath(new URL("./job-launcher.ts", import.meta.url
 import { fileURLToPath } from "node:url";
 import {
   awaitCliTreeStopped, cliContainment, cliJobRefused, cliProcessPid, cliStopDelivery, cliTreeConfirmedStopped, engineJob, engineProcessPid,
-  ENGINE_CONTAINMENT_CODE, forceCliTreeStopped, JOB_STOP_CAP_MS, killCliTree, launcherEnvironment, spawnCli, WINDOWS_ROUTE_WATCHDOG_MS, WINDOWS_TASKKILL_CAP_MS,
+  engineExecutableDeps, ENGINE_CONTAINMENT_CODE, forceCliTreeStopped, JOB_STOP_CAP_MS, killCliTree, launcherEnvironment, spawnCli, WINDOWS_ROUTE_WATCHDOG_MS, WINDOWS_TASKKILL_CAP_MS,
 } from "./procs.ts";
 
 // Simulated Windows only: no subprocess, taskkill or signal is executed.
@@ -38,6 +40,8 @@ let child: ChildProcess;
 let base: string;
 beforeEach(() => {
   base = mkdtempSync(join(tmpdir(), "pip-procs-win-"));
+  // The OS and CLIs are fakes throughout this suite, including their executable-presence checks.
+  vi.spyOn(engineExecutableDeps, "executable").mockReturnValue(true);
   vi.useFakeTimers();
   Object.defineProperty(process, "platform", { ...platformDescriptor, value: "win32" });
   child = Object.assign(new EventEmitter(), {
@@ -72,6 +76,7 @@ afterEach(() => {
   child.emit("close", child.exitCode, child.signalCode);
   Object.defineProperty(process, "platform", platformDescriptor);
   vi.useRealTimers();
+  vi.restoreAllMocks();
   removeTempDirSync(base);
 });
 

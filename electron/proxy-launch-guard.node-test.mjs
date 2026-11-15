@@ -101,7 +101,7 @@ test("main.mjs runs the guard before any other statement and before the single-i
   const call = source.indexOf("\nenforceProxyLaunchGuard();");
   assert.ok(call > 0, "main.mjs calls enforceProxyLaunchGuard()");
   assert.ok(call < source.indexOf("requestSingleInstanceLock("), "before requestSingleInstanceLock");
-  assert.ok(source.startsWith('import { enforceProxyLaunchGuard } from "./proxy-launch-guard.mjs";'), "its module is evaluated first");
+  assert.ok(source.startsWith('import "../shared/win-hide-child-process.mjs";\nimport { enforceProxyLaunchGuard } from "./proxy-launch-guard.mjs";'), "its module is evaluated first");
   // no top-level statement of the app runs first (everything above it is imports and comments)
   const firstStatement = source.search(/^(const|let|var|if|function|app\.|process\.)/m);
   assert.ok(firstStatement > call, "the first top-level statement");

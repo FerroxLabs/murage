@@ -25,6 +25,7 @@ import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { autoVerdict } from "../../auto-approve.ts";
+import { expectNoLimitsOwnerOutcome } from "../../testing/no-limits-1019.ts";
 import { classifyStopLine, type StopLinePlace } from "../../stop-line.ts";
 import { commandFromToolInput, commandCwdFromToolInput } from "../../../shared/exact-command.ts";
 import type { GrantCall } from "../../../shared/app-action-grant.ts";
@@ -45,13 +46,13 @@ const HERMES_ASK_SUPPORT: AcpSupport = {
   pickAuthMethod: () => null,
   authFailure: "continue",
   isAuthenticated: () => true,
-  normalizeAsk: hermesAcpSupport.normalizeAsk,
+  normalizeAsk: hermesAcpSupport.normalizeAsk, fluxReach: () => "elsewhere" as const
 };
 const HermesAskDriver = createAcpDriver(HERMES_ASK_SUPPORT);
 
 /** What the hook program prints for one call, run as Hermes runs it (stdin JSON in, stdout JSON out). */
 const hookSays = (toolName: string, toolInput: unknown) => JSON.parse(spawnSync(process.execPath, ["-e", HERMES_ASK_HOOK_SOURCE],
-  { input: JSON.stringify({ hook_event_name: "pre_tool_call", tool_name: toolName, tool_input: toolInput }), encoding: "utf8" }).stdout);
+  { windowsHide: true, input: JSON.stringify({ hook_event_name: "pre_tool_call", tool_name: toolName, tool_input: toolInput }), encoding: "utf8" }).stdout);
 
 /** The permission request Hermes sends for a hook-approved call (permissions.py, approval.py). */
 const hermesRequest = (toolName: string, message: string) => ({
@@ -106,10 +107,32 @@ describe("HERMES-BUGS-1010: a Hermes hook ask is judged by its real command, who
     const said = hookSays("terminal", { command, workdir: THREAD });
     expect(said.action).toBe("approve");
     expect(JSON.parse(said.message)).toEqual({ murage: 1, v: 1, tool: "terminal", input: { command, workdir: THREAD }, truncated: false });
-    // Above the cap the message says so and carries no arguments, so nothing cut is ever judged.
+    // MAIN RULING INT-CONFLICT-DEFAULT 604fa36919 / 36e479d8b4: preserve complete protocol input, including the wipe tail.
     const huge = hookSays("terminal", { command: "y".repeat(HERMES_ASK_MESSAGE_CAP + 10) });
-    expect(JSON.parse(huge.message)).toEqual({ murage: 1, v: 1, tool: "terminal", input: null, truncated: true });
-    expect(huge.message.length).toBeLessThanOrEqual(HERMES_ASK_MESSAGE_CAP);
+    expect(JSON.parse(huge.message)).toEqual({ murage: 1, v: 1, tool: "terminal", input: { command: "y".repeat(HERMES_ASK_MESSAGE_CAP + 10) }, truncated: false });
+    // MAIN RULING INT-CONFLICT-DEFAULT 604fa36919 / 36e479d8b4: the former threshold is a complete-input regression boundary.
+    expect(huge.message.length).toBeGreaterThan(HERMES_ASK_MESSAGE_CAP);
+  });
+
+  it.each(["; printf safe", "; rm -rf ~"])("preserves an oversized command and judges its tail: %s", async (tail) => {
+      const command = `printf %s ${"x".repeat(HERMES_ASK_MESSAGE_CAP + 10)}${tail}`;
+      const said = hookSays("terminal", { command, workdir: THREAD });
+      const message = JSON.parse(said.message);
+      expect(message.input?.command).toBe(command);
+      expect(message.truncated).toBe(false);
+      const opened = await askedWith("hermes-oversized", hermesRequest("terminal", said.message));
+      expect(commandFromToolInput(opened.toolCall.input)).toBe(command);
+      expect(opened.toolInputMissing).toBeUndefined();
+      expect(opened.toolInputTruncated).not.toBe(true);
+      const verdict = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, {
+        fullAccessOrigin: "owner", ownerStarted: true, outsideRead: null,
+        workFolder: THREAD, promptFacts: { home: HOME } as any,
+        commandText: commandFromToolInput(opened.toolCall.input), call: callOf(opened),
+      });
+      if (tail.includes("rm -rf")) expect(verdict).toMatchObject({ approve: null, source: "always-ask", rule: "delete-home" });
+      else expect(verdict).toMatchObject({ approve: expect.any(String), source: "no-limits" });
+      await instance?.dispose();
+      instance = undefined;
   });
 
   it("every reader takes the real command: the card, the policy's command, its folder and the stop line", async () => {
@@ -150,7 +173,7 @@ describe("HERMES-BUGS-1010: a Hermes hook ask is judged by its real command, who
   it("a hook message Murage does not recognise is a call it could not read, never judged by the placeholder", async () => {
     for (const [id, message] of [
       ["hermes-old-hook", `terminal: ${"q".repeat(400)}`],
-      ["hermes-cut", hookSays("terminal", { command: "y".repeat(HERMES_ASK_MESSAGE_CAP + 10) }).message],
+      ["hermes-cut", JSON.stringify({ murage: 1, v: 1, tool: "terminal", input: null, truncated: true })],
       ["hermes-other-tool", JSON.stringify({ murage: 1, v: 1, tool: "execute_code", input: { code: "print(1)" }, truncated: false })],
       ["hermes-no-command", JSON.stringify({ murage: 1, v: 1, tool: "terminal", input: {}, truncated: false })],
     ] as const) {
@@ -164,9 +187,17 @@ describe("HERMES-BUGS-1010: a Hermes hook ask is judged by its real command, who
       const verdict = autoVerdict({ autoApprove: true, fullAccess: true }, opened.tool, opened.summary, { call: callOf(opened) });
       expect(verdict.approve).toBeNull();
       expect(["unread-call", "always-ask"]).toContain(verdict.source);
-      // and at No limits on a turn the owner started: a call that did not arrive whole asks there too
+      // RULING-R3 R2: a protocol-truncated hook message cannot clear the wipe check.
       const owner = autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, { fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null, inputTruncated: opened.toolInputTruncated === true, call: callOf(opened) });
-      expect(owner.approve, id).toBeNull();
+      if (id === "hermes-cut") {
+        // MAIN RULING 2026-11-13 wipe-only: truncation of a non-wipe is not a No limits card.
+        expect(owner).toMatchObject({ approve: expect.any(String), source: "no-limits" });
+        // The server also sees Hermes's placeholder command; it is not the missing full text.
+        expect(autoVerdict({ autoApprove: true, fullAccess: true, noLimits: true }, opened.tool, opened.summary, {
+          fullAccessOrigin: "owner", ownerStarted: true, stopLine: null, outsideRead: null,
+          inputTruncated: true, commandText: commandFromToolInput(opened.toolCall.input), call: callOf(opened),
+        }).approve).toEqual(expect.any(String));
+      } else expectNoLimitsOwnerOutcome(owner, opened.summary, undefined, id);
       await instance?.dispose();
       instance = undefined;
     }

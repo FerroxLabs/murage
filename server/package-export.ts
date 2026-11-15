@@ -1,6 +1,6 @@
 import { parseBotPackage, type BotPackageDefinition, type BotPackagePlaybook, type ParsedBotPackage } from "./bot-package.ts";
 import type { Routine } from "./routines.ts";
-import type { BotRecord, GroupRecord, InstalledPlaybook } from "./store.ts";
+import { inertBot, type BotRecord, type GroupRecord, type InstalledPlaybook } from "./store.ts";
 import { boundEmailAddress, scrubEmailAddress, scrubOptional } from "./email/export-scrub.ts";
 
 export function botExportRole(bot: BotRecord): "individual" | "member" | "leader" | "chief" {
@@ -44,7 +44,7 @@ export interface BotPackageExportInput {
 }
 
 function buildBotPackageExport(input: BotPackageExportInput) {
-  const bots = input.bots.filter((bot) => !bot.hidden);
+  const bots = input.bots.filter((bot) => !inertBot(bot));
   if (!bots.length) throw new Error("Create a bot before exporting your package");
   const selection = input.selection;
   const selected = (field: keyof BotPackageExportSelection): Set<string> | undefined => {

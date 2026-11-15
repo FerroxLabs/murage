@@ -1,0 +1,927 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "sc-activate-r3-import-and-policy",
+  "date": "2026-11-13",
+  "base": "0167cdbb4f5dd066c920981d4a12e332da988b7d",
+  "scope": "Review Ask writer translations and unconditional guest Ask against MURAGE-UX-BAR and release notes",
+  "strings": {
+    "en:ux.l1.level.unlimitedDetail": {
+      "text": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "en:ux.l1.level.underTable": {
+      "text": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. Saved permission rules do not block actions. Features you switched off entirely, including channel messages, stay off until you turn them on.",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. Saved permission rules do not block actions. Features you switched off entirely, including channel messages, stay off until you turn them on.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "en:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "en:ux.lcopyb.level.unlimitedHere": {
+      "text": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "en:ux.lcopyb.level.unlimited": {
+      "text": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "en:ux.lcopyb.level.channelHint": {
+      "text": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask. Trigger links from other apps and routines use the bot's level.",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "en:noLimits.v1.warning": {
+      "text": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "en:ownWrite.title": {
+      "text": "Review this change",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain review action; one obvious next step on the Ask card. Translation preserves the English action and state."
+    },
+    "en:ownWrite.allow": {
+      "text": "Allow",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "Explicit one-change permission; no standing rule or No limits promise. Translation preserves the English action and state."
+    },
+    "en:ownWrite.deny": {
+      "text": "Don’t allow",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear decline paired with Allow; no ambiguous cancel wording. Translation preserves the English action and state."
+    },
+    "en:ownWrite.waiting": {
+      "text": "Waiting for you",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Current request state in plain words; no promise that the change happened. Translation preserves the English action and state."
+    },
+    "en:ownWrite.approved": {
+      "text": "Approved",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Approval status is distinct from the effect status. Translation preserves the English action and state."
+    },
+    "en:ownWrite.applying": {
+      "text": "Making this change",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Describes an operation in progress without claiming completion. Translation preserves the English action and state."
+    },
+    "en:ownWrite.applied": {
+      "text": "Change made",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Used only after the handler confirms the requested effect. Translation preserves the English action and state."
+    },
+    "en:ownWrite.declined": {
+      "text": "Not allowed",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Records the declined action without implying an effect. Translation preserves the English action and state."
+    },
+    "en:ownWrite.expired": {
+      "text": "Expired",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Plain terminal state with no repeat action. Translation preserves the English action and state."
+    },
+    "en:ownWrite.unknown": {
+      "text": "Check the result before trying again",
+      "en": "Check the result before trying again",
+      "verdict": "pass",
+      "note": "Direct recovery instruction; does not promise that nothing changed or invite a duplicate effect. Translation preserves the English action and state."
+    },
+    "en:ownWrite.restored": {
+      "text": "This request came from a backup. Ask your bot to try again.",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains the non-executable backup request and the available next action. Translation preserves the English action and state."
+    },
+    "en:ownWrite.unavailable": {
+      "text": "This change could not be made. Ask your bot to try again.",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Short failure and next step for an operation that did not complete. Translation preserves the English action and state."
+    },
+    "de:noLimits.v1.warning": {
+      "text": "Keine Grenzen: Deine Bots führen Befehle und Tools ohne Nachfrage aus, auch mit Inhalten von außen oder Befehlen, die Murage nicht lesen kann. Dabei können sie geschützte Dateien ändern und Schlüssel und Passwörter lesen oder senden. Nur bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe wird vorher gefragt. Gespeicherte Berechtigungsregeln blockieren keine Aktionen. Vollständig ausgeschaltete Funktionen bleiben aus, bis du sie einschaltest. Murage sagt dir ohne Karte, was ausgeschaltet ist und wo du es einschalten kannst. Ausgeschaltete Kanalnachrichten bleiben aus. Trigger-Links aus anderen Apps und Routinen verwenden die Stufe des Bots. Chats anderer Personen bleiben bei „Fragen“. Eine Vollzugriff-Einstellung aus 1.0.18 zählt nicht. Chats ohne bekannten Absender bleiben bei „Fragen“. Ein unklarer Löschbefehl läuft, außer Murage erkennt, dass er den ganzen Computer, deinen persönlichen Ordner oder Systemordner leeren würde.",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "de:ux.l1.level.unlimitedDetail": {
+      "text": "Deine Bots führen Befehle und Tools ohne Nachfrage aus, auch mit Inhalten von außen oder Befehlen, die Murage nicht lesen kann. Dabei können sie geschützte Dateien ändern und Schlüssel und Passwörter lesen oder senden. Nur bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe wird vorher gefragt. Gespeicherte Berechtigungsregeln blockieren keine Aktionen. Vollständig ausgeschaltete Funktionen bleiben aus, bis du sie einschaltest. Murage sagt dir ohne Karte, was ausgeschaltet ist und wo du es einschalten kannst. Ausgeschaltete Kanalnachrichten bleiben aus. Trigger-Links aus anderen Apps und Routinen verwenden die Stufe des Bots. Chats anderer Personen bleiben bei „Fragen“. Eine Vollzugriff-Einstellung aus 1.0.18 zählt nicht.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "de:ux.l1.level.underTable": {
+      "text": "Mit „Keine Grenzen“ können geschützte Dateien geändert werden. Nur bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe wird vorher gefragt. Trigger-Links aus anderen Apps und Routinen verwenden die Stufe des Bots. Chats anderer Personen bleiben bei „Fragen“. Gespeicherte Berechtigungsregeln blockieren keine Aktionen. Vollständig ausgeschaltete Funktionen bleiben aus, bis du sie einschaltest.",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. Saved permission rules do not block actions. Features you switched off entirely, including channel messages, stay off until you turn them on.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "de:ux.l1.confirm.unlimitedBody": {
+      "text": "Mit {level} kann {bot} Befehle und Tools ohne Nachfrage ausführen. Inhalte von außen und Befehle, die Murage nicht lesen kann, laufen ebenfalls weiter. Dabei können sie geschützte Dateien ändern und Schlüssel und Passwörter lesen oder senden. Nur bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe wird vorher gefragt. Gespeicherte Berechtigungsregeln blockieren keine Aktionen. Vollständig ausgeschaltete Funktionen bleiben aus, bis du sie einschaltest. Murage sagt dir ohne Karte, was ausgeschaltet ist und wo du es einschalten kannst. Ausgeschaltete Kanalnachrichten bleiben aus. Trigger-Links aus anderen Apps und Routinen verwenden die Stufe des Bots. Chats anderer Personen bleiben bei „Fragen“. Eine Vollzugriff-Einstellung aus 1.0.18 zählt nicht.",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "de:ux.lcopyb.level.unlimitedHere": {
+      "text": "Deine Bots führen Befehle und Tools ohne Nachfrage aus, auch mit Inhalten von außen oder Befehlen, die Murage nicht lesen kann. Dabei können sie geschützte Dateien ändern und Schlüssel und Passwörter lesen oder senden. Nur bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe wird vorher gefragt. Gespeicherte Berechtigungsregeln blockieren keine Aktionen. Vollständig ausgeschaltete Funktionen bleiben aus, bis du sie einschaltest. Murage sagt dir ohne Karte, was ausgeschaltet ist und wo du es einschalten kannst. Ausgeschaltete Kanalnachrichten bleiben aus. Trigger-Links aus anderen Apps und Routinen verwenden die Stufe des Bots. Chats anderer Personen bleiben bei „Fragen“. Eine Vollzugriff-Einstellung aus 1.0.18 zählt nicht. Das schließt Klicken und Tippen auf diesem Computer ein.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "de:ux.lcopyb.level.unlimited": {
+      "text": "Deine Bots führen Befehle und Tools ohne Nachfrage aus, auch mit Inhalten von außen oder Befehlen, die Murage nicht lesen kann. Dabei können sie geschützte Dateien ändern und Schlüssel und Passwörter lesen oder senden. Nur bei einer wahrscheinlichen vollständigen Löschung oder einer Katastrophe wird vorher gefragt. Gespeicherte Berechtigungsregeln blockieren keine Aktionen. Vollständig ausgeschaltete Funktionen bleiben aus, bis du sie einschaltest. Murage sagt dir ohne Karte, was ausgeschaltet ist und wo du es einschalten kannst. Ausgeschaltete Kanalnachrichten bleiben aus. Trigger-Links aus anderen Apps und Routinen verwenden die Stufe des Bots. Chats anderer Personen bleiben bei „Fragen“. Eine Vollzugriff-Einstellung aus 1.0.18 zählt nicht.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "de:ux.lcopyb.level.channelHint": {
+      "text": "An, solange du es nicht ausschaltest. Mit „Keine Grenzen“ laufen deine eigenen Kanalnachrichten ohne Nachfrage. Chats anderer Personen bleiben bei „Fragen“. Trigger-Links aus anderen Apps und Routinen verwenden die Stufe des Bots.",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "de:ownWrite.title": {
+      "text": "Diese Änderung prüfen",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain review action; one obvious next step on the Ask card. Translation preserves the English action and state."
+    },
+    "de:ownWrite.allow": {
+      "text": "Erlauben",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "Explicit one-change permission; no standing rule or No limits promise. Translation preserves the English action and state."
+    },
+    "de:ownWrite.deny": {
+      "text": "Nicht erlauben",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear decline paired with Allow; no ambiguous cancel wording. Translation preserves the English action and state."
+    },
+    "de:ownWrite.waiting": {
+      "text": "Wartet auf dich",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Current request state in plain words; no promise that the change happened. Translation preserves the English action and state."
+    },
+    "de:ownWrite.approved": {
+      "text": "Genehmigt",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Approval status is distinct from the effect status. Translation preserves the English action and state."
+    },
+    "de:ownWrite.applying": {
+      "text": "Änderung wird vorgenommen",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Describes an operation in progress without claiming completion. Translation preserves the English action and state."
+    },
+    "de:ownWrite.applied": {
+      "text": "Änderung vorgenommen",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Used only after the handler confirms the requested effect. Translation preserves the English action and state."
+    },
+    "de:ownWrite.declined": {
+      "text": "Nicht erlaubt",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Records the declined action without implying an effect. Translation preserves the English action and state."
+    },
+    "de:ownWrite.expired": {
+      "text": "Abgelaufen",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Plain terminal state with no repeat action. Translation preserves the English action and state."
+    },
+    "de:ownWrite.unknown": {
+      "text": "Prüfe das Ergebnis, bevor du es erneut versuchst",
+      "en": "Check the result before trying again",
+      "verdict": "pass",
+      "note": "Direct recovery instruction; does not promise that nothing changed or invite a duplicate effect. Translation preserves the English action and state."
+    },
+    "de:ownWrite.restored": {
+      "text": "Diese Anfrage stammt aus einer Sicherung. Bitte deinen Bot, es erneut zu versuchen.",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains the non-executable backup request and the available next action. Translation preserves the English action and state."
+    },
+    "de:ownWrite.unavailable": {
+      "text": "Die Änderung war nicht möglich. Bitte deinen Bot, es erneut zu versuchen.",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Short failure and next step for an operation that did not complete. Translation preserves the English action and state."
+    },
+    "es:noLimits.v1.warning": {
+      "text": "Sin límites: Tus bots ejecutan comandos y herramientas sin preguntar, incluso con contenido externo o comandos que Murage no puede leer. Esto puede cambiar archivos protegidos y leer o enviar claves y contraseñas. Solo se pregunta antes de un probable borrado total o una catástrofe. Las reglas de permisos guardadas no bloquean acciones. Las funciones que desactivaste por completo siguen desactivadas hasta que las actives. Murage te dice qué está desactivado y dónde activarlo, sin tarjeta. Si desactivas los mensajes de canal, siguen desactivados. Los enlaces de activación de otras apps y las rutinas usan el nivel del bot. Los chats de otras personas siguen en Preguntar. Una opción de Acceso total de 1.0.18 no cuenta. Los chats sin remitente conocido siguen en Preguntar. Un borrado con destino incierto se ejecuta, salvo que Murage vea que borraría todo el ordenador, tu carpeta personal o carpetas del sistema.",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "es:ux.l1.level.unlimitedDetail": {
+      "text": "Tus bots ejecutan comandos y herramientas sin preguntar, incluso con contenido externo o comandos que Murage no puede leer. Esto puede cambiar archivos protegidos y leer o enviar claves y contraseñas. Solo se pregunta antes de un probable borrado total o una catástrofe. Las reglas de permisos guardadas no bloquean acciones. Las funciones que desactivaste por completo siguen desactivadas hasta que las actives. Murage te dice qué está desactivado y dónde activarlo, sin tarjeta. Si desactivas los mensajes de canal, siguen desactivados. Los enlaces de activación de otras apps y las rutinas usan el nivel del bot. Los chats de otras personas siguen en Preguntar. Una opción de Acceso total de 1.0.18 no cuenta.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "es:ux.l1.level.underTable": {
+      "text": "En Sin límites, se pueden cambiar archivos protegidos y solo se pregunta antes de un probable borrado total o una catástrofe. Los enlaces de activación de otras apps y las rutinas usan el nivel del bot. Los chats de otras personas siguen en Preguntar. Las reglas de permisos guardadas no bloquean acciones. Las funciones que desactivaste por completo siguen desactivadas hasta que las actives.",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. Saved permission rules do not block actions. Features you switched off entirely, including channel messages, stay off until you turn them on.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "es:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} permite que {bot} ejecute comandos y herramientas sin preguntar. El contenido externo y los comandos que Murage no puede leer también se ejecutan. Esto puede cambiar archivos protegidos y leer o enviar claves y contraseñas. Solo se pregunta antes de un probable borrado total o una catástrofe. Las reglas de permisos guardadas no bloquean acciones. Las funciones que desactivaste por completo siguen desactivadas hasta que las actives. Murage te dice qué está desactivado y dónde activarlo, sin tarjeta. Si desactivas los mensajes de canal, siguen desactivados. Los enlaces de activación de otras apps y las rutinas usan el nivel del bot. Los chats de otras personas siguen en Preguntar. Una opción de Acceso total de 1.0.18 no cuenta.",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "es:ux.lcopyb.level.unlimitedHere": {
+      "text": "Tus bots ejecutan comandos y herramientas sin preguntar, incluso con contenido externo o comandos que Murage no puede leer. Esto puede cambiar archivos protegidos y leer o enviar claves y contraseñas. Solo se pregunta antes de un probable borrado total o una catástrofe. Las reglas de permisos guardadas no bloquean acciones. Las funciones que desactivaste por completo siguen desactivadas hasta que las actives. Murage te dice qué está desactivado y dónde activarlo, sin tarjeta. Si desactivas los mensajes de canal, siguen desactivados. Los enlaces de activación de otras apps y las rutinas usan el nivel del bot. Los chats de otras personas siguen en Preguntar. Una opción de Acceso total de 1.0.18 no cuenta. Esto incluye hacer clic y escribir en este ordenador.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "es:ux.lcopyb.level.unlimited": {
+      "text": "Tus bots ejecutan comandos y herramientas sin preguntar, incluso con contenido externo o comandos que Murage no puede leer. Esto puede cambiar archivos protegidos y leer o enviar claves y contraseñas. Solo se pregunta antes de un probable borrado total o una catástrofe. Las reglas de permisos guardadas no bloquean acciones. Las funciones que desactivaste por completo siguen desactivadas hasta que las actives. Murage te dice qué está desactivado y dónde activarlo, sin tarjeta. Si desactivas los mensajes de canal, siguen desactivados. Los enlaces de activación de otras apps y las rutinas usan el nivel del bot. Los chats de otras personas siguen en Preguntar. Una opción de Acceso total de 1.0.18 no cuenta.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "es:ux.lcopyb.level.channelHint": {
+      "text": "Activado salvo que lo desactives. En Sin límites, tus propios mensajes de canal se ejecutan sin preguntar. Los chats de otras personas siguen en Preguntar. Los enlaces de activación de otras apps y las rutinas usan el nivel del bot.",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "es:ownWrite.title": {
+      "text": "Revisar este cambio",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain review action; one obvious next step on the Ask card. Translation preserves the English action and state."
+    },
+    "es:ownWrite.allow": {
+      "text": "Permitir",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "Explicit one-change permission; no standing rule or No limits promise. Translation preserves the English action and state."
+    },
+    "es:ownWrite.deny": {
+      "text": "No permitir",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear decline paired with Allow; no ambiguous cancel wording. Translation preserves the English action and state."
+    },
+    "es:ownWrite.waiting": {
+      "text": "Esperando tu decisión",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Current request state in plain words; no promise that the change happened. Translation preserves the English action and state."
+    },
+    "es:ownWrite.approved": {
+      "text": "Aprobado",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Approval status is distinct from the effect status. Translation preserves the English action and state."
+    },
+    "es:ownWrite.applying": {
+      "text": "Realizando el cambio",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Describes an operation in progress without claiming completion. Translation preserves the English action and state."
+    },
+    "es:ownWrite.applied": {
+      "text": "Cambio realizado",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Used only after the handler confirms the requested effect. Translation preserves the English action and state."
+    },
+    "es:ownWrite.declined": {
+      "text": "No permitido",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Records the declined action without implying an effect. Translation preserves the English action and state."
+    },
+    "es:ownWrite.expired": {
+      "text": "Caducado",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Plain terminal state with no repeat action. Translation preserves the English action and state."
+    },
+    "es:ownWrite.unknown": {
+      "text": "Comprueba el resultado antes de volver a intentarlo",
+      "en": "Check the result before trying again",
+      "verdict": "pass",
+      "note": "Direct recovery instruction; does not promise that nothing changed or invite a duplicate effect. Translation preserves the English action and state."
+    },
+    "es:ownWrite.restored": {
+      "text": "Esta solicitud procede de una copia de seguridad. Pide a tu bot que lo intente de nuevo.",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains the non-executable backup request and the available next action. Translation preserves the English action and state."
+    },
+    "es:ownWrite.unavailable": {
+      "text": "No se pudo realizar el cambio. Pide a tu bot que lo intente de nuevo.",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Short failure and next step for an operation that did not complete. Translation preserves the English action and state."
+    },
+    "fr:noLimits.v1.warning": {
+      "text": "Sans limites: Tes bots exécutent commandes et outils sans demander, même avec du contenu extérieur ou des commandes que Murage ne peut pas lire. Cela peut modifier des fichiers protégés et lire ou envoyer des clés et des mots de passe. Seul un effacement total probable ou une catastrophe déclenche une demande préalable. Les règles d’autorisation enregistrées ne bloquent aucune action. Les fonctions que tu as entièrement désactivées le restent jusqu’à leur réactivation. Murage indique ce qui est désactivé et où le réactiver, sans carte. Les messages de canal désactivés restent désactivés. Les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot. Les chats des autres restent sur Demander. Un réglage Accès complet de 1.0.18 ne compte pas. Les chats sans expéditeur connu restent sur Demander. Une suppression dont la cible est inconnue s’exécute, sauf si Murage voit qu’elle effacerait tout l’ordinateur, ton dossier personnel ou des dossiers système.",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "fr:ux.l1.level.unlimitedDetail": {
+      "text": "Tes bots exécutent commandes et outils sans demander, même avec du contenu extérieur ou des commandes que Murage ne peut pas lire. Cela peut modifier des fichiers protégés et lire ou envoyer des clés et des mots de passe. Seul un effacement total probable ou une catastrophe déclenche une demande préalable. Les règles d’autorisation enregistrées ne bloquent aucune action. Les fonctions que tu as entièrement désactivées le restent jusqu’à leur réactivation. Murage indique ce qui est désactivé et où le réactiver, sans carte. Les messages de canal désactivés restent désactivés. Les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot. Les chats des autres restent sur Demander. Un réglage Accès complet de 1.0.18 ne compte pas.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "fr:ux.l1.level.underTable": {
+      "text": "En Sans limites, les fichiers protégés peuvent être modifiés et seul un effacement total probable ou une catastrophe déclenche une demande préalable. Les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot. Les chats des autres restent sur Demander. Les règles d’autorisation enregistrées ne bloquent aucune action. Les fonctions que tu as entièrement désactivées le restent jusqu’à leur réactivation.",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. Saved permission rules do not block actions. Features you switched off entirely, including channel messages, stay off until you turn them on.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "fr:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} permet à {bot} d’exécuter commandes et outils sans demander. Le contenu extérieur et les commandes que Murage ne peut pas lire sont aussi exécutés. Cela peut modifier des fichiers protégés et lire ou envoyer des clés et des mots de passe. Seul un effacement total probable ou une catastrophe déclenche une demande préalable. Les règles d’autorisation enregistrées ne bloquent aucune action. Les fonctions que tu as entièrement désactivées le restent jusqu’à leur réactivation. Murage indique ce qui est désactivé et où le réactiver, sans carte. Les messages de canal désactivés restent désactivés. Les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot. Les chats des autres restent sur Demander. Un réglage Accès complet de 1.0.18 ne compte pas.",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "fr:ux.lcopyb.level.unlimitedHere": {
+      "text": "Tes bots exécutent commandes et outils sans demander, même avec du contenu extérieur ou des commandes que Murage ne peut pas lire. Cela peut modifier des fichiers protégés et lire ou envoyer des clés et des mots de passe. Seul un effacement total probable ou une catastrophe déclenche une demande préalable. Les règles d’autorisation enregistrées ne bloquent aucune action. Les fonctions que tu as entièrement désactivées le restent jusqu’à leur réactivation. Murage indique ce qui est désactivé et où le réactiver, sans carte. Les messages de canal désactivés restent désactivés. Les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot. Les chats des autres restent sur Demander. Un réglage Accès complet de 1.0.18 ne compte pas. Cela inclut les clics et la saisie sur cet ordinateur.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "fr:ux.lcopyb.level.unlimited": {
+      "text": "Tes bots exécutent commandes et outils sans demander, même avec du contenu extérieur ou des commandes que Murage ne peut pas lire. Cela peut modifier des fichiers protégés et lire ou envoyer des clés et des mots de passe. Seul un effacement total probable ou une catastrophe déclenche une demande préalable. Les règles d’autorisation enregistrées ne bloquent aucune action. Les fonctions que tu as entièrement désactivées le restent jusqu’à leur réactivation. Murage indique ce qui est désactivé et où le réactiver, sans carte. Les messages de canal désactivés restent désactivés. Les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot. Les chats des autres restent sur Demander. Un réglage Accès complet de 1.0.18 ne compte pas.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "fr:ux.lcopyb.level.channelHint": {
+      "text": "Activé sauf si tu le désactives. En Sans limites, tes propres messages de canal s’exécutent sans demander. Les chats des autres restent sur Demander. Les liens de déclenchement d’autres applis et les routines utilisent le niveau du bot.",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "fr:ownWrite.title": {
+      "text": "Vérifier cette modification",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain review action; one obvious next step on the Ask card. Translation preserves the English action and state."
+    },
+    "fr:ownWrite.allow": {
+      "text": "Autoriser",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "Explicit one-change permission; no standing rule or No limits promise. Translation preserves the English action and state."
+    },
+    "fr:ownWrite.deny": {
+      "text": "Ne pas autoriser",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear decline paired with Allow; no ambiguous cancel wording. Translation preserves the English action and state."
+    },
+    "fr:ownWrite.waiting": {
+      "text": "En attente de ta décision",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Current request state in plain words; no promise that the change happened. Translation preserves the English action and state."
+    },
+    "fr:ownWrite.approved": {
+      "text": "Approuvé",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Approval status is distinct from the effect status. Translation preserves the English action and state."
+    },
+    "fr:ownWrite.applying": {
+      "text": "Modification en cours",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Describes an operation in progress without claiming completion. Translation preserves the English action and state."
+    },
+    "fr:ownWrite.applied": {
+      "text": "Modification effectuée",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Used only after the handler confirms the requested effect. Translation preserves the English action and state."
+    },
+    "fr:ownWrite.declined": {
+      "text": "Non autorisé",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Records the declined action without implying an effect. Translation preserves the English action and state."
+    },
+    "fr:ownWrite.expired": {
+      "text": "Expiré",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Plain terminal state with no repeat action. Translation preserves the English action and state."
+    },
+    "fr:ownWrite.unknown": {
+      "text": "Vérifie le résultat avant de réessayer",
+      "en": "Check the result before trying again",
+      "verdict": "pass",
+      "note": "Direct recovery instruction; does not promise that nothing changed or invite a duplicate effect. Translation preserves the English action and state."
+    },
+    "fr:ownWrite.restored": {
+      "text": "Cette demande provient d’une sauvegarde. Demande à ton bot de réessayer.",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains the non-executable backup request and the available next action. Translation preserves the English action and state."
+    },
+    "fr:ownWrite.unavailable": {
+      "text": "La modification a échoué. Demande à ton bot de réessayer.",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Short failure and next step for an operation that did not complete. Translation preserves the English action and state."
+    },
+    "hi:noLimits.v1.warning": {
+      "text": "कोई सीमा नहीं: आपके बॉट कमांड और टूल बिना पूछे चलाते हैं, बाहरी सामग्री या ऐसी कमांड के साथ भी जिन्हें Murage पढ़ नहीं सकता। इससे संरक्षित फ़ाइलें बदल सकती हैं और कुंजियाँ व पासवर्ड पढ़े या भेजे जा सकते हैं। केवल सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पहले पूछा जाता है। सहेजे गए अनुमति नियम कार्रवाई नहीं रोकते। जिन सुविधाओं को आपने पूरी तरह बंद किया है, वे आपके चालू करने तक बंद रहती हैं। Murage बिना कार्ड के बताता है कि कौन-सी सुविधा बंद है और उसे कहाँ चालू करना है। चैनल संदेश बंद हैं तो बंद ही रहते हैं। दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं। दूसरों की चैट पूछें पर रहती हैं। 1.0.18 की पूरी पहुँच सेटिंग को ऐसा चुनाव नहीं माना जाता। जिन चैट का भेजने वाला ज्ञात नहीं है, वे पूछें पर रहती हैं। मिटाने की कमांड का लक्ष्य स्पष्ट न हो, तब भी वह चलती है, जब तक Murage को यह न दिखे कि वह पूरा कंप्यूटर, आपका होम फ़ोल्डर या सिस्टम फ़ोल्डर मिटा देगी।",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "hi:ux.l1.level.unlimitedDetail": {
+      "text": "आपके बॉट कमांड और टूल बिना पूछे चलाते हैं, बाहरी सामग्री या ऐसी कमांड के साथ भी जिन्हें Murage पढ़ नहीं सकता। इससे संरक्षित फ़ाइलें बदल सकती हैं और कुंजियाँ व पासवर्ड पढ़े या भेजे जा सकते हैं। केवल सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पहले पूछा जाता है। सहेजे गए अनुमति नियम कार्रवाई नहीं रोकते। जिन सुविधाओं को आपने पूरी तरह बंद किया है, वे आपके चालू करने तक बंद रहती हैं। Murage बिना कार्ड के बताता है कि कौन-सी सुविधा बंद है और उसे कहाँ चालू करना है। चैनल संदेश बंद हैं तो बंद ही रहते हैं। दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं। दूसरों की चैट पूछें पर रहती हैं। 1.0.18 की पूरी पहुँच सेटिंग को ऐसा चुनाव नहीं माना जाता।",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "hi:ux.l1.level.underTable": {
+      "text": "कोई सीमा नहीं पर संरक्षित फ़ाइलें बदल सकती हैं और केवल सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पहले पूछा जाता है। दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं। दूसरों की चैट पूछें पर रहती हैं। सहेजे गए अनुमति नियम कार्रवाई नहीं रोकते। जिन सुविधाओं को आपने पूरी तरह बंद किया है, वे आपके चालू करने तक बंद रहती हैं।",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. Saved permission rules do not block actions. Features you switched off entirely, including channel messages, stay off until you turn them on.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "hi:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} पर {bot} कमांड और टूल बिना पूछे चला सकता है। बाहरी सामग्री और वे कमांड भी चलती हैं जिन्हें Murage पढ़ नहीं सकता। इससे संरक्षित फ़ाइलें बदल सकती हैं और कुंजियाँ व पासवर्ड पढ़े या भेजे जा सकते हैं। केवल सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पहले पूछा जाता है। सहेजे गए अनुमति नियम कार्रवाई नहीं रोकते। जिन सुविधाओं को आपने पूरी तरह बंद किया है, वे आपके चालू करने तक बंद रहती हैं। Murage बिना कार्ड के बताता है कि कौन-सी सुविधा बंद है और उसे कहाँ चालू करना है। चैनल संदेश बंद हैं तो बंद ही रहते हैं। दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं। दूसरों की चैट पूछें पर रहती हैं। 1.0.18 की पूरी पहुँच सेटिंग को ऐसा चुनाव नहीं माना जाता।",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "hi:ux.lcopyb.level.unlimitedHere": {
+      "text": "आपके बॉट कमांड और टूल बिना पूछे चलाते हैं, बाहरी सामग्री या ऐसी कमांड के साथ भी जिन्हें Murage पढ़ नहीं सकता। इससे संरक्षित फ़ाइलें बदल सकती हैं और कुंजियाँ व पासवर्ड पढ़े या भेजे जा सकते हैं। केवल सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पहले पूछा जाता है। सहेजे गए अनुमति नियम कार्रवाई नहीं रोकते। जिन सुविधाओं को आपने पूरी तरह बंद किया है, वे आपके चालू करने तक बंद रहती हैं। Murage बिना कार्ड के बताता है कि कौन-सी सुविधा बंद है और उसे कहाँ चालू करना है। चैनल संदेश बंद हैं तो बंद ही रहते हैं। दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं। दूसरों की चैट पूछें पर रहती हैं। 1.0.18 की पूरी पहुँच सेटिंग को ऐसा चुनाव नहीं माना जाता। इसमें इस कंप्यूटर पर क्लिक करना और टाइप करना भी शामिल है।",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "hi:ux.lcopyb.level.unlimited": {
+      "text": "आपके बॉट कमांड और टूल बिना पूछे चलाते हैं, बाहरी सामग्री या ऐसी कमांड के साथ भी जिन्हें Murage पढ़ नहीं सकता। इससे संरक्षित फ़ाइलें बदल सकती हैं और कुंजियाँ व पासवर्ड पढ़े या भेजे जा सकते हैं। केवल सारा डेटा मिटने या बड़ी तबाही की आशंका होने पर पहले पूछा जाता है। सहेजे गए अनुमति नियम कार्रवाई नहीं रोकते। जिन सुविधाओं को आपने पूरी तरह बंद किया है, वे आपके चालू करने तक बंद रहती हैं। Murage बिना कार्ड के बताता है कि कौन-सी सुविधा बंद है और उसे कहाँ चालू करना है। चैनल संदेश बंद हैं तो बंद ही रहते हैं। दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं। दूसरों की चैट पूछें पर रहती हैं। 1.0.18 की पूरी पहुँच सेटिंग को ऐसा चुनाव नहीं माना जाता।",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "hi:ux.lcopyb.level.channelHint": {
+      "text": "जब तक आप बंद न करें, यह चालू रहता है। कोई सीमा नहीं पर आपके अपने चैनल संदेश बिना पूछे चलते हैं। दूसरों की चैट पूछें पर रहती हैं। दूसरे ऐप के ट्रिगर लिंक और रूटीन बॉट का स्तर इस्तेमाल करते हैं।",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "hi:ownWrite.title": {
+      "text": "इस बदलाव की समीक्षा करें",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain review action; one obvious next step on the Ask card. Translation preserves the English action and state."
+    },
+    "hi:ownWrite.allow": {
+      "text": "अनुमति दें",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "Explicit one-change permission; no standing rule or No limits promise. Translation preserves the English action and state."
+    },
+    "hi:ownWrite.deny": {
+      "text": "अनुमति न दें",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear decline paired with Allow; no ambiguous cancel wording. Translation preserves the English action and state."
+    },
+    "hi:ownWrite.waiting": {
+      "text": "आपके निर्णय की प्रतीक्षा है",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Current request state in plain words; no promise that the change happened. Translation preserves the English action and state."
+    },
+    "hi:ownWrite.approved": {
+      "text": "स्वीकृत",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Approval status is distinct from the effect status. Translation preserves the English action and state."
+    },
+    "hi:ownWrite.applying": {
+      "text": "बदलाव किया जा रहा है",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Describes an operation in progress without claiming completion. Translation preserves the English action and state."
+    },
+    "hi:ownWrite.applied": {
+      "text": "बदलाव हो गया",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Used only after the handler confirms the requested effect. Translation preserves the English action and state."
+    },
+    "hi:ownWrite.declined": {
+      "text": "अनुमति नहीं मिली",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Records the declined action without implying an effect. Translation preserves the English action and state."
+    },
+    "hi:ownWrite.expired": {
+      "text": "समय समाप्त",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Plain terminal state with no repeat action. Translation preserves the English action and state."
+    },
+    "hi:ownWrite.unknown": {
+      "text": "दोबारा कोशिश करने से पहले परिणाम जाँचें",
+      "en": "Check the result before trying again",
+      "verdict": "pass",
+      "note": "Direct recovery instruction; does not promise that nothing changed or invite a duplicate effect. Translation preserves the English action and state."
+    },
+    "hi:ownWrite.restored": {
+      "text": "यह अनुरोध बैकअप से आया है। अपने बॉट से दोबारा कोशिश करने को कहें।",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains the non-executable backup request and the available next action. Translation preserves the English action and state."
+    },
+    "hi:ownWrite.unavailable": {
+      "text": "यह बदलाव नहीं हो सका। अपने बॉट से दोबारा कोशिश करने को कहें।",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Short failure and next step for an operation that did not complete. Translation preserves the English action and state."
+    },
+    "ja:noLimits.v1.warning": {
+      "text": "制限なし：あなたのボットは、外部のコンテンツやMurageが読み取れないコマンドでも、確認なしでコマンドやツールを実行します。保護されたファイルを変更したり、キーやパスワードを読み取って送信したりすることもあります。全消去や重大な破壊の可能性が高い場合だけ、実行前に確認します。保存済みの権限ルールは操作を止めません。完全にオフにした機能は、あなたがオンにするまでオフのままです。Murageはカードを出さず、オフの機能とオンにする場所を伝えます。チャンネルのメッセージをオフにしていれば、そのままオフです。他のアプリからのトリガーリンクとルーティンはボットの権限を使います。他の人のチャットは「確認する」のままです。1.0.18のフルアクセス設定は、明示的な設定に含まれません。送信者が不明なチャットは「確認する」のままです。削除先が不明なコマンドも実行します。ただし、コンピューター全体、ホームフォルダー、システムフォルダーを全消去するとMurageが判断した場合は確認します。",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "ja:ux.l1.level.unlimitedDetail": {
+      "text": "あなたのボットは、外部のコンテンツやMurageが読み取れないコマンドでも、確認なしでコマンドやツールを実行します。保護されたファイルを変更したり、キーやパスワードを読み取って送信したりすることもあります。全消去や重大な破壊の可能性が高い場合だけ、実行前に確認します。保存済みの権限ルールは操作を止めません。完全にオフにした機能は、あなたがオンにするまでオフのままです。Murageはカードを出さず、オフの機能とオンにする場所を伝えます。チャンネルのメッセージをオフにしていれば、そのままオフです。他のアプリからのトリガーリンクとルーティンはボットの権限を使います。他の人のチャットは「確認する」のままです。1.0.18のフルアクセス設定は、明示的な設定に含まれません。",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "ja:ux.l1.level.underTable": {
+      "text": "制限なしでは、保護されたファイルも変更できます。全消去や重大な破壊の可能性が高い場合だけ、実行前に確認します。他のアプリからのトリガーリンクとルーティンはボットの権限を使います。他の人のチャットは「確認する」のままです。保存済みの権限ルールは操作を止めません。完全にオフにした機能は、あなたがオンにするまでオフのままです。",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. Saved permission rules do not block actions. Features you switched off entirely, including channel messages, stay off until you turn them on.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "ja:ux.l1.confirm.unlimitedBody": {
+      "text": "{level}では、{bot}は確認なしでコマンドやツールを実行できます。外部のコンテンツやMurageが読み取れないコマンドでも実行します。保護されたファイルを変更したり、キーやパスワードを読み取って送信したりすることもあります。全消去や重大な破壊の可能性が高い場合だけ、実行前に確認します。保存済みの権限ルールは操作を止めません。完全にオフにした機能は、あなたがオンにするまでオフのままです。Murageはカードを出さず、オフの機能とオンにする場所を伝えます。チャンネルのメッセージをオフにしていれば、そのままオフです。他のアプリからのトリガーリンクとルーティンはボットの権限を使います。他の人のチャットは「確認する」のままです。1.0.18のフルアクセス設定は、明示的な設定に含まれません。",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "ja:ux.lcopyb.level.unlimitedHere": {
+      "text": "あなたのボットは、外部のコンテンツやMurageが読み取れないコマンドでも、確認なしでコマンドやツールを実行します。保護されたファイルを変更したり、キーやパスワードを読み取って送信したりすることもあります。全消去や重大な破壊の可能性が高い場合だけ、実行前に確認します。保存済みの権限ルールは操作を止めません。完全にオフにした機能は、あなたがオンにするまでオフのままです。Murageはカードを出さず、オフの機能とオンにする場所を伝えます。チャンネルのメッセージをオフにしていれば、そのままオフです。他のアプリからのトリガーリンクとルーティンはボットの権限を使います。他の人のチャットは「確認する」のままです。1.0.18のフルアクセス設定は、明示的な設定に含まれません。このコンピューターでのクリックや入力も含まれます。",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "ja:ux.lcopyb.level.unlimited": {
+      "text": "あなたのボットは、外部のコンテンツやMurageが読み取れないコマンドでも、確認なしでコマンドやツールを実行します。保護されたファイルを変更したり、キーやパスワードを読み取って送信したりすることもあります。全消去や重大な破壊の可能性が高い場合だけ、実行前に確認します。保存済みの権限ルールは操作を止めません。完全にオフにした機能は、あなたがオンにするまでオフのままです。Murageはカードを出さず、オフの機能とオンにする場所を伝えます。チャンネルのメッセージをオフにしていれば、そのままオフです。他のアプリからのトリガーリンクとルーティンはボットの権限を使います。他の人のチャットは「確認する」のままです。1.0.18のフルアクセス設定は、明示的な設定に含まれません。",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "ja:ux.lcopyb.level.channelHint": {
+      "text": "オフにしない限りオンです。制限なしでは、あなた自身のチャンネルのメッセージは確認なしで実行します。他の人のチャットは「確認する」のままです。他のアプリからのトリガーリンクとルーティンはボットの権限を使います。",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "ja:ownWrite.title": {
+      "text": "この変更を確認",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain review action; one obvious next step on the Ask card. Translation preserves the English action and state."
+    },
+    "ja:ownWrite.allow": {
+      "text": "許可する",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "Explicit one-change permission; no standing rule or No limits promise. Translation preserves the English action and state."
+    },
+    "ja:ownWrite.deny": {
+      "text": "許可しない",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear decline paired with Allow; no ambiguous cancel wording. Translation preserves the English action and state."
+    },
+    "ja:ownWrite.waiting": {
+      "text": "確認を待っています",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Current request state in plain words; no promise that the change happened. Translation preserves the English action and state."
+    },
+    "ja:ownWrite.approved": {
+      "text": "承認済み",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Approval status is distinct from the effect status. Translation preserves the English action and state."
+    },
+    "ja:ownWrite.applying": {
+      "text": "変更中",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Describes an operation in progress without claiming completion. Translation preserves the English action and state."
+    },
+    "ja:ownWrite.applied": {
+      "text": "変更しました",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Used only after the handler confirms the requested effect. Translation preserves the English action and state."
+    },
+    "ja:ownWrite.declined": {
+      "text": "許可されませんでした",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Records the declined action without implying an effect. Translation preserves the English action and state."
+    },
+    "ja:ownWrite.expired": {
+      "text": "期限切れ",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Plain terminal state with no repeat action. Translation preserves the English action and state."
+    },
+    "ja:ownWrite.unknown": {
+      "text": "再試行する前に結果を確認してください",
+      "en": "Check the result before trying again",
+      "verdict": "pass",
+      "note": "Direct recovery instruction; does not promise that nothing changed or invite a duplicate effect. Translation preserves the English action and state."
+    },
+    "ja:ownWrite.restored": {
+      "text": "このリクエストはバックアップから復元されました。ボットに再試行を依頼してください。",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains the non-executable backup request and the available next action. Translation preserves the English action and state."
+    },
+    "ja:ownWrite.unavailable": {
+      "text": "変更できませんでした。ボットに再試行を依頼してください。",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Short failure and next step for an operation that did not complete. Translation preserves the English action and state."
+    },
+    "pt-br:noLimits.v1.warning": {
+      "text": "Sem limites: Seus bots executam comandos e ferramentas sem perguntar, mesmo com conteúdo externo ou comandos que o Murage não consegue ler. Isso pode alterar arquivos protegidos e ler ou enviar chaves e senhas. Só pede confirmação antes de um provável apagamento total ou de uma catástrofe. As regras de permissão salvas não bloqueiam ações. Os recursos que você desativou por completo continuam desativados até você ativá-los. O Murage diz o que está desativado e onde ativar, sem cartão. Mensagens de canal desativadas continuam desativadas. Links de acionamento de outros apps e rotinas usam o nível do bot. Os chats de outras pessoas continuam em Perguntar. Uma opção de Acesso total da versão 1.0.18 não conta. Chats sem remetente conhecido continuam em Perguntar. Um comando de exclusão com destino incerto é executado, a menos que o Murage veja que apagaria todo o computador, sua pasta pessoal ou pastas do sistema.",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "pt-br:ux.l1.level.unlimitedDetail": {
+      "text": "Seus bots executam comandos e ferramentas sem perguntar, mesmo com conteúdo externo ou comandos que o Murage não consegue ler. Isso pode alterar arquivos protegidos e ler ou enviar chaves e senhas. Só pede confirmação antes de um provável apagamento total ou de uma catástrofe. As regras de permissão salvas não bloqueiam ações. Os recursos que você desativou por completo continuam desativados até você ativá-los. O Murage diz o que está desativado e onde ativar, sem cartão. Mensagens de canal desativadas continuam desativadas. Links de acionamento de outros apps e rotinas usam o nível do bot. Os chats de outras pessoas continuam em Perguntar. Uma opção de Acesso total da versão 1.0.18 não conta.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "pt-br:ux.l1.level.underTable": {
+      "text": "Em Sem limites, arquivos protegidos podem ser alterados e só pede confirmação antes de um provável apagamento total ou de uma catástrofe. Links de acionamento de outros apps e rotinas usam o nível do bot. Os chats de outras pessoas continuam em Perguntar. As regras de permissão salvas não bloqueiam ações. Os recursos que você desativou por completo continuam desativados até você ativá-los.",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. Saved permission rules do not block actions. Features you switched off entirely, including channel messages, stay off until you turn them on.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "pt-br:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} permite que {bot} execute comandos e ferramentas sem perguntar. Conteúdo externo e comandos que o Murage não consegue ler também são executados. Isso pode alterar arquivos protegidos e ler ou enviar chaves e senhas. Só pede confirmação antes de um provável apagamento total ou de uma catástrofe. As regras de permissão salvas não bloqueiam ações. Os recursos que você desativou por completo continuam desativados até você ativá-los. O Murage diz o que está desativado e onde ativar, sem cartão. Mensagens de canal desativadas continuam desativadas. Links de acionamento de outros apps e rotinas usam o nível do bot. Os chats de outras pessoas continuam em Perguntar. Uma opção de Acesso total da versão 1.0.18 não conta.",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "pt-br:ux.lcopyb.level.unlimitedHere": {
+      "text": "Seus bots executam comandos e ferramentas sem perguntar, mesmo com conteúdo externo ou comandos que o Murage não consegue ler. Isso pode alterar arquivos protegidos e ler ou enviar chaves e senhas. Só pede confirmação antes de um provável apagamento total ou de uma catástrofe. As regras de permissão salvas não bloqueiam ações. Os recursos que você desativou por completo continuam desativados até você ativá-los. O Murage diz o que está desativado e onde ativar, sem cartão. Mensagens de canal desativadas continuam desativadas. Links de acionamento de outros apps e rotinas usam o nível do bot. Os chats de outras pessoas continuam em Perguntar. Uma opção de Acesso total da versão 1.0.18 não conta. Isso inclui clicar e digitar neste computador.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "pt-br:ux.lcopyb.level.unlimited": {
+      "text": "Seus bots executam comandos e ferramentas sem perguntar, mesmo com conteúdo externo ou comandos que o Murage não consegue ler. Isso pode alterar arquivos protegidos e ler ou enviar chaves e senhas. Só pede confirmação antes de um provável apagamento total ou de uma catástrofe. As regras de permissão salvas não bloqueiam ações. Os recursos que você desativou por completo continuam desativados até você ativá-los. O Murage diz o que está desativado e onde ativar, sem cartão. Mensagens de canal desativadas continuam desativadas. Links de acionamento de outros apps e rotinas usam o nível do bot. Os chats de outras pessoas continuam em Perguntar. Uma opção de Acesso total da versão 1.0.18 não conta.",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "pt-br:ux.lcopyb.level.channelHint": {
+      "text": "Ativado, a menos que você desative. Em Sem limites, suas próprias mensagens de canal são executadas sem perguntar. Os chats de outras pessoas continuam em Perguntar. Links de acionamento de outros apps e rotinas usam o nível do bot.",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "pt-br:ownWrite.title": {
+      "text": "Revisar esta alteração",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain review action; one obvious next step on the Ask card. Translation preserves the English action and state."
+    },
+    "pt-br:ownWrite.allow": {
+      "text": "Permitir",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "Explicit one-change permission; no standing rule or No limits promise. Translation preserves the English action and state."
+    },
+    "pt-br:ownWrite.deny": {
+      "text": "Não permitir",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear decline paired with Allow; no ambiguous cancel wording. Translation preserves the English action and state."
+    },
+    "pt-br:ownWrite.waiting": {
+      "text": "Aguardando sua decisão",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Current request state in plain words; no promise that the change happened. Translation preserves the English action and state."
+    },
+    "pt-br:ownWrite.approved": {
+      "text": "Aprovado",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Approval status is distinct from the effect status. Translation preserves the English action and state."
+    },
+    "pt-br:ownWrite.applying": {
+      "text": "Fazendo a alteração",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Describes an operation in progress without claiming completion. Translation preserves the English action and state."
+    },
+    "pt-br:ownWrite.applied": {
+      "text": "Alteração feita",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Used only after the handler confirms the requested effect. Translation preserves the English action and state."
+    },
+    "pt-br:ownWrite.declined": {
+      "text": "Não permitido",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Records the declined action without implying an effect. Translation preserves the English action and state."
+    },
+    "pt-br:ownWrite.expired": {
+      "text": "Expirado",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Plain terminal state with no repeat action. Translation preserves the English action and state."
+    },
+    "pt-br:ownWrite.unknown": {
+      "text": "Confira o resultado antes de tentar novamente",
+      "en": "Check the result before trying again",
+      "verdict": "pass",
+      "note": "Direct recovery instruction; does not promise that nothing changed or invite a duplicate effect. Translation preserves the English action and state."
+    },
+    "pt-br:ownWrite.restored": {
+      "text": "Esta solicitação veio de um backup. Peça ao seu bot para tentar novamente.",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains the non-executable backup request and the available next action. Translation preserves the English action and state."
+    },
+    "pt-br:ownWrite.unavailable": {
+      "text": "Não foi possível fazer a alteração. Peça ao seu bot para tentar novamente.",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Short failure and next step for an operation that did not complete. Translation preserves the English action and state."
+    },
+    "zh:noLimits.v1.warning": {
+      "text": "无限制：你的机器人运行命令和工具时不会询问，即使涉及外部内容或 Murage 无法读取的命令也会运行。这可能更改受保护的文件，也可能读取或发送密钥和密码。只有可能清空全部数据或造成灾难性破坏时，才会先询问。已保存的权限规则不会阻止操作。你完全关闭的功能会保持关闭，直到你重新开启。Murage 不会显示卡片，只会说明哪个功能已关闭以及在哪里开启。频道消息关闭后仍保持关闭。其他应用的触发链接和例行任务使用机器人的权限级别。其他人的聊天保持在询问级别。1.0.18 的完全访问设置不算明确设置。发送者不明的聊天保持在询问级别。删除目标不明的命令也会运行，除非 Murage 能看出它会清空整台电脑、你的主文件夹或系统文件夹。",
+      "en": "No limits: Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. Chats with no known sender stay at Ask. An unclear delete runs unless Murage can see it would wipe the whole computer, your home folder or system folders.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "zh:ux.l1.level.unlimitedDetail": {
+      "text": "你的机器人运行命令和工具时不会询问，即使涉及外部内容或 Murage 无法读取的命令也会运行。这可能更改受保护的文件，也可能读取或发送密钥和密码。只有可能清空全部数据或造成灾难性破坏时，才会先询问。已保存的权限规则不会阻止操作。你完全关闭的功能会保持关闭，直到你重新开启。Murage 不会显示卡片，只会说明哪个功能已关闭以及在哪里开启。频道消息关闭后仍保持关闭。其他应用的触发链接和例行任务使用机器人的权限级别。其他人的聊天保持在询问级别。1.0.18 的完全访问设置不算明确设置。",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "zh:ux.l1.level.underTable": {
+      "text": "在无限制级别，受保护的文件也可以更改，只有可能清空全部数据或造成灾难性破坏时才会先询问。其他应用的触发链接和例行任务使用机器人的权限级别。其他人的聊天保持在询问级别。已保存的权限规则不会阻止操作。你完全关闭的功能会保持关闭，直到你重新开启。",
+      "en": "At No limits, protected files can change and only a likely wipe or catastrophe asks first. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. Saved permission rules do not block actions. Features you switched off entirely, including channel messages, stay off until you turn them on.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "zh:ux.l1.confirm.unlimitedBody": {
+      "text": "{level}允许{bot}不经询问就运行命令和工具。外部内容和 Murage 无法读取的命令也会运行。这可能更改受保护的文件，也可能读取或发送密钥和密码。只有可能清空全部数据或造成灾难性破坏时，才会先询问。已保存的权限规则不会阻止操作。你完全关闭的功能会保持关闭，直到你重新开启。Murage 不会显示卡片，只会说明哪个功能已关闭以及在哪里开启。频道消息关闭后仍保持关闭。其他应用的触发链接和例行任务使用机器人的权限级别。其他人的聊天保持在询问级别。1.0.18 的完全访问设置不算明确设置。",
+      "en": "{level} lets {bot} run commands and tools without asking. Outside content and commands Murage cannot read also run. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "zh:ux.lcopyb.level.unlimitedHere": {
+      "text": "你的机器人运行命令和工具时不会询问，即使涉及外部内容或 Murage 无法读取的命令也会运行。这可能更改受保护的文件，也可能读取或发送密钥和密码。只有可能清空全部数据或造成灾难性破坏时，才会先询问。已保存的权限规则不会阻止操作。你完全关闭的功能会保持关闭，直到你重新开启。Murage 不会显示卡片，只会说明哪个功能已关闭以及在哪里开启。频道消息关闭后仍保持关闭。其他应用的触发链接和例行任务使用机器人的权限级别。其他人的聊天保持在询问级别。1.0.18 的完全访问设置不算明确设置。这包括在这台电脑上点击和输入。",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count. This includes clicking and typing on this computer.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "zh:ux.lcopyb.level.unlimited": {
+      "text": "你的机器人运行命令和工具时不会询问，即使涉及外部内容或 Murage 无法读取的命令也会运行。这可能更改受保护的文件，也可能读取或发送密钥和密码。只有可能清空全部数据或造成灾难性破坏时，才会先询问。已保存的权限规则不会阻止操作。你完全关闭的功能会保持关闭，直到你重新开启。Murage 不会显示卡片，只会说明哪个功能已关闭以及在哪里开启。频道消息关闭后仍保持关闭。其他应用的触发链接和例行任务使用机器人的权限级别。其他人的聊天保持在询问级别。1.0.18 的完全访问设置不算明确设置。",
+      "en": "Your bots run commands and tools without asking, even with outside content or commands Murage cannot read. This can change protected files and read or send keys and passwords. Only a likely wipe or catastrophe asks first. Saved permission rules do not block actions. Features you switched off entirely stay off until you turn them on. Murage says what is off and where to turn it on, without a card. Channel messages off stays off. Trigger links from other apps and routines use the bot's level. Other people's chats stay at Ask. A setting carried over from 1.0.18 does not count.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "zh:ux.lcopyb.level.channelHint": {
+      "text": "默认开启，除非你将它关闭。在无限制级别，你自己的频道消息无需询问就会执行。其他人的聊天保持在询问级别。其他应用的触发链接和例行任务使用机器人的权限级别。",
+      "en": "On unless you turn it off. At No limits, your own channel messages run without asking. Other people's chats stay at Ask. Trigger links from other apps and routines use the bot's level.",
+      "verdict": "pass",
+      "note": "MAIN binding and release-notes wording: other people’s threads stay at Ask with no explicit-bot exception. The surrounding wipe-only warning, disabled-feature behavior, channel-off rule and 1.0.18 caveat remain. Checked the exact replacement in this locale against the source."
+    },
+    "zh:ownWrite.title": {
+      "text": "审核此更改",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain review action; one obvious next step on the Ask card. Translation preserves the English action and state."
+    },
+    "zh:ownWrite.allow": {
+      "text": "允许",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "Explicit one-change permission; no standing rule or No limits promise. Translation preserves the English action and state."
+    },
+    "zh:ownWrite.deny": {
+      "text": "不允许",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear decline paired with Allow; no ambiguous cancel wording. Translation preserves the English action and state."
+    },
+    "zh:ownWrite.waiting": {
+      "text": "等待你的决定",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Current request state in plain words; no promise that the change happened. Translation preserves the English action and state."
+    },
+    "zh:ownWrite.approved": {
+      "text": "已批准",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Approval status is distinct from the effect status. Translation preserves the English action and state."
+    },
+    "zh:ownWrite.applying": {
+      "text": "正在更改",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Describes an operation in progress without claiming completion. Translation preserves the English action and state."
+    },
+    "zh:ownWrite.applied": {
+      "text": "更改已完成",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Used only after the handler confirms the requested effect. Translation preserves the English action and state."
+    },
+    "zh:ownWrite.declined": {
+      "text": "未允许",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Records the declined action without implying an effect. Translation preserves the English action and state."
+    },
+    "zh:ownWrite.expired": {
+      "text": "已过期",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Plain terminal state with no repeat action. Translation preserves the English action and state."
+    },
+    "zh:ownWrite.unknown": {
+      "text": "请先检查结果，再重试",
+      "en": "Check the result before trying again",
+      "verdict": "pass",
+      "note": "Direct recovery instruction; does not promise that nothing changed or invite a duplicate effect. Translation preserves the English action and state."
+    },
+    "zh:ownWrite.restored": {
+      "text": "此请求来自备份。请让你的机器人重试。",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains the non-executable backup request and the available next action. Translation preserves the English action and state."
+    },
+    "zh:ownWrite.unavailable": {
+      "text": "无法完成此更改。请让你的机器人重试。",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Short failure and next step for an operation that did not complete. Translation preserves the English action and state."
+    }
+  },
+  "files": {}
+}

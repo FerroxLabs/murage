@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { serviceQueue, producerBase } from "./narrow-denials.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -53,6 +55,15 @@ export function resolveMcpCard(servers: Record<string, unknown> | undefined, nam
   if (!parsed.ok || mcpEntryRev(name, parsed.server) !== rev) return { ok: false, stale: true };
   if (key !== undefined && !mcpDeclaredKeys(parsed.server).includes(key)) return { ok: false, stale: true };
   return { ok: true, server: parsed.server };
+}
+
+/** Approval binds the execution target and declared credential names, while
+ * allowing those same slots to move from pending to held as the owner fills them. */
+export function mcpApprovalMatches(registered: AnyStoredMcpServer, current: AnyStoredMcpServer): boolean {
+  const shape = (server: AnyStoredMcpServer) => isRemoteMcpServer(server)
+    ? ["remote", server.url, server.transport ?? "http", server.auth, [...new Set(mcpDeclaredKeys(server))].sort()]
+    : ["stdio", server.command, server.args, [...new Set(mcpDeclaredKeys(server))].sort()];
+  return JSON.stringify(shape(registered)) === JSON.stringify(shape(current));
 }
 
 /** Resolve a dynamic credential id. Null when it is not one. */
@@ -175,3 +186,15 @@ export function openMcpCards(db: McpCardDatabase, name: string): Array<{ threadI
     ...enables.map((row) => ({ threadId: row.thread_id, messageId: row.id, kind: "options" as const })),
   ];
 }
+
+/** S4 supplies a freshly verified service claim and the actual revision-bound
+ * enable operation. Card payload and options enter registration before decide. */
+export function requestMcpEnable(authority:import('./narrow-denials.ts').ServiceAuthority|undefined,name:string,server:AnyStoredMcpServer,rev:string,bot:{id:string;name:string},execute:()=>void) {
+  const queue=serviceQueue('mcp'),requestId=`mcp-${randomUUID()}`;
+  const {title,subtitle,...action}=mcpEnableCard(name,server,rev,bot);
+  const request=queue.open({authority,ref:requestId,tool:'mcp_enable',input:{name,rev,...(isRemoteMcpServer(server)?{url:server.url,transport:server.transport??'http'}:{command:server.command,args:[...server.args]})},action:{...action,requestId,tool:'mcp_enable'},view:{title,subtitle},base:producerBase(true)});
+  const result=queue.executeNow(request,()=>execute());
+  if(result.kind==='executed'||result.kind==='refuse')return result;
+  queue.presentNow(request,result.ref,(_item,answer)=>{if(answer.behavior==='allow')execute();});return result;
+}
+export function pendingMcpApprovals(){return serviceQueue('mcp').pendingApprovals();}

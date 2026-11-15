@@ -1,3 +1,4 @@
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
 // The /api/events firehose, pinned at the wire.
 //
 // `sse-visibility.test.ts` covers the decision; this covers the wiring, and
@@ -85,6 +86,7 @@ posixOnly("the events stream is scoped per client", () => {
     const port = await freePortBlock([0, 1]);
     BASE = `http://127.0.0.1:${port}`;
     const env: NodeJS.ProcessEnv = {
+      ...powerBlockTestEnv(),
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(port),
@@ -97,7 +99,8 @@ posixOnly("the events stream is scoped per client", () => {
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
 
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env,
       stdio: ["ignore", "pipe", "pipe"],

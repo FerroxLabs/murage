@@ -1,3 +1,4 @@
+import { inertBot } from './store.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -54,6 +55,7 @@ export interface ImportedTeamBot {
   name: string;
   section?: string;
   hidden?: boolean;
+  staged?: unknown;
   chiefOfStaff?: boolean;
   chiefScope?: string;
   individual?: boolean;
@@ -94,7 +96,7 @@ export function tidyImportedTeams<B extends ImportedTeamBot>(deps: TidyImportedT
     // so any lead or Individual Assistant on the crew is the owner's choice,
     // and then no lead is appointed (and no role is ever overwritten).
     const ownerChoseRoles = members.some((bot) => bot.chiefOfStaff === true || bot.individual === true);
-    const lead = ownerChoseRoles ? undefined : members.find((bot) => !bot.hidden && bot.installedPackage && deps.starterPackages.has(bot.installedPackage.id)
+    const lead = ownerChoseRoles ? undefined : members.find((bot) => !inertBot(bot) && bot.installedPackage && deps.starterPackages.has(bot.installedPackage.id)
       && (bot.installedPackage.sourceRole === "leader" || bot.installedPackage.sourceRole === "chief"));
     if (lead && !deps.leadershipError(lead)) {
       try {

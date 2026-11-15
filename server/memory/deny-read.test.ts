@@ -7,12 +7,15 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { denyGeneration, denyLookup, fenceVerdict, lineageLive, memoryLookup, refsLookup, sessionLookup } from "./deny-read.ts";
 import { buildPrompt, promptPart } from "./prompt-parts.ts";
+import { openTurnLineage, closeTurnLineage } from "./lineage-write.ts";
 import { FOOTPRINT_STAR, memoryRefKey, type LineageReader, type MemoryRef, type LineageVerdict, type PageLine, type TurnLineage } from "./lineage-types.ts";
 import { CONTENT, MEMBER, OWNER, WritetimeFixture } from "./testing/writetime-fixture.ts";
 import { activateRevokesAtUpgrade } from "./schema.ts";
 
 const fixtures: WritetimeFixture[] = [];
-afterEach(() => { for (const fixture of fixtures.splice(0)) fixture.close(); });
+const turns: TurnLineage[] = [];
+const trackedTurn = (f: WritetimeFixture) => { const turn = openTurnLineage(f.db, { threadId: "T", turnId: "t" }); turns.push(turn); return turn; };
+afterEach(() => { turns.splice(0).forEach(closeTurnLineage); for (const fixture of fixtures.splice(0)) fixture.close(); });
 const make = () => { const fixture = new WritetimeFixture(); fixtures.push(fixture); return fixture; };
 const SHOWN = { state: "shown" };
 const W = (reason: string) => ({ state: "withheld", reason });
@@ -451,7 +454,7 @@ describe("refs and the send fence", () => {
 
   it("(j) the send fence: an unmoved generation passes; a moved one re-runs the lookups and fails only on a denied or pending part", () => {
     const f = make().reply("T", "q", 5).meta("deny_generation", 3);
-    const turn: TurnLineage = { threadId: "T", turnId: "t", turnLsn: 6, parents: [], denyGeneration: 3 };
+    const turn = trackedTurn(f);
     const built = buildPrompt(turn, [promptPart("quote", [{ kind: "line", threadId: "T", messageId: "q" }]), promptPart("hi", [{ kind: "none", reason: "owner-turn" }])]);
     expect(denyGeneration(f.db)).toBe(3);
     expect(fenceVerdict(f.db, built, MEMBER)).toEqual(SHOWN);
@@ -471,7 +474,7 @@ describe("refs and the send fence", () => {
 
   it("(01-B2) a non-owner room prefix's shown lines are rechecked by the audience reader at the fence: a policy bump after the build refuses once the pending rows are tidied", () => {
     const f = make().reply("T", "old", 20, { memLsn: 5 }).meta("deny_generation", 3);
-    const turn: TurnLineage = { threadId: "T", turnId: "t", turnLsn: 30, parents: [], denyGeneration: 3 };
+    const turn = trackedTurn(f);
     const prefix = (extra: object = {}) => buildPrompt(turn, [promptPart("room transcript", [{ kind: "prefix", threadId: "T", headLsn: 30, shown: ["old"], ...extra }])]);
     expect(fenceVerdict(f.db, prefix(), MEMBER)).toEqual(SHOWN);
     f.meta("policy_bump_lsn", 10).meta("deny_generation", 4); // the owner changed memory settings; no pending row is left (tidy ran)

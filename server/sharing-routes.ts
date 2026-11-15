@@ -9,7 +9,7 @@
 import { createHash } from "node:crypto";
 import { database } from "./database.ts";
 import { loadConfig } from "./config.ts";
-import { type BotRecord, type Store, isIndividualAssistant, isWorkspaceChief, sectionKey } from "./store.ts";
+import { inertBot, type BotRecord, type Store, isIndividualAssistant, isWorkspaceChief, sectionKey } from "./store.ts";
 import { sharedWithTeam } from "./execution-audience.ts";
 import { teamChangeOpen, teamIdFor, teamLabel } from "./team-identities.ts";
 import { changeSharing } from "./shared-work.ts";
@@ -69,7 +69,7 @@ export function sharingView(store: Store, bot: BotRecord, generationFor?: (threa
     sharedWith: bot.sharedWith ?? { mode: "none", teams: [] },
     partitioned: bot.partitionedAt !== undefined,
     enabled: flagOn(),
-    shareable: !isIndividualAssistant(bot) && !isWorkspaceChief(bot) && !bot.hidden,
+    shareable: !isIndividualAssistant(bot) && !isWorkspaceChief(bot) && !inertBot(bot),
     teams: sharingTeams(store, bot),
     load: sharingLoad(bot, generationFor),
     loadLine: sharedLoadLine(bot, true, generationFor),
@@ -88,7 +88,7 @@ function patchSharing(deps: SharingRouteDeps, bot: BotRecord, body: unknown): Sh
   if (mode !== "none" && !flagOn()) return fail(409, FLAG_OFF);
   if (mode !== "none" && isIndividualAssistant(bot)) return fail(400, `${bot.name} is an Individual Assistant and works only for you, so ${bot.name} cannot be shared with a team.`);
   if (mode !== "none" && isWorkspaceChief(bot)) return fail(400, `${bot.name} is the Chief of Staff and already works across every team.`);
-  if (mode !== "none" && bot.hidden) return fail(400, `${bot.name} is archived. Bring ${bot.name} back before sharing ${bot.name} with a team.`);
+  if (mode !== "none" && inertBot(bot)) return fail(400, `${bot.name} is archived. Bring ${bot.name} back before sharing ${bot.name} with a team.`);
   if (teamChangeOpen()) return fail(409, JOURNAL_OPEN);
   // Read only: a listed team was named by the id GET sharing gave it, and
   // `all` names no team, so nothing here mints (3.1).
@@ -138,6 +138,7 @@ function putGeneralNotes(bot: BotRecord, body: unknown): SharingReply {
  * there or approved for every team; never notebooks, notes, memory,
  * folders, sharing, routines, tasks, computer, cloud, browser or apps. */
 function copyForTeam(store: Store, bot: BotRecord, body: unknown): SharingReply {
+  if (inertBot(bot)) return fail(409, "Review this bot before copying it to a team.");
   const input = body && typeof body === "object" && !Array.isArray(body) ? body as Record<string, unknown> : {};
   if (typeof input.teamId !== "string" || Object.keys(input).length !== 1) return fail(400, "teamId is required");
   const team = sharingTeams(store, bot).find(item => item.id === input.teamId);
@@ -181,7 +182,7 @@ export function openWorkThread(store: Store, bot: BotRecord, body: unknown): Sha
     const team = sharingTeamsRead(store, bot).find(item => item.name === input.teamName);
     if (!team?.covered) return fail(404, `${bot.name} is not shared with that team.`);
     if (!team.id) {
-      if (bot.hidden) return fail(409, `${bot.name} is archived. Bring ${bot.name} back before opening new work.`);
+      if (inertBot(bot)) return fail(409, `${bot.name} is archived. Bring ${bot.name} back before opening new work.`);
       if (teamChangeOpen()) return fail(409, JOURNAL_OPEN);
       if (team.name.length > 60) return fail(400, `The name ${team.name} is longer than 60 characters. Rename the team to 60 characters or fewer, then open this work.`);
       team.id = teamIdFor(team.name);
@@ -191,7 +192,7 @@ export function openWorkThread(store: Store, bot: BotRecord, body: unknown): Sha
   const existing = bot.tasks?.find(task => task.sharedWork?.teamId === teamId && !task.sharedWork.quarantined);
   if (existing) return { status: 200, body: { threadId: existing.threadId } };
   if (!sharedWithTeam(bot, teamId)) return fail(404, `${bot.name} is not shared with that team.`);
-  if (bot.hidden) return fail(409, `${bot.name} is archived. Bring ${bot.name} back before opening new work.`);
+  if (inertBot(bot)) return fail(409, `${bot.name} is archived. Bring ${bot.name} back before opening new work.`);
   const task = store.openSharedWork(bot.id, teamId);
   if (task && "refused" in task) return fail(409, task.refused);
   return task ? { status: 200, body: { threadId: task.threadId } } : fail(404, "no such bot");
@@ -245,7 +246,7 @@ export function teamSharing(store: Store, label: string, generationFor?: (thread
   const row = key ? database().prepare("SELECT team_id FROM team_identities WHERE label=? AND retired_at IS NULL").get(key) : undefined;
   return {
     id: row ? String(row.team_id) : null,
-    sharedIn: key ? store.bots.filter(bot => !bot.hidden && sectionKey(bot.section) !== key && bot.sharedWith && bot.sharedWith.mode !== "none"
+    sharedIn: key ? store.bots.filter(bot => !inertBot(bot) && sectionKey(bot.section) !== key && bot.sharedWith && bot.sharedWith.mode !== "none"
       && sharingTeamsRead(store, bot).some(team => team.name === key && team.covered))
       .map(bot => ({ botId: bot.id, name: bot.name, from: sectionKey(bot.section) || "General", load: sharedLoadLine(bot, true, generationFor) })) : [],
   };

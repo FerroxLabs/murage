@@ -243,7 +243,7 @@ describe("what a broker request carries", () => {
       LEGACY_DAILY_LIMIT,
     };
     for (const [name, text] of Object.entries(readable)) {
-      // The catalogue is "500+ apps", named by example. Never the vendor.
+      // The catalog is named by example. Never the vendor.
       expect.soft(text, `${name} names the broker`).not.toMatch(/composio/i);
       // The flow never hands somebody a settings pane on the way through.
       expect.soft(text, `${name} sends them to Settings`).not.toMatch(/settings/i);

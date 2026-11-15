@@ -18,7 +18,8 @@
 // as the companion's door header; approving a card or changing a setting still
 // needs the desktop or the paired phone.
 import { timingSafeEqual, randomBytes } from "node:crypto";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import type { IncomingHttpHeaders } from "node:http";
 import { join } from "node:path";
 
