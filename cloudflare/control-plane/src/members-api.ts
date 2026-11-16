@@ -7,14 +7,19 @@
 //   POST /v1/account/plan                   accept that quote: upgrade now (step-up); downgrade answers 409 downgrade_not_available
 //                                           (both off unless CLOUD_PLAN_CHANGE=1: 409 plan_change_disabled, "contact us")
 //   GET  /v1/account/plan                   the plan, a pending change, and the server resize that follows an upgrade
+//   GET  /v1/account/referral               the member's FirstPromoter referral link: {status: active|pending|none, link, portalUrl}
 // Every route is the signed-in member's own (Supabase identity on Cloud routes); another member's home or session is 404. Every state is read
 // from D1 rows written by the signed Stripe webhook, the refund ledger and the lifecycle, never from the query string.
-import { assertPinnedHome } from "./customer-identity";
+import { assertPinnedHome, inviteDecision } from "./customer-identity";
 import { commitQ, journalDispatch } from "./step-up-op";
+import { recordOwnProviderAction, type AccessKind } from "./access-events";
 import { z } from "zod";
+import { referralFor } from "./referral";
 import { accountSession, type ControlPlaneAuth } from "./auth";
 import { actor, bindingOf, cfg, CHECKOUT_SESSION_TTL_MS, checkoutAlertSyncQ, completedSessionSettled, expireConfirmed, getSub, homeSoldByLink, indeterminateStripeOutcome, planEndSentence, prepareCheckoutCustomer, planEndState, RelocatedAttempt, relocationClearedQ, publicCancelEndSql, readJSON, reconcileCheckoutAttempt, replayCheckoutAttempt,
-  savedStepUpCheckout, checkoutAttemptAbandoned, sessionRequestSettled, stepUpConsentRestart, STRIPE_MIN_SESSION_WINDOW_MS, terminalStripeRefusal, type BillingDependencies } from "./b5-billing";
+  savedStepUpCheckout, checkoutAttemptAbandoned, sessionRequestSettled, stepUpConsentRestart, STRIPE_MIN_SESSION_WINDOW_MS, terminalStripeRefusal, assertSalesAllowedFor, type BillingDependencies } from "./b5-billing";
+import { assertImageEpochCurrent } from "./image-admission";
+import { assertInvited } from "./sales-invite";
 import { PLAN_MONTHLY_USD, submitLinksFor } from "./b5-config";
 import { DEFAULT_LADDERS, provisionerConfig, ladderFor, type LadderRung } from "./b5-config";
 import { PLAN_RANK, PLANS, type Plan } from "./b5-config";
@@ -29,6 +34,7 @@ import { CLOUD_MEMBERS_PATH, createTaxQuote, currentVersions, SCREEN_VERSION, ge
 import { BACKUP_STALE_MS } from "./ops-monitor";
 import { MANAGED_QUOTE_SOURCE, sellerFor, sellerOfConsent, sellerSettings, SUBMIT_TEXT_VARIANT } from "./seller";
 import { archivedStripePage, stripePageOf } from "./checkout-strings";
+import { orderRefunds, refusedForAccount } from "./refusal";
 
 /** The consent row with the subscription its checkout created (written by attachSessionToConsent). */
 type ConsentRow = LegalConsentRow & { stripe_subscription_id: string | null; quote_id: string | null; stripe_price_id: string | null };
@@ -67,7 +73,6 @@ export type OrderStatus = "paid" | "pending" | "failed" | "refund_pending" | "re
 const orderQuery = z.object({ home: z.string().regex(/^[\w-]{1,128}$/).optional(), session: z.string().regex(/^cs_[\w]{1,200}$/).optional() })
   .refine((v) => (v.home === undefined) !== (v.session === undefined));
 interface HomeRow { id: string; owner_id: string; desired_state: string; entitlement: string; reservation_expires_at: number | null }
-interface RefundRow { amount_cents: number | null; target_cents: number | null; paid_cents: number | null; refunded_at: number | null; done_at: number | null }
 
 async function order(request: Request, env: Env, deps: BillingDependencies, auth: ControlPlaneAuth): Promise<Response> {
   const user = await currentUser(request, deps, auth);
@@ -107,6 +112,8 @@ async function order(request: Request, env: Env, deps: BillingDependencies, auth
   const ownSub = consent !== null && sub !== null && sub.consent_id === consent.id && consent.stripe_subscription_id !== null
     && sub.subscription_id !== null && sub.subscription_id === consent.stripe_subscription_id ? sub : null;
   return json({ homeId: home.id, sessionId: consent?.stripe_session_id ?? open?.session_id ?? null, plan: consent?.plan ?? sub?.plan ?? null, ...view,
+    // The guard turned this order away (mismatch, country_paused, rejected_consent): null for every other order.
+    refused: view.status === "paid" ? null : await refusedForAccount(env, user.id, nowOf(deps)),
     currentPeriodEnd: ownSub?.current_period_end ?? null, checkedAt: nowOf(deps) });
 }
 
@@ -123,9 +130,15 @@ export async function reconcileOrder(env: Env, home: HomeRow, consent: ConsentRo
   const base = { charged: null as boolean | null, startsAt: ownSub?.service_start_at ?? consent?.paid_at ?? null, refund: null as { amountCents: number | null; refundedAt: number | null } | null };
   const current = consent !== null && sub?.consent_id === consent.id;
   // Refunds of THIS order's contract (by its subscription), money-bearing or not yet decided. A decided zero is no refund.
-  const refunds = subId ? (await env.DB.prepare(`SELECT amount_cents,target_cents,paid_cents,refunded_at,done_at FROM refund_ops WHERE home_id=?
-      AND (subscription_id=? OR cancel_subscription_id=?)`).bind(home.id, subId, subId).all<RefundRow>()).results
-      .filter((r) => { const a = r.amount_cents ?? r.target_cents ?? r.paid_cents; return a === null ? r.done_at === null : a > 0; }) : [];
+  const refunds = await orderRefunds(env, home.id, consent?.id ?? null, subId, consent && consent.rejected_at !== null ? consent.rejected_reason : null);
+  // The guard turned the order away (renewal not confirmed, country mismatch, country paused): a failed order, refunded in full when it was
+  // paid. Checked BEFORE the refund block, so a refused order is never reported as a plain refund_sent; refused (the endpoints) says why.
+  if (consent && consent.rejected_at !== null) {
+    const sent = refunds.length > 0 && refunds.every((r) => r.refunded_at !== null);
+    const amount = refunds.reduce<number | null>((t, r) => (t === null || (r.amount_cents ?? r.target_cents) === null ? null : t + (r.amount_cents ?? r.target_cents)!), 0);
+    return { ...base, status: "failed", reason: refunds.length ? "refused" : "not_paid", charged: refunds.length > 0,
+      refund: refunds.length ? { amountCents: amount, refundedAt: sent ? Math.max(...refunds.map((r) => r.refunded_at!)) : null } : null };
+  }
   if (refunds.length) {
     const sent = refunds.every((r) => r.refunded_at !== null);
     const amount = refunds.reduce<number | null>((s, r) => (s === null || (r.amount_cents ?? r.target_cents) === null ? null : s + (r.amount_cents ?? r.target_cents)!), 0);
@@ -230,7 +243,10 @@ async function deletion(request: Request, env: Env, deps: BillingDependencies, a
 
 interface OpenRow { home_id: string; consent_id: string; state: string; session_id: string | null; session_url: string | null; expires_at: number | null; updated_at: number }
 
-async function resumeCheckout(request: Request, env: Env, deps: BillingDependencies, auth: ControlPlaneAuth): Promise<Response> {
+export async function resumeCheckout(request: Request, env: Env, deps: BillingDependencies, auth: ControlPlaneAuth): Promise<Response> {
+  await assertSalesAllowedFor(request, env, deps, auth);
+  await assertInvited(env, () => (deps.accountUser ?? (async (r, a) => (await accountSession(r, a))?.user ?? null))(request, auth), inviteDecision(request));
+  await assertImageEpochCurrent(env);
   const who = await actor(request, env, deps, auth, undefined, "payable");
   // { homeId } is optional; when sent it must be the resolved home. On the first-purchase bootstrap it is REQUIRED and must be the reserved
   // home (Astra TRUST-4 P2-4: the resume target is bound at both gates, never picked for an empty body).
@@ -643,6 +659,7 @@ function requireEnabled(env: Env) {
  *  same live state answers 409 quote_stale: a quote exists but no longer matches Stripe; ask for a new quote. */
 async function planQuote(request: Request, env: Env, deps: BillingDependencies, auth: ControlPlaneAuth): Promise<Response> {
   requireEnabled(env);
+  await assertInvited(env, () => (deps.accountUser ?? (async (r, a) => (await accountSession(r, a))?.user ?? null))(request, auth), inviteDecision(request));
   const body = await readJSON(request, quoteBody);
   const who = await actor(request, env, deps, auth, undefined, "subscribed");
   const user = await currentUser(request, deps, auth);
@@ -671,6 +688,7 @@ async function planQuote(request: Request, env: Env, deps: BillingDependencies, 
  *  with the quote's own proration_date: Stripe charges exactly the quoted amount, or nothing changes. */
 async function changePlan(request: Request, env: Env, deps: BillingDependencies, auth: ControlPlaneAuth): Promise<Response> {
   requireEnabled(env);
+  await assertInvited(env, () => (deps.accountUser ?? (async (r, a) => (await accountSession(r, a))?.user ?? null))(request, auth), inviteDecision(request));
   const user = await currentUser(request, deps, auth);
   await requireStepUp(request, env, deps, auth);
   const body = await readJSON(request, planBody);
@@ -852,6 +870,7 @@ export function hetznerResizeHost(token: string, fetcher: typeof fetch = fetch):
 interface ResizeRow { id: string; home_id: string; generation: number; resource_generation: number; from_plan: string; to_plan: string; state: string;
   server_id: string | null; from_type: string | null; target_type: string | null; action_id: string | null; snapshot_ref: string | null; pending_op: string | null;
   attempts: number; powered_on_at: number | null; step_at: number | null; shutdown_sent_at: number | null; next_at: number; alerted_at: number | null; last_error: string | null; created_at: number }
+const PLAN_CHANGE_POWER = "server switched off, resized or restarted by our plan change";
 /** A graceful shutdown gets this long before a hard power-off. */
 export const SHUTDOWN_GRACE_MS = 3 * MINUTE;
 /** After a shutdown was sent, a server still reporting "running" is watched this long before recovery concludes the shutdown never took
@@ -955,6 +974,16 @@ async function resizeStep(env: Env, lease: HomeLease, host: ResizeHost | null, j
     await fence(env, lease);
     return call();
   };
+  /** Records the provider action id of a call this job just made, as the job's own routine action (the provider sweep then finds the entry
+   *  and does not alert). A power-on also writes the home's power row, which is what makes the unlock that follows its boot routine. */
+  const own = async (kind: AccessKind, actionId: string, reason: string) =>
+    recordOwnProviderAction(env.DB, { homeId: job.home_id, generation: job.resource_generation, actionId, kind, actor: "system", reason, at: now });
+  const ownPowerRow = async (actionId: string) => {
+    try {
+      await fencedRun(env, lease, `INSERT INTO cloud_home_jobs (id,home_id,kind,ref,generation,state,created_at,finished_at,outcome,server_id,action_id)
+        VALUES (?,?,'power','start',?,'done',?,?,'plan_change',?,?)`, crypto.randomUUID(), job.home_id, home.generation, now, now, job.server_id, actionId);
+    } catch (e) { if (e instanceof LeaseLost) throw e; /* the unlock is then told at once */ }
+  };
   if (job.state !== "queued" && !host) {
     if (!restorationOwed(job)) return finish(env, lease, job, now, "failed", "provider_unconfigured");
     // The server may be off and the provider cannot be reached right now: never terminal. The journal is kept, ops are told, and the
@@ -996,6 +1025,7 @@ async function resizeStep(env: Env, lease: HomeLease, host: ResizeHost | null, j
       await set("server_id=?,from_type=?,target_type=?", server.id, target.fromType, target.targetType);
       job.server_id = server.id;
       const snap = await journaled("snapshot", () => host.snapshot(server.id, job.home_id, home.resource_generation));
+      await own("provider_snapshot", snap.actionId, "snapshot of the server taken at the hosting company");
       return set("state='snapshotting',snapshot_ref=?,action_id=?,pending_op=NULL,step_at=?,next_at=?", snap.imageId, snap.actionId, now, now + MINUTE);
     }
     case "snapshotting": {
@@ -1014,6 +1044,7 @@ async function resizeStep(env: Env, lease: HomeLease, host: ResizeHost | null, j
       // Right before the shutdown: the volume backup must still be fresh.
       if (!await backupFresh(env, lease, job, now)) return;
       const action = await journaled("shutdown", () => host!.shutdown(job.server_id!));
+      await own("plan_change_power", action, PLAN_CHANGE_POWER);
       // The marker outlives the acknowledgement: until the server is verified back on, recovery treats a shutdown as outstanding.
       return set("state='powering_off',action_id=?,pending_op=NULL,step_at=?,shutdown_sent_at=?,next_at=?", action, now, now, now + MINUTE);
     }
@@ -1026,12 +1057,14 @@ async function resizeStep(env: Env, lease: HomeLease, host: ResizeHost | null, j
       if (s.status !== "off") {
         if (now - (job.step_at ?? now) > SHUTDOWN_GRACE_MS && job.last_error !== "forced_off") {
           const a = await journaled("forceoff", () => host!.forceOff(job.server_id!));
+          await own("plan_change_power", a, PLAN_CHANGE_POWER);
           return set("action_id=?,pending_op=NULL,last_error='forced_off',next_at=?", a, now + MINUTE);
         }
         if (now - (job.step_at ?? now) > 4 * SHUTDOWN_GRACE_MS) return set("state='recovering',last_error='would_not_stop',next_at=?", now);
         return set("next_at=?", now + MINUTE);
       }
       const a = await journaled("change_type", () => host!.changeType(job.server_id!, job.target_type!));
+      await own("plan_change_power", a, PLAN_CHANGE_POWER);
       return set("state='changing',action_id=?,pending_op=NULL,step_at=?,next_at=?", a, now, now + MINUTE);
     }
     case "changing": {
@@ -1077,6 +1110,8 @@ async function resizeStep(env: Env, lease: HomeLease, host: ResizeHost | null, j
         return finish(env, lease, job, now, "failed", `left_off_lifecycle_${home.desired_state}`);
       }
       const a = await journaled("poweron", () => host!.powerOn(job.server_id!));
+      await own("plan_change_power", a, PLAN_CHANGE_POWER);
+      await ownPowerRow(a);
       return set(`state=?,action_id=?,pending_op=NULL,step_at=?,next_at=?`, resized ? "powering_on" : "restoring", a, now, now + MINUTE);
     }
     case "restoring": case "powering_on": {
@@ -1143,7 +1178,7 @@ async function lapsePlanChanges(env: Env, deps: BillingDependencies, now: number
 // ---- Routing -----------------------------------------------------------------------------------------------------------------------
 
 export const MEMBERS_PATHS: ReadonlySet<string> = new Set(["/v1/account/order", "/v1/account/deletion", "/v1/billing/checkout/resume",
-  "/v1/account/plan/preview", "/v1/account/plan"]);
+  "/v1/account/plan/preview", "/v1/account/plan", "/v1/account/referral"]);
 
 export async function membersRoute(request: Request, env: Env, deps: BillingDependencies, auth: ControlPlaneAuth): Promise<Response | null> {
   const path = new URL(request.url).pathname;
@@ -1154,6 +1189,7 @@ export async function membersRoute(request: Request, env: Env, deps: BillingDepe
   const only = (method: string) => { if (m !== method) throw new HTTPError(405, "method_not_allowed"); };
   if (path === "/v1/account/order") { only("GET"); return order(request, env, deps, auth); }
   if (path === "/v1/account/deletion") { only("GET"); return deletion(request, env, deps, auth); }
+  if (path === "/v1/account/referral") { only("GET"); return json(await referralFor(env, (await currentUser(request, deps, auth)).id)); }
   if (path === "/v1/billing/checkout/resume") { only("POST"); return resumeCheckout(request, env, deps, auth); }
   if (path === "/v1/account/plan/preview") { only("POST"); return planQuote(request, env, deps, auth); }
   if (path === "/v1/account/plan") {

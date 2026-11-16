@@ -1,0 +1,10 @@
+
+ RUN  v4.1.12 /repo
+
+ ✓ scripts/signal-runtime.test.mjs (151 tests | 6 skipped) 7287ms
+   ✓ T-PIN: bundled startup shares the staging digest without checkout files or CLI side effects  625ms
+
+ Test Files  1 passed (1)
+      Tests  145 passed | 6 skipped (151)
+   Start at  08:52:14
+   Duration  7.79s (transform 618ms, setup 0ms, import 398ms, tests 7.29s, environment 0ms)

@@ -1,0 +1,3 @@
+MurageMain 20:1xZ, binding on REDACT r3.2 before its build (replay counts: _r3b/r6-l7-colon.out). Plain form, yes: a secret-named label, colon only, one word, whatever its length, and the value must end its line.
+Fixed type list includes `token`. Numbers: excluded only under count-like labels such as `tokens`; a number under password, secret or authorization still masks.
+Rows owed: `tokens: 1200` unchanged; `password: 1234` masks. Also `password: hunter2` masks; `token: token` unchanged; `password: hunter2 and more` unchanged by this form. State the effect on auto-approve.ts:382 (replay: 0 of 8,761 commands) and done-when.ts:20 (no values in the copy to measure).

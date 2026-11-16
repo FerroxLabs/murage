@@ -1,3 +1,4 @@
+import { checkpointFamily } from './checkpoints.ts';
 import { randomUUID } from "node:crypto";
 import { holdForgottenSources } from "../turn-source-holds.ts";
 import { database, transaction } from "../database.ts";
@@ -26,17 +27,37 @@ export function forgetMemory(ticket: object, target: {kind:"source"|"record";id:
   if(result.derivedCleanup=="pending")notifyMemoryWork();
   return result;
 }
-function forgetInTransaction(ticket: object, target: {kind:"source"|"record";id:string;revision?:number}) {
+type ForgetResult={status:'excluded';deletionEpoch:number;derivedCleanup:'pending'|'complete';externalHistory:string;originals:string};
+function forgetInTransaction(ticket: object, target: {kind:"source"|"record";id:string;revision?:number}, familyMember=false):{result:ForgetResult;pending:boolean} {
   requireMemoryOwner(ticket);
   if(!target.id || target.revision!==undefined && (!Number.isSafeInteger(target.revision)||target.revision<0))throw new Error("INVALID_MEMORY_TARGET");
   let pending=false;
   const result=transaction(db=>{
+    // A displayed rolling checkpoint is one owner-visible family. Preserve exact
+    // record revocation paths for every retained member; head movement has none.
+    const family=!familyMember&&target.kind==='record'?checkpointFamily(db,target.id,target.revision):undefined;
+    if(family){
+      db.prepare(`INSERT OR IGNORE INTO memory_checkpoint_exclusions SELECT ?,e.source_id,e.source_revision FROM memory_checkpoint_members m JOIN memory_evidence e ON e.record_id=m.record_id AND e.record_version=m.record_version WHERE m.family_id=?`).run(family.family_id,family.family_id);
+      db.prepare("UPDATE memory_checkpoint_heads SET record_id=NULL,record_version=NULL,state='forgotten' WHERE family_id=?").run(family.family_id);
+      let selected:ReturnType<typeof forgetInTransaction>['result']|undefined;
+      for(const member of db.prepare('SELECT DISTINCT record_id FROM memory_checkpoint_members WHERE family_id=? ORDER BY record_id').all(family.family_id)){
+        const forgotten=forgetInTransaction(ticket,{kind:'record',id:String(member.record_id)},true);
+        pending ||= forgotten.pending;
+        if(member.record_id===target.id)selected=forgotten.result;
+      }
+      if(!selected)throw new Error('MEMORY_NOT_FOUND');
+      return {...selected,deletionEpoch:Number(db.prepare('SELECT deletion_epoch FROM memory_meta WHERE id=1').get()!.deletion_epoch),derivedCleanup:pending?'pending' as const:selected.derivedCleanup};
+    }
     const exists=target.kind==="source"?db.prepare("SELECT 1 FROM memory_sources WHERE id=?").get(target.id):db.prepare("SELECT 1 FROM memory_records WHERE id=?").get(target.id);
     if(!exists)throw new Error("MEMORY_NOT_FOUND");
     db.exec("UPDATE memory_meta SET deletion_epoch=deletion_epoch+1,policy_revision=policy_revision+1 WHERE id=1");
     const epoch=Number(db.prepare("SELECT deletion_epoch FROM memory_meta WHERE id=1").get()!.deletion_epoch);
     const rev=target.revision??null;
     db.prepare("INSERT INTO memory_tombstones VALUES(?,?,?,?,NULL,?,'owner-forget',?)").run(randomUUID(),target.kind,target.id,rev,epoch,Date.now());
+    // Memory screen B2 (spec r3 2.3): the pin goes in this commit, not at the job's affect step (memory-revocation.ts), which a large
+    // record leaves to the runner; the next turn then never selects a pin it may not read. A primary-key range over this record's
+    // versions; authority_pins_u moves the pin stamp, so the bundle's pin cache is not reused.
+    if(target.kind==="record")db.prepare("UPDATE memory_records SET owner_pinned=0 WHERE id=? AND (? IS NULL OR version=?) AND owner_pinned=1").run(target.id,rev,rev);
     // A room's notes (its checkpoint) quote room messages every member still
     // reads. Forgetting the notes forgets the notes: a reply made with them is
     // withheld for using them, but the messages they quoted are not forgotten
@@ -80,7 +101,7 @@ function forgetInTransaction(ticket: object, target: {kind:"source"|"record";id:
     if(!notes)forgottenMessages(db,ended.map(source=>source.id));
     // the worker sets both statuses together, so the indexed lexical probe answers (memory_projection_pending); a job still running is pending too
     const cleanup=pending||Boolean(db.prepare("SELECT 1 FROM memory_projection_receipts WHERE lexical_status='delete-pending' LIMIT 1").get());
-    return {status:"excluded" as const,deletionEpoch:epoch,derivedCleanup:cleanup?"pending":"complete",externalHistory:"already-delivered provider text cannot be erased",originals:"retained outside memory; supporting source revisions and automatic reimport excluded"};
+    return {status:"excluded" as const,deletionEpoch:epoch,derivedCleanup:cleanup?"pending" as const:"complete" as const,externalHistory:"already-delivered provider text cannot be erased",originals:"retained outside memory; supporting source revisions and automatic reimport excluded"};
   });
   return {result,pending};
 }

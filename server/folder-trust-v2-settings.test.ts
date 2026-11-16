@@ -1,3 +1,4 @@
+import { fakeEngineServerArgs } from "./testing/fake-engine-server.ts";
 // What Settings says about folder trust, proved on the outcome and not the
 // sentence: a Forget does what its row says (test 18, 13(e)), the engine's own
 // file is read as written (test 19), and a file this build writes survives a
@@ -84,7 +85,8 @@ async function bootServer(port: number): Promise<{ child: ChildProcess; desktop:
   writeFileSync(trustFile("store-broken"), "this is not toml at all [[[\n");
   mkdirSync(trustFile("store-dir"));
   writeFileSync(trustFile("store-empty"), "  \n");
-  const proc = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+  const proc = spawn(process.execPath, fakeEngineServerArgs(join(SERVER_DIR, "index.ts")), {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -145,7 +147,8 @@ const skip = (bot: Bot, requestId: string) => request("POST", `/api/bots/${bot.i
 async function decide(bot: Bot, label: "Trust this folder" | "Don't trust") {
   await send(bot);
   const open = await card(bot);
-  expect((await answer(bot, open.requestId, label)).status).toBe(200);
+  const delivered = await answer(bot, open.requestId, label);
+  expect(delivered, JSON.stringify(delivered)).toMatchObject({ status: 200, body: { outcome: "answered" } });
   await settled(bot);
 }
 async function skipCard(bot: Bot, text: string) {
@@ -175,6 +178,19 @@ posixOnly("what Settings promises, through the harness", () => {
     await removeTempDir(home);
   });
 
+  it("GET reports legacy upstream trust as ineffective until the engine records consent 2", async () => {
+    const bot = await makeBot("Legacy reporting", "store-empty");
+    const folder = workspaceOf(bot);
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "AGENTS.md"), "fixture instructions");
+    const text = `[folders.${JSON.stringify(folder)}]\ntrusted = true\n`;
+    writeFileSync(trustFile("store-empty"), text);
+    expect((await noteFor(bot)).body).toMatchObject({ trustGeneration: 2, upstreamTrusted: false, upstreamStore: "own" });
+    writeFileSync(trustFile("store-empty"), text + "consent = 2\n");
+    expect((await noteFor(bot)).body).toMatchObject({ trustGeneration: 2, upstreamTrusted: true, upstreamStore: "own" });
+    writeFileSync(trustFile("store-empty"), "");
+  });
+
   it("(18) Forget of a trust: the owner's own Fuigo keeps it and does not ask; a home that never trusted it does", async () => {
     const owner = await makeBot("Owner", "own");
     await decide(owner, "Trust this folder");
@@ -183,7 +199,7 @@ posixOnly("what Settings promises, through the harness", () => {
     // the row's copy reads these: consent 2, own home, the real file
     const note = (await noteFor(owner)).body;
     expect(note).toMatchObject({ upstreamStore: "own", upstreamTrustFile: trustFile("own"), trustGeneration: 2 });
-    expect(note.records.find((row: any) => row.key === K("forgotten"))).toMatchObject({ decision: "trust", consent: 2 });
+    expect(note.records.find((row: any) => row.key === K("forgotten")), JSON.stringify(note)).toMatchObject({ decision: "trust", consent: 2 });
 
     // control: while the record stands, a home with no grant is answered with no card
     const control = await makeBot("Control", "fresh-control");

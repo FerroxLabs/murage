@@ -12,7 +12,7 @@ import { cloudCopy } from "@/lib/cloud-copy";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 import { cloudHomeBridge, type CloudHomeBridge, type PairedHome } from "@/lib/cloud-workspace";
-import { EngineSignIns } from "./EngineSignIns";
+import { EngineSignIns, type SignInRequest } from "./EngineSignIns";
 
 export const CONNECT_WINDOW_MS = 10 * 60_000;
 export const CONNECT_POLL_MS = 2_000;
@@ -26,6 +26,9 @@ export const formatCountdown = (seconds: number) => `${Math.floor(seconds / 60)}
  * "pending": a key is made and the browser is open, with the ten-minute countdown.
  * "attempted": the home was asked and its answer may be lost; no countdown, the key is kept for the next Connect.
  */
+/** A home as the owner can name it: the host of its address. */
+const hostOf = (origin: string): string | undefined => { try { return new URL(origin).host || undefined; } catch { return undefined; } };
+
 export type ConnectPhase = "idle" | "pending" | "attempted" | "paired" | "closed";
 
 export interface ConnectResult { code: string; message: string; at: number; retryAfterMs?: number }
@@ -70,7 +73,7 @@ export interface ConnectHomeViewProps {
   onOpen(homeId: string): void;
   onDisconnect(homeId: string): void;
   /** B3 WP5: the engine sign-ins under a connected home's row (EngineSignIns). Absent: the row has Open and Disconnect only. */
-  signIns?(homeId: string): ReactNode;
+  signIns?(homeId: string, homeName?: string): ReactNode;
 }
 
 const button = "rounded-md bg-control px-3 py-1.5 text-[13px] font-medium text-ink hover:bg-inset disabled:opacity-50";
@@ -97,7 +100,7 @@ export function ConnectHomeView(props: ConnectHomeViewProps) {
                 <button type="button" className={button} disabled={busy} onClick={() => props.onOpen(home.homeId)}>{cloudCopy.connectOpen}</button>
                 <button type="button" className={button} disabled={busy} onClick={() => props.onDisconnect(home.homeId)}>{cloudCopy.connectDisconnect}</button>
               </div>
-              {props.signIns?.(home.homeId) ?? null}
+              {props.signIns?.(home.homeId, hostOf(home.origin)) ?? null}
             </li>
           ))}
         </ul>
@@ -134,7 +137,7 @@ export function ConnectHomeView(props: ConnectHomeViewProps) {
 const messageOf = (cause: unknown) => (cause instanceof Error && cause.message ? cause.message : "Something went wrong. Try again.");
 
 /** `onChanged` runs after the computer connects or disconnects so the switch can reread what is paired. */
-export function ConnectHome({ bridge = cloudHomeBridge(), paired, onChanged }: { bridge?: CloudHomeBridge; paired: PairedHome[]; onChanged?: () => void }) {
+export function ConnectHome({ bridge = cloudHomeBridge(), paired, onChanged, signInRequest, onSignInRequestHandled }: { bridge?: CloudHomeBridge; paired: PairedHome[]; onChanged?: () => void; signInRequest?: SignInRequest | null; onSignInRequestHandled?: () => void }) {
   const [pendingSince, setPendingSince] = useState<number | null>(null);
   const [attempted, setAttempted] = useState(false);
   const [lastResult, setLastResult] = useState<ConnectResult | null>(null);
@@ -201,7 +204,7 @@ export function ConnectHome({ bridge = cloudHomeBridge(), paired, onChanged }: {
       })}
       onOpen={(homeId) => void run(async () => { await bridge.open(homeId); })}
       onDisconnect={(homeId) => void run(async () => { await bridge.disconnect(homeId); changed.current?.(); })}
-      signIns={(homeId) => <EngineSignIns bridge={bridge} homeId={homeId} busy={busy} onError={setError} />}
+      signIns={(homeId, homeName) => <EngineSignIns bridge={bridge} homeId={homeId} homeName={homeName} busy={busy} onError={setError} request={signInRequest} onRequestHandled={onSignInRequestHandled} />}
     />
   );
 }

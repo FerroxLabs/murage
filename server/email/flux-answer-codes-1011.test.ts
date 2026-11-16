@@ -1,3 +1,4 @@
+import { createMemoryEmailRuntime } from "../testing/email-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -23,7 +24,7 @@ const ACCOUNT = "sk-flux-dashboard-fixture";
 const OWNER = "owner-fixture-token";
 const BOT = { id: "b1", name: "Juniper", threadId: "t-b1" };
 const CAPS = { enabled: true, available: true, account_state: "active", limits: {} };
-const OWNER_REF: CredentialRef = { kind: "owner" };
+const OWNER_REF: CredentialRef = { kind: "owner", expectOwnerRef: "key_owner" };
 
 let fake: FakeFlux;
 let runtime: EmailRuntime;
@@ -31,7 +32,7 @@ let runtime: EmailRuntime;
 beforeEach(() => {
   fake = new FakeFlux();
   const db = new DatabaseSync(":memory:");
-  runtime = new EmailRuntime({
+  runtime = createMemoryEmailRuntime({
     accountKey: () => ACCOUNT, database: () => db, transaction: fn => fn(), fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test", now: () => 1_800_000_000_000,
     workspaceRoot: () => undefined, bot: id => (id === BOT.id ? BOT as unknown as BotRecord : undefined),
     cardHost: { botName: () => BOT.name, threadExists: () => true, card: () => null, appendCard: () => "m1", patchCard: () => undefined, outcome: () => undefined, activity: () => undefined, notify: () => undefined },

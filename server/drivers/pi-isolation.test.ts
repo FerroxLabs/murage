@@ -1,3 +1,4 @@
+import { bindFixtureAdapter, fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -10,7 +11,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { ensureDirs } from "../config.ts";
 import { recordEvents } from "../testing/events.ts";
-import { PiDriver, piIsolationArgs, piProjectContextFiles } from "./pi.ts";
+import { PiDriver, buildMcpServers, piIsolationArgs, piProjectContextFiles } from "./pi.ts";
 import { ScopeUnavailableError } from "./scoped-cli-home.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
@@ -64,20 +65,29 @@ describe("pi personal setup isolation", () => {
     const dump = join(home, "dump.jsonl");
     const instance = await PiDriver.create({ instanceId: "pi-iso", displayName: "pi", enabled: true,
       environment: { HOME: home, USERPROFILE: home, FAKE_PI_DUMP: dump }, config: { cli: FAKE_CLI, fullAuto: false } });
+    bindFixtureAdapter(instance.adapter);
     const recorder = recordEvents(instance.adapter);
     try {
-      const { turnId } = await instance.adapter.sendTurn({ threadId: "pi-iso-1", text: "hi", cwd: sub,
+      const mounted = fixtureMountTurn({ threadId: "pi-iso-mounted", text: "hi", cwd: sub,
         integrations: { memory: { command: "node", args: ["memory-proxy.js"], env: {} } } });
+      await expect(instance.adapter.sendTurn(mounted)).rejects.toThrow("Murage keeps this bot's memory out of Pi's tools.");
+      expect(recorder.events).toEqual([]);
+      const servers = buildMcpServers(mounted);
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "pi-iso-1", text: "hi", cwd: sub });
       await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
       const rows = readFileSync(dump, "utf8").trim().split("\n").map((line) => JSON.parse(line) as { argv: string[]; mcpConfig?: { mcpServers?: Record<string, unknown> } | null });
-      const turnRow = rows.find((row) => row.mcpConfig != null)!;
+      const turnRow = rows.filter((row) => row.argv).at(-1)!;
       expect(turnRow).toBeTruthy();
       for (const flag of ["--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes", "--no-context-files"]) expect(turnRow.argv).toContain(flag);
       // Murage's own extensions still ride -e, after the switches
       const ext = turnRow.argv.indexOf("-e");
-      expect(turnRow.argv[ext + 1]).toContain("pi-mcp-extension");
+      // MAIN RULING INT-CONFLICT-DEFAULT 5a0ace43b0 a8db6b745a: Pi refuses mounted turns; the native isolation control retains its permission gate
+      expect(turnRow.argv[ext + 1]).toContain("pi-permission-gate");
+      expect(turnRow.argv.join(" ")).not.toContain("pi-mcp-extension");
       expect(ext).toBeGreaterThan(turnRow.argv.indexOf("--no-extensions"));
-      expect(Object.keys(turnRow.mcpConfig!.mcpServers!)).toContain("murage-memory");
+      // MAIN RULING INT-CONFLICT-DEFAULT 5a0ace43b0 a8db6b745a: retain the producer's memory-server inventory while proving no mount reaches the native Pi process
+      expect(Object.keys(servers!)).toContain("murage-memory");
+      expect(turnRow.mcpConfig).toBeNull();
       const appended = turnRow.argv.flatMap((arg, i) => turnRow.argv[i - 1] === "--append-system-prompt" ? [arg] : []);
       expect(appended).toEqual([join(project, "AGENTS.md"), join(sub, "CLAUDE.md")]);
       expect(JSON.stringify(turnRow.argv)).not.toMatch(/PERSONAL|personal\.ts|\.pi[/\\]agent/);

@@ -1,5 +1,5 @@
 {
-  "@source": "57c41d0f4509791921344f3d826b6015ceced077",
+  "@source": "968d807cca562a743b79127e48954176f04baabf",
   "label.cloudPairing": "Cloud ホームに新しいデバイスを追加する",
   "label.cloudDevicesAccount": "Cloud ホームのデバイスまたはアカウントを変更する",
   "label.modelSigninStart": "Cloud ホームでモデルのログインを開始する",
@@ -8,6 +8,7 @@
   "label.modelSigninRemove": "Cloud ホームからモデルの接続を削除する",
   "label.ownServer": "ボットがコンピューターとして使うサーバーを変更する",
   "label.engineLogin": "Cloud ホームでエンジンにログインするか、エンジンからログアウトする",
+  "label.engineSigninCode": "Cloud のホームページにあるボットの Antigravity ログインを完了する",
   "label.botCreate": "ボットを作成する",
   "label.botDelete": "ボットとその会話を削除する",
   "label.botSettings": "ボットの設定を変更する",
@@ -50,6 +51,7 @@
   "label.teamsImportExport": "チームをインポートまたはエクスポートする",
   "label.teamLibraryGithub": "GitHub からチームをダウンロードする",
   "label.teamLibraryGrok": "Grok Bot を取り込む",
+  "label.moveInGrok": "ダウンロードからGrok Botsを取り込む",
   "label.packagesImportExport": "パッケージをインポートまたはエクスポートする",
   "label.starterProfiles": "スタータープロファイルをインストールする",
   "label.moveLend": "ボットの作業をチーム間で移動または貸し出す",
@@ -59,6 +61,7 @@
   "label.localModels": "ローカルモデルを変更する",
   "label.claudeAccounts": "Claude アカウントを変更する",
   "label.chatChannels": "Telegram、Slack、または Discord の接続を変更する",
+  "label.signal": "Signal の接続を変更する",
   "label.whatsapp": "WhatsApp の接続を変更する",
   "label.memory": "メモリを変更する",
   "label.skillsCollection": "スキルコレクションを変更する",
@@ -131,5 +134,7 @@
   "dialog.close": "閉じる",
   "prepare.voiceFinishing": "Murage は音声の返信を仕上げています。",
   "prepare.voiceFinishingDetail": "約 {minutes} 分後にもう一度お試しください。チャットとメモリはそのままです。",
-  "prepare.quit": "終了"
+  "prepare.quit": "終了",
+  "label.claudeCodeImport": "Claude Code からスキルとツールサーバーを読み込む",
+  "label.restoreBackup": "既存のバックアップから復元"
 }

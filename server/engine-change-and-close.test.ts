@@ -61,21 +61,27 @@ describe("an engine change or an app close around a run waiting for the person",
     (await api("GET", `/api/threads/${threadId}/messages?limit=50`)).body.messages;
   const pendingApprovals = async () => (await desktopApi("GET", "/api/inbox?view=approvals")).body.approvals as number;
 
-  /** The app's shape: Electron's private parent port, one listener, fed here
+  /** The app's shape: Electron's private EventEmitter parent port, fed here
    * from the IPC channel, as main.mjs feeds it (utilityProcess postMessage). */
   const PARENT_PORT_PRELUDE = `data:text/javascript,${encodeURIComponent(`
-    let listener;
-    process.on("message", (data) => listener?.({ data }));
-    Object.defineProperty(process, "parentPort", { value: {
-      on(event, callback) { if (event === "message") listener = callback; },
-      postMessage(message) { process.send?.(message); },
-    } });
+    const { EventEmitter } = await import("node:events");
+    const port = new EventEmitter();
+    process.on("message", data => port.emit("message", { data }));
+    port.postMessage = message => {
+      if (message?.type === "murage:highlevel-bootstrap-request") {
+        queueMicrotask(() => port.emit("message", { data: { type: "murage:highlevel-bootstrap", requestId: message.requestId, error: "storage" } }));
+        return;
+      }
+      process.send?.(message);
+    };
+    Object.defineProperty(process, "parentPort", { value: port });
   `)}`;
 
   const start = async ({ packaged = false } = {}) => {
     stderr = "";
     desktopHeaders = DESKTOP_HEADERS;
     child = spawn(process.execPath, [...(packaged ? ["--import", PARENT_PORT_PRELUDE] : []), join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

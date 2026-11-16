@@ -38,7 +38,7 @@ async function call(options: Call & { path: string; method: "GET" | "POST" | "DE
   if (response.ok) return response;
   void response.body?.cancel().catch(() => {});
   const { status } = response;
-  if (status === 401 || status === 403) throw new PublishError("reconnect", "Netlify did not accept the sign-in. Please reconnect Netlify and try again.");
+  if (status === 401 || status === 403) throw new PublishError("reconnect", "Netlify is off. Turn it on in Settings > Connections > Connected tools.");
   if (status === 429) throw new PublishError("rate-limited", "Netlify is limiting how often I can publish. Please try again in a minute.");
   if (status === 404 && options.allow404) return null;
   if (status === 404) throw new PublishError("not-found", "Netlify has no site with that id. It may already be removed.");

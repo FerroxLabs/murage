@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
+import { stopSearchIndex } from "./message-search-index.ts";
 import {
   DRAIN_PAGE, IDLE_RELEASE_BATCH, RESTART_RECEIPT, SHARED_REQUEUE_ROWS, SETTLE_PAGE, _drainingCount, _resetPending, appendHeldLine, busyHandoffText, didNotStartText,
   dismissHeldDelegation, drainDelegations, findDelegationReceipt, heldLineId, idleReleaseHasMore, queueDelegation, reconcileStartedDelegations, registerHeldLine, releaseDelegationsWaitingOn,
@@ -61,12 +62,14 @@ describe("1. normal boot makes no file in the data folder, and the held lines ar
   it("an empty boot settling writes nothing to DATA_DIR, and every entry the data folder holds is one the backup inventory knows", async () => {
     const w = ownerWorld("owner");
     queued(w);
+    // The search worker added by 5d5a791f19 publishes its own files independently of delegation settlement.
+    expect(await stopSearchIndex()).toBe(true);
     const before = readdirSync(DATA_DIR).sort();
     await settleStartedDelegations({ store: w.store });
     reconcileStartedDelegations({ store: w.store });
     expect(existsSync(`${DATA_DIR}/held-lines-swept.json`)).toBe(false);
     expect(readdirSync(DATA_DIR).sort()).toEqual(before);                                // no file of Murage's own appeared
-    for (const entry of readdirSync(DATA_DIR)) if (/held-lines/.test(entry)) expect(classifyDataDirEntry(entry), entry).toBeDefined();
+    for (const entry of readdirSync(DATA_DIR)) expect(classifyDataDirEntry(entry), entry).toBeDefined();
   });
   it("held_notice_lines is a 1.0.2 object the downgrade drops and the snapshot knows", () => {
     ownerWorld("owner");

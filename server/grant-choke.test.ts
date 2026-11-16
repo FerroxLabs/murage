@@ -19,6 +19,8 @@ import { peerAllowKey, peerApprovalHolder, requestPeerApproval, resolvePeerComms
 import { Store, type BotRecord } from "./store.ts";
 import { stopWalMaintenance } from "./wal-maintenance.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { serviceQueueFixture } from "./testing/service-queue-fixture.ts";
+import { serviceQueue } from "./narrow-denials.ts";
 
 const BOB = "stop:message:bob@example.com";
 
@@ -203,7 +205,9 @@ describe("C1b: a bot-to-bot contact card's Always allow saves through the choke 
     store = new Store(selection);
     from = store.patchBot(store.createBot().id, { name: "Asker", approvePeerComms: true })!;
     target = store.patchBot(store.createBot().id, { name: "Helper" })!;
-    bus = { store, broadcast: () => {} };
+    const producer = serviceQueueFixture(store);
+    producer.queue(serviceQueue('peer'));
+    bus = { store, authorityFor: producer.authorityFor, broadcast: () => {} };
   });
   afterEach(async () => {
     closeMessageDb();
@@ -215,6 +219,7 @@ describe("C1b: a bot-to-bot contact card's Always allow saves through the choke 
 
   it("the peer bus is the holder, resolvePeerComms is the answer, and the grant lands after it", async () => {
     const first = requestPeerApproval(bus, from, target, "hello", "ask_bot");
+    await vi.waitFor(() => expect(openCard()).toBeTruthy());
     const card = openCard();
     expect(card?.card?.options).toEqual(["Allow", "Deny", "Always allow"]);
     const requestId = card!.card!.requestId!;

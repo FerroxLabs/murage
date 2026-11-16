@@ -212,7 +212,7 @@ describe("Cline turns (fake CLI)", () => {
 describe("a failing-auth engine with no method to call (Grok's shape)", () => {
   const LOGIN = "Sign in to the fixture engine";
   const support = (extra: Partial<AcpSupport>): AcpSupport => ({
-    driverKind: "authSkipFixture", displayName: "Auth Skip Fixture", models: { default: "m", options: [{ id: "m", label: "M" }] },
+    driverKind: "authSkipFixture", fluxReach: () => "elsewhere" as const, displayName: "Auth Skip Fixture", models: { default: "m", options: [{ id: "m", label: "M" }] },
     defaultCli: FAKE_CLI, nativeSource: "fixture.acp", loginNote: LOGIN, spawnArgs: () => [], pickAuthMethod: () => null,
     authFailure: "fail", isAuthenticated: () => true, ...extra,
   });

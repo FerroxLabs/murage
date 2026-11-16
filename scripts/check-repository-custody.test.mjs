@@ -1,10 +1,11 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, test } from "vitest";
 import { custodyViolations, privateContentPattern } from "./check-repository-custody.mjs";
+import { gitFixture } from "../server/testing/git-fixture.mjs";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -31,24 +32,22 @@ test("retains real product handoff features, skills and reusable fixtures", () =
 });
 
 test("the index gate fails on a synthetic record staged in a copy of the index", () => {
-  // A copied index keeps the real checkout's staging untouched.
-  const dir = mkdtempSync(join(tmpdir(), "murage-custody-index-"));
+  // Each gate starts with its own Git object store and index.
+  const fixture = gitFixture(["scripts/check-repository-custody.mjs"]);
+  const { root: dir, env } = fixture;
   try {
-    const index = join(dir, "index");
-    copyFileSync(resolve(ROOT, execFileSync("git", ["rev-parse", "--git-path", "index"], { cwd: ROOT, encoding: "utf8" }).trim()), index);
-    const env = { ...process.env, GIT_INDEX_FILE: index };
-    const blob = execFileSync("git", ["hash-object", "--stdin"], { cwd: ROOT, input: "synthetic\n", encoding: "utf8" }).trim();
-    const gate = () => spawnSync(process.execPath, ["scripts/check-repository-custody.mjs"], { cwd: ROOT, env, encoding: "utf8" });
+    const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: dir, env, input: "synthetic\n", encoding: "utf8" }).trim();
+    const gate = () => spawnSync(process.execPath, ["scripts/check-repository-custody.mjs"], { cwd: dir, env, encoding: "utf8" });
     expect(gate().status).toBe(0);
     for (const path of ["apps/docs/.planning/STATE.md", RECEIPT]) {
-      execFileSync("git", ["update-index", "--add", "--cacheinfo", `100644,${blob},${path}`], { cwd: ROOT, env });
+      execFileSync("git", ["update-index", "--add", "--cacheinfo", `100644,${blob},${path}`], { cwd: dir, env });
     }
     const result = gate();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("apps/docs/.planning/STATE.md");
     expect(result.stderr).toContain(RECEIPT);
   } finally {
-    removeTempDirSync(dir);
+    fixture.dispose();
   }
 });
 
@@ -76,26 +75,20 @@ test("keeps the neutral examples that exercise the same product rules", () => {
 });
 
 test("the index gate fails on a private path staged in a copy of the index, and names only the location", () => {
-  // A copied index and a private object directory: the real checkout's staging
-  // and object store are untouched; its objects are read as alternates.
-  const dir = mkdtempSync(join(tmpdir(), "murage-custody-content-"));
+  const fixture = gitFixture(["scripts/check-repository-custody.mjs"]);
+  const { root: dir, env } = fixture;
   try {
-    const index = join(dir, "index"), objects = join(dir, "objects");
-    mkdirSync(objects);
-    copyFileSync(resolve(ROOT, execFileSync("git", ["rev-parse", "--git-path", "index"], { cwd: ROOT, encoding: "utf8" }).trim()), index);
-    const env = { ...process.env, GIT_INDEX_FILE: index, GIT_OBJECT_DIRECTORY: objects,
-      GIT_ALTERNATE_OBJECT_DIRECTORIES: resolve(ROOT, execFileSync("git", ["rev-parse", "--git-path", "objects"], { cwd: ROOT, encoding: "utf8" }).trim()) };
-    const gate = () => spawnSync(process.execPath, ["scripts/check-repository-custody.mjs"], { cwd: ROOT, env, encoding: "utf8" });
+    const gate = () => spawnSync(process.execPath, ["scripts/check-repository-custody.mjs"], { cwd: dir, env, encoding: "utf8" });
     expect(gate().status).toBe(0);
-    const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: ROOT, env, input: `first line\n${PRIVATE_LINES[0]}\n${PRIVATE_LINES[4]}\n`, encoding: "utf8" }).trim();
-    execFileSync("git", ["update-index", "--add", "--cacheinfo", `100644,${blob},src/e2e/synthetic-private.spec.ts`], { cwd: ROOT, env });
+    const blob = execFileSync("git", ["hash-object", "-w", "--stdin"], { cwd: dir, env, input: `first line\n${PRIVATE_LINES[0]}\n${PRIVATE_LINES[4]}\n`, encoding: "utf8" }).trim();
+    execFileSync("git", ["update-index", "--add", "--cacheinfo", `100644,${blob},src/e2e/synthetic-private.spec.ts`], { cwd: dir, env });
     const result = gate();
     expect(result.status).toBe(1);
     expect(result.stderr).toContain("src/e2e/synthetic-private.spec.ts:2");
     expect(result.stderr).toContain("src/e2e/synthetic-private.spec.ts:3"); // lower-cased volume path
     expect(result.stderr).not.toContain(HOME);
   } finally {
-    removeTempDirSync(dir);
+    fixture.dispose();
   }
 });
 

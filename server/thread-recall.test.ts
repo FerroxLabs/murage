@@ -1,3 +1,7 @@
+import { fixtureMemoryAccess } from "./testing/recall-access-fixture.ts";
+import { rebuildSearchFixture } from "./testing/message-search-fixture.ts";
+import { acceptFixtureResponse, bindFixtureTurn } from "./testing/consuming-fixture.ts";
+import { LEDGER_REFUSAL_LINE } from "./ledger-refusal.ts";
 import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -14,7 +18,7 @@ import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database, transaction } from "./database.ts";
 import { appendMessage, closeMessageDb, insertMessageBefore, readMessage } from "./message-db.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
-import { ensureScope, memoryAccess, recallThreads, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./memory/policy.ts";
+import { ensureScope, recallThreads, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./memory/policy.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
 import { setMemoryMode } from "./memory/repository.ts";
 import { bindHumanThread, linkHumanBinding, observeVerifiedHuman, resolveHumanBinding } from "./human-principals.ts";
@@ -30,7 +34,7 @@ import { readableMemoryRecord } from "./memory/readable.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
 import {
   CALLS_LINE, CHECKING_LINE, NOT_ACTIVE_LINE, NO_THREADS_LINE, NO_THREADS_STATUS, OUT_OF_ROOM_LINE, PARTIAL_LINE, THREAD_CALLS_PER_TURN, THREAD_ENVELOPE_BUDGET,
-  UNRECORDED_LINE, envelopeBytes, judgeRows, threadRecallRoute, type ThreadRecallHost, type ThreadRecallState, type ThreadRecallTool,
+  envelopeBytes, judgeRows, threadRecallRoute, type ThreadRecallHost, type ThreadRecallState, type ThreadRecallTool,
 } from "./thread-recall.ts";
 import type { Message, Store } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -76,7 +80,8 @@ beforeEach(() => {
 
 interface Rig {
   host: ThreadRecallHost; state: ThreadRecallState; lineage: RunningTurnLineage; access: () => MemoryAccess;
-  out: Array<{ status: number; body: Json; events: string[]; carries: number }>; events: string[];
+  out: Array<{ status: number; body: Json; destroyed: boolean; events: string[]; carries: number }>; events: string[];
+  planned: Array<{ status: number; body: Json }>;
   hooks: { onYield?: () => void | Promise<void>; sealFails?: boolean; ownerGeneration: string | undefined; lineageGone?: boolean };
   call: (tool: ThreadRecallTool, body?: unknown) => Promise<Rig["out"][number]>;
 }
@@ -85,14 +90,16 @@ function rig(opts: { thread?: string; botId?: string; notOwnerAudience?: boolean
   const registry = new InternalCapabilities(); registry.begin(botId, thread, generation, opts.principal);
   const token = registry.mint({ botId, threadId: thread, generation, depth: 0, kind: "memory", skillAuthoring: false, ...(opts.principal ? { humanPrincipal: opts.principal } : {}), ...(opts.notOwnerAudience ? { notOwnerAudience: true as const } : {}) });
   const claim = registry.resolve(`Bearer ${token}`)!;
-  const access = () => memoryAccess(registry, claim, () => roster);
+  const access = () => fixtureMemoryAccess(registry, claim, () => roster);
   const turn = openTurnLineage(db(), { threadId: thread, turnId: memberTurnId(botId) + generation });
+  const responseTurn = bindFixtureTurn(db(), turn, botId, generation);
   if (opts.session !== false) transaction(tx => writeSessionLineage(tx, { ...S1, threadId: thread }, turn));
   const lineage = beginTurnLineage({ threadId: thread, botId, roots: { roots: new Set(), over: false }, instanceId: "claude", generation, turn, startGeneration: 0, shown: [], withheldNow: () => false });
   const events: string[] = [];
   const state: ThreadRecallState = { calls: 0, released: new Map(), sealed: false };
   const hooks: Rig["hooks"] = { ownerGeneration: generation };
   const out: Rig["out"] = [];
+  const planned: Rig["planned"] = [];
   const host: ThreadRecallHost = {
     claim: { threadId: thread, botId, generation },
     access: () => { try { return access(); } catch { return null; } },
@@ -102,10 +109,15 @@ function rig(opts: { thread?: string; botId?: string; notOwnerAudience?: boolean
     state: () => hooks.ownerGeneration === generation ? state : undefined,
     seal: () => { events.push("seal"); if (hooks.sealFails) throw new Error("disk full"); },
     yield: async () => { await hooks.onYield?.(); },
-    respond: (status, body) => { events.push("respond"); out.push({ status, body: body as Json, events: [...events], carries: carryCount() }); },
+    respond: (status, body, provenance) => {
+      planned.push({ status, body: body as Json });
+      const delivered = acceptFixtureResponse(responseTurn.binding, status, body, provenance);
+      events.push("respond");
+      out.push({ status: delivered.status, body: delivered.body as Json, destroyed: delivered.destroyed, events: [...events], carries: carryCount() });
+    },
   };
   return {
-    host, state, lineage, access, out, events, hooks,
+    host, state, lineage, access, out, planned, events, hooks,
     call: async (tool, body = {}) => {
       const before = out.length;
       await threadRecallRoute(tool, body, access(), host);
@@ -141,7 +153,8 @@ describe("the set (rules 1 and 2)", () => {
   });
   it("is empty for a thread that is not the bot's own, and for a thread bound to a channel person", () => {
     // another bot's thread never even gets a memory access for this bot
-    expect(() => rig({ thread: "t-other", botId: "ember" }).access()).toThrow("MEMORY_UNAUTHORIZED");
+    // MAIN RULING INT-CONFLICT-DEFAULT e9f38220b9 / 4792bb96fa: an unadmittable foreign context has no ready RecallView; the exact production refusal remains closed.
+    expect(() => rig({ thread: "t-other", botId: "ember" }).access()).toThrow("MEMORY_RECALL_UNAVAILABLE");
   });
   it("leaves out a task thread bound to a channel person", () => {
     const binding = observeVerifiedHuman({ platform: "slack", connectionId: "fixture", authorityId: "team", userId: "person" });
@@ -183,6 +196,7 @@ describe("thread_search (rules 4 to 8, 16)", () => {
   it("returns the newest first with titles and snippets, from every thread of the set and no other bot's", async () => {
     seed(); exclude("t-excl");
     const r = rig();
+    await rebuildSearchFixture();
     const { status, body } = await r.call("thread_search", { query: "vault" });
     expect(status).toBe(200);
     expect(body.hits.map((hit: Json) => hit.messageId)).toEqual(["b2", "b1", "u1"]);
@@ -195,6 +209,7 @@ describe("thread_search (rules 4 to 8, 16)", () => {
   it("pages by oldest_at: the next page continues strictly below the oldest hit", async () => {
     for (let i = 0; i < 25; i++) put("t-main", `m${String(i).padStart(2, "0")}`, `needle number ${i}`, 10_000 + i * 10);
     const r = rig();
+    await rebuildSearchFixture();
     const first = (await r.call("thread_search", { query: "needle" })).body;
     expect(first.hits).toHaveLength(20);
     expect(first.more).toBe(true);
@@ -253,6 +268,7 @@ describe("thread_search (rules 4 to 8, 16)", () => {
   it("a short batch with only silent revocations is complete, not partial", async () => {
     put("t-main", "a1", "needle kept", 100); put("t-main", "a2", "needle revoked", 200);
     forget("t-main", "a2");
+    await rebuildSearchFixture();
     const body = (await rig().call("thread_search", { query: "needle" })).body;
     expect(body.partial).toBe(false);
     expect(body.more).toBe(false);
@@ -490,14 +506,19 @@ describe("the seal, persistence and release (rules 11 to 14, S1)", () => {
     const carries = carryCount();
     const answer = await r.call("thread_search", { query: "vault" });
     expect(answer.status).toBe(409);
-    expect(answer.body).toEqual({ error: UNRECORDED_LINE });
+    // MAIN RULING INT-CONFLICT-DEFAULT baa4d5d336 / 606983d07d / 6a9dfe7db8: a failed consuming write returns only the fixed terminal refusal.
+    expect(answer.body).toBe(LEDGER_REFUSAL_LINE);
     expect(r.state.sealed).toBe(false);
     expect(r.state.released.size).toBe(0);
     expect(carryCount()).toBe(carries);
     expect(r.lineage.turn.parents).toEqual([]);
     r.hooks.sealFails = false;
-    expect((await r.call("thread_search", { query: "vault" })).status).toBe(200);
-    expect(r.state.sealed).toBe(true);
+    // MAIN RULING INT-CONFLICT-DEFAULT baa4d5d336 / 606983d07d / 6a9dfe7db8: a refused generation cannot retry; a fresh generation still succeeds once.
+    expect(await r.call("thread_search", { query: "vault" })).toMatchObject({ status: 0, body: "", destroyed: true });
+    expect(r.state.sealed).toBe(false);
+    const fresh = rig({ generation: "g-fresh" });
+    expect((await fresh.call("thread_search", { query: "vault" })).status).toBe(200);
+    expect(fresh.state.sealed).toBe(true);
   });
   it("a second releasing call of the same generation writes no second seal, and a new generation seals again", async () => {
     seed();
@@ -529,7 +550,8 @@ describe("the seal, persistence and release (rules 11 to 14, S1)", () => {
     const before = Array.isArray(sources) ? sources.length : -1;
     const answer = await r.call("thread_search", { query: "vault" });
     expect(answer.status).toBe(409);
-    expect(answer.body).toEqual({ error: UNRECORDED_LINE });
+    // MAIN RULING INT-CONFLICT-DEFAULT baa4d5d336 / 606983d07d / 6a9dfe7db8: the writer's terminal refusal replaces the pre-writer recovery text.
+    expect(answer.body).toBe(LEDGER_REFUSAL_LINE);
     expect(r.state.released.size).toBe(0);
     expect(carryCount()).toBe(carries);
     expect(r.lineage.turn.parents).toEqual([]);
@@ -546,7 +568,9 @@ describe("the seal, persistence and release (rules 11 to 14, S1)", () => {
     const closed = rig({ generation: "g3" });
     closed.hooks.onYield = () => { closeTurnLineage(closed.lineage.turn); };
     const answer = await closed.call("thread_search", { query: "vault" });
-    expect(answer).toMatchObject({ status: 409, body: { error: NOT_ACTIVE_LINE } });
+    // MAIN RULING INT-CONFLICT-DEFAULT baa4d5d336 / 606983d07d / 6a9dfe7db8: preserve the producer's inactive verdict and independently require the sealed wire refusal.
+    expect(closed.planned.at(-1)).toMatchObject({ status: 409, body: { error: NOT_ACTIVE_LINE } });
+    expect(answer).toMatchObject({ status: 409, body: LEDGER_REFUSAL_LINE });
     expect(closed.state.released.size).toBe(0);
 
     const gone = rig({ generation: "g4" });
@@ -751,7 +775,9 @@ describe("the lineage lifecycle of what a turn read (rule 23)", () => {
     // the call of the first generation is in flight when the replacing dispatch opens and supersedes it
     first.hooks.onYield = () => { supersedeMemberTurns(second.lineage.turn); };
     const lost = await first.call("thread_search", { query: "vault" });
-    expect(lost).toMatchObject({ status: 409, body: { error: NOT_ACTIVE_LINE } });
+    // MAIN RULING INT-CONFLICT-DEFAULT baa4d5d336 / 606983d07d / 6a9dfe7db8: no stale generation can emit the producer's ordinary error body.
+    expect(first.planned.at(-1)).toMatchObject({ status: 409, body: { error: NOT_ACTIVE_LINE } });
+    expect(lost).toMatchObject({ status: 409, body: LEDGER_REFUSAL_LINE });
     expect(isTurnOpen(first.lineage.turn)).toBe(false);
     expect(first.lineage.turn.parents).toEqual([]);
     expect(second.lineage.turn.parents).toEqual([]);
@@ -792,7 +818,10 @@ describe("a line the owner forgot is never returned (106 recall-forgotten)", () 
   it.each(cases)("thread_search: %s, lineage live %s, thread %s, %s line", async (how, live, thread, role) => {
     plant(how, live, thread, role);
     const r = rig();
-    const { status, body } = await r.call("thread_search", { query: "needle" });
+    const delivered = await r.call("thread_search", { query: "needle" });
+    // MAIN RULING INT-CONFLICT-DEFAULT baa4d5d336 / 606983d07d / 6a9dfe7db8: retain every legacy filtering assertion on the producer plan; missing bot lineage additionally refuses all wire content.
+    if (!live && role === "bot") expect(delivered).toMatchObject({ status: 409, body: LEDGER_REFUSAL_LINE });
+    const { status, body } = !live && role === "bot" ? r.planned.at(-1)! : delivered;
     expect(status).toBe(200);
     expect(leaks(body)).toBe(false);
     expect(r.state.released.has("g1")).toBe(false);
@@ -804,12 +833,19 @@ describe("a line the owner forgot is never returned (106 recall-forgotten)", () 
     // a kept anchor: the forgotten neighbour is not in the rows
     r.state.released.set("k1", thread);
     for (const direction of ["around", "after"] as const) {
-      const { body } = await r.call("thread_read", { message_id: "k1", direction, limit: 5 });
+      const delivered = await r.call("thread_read", { message_id: "k1", direction, limit: 5 });
+      // MAIN RULING INT-CONFLICT-DEFAULT baa4d5d336 / 606983d07d / 6a9dfe7db8: one fixed terminal notice, then the exhausted transport closes; no ordinary payload escapes.
+      if (!live && role === "bot") expect(delivered).toMatchObject(direction === "around"
+        ? { status: 409, body: LEDGER_REFUSAL_LINE } : { status: 0, body: "", destroyed: true });
+      const { body } = !live && role === "bot" ? r.planned.at(-1)! : delivered;
       expect(leaks(body)).toBe(false);
     }
     // the forgotten line itself as the anchor (as if handed before it was forgotten): not-reachable, nothing around it
     r.state.released.set("g1", thread);
-    expect((await r.call("thread_read", { message_id: "g1", direction: "around" })).body).toEqual({ rows: [], status: "not-reachable" });
+    const delivered = await r.call("thread_read", { message_id: "g1", direction: "around" });
+    // MAIN RULING INT-CONFLICT-DEFAULT baa4d5d336 / 606983d07d / 6a9dfe7db8: preserve not-reachable on the producer and assert zero output after terminal exhaustion.
+    if (!live && role === "bot") expect(delivered).toMatchObject({ status: 0, body: "", destroyed: true });
+    expect((!live && role === "bot" ? r.planned.at(-1)! : delivered).body).toEqual({ rows: [], status: "not-reachable" });
     expect(r.state.released.get("g1")).toBe(thread);
   });
   it.each(cases)("thread_list: %s, lineage live %s, thread %s, %s line", async (how, live, thread, role) => {

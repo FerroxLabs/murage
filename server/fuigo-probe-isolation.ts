@@ -1,6 +1,8 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { lstat, readFile, realpath, writeFile } from "node:fs/promises";
+import { writeFile } from "./counted-fs-promises.ts";
+import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -35,7 +37,7 @@ export async function createFuigoIsolation(cli: string, home: string, env: NodeJ
   if (process.platform === "darwin") {
     const policy = join(home, "outbound.sb");
     await writeFile(policy, "(version 1)\n(allow default)\n(deny network-outbound)\n", { mode: 0o600, flag: "wx" });
-    try { await exec("/usr/bin/sandbox-exec", ["-f", policy, "/usr/bin/true"], { cwd: home, env, timeout: 15000, maxBuffer: 65536 }); }
+    try { await exec("/usr/bin/sandbox-exec", ["-f", policy, "/usr/bin/true"], withHideInherit({ cwd: home, env, timeout: 15000, maxBuffer: 65536 })); }
     catch { throw unavailable(); }
     return { command: "/usr/bin/sandbox-exec", prefix: ["-f", policy, cli], cleanup: async () => {} };
   }
@@ -44,7 +46,7 @@ export async function createFuigoIsolation(cli: string, home: string, env: NodeJ
   const name = `murage-fuigo-probe-${randomUUID()}`;
   let sid: string;
   try {
-    sid = (await exec(helper, ["setup", cli, home, name], { cwd: home, env, windowsHide: true, timeout: 15000, maxBuffer: 65536 })).stdout.trim();
+    sid = (await exec(helper, ["setup", cli, home, name], withHideInherit({ cwd: home, env, windowsHide: true, timeout: 15000, maxBuffer: 65536 }))).stdout.trim();
   } catch (error) {
     if (String((error as { stderr?: unknown }).stderr ?? "").includes("FUIGO_PROBE_CLEANUP")) throw Object.assign(new Error("Fuigo verification profile cleanup is pending."), { code: "FUIGO_PROBE_CLEANUP", profileName: name });
     throw unavailable();
@@ -53,7 +55,7 @@ export async function createFuigoIsolation(cli: string, home: string, env: NodeJ
   let cleaned = false;
   const cleanup = async () => {
     if (cleaned) return;
-    try { await exec(helper, ["cleanup", name, sid], { cwd: home, env, windowsHide: true, timeout: 15000, maxBuffer: 65536 }); cleaned = true; }
+    try { await exec(helper, ["cleanup", name, sid], withHideInherit({ cwd: home, env, windowsHide: true, timeout: 15000, maxBuffer: 65536 })); cleaned = true; }
     catch { throw Object.assign(new Error("Fuigo verification profile cleanup is pending."), { code: "FUIGO_PROBE_CLEANUP", profileName: name, profileSid: sid }); }
   };
   try {

@@ -17,8 +17,10 @@ import { writetimeReplayWithheld } from "./disclosures.ts";
 import { assertSendFence, writetimeSessionVerdict } from "./dispatch.ts";
 import { lessonEvidenceForgotten } from "./lessons.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
-import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
-import { catchUpRecentMemory } from "./recent.ts";
+import { reconcileMemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
+
+import { fixtureCatchUpRecentMemory as catchUpRecentMemory } from "../testing/recall-access-fixture.ts";
 import { buildPrompt, promptPart } from "./prompt-parts.ts";
 import { writetimeRecordRefusal } from "./readable.ts";
 import { WritetimeFixture } from "./testing/writetime-fixture.ts";

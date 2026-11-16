@@ -1,3 +1,12 @@
+import { captureSource } from './capture.ts';
+import { storeAnchorMessage } from './testing/anchor-message.ts';
+import { writeLineage } from './lineage-write.ts';
+import { transaction } from '../database.ts';
+import { commitRevoke } from './revoke-commit.ts';
+import { drainRevokeMarker } from './memory-revocation.ts';
+import { sessionLookup } from './deny-read.ts';
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
+import { startLiveSession } from './testing/live-session-fixture.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -10,6 +19,7 @@
 //   to the budget, so a frame citing many replies of a long session is fast.
 // - L1: a line quoted from far back never takes a newer line's place.
 // - L3: the receipt budget withholds a direct line instead of failing.
+import { WritetimeFixture } from './testing/writetime-fixture.ts';
 import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
@@ -17,17 +27,20 @@ import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
-import { continuationMemoryRevoked, filterDirectReplay, filterMemoryReplay } from "./disclosures.ts";
-import { recordSessionRoots, REPLAY_RECEIPT_BUDGET, replayRowsRead, resetReplayRowsRead } from "./replay-lineage.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
+import { receiptLineageRef, linkMemoryDisclosureOutput, bindMemoryDisclosureSession, deliverMemoryDisclosure, continuationMemoryRevoked, filterDirectReplay, filterMemoryReplay } from "./disclosures.ts";
+import { REPLAY_RECEIPT_BUDGET, replayRowsRead, resetReplayRowsRead } from "./replay-lineage.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
 
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+let liveProof = false;
+beforeEach(() => { liveProof = false; closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
 function fixture(threadId = "private", notOwnerAudience = false) {
+  if(liveProof) new WritetimeFixture(database());
   const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "private", section: "secret-team" }], groups: [] };
   reconcileMemoryRoster(roster);
   const registry = new InternalCapabilities();
@@ -39,23 +52,38 @@ type M = { id: string; role: string; kind: string; text: string; replyToId?: str
 const owner = (id: string, replyToId?: string): M => ({ id, role: "user", kind: "text", text: `ask ${id}`, ...(replyToId ? { replyToId } : {}) });
 const bot = (id: string): M => ({ id, role: "bot", kind: "text", text: `answer ${id}` });
 function botSource(scope: string, messageId: string) {
+  if(liveProof) {
+    new WritetimeFixture(database()).message('private',messageId,'bot',{text:messageId}).lineage('private',messageId,Number(database().prepare('SELECT next FROM memory_lsn WHERE id=1').get()!.next),{generated:true,memLsn:null});
+    captureSource(database(),{id:`message:private:${messageId}`,threadId:'private',messageId,kind:'text',speaker:'bot:bot',outcome:'settled',text:messageId});
+    return;
+  }
   database().prepare("INSERT INTO memory_sources VALUES(?,?,'private',?,NULL,1,'hash','text','bot:bot','settled',NULL,'active')").run(`message:private:${messageId}`, scope, messageId);
   database().prepare("INSERT INTO memory_source_versions VALUES(?,1,'hash',?,1)").run(`message:private:${messageId}`, JSON.stringify({ text: messageId }));
 }
-function insertReceipt(a: { policyRevision: number; deletionEpoch: number }, id: string, session: string | null, sources: string[], outputs: string[], state = "delivered", at = 1) {
+function insertReceipt(a: ReturnType<typeof fixture>, id: string, session: string | null, sources: string[], outputs: string[], state = "delivered", at = 1) {
   database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,0,?,?)")
-    .run(id, "private", "fuigo", session, "[]", JSON.stringify(sources.map(s => ({ id: s, revision: 1 }))), JSON.stringify(outputs), a.policyRevision, a.deletionEpoch, state, at);
+    .run(id, "private", "fuigo", liveProof ? null : session, "[]", JSON.stringify(sources.map(s => ({ id: s, revision: 1 }))), JSON.stringify(outputs), a.policyRevision, a.deletionEpoch, state, at);
+  if(liveProof && session) {
+    const bind=()=>bindMemoryDisclosureSession(id,session);
+    if(!startLiveSession(a,'fuigo',session,bind)) bind();
+    if(database().prepare('SELECT 1 FROM memory_session_checks WHERE thread_id=? AND driver_instance=? AND native_session=?').get('private','fuigo',session)) deliverMemoryDisclosure(id,a);
+  }
+  if(liveProof) for(const output of outputs) {
+    storeAnchorMessage(database(),'private',output,output,'bot',at);
+    writeLineage(database(),{threadId:'private',messageId:output,author:'generated'},{refs:[receiptLineageRef(database(),id)!]});
+    linkMemoryDisclosureOutput(id,output);
+  }
 }
 const state = (id: string) => (database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(id) as { state: string }).state;
 
 it("M1: a resumed session whose receipt cites a withheld reply is reset, though its outputs are far outside the replay window", () => {
+  liveProof = true;
   const a = fixture(); const scope = ensureScope("bot", "bot");
   // x-old: a bot reply withheld on its content: its own receipt cites a
   // source the owner since forgot (in the owner's own chat a receipt revoked
   // on state alone no longer withholds a reply; see the 1.0.1.1 case below)
   botSource(scope, "x-old"); botSource(scope, "gone");
-  database().prepare("UPDATE memory_sources SET state='deleted' WHERE id='message:private:gone'").run();
-  insertReceipt(a, "R-x", null, ["message:private:gone"], ["x-old"], "revoked", 1);
+  insertReceipt(a, "R-x", null, ["message:private:gone"], ["x-old"], "delivered", 1);
   // session S-A of engine fuigo: its frame cited x-old's captured source; its only output a-old
   insertReceipt(a, "R-s", "S-A", ["message:private:x-old"], ["a-old"], "delivered", 2);
   // a sound session S-B of the same engine
@@ -64,29 +92,70 @@ it("M1: a resumed session whose receipt cites a withheld reply is reset, though 
   insertReceipt(a, "R-b", "S-B", ["message:private:y-old"], ["b-old"], "delivered", 4);
   // S-B is a session v6 started (its lineage row): its fixture timestamps
   // predate lineage, and an unproven pre-v6 session resets (Astra r4 #5)
-  recordSessionRoots("private", "fuigo", "S-B", { roots: new Set(), over: false });
   database().prepare("INSERT OR IGNORE INTO memory_session_lineage(thread_id,driver_instance,native_session,first_lsn,last_lsn,door_epoch) SELECT ?,?,?,0,0,value FROM memory_lineage_lsn_meta WHERE key='reader_door_epoch'").run("private", "fuigo", "S-A"); // a 1.0.3 fresh start stamped it (S6 rule 26)
   database().prepare("INSERT OR IGNORE INTO memory_session_lineage(thread_id,driver_instance,native_session,first_lsn,last_lsn,door_epoch) SELECT ?,?,?,0,0,value FROM memory_lineage_lsn_meta WHERE key='reader_door_epoch'").run("private", "fuigo", "S-B"); // a 1.0.3 fresh start stamped it (S6 rule 26)
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild): withdraw only after both real first frames were accepted.
+  database().prepare("UPDATE memory_sources SET state='deleted' WHERE id='message:private:gone'").run();
+  transaction(tx=>commitRevoke(tx,{kind:'receipt',bundleId:'R-x',cause:'receipt-content'})); drainRevokeMarker(database());
+  expect(state("R-b")).toBe("delivered");
+  expect(sessionLookup(database(), { threadId: "private", driverInstance: "fuigo", nativeSession: "S-B" }, { audience: null }))
+    .toEqual({ state: "withheld", reason: "deny-session" });
+  expect(database().prepare("SELECT revoke_id FROM memory_deny_session WHERE thread_id='private' AND driver_instance='fuigo' AND native_session='S-B' AND revoke_id=1").get())
+    .toEqual({ revoke_id: 1 });
+  expect(database().prepare("SELECT revoke_id FROM memory_revoke_audience").all()).toEqual([]);
   const messages: M[] = [bot("x-old"), bot("a-old")];
   for (let i = 0; i < 60; i++) messages.push(owner(`o-${i}`), bot(`b-${i}`)); // another engine's turns
   filterDirectReplay(LineageAllowance.tool(), "private", messages, a, new Set());
   expect(continuationMemoryRevoked(LineageAllowance.tool(), "private", "fuigo", "S-A", a)).toBe(true);
   expect(state("R-s")).toBe("revoked");
-  // a sound session resumes
-  expect(continuationMemoryRevoked(LineageAllowance.tool(), "private", "fuigo", "S-B", a)).toBe(false);
+  // MAIN RULING 1116-RECALLF062 (1): S-B held the revoked receipt's positional range, so it resets too.
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), "private", "fuigo", "S-B", a)).toBe(true);
   expect(state("R-b")).toBe("delivered");
 });
 
+it("M1: sessions begun at the range cap or ended before its first line resume with delivered receipts", () => {
+  liveProof = true;
+  const a = fixture(); const scope = ensureScope("bot", "bot");
+  insertReceipt(a, "R-before", "S-before", [], ["before-old"]);
+  botSource(scope, "x-old"); botSource(scope, "gone");
+  insertReceipt(a, "R-x", null, ["message:private:gone"], ["x-old"]);
+  const from = Number(database().prepare("SELECT first_lsn FROM memory_receipt_lines WHERE bundle_id='R-x'").get()!.first_lsn);
+  insertReceipt(a, "R-held", "S-held", [], []);
+  database().prepare("UPDATE memory_sources SET state='deleted' WHERE id='message:private:gone'").run();
+  const revoke = transaction(tx => commitRevoke(tx, { kind: "receipt", bundleId: "R-x", cause: "receipt-content" }, { inline: false }));
+  const cap = Number(database().prepare("SELECT started_lsn FROM memory_revoke_jobs WHERE revoke_id=?").get(revoke)!.started_lsn);
+  insertReceipt(a, "R-cap", "S-cap", [], []);
+  const span = (session: string) => database().prepare("SELECT first_lsn,last_lsn FROM memory_session_lineage WHERE thread_id='private' AND driver_instance='fuigo' AND native_session=?").get(session)!;
+  // MAIN RULING 1116-RECALLF062 (3): each control misses exactly one side of the overlap predicate.
+  expect(Number(span("S-cap").first_lsn)).toBe(cap);
+  expect(Number(span("S-cap").last_lsn)).toBeGreaterThanOrEqual(from);
+  expect(Number(span("S-before").first_lsn)).toBeLessThan(cap);
+  expect(Number(span("S-before").last_lsn)).toBeLessThan(from);
+  expect(Number(span("S-held").first_lsn)).toBeLessThan(cap);
+  expect(Number(span("S-held").last_lsn)).toBeGreaterThanOrEqual(from);
+  drainRevokeMarker(database());
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), "private", "fuigo", "S-cap", a)).toBe(false);
+  expect(state("R-cap")).toBe("delivered");
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), "private", "fuigo", "S-before", a)).toBe(false);
+  expect(state("R-before")).toBe("delivered");
+  // No receipt, line or carry ancestry: only the positional session stage reaches this accepted empty frame.
+  expect(continuationMemoryRevoked(LineageAllowance.tool(), "private", "fuigo", "S-held", a)).toBe(true);
+  expect(state("R-held")).toBe("delivered");
+  expect(database().prepare("SELECT native_session FROM memory_deny_session WHERE native_session IN ('S-cap','S-before')").all()).toEqual([]);
+});
+
 it("M1 (1.0.1.1): a cited reply whose receipt was revoked on state alone ends the session for a reader not proven the owner, never the owner's own chat", () => {
+  liveProof = true;
   for (const notOwner of [false, true]) {
     closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
     const a = fixture("private", notOwner); const scope = ensureScope("bot", "bot");
     // x-old: its receipt revoked by an install-wide change; its content intact
     botSource(scope, "x-old");
-    insertReceipt(a, "R-x", null, [], ["x-old"], "revoked", 1);
+    insertReceipt(a, "R-x", null, [], ["x-old"], "delivered", 1);
     insertReceipt(a, "R-s", "S-A", ["message:private:x-old"], ["a-old"], "delivered", 2);
-    recordSessionRoots("private", "fuigo", "S-A", { roots: new Set(), over: false });
     database().prepare("INSERT OR IGNORE INTO memory_session_lineage(thread_id,driver_instance,native_session,first_lsn,last_lsn,door_epoch) SELECT ?,?,?,0,0,value FROM memory_lineage_lsn_meta WHERE key='reader_door_epoch'").run("private", "fuigo", "S-A"); // a 1.0.3 fresh start stamped it (S6 rule 26)
+    database().prepare("UPDATE memory_disclosures SET state='revoked' WHERE bundle_id='R-x'").run();
+    drainRevokeMarker(database());
     expect(continuationMemoryRevoked(LineageAllowance.tool(), "private", "fuigo", "S-A", a)).toBe(notOwner);
     expect(state("R-s")).toBe("delivered");
   }

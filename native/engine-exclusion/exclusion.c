@@ -51,6 +51,9 @@
 //   cwdOf(pid)                     Windows (DELETION-WHILE-OPEN-107): another process's working folder, read from its PEB
 //                                  (ProcessParameters->CurrentDirectory.DosPath); null when it cannot be read. Optional: an older
 //                                  build without it only means the open-home pass does not run there (it fails closed).
+//   anchorBegin / anchorOpen / anchorList / anchorRead / anchorStat / anchorClose / anchorEnd
+//                                  Windows (version 11): the anchored opens the Claude Code copy import reads through, in anchored-win.c (CONTRACTS-B 1.3)
+//                                  every folder and file opened relative to its held parent, on the session own I/O thread, under a deadline.
 //   dropShutdownPrivileges         Windows (version 10): removes both shutdown privileges from this process's primary token and
 //                                  verifies they are absent. Returns { ok: true } or { ok: false, step, error }.
 //   diskWritten()                  macOS (IO-IDLE-DRAIN-1018 r3.6): this process's cumulative bytes written to storage
@@ -62,17 +65,23 @@
 #include <node_api.h>
 #include <stdbool.h>
 #include <stdint.h>
+extern void io_meter_note_native_bytes(uint64_t bytes);
+extern void io_meter_mark_unknown(void);
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #ifdef _WIN32
+#ifndef _WIN32_WINNT
+#define _WIN32_WINNT 0x0A00
+#endif
 #include <windows.h>
 #else
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/file.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <time.h>
@@ -89,10 +98,11 @@
 #ifdef __linux__
 #include <signal.h>
 #include <sys/syscall.h>
+#include <sys/prctl.h>
 #endif
 #endif
 
-#define ADDON_VERSION 10
+#define ADDON_VERSION 11
 #define LOCK_WAIT_MS 1000
 #define LOCK_STEP_MS 10
 
@@ -1323,7 +1333,9 @@ static napi_value handle_write(napi_env env, napi_callback_info info) {
   overlapped.OffsetHigh = (DWORD)(at >> 32);
   DWORD put = 0;
   DWORD want = (DWORD)(length > 0x10000000u ? 0x10000000u : length);
-  if (!WriteFile(held->handle, (const char *)data, want, &put, &overlapped) || put == 0) return fail_code(env, "EIO", "write failed");
+  BOOL written_ok=WriteFile(held->handle, (const char *)data, want, &put, &overlapped);
+  if(put)io_meter_note_native_bytes((uint64_t)put);
+  if (!written_ok || put == 0) {io_meter_mark_unknown();return fail_code(env, "EIO", "write failed");}
   return make_int(env, (int32_t)put);
 }
 
@@ -1732,8 +1744,12 @@ typedef struct {
   napi_deferred deferred;
   wchar_t *path;
   LONG result;
+  BOOL embedded;
+  BOOL timestamp;
   wchar_t publisher[512];
   wchar_t subject[2048];
+  wchar_t organization[512];
+  char thumbprint[65];
 } AuthenticodeWork;
 
 static const char *authenticode_status(LONG result) {
@@ -1752,6 +1768,17 @@ static void authenticode_execute(napi_env env, void *data) {
   AuthenticodeWork *job = data;
   job->publisher[0] = L'\0';
   job->subject[0] = L'\0';
+  job->embedded = FALSE;
+  job->timestamp = FALSE;
+  // Catalog trust cannot admit a path-loaded PE. Require an embedded PKCS#7
+  // object as well as WinVerifyTrust's verified file signer below.
+  HCERTSTORE embedded_store = NULL;
+  HCRYPTMSG embedded_message = NULL;
+  job->embedded = CryptQueryObject(CERT_QUERY_OBJECT_FILE, job->path,
+    CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED, CERT_QUERY_FORMAT_FLAG_BINARY, 0,
+    NULL, NULL, NULL, &embedded_store, &embedded_message, NULL);
+  if (embedded_message) CryptMsgClose(embedded_message);
+  if (embedded_store) CertCloseStore(embedded_store, 0);
   WINTRUST_FILE_INFO file;
   memset(&file, 0, sizeof file);
   file.cbStruct = sizeof file;
@@ -1769,9 +1796,23 @@ static void authenticode_execute(napi_env env, void *data) {
   if (job->result == ERROR_SUCCESS) {
     CRYPT_PROVIDER_DATA *provider = WTHelperProvDataFromStateData(trust.hWVTStateData);
     CRYPT_PROVIDER_SGNR *signer = provider ? WTHelperGetProvSignerFromChain(provider, 0, FALSE, 0) : NULL;
+    if (signer && signer->csCounterSigners > 0) {
+      CRYPT_PROVIDER_SGNR *timestamp = WTHelperGetProvSignerFromChain(provider, 0, TRUE, 0);
+      job->timestamp = timestamp && timestamp->dwError == ERROR_SUCCESS;
+    }
     CRYPT_PROVIDER_CERT *leaf = signer ? WTHelperGetProvCertFromChain(signer, 0) : NULL;
     if (leaf && leaf->pCert) {
       CertGetNameStringW(leaf->pCert, CERT_NAME_SIMPLE_DISPLAY_TYPE, 0, NULL, job->publisher, 512);
+      // Chrome admission needs the leaf organization (not a display-name
+      // substring) and the certificate SHA-256 from this verified chain.
+      DWORD organization_chars = CertGetNameStringW(leaf->pCert, CERT_NAME_ATTR_TYPE, 0, (void *)szOID_ORGANIZATION_NAME, job->organization, 512);
+      if (organization_chars <= 1 || organization_chars >= 512) job->organization[0] = L'\0';
+      BYTE digest[32]; DWORD digest_bytes = sizeof digest;
+      if (CertGetCertificateContextProperty(leaf->pCert, CERT_SHA256_HASH_PROP_ID, digest, &digest_bytes) && digest_bytes == sizeof digest) {
+        static const char hex[] = "0123456789abcdef";
+        for (size_t i = 0; i < sizeof digest; ++i) { job->thumbprint[i * 2] = hex[digest[i] >> 4]; job->thumbprint[i * 2 + 1] = hex[digest[i] & 15]; }
+        job->thumbprint[64] = '\0';
+      }
       // Version 9: the signer's whole subject, as .NET's X500DistinguishedName.Name writes it ("CN=..., O=..., C=..."), for the
       // updater's publisher check (electron/windows-update-signature.mjs).
       if (!CertNameToStrW(X509_ASN_ENCODING, &leaf->pCert->pCertInfo->Subject, CERT_X500_NAME_STR | CERT_NAME_STR_REVERSE_FLAG, job->subject, 2048))
@@ -1790,6 +1831,10 @@ static void authenticode_complete(napi_env env, napi_status status, void *data) 
   if (status == napi_ok && napi_create_object(env, &result) == napi_ok) {
     napi_create_string_utf8(env, authenticode_status(job->result), NAPI_AUTO_LENGTH, &value);
     napi_set_named_property(env, result, "status", value);
+    napi_get_boolean(env, job->embedded, &value);
+    napi_set_named_property(env, result, "embedded", value);
+    napi_get_boolean(env, job->timestamp, &value);
+    napi_set_named_property(env, result, "timestamp", value);
     char *publisher = wide_to_utf8(job->publisher, (int)wcslen(job->publisher));
     napi_create_string_utf8(env, publisher ? publisher : "", NAPI_AUTO_LENGTH, &value);
     free(publisher);
@@ -1798,6 +1843,12 @@ static void authenticode_complete(napi_env env, napi_status status, void *data) 
     napi_create_string_utf8(env, subject ? subject : "", NAPI_AUTO_LENGTH, &value);
     free(subject);
     napi_set_named_property(env, result, "subject", value);
+    char *organization = wide_to_utf8(job->organization, (int)wcslen(job->organization));
+    napi_create_string_utf8(env, organization ? organization : "", NAPI_AUTO_LENGTH, &value);
+    free(organization);
+    napi_set_named_property(env, result, "organization", value);
+    napi_create_string_utf8(env, job->thumbprint, NAPI_AUTO_LENGTH, &value);
+    napi_set_named_property(env, result, "thumbprint", value);
     napi_create_int64(env, (int64_t)(uint32_t)job->result, &value);
     napi_set_named_property(env, result, "code", value);
     napi_resolve_deferred(env, job->deferred, result);
@@ -1839,6 +1890,7 @@ static napi_value authenticode(napi_env env, napi_callback_info info) {
 #include <sddl.h>
 #include <aclapi.h>
 #include "exclusion-lsa.h"
+#include "anchored-win.h"
 #define COBJMACROS
 #include <sapi.h>
 #pragma comment(lib, "ole32.lib")
@@ -2358,6 +2410,8 @@ typedef struct {
 static void speak_execute(napi_env env, void *data) {
   (void)env;
   SpeakWork *w = data;
+  // SAPI owns the file stream: its partial progress is not observable here.
+  io_meter_mark_unknown();
   HRESULT init = CoInitializeEx(NULL, COINIT_MULTITHREADED);
   ISpVoice *voice = NULL;
   ISpStream *stream = NULL;
@@ -2461,12 +2515,62 @@ static napi_value disk_written(napi_env env, napi_callback_info info) {
 }
 #endif
 
+/* Disable kernel cores before a password may enter this process. The hard
+ * limit is inherited by children. Linux dumpable=0 also prevents piped core
+ * handlers and same-user ptrace/proc memory reads; verify both OS answers.
+ * Windows has no equivalent implemented here and must refuse admission. */
+static napi_value disable_core_dumps(napi_env env, napi_callback_info info) {
+  (void)info;
+#ifdef _WIN32
+  return make_bool(env, 0);
+#else
+  struct rlimit zero = {0, 0}, actual;
+  if (setrlimit(RLIMIT_CORE, &zero) != 0 || getrlimit(RLIMIT_CORE, &actual) != 0
+      || actual.rlim_cur != 0 || actual.rlim_max != 0) return make_bool(env, 0);
+#ifdef __linux__
+  if (prctl(PR_SET_DUMPABLE, 0, 0, 0, 0) != 0 || prctl(PR_GET_DUMPABLE, 0, 0, 0, 0) != 0) return make_bool(env, 0);
+#endif
+  return make_bool(env, 1);
+#endif
+}
+
 static void add(napi_env env, napi_value exports, const char *name, napi_callback fn) {
   napi_value value;
   if (napi_create_function(env, name, NAPI_AUTO_LENGTH, fn, NULL, &value) == napi_ok) napi_set_named_property(env, exports, name, value);
 }
 
+extern napi_value io_add(napi_env env, napi_callback_info info);
+extern napi_value io_snapshot(napi_env env, napi_callback_info info);
+extern napi_value io_total(napi_env env, napi_callback_info info);
+extern napi_value io_bytes(napi_env env, napi_callback_info info);
+extern napi_value io_unknown(napi_env env, napi_callback_info info);
+extern napi_value io_grant_snapshot(napi_env env, napi_callback_info info);
+extern napi_value io_grant_begin(napi_env env, napi_callback_info info);
+extern napi_value io_grant_end(napi_env env, napi_callback_info info);
+extern napi_value io_grant_charge(napi_env env, napi_callback_info info);
+extern napi_value io_all_bg(napi_env env, napi_callback_info info);
+extern napi_value io_fg_begin(napi_env env,napi_callback_info info);
+extern napi_value io_fg_end(napi_env env,napi_callback_info info);
+
+
+#include "sentinel-io.h"
+
 NAPI_MODULE_INIT() {
+  sentinel_io_register(env, exports);
+  add(env, exports, "ioMeterAdd", io_add);
+  add(env, exports, "ioMeterSnapshot", io_snapshot);
+  add(env, exports, "ioMeterTotal", io_total);
+  add(env, exports, "ioMeterBytes", io_bytes);
+  add(env, exports, "ioMeterUnknown", io_unknown);
+  add(env, exports, "ioGrantSnapshot", io_grant_snapshot);
+  add(env, exports, "ioGrantBegin", io_grant_begin);
+  add(env, exports, "ioGrantEnd", io_grant_end);
+  add(env, exports, "ioGrantCharge", io_grant_charge);
+  add(env, exports, "ioAllBg", io_all_bg);
+  add(env, exports, "ioFgBegin", io_fg_begin);
+  add(env, exports, "ioFgEnd", io_fg_end);
+
+  add(env, exports, "disableCoreDumps", disable_core_dumps);
   add(env, exports, "lock", lock_file);
   add(env, exports, "processes", list_processes);
   add(env, exports, "renameNoReplace", rename_no_replace);
@@ -2504,6 +2608,7 @@ NAPI_MODULE_INIT() {
   add(env, exports, "speechVoices", speech_voices);
   add(env, exports, "speechToWave", speech_to_wave);
   add(env, exports, "cwdOf", cwd_of);
+  anchored_win_register(env, exports);
 #endif
   add(env, exports, "bootId", boot_id);
   add(env, exports, "version", version);

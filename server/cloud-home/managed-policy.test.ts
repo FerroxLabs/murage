@@ -11,7 +11,7 @@ it("records only confirmed managed policy keys", () => {
   expect(claude).toMatchObject({ allowManagedHooksOnly: true, allowManagedMcpServersOnly: true, enableAllProjectMcpServers: false, env: { DISABLE_UPDATES: "1" } });
   expect(read("managed/codex-requirements.toml")).toContain("check_for_update_on_startup = false");
   expect(read("managed/grok-requirements.toml")).toContain('maximum_version = "1.0.45"');
-  expect(read("managed/fuigo-requirements.toml")).toBe("[plugins]\nauto_discover = false\n[cli]\nuse_leader = false\n[claude_compat]\nimported = true\n");
+  expect(read("managed/fuigo-requirements.toml")).toBe("fail_closed = true\nallow_managed_hooks_only = true\n[plugins]\nauto_discover = false\n[cli]\nuse_leader = false\n[claude_compat]\nimported = true\n");
   expect(read("managed/fuigo-managed_config.toml")).toBe("# managed by the Murage launcher\n");
 });
 it("lists the rendered paths under each engine home for diagnostics", () => {

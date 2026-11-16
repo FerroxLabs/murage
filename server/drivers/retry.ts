@@ -173,8 +173,8 @@ export function classifyError(err: FailureInput): ErrorClassification {
  * - `unsent`: no write was attempted yet.
  * - `in-flight`: bytes were handed to the pipe and the write has not reported.
  * - `written`: the write reported success. The engine may have accepted it.
- * - `refused`: the write reported failure (or the pipe was already closed), so
- *   the newline-terminated message never reached the engine whole.
+ * - `refused`: no write was entered (for example, the pipe was already closed).
+ *   A throw or callback failure after entry remains unknown acceptance.
  */
 export type SubmissionState = "unsent" | "in-flight" | "written" | "refused";
 
@@ -216,7 +216,7 @@ export function createAttemptBoundary(): AttemptBoundary {
     },
     markInFlight: () => advance("in-flight"),
     markWritten: () => advance("written"),
-    markRefused: () => advance("refused"),
+    markRefused: () => { if (submission === "unsent") advance("refused"); },
     markOutput: () => {
       sawOutput = true;
     },

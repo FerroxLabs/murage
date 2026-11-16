@@ -1,0 +1,10 @@
+# Signal live qualification: all five remain required whenever pin.g0 is non-null.
+# Explicit pin.g0 = null ships WITHOUT Signal: no staging, runtime copies or activation.
+# CI omits exactly these five live cases for explicit null; behavioral tests still run.
+# Null omits only Signal qualification; it is never evidence that these gates passed.
+# file<TAB>exact test name; run: node scripts/signal-release-check.mjs
+scripts/signal-runtime-staging.test.mjs	T-PIN-RELEASABLE: committed pin is release ready
+server/signal-api.test.ts	T-B8-ACTIVATION: committed pin and G0 fixtures enable isolated desktop status 200
+src/components/SignalSettings.test.ts	T-B8-ACTIVATION: reviewed committed G0 adapters reveal the Settings card
+server/channels/signal/service.test.ts	T-RAW-REPLAY: G0 stdout admits only owner notes and applies delete/expiry
+server/channels/signal/service.test.ts	T-LINK-CONTRACT: G0 start/finish/accounts reach linked with captured identity

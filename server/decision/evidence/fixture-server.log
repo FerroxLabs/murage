@@ -1,0 +1,25 @@
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=4
+[sqlite] storage file=1 wal=2 freelist=0
+[own-write] legacy wildcard keys at boot: 0
+[folder-trust] recorded 0 folders bots were already working in as trusted (chosen before 0.1.52; Forget in the picker asks again)
+murage webhook receiver on http://127.0.0.1:21615
+murage server on http://127.0.0.1:21614
+[startup] writes before first health=0
+[memory] keep-all repair: owner-chat session marks removed=0 threads=0 open-jobs=0 cursors-cleared=0 slices=0 drainLeft=false cursorsKeptChecking=0 cursorsKeptLive=0 cursorsSkippedChanged=0
+[memory] index build start name=memory_records_canon
+[memory] index build done name=memory_records_canon ms=46
+[memory] index build start name=memory_details_identity
+[memory] index build done name=memory_details_identity ms=39
+[memory] index build start name=memory_records_waiting_review
+[memory] index build done name=memory_records_waiting_review ms=51
+[memory] index build start name=memory_tombstones_forgets
+[memory] index build done name=memory_tombstones_forgets ms=32
+memory recall skipped thread=c0c2c120-cdbf-48b0-8b36-6ed99bdba531 engine=verification reason=budget wait=300
+turn sent-to-dispatch thread=c0c2c120-cdbf-48b0-8b36-6ed99bdba531 ms=477
+claude dispatch thread=c0c2c120-cdbf-48b0-8b36-6ed99bdba531 process=spawned reason=no-process shell=murage-exec:/bin/bash
+claude first-token thread=c0c2c120-cdbf-48b0-8b36-6ed99bdba531 process=spawned sealed=false resumed=false dispatchMs=120 gateMs=77 firstTokenMs=174
+outside: first-mark thread=c0c2c120-cdbf-48b0-8b36-6ed99bdba531 source=outside tool site=item:outside tool
+warm pool rss unknown, assuming 600MB engine=claude thread=c0c2c120-cdbf-48b0-8b36-6ed99bdba531
+warm pool engines=1 idle=1 poolMB=600 budgetMB=7833 freeMB=24105 userTurns=1 repeatTurns=0 hot=0 reuseRate=none hotShare=0 sealedTurns=0 spares=0/0
+claude close thread=c0c2c120-cdbf-48b0-8b36-6ed99bdba531 reason=dispose

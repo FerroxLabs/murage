@@ -160,6 +160,7 @@ import { EventEmitter } from 'node:events';
 import { acknowledgedRelaunchHandoff } from './desktop-relaunch.mjs';
 test('BF-2 integration: owned handoff, real cleanup and retained Quit surface survive throwing presentation', async () => {
   const calls = [], ownedRelaunchHelpers = new Set(), child = new EventEmitter();
+  const failures = [];
   child.pid = 123; child.kill = () => calls.push('kill');
   await assert.rejects(acknowledgedRelaunchHandoff({ app: {}, args: [], platform: 'linux',
     env: { APPIMAGE: '/fixture/app', APPDIR: '/fixture/mount' }, execPath: '/fixture/mount/app',
@@ -172,6 +173,8 @@ test('BF-2 integration: owned handoff, real cleanup and retained Quit surface su
     stopAutomaticRemoteBackups: noop, backupScheduleHost: null, desktopShutdownStarted: false,
     localEngineLogin: { shutdown: settled }, modelSignIn: disposable, mcpServers: disposable,
     notificationAuthorization: disposable, showApprovalNotification: disposable,
+    bannerNative: { dispose: () => calls.push('dispose-banner') },
+    attentionSurfaces: { dispose: () => calls.push('dispose-attention') },
     desktopBackupTool: disposable, desktopResticTool: null, remoteBackupAttestation: { abort: noop }, managedComposioShutdown: { abort: noop },
     cuaCleanedUp: false, desktopCleanup: null, syncCompanionKeepAwake: noop,
     androidDevice: { stop: settled }, nativeActions: {}, stopRecorder: settled, browserSurface: null,
@@ -180,7 +183,7 @@ test('BF-2 integration: owned handoff, real cleanup and retained Quit surface su
     backupRemoteOperations: [], credentialWrites: [], companionStarts: [], stopDesktopCompanion: settled,
     browserLifecycleCleanups: new Map(), browserHost: null, cuaReady: Promise.resolve(), stopCua: settled,
     CUA_STOP_TIMEOUT_MS: 100, desktopDataOwner: { release: () => calls.push('release') }, exitedServerChildren: [],
-    recordStartupRefusal: () => calls.push('record'), shutdownCause: null, noteShutdownCause: noop,
+    recordStartupRefusal: error => { failures.push(error); calls.push('record'); }, shutdownCause: null, noteShutdownCause: noop,
     startupFailureExit: false, closedBackupRequested: false, closeStartupSplash: noop,
     showDesktopRecovery: () => { calls.push('recovery'); throw Error('recovery'); },
     dialog: { showErrorBox: () => { calls.push('box'); throw Error('box'); }, showMessageBox: options => {
@@ -195,9 +198,11 @@ test('BF-2 integration: owned handoff, real cleanup and retained Quit surface su
   await terminalDesktopStartup(Error('handoff'), ctx.deps);
   assert.ok(calls.includes('record')); assert.ok(calls.includes('box')); assert.ok(calls.includes('recovery'));
   assert.ok(calls.includes('surface')); assert.ok(!calls.includes('release')); assert.ok(!calls.includes('exit:1'));
+  assert.ok(calls.includes('dispose-banner')); assert.ok(calls.includes('dispose-attention'));
   child.emit('spawn'); assert.ok(!calls.includes('exit:1'));
   child.emit('exit'); quitRetry();
   await new Promise(setImmediate); await new Promise(setImmediate);
+  assert.deepEqual(failures.filter(error => error?.name === 'ReferenceError').map(error => error.message), []);
   assert.ok(calls.includes('release')); assert.equal(calls.at(-1), 'exit:1');
 });
 test('BF-1: surviving handoff helper uses fallback instead of reopening local startup', async () => {

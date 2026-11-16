@@ -10,9 +10,14 @@ exec_receiver = re.compile(r'\b(?:cp|childProcess|child_process|deps|dependencie
 injected = re.compile(r'\b(?:fork|spawn|exec|execFile|forkFn|spawnFn|execFn|execFileFn|[A-Za-z_$][\w$]*(?:Fork|Spawn|Exec|Cli))\s*\??\s*(?::|=)|\bthis\.(?:forkFn|spawnFn|execFn|execFileFn)\b')
 parameters = re.compile(r'[(,]\s*(?:fork|spawn|exec|execFile|forkFn|spawnFn|[A-Za-z_$][\w$]*(?:Fork|Spawn|Exec|Cli))\s*[,)]')
 wrappers = re.compile(r'''(?:import|export)\s+[^;]*?\b(?:spawnCli|execCli|execCliSync)\b[^;]*?from\s*['"][^'"]*procs(?:\.ts)?['"]''')
-for path in sorted((root / 'server').rglob('*')):
+found = []
+for path in (root / 'server').rglob('*'):
     if not path.is_file() or path.suffix not in ('.ts', '.tsx', '.js', '.mjs', '.cjs') or re.search(r'\.(?:test|spec)\.[cm]?[jt]sx?$|\.d\.ts$', path.name): continue
     text = path.read_text(errors='replace')
     if any(p.search(text) for p in (child, receiver, exec_receiver, injected, parameters, wrappers)):
-        print(path.relative_to(root).as_posix())
+        found.append(path.relative_to(root).as_posix())
+# Sort emitted names, rather than Path components (decision-wiring versus
+# decision/...), so every consumer gets the same lexical filename order.
+for name in sorted(found):
+    print(name)
 PY

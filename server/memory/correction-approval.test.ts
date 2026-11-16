@@ -6,12 +6,13 @@ import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // target needs an explicit transfer/unpin choice. Stale, forgotten, archived,
 // ambiguous and repeated cases fail without partial mutation.
 import { mkdirSync } from "node:fs";
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { appendMessage } from "../message-db.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { captureWork } from "./chunks.ts";
@@ -72,6 +73,18 @@ describe("correction proposal before approval", () => {
     await expect(f.propose("replayed", "The deploy window is Thursday", 2)).rejects.toThrow("MEMORY_IDEMPOTENCY_CONFLICT");
     expect(database().prepare("SELECT parent_id,parent_version FROM memory_derivations WHERE child_id=? AND child_version=1").all(candidate))
       .toEqual([{ parent_id: f.target, parent_version: 1 }]);
+  });
+  it("rejects a changed target version before spending a hydration allowance", async () => {
+    const f = fixture(); const candidate = await f.propose("bounded-replay");
+    correctMemory(f.owner, f.target, 1, "The deploy window is Tuesday (owner wording)");
+    const empty = LineageAllowance.tool(0);
+    const allowance = vi.spyOn(LineageAllowance, "tool").mockReturnValue(empty);
+    try {
+      await expect(f.propose("bounded-replay", "The deploy window is Thursday", 2)).rejects.toThrow("MEMORY_IDEMPOTENCY_CONFLICT");
+      expect(allowance).not.toHaveBeenCalled();
+      expect(database().prepare("SELECT parent_id,parent_version FROM memory_derivations WHERE child_id=? AND child_version=1").all(candidate))
+        .toEqual([{ parent_id: f.target, parent_version: 1 }]);
+    } finally { allowance.mockRestore(); }
   });
 });
 

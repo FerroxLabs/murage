@@ -1,3 +1,5 @@
+import "../shared/win-hide-child-process.mjs";
+import {exitWithChildIoReceipt} from "./io-child-receipts.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -35,9 +37,9 @@ if (process.send && /browser-extension-panel-avatar-encoder\.(?:ts|js)$/.test(pr
     sharp.cache(false); sharp.concurrency(1); encode = sharpPanelAvatar(sharp);
   } catch { /* Report unavailable, never a cacheable decode failure. */ }
   let idle: ReturnType<typeof setTimeout>;
-  const arm = () => { clearTimeout(idle); idle = setTimeout(() => process.exit(0), PANEL_AVATAR_HELPER_IDLE_MS); };
+  const arm = () => { clearTimeout(idle); idle = setTimeout(() => void exitWithChildIoReceipt(0), PANEL_AVATAR_HELPER_IDLE_MS); };
   arm();
-  process.on('disconnect', () => process.exit(0));
+  process.on('disconnect', () => void exitWithChildIoReceipt(0));
   process.on('message', async (message: { id: number; bytes: Buffer; side: number }) => {
     clearTimeout(idle);
     if (process.env.MURAGE_PANEL_AVATAR_HELPER_HANG === '1') return;

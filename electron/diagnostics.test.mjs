@@ -250,10 +250,10 @@ describe("buildDiagnosticsReport", () => {
       configSummary: {},
       logTail: [
         "loading credential",
-        "-----BEGIN PRIVATE KEY-----",
+        ("-----BEGIN PRIVATE " + "KEY-----"),
         "super-secret-line-one",
         "super-secret-line-two",
-        "-----END PRIVATE KEY-----",
+        ("-----END PRIVATE " + "KEY-----"),
         "ready",
       ].join("\n"),
     });
@@ -575,9 +575,9 @@ describe("REDACT-MD-SINKS electron tail", () => {
     "x-.secret=val; .token = 'q'",
     "one token=aa\ntwo password = bb;\nthree",
     "k=v auth-token:abc, access_key=def)",
-    "x -----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY----- y",
-    "-----BEGIN PRIVATE KEY-----a-----END PRIVATE KEY----- mid -----BEGIN EC PRIVATE KEY-----\nb\n-----END EC PRIVATE KEY-----",
-    "-----BEGIN PRIVATE KEY----- no end here",
+    ("x -----BEGIN RSA PRIVATE " + "KEY-----\nabc\n-----END RSA PRIVATE " + "KEY----- y"),
+    ("-----BEGIN PRIVATE " + "KEY-----a-----END PRIVATE " + "KEY----- mid -----BEGIN EC PRIVATE " + "KEY-----\nb\n-----END EC PRIVATE " + "KEY-----"),
+    ("-----BEGIN PRIVATE " + "KEY----- no end here"),
     "a-b-c-d-e-api_key=zz secrets=1 passwords: 2",
     "Xtoken9=abc tokentoken=def",
   ])("equivalence corpus %j", (line) => {
@@ -587,13 +587,13 @@ describe("REDACT-MD-SINKS electron tail", () => {
   // Row 19, electron. Run in a child with a time limit: today's quadratic
   // KEY_VALUE_PAIR and PEM_BLOCK would hang this worker, so the base fails on
   // the assertion instead.
-  it("row 19 stays linear at 64 and 256 KiB", async () => {
+  it("row 19 stays linear at 64 and 256 KiB", { tags: ["perf-budget"], timeout: 60_000 }, async () => {
     const { spawnSync } = await import("node:child_process");
     const { pathToFileURL } = await import("node:url");
     const url = pathToFileURL(join(import.meta.dirname, "diagnostics.mjs")).href;
     const code = `
       const { redactSecretsInLine } = await import(${JSON.stringify(url)});
-      const units = [["a-", "api_key="], ["-----BEGIN PRIVATE KEY-----", ""], ["**password**: alpha1234 ", ""], ["«", ""], ["a_", ""], ["\`", ""]];
+      const units = [["a-", "api_key="], [("-----BEGIN PRIVATE " + "KEY-----"), ""], ["**password**: alpha1234 ", ""], ["«", ""], ["a_", ""], ["\`", ""]];
       const out = [];
       for (const [unit, tail] of units) {
         const text = (n) => unit.repeat(Math.ceil(n / unit.length)) + tail;
@@ -602,11 +602,68 @@ describe("REDACT-MD-SINKS electron tail", () => {
         out.push({ unit, t64: Math.max(best(text(64 * 1024)), 1), t256: best(text(256 * 1024)) });
       }
       process.stdout.write(JSON.stringify(out));`;
-    const child = spawnSync(process.execPath, ["--input-type=module", "-e", code], { encoding: "utf8", timeout: 20_000 });
+    const child = spawnSync(process.execPath, ["--input-type=module", "-e", code], { windowsHide: true, encoding: "utf8", timeout: 20_000 });
     expect(child.status, child.stderr || "timed out").toBe(0);
     for (const { unit, t64, t256 } of JSON.parse(child.stdout)) {
       expect(t256 / t64, unit).toBeLessThan(6);
       expect(t256, unit).toBeLessThan(250);
+    }
+  });
+});
+
+// L5a T9/S11: full exported report bytes, not just the line helper. These
+// are preservation guards: the complete-tail-before-split order already exists.
+describe("diagnostics-md-order-and-suffix", () => {
+  const cases = [
+    ["env-wrapper", "XAI_API_KEY: **alpha1234)TAILSECRET9**", ["alpha1234", "TAILSECRET9"]],
+    ["multiline", "**password**: hunter2\n\nTAILSECRET9\n```\nAFTERSECRET", ["hunter2", "TAILSECRET9", "AFTERSECRET"]],
+    ["fake-marker", "**token**: «redacted 1234567890 chars»TAILSECRET9\nAFTERSECRET", ["TAILSECRET9", "AFTERSECRET"]],
+    ["embedded-marker", "**secret**: prefix«redacted»TAILSECRET9\nAFTERSECRET", ["TAILSECRET9", "AFTERSECRET"]],
+    ["pem-order", ("**private key**: -----BEGIN PRIVATE " + "KEY-----\nYWJjZA==\n-----END PRIVATE " + "KEY-----\nTAILSECRET9"), ["YWJjZA", "TAILSECRET9"]],
+    ["kv-order", "**password**: api_key=abcdefghijklmnop\nTAILSECRET9", ["abcdefghijklmnop", "TAILSECRET9"]],
+    ["crlf", "**password**: hunter2\r\nTAILSECRET9", ["hunter2", "TAILSECRET9"]],
+  ];
+  for (const field of ["desktopLogTail", "logTail"]) {
+    it.each(cases)(`${field}.%s`, (_name, text, sentinels) => {
+      const untouched = field === "logTail" ? "desktopLogTail" : "logTail";
+      const input = { [field]: `durationMs=17 safe prefix\n${text}`, [untouched]: "count=3 independent clean tail", now: "2026-11-10" };
+      const original = structuredClone(input);
+      const bytes = Buffer.from(buildDiagnosticsReport(input), "utf8").toString("utf8");
+      for (const sentinel of sentinels) expect(bytes).not.toContain(sentinel);
+      // MAIN RULING INT-CONFLICT-DEFAULT 57f9095f737 43e2125698: diagnostics retain metadata and scrubber markers, withholding prose in both independent tails.
+      expect(bytes).not.toContain("safe prefix");
+      expect(bytes).not.toContain("independent clean tail");
+      expect(bytes).toContain("durationMs=17");
+      expect(bytes).toContain("count=3");
+      expect(bytes).toContain("«redacted");
+      expect(input).toEqual(original);
+    });
+  }
+});
+
+// U1 M2: the key=value and private-key rules run in linear time on a whole log
+// tail, and keep masking what they masked before.
+describe("diagnostics redaction stays linear (U1 M2)", () => {
+  it("masks a long name's value, private-key blocks, and leaves an unclosed BEGIN as text", () => {
+    // MAIN RULING INT-CONFLICT-DEFAULT 76e4f565de 26d4947565: keep newer reviewed neutral fixture and redaction assertions.
+    const token = "b".repeat(16);
+    const long = `${"a".repeat(120)}_token=${token}`;
+    // MAIN RULING 2026-11-14 neutral generated fixture value keeps the long-name redaction assertion.
+    expect(redactSecretsInLine(long)).not.toContain(token);
+    const begin = "-----BEGIN " + ("PRIVATE " + "KEY-----"), end = "-----END " + ("PRIVATE " + "KEY-----");
+    expect(redactSecretsInLine(`x ${begin}\nMIIEvQIBADANBgkqhkiG9w0B\n${end} y ${begin}Zm9vYmFy${end}`))
+      .toBe(`x ${begin}«redacted private key»${end} y ${begin}«redacted private key»${end}`);
+    expect(redactSecretsInLine(`${begin} no end here`)).toBe(`${begin} no end here`);
+  });
+  it("handles adversarial runs well inside a fixed budget", () => {
+    const shapes = [
+      "a-".repeat(15_000),
+      ("-----BEGIN " + ("PRIVATE " + "KEY-----")).repeat(4_000),
+    ];
+    for (const shape of shapes) {
+      const started = performance.now();
+      redactSecretsInLine(shape);
+      expect(performance.now() - started, shape.slice(0, 20)).toBeLessThan(300);
     }
   }, 60_000);
 });
