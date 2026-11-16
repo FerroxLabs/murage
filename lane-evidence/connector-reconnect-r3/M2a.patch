@@ -1,0 +1,12 @@
+--- server/composio.ts
++++ server/composio.ts
+@@ -1752,7 +1752,8 @@
+ 
+ function recordAppAnswer(cfg: AppConfig, payload: JsonValue, bytes: Uint8Array, probe: boolean): void {
+   const request = payload as { id?: unknown; params?: { name?: string; arguments?: unknown } };
+-  const call = normalizedCallRows(request.params?.name ?? "", request.params?.arguments);
++  const raw = request.params?.arguments as {tools?: Array<{tool_slug:string;account?:string}>};
++  const call = {complete:true,rows:(raw?.tools ?? []).map((row,index)=>({index,tool:row.tool_slug,account:row.account}))};
+   const owner = inventoryOwner(cfg);
+   // Scan-only requirements do not establish response row correspondence.
+   if (!owner || !call.complete) return;

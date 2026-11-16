@@ -124,7 +124,7 @@ function processAlive(pid) {
 
 function run(command, args) {
   return new Promise((resolve) => {
-    execFile(command, args, { timeout: 3_000, windowsHide: true }, (error, stdout) => resolve(error ? "" : String(stdout)));
+    execFile(command, [...args], { timeout: 3_000, windowsHide: true }, (error, stdout) => resolve(error ? "" : String(stdout)));
   });
 }
 

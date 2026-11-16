@@ -1,3 +1,6 @@
+import { storeLiveAnchor } from './testing/live-session-fixture.ts';
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
+import { startLiveSession } from './testing/live-session-fixture.ts';
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -18,15 +21,15 @@ import type { Message } from "../store.ts";
 import { authorityParts, authorityStamp } from "./authority-epoch.ts";
 import { ownerMemoryTicket, saveMemoryCandidate } from "./authority.ts";
 import { captureSource, TURN_WALK_MAX, wholeTurnText } from "./capture.ts";
-import { continuationMemoryRevoked, resetSessionHolds } from "./disclosures.ts";
+import { bindMemoryDisclosureSession, deliverMemoryDisclosure, continuationMemoryRevoked, resetSessionHolds } from "./disclosures.ts";
 import { forgetMemory } from "./forget.ts";
-import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { legacyFile } from "./testing/legacy-file-model.ts";
-import { outputRootsFor, recordSessionRoots, replayExclusions } from "./replay-lineage.ts";
+import { replayExclusions } from "./replay-lineage.ts";
 import { setMemoryMode } from "./repository.ts";
 import { backfillOutputRoots } from "./schema.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
-import { stampFreshSession } from "./testing/writetime-fixture.ts";
 import { storeAnchorMessage } from "./testing/anchor-message.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older" }] }], groups: [] };
@@ -125,8 +128,11 @@ it("P1 connection identity: a replacement connection never matches the stamps of
   const record = secretRecord();
   receiptFor(record, "A");
   put("A", 10, { parentId: null });
-  recordSessionRoots("chat", "engine", "S", outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
-  stampFreshSession(database(), "chat", "engine", "S"); // stamped as a 1.0.3 fresh start leaves it (S6 rule 26)
+  database().prepare("UPDATE memory_disclosures SET native_session=NULL WHERE bundle_id='F1'").run();
+  const source = database().prepare('SELECT s.thread_id,s.message_id FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=? AND e.record_version=1').get(record)!;
+  storeLiveAnchor(database(),String(source.thread_id),String(source.message_id));
+  const a = access();
+  startLiveSession(a, 'engine', 'S', () => { bindMemoryDisclosureSession('F1','S'); deliverMemoryDisclosure('F1',a); });
   const check = () => continuationMemoryRevoked(LineageAllowance.tool(), "chat", "engine", "S", access());
   expect(check()).toBe(false);
   const before = authorityStamp(), parts = authorityParts();

@@ -21,6 +21,7 @@
 // This drives the REAL server through the REAL routes. Nothing here is
 // stubbed: the reopen is the same `POST /api/setup/reopen` the do-it card's
 // own back buttons call.
+import { chiefHasSpoken } from "./first-run-chief";
 import { expect, test } from "./fixtures";
 import { HARNESS_URL, desktopHeaders } from "./rig";
 
@@ -44,8 +45,16 @@ async function reachTheJobs(): Promise<void> {
     const view = await harness("GET", "/api/setup");
     if (!stepOf(view, step)?.done) await harness("POST", "/api/setup/skip", { step });
   }
-  const view = await harness("GET", "/api/setup");
-  expect(stepOf(view, "chat").done, "chat must still be the open question").toBe(false);
+  const { bots } = await harness("GET", "/api/bots");
+  if (bots.some((bot: any) => bot.messages?.some((message: any) => message.card?.setup?.key === "detect:move-grok"))) {
+    await harness("POST", "/api/setup/card", { key: "detect:move-grok", action: "settle" });
+  }
+  for (const key of ["flux:notify", "chat:hire"]) {
+    await harness("POST", "/api/setup/card", { key, action: "settle" });
+  }
+  if (stepOf(await harness("GET", "/api/setup"), "chat").done) {
+    await harness("POST", "/api/setup/reopen", { step: "chat" });
+  }
 }
 
 // THE LISTENERS GO ON BEFORE THE FIRST NAVIGATION, NOT AFTER.
@@ -65,6 +74,7 @@ test.use({
     await page.addInitScript(() => {
       try {
         window.localStorage.setItem("murage-email-gate", "skipped");
+        window.localStorage.setItem("help.seen.chat.level-chip", "1");
       } catch {
         /* storage blocked — the gate just renders */
       }
@@ -87,10 +97,7 @@ test("a job row is still pressable after the step is reopened", async ({ app }) 
   // That is a race in this file, not a defect in the app — a person cannot
   // answer a card that has not been drawn. It cost four diagnostic runs, and
   // it is why the first two attempts looked like the flow never arrived.
-  await expect(
-    app.getByText(/Tell me what to call you and I will get the rest ready/i),
-    "the Chief must have asked before the checklist is driven",
-  ).toBeVisible();
+  await chiefHasSpoken(app);
 
   await reachTheJobs();
   const reached = await harness("GET", "/api/setup");
@@ -109,10 +116,13 @@ test("a job row is still pressable after the step is reopened", async ({ app }) 
   await app.reload();
 
   // The five rows are the Chief's own question. Any one of them proves it.
-  const brief = app.getByRole("button", { name: /Brief me every morning/i });
+  const brief = app.getByRole("checkbox", { name: /Brief me every morning/i });
   await expect(brief, "the jobs list must arrive pressable").toBeEnabled();
 
-  await brief.click();
+  await brief.check();
+  await app.getByRole("checkbox", { name: /Organise my day/i }).uncheck();
+  await app.getByRole("checkbox", { name: /Make sense of these notes/i }).uncheck();
+  await app.getByRole("button", { name: "Set up these 1", exact: true }).click();
   await expect
     .poll(async () => stepOf(await harness("GET", "/api/setup"), "chat").done, {
       message: "choosing a job must record it on the checklist",
@@ -131,10 +141,97 @@ test("a job row is still pressable after the step is reopened", async ({ app }) 
   // still a latch.
   await expect(brief, "reopening the step must bring the rows back to life").toBeEnabled();
 
-  await brief.click();
+  await brief.check();
+  await app.getByRole("checkbox", { name: /Organise my day/i }).uncheck();
+  await app.getByRole("checkbox", { name: /Make sense of these notes/i }).uncheck();
+  await app.getByRole("button", { name: "Set up these 1", exact: true }).click();
   await expect
     .poll(async () => stepOf(await harness("GET", "/api/setup"), "chat").done, {
       message: "the second choice must reach the server, not die in the renderer",
     })
     .toBe(true);
+});
+
+
+// G4 lifecycle: a dedicated real server owns the profile so restart never touches
+// the rig's shared harness. Run by the browser rig, not by the unit gate.
+test("selected jobs survive reload and a process restart; Stop stays stopped", async ({ page }) => {
+  test.setTimeout(120_000);
+  const { launchVerificationServer } = await import("../../scripts/control-murage.ts");
+  const { createServer } = await import("vite");
+  const { fileURLToPath } = await import("node:url");
+  const fixture = await launchVerificationServer();
+  let ui: Awaited<ReturnType<typeof createServer>> | undefined;
+  const headers: Record<string, string> = { "x-murage-surface": "desktop", "content-type": "application/json" };
+  const refreshSecret = async () => {
+    const response = await fetch(`${fixture.info.url}/api/desktop-secret`, { headers: { "x-murage-surface": "desktop" } });
+    expect(response.ok).toBe(true);
+    headers["x-murage-surface-secret"] = (await response.json()).secret;
+  };
+  const request = async (method: string, path: string, body?: unknown) => {
+    const response = await fetch(`${fixture.info.url}${path}`, { method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
+    const data = await response.json();
+    expect(response.ok, `${path}: ${JSON.stringify(data)}`).toBe(true);
+    return data;
+  };
+  try {
+    await refreshSecret();
+    ui = await createServer({
+      root: fileURLToPath(new URL("../../", import.meta.url)),
+      server: { host: "127.0.0.1", port: 0, strictPort: false, watch: null, hmr: false,
+        proxy: { "/api": { target: fixture.info.url, ws: true, configure(proxy) {
+          const authorize = (req: { setHeader(name: string, value: string): void }) => {
+            for (const [key, value] of Object.entries(headers)) req.setHeader(key, value);
+          };
+          proxy.on("proxyReq", authorize); proxy.on("proxyReqWs", authorize);
+        } } },
+      },
+    });
+    await ui.listen();
+    await page.addInitScript(() => localStorage.setItem("murage-email-gate", "skipped"));
+    await page.goto(ui.resolvedUrls!.local[0]);
+    await chiefHasSpoken(page);
+    await request("POST", "/api/setup/answer", { step: "hello", answer: "Queue Owner" });
+    for (const step of ["detect", "flux"]) await request("POST", "/api/setup/skip", { step });
+    for (const key of ["flux:notify", "chat:hire"]) await request("POST", "/api/setup/card", { key, action: "settle" });
+    await page.reload();
+    for (const title of ["Brief me every morning", "Organise my day", "Make sense of these notes"]) {
+      await page.getByRole("checkbox", { name: new RegExp(title, "i") }).check();
+    }
+    await page.getByRole("button", { name: "Set up these 3", exact: true }).click();
+    const queue = async () => (await request("GET", "/api/owner/first-run-jobs")).pending;
+    await expect.poll(queue).toEqual(["day", "notes"]);
+    const { openSidebar } = await import("./fixtures");
+    const pending = page.locator('[data-today="pending-jobs"]');
+    const showQueue = async () => {
+      const sidebar = await openSidebar(page);
+      await sidebar.getByRole("button", { name: "Today", exact: true }).click();
+      await expect(pending).toContainText("Make sense of these notes");
+    };
+    // The first job still needs its answer, so the queue must not drain yet.
+    await showQueue();
+    await expect(pending).toContainText("Organise my day");
+    await page.reload();
+    expect(await queue()).toEqual(["day", "notes"]);
+    await showQueue();
+    await expect(pending).toContainText("Organise my day");
+    await fixture.restart();
+    await refreshSecret();
+    await page.reload();
+    expect(await queue()).toEqual(["day", "notes"]);
+    await showQueue();
+    await expect(pending).toContainText("Organise my day");
+    await pending.getByRole("button", { name: "Stop Organise my day", exact: true }).click();
+    await expect.poll(queue).toEqual(["notes"]);
+    await expect(pending.getByRole("button", { name: "Stop Organise my day", exact: true })).toHaveCount(0);
+    await fixture.restart();
+    await refreshSecret();
+    await page.reload();
+    expect(await queue()).toEqual(["notes"]);
+    await showQueue();
+    await expect(page.getByRole("button", { name: "Stop Organise my day", exact: true })).toHaveCount(0);
+  } finally {
+    await ui?.close();
+    await fixture.close();
+  }
 });

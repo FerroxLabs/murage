@@ -1,0 +1,45 @@
+
+ RUN  v4.1.12 /work
+
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2a wrapped multi attributes A failure and B success separately
+ × server/connector-reconnect-r3-attribution.test.ts > R2b direct provider preserves B account for attribution and guard 91ms
+   → expected [] to deeply equal [ 'B' ]
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2c unknown account never creates or blocks an incident
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2d unknown account never creates or blocks an incident
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order false
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order true
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch same creates no incident
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch mixed creates no incident
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch missing-index creates no incident
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch malformed creates no incident
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-reconnect-r3-attribution.test.ts > R2b direct provider preserves B account for attribution and guard
+AssertionError: expected [] to deeply equal [ 'B' ]
+
+- Expected
++ Received
+
+- [
+-   "B",
+- ]
++ []
+
+ ❯ server/connector-reconnect-r3-attribution.test.ts:48:83
+     46| });
+     47| it("R2b direct provider preserves B account for attribution and guard"…
+     48|   probe="upstreamAuth"; await dispatch(undefined,{account:"B"}); expec…
+       |                                                                                   ^
+     49|   await dispatch(undefined,{account:"B"}); expect(calls).toHaveLength(…
+     50|   probe="ok"; await dispatch(undefined,{account:"A"}); expect(calls).t…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 skipped (11)
+   Start at  05:10:43
+   Duration  9.80s (transform 7.66s, setup 8.54s, import 1.01s, tests 96ms, environment 0ms)
+

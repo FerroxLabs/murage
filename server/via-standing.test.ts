@@ -28,7 +28,8 @@ const bodyOf = (header: string): string => {
 describe("wiring in server/index.ts", () => {
   it("failOverThread starts nothing for a via source: its check comes before the row, the move and the line", () => {
     const body = bodyOf("function failOverThread(");
-    const guard = body.indexOf("store.messageById(turn.threadId, turn.sourceMessageId)?.via");
+    // MAIN RULING INT-CONFLICT-DEFAULT dc17aa2032 / 4792bb96fa: the same via refusal now uses the indexed point reader.
+    const guard = body.indexOf("store.messageById(turn.threadId, turn.sourceMessageId, { buildIndex: false })?.via");
     expect(guard).toBeGreaterThan(-1);
     expect(guard).toBeLessThan(body.indexOf("limitFailovers.startFrom("));
     expect(guard).toBeLessThan(body.indexOf("failoverLine("));

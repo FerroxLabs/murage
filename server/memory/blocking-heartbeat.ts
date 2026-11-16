@@ -1,3 +1,4 @@
+import { windowsHidePrelude } from "../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -32,6 +33,7 @@ const fs = require("node:fs");
 const ctl = new Int32Array(workerData.shared, 0, 4), at = new Float64Array(workerData.shared, 16, 1), label = new Uint8Array(workerData.shared, 24, ${LABEL_BYTES});
 const stamp = makeStamper("note", workerData.cap);
 const began = Date.now(), temp = workerData.file + "." + (process.pid * 1000 + threadId) + ".tmp";
+const awake = createAwakeMeter(workerData.cap);
 const beat = () => {
   if (Atomics.load(ctl, 1)) return;
   Atomics.store(ctl, 0, 1);
@@ -45,7 +47,10 @@ const beat = () => {
     try { upgrade = stamp(progress, counts); } catch {}
     if (progress && upgrade) progress.upgrade = upgrade;
     // a board with nothing on it yet: the note still says, field by field, that this is the start of an upgrade and nothing more is known
-    if (!upgrade) upgrade = unknownUpgradeState({ launch: workerData.launch, source: "note", stage: "starting", complete: false, keepOpen: true, heartbeatAt: now });
+    // a launch with no board that names its step (the one-time owner-pin index): the screen says which step, and its time awake moves
+    // its sequence comes from the launch's own allocator, so a screen that saw an earlier note of this launch (a check, a backfill) takes it in, not as older
+    const named = workerData.contractPhase ? { phase: workerData.contractPhase, seq: workerData.contractSeq ?? 0, step: { awakeElapsedMs: Math.round(awake.tick()), unit: "none" } } : {};
+    if (!upgrade) upgrade = unknownUpgradeState({ launch: workerData.launch, source: "note", stage: "starting", complete: false, keepOpen: true, heartbeatAt: now, ...named });
     fs.writeFileSync(temp, JSON.stringify({ ...workerData.base, ...(progress ? { progress } : {}), upgrade, updatedAt: now, step, stepElapsedMs: now - (at[0] || began) }), { mode: 0o600 });
     if (workerData.renameDelayMs) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, workerData.renameDelayMs);
     fs.renameSync(temp, workerData.file);
@@ -58,7 +63,7 @@ setInterval(beat, workerData.intervalMs);
 
 /** Starts the heartbeat for a blocking stretch of the upgrade. `base` is the note the reporter would write (its `updatedAt` is
  * replaced on every beat). Never throws: a heartbeat that cannot start leaves the upgrade exactly as it was. */
-export function startBlockingHeartbeat(file: string, base: Record<string, unknown>, first: BlockingStep, intervalMs = HEARTBEAT_INTERVAL_MS, renameDelayMs = 0, board?: SharedArrayBuffer, counts?: SharedArrayBuffer): BlockingHeartbeat {
+export function startBlockingHeartbeat(file: string, base: Record<string, unknown>, first: BlockingStep, intervalMs = HEARTBEAT_INTERVAL_MS, renameDelayMs = 0, board?: SharedArrayBuffer, counts?: SharedArrayBuffer, contractPhase?: "indexing", contractSeq?: number): BlockingHeartbeat {
   const shared = new SharedArrayBuffer(24 + LABEL_BYTES), ctl = new Int32Array(shared, 0, 4), at = new Float64Array(shared, 16, 1), label = new Uint8Array(shared, 24, LABEL_BYTES);
   const set = (step: BlockingStep) => {
     const bytes = Buffer.from(step, "utf8").subarray(0, LABEL_BYTES);
@@ -67,7 +72,7 @@ export function startBlockingHeartbeat(file: string, base: Record<string, unknow
   set(first);
   let worker: Worker | null = null;
   try {
-    worker = new Worker(WORKER_SOURCE, { eval: true, workerData: { shared, file, base, intervalMs, renameDelayMs, board, counts, launch: bootLaunchId(), cap: Math.max(AWAKE_GAP_CAP_MS, intervalMs * 2) } });
+    worker = new Worker(windowsHidePrelude + WORKER_SOURCE, { eval: true, workerData: { shared, file, base, intervalMs, renameDelayMs, board, counts, contractPhase, contractSeq, launch: bootLaunchId(), cap: Math.max(AWAKE_GAP_CAP_MS, intervalMs * 2) } });
     worker.on("error", () => { /* a heartbeat failure never stops the upgrade */ });
     worker.unref();
   } catch { worker = null; }

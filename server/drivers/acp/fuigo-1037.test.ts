@@ -52,7 +52,8 @@ const LEVELS = [
   ["Ask", { autoApprove: false }, false, { routeAsks: true, askLevel: true }],
   ["Auto", { autoApprove: true }, true, { routeAsks: true }],
   ["Full access", { autoApprove: true, fullAccess: true }, true, { stopLine: true }],
-  ["No limits", { autoApprove: true, fullAccess: true, noLimits: true }, true, { stopLine: true }],
+  // MAIN RULING 2026-11-13 wipe-only: Fuigo must receive the No limits flag while the wipe stop remains enabled.
+  ["No limits", { autoApprove: true, fullAccess: true, noLimits: true }, true, { stopLine: true, noLimits: true }],
 ] as const;
 
 describe("Fuigo 1.0.37: an ACP client terminal is never on offer", () => {

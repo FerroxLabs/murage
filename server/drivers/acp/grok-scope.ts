@@ -213,7 +213,7 @@ function scanToml(text: string): TomlStatement[] {
 }
 
 /** grok's config.toml without the `mcp_servers`, `hooks`, `skills` and `permission` tables and keys, whatever way they are written: `[mcp_servers.x]`, `[[hooks.y]]`, a quoted `"mcp_servers" = { ... }` (also across lines), or a dotted `hooks.a.b = ...`. Decided on the parsed key, not the line text. Everything else (models, keys, features, comments) is kept byte for byte. A file this scanner cannot read is not copied at all: grok would not read it either, and none of its text may reach a bot turn. */
-export function filterGrokConfigToml(text: string): string {
+export function filterGrokConfigToml(text: string, personalRoots: ReadonlySet<string> = PERSONAL_ROOTS): string {
   let statements: TomlStatement[];
   try { statements = scanToml(text); } catch { return ""; }
   let out = "";
@@ -224,10 +224,10 @@ export function filterGrokConfigToml(text: string): string {
     let inTable = true;
     if (statement.kind === "header") {
       table = statement.path;
-      personal = PERSONAL_ROOTS.has(table[0]!);
+      personal = personalRoots.has(table[0]!);
     } else {
       inTable = table.length > 0;
-      personal = PERSONAL_ROOTS.has([...table, ...statement.path][0]!);
+      personal = personalRoots.has([...table, ...statement.path][0]!);
     }
     if (!personal) continue;
     out += text.slice(at, statement.start);

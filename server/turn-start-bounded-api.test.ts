@@ -11,14 +11,39 @@
 //     held for 3 s, and the setup still runs (after the answer).
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { countControlSource, refillThread, sendCountCommand } from "./testing/bounded-reads.ts";
+import { countControlSource, refillThread, sendCountCommand, waitForMessageWalk } from "./testing/bounded-reads.ts";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { WALKED, walkMessagesChunk } from "./message-walker.ts";
+import { writeIndexState } from "./transcript-backfill.ts";
+import { markThreadNotReady, readyImportedThread, writeLineage } from "./memory/lineage-write.ts";
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
 
 const ROUTINES = fileURLToPath(new URL("./routines.ts", import.meta.url));
 const WORKER = fileURLToPath(new URL("./memory/worker-controller.ts", import.meta.url));
+const SEARCH = fileURLToPath(new URL("./memory/search.ts", import.meta.url));
+// Install observations when the server naturally loads each module. Importing
+// these application modules from the preload changes their cycle entry order.
+const sourceHooks = {
+  [WORKER]: `
+    const fixtureHold = MemoryWorkerController.prototype.holdForTurn;
+    MemoryWorkerController.prototype.holdForTurn = function(...args) {
+      const release = fixtureHold.apply(this, args);
+      return () => { globalThis[Symbol.for('murage.fixture.turn-start-freeze')](); return release(); };
+    };`,
+  [SEARCH]: `setAuthorizeSliceMsForTest(0);`,
+  [ROUTINES]: `
+    import { existsSync as fixtureExistsSync } from 'node:fs';
+    import { join as fixtureJoin } from 'node:path';
+    const fixtureNote = RoutineManager.prototype.notePinnedBundle;
+    RoutineManager.prototype.notePinnedBundle = function(...args) {
+      if (fixtureExistsSync(fixtureJoin(process.env.MURAGE_DATA_DIR, 'slow-setup')))
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 3000);
+      return fixtureNote.apply(this, args);
+    };`,
+};
 let fixture: VerificationServer, headers: Record<string, string> = {}, model: string;
 const api = async (method: string, path: string, body?: unknown) => {
   const response = await fetch(fixture.info.url + path, { method, headers: { ...headers, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -37,6 +62,12 @@ const instrumentation = `
   const fs=await import('node:fs');const path=await import('node:path');const sqlite=await import('node:sqlite');const {pathToFileURL}=await import('node:url');
   process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';
   const dir=process.env.MURAGE_DATA_DIR;let watched=null;let frozen=false;let counts={statements:0,rows:0,bySql:{}};
+  const {registerHooks}=await import('node:module');
+  const patches=new Map(Object.entries(${JSON.stringify(sourceHooks)}).map(([file,source])=>[pathToFileURL(file).href,source]));
+  const installedHooks=new Set();
+  globalThis[Symbol.for('murage.fixture.turn-start-freeze')]=()=>{frozen=true;};
+  registerHooks({load(url,context,next){const loaded=next(url,context);const patch=patches.get(url);
+    if(!patch)return loaded;installedHooks.add(url);return {...loaded,source:String(loaded.source)+'\\n'+patch};}});
   const proto=sqlite.StatementSync.prototype;
   for(const name of ['all','get','iterate','run']){const original=proto[name];proto[name]=function(...args){const result=original.apply(this,args);
     if(watched!==null&&!frozen&&args.some(arg=>arg===watched||(arg&&typeof arg==='object'&&Object.values(arg).includes(watched)))){counts.statements++;
@@ -44,18 +75,13 @@ const instrumentation = `
       const key=String(this.sourceSQL).replace(/\\s+/g,' ').slice(0,160);const entry=counts.bySql[key]??={statements:0,rows:0};entry.statements++;entry.rows+=rows;}
     return result;};}
   ${countControlSource(`(command)=>{
-    if(command.start){watched=command.start;frozen=false;counts={statements:0,rows:0,bySql:{}};fs.writeFileSync(path.join(dir,'window-open'),String(command.start));}
+    if(command.start){if(installedHooks.size!==patches.size)throw new Error('turn-start fixture hooks incomplete');watched=command.start;frozen=false;counts={statements:0,rows:0,bySql:{}};fs.writeFileSync(path.join(dir,'window-open'),String(command.start));}
     else{fs.writeFileSync(path.join(dir,'counts.json'),JSON.stringify(counts));watched=null;}}`)}
   // The window ends where the turn hands its prompt to the engine (the turn hold's release), not at the dump signal: what the memory worker
   // publishes after that point (it waits for the hold) lands a variable moment later and is not the turn start's cost.
-  const {MemoryWorkerController}=await import(pathToFileURL(${JSON.stringify(WORKER)}).href);
-  const hold=MemoryWorkerController.prototype.holdForTurn;
-  MemoryWorkerController.prototype.holdForTurn=function(...args){const release=hold.apply(this,args);return()=>{frozen=true;return release();};};
-  const {RoutineManager}=await import(pathToFileURL(${JSON.stringify(ROUTINES)}).href);
-  const note=RoutineManager.prototype.notePinnedBundle;
-  RoutineManager.prototype.notePinnedBundle=function(...args){
-    if(fs.existsSync(path.join(dir,'slow-setup')))Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,3000);
-    return note.apply(this,args);};
+  // 349eff48b9: search authorizes in timed slices, each with its own access pass.
+  // Force one candidate per slice so the count oracle always measures the maximum
+  // per-record reader checks, independent of runner speed. No count is filtered.
 `;
 
 // The fake engine gives every new bot a random greeting, and recall reads a thread's own sources when one shares a word with the prompt
@@ -69,14 +95,32 @@ function seed(threadId: string, count: number) {
   const db = new DatabaseSync(file("messages.db"));
   try {
     const leaf = (db.prepare("SELECT active_leaf_id AS id FROM thread_state WHERE thread_id=?").get(threadId) as { id: string | null } | undefined)?.id ?? null;
+    // This is retained history: the starter rows precede its synthetic rows
+    // in time as well as in branch/lineage order.
+    db.prepare("UPDATE messages SET at=1700000000000,json=json_set(json,'$.at',1700000000000) WHERE thread_id=?").run(threadId);
     db.prepare(`WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v+1 FROM n WHERE v<?)
       INSERT INTO messages(thread_id,id,at,role,kind,text,json)
       SELECT ?, 'seed-'||v, 1700000000000+v, CASE v%2 WHEN 1 THEN 'user' ELSE 'bot' END, 'text', 'line '||v,
         json_object('id','seed-'||v,'at',1700000000000+v,'role',CASE v%2 WHEN 1 THEN 'user' ELSE 'bot' END,'kind','text','text','line '||v,
           'parentId',CASE WHEN v=1 THEN ? ELSE 'seed-'||(v-1) END)
       FROM n`).run(count, threadId, leaf);
+    beginWrite(db, 'fixture_history_lineage');
+    try {
+      markThreadNotReady(db, threadId);
+      for (let n = 1; n <= count; n++) {
+        const token = writeLineage(db, { threadId, messageId: `seed-${n}`, author: n % 2 ? 'owner' : 'generated' }, {});
+        if (token.lsn <= 0) throw new Error('fixture history lineage was not recorded');
+      }
+      expect(readyImportedThread(db, threadId)).toBe(true);
+      endWrite(db, 'fixture_history_lineage');
+    } catch (error) { undoWrite(db, 'fixture_history_lineage'); throw error; }
     db.prepare("INSERT INTO thread_state(thread_id,active_leaf_id) VALUES(?,?) ON CONFLICT(thread_id) DO UPDATE SET active_leaf_id=excluded.active_leaf_id").run(threadId, `seed-${count}`);
     refillThread(db, threadId);
+    // Finish the real one-time producers on the offline seed connection.
+    // Otherwise this measures an upgrade racing the first turn, whose
+    // background byte budget deliberately takes longer on the larger file.
+    for (const name of WALKED) writeIndexState(db, name, { done: 0, cursor: 0, skipped: 0 });
+    while (walkMessagesChunk(db).more) { /* bounded production slices */ }
   } finally { db.close(); }
 }
 
@@ -99,11 +143,21 @@ async function measuredSend(bot: { id: string; threadId: string }) {
 }
 
 beforeAll(async () => {
-  fixture = await launchVerificationServer({}, undefined, { instrumentationSource: instrumentation });
+  try {
+    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: instrumentation });
+  } catch (error) {
+    const log = /; see (.+)/.exec(String(error))?.[1];
+    if (log && existsSync(log)) console.error(readFileSync(log, 'utf8'));
+    throw error;
+  }
   headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": (await api("GET", "/api/desktop-secret")).body.secret };
   model = (await api("GET", "/api/instances")).body.instances.find((instance: any) => instance.instanceId === "verification").models.options[0].id;
 }, 60_000);
 afterAll(async () => { await fixture?.close(); });
+afterEach(({ task }) => {
+  if (task.result?.state === 'fail' && fixture && existsSync(fixture.info.logPath))
+    console.error(readFileSync(fixture.info.logPath, 'utf8'));
+});
 
 const authHeaders = async () => { headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": (await api("GET", "/api/desktop-secret")).body.secret }; };
 
@@ -116,6 +170,9 @@ it("a send and its turn start read the same statements and rows at 1,000 and at 
   seed(large.threadId, 200_000);
   await fixture.restart();
   await authHeaders();
+  // Raw historical rows need the one-time index walk before recurring turn
+  // work is compared. The measured windows still count every SQL statement.
+  await waitForMessageWalk(file('messages.db'));
   // the first turn after a start warms process-wide caches; it is not measured against either thread
   await measuredSend(warm);
   await new Promise((r) => setTimeout(r, 1_500));
@@ -123,6 +180,7 @@ it("a send and its turn start read the same statements and rows at 1,000 and at 
   // the small bot's turn finishes before the large one is sent (one engine dump)
   await new Promise((r) => setTimeout(r, 1_500));
   const b = await measuredSend(large);
+  console.log('turn-start counts', JSON.stringify({ small: a.counts, large: b.counts }));
   expect(a.counts.statements).toBeGreaterThan(0);
   // per statement first, so a difference names the read that grew
   expect(b.counts.bySql).toEqual(a.counts.bySql);

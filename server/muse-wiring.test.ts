@@ -11,7 +11,7 @@ import { chmodSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CLOUD_HIDDEN_ENGINES, isCloudHiddenEngine } from "./cloud-home/runnable-engines.ts";
 import { allInstanceConfigs, ensureDirs, instanceConfigs, PROVIDER_CREDENTIAL_ENV, stripCliProbeCredentialEnv, stripWorkspaceCredentialEnv, WORKSPACE_CREDENTIAL_ENV, type AppConfig } from "./config.ts";
@@ -19,7 +19,7 @@ import type { ProviderInstance } from "./contracts.ts";
 import { ENGINE_LABEL } from "./conversation-deletion.ts";
 import { DEFAULT_INSTANCES } from "./default-instances.ts";
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
-import { CustomAcpDriver } from "./drivers/acp/custom.ts";
+import { CustomAcpDriver, customAcpSupport } from "./drivers/acp/custom.ts";
 import { ENGINE_SIGNIN_TABLE } from "./engine-signin-recipe.ts";
 import { augmentedPath, resetPathCacheForTests } from "./env-path.ts";
 import { fluxSurfaceFor } from "./flux-routing.ts";
@@ -53,11 +53,14 @@ describe("the Meta key stays with Muse Code", () => {
     let recorder: EventRecorder | undefined;
     let scratch: string;
     beforeEach(() => {
+      // This fake CLI only exchanges local protocol frames; it has no model host.
+      vi.spyOn(customAcpSupport, "fluxReach").mockReturnValue("elsewhere");
       ensureDirs();
       chmodSync(FAKE_CLI, 0o755);
       scratch = mkdtempSync(join(tmpdir(), "murage-muse-wiring-test-"));
     });
     afterEach(async () => {
+      vi.restoreAllMocks();
       delete process.env.FAKE_ACP_DUMP;
       delete process.env.META_API_KEY;
       recorder?.stop();

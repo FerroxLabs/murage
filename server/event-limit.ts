@@ -1,3 +1,5 @@
+import { serviceThreadNoLimits } from './service-no-limits.ts';
+import { murageLine } from './murage-line.ts';
 // What happens when a run started by an event (a channel message, a webhook,
 // a routine) reaches the number of hand-offs or new bots it may do on its own.
 // The old answer was a flat refusal the bot could only relay as a dead end.
@@ -5,7 +7,7 @@
 // the owner with Allow (another batch) and Not now. There is no "always allow":
 // the limit is per run, so every run starts from the same guard. A run whose
 // connection was turned off is still refused, in plain words.
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { requestEventLimitApproval, type ApprovalBus, type PeerApprovalOutcome } from "./peer-approval.ts";
 import { EVENT_EXTENSION, EVENT_FULL_ACCESS_LIMIT, EVENT_MAX_LIMIT, type RoutineManager } from "./routines.ts";
 import type { BotRecord } from "./store.ts";
@@ -53,6 +55,8 @@ export interface EventLimitContext {
   fromThreadId: string;
   /** The bot being handed to, or the new bot's name. */
   targetName?: string;
+  /** Stable directed bot pair, independent of message text. */
+  handoffPair?: string;
   /** Does the owner's Full access already cover this run's origin? */
   fullAccess: () => boolean;
   /** Throws when the turn that asked is no longer running. */
@@ -96,9 +100,16 @@ export async function admitEventWithOwner(ctx: EventLimitContext): Promise<void>
   for (let round = 0; round < 3; round++) {
     // The owner's Not now comes before any admission: capacity freed by a refund can never let a new action through.
     // Only a receipt already in the ledger is replayed, and that never reaches here.
-    if (ctx.routines.eventKindDeclined(ctx.eventId, ctx.kind)) refuse(notNow);
-    const verdict = ctx.routines.admitEventActionDetailed(ctx.eventId, ctx.admissionId, ctx.kind);
+    const noLimits = serviceThreadNoLimits(ctx.fromThreadId, ctx.from.id);
+    if (!noLimits && ctx.routines.eventKindDeclined(ctx.eventId, ctx.kind)) refuse(notNow);
+    const verdict = ctx.routines.admitEventActionDetailed(ctx.eventId, ctx.admissionId, ctx.kind, noLimits ? { pair: ctx.handoffPair } : undefined);
     if (verdict.ok) return;
+    if (verdict.reason === "loop" || verdict.reason === "ceiling") {
+      const text = verdict.reason === "loop" ? "This run stopped repeating the same hand-off between bots. Work already started can finish."
+        : "This run stopped after a large number of actions. Work already started can finish.";
+      ctx.bus.store.appendMessage(ctx.fromThreadId, murageLine({ role: "bot", kind: "text", text }));
+      refuse(text);
+    }
     if (verdict.reason === "closed") {
       refuse(verdict.closedReason === "stopped" ? `This run was stopped, so I can't ${doing} from it.`
         : verdict.closedReason === "watch" ? `This check only looks for changes, so I can't ${doing} from it.`
@@ -183,7 +194,7 @@ export async function runEventAction<R>(spec: EventActionSpec<R>, step: (handle:
       unrun: () => {},
     }).catch(error => { if (error instanceof EarlyResult) return error.result as R; throw error; });
   }
-  const base = eventActionId(spec.kind, spec.identity);
+  const base = eventActionId(spec.kind, serviceThreadNoLimits(spec.fromThreadId, spec.from.id) ? [...spec.identity, randomUUID()] : spec.identity);
   let attempt = 1;
   let id = base;
   let reuse = false;
@@ -218,7 +229,7 @@ export async function runEventAction<R>(spec: EventActionSpec<R>, step: (handle:
         charge: async () => {
           spec.stillActive();
           await admitEventWithOwner({ routines, bus: spec.bus, eventId, kind: spec.kind, admissionId: actionId, from: spec.from, fromThreadId: spec.fromThreadId,
-            ...(spec.targetName ? { targetName: spec.targetName } : {}), fullAccess: spec.fullAccess, stillActive: spec.stillActive });
+            ...(spec.targetName ? { targetName: spec.targetName } : {}), ...(spec.kind === "handoff" ? { handoffPair: JSON.stringify([...spec.identity.slice(1, 3)].sort()) + ":" + createHash("sha256").update(JSON.stringify(spec.identity.slice(3))).digest("hex") } : {}), fullAccess: spec.fullAccess, stillActive: spec.stillActive });
           charged = true;
           let early: R | undefined;
           try { early = await spec.revalidate(); } catch (error) {

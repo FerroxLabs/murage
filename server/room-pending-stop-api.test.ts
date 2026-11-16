@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
 
 const serverDir = dirname(fileURLToPath(import.meta.url));
 let fixture: VerificationServer;
@@ -16,7 +17,7 @@ const rows = () => {
   return existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
 };
 beforeAll(async () => {
-  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
     const fs=await import('node:fs');const path=await import('node:path');
     // A room turn stops for silence (0.1.61): run the stall clock 120 times
     // faster, so the held turn's twenty silent minutes pass in ten seconds
@@ -65,6 +66,9 @@ it("retains a stalled room beyond six seconds, queues its next prompt without di
     expect(result.status).toBe(201);return result.body.group;
   };
   const held = await room("Held room", slow.id), independent = await room("Independent room", fast.id);
+  // The host-computer setup fence is separate from the stalled room turn.
+  // Start observing its stop/close sequence once both bots are configured.
+  writeFileSync(join(fixture.info.dataDir, "room-stops.jsonl"), "");
   const state = async () => (await api("GET", "/api/bots?messages=0")).body;
   expect((await api("POST", `/api/groups/${held.id}/messages`, { text: "Wait for explicit close" })).status).toBe(202);
   await expect.poll(() => rows().filter(row => row.stop).length, { timeout: 30000 }).toBe(1);

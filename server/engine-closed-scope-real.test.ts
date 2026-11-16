@@ -32,7 +32,7 @@ const sleepMs = (ms: number) => { Atomics.wait(new Int32Array(new SharedArrayBuf
 function start(env: Record<string, string>, argv0?: string): ChildProcess {
   const base: Record<string, string> = {};
   for (const name of ["PATH", "SystemRoot", "SYSTEMROOT"]) if (process.env[name]) base[name] = process.env[name]!;
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { env: { ...base, ...env }, stdio: "ignore", ...(argv0 ? { argv0 } : {}) });
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {  env: { ...base, ...env }, stdio: "ignore", ...(argv0 ? { argv0 } : {}), windowsHide: true });
   children.push(child);
   return child;
 }

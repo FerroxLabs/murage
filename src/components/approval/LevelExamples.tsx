@@ -6,7 +6,7 @@
 // lane checks against the verdict. Every cell is for a turn with nothing
 // said yes to before. Shown in the chat chip's menu and in Settings › Level;
 // `only` shows one level's column (the phone sheet's picked level).
-import { LEVEL_EXAMPLES, type LevelId } from "../../../shared/level-examples";
+import { LEVEL_EXAMPLES, type LevelId, type OtherCell } from "../../../shared/level-examples";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 import { cn } from "@/lib/cn";
@@ -15,6 +15,9 @@ import { levelName } from "@/lib/fold-words";
 export function LevelExamples({ only, current, className }: { only?: LevelId; current?: LevelId; className?: string }) {
   const levels = only ? [only] : [...LEVEL_EXAMPLES.levels];
   const cell = (value: "asks" | "goes-ahead") => (value === "asks" ? t("ux.l1.level.asks") : t("ux.l1.level.goesAhead"));
+  const otherCell = (value: OtherCell, level: LevelId) => value === "goes-ahead" ? cell(value)
+    : value === "goes-ahead-with-option" && level === "unlimited" ? t("ux.l1.level.cell.channel-enabled")
+    : t(`ux.l1.level.cell.${value}` as LocaleKey);
   return (
     <div data-level-examples className={cn("text-[12px] text-ink", className)}>
       <table className="w-full border-collapse text-left">
@@ -54,10 +57,10 @@ export function LevelExamples({ only, current, className }: { only?: LevelId; cu
               <tr key={row.id} data-level-other={row.id} className="border-t border-hairline/20 align-top">
                 <th scope="row" className="py-1 pr-2 font-normal">
                   {t(`ux.l1.level.other.${row.id}` as LocaleKey)}
-                  {row.notes.map((note) => <div key={note} className="text-[11.5px] text-ink-secondary">{t(`ux.l1.level.note.${note}` as LocaleKey)}</div>)}
+                  {row.notes.filter(note => level !== "unlimited" || note !== "never-for-payment").map((note) => <div key={note} className="text-[11.5px] text-ink-secondary">{t(`ux.l1.level.note.${note}` as LocaleKey)}</div>)}
                 </th>
-                <td className="px-1 py-1 text-ink-secondary">{t(`ux.l1.level.cell.${row.ordinary[level]}` as LocaleKey)}</td>
-                <td className="px-1 py-1 text-ink-secondary">{t(`ux.l1.level.cell.${row.stopLine[level]}` as LocaleKey)}</td>
+                <td className="px-1 py-1 text-ink-secondary">{otherCell(row.ordinary[level], level)}</td>
+                <td className="px-1 py-1 text-ink-secondary">{otherCell(row.stopLine[level], level)}</td>
               </tr>
             );
           })}

@@ -92,6 +92,7 @@ const baseDirect: DirectTurnShapeInput = {
   coordination: "",
   credential: "",
   image: "",
+  webRead: true,
   webSearchBackup: true,
   routines: "",
   learn: "",

@@ -1,3 +1,4 @@
+import { openTestIndex, put } from "./testing/open-index.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it } from "vitest";
@@ -7,7 +8,6 @@ import { ensureWorkspace } from "../workspace.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
 import { memoryOwnerRoute, memoryOwnerStatus } from "./settings.ts";
-import { MemoryIndex } from "./index.ts";
 import { closeMemoryIndexReader } from "./index-reader.ts";
 import type { MemoryRecord } from "../../shared/memory.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
@@ -27,7 +27,7 @@ it("pages 3000 records with indexed keyword search, Important and Recent without
     }
     db.prepare("INSERT INTO memory_records VALUES('other',1,?,'fact','PRIVATE_OTHER','owner-statement','active',0,1,NULL,NULL,1)").run(other);
   });
-  const index=new MemoryIndex(join(DATA_DIR,"memory-index.db"));index.upsert(rows);index.close();
+  const index=await openTestIndex(join(DATA_DIR,"memory-index.db"));await put(index, rows);index.close();
   const first=await action({action:"list",botId:"a",view:"recent"});
   expect(first.records).toHaveLength(50);expect(first.records[0].id).toBe("row-2999");expect(first.nextCursor).toBeTruthy();
   const next=await action({action:"list",botId:"a",view:"recent",cursor:first.nextCursor});

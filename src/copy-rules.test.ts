@@ -135,6 +135,7 @@ function hits(files: string[], rules: Rule[], allow: Record<string, string> = {}
       const text = /^\s*<!doctype html>/i.test(raw) ? htmlText(raw).join(" ") : raw;
       if (PENDING.some(entry => entry.file === label && text === entry.text)) continue;
       if (MODEL_FACING_TEXT.some(entry => entry.file === label && text.startsWith(entry.starts))) continue;
+      if (!shown && INTERNAL_SCHEMA_DIAGNOSTICS.some(entry => entry.file === label && text === entry.text)) continue;
       for (const rule of rules) if ((shown && rule === SAFE ? SHOWN_SAFE : rule).pattern.test(text)) found.push(`${label}:${line}: ${rule.name}: ${text.trim().slice(0, 120)}`);
     }
   }
@@ -193,6 +194,15 @@ const MODEL_FACING: Record<string, string> = {
 // Single strings a model reads, in files that also hold copy.
 const MODEL_FACING_TEXT: Array<{ file: string; starts: string }> = [
   { file: "server/drivers/acp/core.ts", starts: "The user denied this operation." },
+];
+
+// Frozen schema diagnostics, never displayed: HighLevelHost returns its fixed
+// argument-refusal sentence instead of Zod issues. grants-management.test.ts
+// pins that boundary; the exception is exact and never applies to JSX copy.
+const INTERNAL_SCHEMA_DIAGNOSTICS = [
+  { file: "server/highlevel/operations/opportunities.ts", text: "Unsafe record id" },
+  { file: "server/highlevel/operations/schemas/opportunities.ts", text: "Unsafe record id" },
+  { file: "server/highlevel/operations/schemas/common.ts", text: "HighLevel arguments contain an unsafe field or value" },
 ];
 
 // Desktop files whose strings never reach a person: a model reads them, or
@@ -258,6 +268,12 @@ const RAW_ERROR: Rule = { name: "a raw error code", pattern: /\bstatus [45]\d\d\
 // the owner's word (listed in the 0.1.60 fix2-ui report). A new or changed
 // string is caught.
 const PRICE_KNOWN: Array<{ file: string; text: string; why: string }> = [
+  // MAIN RULING INT-CONFLICT-DEFAULT 10ebc7cfb31c / dc1038b388: the reviewed limit editor uses this exact internal action route, never displayed as copy.
+  { file: "src/components/SpendLimitCard.tsx", text: "/api/spend/limit", why: "limit owner-action route, never shown" },
+  // MAIN RULING INT-CONFLICT-DEFAULT 10ebc7cfb31c / dc1038b388: exact internal pause routes/row id from the reviewed pause renderer are never displayed as copy.
+  { file: "src/components/SpendPauseCard.tsx", text: "/api/spend/notice/dismiss", why: "pause owner-action route, never shown" },
+  { file: "src/components/SpendPauseCard.tsx", text: "/api/spend/check", why: "pause owner-action route, never shown" },
+  { file: "src/components/today/MonthCard.tsx", text: "spend:paused", why: "pause Needs you row id, never shown" },
   { file: "src/lib/model-metadata.ts", text: "Price varies by route", why: "model catalogue pricing column" },
   { file: "src/lib/provider-model-picker.ts", text: "Price unavailable", why: "model catalogue pricing column" },
   { file: "src/lib/usage.ts", text: "equivalent: on your subscription, not billed", why: "Usage page cost column caption, left for the owner in 0.1.60 fix3" },
@@ -266,6 +282,7 @@ const PRICE_KNOWN: Array<{ file: string; text: string; why: string }> = [
   { file: "src/components/BrowserActivityLog.tsx", text: "browserExt.decision.free", why: "the activity log's internal decision key `free` means no approval was needed; the owner sees \"no approval needed\", never a price" },
   { file: "src/components/today/MonthCard.tsx", text: "/api/spend", why: "the meter's route path, never shown" },
   { file: "src/components/today/MonthCard.tsx", text: "spend:", why: "the Needs you row id, never shown" },
+  { file: "src/lib/settings-search.ts", text: "spend", why: "a search synonym the ranker matches against what a person types (cost, spend, usage), never shown (SETTINGS-SEARCH-RANKER-1019 R2)" },
 ];
 // 1.0.12: providerError.payment.summary no longer names HTTP 402 (the code sits in the card's details fold).
 // VOICE-402-CALL rev 4.1 §6.3 explicitly requires this billing boundary.
@@ -273,7 +290,8 @@ const PRICE_KNOWN: Array<{ file: string; text: string; why: string }> = [
 const PRICE_KNOWN_KEYS = new Set<string>(["settings.fluxSpendLimits"]);
 // UX-L2C monthly meter (1.0.19): the feature is Flux's own billed figure against the owner's limit, so these lines name
 // what Flux billed. Copy per designs/UX-L2C-METER-FLUX-1018.md, MurageMain 11-04. Each key is exact; a new one is caught.
-const PRICE_KNOWN_UX_KEYS = new Set<string>(["ux.l2c.month.billed", "ux.l2c.month.ofLimit", "ux.l2c.usage.subtitle"]);
+// MAIN RULING INT-CONFLICT-DEFAULT 10ebc7cfb31c / dc1038b388: the pause renderer's independent 2386b0e417fb copy review approves these exact account-meter explanations; all other copy and negative fixtures stay scanned.
+const PRICE_KNOWN_UX_KEYS = new Set<string>(["ux.l2c.month.billed", "ux.l2c.month.ofLimit", "ux.l2c.usage.subtitle", "ux.l2c.pause.promise", "ux.l2c.pause.accountBilled", "ux.l2c.pause.accountOfLimit"]);
 
 describe("product copy rules", () => {
   it("the desktop app's own windows and dialogs show no em dash, no safe and never the connection service's name", () => {

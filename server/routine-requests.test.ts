@@ -1,3 +1,6 @@
+import { lookupApproval, readApproval } from './decision/index.ts';
+import { Store, type Message } from './store.ts';
+import { routineServiceFixture, clearServiceQueueFixture } from './testing/service-queue-fixture.ts';
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,8 +9,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   RoutineRequestError,
-  RoutineRequestService,
   routineRequestFingerprint,
+  routineProposalDigest,
   type RoutineProposalInput,
   type RoutineRequestMessage,
   type RoutineRequestOptionCard,
@@ -73,7 +76,7 @@ function harness(
     startTurn: async () => {},
   });
   const store = new MemoryStore();
-  const service = new RoutineRequestService({
+  const service = routineServiceFixture({
     store,
     routines,
     now: () => clock.now,
@@ -101,6 +104,53 @@ function malformedProposal(value: JsonValue): RoutineProposalInput {
   // Zod boundary; production callers receive the schema-derived type.
   return value as RoutineProposalInput;
 }
+
+it.each(['direct', 'room', 'room-task'] as const)('service fixture preserves %s request identity and requesting-member attribution', async kind => {
+  const { routines } = harness();
+  const roster = new Store(() => ({ instanceId: 'fixture', model: 'fixture' }));
+  const lead = roster.createBot({ name: 'Room lead' });
+  const requester = roster.createBot({ name: 'Requesting member' });
+  const room = roster.createGroup('Approval fixture', [lead.id, requester.id], false, undefined,
+    { defaultResponder: { kind: 'member', botId: lead.id }, completed: true });
+  const threadId = kind === 'direct' ? requester.threadId : kind === 'room' ? room.threadId : roster.createGroupTask(room.id, 'Fixture task', false)!.threadId;
+  const rows: Message[] = [];
+  // Fixture consumer owner: r1-service-fixture. Durable card producer owner: Store/decision.
+  // The projection retains the real roster while decision presentations use the isolated DB.
+  const store = {
+    get bots() { return roster.bots; },
+    get groups() { return roster.groups; },
+    messagesFor: (_thread: string) => rows,
+    appendMessage: (_thread: string, input: Omit<Message, 'id' | 'at'>) => {
+      const row = { ...input, id: `projection-${rows.length}`, at: Date.now() };
+      rows.push(row); return row;
+    },
+    patchMessage: (_thread: string, id: string, patch: Partial<Message>) => {
+      const row = rows.find(message => message.id === id);
+      if (!row) return null;
+      Object.assign(row, patch); return row;
+    },
+  };
+  const service = () => routineServiceFixture({ store, routines });
+  const proposal = await service().propose({ botId: requester.id, threadId, proposal: createProposal() });
+  expect(routines.listRoutines()).toHaveLength(0);
+  expect(rows).toHaveLength(1);
+  const message = rows[0], record = lookupApproval(threadId, message.id)!;
+  expect(record).toMatchObject({ botId: requester.id, threadId, chatMessageId: message.id, state: 'open' });
+  expect(record.queue?.ref).toBe(proposal.requestId);
+  expect(message.id).toBe(proposal.messageId);
+  expect(message.card).toMatchObject({ approvalId: record.ref.approvalId, actionHash: record.actionHash });
+  if (kind === 'direct') expect(message.from).toBeUndefined();
+  else expect(message.from).toEqual({ botId: requester.id, name: requester.name, color: requester.color });
+  const persisted = new Store().messageById(threadId, message.id);
+  expect(persisted).toMatchObject({ id: message.id, card: { approvalId: record.ref.approvalId, actionHash: record.actionHash } });
+  expect(persisted?.from).toEqual(message.from);
+  // Recreate the service before answering; the durable decision keeps its identity.
+  const answer = { botId: requester.id, threadId, requestId: proposal.requestId, behavior: 'allow' };
+  expect(service().resolve(answer).state).toBe('applied');
+  expect(service().resolve(answer).state).toBe('already_settled');
+  expect(routines.listRoutines()).toHaveLength(1);
+  expect(readApproval(record.ref.approvalId)).toMatchObject({ actionHash: record.actionHash, chatMessageId: message.id, state: 'answered', delivery: 'accepted' });
+});
 
 function cardFingerprint(card: RoutineRequestOptionCard, messageId: string): string {
   if (!card.routineRequest) throw new Error("missing routine request payload");
@@ -1311,7 +1361,7 @@ describe("cross-bot routine targeting", () => {
       startTurn: async () => {},
     });
     const store = new MemoryStore();
-    const service = new RoutineRequestService({
+    const service = routineServiceFixture({
       store,
       routines,
       now: () => clock.now,
@@ -1405,4 +1455,41 @@ describe("SL-M: a confirmed chat proposal for a repeating routine starts each ru
     expect(once.routine.carryLastReport).toBeUndefined();
     expect(once.detail).not.toContain("last run's report");
   });
+});
+
+it('bot-create: confirmation is held without enabling a routine until its staged target activates', async () => {
+  const {store, routines, clock} = harness();
+  let staged = true; const held: unknown[] = [];
+  const service = routineServiceFixture({store, routines, now:()=>clock.now, holdTarget: (target, payload) => { if (!staged) return false; held.push({target,payload}); return true; }});
+  const proposed = await service.propose({botId:'bot-a', threadId:'thread-a', proposal:{...createProposal(),forBot:{botId:'bot-b',name:'Ops'}}});
+  const answer = {botId:'bot-a',threadId:'thread-a',requestId:proposed.requestId,behavior:'allow'};
+  expect(service.resolve(answer)).toMatchObject({claimed:true,state:'held'});
+  expect(routines.listRoutines()).toHaveLength(0); expect(held).toHaveLength(1);
+  staged=false;
+  expect(service.resolve(answer)).toMatchObject({claimed:true,state:'applied'});
+  expect(routines.listRoutines()).toHaveLength(1);
+});
+
+
+it('a changed routine review leaves the registered answer open and can be reviewed again', async () => {
+  clearServiceQueueFixture('routine');
+  const { service, store, routines } = harness();
+  const proposal = await service.propose({ botId:'bot-a', threadId:'thread-a', proposal:createProposal() });
+  const message = store.messagesFor('thread-a')[0]!;
+  const title = message.card!.title;
+  const digest = message.card!.routineProposalDigest;
+  message.card!.title = 'Changed after review';
+  const answer = { botId:'bot-a', threadId:'thread-a', requestId:proposal.requestId, behavior:'allow' };
+  expect(service.resolve(answer)).toMatchObject({ claimed:true, state:'invalid', status:409 });
+  expect(lookupApproval('thread-a',message.id)?.state).toBe('open');
+  expect(service.pendingApprovals()).toHaveLength(1);
+  expect(routines.listRoutines()).toHaveLength(0);
+  message.card!.routineProposalDigest = routineProposalDigest(message.card!.routineRequest!,message.card!);
+  expect(service.resolve(answer)).toMatchObject({ claimed:true, state:'invalid', status:409 });
+  expect(lookupApproval('thread-a',message.id)?.state).toBe('open');
+  message.card!.title = title;
+  message.card!.routineProposalDigest = digest;
+  expect(service.resolve(answer)).toMatchObject({ claimed:true, state:'applied' });
+  expect(lookupApproval('thread-a',message.id)?.state).toBe('answered');
+  expect(routines.listRoutines()).toHaveLength(1);
 });

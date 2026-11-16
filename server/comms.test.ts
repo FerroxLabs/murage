@@ -13,30 +13,46 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { request as httpRequest } from "node:http";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { queuedDelegationsByThread } from "./pending-delegations-schema.ts";
 
 
 import { mentionedBots, normalizeGroupDefaultResponder, roomResponders } from "./store.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { ASK_STOP_NOTE } from "./drivers/ask-stop.ts";
+import { allInstanceConfigs } from "./config.ts";
+import { fixtureMessageEvidence } from "./testing/display-fixture.ts";
+import { CommsWireFixture } from "./testing/comms-wire-fixture.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
 // The fake engines announce their MCP servers ready under Grok Build's own name, as the real engine does
 // (drivers/acp/grok.ts mcpReadyNotification). A build that stays silent is held for the full MCP_REQUIRED_WAIT_MS
 // before every first prompt (drivers/acp/core.ts waitMcpReady), which is longer than these tests' turn windows.
-const GROK_MCP_READY = { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized" };
+// The reviewed new3-g2 readiness fixture also answers the exact per-server list RPC.
+const GROK_MCP_READY = { FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized", FAKE_ACP_MCP_LIST: "all:ready" };
 const FAKE_AGY_CLI = join(SERVER_DIR, "testing", "fake-agy-cli.ts");
-const PORT = 18800 + Math.floor(Math.random() * 10_000);
-const BASE = `http://127.0.0.1:${PORT}`;
 /** The renderer's proof, pinned for this child. See `api` below. */
 const DESKTOP_SECRET = "c0ffee00c0ffee11".repeat(4);
-/** Set by comms-recall-skip.test.ts: the server skips every overlapped memory recall (testing/recall-skip-preload.mjs). */
-const RECALL_SKIP = process.env.MURAGE_TEST_COMMS_RECALL_SKIP === "1";
+
+function fixtureEvidenceDirectory(...parts: string[]): string {
+  const root = resolve(process.env.SC_ISSUES_EVIDENCE ?? join(tmpdir(), "murage-comms-evidence"));
+  const away = relative(resolve(SERVER_DIR, ".."), root);
+  if (!(away === ".." || away.startsWith("../") || away.startsWith("..\\")) || root.startsWith("/dev/")) throw new Error("Fixture evidence must stay outside the checkout");
+  return join(root, "chief-capability", "C02", ...parts);
+}
+
+
+// MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: submit the actual displayed action; retain every peer gate and delivery check.
+function peerRequestHandle(row: any): string {
+  const display = row;
+  expect(display.card.requestId).toBeUndefined();
+  expect(display.card.requestHandle).toBe(`p.${row.id}`);
+  return display.card.requestHandle;
+}
 
 describe("mentionedBots", () => {
   const peers = [
@@ -132,7 +148,13 @@ describe("roomResponders", () => {
   });
 });
 
-describe("comms e2e (fake ACP fleet)", () => {
+// Each recall mode owns a fresh server and home. Preserve every original scenario,
+// including the wrapper entry, and check the focused dispatch cases after each turn.
+describe.each(process.env.MURAGE_TEST_COMMS_RECALL_SKIP === "1" ? ["recall skipped"] : ["normal recall", "recall skipped"])("comms e2e (fake ACP fleet, %s)", (recallMode) => {
+  const recallSkip = recallMode === "recall skipped";
+  const PORT = 18800 + Math.floor(Math.random() * 10_000);
+  const BASE = `http://127.0.0.1:${PORT}`;
+  // Preserve all original scenarios in each recall mode.
   let child: ChildProcess;
   let home: string;
   let gateFile = "";
@@ -155,13 +177,56 @@ describe("comms e2e (fake ACP fleet)", () => {
    * assertions would be checking the phone's view of a conversation only the
    * desktop is shown — and the marker on its own stopped being believed: the
    * harness wants this launch's desktop secret alongside it. */
-  const api = (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
+  // MAIN RULING INT-CONFLICT-DEFAULT de1ff54d75 a62419d6d5: retain raw HTTP cards and submit their public handles directly.
+  const wireFixture=new CommsWireFixture();
+  // This scenario includes the person's exact-card approval of the requested
+  // creation and handoff. Exercise the real owner endpoint, never a grant stub.
+  async function approveFixtureTeamRequest(chiefId:string):Promise<void> {
+    const answered=new Set<string>();const deadline=Date.now()+20_000;
+    let created=false,continued=false;
+    while(Date.now()<deadline) {
+      const state=(await api("GET","/api/bots")).body;
+      const chief=state.bots.find((bot:any)=>bot.id===chiefId);
+      const operator=state.bots.find((bot:any)=>bot.name==="Pixel"&&bot.section==="Launch");
+      if(created&&operator&&!chief?.busy&&!continued) {
+        continued=true;
+        const reply=await api("POST",`/api/bots/${chiefId}/messages`,{text:"Continue with Pixel and delegate the design review."});
+        if(reply.status!==202)throw new Error(`Fixture owner continuation refused status=${reply.status}`);
+      }
+      if(continued&&operator&&!operator.busy&&operator.messages?.some((message:any)=>message.text?.includes("hello from fake acp"))) {
+        // The asserted handoff has finished. Retire the fixture lead's wake so
+        // it cannot contact a bot created by the next scenario.
+        const stopped=await api("POST",`/api/bots/${chiefId}/interrupt`,{all:true});
+        if(stopped.status!==200)throw new Error(`Fixture lead cleanup refused status=${stopped.status}`);
+        return;
+      }
+      for(const message of chief?.messages??[]) {
+        const card=message.card;if(!card||card.answered||card.dismissed)continue;
+        const writer=card.writer;
+        if(card.kind==="own-write"&&writer?.tool==="create_bot"&&writer.state==="waiting"&&typeof card.requestId==="string"&&!answered.has(card.requestId)) {
+          const spec=JSON.parse(writer.detail);
+          if(spec.name!=="Pixel"||spec.role!=="Product designer"||spec.instructions!=="Design and review the user experience.")throw new Error("Fixture owner was offered a different creation");
+          const answer=await api("POST",`/api/bots/${chiefId}/respond`,{requestId:card.requestId,behavior:"allow",stateRevision:writer.stateRevision});
+          if(answer.status!==200)throw new Error(`Fixture owner creation refused status=${answer.status}`);
+          answered.add(card.requestId);created=true;
+        }
+        if(created&&operator&&card.tool==="delegate_bot"&&card.title?.includes("@Pixel")&&typeof card.requestHandle==="string"&&!answered.has(card.requestHandle)) {
+          const answer=await api("POST",`/api/bots/${chiefId}/respond`,{requestHandle:card.requestHandle,action:"allow"});
+          if(answer.status!==200)throw new Error(`Fixture owner handoff refused status=${answer.status}`);
+          answered.add(card.requestHandle);
+        }
+      }
+      await new Promise(done=>setTimeout(done,50));
+    }
+    throw new Error("Fixture owner's requested team did not finish");
+  }
+  const api = (method: string, path: string, body?: unknown): Promise<{ status: number; body: any; wireBody?: any }> => {
     // One fresh connection per request (`agent: false`, `connection: close`).
     // fetch() pools keep-alive sockets; under load the pooled socket can be
     // reaped by the server just as the client reuses it, which surfaces as
     // "fetch failed / read ECONNRESET" on an unrelated call. Nothing here
     // depends on connection reuse, so never reuse one.
-    const payload = body ? JSON.stringify(body) : undefined;
+    const payload = body ? JSON.stringify(path.endsWith("/respond")?wireFixture.request(body):body) : undefined;
     return new Promise((resolve, reject) => {
       const req = httpRequest(
         `${BASE}${path}`,
@@ -181,7 +246,21 @@ describe("comms e2e (fake ACP fleet)", () => {
           res.on("error", reject);
           res.on("end", () => {
             try {
-              resolve({ status: res.statusCode ?? 0, body: JSON.parse(Buffer.concat(chunks).toString("utf8")) });
+              const wireBody=JSON.parse(Buffer.concat(chunks).toString("utf8"));
+              // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 183bf374c2: keep independent native-id and public click-destination checks.
+              const holders = [...(wireBody.bots ?? []), ...(wireBody.groups ?? [])].filter(item => Array.isArray(item.messages));
+              const displayed = holders.flatMap(item => item.messages).filter(display => display.card?.kind !== "own-write");
+              if (displayed.length) {
+                const stored = fixtureMessageEvidence(join(home, ".murage", "messages.db"), displayed);
+                for (let at = 0; at < displayed.length; at++) {
+                  const row = stored[at], display = displayed[at];
+                  if (row.comm?.groupId) {
+                    expect(display.comm?.groupId).toBe(row.comm.groupId);
+                    expect(display.comm?.withBotId).toBe(row.comm.withBotId);
+                  }
+                }
+              }
+              resolve({ status: res.statusCode ?? 0, body: wireFixture.observe(wireBody),wireBody });
             } catch (error) {
               reject(error);
             }
@@ -197,13 +276,27 @@ describe("comms e2e (fake ACP fleet)", () => {
     chmodSync(FAKE_CLI, 0o755);
     chmodSync(FAKE_AGY_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "murage-comms-test-"));
+    // Producer owner: c3-memory (real native meter fixture); consumer owner:
+    // sc-safety (this private server). Background recall keeps its actual
+    // byte-admission VFS; the engine-lock stand-in cannot grant BG writes.
+    const {prepareMemoryMeterFixture}=await import("./memory/testing/native-meter-fixture.ts");
+    prepareMemoryMeterFixture(process.env.MURAGE_FIXTURE_IMPORT_ROOT ?? home);
+    const nativeMeter=process.env.MURAGE_ENGINE_EXCLUSION_PATH;
+    if(!nativeMeter)throw new Error("Fixture native I/O meter was not prepared");
     gateFile = join(home, "helper-gate");
     helperHangRpc = join(home, "helper-hang-rpc.json");
     mkdirSync(join(home, ".murage"), { recursive: true });
     writeFileSync(
       join(home, ".murage", "config.json"),
       JSON.stringify({
+        // Keep operator births on this fake fleet even when the host has Fuigo.
+        engineDiscovery: "explicit",
         instances: {
+          recallProbe: {
+            driver: "grokAgent",
+            environment: { ...GROK_MCP_READY, FAKE_ACP_MODE: "happy" },
+            config: { cli: FAKE_CLI, fullAuto: true },
+          },
           // the ask-peer fleet: both bots run "ask-peer" so A can ask B
           // synchronously (existing ask_bot e2e + the approval-gate e2e,
           // which uses the same sync path under a human card).
@@ -296,7 +389,9 @@ describe("comms e2e (fake ACP fleet)", () => {
     const env: NodeJS.ProcessEnv = {
       HOME: home,
       USERPROFILE: home,
+      MURAGE_ENGINE_EXCLUSION_PATH: nativeMeter,
       MURAGE_PORT: String(PORT),
+      MURAGE_TEST_COMMS_OBSERVATIONS: join(home, "comms-mounts.jsonl"),
       // Pinned through the dev injection so the caller above can hold the
       // same secret the harness minted. A packaged child ignores this.
       MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
@@ -308,9 +403,17 @@ describe("comms e2e (fake ACP fleet)", () => {
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
     // RECALL-SKIP-DROP (comms-recall-skip.test.ts): the same suite with every overlapped recall skipped, the branch a
     // slow machine takes when recall runs past RECALL_WAIT_MS.
-    const preload = RECALL_SKIP ? ["--import", pathToFileURL(join(SERVER_DIR, "testing", "recall-skip-preload.mjs")).href] : [];
-    if (RECALL_SKIP) env.MURAGE_TEST_RECALL_SKIP = "1";
+    const preload = recallSkip ? ["--import", pathToFileURL(join(SERVER_DIR, "testing", "recall-skip-preload.mjs")).href] : [];
+    preload.push("--import", pathToFileURL(join(SERVER_DIR, "testing", "mount-evidence-preload.mjs")).href);
+    // This child runs only the fake fleet under its disposable home. Like the
+    // verification launcher, opt into the test-only host-power seam; the
+    // container does not carry the packaged bwrap executable.
+    env.NODE_ENV = "test";
+    preload.push("--import", pathToFileURL(join(SERVER_DIR, "testing", "comms-mount-observer.mjs")).href);
+    preload.push("--import", "data:text/javascript,globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;");
+    if (recallSkip) env.MURAGE_TEST_RECALL_SKIP = "1";
     child = spawn(process.execPath, [...preload, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env,
       stdio: ["ignore", "pipe", "pipe"],
@@ -331,20 +434,81 @@ describe("comms e2e (fake ACP fleet)", () => {
     }
   }, 30_000);
 
+  if (recallSkip) {
+    let recallLogStart = 0;
+    beforeEach(async () => {
+      recallLogStart = stderr.length;
+      // The fake engine picks the first visible peer. Retire the previous
+      // scenario's roster, demoting Chiefs as the current PATCH contract requires.
+      for (const existing of (await api("GET", "/api/bots")).body.bots) {
+        expect((await api("PATCH", `/api/bots/${existing.id}`, { hidden: true, ...(existing.chiefOfStaff ? { chiefOfStaff: false } : {}) })).status).toBe(200);
+      }
+    });
+    afterEach((context) => {
+      if (!["takes the recall-skip branch on a bot's turn (RECALL-SKIP-DROP)", "carries a question from bot A through the agents proxy to bot B and back", "hands the task off async via delegate_bot and lets B run after A's turn settles", "queues an ask_bot to a busy peer as a delegation and delivers it once the peer frees up", "converts a timed-out ask into a delegation and delivers the late reply", "starts the delegating bot's continuation when a direct delegate_bot hand-off returns", "blocks ask_bot behind a card and only runs B after the user allows", "refuses ask_bot with a denial chip and never starts B when the user denies"].includes(context.task.name)) return;
+      // Check each focused scenario's own turns.
+      expect(stderr).toContain("RECALL_SKIP_PRELOAD forced");
+      expect(stderr.slice(recallLogStart)).toMatch(/memory recall skipped thread=\S+ engine=\S+ reason=budget/);
+    });
+  }
+
+
+  beforeEach(async context=>{
+    if(context.task.name!=="lets a section Chief create a safe operator and delegate work to it")return;
+    // Make the test's documented birth fallback concrete in each fresh fleet.
+    for(const existing of (await api("GET","/api/bots")).body.bots)if(!existing.hidden)
+      await api("PATCH",`/api/bots/${existing.id}`,{hidden:true,...(existing.chiefOfStaff?{chiefOfStaff:false}:{})});
+    const baseline=(await api("POST","/api/bots")).body.bot;
+    await api("PATCH",`/api/bots/${baseline.id}`,{name:"Fixture birth baseline",modelSelection:{instanceId:"grok",model:"fake-model"}});
+  });
+
+  // Fixture evidence only: capture actual server state before deleting this
+  // isolated home. No result, role, card field or permission is synthesized.
+  afterEach(async context => {
+    const directory=process.env.SC_COMMS_TRACE_DIR;
+    if(!directory || context.task.result?.state!=="fail")return;
+    const output=resolve(directory);
+    if(!relative(process.cwd(),output).startsWith("..") || output.startsWith("/dev/"))throw new Error("Fixture evidence must be outside the repository");
+    mkdirSync(output,{recursive:true});
+    const state=(await api("GET","/api/bots")).wireBody;
+    const db=new DatabaseSync(join(home,".murage","messages.db"),{readOnly:true});
+    let requests:unknown[]=[],recall:unknown;
+    try {
+      requests=db.prepare("SELECT id,target_thread_id,to_bot_id,verb,state FROM room_requests WHERE from_kind='bot' ORDER BY created_at DESC LIMIT 12").all();
+      recall={views:db.prepare("SELECT view_id,generation,authority_epoch,roster_revision,state,scope_count,digest,watermark FROM memory_recall_views").all(),contexts:db.prepare("SELECT * FROM memory_recall_contexts").all(),epoch:db.prepare("SELECT * FROM memory_recall_epoch").all(),policy:db.prepare("SELECT id,state FROM memory_scope_bindings WHERE id='memory-roster-policy'").all()};
+    }
+    finally {db.close();}
+    const threads=[];
+    for(const row of requests as Array<{target_thread_id?:string}>)if(row.target_thread_id)threads.push({threadId:row.target_thread_id,body:(await api("GET",`/api/threads/${row.target_thread_id}/messages`)).body});
+    writeFileSync(join(output,`${recallMode.replaceAll(" ","-")}-${context.task.name.replace(/[^a-z0-9]/gi,"-")}.json`),JSON.stringify({state,requests,threads,recall,stderr},null,2));
+  });
+
   afterAll(async () => {
     await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(home);
   });
 
-  it.runIf(RECALL_SKIP)("takes the recall-skip branch on a bot's turn (RECALL-SKIP-DROP)", async () => {
-    // The skip is forced, so every later test in this run sends its turns without recall. Prove it is really taken.
+  it("keeps the fake ACP fleet independent of installed engines", () => {
+    const config = JSON.parse(readFileSync(join(home, ".murage", "config.json"), "utf8"));
+    // A real Fuigo discovered on the host must never become the default for
+    // Pixel (or any other bot born without an explicit model selection).
+    expect(Object.keys(allInstanceConfigs(config)).sort()).toEqual(Object.keys(config.instances).sort());
+  });
+
+  if (recallSkip) it("takes the recall-skip branch on a bot's turn (RECALL-SKIP-DROP)", async () => {
+    // Prove both that recall was skipped and that the engine answered. Merely
+    // becoming idle also happens when engine launch fails.
     for (const existing of (await api("GET", "/api/bots")).body.bots) await api("PATCH", `/api/bots/${existing.id}`, { hidden: true });
     const bot = (await api("POST", "/api/bots")).body.bot;
-    await api("PATCH", `/api/bots/${bot.id}`, { name: "SkipProbe", modelSelection: { instanceId: "grok", model: "fake-model" } });
+    await api("PATCH", `/api/bots/${bot.id}`, { name: "SkipProbe", modelSelection: { instanceId: "recallProbe", model: "fake-model" } });
     expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "hello" })).status).toBe(202);
     // the rewrite's own marker (testing/recall-skip-loader.mjs), then this probe's own skip line
-    await waitUntil(async () => stderr.includes("RECALL_SKIP_PRELOAD forced") && /memory recall skipped thread=\S+ engine=grok reason=budget/.test(stderr), 20_000, "the forced recall skip never ran");
-    await waitUntil(async () => !(await api("GET", "/api/bots?messages=0")).body.bots.find((b: any) => b.id === bot.id).busy, 20_000, "the probe turn never settled");
+    await waitUntil(async () => stderr.includes("RECALL_SKIP_PRELOAD forced") && /memory recall skipped thread=\S+ engine=recallProbe reason=budget/.test(stderr), 20_000, "the forced recall skip never ran");
+    await waitUntil(async () => {
+      const current = (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === bot.id);
+      return !current.busy && current.messages.some((m: any) =>
+        m.kind === "text" && m.role === "bot" && m.text === "hello from fake acp");
+    }, 20_000, "the probe engine never answered after recall was skipped");
   });
 
   it("seals the internal comms endpoints behind the boot token", async () => {
@@ -463,13 +627,24 @@ describe("comms e2e (fake ACP fleet)", () => {
         const deadline = Date.now() + 30_000;
         let askerBot: any;
         let helperBot: any;
+        // MAIN RULING 1114-SC-SAFETY-MANAGED-ASK: refuse the real checked card and retain the Ask-stop and zero-peer outcomes.
+        let brokerCardRaised = false;
         for (;;) {
           const state = (await api("GET", "/api/bots")).body;
           askerBot = state.bots.find((bot: any) => bot.id === asker.id);
           helperBot = state.bots.find((bot: any) => bot.id === helper.id);
+          if (level === "ask" && !brokerCardRaised) {
+            const card = askerBot.messages.find((m: any) => m.kind === "options" && m.card?.tool === "mcp__murage-agents__ask_bot" && !m.card.answered)?.card;
+            if (card) {
+              expect(card.requestHandle).toMatch(/^p\.[\w-]+$/);
+              expect(card.requestId).toBeUndefined();
+              brokerCardRaised = true;
+              expect((await api("POST", `/api/bots/${asker.id}/respond`, { requestHandle: card.requestHandle, action: "deny" })).status).toBe(200);
+            }
+          }
           const ended = askerBot.messages.some(
             (message: any) => message.kind === "text" && message.role === "bot" && message.turnTerminal === true
-              && message.text?.includes(reaches ? "peer says:" : "peer error: agents MCP not mounted"),
+              && message.text?.includes(reaches ? "peer says:" : "peer error:"),
           );
           if (ended && !askerBot.busy) break;
           if (Date.now() > deadline) {
@@ -482,6 +657,7 @@ describe("comms e2e (fake ACP fleet)", () => {
         expect(askerBot.messages.some((m: any) => m.text?.includes("peer says:"))).toBe(reaches);
         // At Ask the turn ends as the Ask stop, with its note, never as the owner's Stop.
         if (level === "ask") {
+          expect(brokerCardRaised).toBe(true);
           expect(askerBot.messages.some((m: any) => m.kind === "activity" && m.tool?.notice === true && m.tool?.name === ASK_STOP_NOTE)).toBe(true);
           expect(askerBot.messages.some((m: any) => m.kind === "activity" && m.tool?.name === "Stopped by you")).toBe(false);
         }
@@ -512,6 +688,9 @@ describe("comms e2e (fake ACP fleet)", () => {
         text: "Create the specialist team and start the design review.",
       });
       expect(send.status).toBe(202);
+      // The scenario explicitly drives the existing owner creation and handoff
+      // decisions; HTTP observation itself has no side effects.
+      await approveFixtureTeamRequest(chief.id);
 
       const deadline = Date.now() + 30_000;
       let operator: any;
@@ -535,8 +714,8 @@ describe("comms e2e (fake ACP fleet)", () => {
         composio: false,
         autoApprove: false,
         approvePeerComms: false,
-        // From 1.0.15 a specialist the Chief creates with no model_selection is born on Fuigo when Fuigo can answer (BIRTH-FUIGO: a later bot
-        // is born on Fuigo whatever the Chief is on); the fleet's `grok` instance is the Fuigo here, the Chief's `chiefCreator` is not.
+        // With no usable Fuigo in this explicit fleet, birth falls back to
+        // the oldest visible bot's grok selection, not the section Chief's.
         modelSelection: { instanceId: "grok", model: "fake-model" },
       });
       expect(operator.chiefOfStaff).toBeFalsy();
@@ -885,8 +1064,8 @@ describe("comms e2e (fake ACP fleet)", () => {
           return Boolean(current?.busy);
         }, 10_000, "helper never became busy behind the approval card");
         expect((await api("POST", `/api/bots/${asker.id}/respond`, {
-          requestId: approvalCard.card.requestId,
-          behavior: "allow",
+          requestHandle: peerRequestHandle(approvalCard),
+          action: "allow",
         })).status).toBe(200);
 
         await waitUntil(async () => {
@@ -933,7 +1112,7 @@ describe("comms e2e (fake ACP fleet)", () => {
             try { return bounded(readFileSync(join(home, ".murage", name), "utf8"), 24000); }
             catch { return null; }
           };
-          const directory = join(SERVER_DIR, "..", ".planning", "chief-capability-evidence", "C02", "E1");
+          const directory = fixtureEvidenceDirectory("E1");
           mkdirSync(directory, { recursive: true });
           writeFileSync(join(directory, `reload-${process.pid}-${diagnosticStartedAt}.json`), JSON.stringify({
             startedAt: diagnosticStartedAt, reloadStartedAt, reloadFinishedAt, endedAt: Date.now(),
@@ -1488,7 +1667,7 @@ describe("comms e2e (fake ACP fleet)", () => {
         askerBot = state.bots.find((b: any) => b.id === asker.id);
         helperBot = state.bots.find((b: any) => b.id === helper.id);
         card = askerBot.messages.find(
-          (m: any) => m.kind === "options" && m.card?.requestId && m.card?.tool === "ask_bot",
+          (m: any) => m.kind === "options" && m.card?.requestHandle && m.card?.tool === "ask_bot",
         );
         const helperStarted =
           helperBot.messages.some((m: any) => m.role === "user" && m.kind === "text") ||
@@ -1516,7 +1695,7 @@ describe("comms e2e (fake ACP fleet)", () => {
       const allow = await api(
         "POST",
         `/api/bots/${asker.id}/respond`,
-        { requestId: card.card.requestId, behavior: "allow" },
+        { requestHandle: peerRequestHandle(card), action: "allow" },
       );
       expect(allow.status).toBe(200);
 
@@ -1573,7 +1752,7 @@ describe("comms e2e (fake ACP fleet)", () => {
       askerBot = state.bots.find((b: any) => b.id === asker.id);
       helperBot = state.bots.find((b: any) => b.id === helper.id);
       card = askerBot.messages.find(
-        (m: any) => m.kind === "options" && m.card?.requestId && m.card?.tool === "ask_bot",
+        (m: any) => m.kind === "options" && m.card?.requestHandle && m.card?.tool === "ask_bot",
       );
       if (card) break;
       if (Date.now() > cardDeadline) {
@@ -1587,7 +1766,7 @@ describe("comms e2e (fake ACP fleet)", () => {
     const deny = await api(
       "POST",
       `/api/bots/${asker.id}/respond`,
-      { requestId: card.card.requestId, behavior: "deny" },
+      { requestHandle: peerRequestHandle(card), action: "deny" },
     );
     expect(deny.status).toBe(200);
 
@@ -1719,6 +1898,9 @@ describe("comms e2e (fake ACP fleet)", () => {
     );
     expect(reply.text).toContain("hello from fake acp");
     expect(reply.text).toContain("agents tools available at depth 1");
+    const mounts = readFileSync(join(home, "comms-mounts.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
+    expect(mounts.filter(row => row.botId === helper.id).map(row => row.depth)).toContain("1");
+    expect(mounts.every(row => row.privateWireFields === false)).toBe(true);
     expect(reply.text).toContain(asker.id);
     expect(reply.text).not.toContain("peer error");
   }, 45_000);
@@ -1737,7 +1919,7 @@ describe("comms e2e (fake ACP fleet)", () => {
     const receiptPrefix = `batch-${process.pid}-${startedAt}`;
     let latestState: any[] = [chief, ...helpers];
     let gateReleasedAt: number | null = null;
-    const capture = (phase: "gate" | "failure", failure?: unknown) => {
+    const capture = (phase: "gate" | "settled" | "failure", failure?: unknown) => {
       try {
         const helperIds = new Set(helpers.map(helper => helper.id));
         const redact = (value: unknown, limit: number) => String(value ?? "")
@@ -1763,7 +1945,7 @@ describe("comms e2e (fake ACP fleet)", () => {
               attempts: item.attempts, waitingOnBusy: item.waitingOnBusy, depth: item.depth,
               message: redact(item.message, 500),
             })) : []) : null;
-        const directory = join(SERVER_DIR, "..", ".planning", "chief-capability-evidence", "C02");
+        const directory = fixtureEvidenceDirectory();
         mkdirSync(directory, { recursive: true });
         writeFileSync(join(directory, `${receiptPrefix}-${phase}.json`), JSON.stringify({
           phase, at: Date.now(), startedAt, gateReleasedAt,
@@ -1808,14 +1990,25 @@ describe("comms e2e (fake ACP fleet)", () => {
       gateReleasedAt = Date.now();
       capture("gate");
       let completed = 0;
+      let leadSettled = false;
       while (Date.now() < deadline) {
         const state = (await api("GET", "/api/bots")).body.bots;
         latestState = state;
         completed = state.filter((bot: any) => helpers.some(helper => helper.id === bot.id) && !bot.busy && bot.messages.some((message: any) => message.role === "bot" && message.kind === "text" && message.text?.includes("batch work"))).length;
-        if (completed === 8) break;
+        const lead = state.find((bot: any) => bot.id === chief.id);
+        leadSettled = !lead.busy && lead.messages.some((message: any) => message.role === "bot" && message.kind === "text" && message.text === "BATCH RESUMED: read the teammates' replies");
+        if (completed === 8 && leadSettled) break;
         await new Promise(resolve => setTimeout(resolve, 100));
       }
       expect(completed).toBe(8);
+      expect(leadSettled).toBe(true);
+      // A result wake must not make the fake assign a second batch. Merely
+      // observing eight idle helpers could catch a gap between extra batches.
+      for (const helper of helpers) {
+        const bot = latestState.find(bot => bot.id === helper.id);
+        expect(bot.messages.filter((message: any) => message.role === "user" && /\bbatch work \d+\b/.test(message.text ?? ""))).toHaveLength(1);
+      }
+      capture("settled");
     } catch (error) {
       capture("failure", error);
       throw error;

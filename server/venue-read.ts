@@ -7,7 +7,7 @@
 // state at the call. Every refusal is a 403 with one fixed line and no lines, R10 budget refusals included (design 4.3 R10 amended); a
 // malformed limit or cursor on an authorised venue is 400 with a neutral line (design 4.4); any throw is L1.
 import type { DatabaseSync } from "node:sqlite";
-import { isWorkspaceOwner, threadHumanPrincipal, WORKSPACE_OWNER } from "./human-principals.ts";
+import { isWorkspaceOwner, pairedOwnerBinding, threadHumanPrincipal, WORKSPACE_OWNER, type PairedOwner } from "./human-principals.ts";
 import { executionStore, sameThreadPartition, threadPartition } from "./execution-audience.ts";
 import { turnAudienceIsOwner } from "./owner-audience.ts";
 import { projectSettingsFor } from "./project-records.ts";
@@ -37,6 +37,9 @@ export type VenueReadLive = {
   notOwnerAudience(threadId: string): boolean;
   /** store.bots and store.groups now */
   roster(): { bots: BotRecord[]; groups: GroupRecord[] };
+  /** CROSS-CHAT-PAIRED-DM-1019: the thread's live routine run, when it is a channel run for a workspace-owner principal with no
+   * not-owner mark (routines.activeRunOrigin); null otherwise. Absent: no paired read is ever authorised. */
+  pairedRun?(threadId: string): PairedOwner | null;
 };
 let live: VenueReadLive | null = null;
 export function setVenueReadLive(next: VenueReadLive | null): void { live = next; }
@@ -54,6 +57,21 @@ export function venueReadMounts(input: {
     && (!input.chainRootThreadId || input.rootOwnerSurface === true)
     && input.automationSource === undefined && !input.projectCardRun && !input.sharedWorkRun
     && !input.automationThread && ownDirectThread(input.bot, input.threadId) && input.agentsMcp === true;
+}
+
+/** The paired-DM mount (CROSS-CHAT-PAIRED-DM-1019 step 3): the owner's own paired Telegram/Slack/Discord DM. venueReadMounts is not
+ * widened (venuePostMounts calls it, so no paired turn can post). `run` is the thread's live channel run for a workspace-owner
+ * principal (VenueReadLive.pairedRun); it must name the same binding and revision as the thread's own row, verified live. Returns the
+ * binding the record carries, or null. */
+export function pairedVenueReadMounts(input: Omit<Parameters<typeof venueReadMounts>[0], "origin"> & { origin?: string; cardContinuation?: unknown; askerWake?: unknown },
+  run: PairedOwner | null | undefined, db: DatabaseSync): PairedOwner | null {
+  if (!run || input.origin !== undefined || input.automationSource !== "channel") return null;
+  // a held card replay or an asker wake carries the stored channel options; neither is the owner's DM message itself (Grok r1 M1)
+  if (input.cardContinuation !== undefined || input.askerWake !== undefined) return null;
+  if (!input.surfacesForOwner || !input.directOwnerAudience || input.notOwnerAudience === true || input.chainNotOwner) return null;
+  if (input.chainRootThreadId !== undefined || input.projectCardRun || input.sharedWorkRun || input.agentsMcp !== true) return null;
+  if (!ownDirectThread(input.bot, input.threadId)) return null;
+  return pairedOwnerBinding(input.threadId, run, db);
 }
 
 /** The bot's main chat or one of its own tasks that is neither a project desk nor shared work. */
@@ -125,10 +143,19 @@ export function authorizeVenueRead(db: DatabaseSync, claim: { botId: string; thr
     if (record.attempts > VENUE_READ_ATTEMPTS) return refuse(403, VENUE_READ_LIMIT);
     const { botId, threadId } = record;
     // R2: the audience now
-    if (record.origin !== "desktop" && record.origin !== "companion") return L1();
+    if (record.origin === "paired") {
+      // CROSS-CHAT-PAIRED-DM-1019 step 4: the channel run is still live for the same owner binding, and the binding is still active, the
+      // owner's and at the same revision now; a chain never qualifies
+      const paired = record.paired;
+      if (!paired || record.rootThreadId !== undefined) return L1();
+      const run = live.pairedRun?.(threadId);
+      if (!run || run.bindingId !== paired.bindingId || run.revision !== paired.revision) return L1();
+      if (!pairedOwnerBinding(threadId, paired, db)) return L1();
+    } else if (record.origin !== "desktop" && record.origin !== "companion") return L1();
     if (live.ownerSurface(threadId) !== true) return L1();
     if (live.notOwnerAudience(threadId)) return L1();
-    if (!turnAudienceIsOwner(threadId, { origin: record.origin, ...(record.rootThreadId ? { rootThreadId: record.rootThreadId } : {}) }, db)) return L1();
+    const audienceOrigin = record.origin === "paired" ? undefined : record.origin;
+    if (!turnAudienceIsOwner(threadId, { ...(audienceOrigin ? { origin: audienceOrigin } : {}), ...(record.rootThreadId ? { rootThreadId: record.rootThreadId } : {}) }, db)) return L1();
     if (record.rootThreadId && live.ownerSurface(record.rootThreadId) !== true) return L1();
     if (!isWorkspaceOwner(threadHumanPrincipal(threadId, db))) return L1();
     // R3: the bot's own direct thread, held by no room and no other bot
@@ -150,7 +177,7 @@ export function authorizeVenueRead(db: DatabaseSync, claim: { botId: string; thr
 }
 
 /** The route's whole answer (index.ts /api/internal/venue/read-messages): authorise, read the page, and map every refusal to its line. */
-export function serveVenueRead(db: DatabaseSync, claim: { botId: string; threadId: string; generation: string }, body: Record<string, unknown>): { status: number; body: unknown } {
+export function serveVenueRead(db: DatabaseSync, claim: { botId: string; threadId: string; generation: string }, body: Record<string, unknown>, consumingTurn?: import("./memory/lineage-types.ts").TurnLineage): { status: number; body: unknown } {
   const verdict = authorizeVenueRead(db, claim, body);
   if (!verdict.ok) return { status: verdict.status, body: verdict.body };
   const handler = venueToolHandlers.get("read-messages");
@@ -158,7 +185,7 @@ export function serveVenueRead(db: DatabaseSync, claim: { botId: string; threadI
   const { record } = verdict;
   let result: { status: number; body: unknown };
   try {
-    result = handler({ db, venueId: verdict.venueId, botId: record.botId, consumingThreadId: record.threadId, input: verdict.input, options: verdict.options,
+    result = handler({ db, consumingTurn, venueId: verdict.venueId, botId: record.botId, consumingThreadId: record.threadId, input: verdict.input, options: verdict.options,
       // R10, second half: past the line budget the page returns nothing
       charge: lines => { if (record.lines + lines > VENUE_READ_LINES) return false; record.lines += lines; return true; } });
   } catch {

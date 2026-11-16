@@ -1,0 +1,591 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "sol (sc-mail-r1/r2 author sessions)",
+  "date": "2026-11-13",
+  "base": "7c9ce6fe",
+  "scope": "sc-mail-r3 independent continuation-session review of inherited writer copy; user explicitly requests this session to record verdicts",
+  "strings": {
+    "en:ownWrite.title": {
+      "text": "Review this change",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain purpose and an obvious review action; the exact proposed change appears immediately below. Translation preserves the English state and action."
+    },
+    "en:ownWrite.allow": {
+      "text": "Allow",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "One primary action, using the same verb as permission cards. Translation preserves the English state and action."
+    },
+    "en:ownWrite.deny": {
+      "text": "Don’t allow",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear secondary refusal; no implied effect. Translation preserves the English state and action."
+    },
+    "en:ownWrite.waiting": {
+      "text": "Waiting for you",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Short status with a word, independent of colour. Translation preserves the English state and action."
+    },
+    "en:ownWrite.approved": {
+      "text": "Approved",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Distinct approval state; does not claim the change is already applied. Translation preserves the English state and action."
+    },
+    "en:ownWrite.applying": {
+      "text": "Making this change",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Names work in progress without promising completion. Translation preserves the English state and action."
+    },
+    "en:ownWrite.applied": {
+      "text": "Change made",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Short completed status, shown only after the committed result. Translation preserves the English state and action."
+    },
+    "en:ownWrite.declined": {
+      "text": "Not allowed",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Clear refusal status. Translation preserves the English state and action."
+    },
+    "en:ownWrite.expired": {
+      "text": "Expired",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Short inactive status; no active Allow is rendered. Translation preserves the English state and action."
+    },
+    "en:ownWrite.unknown": {
+      "text": "This change may or may not have been made. Check the result before trying again.",
+      "en": "This change may or may not have been made. Check the result before trying again.",
+      "verdict": "pass",
+      "note": "Accurately states uncertainty and gives the safe next step without claiming success or failure. Translation preserves the English state and action."
+    },
+    "en:ownWrite.restored": {
+      "text": "This request came from a backup. Ask your bot to try again.",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains why this backup request cannot be replayed and gives one next step. Translation preserves the English state and action."
+    },
+    "en:ownWrite.unavailable": {
+      "text": "This change could not be made. Ask your bot to try again.",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains that this attempt could not proceed and gives a next step; separate from the unknown-outcome state. Translation preserves the English state and action."
+    },
+    "de:ownWrite.title": {
+      "text": "Diese Änderung prüfen",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain purpose and an obvious review action; the exact proposed change appears immediately below. Translation preserves the English state and action."
+    },
+    "de:ownWrite.allow": {
+      "text": "Erlauben",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "One primary action, using the same verb as permission cards. Translation preserves the English state and action."
+    },
+    "de:ownWrite.deny": {
+      "text": "Nicht erlauben",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear secondary refusal; no implied effect. Translation preserves the English state and action."
+    },
+    "de:ownWrite.waiting": {
+      "text": "Wartet auf dich",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Short status with a word, independent of colour. Translation preserves the English state and action."
+    },
+    "de:ownWrite.approved": {
+      "text": "Genehmigt",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Distinct approval state; does not claim the change is already applied. Translation preserves the English state and action."
+    },
+    "de:ownWrite.applying": {
+      "text": "Änderung wird vorgenommen",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Names work in progress without promising completion. Translation preserves the English state and action."
+    },
+    "de:ownWrite.applied": {
+      "text": "Änderung vorgenommen",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Short completed status, shown only after the committed result. Translation preserves the English state and action."
+    },
+    "de:ownWrite.declined": {
+      "text": "Nicht erlaubt",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Clear refusal status. Translation preserves the English state and action."
+    },
+    "de:ownWrite.expired": {
+      "text": "Abgelaufen",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Short inactive status; no active Allow is rendered. Translation preserves the English state and action."
+    },
+    "de:ownWrite.unknown": {
+      "text": "Diese Änderung wurde möglicherweise vorgenommen. Prüfe das Ergebnis, bevor du es erneut versuchst.",
+      "en": "This change may or may not have been made. Check the result before trying again.",
+      "verdict": "pass",
+      "note": "Accurately states uncertainty and gives the safe next step without claiming success or failure. Translation preserves the English state and action."
+    },
+    "de:ownWrite.restored": {
+      "text": "Diese Anfrage stammt aus einer Sicherung. Bitte deinen Bot, es erneut zu versuchen.",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains why this backup request cannot be replayed and gives one next step. Translation preserves the English state and action."
+    },
+    "de:ownWrite.unavailable": {
+      "text": "Die Änderung war nicht möglich. Bitte deinen Bot, es erneut zu versuchen.",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains that this attempt could not proceed and gives a next step; separate from the unknown-outcome state. Translation preserves the English state and action."
+    },
+    "es:ownWrite.title": {
+      "text": "Revisar este cambio",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain purpose and an obvious review action; the exact proposed change appears immediately below. Translation preserves the English state and action."
+    },
+    "es:ownWrite.allow": {
+      "text": "Permitir",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "One primary action, using the same verb as permission cards. Translation preserves the English state and action."
+    },
+    "es:ownWrite.deny": {
+      "text": "No permitir",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear secondary refusal; no implied effect. Translation preserves the English state and action."
+    },
+    "es:ownWrite.waiting": {
+      "text": "Esperando tu decisión",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Short status with a word, independent of colour. Translation preserves the English state and action."
+    },
+    "es:ownWrite.approved": {
+      "text": "Aprobado",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Distinct approval state; does not claim the change is already applied. Translation preserves the English state and action."
+    },
+    "es:ownWrite.applying": {
+      "text": "Realizando el cambio",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Names work in progress without promising completion. Translation preserves the English state and action."
+    },
+    "es:ownWrite.applied": {
+      "text": "Cambio realizado",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Short completed status, shown only after the committed result. Translation preserves the English state and action."
+    },
+    "es:ownWrite.declined": {
+      "text": "No permitido",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Clear refusal status. Translation preserves the English state and action."
+    },
+    "es:ownWrite.expired": {
+      "text": "Caducado",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Short inactive status; no active Allow is rendered. Translation preserves the English state and action."
+    },
+    "es:ownWrite.unknown": {
+      "text": "Puede que el cambio se haya realizado. Comprueba el resultado antes de volver a intentarlo.",
+      "en": "This change may or may not have been made. Check the result before trying again.",
+      "verdict": "pass",
+      "note": "Accurately states uncertainty and gives the safe next step without claiming success or failure. Translation preserves the English state and action."
+    },
+    "es:ownWrite.restored": {
+      "text": "Esta solicitud procede de una copia de seguridad. Pide a tu bot que lo intente de nuevo.",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains why this backup request cannot be replayed and gives one next step. Translation preserves the English state and action."
+    },
+    "es:ownWrite.unavailable": {
+      "text": "No se pudo realizar el cambio. Pide a tu bot que lo intente de nuevo.",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains that this attempt could not proceed and gives a next step; separate from the unknown-outcome state. Translation preserves the English state and action."
+    },
+    "fr:ownWrite.title": {
+      "text": "Vérifier cette modification",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain purpose and an obvious review action; the exact proposed change appears immediately below. Translation preserves the English state and action."
+    },
+    "fr:ownWrite.allow": {
+      "text": "Autoriser",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "One primary action, using the same verb as permission cards. Translation preserves the English state and action."
+    },
+    "fr:ownWrite.deny": {
+      "text": "Ne pas autoriser",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear secondary refusal; no implied effect. Translation preserves the English state and action."
+    },
+    "fr:ownWrite.waiting": {
+      "text": "En attente de ta décision",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Short status with a word, independent of colour. Translation preserves the English state and action."
+    },
+    "fr:ownWrite.approved": {
+      "text": "Approuvé",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Distinct approval state; does not claim the change is already applied. Translation preserves the English state and action."
+    },
+    "fr:ownWrite.applying": {
+      "text": "Modification en cours",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Names work in progress without promising completion. Translation preserves the English state and action."
+    },
+    "fr:ownWrite.applied": {
+      "text": "Modification effectuée",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Short completed status, shown only after the committed result. Translation preserves the English state and action."
+    },
+    "fr:ownWrite.declined": {
+      "text": "Non autorisé",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Clear refusal status. Translation preserves the English state and action."
+    },
+    "fr:ownWrite.expired": {
+      "text": "Expiré",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Short inactive status; no active Allow is rendered. Translation preserves the English state and action."
+    },
+    "fr:ownWrite.unknown": {
+      "text": "La modification a peut-être été effectuée. Vérifie le résultat avant de réessayer.",
+      "en": "This change may or may not have been made. Check the result before trying again.",
+      "verdict": "pass",
+      "note": "Accurately states uncertainty and gives the safe next step without claiming success or failure. Translation preserves the English state and action."
+    },
+    "fr:ownWrite.restored": {
+      "text": "Cette demande provient d’une sauvegarde. Demande à ton bot de réessayer.",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains why this backup request cannot be replayed and gives one next step. Translation preserves the English state and action."
+    },
+    "fr:ownWrite.unavailable": {
+      "text": "La modification a échoué. Demande à ton bot de réessayer.",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains that this attempt could not proceed and gives a next step; separate from the unknown-outcome state. Translation preserves the English state and action."
+    },
+    "hi:ownWrite.title": {
+      "text": "इस बदलाव की समीक्षा करें",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain purpose and an obvious review action; the exact proposed change appears immediately below. Translation preserves the English state and action."
+    },
+    "hi:ownWrite.allow": {
+      "text": "अनुमति दें",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "One primary action, using the same verb as permission cards. Translation preserves the English state and action."
+    },
+    "hi:ownWrite.deny": {
+      "text": "अनुमति न दें",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear secondary refusal; no implied effect. Translation preserves the English state and action."
+    },
+    "hi:ownWrite.waiting": {
+      "text": "आपके निर्णय की प्रतीक्षा है",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Short status with a word, independent of colour. Translation preserves the English state and action."
+    },
+    "hi:ownWrite.approved": {
+      "text": "स्वीकृत",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Distinct approval state; does not claim the change is already applied. Translation preserves the English state and action."
+    },
+    "hi:ownWrite.applying": {
+      "text": "बदलाव किया जा रहा है",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Names work in progress without promising completion. Translation preserves the English state and action."
+    },
+    "hi:ownWrite.applied": {
+      "text": "बदलाव हो गया",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Short completed status, shown only after the committed result. Translation preserves the English state and action."
+    },
+    "hi:ownWrite.declined": {
+      "text": "अनुमति नहीं मिली",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Clear refusal status. Translation preserves the English state and action."
+    },
+    "hi:ownWrite.expired": {
+      "text": "समय समाप्त",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Short inactive status; no active Allow is rendered. Translation preserves the English state and action."
+    },
+    "hi:ownWrite.unknown": {
+      "text": "यह बदलाव हुआ भी हो सकता है और नहीं भी। दोबारा कोशिश करने से पहले परिणाम जाँचें।",
+      "en": "This change may or may not have been made. Check the result before trying again.",
+      "verdict": "pass",
+      "note": "Accurately states uncertainty and gives the safe next step without claiming success or failure. Translation preserves the English state and action."
+    },
+    "hi:ownWrite.restored": {
+      "text": "यह अनुरोध बैकअप से आया है। अपने बॉट से दोबारा कोशिश करने को कहें।",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains why this backup request cannot be replayed and gives one next step. Translation preserves the English state and action."
+    },
+    "hi:ownWrite.unavailable": {
+      "text": "यह बदलाव नहीं हो सका। अपने बॉट से दोबारा कोशिश करने को कहें।",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains that this attempt could not proceed and gives a next step; separate from the unknown-outcome state. Translation preserves the English state and action."
+    },
+    "ja:ownWrite.title": {
+      "text": "この変更を確認",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain purpose and an obvious review action; the exact proposed change appears immediately below. Translation preserves the English state and action."
+    },
+    "ja:ownWrite.allow": {
+      "text": "許可する",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "One primary action, using the same verb as permission cards. Translation preserves the English state and action."
+    },
+    "ja:ownWrite.deny": {
+      "text": "許可しない",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear secondary refusal; no implied effect. Translation preserves the English state and action."
+    },
+    "ja:ownWrite.waiting": {
+      "text": "確認を待っています",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Short status with a word, independent of colour. Translation preserves the English state and action."
+    },
+    "ja:ownWrite.approved": {
+      "text": "承認済み",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Distinct approval state; does not claim the change is already applied. Translation preserves the English state and action."
+    },
+    "ja:ownWrite.applying": {
+      "text": "変更中",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Names work in progress without promising completion. Translation preserves the English state and action."
+    },
+    "ja:ownWrite.applied": {
+      "text": "変更しました",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Short completed status, shown only after the committed result. Translation preserves the English state and action."
+    },
+    "ja:ownWrite.declined": {
+      "text": "許可されませんでした",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Clear refusal status. Translation preserves the English state and action."
+    },
+    "ja:ownWrite.expired": {
+      "text": "期限切れ",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Short inactive status; no active Allow is rendered. Translation preserves the English state and action."
+    },
+    "ja:ownWrite.unknown": {
+      "text": "変更が行われたかどうかは不明です。再試行する前に結果を確認してください。",
+      "en": "This change may or may not have been made. Check the result before trying again.",
+      "verdict": "pass",
+      "note": "Accurately states uncertainty and gives the safe next step without claiming success or failure. Translation preserves the English state and action."
+    },
+    "ja:ownWrite.restored": {
+      "text": "このリクエストはバックアップから復元されました。ボットに再試行を依頼してください。",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains why this backup request cannot be replayed and gives one next step. Translation preserves the English state and action."
+    },
+    "ja:ownWrite.unavailable": {
+      "text": "変更できませんでした。ボットに再試行を依頼してください。",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains that this attempt could not proceed and gives a next step; separate from the unknown-outcome state. Translation preserves the English state and action."
+    },
+    "pt-br:ownWrite.title": {
+      "text": "Revisar esta alteração",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain purpose and an obvious review action; the exact proposed change appears immediately below. Translation preserves the English state and action."
+    },
+    "pt-br:ownWrite.allow": {
+      "text": "Permitir",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "One primary action, using the same verb as permission cards. Translation preserves the English state and action."
+    },
+    "pt-br:ownWrite.deny": {
+      "text": "Não permitir",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear secondary refusal; no implied effect. Translation preserves the English state and action."
+    },
+    "pt-br:ownWrite.waiting": {
+      "text": "Aguardando sua decisão",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Short status with a word, independent of colour. Translation preserves the English state and action."
+    },
+    "pt-br:ownWrite.approved": {
+      "text": "Aprovado",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Distinct approval state; does not claim the change is already applied. Translation preserves the English state and action."
+    },
+    "pt-br:ownWrite.applying": {
+      "text": "Fazendo a alteração",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Names work in progress without promising completion. Translation preserves the English state and action."
+    },
+    "pt-br:ownWrite.applied": {
+      "text": "Alteração feita",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Short completed status, shown only after the committed result. Translation preserves the English state and action."
+    },
+    "pt-br:ownWrite.declined": {
+      "text": "Não permitido",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Clear refusal status. Translation preserves the English state and action."
+    },
+    "pt-br:ownWrite.expired": {
+      "text": "Expirado",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Short inactive status; no active Allow is rendered. Translation preserves the English state and action."
+    },
+    "pt-br:ownWrite.unknown": {
+      "text": "A alteração pode ou não ter sido feita. Confira o resultado antes de tentar novamente.",
+      "en": "This change may or may not have been made. Check the result before trying again.",
+      "verdict": "pass",
+      "note": "Accurately states uncertainty and gives the safe next step without claiming success or failure. Translation preserves the English state and action."
+    },
+    "pt-br:ownWrite.restored": {
+      "text": "Esta solicitação veio de um backup. Peça ao seu bot para tentar novamente.",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains why this backup request cannot be replayed and gives one next step. Translation preserves the English state and action."
+    },
+    "pt-br:ownWrite.unavailable": {
+      "text": "Não foi possível fazer a alteração. Peça ao seu bot para tentar novamente.",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains that this attempt could not proceed and gives a next step; separate from the unknown-outcome state. Translation preserves the English state and action."
+    },
+    "zh:ownWrite.title": {
+      "text": "审核此更改",
+      "en": "Review this change",
+      "verdict": "pass",
+      "note": "Plain purpose and an obvious review action; the exact proposed change appears immediately below. Translation preserves the English state and action."
+    },
+    "zh:ownWrite.allow": {
+      "text": "允许",
+      "en": "Allow",
+      "verdict": "pass",
+      "note": "One primary action, using the same verb as permission cards. Translation preserves the English state and action."
+    },
+    "zh:ownWrite.deny": {
+      "text": "不允许",
+      "en": "Don’t allow",
+      "verdict": "pass",
+      "note": "Clear secondary refusal; no implied effect. Translation preserves the English state and action."
+    },
+    "zh:ownWrite.waiting": {
+      "text": "等待你的决定",
+      "en": "Waiting for you",
+      "verdict": "pass",
+      "note": "Short status with a word, independent of colour. Translation preserves the English state and action."
+    },
+    "zh:ownWrite.approved": {
+      "text": "已批准",
+      "en": "Approved",
+      "verdict": "pass",
+      "note": "Distinct approval state; does not claim the change is already applied. Translation preserves the English state and action."
+    },
+    "zh:ownWrite.applying": {
+      "text": "正在更改",
+      "en": "Making this change",
+      "verdict": "pass",
+      "note": "Names work in progress without promising completion. Translation preserves the English state and action."
+    },
+    "zh:ownWrite.applied": {
+      "text": "更改已完成",
+      "en": "Change made",
+      "verdict": "pass",
+      "note": "Short completed status, shown only after the committed result. Translation preserves the English state and action."
+    },
+    "zh:ownWrite.declined": {
+      "text": "未允许",
+      "en": "Not allowed",
+      "verdict": "pass",
+      "note": "Clear refusal status. Translation preserves the English state and action."
+    },
+    "zh:ownWrite.expired": {
+      "text": "已过期",
+      "en": "Expired",
+      "verdict": "pass",
+      "note": "Short inactive status; no active Allow is rendered. Translation preserves the English state and action."
+    },
+    "zh:ownWrite.unknown": {
+      "text": "此更改可能已完成，也可能未完成。请先检查结果，再重试。",
+      "en": "This change may or may not have been made. Check the result before trying again.",
+      "verdict": "pass",
+      "note": "Accurately states uncertainty and gives the safe next step without claiming success or failure. Translation preserves the English state and action."
+    },
+    "zh:ownWrite.restored": {
+      "text": "此请求来自备份。请让你的机器人重试。",
+      "en": "This request came from a backup. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains why this backup request cannot be replayed and gives one next step. Translation preserves the English state and action."
+    },
+    "zh:ownWrite.unavailable": {
+      "text": "无法完成此更改。请让你的机器人重试。",
+      "en": "This change could not be made. Ask your bot to try again.",
+      "verdict": "pass",
+      "note": "Explains that this attempt could not proceed and gives a next step; separate from the unknown-outcome state. Translation preserves the English state and action."
+    }
+  },
+  "files": {}
+}

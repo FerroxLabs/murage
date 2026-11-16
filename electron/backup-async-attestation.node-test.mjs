@@ -10,9 +10,10 @@ import {createHash} from 'node:crypto';
 import {signedAgeOwnedByCurrentAppAsync,AGE_ORIGINAL_SHA256,asyncBackupCodesign} from './backup-age-attestation.mjs';
 import {signedResticOwnedByCurrentAppAsync} from './backup-restic-attestation.mjs';
 import {RESTIC_ORIGINAL_SHA256} from '../shared/backup-restic-pin.mjs';
+import {backupNativeFixture} from './backup-native-fixture.mjs';
 for(const [name,verify,pin] of [['age',signedAgeOwnedByCurrentAppAsync,AGE_ORIGINAL_SHA256,asyncBackupCodesign],['restic',signedResticOwnedByCurrentAppAsync,RESTIC_ORIGINAL_SHA256]]){
  test(`${name} async trust preserves actual payload and all signing decisions; await replacements and abort refuse`,async()=>{
-  const bytes=readFileSync(new URL(`../dist-native/backup-${name}/arm64/${name}`,import.meta.url));assert.equal(createHash('sha256').update(bytes).digest('hex'),pin,'Actual pinned asset precondition');
+  const bytes=readFileSync(backupNativeFixture(name));assert.equal(createHash('sha256').update(bytes).digest('hex'),pin,'Actual pinned asset precondition');
   const root=realpathSync(mkdtempSync(path.join(tmpdir(),'murage-async-attestation-'))),app=path.join(root,'Murage.app'),file=path.join(app,'Contents/Resources/backup-tools/arm64',name),currentExecutable=path.join(app,'Contents/MacOS/Murage');mkdirSync(path.dirname(file),{recursive:true});mkdirSync(path.dirname(currentExecutable),{recursive:true});writeFileSync(file,bytes);writeFileSync(currentExecutable,'synthetic main');
   try{
    const calls=[];const run=async args=>{calls.push(args);await new Promise(r=>setTimeout(r,1));return {status:0,stderr:'TeamIdentifier=ABCDEFGHIJ\n'};};

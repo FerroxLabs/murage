@@ -1,0 +1,135 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "SETPAGES-A3",
+  "date": "2026-11-09",
+  "base": "cf4d07ef9",
+  "scope": "route credit lines for Fuigo and Flux rows",
+  "strings": {
+    "en:settings.route.creditUnavailable": {
+      "text": "Credit is not available right now.",
+      "en": "Credit is not available right now.",
+      "verdict": "pass"
+    },
+    "en:settings.route.noFluxKey": {
+      "text": "{engine} needs a Flux key.",
+      "en": "{engine} needs a Flux key.",
+      "verdict": "pass"
+    },
+    "en:settings.route.fluxKeyProblem": {
+      "text": "Flux did not accept your key.",
+      "en": "Flux did not accept your key.",
+      "verdict": "pass"
+    },
+    "de:settings.route.creditUnavailable": {
+      "text": "Das Guthaben ist gerade nicht abrufbar.",
+      "en": "Credit is not available right now.",
+      "verdict": "pass"
+    },
+    "de:settings.route.noFluxKey": {
+      "text": "{engine} braucht einen Flux-Schlüssel.",
+      "en": "{engine} needs a Flux key.",
+      "verdict": "pass"
+    },
+    "de:settings.route.fluxKeyProblem": {
+      "text": "Flux hat deinen Schlüssel nicht akzeptiert.",
+      "en": "Flux did not accept your key.",
+      "verdict": "pass"
+    },
+    "es:settings.route.creditUnavailable": {
+      "text": "El crédito no está disponible ahora mismo.",
+      "en": "Credit is not available right now.",
+      "verdict": "pass"
+    },
+    "es:settings.route.noFluxKey": {
+      "text": "{engine} necesita una clave de Flux.",
+      "en": "{engine} needs a Flux key.",
+      "verdict": "pass"
+    },
+    "es:settings.route.fluxKeyProblem": {
+      "text": "Flux no aceptó tu clave.",
+      "en": "Flux did not accept your key.",
+      "verdict": "pass"
+    },
+    "fr:settings.route.creditUnavailable": {
+      "text": "Le crédit n’est pas disponible pour le moment.",
+      "en": "Credit is not available right now.",
+      "verdict": "pass"
+    },
+    "fr:settings.route.noFluxKey": {
+      "text": "{engine} a besoin d’une clé Flux.",
+      "en": "{engine} needs a Flux key.",
+      "verdict": "pass"
+    },
+    "fr:settings.route.fluxKeyProblem": {
+      "text": "Flux n’a pas accepté ta clé.",
+      "en": "Flux did not accept your key.",
+      "verdict": "pass"
+    },
+    "hi:settings.route.creditUnavailable": {
+      "text": "क्रेडिट अभी उपलब्ध नहीं है।",
+      "en": "Credit is not available right now.",
+      "verdict": "pass"
+    },
+    "hi:settings.route.noFluxKey": {
+      "text": "{engine} को Flux कुंजी चाहिए।",
+      "en": "{engine} needs a Flux key.",
+      "verdict": "pass"
+    },
+    "hi:settings.route.fluxKeyProblem": {
+      "text": "Flux ने आपकी कुंजी स्वीकार नहीं की।",
+      "en": "Flux did not accept your key.",
+      "verdict": "pass"
+    },
+    "ja:settings.route.creditUnavailable": {
+      "text": "クレジットは今は確認できません。",
+      "en": "Credit is not available right now.",
+      "verdict": "pass"
+    },
+    "ja:settings.route.noFluxKey": {
+      "text": "{engine} には Flux キーが必要です。",
+      "en": "{engine} needs a Flux key.",
+      "verdict": "pass"
+    },
+    "ja:settings.route.fluxKeyProblem": {
+      "text": "Flux があなたのキーを受け付けませんでした。",
+      "en": "Flux did not accept your key.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.creditUnavailable": {
+      "text": "O crédito não está disponível agora.",
+      "en": "Credit is not available right now.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.noFluxKey": {
+      "text": "{engine} precisa de uma chave do Flux.",
+      "en": "{engine} needs a Flux key.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.route.fluxKeyProblem": {
+      "text": "O Flux não aceitou a sua chave.",
+      "en": "Flux did not accept your key.",
+      "verdict": "pass"
+    },
+    "zh:settings.route.creditUnavailable": {
+      "text": "暂时无法获取额度。",
+      "en": "Credit is not available right now.",
+      "verdict": "pass"
+    },
+    "zh:settings.route.noFluxKey": {
+      "text": "{engine} 需要 Flux 密钥。",
+      "en": "{engine} needs a Flux key.",
+      "verdict": "pass"
+    },
+    "zh:settings.route.fluxKeyProblem": {
+      "text": "Flux 未接受你的密钥。",
+      "en": "Flux did not accept your key.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

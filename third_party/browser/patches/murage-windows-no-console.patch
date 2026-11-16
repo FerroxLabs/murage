@@ -1,0 +1,202 @@
+Murage Windows no-console patch (0.36.0-omb.3). Apply after agent-browser-windows-stdio.patch and murage-control-token.fix1.patch.
+The daemon is DETACHED_PROCESS (no console), so each console-subsystem child it spawns (chrome-headless-shell.exe,
+ffmpeg, aws, this executable) opened a visible console window. Every such spawn now passes CREATE_NO_WINDOW (Windows only).
+Modified by Ferrox Labs under Apache-2.0 section 4(b).
+
+diff --git a/cli/src/native/cdp/chrome.rs b/cli/src/native/cdp/chrome.rs
+index 864e8c6..63d1521 100644
+--- a/cli/src/native/cdp/chrome.rs
++++ b/cli/src/native/cdp/chrome.rs
+@@ -824,6 +824,9 @@ fn try_launch_chrome(chrome_path: &Path, options: &LaunchOptions) -> Result<Chro
+         .stdin(Stdio::null())
+         .stdout(Stdio::null())
+         .stderr(Stdio::piped());
++    // Windows: chrome-headless-shell.exe is a console-subsystem binary and this daemon has no console
++    // (DETACHED_PROCESS), so without CREATE_NO_WINDOW every launch pops a console window.
++    crate::native::no_console::hide_std(&mut cmd);
+ 
+     // Scope the virtual display and its auth cookie to the Chrome child;
+     // the daemon's own environment is left untouched.
+diff --git a/cli/src/native/cdp/lightpanda.rs b/cli/src/native/cdp/lightpanda.rs
+index c8c6f9b..8c2c764 100644
+--- a/cli/src/native/cdp/lightpanda.rs
++++ b/cli/src/native/cdp/lightpanda.rs
+@@ -113,7 +113,10 @@ pub fn find_lightpanda() -> Option<PathBuf> {
+ 
+     #[cfg(windows)]
+     {
+-        if let Ok(output) = Command::new("where").arg("lightpanda").output() {
++        let mut where_cmd = Command::new("where");
++        where_cmd.arg("lightpanda");
++        crate::native::no_console::hide_std(&mut where_cmd);
++        if let Ok(output) = where_cmd.output() {
+             if output.status.success() {
+                 let path = String::from_utf8_lossy(&output.stdout)
+                     .lines()
+@@ -162,11 +165,14 @@ pub async fn launch_lightpanda(
+     };
+     let args = build_lightpanda_serve_args(port, options.proxy.as_deref());
+ 
+-    let mut child = Command::new(&binary_path)
++    let mut lightpanda_cmd = Command::new(&binary_path);
++    lightpanda_cmd
+         .args(&args)
+         .stdin(Stdio::null())
+         .stdout(Stdio::piped())
+-        .stderr(Stdio::piped())
++        .stderr(Stdio::piped());
++    crate::native::no_console::hide_std(&mut lightpanda_cmd);
++    let mut child = lightpanda_cmd
+         .spawn()
+         .map_err(|e| format!("Failed to launch Lightpanda at {:?}: {}", binary_path, e))?;
+ 
+diff --git a/cli/src/native/mod.rs b/cli/src/native/mod.rs
+index 133a164..59aafe6 100644
+--- a/cli/src/native/mod.rs
++++ b/cli/src/native/mod.rs
+@@ -8,6 +8,7 @@ pub mod auth;
+ pub mod browser;
+ #[allow(dead_code)]
+ pub mod cdp;
++pub mod no_console;
+ #[allow(dead_code)]
+ pub mod control_token;
+ #[allow(dead_code)]
+diff --git a/cli/src/native/no_console.rs b/cli/src/native/no_console.rs
+new file mode 100644
+index 0000000..376963a
+--- /dev/null
++++ b/cli/src/native/no_console.rs
+@@ -0,0 +1,28 @@
++//! Murage patch (0.36.0-omb.3): keep child consoles from appearing on Windows.
++//!
++//! The daemon is started with DETACHED_PROCESS, so it owns no console. Every console-subsystem program it
++//! then spawns (chrome-headless-shell.exe, ffmpeg, aws, this executable itself) makes Windows allocate a
++//! brand new console window unless the spawn passes CREATE_NO_WINDOW. These helpers add that flag on
++//! Windows and do nothing elsewhere, so Unix process-group handling is untouched.
++
++#[cfg(windows)]
++const CREATE_NO_WINDOW: u32 = 0x0800_0000;
++
++/// Sets CREATE_NO_WINDOW on Windows; use only on commands with no other creation flags.
++pub fn hide_std(cmd: &mut std::process::Command) -> &mut std::process::Command {
++    #[cfg(windows)]
++    {
++        use std::os::windows::process::CommandExt;
++        cmd.creation_flags(CREATE_NO_WINDOW);
++    }
++    cmd
++}
++
++/// Sets CREATE_NO_WINDOW on Windows; use only on commands with no other creation flags.
++pub fn hide_tokio(cmd: &mut tokio::process::Command) -> &mut tokio::process::Command {
++    #[cfg(windows)]
++    {
++        cmd.creation_flags(CREATE_NO_WINDOW);
++    }
++    cmd
++}
+diff --git a/cli/src/native/providers.rs b/cli/src/native/providers.rs
+index c6848c0..9a4e2ed 100644
+--- a/cli/src/native/providers.rs
++++ b/cli/src/native/providers.rs
+@@ -659,6 +659,7 @@ mod agentcore {
+             cmd.args(["--profile", &profile]);
+         }
+ 
++        crate::native::no_console::hide_std(&mut cmd);
+         let output = cmd.output()
+             .map_err(|e| format!("Failed to run aws CLI: {}. Install AWS CLI or set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY", e))?;
+ 
+diff --git a/cli/src/native/recording.rs b/cli/src/native/recording.rs
+index cdd51c2..6b591c5 100644
+--- a/cli/src/native/recording.rs
++++ b/cli/src/native/recording.rs
+@@ -117,6 +117,7 @@ fn build_ffmpeg_command(output_path: &str) -> tokio::process::Command {
+         .stderr(Stdio::piped())
+         .kill_on_drop(true);
+ 
++    crate::native::no_console::hide_tokio(&mut cmd);
+     cmd
+ }
+ 
+diff --git a/cli/src/native/stream/chat.rs b/cli/src/native/stream/chat.rs
+index 884f22a..d68bc5d 100644
+--- a/cli/src/native/stream/chat.rs
++++ b/cli/src/native/stream/chat.rs
+@@ -504,6 +504,7 @@ pub(crate) async fn execute_chat_tool(session: &str, command: &str) -> String {
+     args.extend(cmd_words);
+ 
+     let mut cmd = tokio::process::Command::new(&exe);
++    crate::native::no_console::hide_tokio(&mut cmd);
+     cmd.args(&args)
+         .env_remove("AGENT_BROWSER_DASHBOARD")
+         .env_remove("AGENT_BROWSER_DASHBOARD_PORT")
+diff --git a/cli/src/native/stream/dashboard.rs b/cli/src/native/stream/dashboard.rs
+index cebb191..adba88f 100644
+--- a/cli/src/native/stream/dashboard.rs
++++ b/cli/src/native/stream/dashboard.rs
+@@ -926,6 +926,7 @@ async fn exec_cli(body: &str) -> Result<String, String> {
+     let exe = std::env::current_exe().map_err(|e| format!("Cannot resolve executable: {}", e))?;
+ 
+     let mut cmd = tokio::process::Command::new(&exe);
++    crate::native::no_console::hide_tokio(&mut cmd);
+     cmd.args(&args)
+         .arg("--json")
+         .env_remove("AGENT_BROWSER_DASHBOARD")
+@@ -1008,6 +1009,7 @@ pub(super) async fn spawn_session(body: &str) -> Result<String, String> {
+     let exe = std::env::current_exe().map_err(|e| format!("Cannot resolve executable: {}", e))?;
+ 
+     let mut cmd = tokio::process::Command::new(&exe);
++    crate::native::no_console::hide_tokio(&mut cmd);
+     cmd.arg("open")
+         .arg("about:blank")
+         .arg("--session")
+diff --git a/cli/src/native/webdriver/appium.rs b/cli/src/native/webdriver/appium.rs
+index 3d85a5e..5cdc011 100644
+--- a/cli/src/native/webdriver/appium.rs
++++ b/cli/src/native/webdriver/appium.rs
+@@ -165,27 +165,32 @@ async fn is_appium_running(port: u16) -> bool {
+ 
+ fn launch_appium(port: u16) -> Result<Child, String> {
+     // Try npx appium first, then direct appium
+-    let result = Command::new("npx")
++    let mut npx_cmd = Command::new("npx");
++    npx_cmd
+         .args(["appium", "--relaxed-security", "--port", &port.to_string()])
+         .stdin(Stdio::null())
+         .stdout(Stdio::piped())
+-        .stderr(Stdio::piped())
+-        .spawn();
++        .stderr(Stdio::piped());
++    crate::native::no_console::hide_std(&mut npx_cmd);
++    let result = npx_cmd.spawn();
+ 
+     match result {
+         Ok(child) => Ok(child),
+-        Err(_) => Command::new("appium")
+-            .args(["--relaxed-security", "--port", &port.to_string()])
+-            .stdin(Stdio::null())
+-            .stdout(Stdio::piped())
+-            .stderr(Stdio::piped())
+-            .spawn()
+-            .map_err(|e| {
++        Err(_) => {
++            let mut appium_cmd = Command::new("appium");
++            appium_cmd
++                .args(["--relaxed-security", "--port", &port.to_string()])
++                .stdin(Stdio::null())
++                .stdout(Stdio::piped())
++                .stderr(Stdio::piped());
++            crate::native::no_console::hide_std(&mut appium_cmd);
++            appium_cmd.spawn().map_err(|e| {
+                 format!(
+                     "Failed to launch Appium. Install it with: npm install -g appium. Error: {}",
+                     e
+                 )
+-            }),
++            })
++        }
+     }
+ }
+ 

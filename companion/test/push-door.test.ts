@@ -134,9 +134,9 @@ describe("session routes", () => {
 });
 
 describe("the origin gate", () => {
-  const identity: BoundIdentity = { scheme: "https", hosts: new Set(["mac.tailnet123.ts.net"]) };
+  const identity: BoundIdentity = { scheme: "https", hosts: new Set(["mac.tail000000.ts.net"]) };
   const req = (headers: Record<string, string>, method = "GET", url = `/api/mobile/push/${REF}`) =>
-    ({ method, url, headers: { host: "mac.tailnet123.ts.net", ...headers } }) as unknown as IncomingMessage;
+    ({ method, url, headers: { host: "mac.tail000000.ts.net", ...headers } }) as unknown as IncomingMessage;
 
   it("lets a native bearer request through without Origin or Sec-Fetch", () => {
     expect(originGate(req({ authorization: `Bearer ${DETAIL}` }), identity)).toBeNull();
@@ -175,7 +175,7 @@ describe("the origin gate", () => {
 
 describe("through the door", () => {
   const RESPOND = "murage_pr_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
-  const HOST = "mac.tailnet123.ts.net";
+  const HOST = "mac.tail000000.ts.net";
   let harness: Server;
   let door: Server;
   let doorPort = 0;
@@ -373,7 +373,7 @@ describe("the harness call always settles", () => {
 });
 
 describe("the door's revocation hop, end to end (H7 Minor 2)", () => {
-  const HOST = "mac.tailnet123.ts.net";
+  const HOST = "mac.tail000000.ts.net";
   const DEVICE = { id: "dev_1", name: "Sam's iPhone", cloudDesktopAccess: false };
   const SESSION = "murage_browser_session_value";
   let harness: Server;

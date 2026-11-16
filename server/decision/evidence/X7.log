@@ -1,0 +1,40 @@
+COMMAND node_modules/.bin/vitest run server/decision/settle-states.test.ts -t X7
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/settle-states.test.ts > R8 R9 M33 X7 two questions retain FIFO; instructions remain a normal send
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=56 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/settle-states.test.ts (6 tests | 1 failed | 5 skipped) 441ms
+   ↓ R9 never resolving transport retries same answerId, interrupts by 20s and ignores late completion
+   × R8 R9 M33 X7 two questions retain FIFO; instructions remain a normal send 437ms
+   ↓ R19 Ask→No limits answers open owner BASE before returning; webhook stays BASE
+   ↓ R19 a retained wipe card is reclassified when owner moves into No limits
+   ↓ native request.resolved retires the captured generation and preserves its replacement
+   ↓ native turn.completed retires the captured generation and preserves its replacement
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 5 skipped (6)
+   Start at  06:31:19
+   Duration  5.41s (transform 3.93s, setup 4.58s, import 268ms, tests 441ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/settle-states.test.ts > R8 R9 M33 X7 two questions retain FIFO; instructions remain a normal send
+AssertionError: expected 2 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 2
+
+ ❯ server/decision/settle-states.test.ts:9:88
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

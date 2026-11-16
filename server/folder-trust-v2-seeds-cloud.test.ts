@@ -11,12 +11,9 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The launcher needs root and a turn namespace: the engine starts directly, with the env the core built.
-vi.mock("./cloud-home/turn-process.ts", async (original) => {
-  const actual = await original<typeof import("./cloud-home/turn-process.ts")>();
-  return { ...actual, cloudTurnEnvironment: (_engine: string, source: NodeJS.ProcessEnv) => source, cloudTurnLaunch: () => null };
-});
+import * as cloudTurnProcess from "./cloud-home/turn-process.ts";
 
-import { TURN_RENDER } from "./cloud-home/turn-process.ts";
+import { TURN_RENDER, TURN_MARKER } from "./cloud-home/turn-process.ts";
 import { ensureDirs } from "./config.ts";
 import type { FolderTrustTurnInput, ProviderInstance, RuntimeEvent, SendTurnInput } from "./contracts.ts";
 import { FuigoAgentDriver } from "./drivers/acp/fuigo.ts";
@@ -51,6 +48,15 @@ posixOnly("an unrouted turn on the real Fuigo driver", () => {
   let recorder: EventRecorder;
 
   beforeEach(() => {
+    // procs is retained by setup: intercept its actual export, and preserve
+    // the real engine identity while the fake CLI uses only its scratch home.
+    vi.spyOn(cloudTurnProcess, "cloudTurnEnvironment").mockImplementation((engine, source) => ({ ...source,
+      ...(process.env.MURAGE_CLOUD_ROLE === "home" ? { [TURN_MARKER]: engine } : {}),
+    }));
+    vi.spyOn(cloudTurnProcess, "cloudTurnLaunch").mockImplementation((_command, _args, env) => {
+      if (process.env.MURAGE_CLOUD_ROLE === "home") expect(env?.[TURN_MARKER]).toBe("fuigoAgent");
+      return null;
+    });
     ensureDirs();
     chmodSync(FAKE_CLI, 0o755);
     scratch = realpathSync(mkdtempSync(join(tmpdir(), "murage-trust-cloud-")));
@@ -66,6 +72,7 @@ posixOnly("an unrouted turn on the real Fuigo driver", () => {
     await instance?.dispose();
     instance = undefined;
     vi.unstubAllEnvs();
+    vi.restoreAllMocks();
     await removeTempDir(scratch);
   });
 

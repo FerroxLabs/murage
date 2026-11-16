@@ -1,0 +1,65 @@
+{
+ "status": 402,
+ "headers": {
+  "date": "<HTTP-date>",
+  "server": "uvicorn",
+  "x-flux-alias": "deepseek-v4-flash",
+  "content-length": "308",
+  "content-type": "application/json",
+  "x-frame-options": "DENY",
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-content-type-options": "nosniff",
+  "connection": "close"
+ },
+ "body": {
+  "error": {
+   "message": "free_tier_exhausted",
+   "type": "None",
+   "param": "None",
+   "code": "402",
+   "provider_specific_fields": {
+    "error": "free_tier_exhausted",
+    "message": "Free tier monthly allowance exhausted. Upgrade to Builder ($29/mo) for $20 of included usage + BYOK.",
+    "upgrade_url": "https://fluxrouter.ai/home/billing"
+   }
+  }
+ },
+ "endpoint": "/v1/chat/completions",
+ "per_endpoint": {
+  "/v1/messages": {
+   "status": 429,
+   "headers": {
+    "content-length": "125",
+    "content-type": "application/json"
+   },
+   "body": {
+    "type": "error",
+    "error": {
+     "type": "rate_limit_error",
+     "message": "Monthly cap reached. Visit fluxrouter.ai/pricing to upgrade."
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  },
+  "/v1/responses": {
+   "status": 429,
+   "headers": {
+    "content-length": "187",
+    "content-type": "application/json"
+   },
+   "body": {
+    "error": {
+     "type": "rate_limit_exceeded",
+     "state": "cap_reached",
+     "tier": "payg",
+     "message": "Monthly cap reached. Visit fluxrouter.ai/pricing to upgrade.",
+     "upgrade_url": "fluxrouter.ai/pricing"
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  }
+ },
+ "notes": "Raised by the Flux rate limiter (src/rate_limits.py), which runs BEFORE forge_hook stamps the subscription tier. On /v1/chat/completions the forge failure hook (src/gateway.py:26070-26088) therefore sees tier='free' for EVERY key, finds 'exceeded' in str(exc) ('rate_limit_exceeded'), and rewrites the 429 into this 402 free_tier_exhausted. The original 429 body survives only on /v1/messages (message only) and /v1/responses (full dict, incl. error.state). No Retry-After / reset header on any endpoint. A PAID-tier monthly cap is told 'Free tier monthly allowance exhausted' on chat."
+}

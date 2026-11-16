@@ -80,7 +80,8 @@
 // move ctime) and the same page lists in 316-362 ms first, 3-7 ms warm,
 // plain-written and renamed alike. No further bound is applied at that cost.
 import { createHash } from "node:crypto";
-import { closeSync, constants, fchmodSync, fstatSync, futimesSync, lstatSync, openSync, readSync, unlinkSync, writeSync, type Stats } from "node:fs";
+import { writeSync } from "./counted-fs.ts";
+import { closeSync, constants, fchmodSync, fstatSync, futimesSync, lstatSync, openSync, readSync, unlinkSync, type Stats } from "node:fs";
 import { join } from "node:path";
 import { WORKSPACE_TEXT_MAX_BYTES, type FileRevision } from "../shared/workspace-files.ts";
 

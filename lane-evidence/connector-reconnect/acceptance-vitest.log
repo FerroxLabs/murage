@@ -1,0 +1,27 @@
+
+ RUN  v4.1.12 /work
+
+ ✓ server/route-policy.test.ts (45 tests) 4935ms
+     ✓ (a) every discovered route has exactly one class, and every entry is a route  1494ms
+     ✓ (C5) a bare loopback request gets the unknown-route 404 on every conversation-class route  1092ms
+     ✓ every renderer fetch of a desktop route carries the desktop's proof  1114ms
+     ✓ the hidden-bot rule covers every non-desktop route on one bot or room  1149ms
+ ✓ server/connector-health-workflow.test.ts (1 test) 23882ms
+   ✓ an idle fixture discovers a lapse, retains it through restart and missing inventory, then clears verified recovery  23879ms
+ ✓ server/connected-app-health.test.ts (19 tests) 276ms
+ ✓ server/mobile-push-outbox.test.ts (47 tests) 177ms
+ ✓ server/mobile-push-routes.test.ts (26 tests) 62ms
+ ✓ src/lib/notify.test.ts (24 tests) 27ms
+ ✓ server/mobile-push-detail.test.ts (28 tests) 19ms
+ ✓ server/notification-preferences.test.ts (11 tests) 17ms
+ ✓ src/components/ReconnectAppsBanner.test.ts (9 tests) 17ms
+ ✓ server/connector-health-store.test.ts (3 tests) 25ms
+ ✓ server/tray-summary.test.ts (14 tests) 13ms
+ ✓ src/lib/deep-link.test.ts (17 tests) 14ms
+ ✓ server/notify.test.ts (10 tests) 14ms
+
+ Test Files  13 passed (13)
+      Tests  254 passed (254)
+   Start at  02:53:12
+   Duration  46.07s (transform 4.92s, setup 12.89s, import 2.28s, tests 29.48s, environment 1ms)
+

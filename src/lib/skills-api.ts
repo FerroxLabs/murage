@@ -3,6 +3,7 @@
 //
 // Settings → Skills talks to /api/skills (server/skills-api.ts) through here.
 import { api } from "@/state/store";
+import type { SkillPagination } from "../../shared/skill-pagination";
 
 export type SkillVerdict = "clean" | "review" | "blocked";
 export interface SkillFinding { rule: string; category: string; severity: string; confidence: number; message: string; evidence: string; file: string }
@@ -32,6 +33,7 @@ export interface SkillsPage {
   builtins?: SkillSummary[];
   categories: Array<{ name: string; count: number }>;
   libraryReady: boolean;
+  pagination: SkillPagination;
 }
 
 /** The Chief of Staff guide: a built-in attached to the workspace Chief. */
@@ -60,10 +62,12 @@ export function findingLines(scan: Pick<SkillScan, "findings">): string[] {
   return [...new Set(scan.findings.map((finding) => finding.message))];
 }
 
-export function listSkills(query: { q?: string; category?: string } = {}, request: Request = api): Promise<SkillsPage> {
+export function listSkills(query: { q?: string; category?: string; offset?: number; limit?: number } = {}, request: Request = api): Promise<SkillsPage> {
   const params = new URLSearchParams();
   if (query.q?.trim()) params.set("q", query.q.trim());
   if (query.category) params.set("category", query.category);
+  if (query.offset !== undefined) params.set("offset", String(query.offset));
+  if (query.limit !== undefined) params.set("limit", String(query.limit));
   const suffix = params.toString();
   return request(`/api/skills${suffix ? `?${suffix}` : ""}`);
 }

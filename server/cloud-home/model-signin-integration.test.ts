@@ -16,12 +16,14 @@ import { CloudSessions, type CloudScope } from "../cloud-sessions.ts";
 import { cloudBodies, createCloudRequestAuth, stepPurpose } from "../cloud-request-auth.ts";
 import { handleModelGateway } from "../model-gateway.ts";
 import { ModelSignIns } from "../model-signin.ts";
+import { issueGatewayTurnCredential, revokeGatewayTurnCredentials } from "../model-gateway-release.ts";
+import { consumingFixture } from "../testing/consuming-fixture.ts";
 import { applyProviderRoute } from "../provider-routing.ts";
 import { createCloudModelSignInApi } from "./model-signin-api.ts";
 import { createCloudModelSignInClient } from "./model-signin-wire.ts";
 import { CLOUD_MODEL_SIGNINS_KEY, createHomeModelSignIn, HomeSignInError, type HomeSignInProvider } from "./model-signin.ts";
 import { SealedSecretStore } from "./secrets.ts";
-import { createSupervisorPort } from "./supervisor-port.ts";
+import { createSupervisorPort } from "../testing/composio-supervisor-fixture.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 // Protocol/preconditions: real Ed25519 owner pairing and body-bound assertions;
@@ -108,6 +110,8 @@ async function fixture(provider: HomeSignInProvider) {
     ? new Response('data: {"type":"response.completed","response":{"id":"synthetic-response","status":"completed","output":[]}}\n\ndata: [DONE]\n\n', { headers: { "content-type": "text/event-stream" } })
     : Response.json({ id: "synthetic-response", choices: [] }));
   const catalog = (id: string): ProviderCatalog => ({ connectionId: id, stale: false, assurance: "catalog-only", models: [] });
+  const turn = consumingFixture(undefined, { empty: true });
+  cleanup.push(() => { revokeGatewayTurnCredentials(turn.binding.identity.dispatchGeneration); turn.close(); });
   const server: Server = createServer(async (req, res) => {
     const url = new URL(req.url!, origin);
     if (await handleModelGateway(req, res, url.pathname, { signIns, catalog, fetch: upstream as typeof fetch })) return;
@@ -123,10 +127,17 @@ async function fixture(provider: HomeSignInProvider) {
     const bytes = body === undefined ? undefined : Buffer.from(JSON.stringify(body));
     const req = request({ host: "127.0.0.1", port, method, path, agent: false, headers: { host: "home.example", origin, ...(device ? { authorization: `Bearer ${device.accessToken}` } : {}), ...(bytes ? { "content-type": "application/json", "content-length": String(bytes.length) } : {}), ...headers } }, res => {
       const chunks: Buffer[] = []; res.on("data", chunk => chunks.push(chunk));
-      res.on("end", () => { const text = Buffer.concat(chunks).toString(); const result = { status: res.statusCode!, body: text ? JSON.parse(text) : null, cache: res.headers["cache-control"] }; publicReplies.push(result); resolve(result); });
+      res.on("end", () => {
+        try {
+          const text = Buffer.concat(chunks).toString();
+          const result = { status: res.statusCode!, body: text ? JSON.parse(text) : null, cache: res.headers["cache-control"] };
+          publicReplies.push(result); resolve(result);
+        } catch (error) { reject(error); }
+      });
     }); req.on("error", reject); req.end(bytes);
   });
   return { sessions, providerFetch, privateMessages, publicReplies, upstream, call, remove, port,
+    inferenceKey: (id: string) => issueGatewayTurnCredential(id, turn.binding),
     registry: () => signIns,
     document: () => JSON.parse(store.getAll()[CLOUD_MODEL_SIGNINS_KEY]),
     sealed: () => readFileSync(join(directory, "credentials.enc"), "utf8"),
@@ -174,7 +185,9 @@ describe("paired owner HTTP to actual home custody and private gateway", () => {
     expect((await h.call("GET", `${gatewayPath}/models`, undefined, undefined, gatewayHeaders)).status).toBe(200);
     expect((await h.call("GET", `${gatewayPath}/models`, undefined, undefined, { authorization: `Bearer ${tokens.access_token}` })).status).toBe(401);
     const inferencePath = provider === "chatgpt" ? "responses" : "chat/completions";
-    const inference = await h.call("POST", `${gatewayPath}/${inferencePath}`, undefined, { model: "synthetic-model", input: "hello", messages: [] }, gatewayHeaders);
+    // Catalog credentials cannot authorize inference. Admit the fixture's exact
+    // consuming generation through the same issuer used by real engine turns.
+    const inference = await h.call("POST", `${gatewayPath}/${inferencePath}`, undefined, { model: "synthetic-model", input: "hello", messages: [] }, { authorization: `Bearer ${h.inferenceKey(id)}` });
     expect(inference.status).toBe(200);
     expect(h.upstream).toHaveBeenCalledTimes(1);
     expect(new Headers(h.upstream.mock.calls[0][1]?.headers).get("authorization")).toBe(`Bearer ${tokens.access_token}`);

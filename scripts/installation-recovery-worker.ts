@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 import { normalizeBackupAgeDiagnostic } from "../electron/backup-age-attestation.mjs";
 import { installationRecoveryCommand } from "../server/installation-recovery-command.ts";
 import { recoveryDesktopSummary } from "../electron/installation-recovery-protocol.mjs";

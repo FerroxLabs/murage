@@ -1,0 +1,237 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "l8-ui-e562781f0a",
+  "date": "2026-11-13",
+  "base": "d03c8dfdbb756269e5a876b73a65dcd471e89c10",
+  "scope": "Imported L8 UI strings; unchanged from e562781f0a, reviewed during sc-activate-r2 integration",
+  "strings": {
+    "en:ux.l4b.heading": {
+      "text": "Ask about this screen",
+      "en": "Ask about this screen",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.label": {
+      "text": "Your question",
+      "en": "Your question",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.placeholder": {
+      "text": "What would you like to know?",
+      "en": "What would you like to know?",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.answers": {
+      "text": "{name} answers",
+      "en": "{name} answers",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.sentFrom": {
+      "text": "(Asked from help on the {screen} screen.)",
+      "en": "(Asked from help on the {screen} screen.)",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.preview": {
+      "text": "Message preview",
+      "en": "Message preview",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.before": {
+      "text": "Your question and this screen's name go to {name}'s chat. Its usual memory and permissions apply. Replies count toward usage.",
+      "en": "Your question and this screen's name go to {name}'s chat. Its usual memory and permissions apply. Replies count toward usage.",
+      "verdict": "pass",
+      "note": "Names the exact disclosed content, destination, normal permissions and usage; no hidden attachment or transcript claim."
+    },
+    "en:ux.l4b.ask": {
+      "text": "Ask",
+      "en": "Ask",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.openInChat": {
+      "text": "Open in chat",
+      "en": "Open in chat",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.done": {
+      "text": "Done",
+      "en": "Done",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.sending": {
+      "text": "Sending your question…",
+      "en": "Sending your question…",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.queued": {
+      "text": "Your question is in line.",
+      "en": "Your question is in line.",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.working": {
+      "text": "{name} is answering.",
+      "en": "{name} is answering.",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.approval": {
+      "text": "{name} needs your approval.",
+      "en": "{name} needs your approval.",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.saved": {
+      "text": "Saved in {name}'s chat.",
+      "en": "Saved in {name}'s chat.",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.removed": {
+      "text": "Removed from the line.",
+      "en": "Removed from the line.",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.refused": {
+      "text": "Your question could not start.",
+      "en": "Your question could not start.",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.failed": {
+      "text": "Your question did not send.",
+      "en": "Your question did not send.",
+      "verdict": "pass",
+      "note": "Used for the definitive not-submitted failure state; does not label an uncertain result as failed."
+    },
+    "en:ux.l4b.submittedFailed": {
+      "text": "Your question was sent, but the answer could not finish.",
+      "en": "Your question was sent, but the answer could not finish.",
+      "verdict": "pass",
+      "note": "Separates saved question admission from a finished answer; the resend flow still requires duplicate confirmation."
+    },
+    "en:ux.l4b.stopped": {
+      "text": "Stopped.",
+      "en": "Stopped.",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.unknown": {
+      "text": "We couldn't confirm what happened.",
+      "en": "We couldn't confirm what happened.",
+      "verdict": "pass",
+      "note": "Preserves uncertainty; makes no completion or delivery promise."
+    },
+    "en:ux.l4b.indexing": {
+      "text": "Preparing faster conversation access.",
+      "en": "Preparing faster conversation access.",
+      "verdict": "pass",
+      "note": "Owner-facing description of the conversation-access preparation; contains no schema, index or protocol detail."
+    },
+    "en:ux.l4b.indexSaved": {
+      "text": "Your message is saved. Try sending again shortly.",
+      "en": "Your message is saved. Try sending again shortly.",
+      "verdict": "pass",
+      "note": "The retained question remains saved while the ordinary send is unavailable; gives the next action without a timing promise."
+    },
+    "en:ux.l4b.removing": {
+      "text": "Removing your question…",
+      "en": "Removing your question…",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.stopping": {
+      "text": "Stopping…",
+      "en": "Stopping…",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.removeFailed": {
+      "text": "Could not remove it.",
+      "en": "Could not remove it.",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.stopFailed": {
+      "text": "Could not confirm it stopped.",
+      "en": "Could not confirm it stopped.",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.missing": {
+      "text": "Open chat to check this question.",
+      "en": "Open chat to check this question.",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.duplicate": {
+      "text": "This may send your question twice.",
+      "en": "This may send your question twice.",
+      "verdict": "pass",
+      "note": "Warns of duplicate delivery before the explicit resend confirmation."
+    },
+    "en:ux.l4b.removeFromLine": {
+      "text": "Remove from line",
+      "en": "Remove from line",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.tryAgain": {
+      "text": "Try again",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.checkAgain": {
+      "text": "Check again",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.sendAgain": {
+      "text": "Send again",
+      "en": "Send again",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.stop": {
+      "text": "Stop",
+      "en": "Stop",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.cancel": {
+      "text": "Cancel",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.noChief": {
+      "text": "Add a Chief to ask questions.",
+      "en": "Add a Chief to ask questions.",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    },
+    "en:ux.l4b.addChief": {
+      "text": "Add a Chief",
+      "en": "Add a Chief",
+      "verdict": "pass",
+      "note": "Plain existing Help action or status. Names the current question and preserves the scoped chat identity; no permission or success promise added."
+    }
+  },
+  "files": {}
+}

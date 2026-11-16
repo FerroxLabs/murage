@@ -81,3 +81,21 @@ describe("the hand-off is recorded where it is dispatched", () => {
     expect(source).toContain("handoffFrom: opts.handoffSourceThreadId");
   });
 });
+
+it('owner No limits may receive its own partition hand-off while the original and destination proofs still hold', () => {
+  let noLimits = false;
+  const check = ownUnsharedWorkCheck({
+    bot: id => ({ id }),
+    isOwnUnsharedThread: (_bot, threadId) => threadId === 'work',
+    isOwnerNoLimitsSource: (_bot, threadId) => noLimits && threadId === 'owner',
+    message,
+  });
+  const who = { fromBotId: 'owner-bot', toBotId: 'worker', fromThreadId: 'owner' };
+  const origin = { threadId: 'work', messageIds: ['b1'] };
+  expect(check(who, origin)).toBe(false);
+  noLimits = true;
+  expect(check(who, origin)).toEqual({ reader: 'owner' });
+  expect(check(who, { threadId: 'work', messageIds: ['b0'] })).toBe(false);
+  expect(check(who, { ...origin, threadId: 'another-person' })).toBe(false);
+  expect(check({ ...who, fromThreadId: 'another-person' }, origin)).toBe(false);
+});

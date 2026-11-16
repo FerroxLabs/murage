@@ -15,7 +15,7 @@ import {
 } from "../src/seller";
 
 const HASH = renewalSha256("Pro: US$99 a month plus tax\nCharged today, then on the same date each month until you cancel.");
-const LINKS = { terms: "https://c.test/cloud-terms", tos: "https://c.test/terms-of-service", privacy: "https://c.test/privacy-policy" };
+const LINKS = { terms: "https://c.test/cloud-terms", tos: "https://c.test/terms-of-service", privacy: "https://c.test/privacy-policy", flux: "https://fluxrouter.ai/terms-of-service" };
 const input = (over: Partial<SessionInput> = {}): SessionInput => ({ customerId: "cus_1", homeId: "home-1", plan: "pro", priceId: "price_1", fpTid: "tid_1",
   successUrl: "https://c.test/ok", cancelUrl: "https://c.test/no", consentId: "consent-1", renewalSha256: HASH, expiresAtSeconds: 1_900_000_000, locale: "en", submitLinks: LINKS, ...over });
 const keys = (f: Record<string, unknown>) => Object.entries(f).filter(([, v]) => v !== undefined && v !== null).map(([k]) => k);
@@ -96,7 +96,7 @@ describe("Test 8: every path x locale", () => {
   it("the exact direct sentences (EN per plan, DE) and the exact Managed Payments label and option (EN, DE)", () => {
     for (const [plan, usd] of [["starter", 49], ["pro", 99], ["max", 149]] as const)
       expect(sessionParams("ferrox", input({ plan }))["custom_text[submit][message]"]).toBe(`Renews each month at US$${usd} + tax until you cancel in your account. `
-        + "By submitting your order you agree to the [Murage Cloud terms](https://c.test/cloud-terms) and [Terms of Service](https://c.test/terms-of-service). [Privacy Policy](https://c.test/privacy-policy).");
+        + "By submitting your order you confirm you are 18 or older, and you agree to the [Murage Cloud terms](https://c.test/cloud-terms), [Terms of Service](https://c.test/terms-of-service) and [Flux Router Terms of Service](https://fluxrouter.ai/terms-of-service). [Privacy Policy](https://c.test/privacy-policy).");
     expect(sessionParams("ferrox", input({ locale: "de" }))["custom_text[submit][message]"]).toMatch(/^Verlängert sich monatlich für 99 US\$ zzgl\. Steuern, bis Sie im Konto kündigen\. Mit dem Absenden/);
     const en = sessionParams("link", input({ submitLinks: undefined })); const de = sessionParams("link", input({ locale: "de", submitLinks: undefined }));
     expect([en["custom_fields[0][label][custom]"], en["custom_fields[0][dropdown][options][0][label]"]]).toEqual(["Your plan renews each month at the total shown until you cancel in your account.", "OK, renew monthly until I cancel (in my currency with tax; exchange rates can change the amount)"]);
@@ -108,7 +108,7 @@ describe("Test 8: every path x locale", () => {
     const f = sessionParams("ferrox", input({ locale: checkoutLocale("US", "de") }));
     expect(f.locale).toBe("de");
     expect(matches(f, "custom_fields")).toEqual([]);
-    expect(f["custom_text[submit][message]"]).toContain("Mit dem Absenden Ihrer Bestellung stimmen Sie den [Murage-Cloud-Bedingungen](https://c.test/cloud-terms) und den [Nutzungsbedingungen](https://c.test/terms-of-service) zu. [Datenschutzerklärung](https://c.test/privacy-policy).");
+    expect(f["custom_text[submit][message]"]).toContain("Mit dem Absenden Ihrer Bestellung bestätigen Sie, dass Sie mindestens 18 Jahre alt sind, und stimmen den [Murage-Cloud-Bedingungen](https://c.test/cloud-terms), den [Nutzungsbedingungen](https://c.test/terms-of-service) und den [Nutzungsbedingungen von Flux Router](https://fluxrouter.ai/terms-of-service) zu. [Datenschutzerklärung](https://c.test/privacy-policy).");
   });
   it("DE and AT: the forced locale reaches both paths whatever language was asked for", () => {
     for (const country of ["DE", "AT"]) for (const seller of ["ferrox", "link"] as const)
@@ -120,7 +120,7 @@ describe("Test 8: every path x locale", () => {
   });
   it("direct names the full submit variant by default and honours the short one", () => {
     expect(SUBMIT_TEXT_VARIANT).toBe("full");
-    expect(sessionParams("ferrox", input({ submitVariant: "short" }))["custom_text[submit][message]"]).toBe("Renews each month at US$99 + tax until you cancel in your account. You also agree to the [Terms of Service](https://c.test/terms-of-service).");
+    expect(sessionParams("ferrox", input({ submitVariant: "short" }))["custom_text[submit][message]"]).toBe("Renews each month at US$99 + tax until you cancel in your account. You also confirm you are 18 or older, and you agree to the [Terms of Service](https://c.test/terms-of-service) and [Flux Router Terms of Service](https://fluxrouter.ai/terms-of-service).");
   });
   it("direct refuses to build without the submit links", () => {
     expect(() => DIRECT_PATH.sessionForm(input({ submitLinks: undefined }))).toThrow("session_submit_links_missing");

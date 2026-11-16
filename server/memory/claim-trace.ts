@@ -27,6 +27,12 @@ export function timedStep<T>(name: string, step: () => T, sink: Sink = defaultSi
   try { return step(); } finally { traceSlowStep(name, performance.now() - started, sink); }
 }
 
+/** One receipt slice of an index-result: `ms` is the whole slice (commit fsync included), `rowMs` the row work alone. Numbers only. */
+export function traceIndexSlice(ms: number, rowMs: number, rows: number, sink: Sink = defaultSink): void {
+  if (!turnTraceEnabled()) return;
+  sink(`[turn-trace] phase=memory.indexSlice ms=${ms.toFixed(1)} rowMs=${rowMs.toFixed(1)} rows=${Math.trunc(rows)}`);
+}
+
 let lastDecade = -2;
 export function resetBacklogTrace(): void { lastDecade = -2; }
 /** Log the pending backlog once at start, then whenever it crosses a power of ten (either way). */

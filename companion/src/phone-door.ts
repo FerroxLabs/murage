@@ -99,7 +99,7 @@ export const MINTED_DEADLINE_MS = 8_000;
 /** S5b (Astra AS2): after a fresh mint, ask the harness to clear the device's revocation barrier.
  * "ok" only for a 200 answer carrying `ok: true`; "not-offered" for a 404; anything else, a throw or
  * the deadline is "failed". Same call pattern as phoneHarnessRevoke (launch proof, companion headers). */
-export async function phoneHarnessMinted(harness: HarnessCall, launchProof: string | undefined, deviceId: string, deadlineMs = MINTED_DEADLINE_MS, scope: "jobs" | "ask" = "jobs"): Promise<"ok" | "not-offered" | "failed"> {
+export async function phoneHarnessMinted(harness: HarnessCall, launchProof: string | undefined, deviceId: string, deadlineMs = MINTED_DEADLINE_MS, scope: "jobs" | "ask" = "jobs", wantsDeviceId = false): Promise<"ok" | "not-offered" | "failed"> {
   if (typeof launchProof !== "string" || !/^[a-f0-9]{64}$/.test(launchProof)) return "failed";
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -109,7 +109,7 @@ export async function phoneHarnessMinted(harness: HarnessCall, launchProof: stri
         path: "/api/phones/minted",
         headers: { accept: "application/json", "content-type": "application/json", "x-murage-companion": "1", "x-murage-companion-token": launchProof },
         // The jobs body is unchanged; an ask mint says so, so the harness does not treat it as a jobs enrolment.
-        body: Buffer.from(JSON.stringify(scope === "ask" ? { deviceId, scope } : { deviceId })),
+        body: Buffer.from(JSON.stringify(scope === "ask" ? { deviceId, scope, ...(wantsDeviceId ? { wantsDeviceId: true } : {}) } : { deviceId })),
       }),
       new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), deadlineMs); }),
     ]);
@@ -166,12 +166,17 @@ export async function handlePhoneBootstrap(
   const b = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
   // The nonce goes first, even when the rest of the body is wrong.
   const held = b && typeof b.nonce === "string" ? o.challenges.take(b.nonce) : null;
-  // `scope` is optional (default "jobs"); only "jobs" and "ask" exist, and no other key is allowed.
-  const keys = b ? Object.keys(b).sort().join(",") : "";
+  // `scope` is optional (default "jobs"). `want: ["deviceId"]` opts into returning
+  // the caller's pairing id; shipped mobile clients require exactly { token } otherwise.
+  // No other request keys or wanted fields are allowed. This changes only the response,
+  // not the signed message, device lookup, or mint barrier.
+  const wantsDeviceId = b !== null && Object.hasOwn(b, "want");
+  const validWant = !wantsDeviceId || (Array.isArray(b?.want) && b.want.length === 1 && b.want[0] === "deviceId");
+  const keys = b ? Object.keys(b).filter((key) => key !== "want").sort().join(",") : "";
   const scoped = keys === "expiresAt,keyId,nonce,scope,signature";
   const exact = b !== null && (scoped || keys === "expiresAt,keyId,nonce,signature");
   const scope = scoped ? (b as Record<string, unknown>).scope : "jobs";
-  if (!b || !exact || (scope !== "jobs" && scope !== "ask") || typeof b.keyId !== "string" || typeof b.nonce !== "string" || typeof b.signature !== "string" || !Number.isSafeInteger(b.expiresAt)) {
+  if (!b || !exact || !validWant || (scope !== "jobs" && scope !== "ask") || typeof b.keyId !== "string" || typeof b.nonce !== "string" || typeof b.signature !== "string" || !Number.isSafeInteger(b.expiresAt)) {
     return { status: 400, body: { error: "bad request" } };
   }
   if (scope === "ask" ? !askOffered : !offered) return { status: 404, body: { error: "no such route" } };
@@ -202,7 +207,7 @@ export async function handlePhoneBootstrap(
     unavailable();
     return { status: 503, body: { error: "unavailable" } };
   }
-  const minted = await phoneHarnessMinted(o.harness, o.doorToken, found.deviceId, o.mintedDeadlineMs, ask ? "ask" : "jobs");
+  const minted = await phoneHarnessMinted(o.harness, o.doorToken, found.deviceId, o.mintedDeadlineMs, ask ? "ask" : "jobs", ask && wantsDeviceId);
   if (minted !== "ok") {
     unavailable();
     return minted === "not-offered" ? { status: 403, body: { ...REFUSED } } : { status: 503, body: { error: "unavailable" } };
@@ -213,7 +218,7 @@ export async function handlePhoneBootstrap(
     unavailable();
     return { status: 503, body: { error: "unavailable" } };
   }
-  return { status: 200, body: { token } };
+  return { status: 200, body: wantsDeviceId ? { token, deviceId: found.deviceId } : { token } };
 }
 
 // ── bearer job routes (plan S4, Grok G2) ─────────────────────────────────
