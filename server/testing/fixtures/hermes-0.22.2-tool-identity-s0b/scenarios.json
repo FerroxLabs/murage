@@ -1,0 +1,42 @@
+[
+  {
+    "id": "video-analyze",
+    "tool": "video_analyze",
+    "input": {
+      "video_url": "/tmp/s0b-work/missing.mp4",
+      "question": "s0b"
+    }
+  },
+  {
+    "id": "unregistered-memory",
+    "tool": "memory: x",
+    "direct": true,
+    "input": {
+      "action": "add",
+      "target": "memory",
+      "content": "s0b unregistered name"
+    }
+  },
+  {
+    "id": "unregistered-zz",
+    "tool": "zz",
+    "direct": true,
+    "input": {
+      "text": "s0b unknown"
+    }
+  },
+  {
+    "id": "execute-code-plain",
+    "tool": "execute_code",
+    "input": {
+      "code": "print(\"s0b plain\")"
+    }
+  },
+  {
+    "id": "execute-code-terminal",
+    "tool": "execute_code",
+    "input": {
+      "code": "from hermes_tools import terminal\nprint(terminal(command=\"python3 -c 'print(42)'\"))"
+    }
+  }
+]

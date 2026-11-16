@@ -81,6 +81,11 @@ export function openDeepLink(target: DeepLinkTarget, state: RoutingState, dispat
   // A bot link opens that bot's main chat: the bot must be one this device holds.
   const threadId = target.threadId ?? state.bots.find((bot) => bot.id === target.botId)?.threadId;
   if (!threadId) return false;
+  if (target.messageId?.startsWith("connector:")) {
+    const incidentId = target.messageId.slice("connector:".length);
+    if (!/^[0-9a-f-]{36}$/.test(incidentId)) return false;
+    return openNotificationTarget(dispatch, { threadId, reconnectIncidentId: incidentId }, state);
+  }
   const placed = openNotificationTarget(dispatch, { ...(target.botId ? { botId: target.botId } : {}), threadId }, state);
   // focusMessage pages back through scrollback until the message is held
   // (store.tsx, the wrapped "focusMessage" case). A link walks at most

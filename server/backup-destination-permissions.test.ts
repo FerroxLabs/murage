@@ -20,9 +20,20 @@ vi.mock("node:fs", async importOriginal => {
   } };
 });
 
+// Windows creates its private stage through the native transport rather than
+// fs.mkdtempSync. Inject the same kernel error at that boundary on Windows.
+vi.mock("./installation-backup-encryption.ts", async importOriginal => {
+  const actual = await importOriginal<typeof import("./installation-backup-encryption.ts")>();
+  return { ...actual, resolveWindowsBackupRuntime: async () => ({ verifyHelper: async () => {} }) };
+});
+vi.mock("./installation-windows-backup-transport.ts", async importOriginal => {
+  const actual = await importOriginal<typeof import("./installation-windows-backup-transport.ts")>();
+  return { ...actual, runWindowsBackupTransport: async () => { throw Object.assign(new Error("injected destination permissions"), { code: failure.code }); } };
+});
+
 for (const code of ["EACCES", "EPERM", "EROFS"])
   for (const operation of ["mkdir", "stat"])
-  it.skipIf(process.platform === "win32" && operation === "mkdir")(`names ${code} during destination ${operation}`, async () => {
+  it(`names ${code} during destination ${operation}`, async () => {
     const root = mkdtempSync(join(tmpdir(), "murage-readonly-backup-"));
     try {
       const data = join(root, "data"), destination = join(root, "backups");

@@ -10,9 +10,10 @@
 // APP_SCHEMA_102_ADDITIONS) and the added-table lifecycle (added-table-lifecycle.ts), and they are created only when bot email is in use, so
 // an installation with email off keeps exactly the schema it has today.
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
+import { EMAIL_PARKS_DDL, adoptLegacyParks } from "./restore.ts";
 
-export const EMAIL_TABLES = ["email_bindings", "email_sends", "email_payloads", "email_events", "email_event_cursor", "email_policy_sync", "email_trust", "email_trusted", "email_tombstones"] as const;
-export const EMAIL_INDEXES = ["email_sends_hash", "email_sends_due", "email_sends_inbox", "email_sends_generation", "email_sends_settled", "email_sends_replaces", "email_events_reference", "email_events_received"] as const;
+export const EMAIL_TABLES = ["email_bindings", "email_sends", "email_payloads", "email_events", "email_event_cursor", "email_policy_sync", "email_trust", "email_trusted", "email_tombstones", "email_parks"] as const;
+export const EMAIL_INDEXES = ["email_sends_spend_wait", "email_sends_hash", "email_sends_due", "email_sends_inbox", "email_sends_generation", "email_sends_settled", "email_sends_replaces", "email_events_reference", "email_events_received"] as const;
 
 /** The payload-prune scan cursor's scope in email_event_cursor (pruneSettledSends). */
 export const PRUNE_PAYLOADS_SCOPE = "prune:payloads";
@@ -20,10 +21,12 @@ export const PRUNE_PAYLOADS_SCOPE = "prune:payloads";
 export const EMAIL_DDL = [
   `CREATE TABLE IF NOT EXISTS email_bindings (bot_id TEXT PRIMARY KEY, inbox_id TEXT, address TEXT, username TEXT, display_name TEXT, email_key_ref TEXT, flux_account_id TEXT, state TEXT NOT NULL, step TEXT, op_id TEXT, op_started_at INTEGER, policy TEXT NOT NULL, failure TEXT, closing_until TEXT, revision INTEGER NOT NULL, updated_at INTEGER NOT NULL)`,
   `CREATE TABLE IF NOT EXISTS email_sends (send_id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, generation INTEGER NOT NULL, thread_id TEXT NOT NULL, inbox_id TEXT NOT NULL, kind TEXT NOT NULL, reply_message_id TEXT, payload_hash TEXT NOT NULL, summary TEXT NOT NULL, idem_suffix INTEGER NOT NULL, state TEXT NOT NULL, code TEXT, why TEXT, stop_requested INTEGER NOT NULL, owner_sent INTEGER NOT NULL, replaces TEXT, receipt TEXT, revision INTEGER NOT NULL, attempts TEXT NOT NULL, held_ids TEXT, approval_id TEXT, message_id TEXT, reconcile_step INTEGER NOT NULL, due_at INTEGER, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, dispatched_at INTEGER, settled_at INTEGER, delivery_note TEXT)`,
+  `CREATE INDEX IF NOT EXISTS email_sends_spend_wait ON email_sends(send_id) WHERE code='spend_limit' AND stop_requested=0 AND state IN ('prepared','held','approved_unsent')`,
   `CREATE INDEX IF NOT EXISTS email_sends_hash ON email_sends(bot_id, payload_hash)`,
   `CREATE INDEX IF NOT EXISTS email_sends_due ON email_sends(due_at) WHERE due_at IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS email_sends_inbox ON email_sends(inbox_id, state)`,
   `CREATE INDEX IF NOT EXISTS email_sends_generation ON email_sends(bot_id, generation)`,
+  `CREATE INDEX IF NOT EXISTS email_sends_attempt ON email_sends(bot_id, generation, payload_hash, created_at)`,
   `CREATE INDEX IF NOT EXISTS email_sends_settled ON email_sends(settled_at) WHERE settled_at IS NOT NULL`,
   `CREATE INDEX IF NOT EXISTS email_sends_replaces ON email_sends(replaces) WHERE replaces IS NOT NULL`,
   `CREATE TABLE IF NOT EXISTS email_payloads (send_id TEXT NOT NULL, part INTEGER NOT NULL, name TEXT, content_type TEXT, size INTEGER NOT NULL, sha256 TEXT NOT NULL, data BLOB NOT NULL, PRIMARY KEY(send_id, part)) WITHOUT ROWID`,
@@ -35,6 +38,7 @@ export const EMAIL_DDL = [
   `CREATE TABLE IF NOT EXISTS email_trust (bot_id TEXT NOT NULL, address TEXT NOT NULL, sent_at TEXT NOT NULL, tainted_at INTEGER, offer_blocked_until INTEGER, offered_at INTEGER, offer_thread TEXT, offer_reason TEXT, PRIMARY KEY(bot_id, address)) WITHOUT ROWID`,
   `CREATE TABLE IF NOT EXISTS email_trusted (bot_id TEXT NOT NULL, entry TEXT NOT NULL, rule TEXT NOT NULL, source TEXT NOT NULL, created_at INTEGER NOT NULL, PRIMARY KEY(bot_id, entry)) WITHOUT ROWID`,
   `CREATE TABLE IF NOT EXISTS email_tombstones (bot_id TEXT NOT NULL, inbox_id TEXT NOT NULL, address_hash TEXT, state TEXT NOT NULL, committed INTEGER NOT NULL, reason TEXT NOT NULL, key_id TEXT, revision INTEGER NOT NULL, created_at INTEGER NOT NULL, removed_at INTEGER, next_try_at INTEGER, PRIMARY KEY(bot_id, inbox_id))`,
+  EMAIL_PARKS_DDL,
 ] as const;
 
 export function initializeEmailTables(db: DatabaseSync): void { for (const sql of EMAIL_DDL) db.exec(sql); }
@@ -54,7 +58,7 @@ export interface SendSummary {
   replySource: ReplySource | null;
 }
 export interface ReplySource { from: string; senderAuthenticated: boolean; scanStatus: string; scanVerdict: string | null; listMail: boolean }
-export interface OwnerReceipt { sendId: string; payloadHash: string; revision: number; at: number; device: string; used: boolean }
+export interface OwnerReceipt { sendId: string; payloadHash: string; revision: number; at: number; device: string; used: boolean; authorization?: import("../approval-decision.ts").ApprovalContext }
 export interface Attempt { suffix: number; keyId: string | null; at: number; route: string; /** #32: Flux answered 2xx (stored under its key) */ answered?: boolean }
 
 export interface SendRow {
@@ -65,13 +69,13 @@ export interface SendRow {
   createdAt: number; updatedAt: number; dispatchedAt: number | null; settledAt: number | null; deliveryNote: string | null;
 }
 
-export type BindingState = "provisioning" | "active" | "failed" | "paused" | "billing_hold" | "grace" | "closing" | "removing" | "remove_requested" | "account_off" | "restored_unverified";
+export type BindingState = "provisioning" | "active" | "failed" | "paused" | "billing_hold" | "grace" | "closing" | "removing" | "remove_requested" | "removal_parked" | "account_off" | "restored_unverified";
 /** The Flux inbox states Murage mirrors from #5, send refusals and #28 lifecycle events (2.6, billing #518). `grace` receives and reads but
  *  never sends; `closing` (a Flux-side close: billing, account disabled, support) is owner-only, and `closing_until` holds Flux's date. */
 export const LIVE_BINDING_STATES: ReadonlySet<BindingState> = new Set<BindingState>(["active", "paused", "billing_hold", "grace", "closing"]);
 export interface BindingRow {
   botId: string; inboxId: string | null; address: string | null; username: string | null; displayName: string | null; emailKeyRef: string | null;
-  fluxAccountId: string | null; state: BindingState; step: "key" | "inbox" | null; opId: string | null; opStartedAt: number | null; policy: "ask" | "auto";
+  fluxAccountId: string | null; state: BindingState; step: "key" | "inbox" | "restored" | null; opId: string | null; opStartedAt: number | null; policy: "ask" | "auto";
   failure: string | null;
   /** Flux's closing_until (ISO) while the inbox is `closing`; null in every other state. */
   closingUntil: string | null; revision: number; updatedAt: number;
@@ -80,6 +84,24 @@ export interface TombstoneRow {
   botId: string; inboxId: string; addressHash: string | null; state: "removing" | "remove_requested" | "removed"; committed: boolean; reason: string;
   keyId: string | null; revision: number; createdAt: number; removedAt: number | null; nextTryAt: number | null;
 }
+/** r3.4d: parked_evidence = parked with Flux evidence the inbox is gone (remote_deleted_at set); the reducer's state of that name. */
+export type ParkState = "parked" | "parked_evidence" | "keep_pending" | "remove_authorized" | "key_release";
+/** A removal a restore parked (r3.1 3.1). Self-contained: it holds the inbox and key identity even when binding and intent are gone. Rows are INSERTed only by restore.ts. */
+export interface ParkRow {
+  botId: string; parkId: string; parkRev: number; state: ParkState; inboxId: string | null; address: string | null; keyId: string | null; bindingOpId: string | null;
+  priorState: string | null; keepOp: string | null; keepCovers: Array<{ inboxId: string; revision: number }> | null; keepFailure: string | null; remoteDeletedAt: number | null;
+  authorizedBy: string | null; authorizedAt: number | null; parkedAt: number;
+}
+const PARK_COLUMNS: Record<keyof ParkRow, string> = {
+  botId: "bot_id", parkId: "park_id", parkRev: "park_rev", state: "state", inboxId: "inbox_id", address: "address", keyId: "key_id", bindingOpId: "binding_op_id", priorState: "prior_state",
+  keepOp: "keep_op", keepCovers: "keep_covers", keepFailure: "keep_failure", remoteDeletedAt: "remote_deleted_at", authorizedBy: "authorized_by", authorizedAt: "authorized_at", parkedAt: "parked_at",
+};
+/** r3.4d KeepGuard: after a Keep succeeds, a Flux re-close of the kept inbox (reason owner or bot_deleted) is answered with RESTORE for a poll window. */
+/** A keep op claimed by a guard repair (r3.4d KeepOp): `authorityId` is the Keep the guard came from. */
+export interface KeepClaim { keepOp: string; botId: string; inboxId: string; authorityId: string; claimedAt: number }
+export interface KeepGuard { inboxId: string; botId: string; keepOp: string; keptAt: number; pollUntil: number; lastCheckedAt: number | null }
+export const GUARD_POLL_MS = 60_000;
+export const GUARD_POLL_WINDOW_MS = 24 * 3600_000;
 export interface PayloadPart { part: number; name: string | null; contentType: string | null; size: number; sha256: string; data: Uint8Array }
 export interface StoredEvent { eventId: string; type: string; inboxId: string | null; botId: string | null; clientReference: string | null; heldId: string | null; created: string | null; data: Record<string, unknown>; receivedAt: number }
 
@@ -129,6 +151,7 @@ export class EmailStore {
   constructor(db: DatabaseSync, options: EmailStoreOptions = {}) {
     this.db = db;
     initializeEmailTables(db);
+    adoptLegacyParks(db);
     this.txImpl = options.transaction ?? (<T>(fn: () => T): T => {
       if (db.isTransaction) return fn();
       db.exec("BEGIN IMMEDIATE");
@@ -157,7 +180,14 @@ export class EmailStore {
   /** The row that replaced `sendId` (an owner resend or an edit), if any: there is at most one. */
   sendReplacing(sendId: string): SendRow | null { return this.send(this.db.prepare("SELECT * FROM email_sends WHERE replaces=? LIMIT 1").get(sendId)); }
   sendsByHash(botId: string, payloadHash: string): SendRow[] { return this.sends(this.db.prepare("SELECT * FROM email_sends WHERE bot_id=? AND payload_hash=? ORDER BY created_at").all(botId, payloadHash)); }
+  sendForAttempt(botId: string, payloadHash: string, generation: number): SendRow | null {
+    return this.send(this.db.prepare("SELECT * FROM email_sends WHERE bot_id=? AND generation=? AND payload_hash=? ORDER BY created_at LIMIT 1").get(botId, generation, payloadHash));
+  }
   sendsOfGeneration(botId: string, generation: number): SendRow[] { return this.sends(this.db.prepare("SELECT * FROM email_sends WHERE bot_id=? AND generation=? ORDER BY created_at").all(botId, generation)); }
+  /** One bounded, indexed page of definite non-sends, with a fair sweep cursor. */
+  spendWaits(after: string, limit: number): SendRow[] {
+    return this.sends(this.db.prepare("SELECT * FROM email_sends WHERE code='spend_limit' AND stop_requested=0 AND state IN ('prepared','held','approved_unsent') AND send_id>? ORDER BY send_id LIMIT ?").all(after, limit));
+  }
   sendsInStates(states: readonly SendState[]): SendRow[] { return this.sends(this.db.prepare(`SELECT * FROM email_sends WHERE state IN (${states.map(() => "?").join(",")}) ORDER BY created_at`).all(...states)); }
   sendsOfBot(botId: string, states: readonly SendState[]): SendRow[] { return this.sends(this.db.prepare(`SELECT * FROM email_sends WHERE bot_id=? AND state IN (${states.map(() => "?").join(",")}) ORDER BY created_at`).all(botId, ...states)); }
   sendsOfInbox(inboxId: string, states: readonly SendState[]): SendRow[] { return this.sends(this.db.prepare(`SELECT * FROM email_sends WHERE inbox_id=? AND state IN (${states.map(() => "?").join(",")}) ORDER BY created_at`).all(inboxId, ...states)); }
@@ -228,6 +258,24 @@ export class EmailStore {
   }
   deleteBinding(botId: string, revision: number): boolean { return Number(this.db.prepare("DELETE FROM email_bindings WHERE bot_id=? AND revision=?").run(botId, revision).changes) === 1; }
 
+  // ---- parks (r3.1 3.1): read, CAS and delete here; the only INSERT is restore.ts ----
+  private park(raw: unknown): ParkRow | null {
+    if (!raw) return null;
+    const row = fromRow<ParkRow>(PARK_COLUMNS, new Set<keyof ParkRow>(["keepCovers"]), new Set(), raw as Record<string, unknown>);
+    return row;
+  }
+  getPark(botId: string): ParkRow | null { return this.park(this.db.prepare("SELECT * FROM email_parks WHERE bot_id=?").get(botId)); }
+  parks(): ParkRow[] { return (this.db.prepare("SELECT * FROM email_parks ORDER BY parked_at, bot_id").all() as unknown[]).map(raw => this.park(raw)!); }
+  parkByInbox(inboxId: string): ParkRow | null { return this.park(this.db.prepare("SELECT * FROM email_parks WHERE inbox_id=?").get(inboxId)); }
+  /** CAS on park_rev; every write bumps it. keepCovers is stored as JSON. */
+  casPark(botId: string, parkRev: number, patch: Partial<Omit<ParkRow, "botId" | "parkRev">>): ParkRow | null {
+    const keys = (Object.keys(patch) as Array<keyof ParkRow>).filter(key => key !== "botId" && key !== "parkRev");
+    const values = keys.map(key => (key === "keepCovers" ? (patch.keepCovers ? JSON.stringify(patch.keepCovers) : null) : (patch[key] ?? null)) as SQLInputValue);
+    const result = this.db.prepare(`UPDATE email_parks SET ${[...keys.map(key => `${PARK_COLUMNS[key]}=?`), "park_rev=park_rev+1"].join(",")} WHERE bot_id=? AND park_rev=?`).run(...values, botId, parkRev);
+    return Number(result.changes) === 1 ? this.getPark(botId) : null;
+  }
+  deletePark(botId: string, parkId: string, parkRev: number): boolean { return Number(this.db.prepare("DELETE FROM email_parks WHERE bot_id=? AND park_id=? AND park_rev=?").run(botId, parkId, parkRev).changes) === 1; }
+
   // ---- tombstones and deletion intents ----
   private tomb(raw: unknown): TombstoneRow | null { return raw ? fromRow<TombstoneRow>(TOMBSTONE_COLUMNS, new Set(), new Set<keyof TombstoneRow>(["committed"]), raw as Record<string, unknown>) : null; }
   getTombstone(botId: string, inboxId: string): TombstoneRow | null { return this.tomb(this.db.prepare("SELECT * FROM email_tombstones WHERE bot_id=? AND inbox_id=?").get(botId, inboxId)); }
@@ -271,6 +319,23 @@ export class EmailStore {
   /** Cached events received before `before`, oldest first, at most `limit` of them (on the received_at index). */
   pruneEvents(before: number, limit = -1): number { return Number(this.db.prepare("DELETE FROM email_events WHERE event_id IN (SELECT event_id FROM email_events WHERE received_at<? ORDER BY received_at LIMIT ?)").run(before, limit).changes); }
   getCursor(scope: string): string | null { return ((this.db.prepare("SELECT cursor FROM email_event_cursor WHERE scope=?").get(scope) as { cursor?: string } | undefined)?.cursor) ?? null; }
+  // ---- r3.4d kv rows (in email_event_cursor): kept keys (keptKeysProtected), keep guards (KeepGuard), the record that `removing` was written by an authorize ----
+  markKeptKey(keyId: string, keepOp: string, now: number): void { this.setCursor(`keptkey:${keyId}`, keepOp, now); }
+  /** r3.4d keptKeysProtected: a kept key leaves the set only with its key revoked or a completed Remove (invariants.current.ts line 76, r3.3i C). */
+  releaseKeptKey(keyId: string | null | undefined): void { if (keyId) this.db.prepare("DELETE FROM email_event_cursor WHERE scope=?").run(`keptkey:${keyId}`); }
+  isKeptKey(keyId: string | null | undefined): boolean { return Boolean(keyId) && this.getCursor(`keptkey:${keyId}`) !== null; }
+  putKeepGuard(guard: KeepGuard, now: number): void { this.setCursor(`keepguard:${guard.inboxId}`, JSON.stringify(guard), now); }
+  getKeepGuard(inboxId: string): KeepGuard | null { try { return JSON.parse(this.getCursor(`keepguard:${inboxId}`) ?? "null") as KeepGuard | null; } catch { return null; } }
+  keepGuards(): KeepGuard[] { return (this.db.prepare("SELECT cursor FROM email_event_cursor WHERE scope LIKE 'keepguard:%' ORDER BY scope").all() as Array<{ cursor: string }>).flatMap(r => { try { return [JSON.parse(r.cursor) as KeepGuard]; } catch { return []; } }); }
+  deleteKeepGuard(inboxId: string): void { this.db.prepare("DELETE FROM email_event_cursor WHERE scope=?").run(`keepguard:${inboxId}`); }
+  /** r3.4d keepOps (reducer startGuardRestore line 156, keepOps in LocalDb): a guard repair claims a keep op on its inbox, durably, before the RESTORE is sent; the claim is the only thing that says "a Keep is in flight on this target". */
+  putKeepClaim(claim: KeepClaim, now: number): void { this.setCursor(`keepop:${claim.inboxId}`, JSON.stringify(claim), now); }
+  getKeepClaim(inboxId: string | null | undefined): KeepClaim | null { if (!inboxId) return null; try { return JSON.parse(this.getCursor(`keepop:${inboxId}`) ?? "null") as KeepClaim | null; } catch { return null; } }
+  keepClaims(): KeepClaim[] { return (this.db.prepare("SELECT cursor FROM email_event_cursor WHERE scope LIKE 'keepop:%' ORDER BY scope").all() as Array<{ cursor: string }>).flatMap(r => { try { return [JSON.parse(r.cursor) as KeepClaim]; } catch { return []; } }); }
+  deleteKeepClaim(inboxId: string): void { this.db.prepare("DELETE FROM email_event_cursor WHERE scope=?").run(`keepop:${inboxId}`); }
+  recordRemovingAuthority(botId: string, kind: string, now: number): void { this.setCursor(`removing-auth:${botId}`, kind, now); }
+  removingAuthority(botId: string): string | null { return this.getCursor(`removing-auth:${botId}`); }
+  clearRemovingAuthority(botId: string): void { this.db.prepare("DELETE FROM email_event_cursor WHERE scope=?").run(`removing-auth:${botId}`); }
   setCursor(scope: string, cursor: string, now: number): void { this.db.prepare("INSERT INTO email_event_cursor (scope, cursor, updated_at) VALUES (?,?,?) ON CONFLICT(scope) DO UPDATE SET cursor=excluded.cursor, updated_at=excluded.updated_at").run(scope, cursor, now); }
   /** Every cursor scope that starts with `prefix` (a seek on the primary key). */
   cursorScopes(prefix: string): string[] {
@@ -327,7 +392,7 @@ export class EmailStore {
   /** The bot's email_trust_offer for an eligible address (3.5): kept on the trust row for the owner's proposal card (built from this record,
    *  never from the bot's words). `reason` is the bot's own text, stored bounded and shown to the owner only. */
   recordTrustOffer(botId: string, address: string, threadId: string, reason: string, now: number): void {
-    this.db.prepare("UPDATE email_trust SET offered_at=?, offer_thread=?, offer_reason=? WHERE bot_id=? AND address=?").run(now, threadId, reason.slice(0, 500), botId, address);
+    this.db.prepare("INSERT INTO email_trust (bot_id,address,sent_at,offered_at,offer_thread,offer_reason) VALUES (?,?,'[]',?,?,?) ON CONFLICT(bot_id,address) DO UPDATE SET offered_at=excluded.offered_at,offer_thread=excluded.offer_thread,offer_reason=excluded.offer_reason").run(botId, address, now, threadId, reason.slice(0, 500));
   }
   /** Offers not yet answered (Add clears the row's offer through addTrusted's caller; Not now through blockTrustOffer). */
   pendingTrustOffers(botId: string): Array<{ address: string; threadId: string | null; reason: string; offeredAt: number }> {
@@ -336,6 +401,9 @@ export class EmailStore {
   }
   clearTrustOffer(botId: string, address: string): void {
     this.db.prepare("UPDATE email_trust SET offered_at=NULL, offer_thread=NULL, offer_reason=NULL WHERE bot_id=? AND address=?").run(botId, address);
+  }
+  trustOfferPending(botId: string, address: string, offeredAt: number): boolean {
+    return this.db.prepare("SELECT 1 FROM email_trust WHERE bot_id=? AND address=? AND offered_at=?").get(botId, address, offeredAt) !== undefined;
   }
   /** Eligible for email_trust_offer: 3 owner Sends in 30 days, no complaint or bounce in that window, no "Not now" in force, not already trusted. */
   trustOfferEligible(botId: string, address: string, now: number): boolean {

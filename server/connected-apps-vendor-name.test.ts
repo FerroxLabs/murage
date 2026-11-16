@@ -1,3 +1,4 @@
+import { fixtureMountTurn } from "./testing/mcp-admission-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -16,7 +17,7 @@ import { STANDARD_SESSION_TOOLS } from "./composio-standard-tools.ts";
 import { capabilitiesPrimer, type PrimerFacts } from "./capabilities-primer.ts";
 import { DEFAULT_HOUSE_RULES } from "./house-rules/default.ts";
 import { loadBundledSkills } from "./skill-library.ts";
-import { buildMcpServers, piGateAsk } from "./drivers/pi.ts";
+import { buildMcpServers as buildAdmittedMcpServers, piGateAsk } from "./drivers/pi.ts";
 import { REQUIRED_MCP_SERVERS } from "./drivers/mcp-readiness.ts";
 import { parseStoredMcpServer, RESERVED_MCP_NAMES } from "./mcp-registry.ts";
 import { autoVerdict } from "./auto-approve.ts";
@@ -222,6 +223,8 @@ const INTERNAL_ONLY: Record<string, string> = {
   "server/config.ts": "environment names",
   "server/data-dir-inventory.ts": "a credential file name",
   "server/flux-composio-dev-token.ts": "a credential file name and the broker's route",
+  "server/flux-admission.ts": "closed source-file inventory and billing classifications, never displayed",
+  "server/highlevel/native-wins.ts": "function identifier in an SSE serialization expression; app data is preserved",
   "server/flux-contract-endpoints.ts": "broker routes",
   "server/flux-memory-headers.ts": "the broker's route",
   "server/index.ts": "an event type",
@@ -279,3 +282,5 @@ describe("connected apps: shipped strings", () => {
     }
   });
 });
+
+const buildMcpServers: typeof buildAdmittedMcpServers = (turn, options) => buildAdmittedMcpServers(fixtureMountTurn(Object.assign({ threadId: "mount-fixture", text: "fixture" }, turn)), options);

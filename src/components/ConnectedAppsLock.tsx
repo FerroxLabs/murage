@@ -88,7 +88,7 @@ export const SHOWCASE_APPS: ReadonlyArray<{ label: string; hue: string }> = [
  * the claim outlives it, so it is stated here, beside the showcase it
  * describes. Named apps, not a vendor: people recognise Gmail and Slack, and
  * the company behind the catalog is not something they bought. */
-export const APPS_CLAIM = "500+ apps, including Gmail, Slack, Notion and GitHub";
+export const APPS_CLAIM = "apps, including Gmail, Slack, Notion and GitHub";
 
 /** Where the key is typed, so the lock's button can land the cursor in the
  * field rather than at the top of a settings page. */

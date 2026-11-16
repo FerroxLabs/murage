@@ -49,6 +49,7 @@ const REQUEST_OPENED_OUT: Record<keyof RequestOpened, boolean> = {
   reason: true,
   toolKind: true,
   toolIdentity: true,
+  identityFrame: false,
   // proven against server-side only (shared/app-action-grant.ts)
   mcpMounts: false,
   toolEngine: true,
@@ -58,6 +59,7 @@ const REQUEST_OPENED_OUT: Record<keyof RequestOpened, boolean> = {
   commandShell: false,
   // the map handed to the engine process: credentials
   execEnv: false,
+  executionCwd: false,
   // its value-free projection (names, shell, provenance, managed names): out (Astra #9)
   envInfo: true,
   toolInputTruncated: true,
@@ -249,6 +251,17 @@ function loggedToolIdentity(identity: unknown): Record<string, string> | undefin
 /** The runtime frame a stream gets (live, and the replay buffer that resumes
  * it): a tool's input and result stay out, and an ask goes out allowlisted. */
 export function windowRuntimeEvent(event: RuntimeEvent): RuntimeEvent {
+  // A host refusal is terminal control, not an execution record. Keep the same
+  // public completion fields even if a caller accidentally carries private state.
+  if (event.type === "turn.completed") {
+    const out: Record<string, unknown> = {};
+    const publicEvent = event as unknown as Record<string, unknown>;
+    for (const key of ["generation", "speechDisposition", "type", "eventId", "provider", "providerInstanceId", "threadId", "createdAt", "turnId", "ok", "stopReason", "cost", "charge", "chargePartial", "denials", "toolsUnavailable", "mcpReadiness", "deniedBy"] as const) {
+      if (Object.hasOwn(publicEvent, key)) out[key] = publicEvent[key];
+    }
+    if (event.usage) out.usage = { input: event.usage.input, output: event.usage.output, ...(event.usage.cachedInput === undefined ? {} : { cachedInput: event.usage.cachedInput }) };
+    return out as unknown as RuntimeEvent;
+  }
   if (event.type === "item.started") return { ...withoutCallKey(event), input: undefined };
   if (event.type === "item.completed" && event.itemType === "tool") return { ...event, result: undefined };
   if (event.type === "request.opened") return requestOpenedOut(event);

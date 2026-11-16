@@ -1,3 +1,5 @@
+import { MESSAGE_SEARCH_DDL } from "./message-tables.ts";
+import { stopSearchIndex } from "./message-search-index.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -11,11 +13,15 @@ import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { downgradeApplicationSchemaTo101 } from "./installation-app-schema-downgrade.ts";
-import { prepareMessageSearchBackfill, stepMessageSearchBackfill } from "./message-search-index.ts";
+import { prepareMessageSearchBackfill, stepMessageSearchBackfill } from "./testing/message-search-index-before-split.ts";
 import { backfillMessageSearchIndex as resumeAs101 } from "./testing/message-search-index-1.0.1.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+beforeEach(async () => {
+  await stopSearchIndex(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
+  const db = database(); await stopSearchIndex();
+  db.exec(MESSAGE_SEARCH_DDL); // model the in-file index written by a pre-split release
+});
 
 const indexed = (db: DatabaseSync) => db.prepare("SELECT id FROM messages_fts_docsize ORDER BY id").all().map((row) => Number(row.id));
 const searchableRows = (db: DatabaseSync) => db.prepare("SELECT rowid AS r FROM messages WHERE kind IN ('text','activity') ORDER BY rowid").all().map((row) => Number(row.r));

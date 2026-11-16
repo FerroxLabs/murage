@@ -5,9 +5,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { isOwnQuiet, isOwnUnasked, OWN_BUILTINS } from "../../shared/own-servers.ts";
-import { HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_READ_TOOL_NAMES, HIGHLEVEL_WRITE_TOOLS } from "../../shared/highlevel.ts";
-import { buildMcpServers, piMountRecords } from "../drivers/mcp-mounts.ts";
+import { HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_FAMILY_TOOLS, HIGHLEVEL_WRITE_TOOLS } from "../../shared/highlevel.ts";
+import { buildMcpServers as buildAdmittedMcpServers, piMountRecords } from "../drivers/mcp-mounts.ts";
 import type { SendTurnInput } from "../contracts.ts";
+import { fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
+import { HighLevelConnectionSource } from "./connection-source.ts";
 import { HIGHLEVEL_CHECK_HOLD_MS, PrivateTokenLeaseSource, highlevelTokenFingerprint } from "./private-token.ts";
 
 const TOKEN = "pit-TEST-0000-not-a-real-token";
@@ -27,6 +29,18 @@ function setup(options: { status?: number; body?: unknown } = {}) {
 }
 
 describe("HighLevel Private Integration token source (HL-S2)", () => {
+  it("publishes only the scope proved by the location check, ignoring response scope claims", async () => {
+    const { source, setToken } = setup({ body: { scopes: ["contacts.write"], location: { id: "Loc12345", scopes: ["contacts.write"] } } });
+    const check = await source.check("Loc12345");
+    expect(check).toMatchObject({ scopes: ["locations.readonly"] });
+    source.confirm(check.opId);
+    expect(source.ownerView()).toMatchObject({ scopes: ["locations.readonly"] });
+    expect(await source.connection("hl_Loc12345")).toMatchObject({ scopes: ["locations.readonly"] });
+    setToken("pit-TEST-swapped");
+    expect(source.ownerView()).toMatchObject({ scopes: [] });
+    expect(await source.connection("hl_Loc12345")).toMatchObject({ scopes: [] });
+  });
+
   it("is not connected until the owner checks and then confirms a location", async () => {
     const { source, requests } = setup();
     expect(await source.connection("hl_Loc12345")).toBeUndefined();
@@ -115,9 +129,9 @@ describe("HighLevel Private Integration token source (HL-S2)", () => {
 });
 
 describe("native HighLevel mount (HL-S2 ruling 1)", () => {
-  it("every native read tool runs with no engine card; no change tool is pre-allowed on any engine (HL-S2 is read only)", () => {
+  it("family tools reach the host without an engine card; legacy change names stay unavailable", () => {
     expect(OWN_BUILTINS.highlevel).toBe("highlevel");
-    for (const tool of [...HIGHLEVEL_READ_TOOL_NAMES, ...HIGHLEVEL_HELPER_NAMES]) {
+    for (const tool of [...Object.values(HIGHLEVEL_FAMILY_TOOLS), ...HIGHLEVEL_HELPER_NAMES]) {
       expect(isOwnUnasked("own:highlevel", tool)).toBe(true);
       expect(isOwnQuiet("own:highlevel", tool)).toBe(true);
     }
@@ -130,12 +144,30 @@ describe("native HighLevel mount (HL-S2 ruling 1)", () => {
 
   it("only a turn that mounts native HighLevel owns the name; an owner's own server called highlevel stays custom and asks", () => {
     const custom = { custom: { highlevel: { command: "node", args: ["their-server.js"], env: {} } } } as unknown as SendTurnInput["integrations"];
-    const without = { integrations: custom } as SendTurnInput;
+    const without = fixtureMountTurn({ threadId: "fixture-thread", text: "fixture", integrations: custom } as SendTurnInput);
     const withoutServers = buildMcpServers(without);
     expect(piMountRecords(without, withoutServers).find((record) => record.engineName === "highlevel")).toMatchObject({ mountId: "custom:highlevel", provenance: "custom" });
-    const native = { integrations: { ...custom, highlevel: { command: "node", args: ["highlevel-proxy.js"], env: { MURAGE_CONTROL_TOKEN: "t" } } } } as unknown as SendTurnInput;
+    const native = fixtureMountTurn({ threadId: "fixture-thread", text: "fixture", integrations: { ...custom, highlevel: { command: "node", args: ["highlevel-proxy.js"], env: { MURAGE_CONTROL_TOKEN: "t" } } } } as unknown as SendTurnInput);
     const nativeServers = buildMcpServers(native);
     expect((nativeServers as Record<string, { args: string[] }>).highlevel.args).toEqual(["highlevel-proxy.js"]);
     expect(piMountRecords(native, nativeServers).find((record) => record.engineName === "highlevel")).toMatchObject({ mountId: "own:highlevel", provenance: "own" });
   });
 });
+
+it("D8 unified source preserves private-token status, scope evidence, lease epochs, restart and disconnect", async () => {
+  const f = setup();
+  f.source.confirm((await f.source.check("Loc12345")).opId);
+  const source = new HighLevelConnectionSource(f.source, null);
+  expect(source.ownerView()).toEqual(f.source.ownerView());
+  expect(await source.connection("hl_Loc12345")).toEqual(await f.source.connection("hl_Loc12345"));
+  expect((await source.lease({ requestId: "private", connectionId: "hl_Loc12345", connectionEpoch: 1, reason: "use" })).accessToken).toBe(TOKEN);
+  const restarted = new HighLevelConnectionSource(new PrivateTokenLeaseSource({token: () => TOKEN, file: f.file}), null);
+  expect(restarted.ownerView()).toEqual(source.ownerView());
+  await expect(restarted.lease({requestId:"stale",connectionId:"hl_Loc12345",connectionEpoch:2,reason:"use"})).rejects.toThrow();
+  expect(await restarted.disconnect("hl_Loc12345")).toEqual({disconnected:true});
+  expect(source.ownerView()).toBeNull();
+  expect(await source.connection("hl_Loc12345")).toBeUndefined();
+  expect(f.source.tokenSaved()).toBe(true);
+});
+
+const buildMcpServers: typeof buildAdmittedMcpServers = (turn, options) => buildAdmittedMcpServers(fixtureMountTurn(Object.assign({ threadId: "mount-fixture", text: "fixture" }, turn)), options);

@@ -95,6 +95,10 @@ export function runWhatsNewAction(action: WhatsNewAction, dispatch: (action: Act
       dispatch({ type: "toggleAppSettings", open: true, section: "computer" });
       whenRendered(() => document.getElementById("local-vm-max-instances"), showSetting);
       return true;
+    // The Skills Library, on its Skills view.
+    case "skills":
+      dispatch({ type: "showTeamLibrary", view: "skills" });
+      return true;
     // The team library, on its Teams view, Ferrox Labs teams included.
     case "library":
       dispatch({ type: "showTeamLibrary", view: "teams" });

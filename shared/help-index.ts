@@ -62,9 +62,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "No limits and the Full access stop line, Skills in Settings with Skill Guard, House rules, What's new, the tray, Flux voices and engine commands.",
     "heading": "New Bot, New Team and House rules in 0.1.59",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.59",
-    "where": "Settings → House rules",
+    "where": "Settings → How every bot behaves → House rules",
     "url": "https://murage.ai/docs/changelog/v0-1-59#new-bot-new-team-and-house-rules-in-0-1-59",
-    "text": "- One chooser each. The + menu has one New Bot and one New Team. Type a sentence and the best matching templates come up, or browse one topic at a time.\n- House rules. Settings → House rules holds one set of rules that goes first in every bot's instructions. Edit them, switch them off, or reset them to the default. Murage's built-in protections always apply.\n- Rich editor. The rich editor from Wayland now edits files, skills and House rules, and keeps Markdown tables exact."
+    "text": "- One chooser each. The + menu has one New Bot and one New Team. Type a sentence and the best matching templates come up, or browse one topic at a time.\n- House rules. Settings → How every bot behaves → House rules holds one set of rules that goes first in every bot's instructions. Edit them, switch them off, or reset them to the default. Murage's built-in protections always apply.\n- Rich editor. The rich editor from Wayland now edits files, skills and House rules, and keeps Markdown tables exact."
   },
   {
     "id": "changelog/v0-1-59#what-shapes-a-bot-and-engine-commands-in-0-1-59",
@@ -172,9 +172,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Backups that work end to end, routine approval levels, Always allow this exact command, Snooze, team management, About me and more.",
     "heading": "About me in 0.1.60",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.60",
-    "where": "Settings → About me",
+    "where": "Settings → General → About me",
     "url": "https://murage.ai/docs/changelog/v0-1-60#about-me-in-0-1-60",
-    "text": "About me. Settings → About me holds a short profile of you. Your bots read it on your own turns and never on turns started by other people or webhooks. What shapes a bot has a switch for it."
+    "text": "About me. Settings → General → About me holds a short profile of you. Your bots read it on your own turns and never on turns started by other people or webhooks. What shapes a bot has a switch for it."
   },
   {
     "id": "changelog/v0-1-60#voice-and-notifications-in-0-1-60",
@@ -292,9 +292,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
     "heading": "Image keys in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
-    "where": "Settings → Models",
+    "where": "Settings → Models & engines",
     "url": "https://murage.ai/docs/changelog/v0-1-61#image-keys-in-0-1-61",
-    "text": "- Every saved image-capable key appears in Image generation. A key you saved under Settings → Models for a provider that makes images now also shows in Image generation, including xAI keys and keys saved with a slash at the end of their address.\n- Your Google Gemini key works for chat and images. Add a Google Gemini key under Settings → Models and bots can chat on Gemini models, and Image generation can use it too. A key saved under the wrong provider is never sent to another one; Settings shows it for you to review."
+    "text": "- Every saved image-capable key appears in Image generation. A key you saved under Settings → Models & engines for a provider that makes images now also shows in Image generation, including xAI keys and keys saved with a slash at the end of their address.\n- Your Google Gemini key works for chat and images. Add a Google Gemini key under Settings → Models & engines and bots can chat on Gemini models, and Image generation can use it too. A key saved under the wrong provider is never sent to another one; Settings shows it for you to review."
   },
   {
     "id": "changelog/v0-1-61#images-in-0-1-61",
@@ -312,9 +312,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Rooms keep every teammate's replies and keep going while bots work, bots on Fuigo reach their teammates, Google Gemini keys work, image generation gets saved prompt blocks, reference packs, longer prompts and more shapes, and recovery keys stay out of folders that sync.",
     "heading": "Saved image prompts and packs in 0.1.61",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 0.1.61",
-    "where": "Settings → Tools & Connections → Image generation",
+    "where": "Settings → Search, images and dictation → Image generation",
     "url": "https://murage.ai/docs/changelog/v0-1-61#saved-image-prompts-and-packs-in-0-1-61",
-    "text": "- Saved prompt blocks. Save a part of an image prompt you use again, such as a character or a brand look, as a named block. Bots send saved blocks first, then the scene. Every save is a new version, and earlier images keep the version they used. You and your bots can add them: find them under Settings → Tools & Connections → Image generation.\n- Reference packs. A bot can save up to 16 reference images from a conversation as a named pack and use the pack again later. Murage checks each image against its saved copy every time the pack is used."
+    "text": "- Saved prompt blocks. Save a part of an image prompt you use again, such as a character or a brand look, as a named block. Bots send saved blocks first, then the scene. Every save is a new version, and earlier images keep the version they used. You and your bots can add them: find them under Settings → Search, images and dictation → Image generation.\n- Reference packs. A bot can save up to 16 reference images from a conversation as a named pack and use the pack again later. Murage checks each image against its saved copy every time the pack is used."
   },
   {
     "id": "changelog/v0-1-61#image-models-and-settings-in-0-1-61",
@@ -471,9 +471,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Murage 1.0 brings projects with a lead, a plan and a board, Murage on your phone, Murage for Chrome, bots that learn from you, tools you add by pasting a link, and calls that feel like a conversation.",
     "heading": "Engines and models in 1.0.0",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.0",
-    "where": "Settings → Models",
+    "where": "Settings → Models & engines",
     "url": "https://murage.ai/docs/changelog/v1-0-0#engines-and-models-in-1-0-0",
-    "text": "- Fuigo 1.0.22. Send a message while a bot is working and it steers the running turn. A message is never sent twice, and one that didn't land is shown plainly.\n- Use the plan you already pay for. Sign in with your ChatGPT plan, or your Grok plan (an unofficial sign-in), under Settings → Models and your bots can use the models that come with it.\n- Claude and Codex answer faster. Murage keeps the engine ready between turns, so your follow-ups start sooner. It watches free memory, so a smaller machine stays responsive.\n- Claude Sonnet 5.5 and Claude Haiku 5.5 are in the model list, and Requesty is a named model connection.\n- Switch with your eyes open.…"
+    "text": "- Fuigo 1.0.22. Send a message while a bot is working and it steers the running turn. A message is never sent twice, and one that didn't land is shown plainly.\n- Use the plan you already pay for. Sign in with your ChatGPT plan, or your Grok plan (an unofficial sign-in), under Settings → Models & engines and your bots can use the models that come with it.\n- Claude and Codex answer faster. Murage keeps the engine ready between turns, so your follow-ups start sooner. It watches free memory, so a smaller machine stays responsive.\n- Claude Sonnet 5.5 and Claude Haiku 5.5 are in the model list, and Requesty is a named model connection.\n- Switch with your eyes open.…"
   },
   {
     "id": "changelog/v1-0-0#connected-apps-and-tools-in-1-0-0",
@@ -691,7 +691,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "One-button engine sign-in, voice notes on your phone, and Fuigo 1.0.38 bringing in a trusted folder's project instructions.",
     "heading": "Better in 1.0.14",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.14",
-    "where": "Murage docs → Changelog → What changed in Murage 1.0.14",
+    "where": "Settings → Backups",
     "url": "https://murage.ai/docs/changelog/v1-0-14#better-in-1-0-14",
     "text": "- When Murage can't read a command, its approval card now says exactly that, and asks you before it runs.\n- On Windows, Murage reads a PowerShell command split across lines as one command, so it gets the same approval checks as the same command on one line.\n- A message queued for the next turn shows its images and files as chips, not raw tags.\n- If Murage quits or restarts during a Codex, Pi, Antigravity or OpenAI tools turn, that turn now shows it didn't finish, and the bot waiting on it hears back when Murage starts again.\n- Stop All on question cards past the follow-up limit ends them as stopped.\n- On your phone, Murage keeps its screen after a reconnect.…"
   },
@@ -944,6 +944,55 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Murage docs → Changelog → What changed in Murage 1.0.18",
     "url": "https://murage.ai/docs/changelog/v1-0-18#better-in-1-0-18",
     "text": "- Murage paints its first screen faster.\n- Core libraries are brought up to date.\n- Plus many smaller improvements throughout."
+  },
+  {
+    "id": "changelog/v1-0-19#overview",
+    "title": "What changed in Murage 1.0.19",
+    "description": "A Skills Library for every bot, settings in one place, and more ways to hear from Murage.",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.19",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.19",
+    "url": "https://murage.ai/docs/changelog/v1-0-19",
+    "text": "Murage 1.0.19 is out for Mac, Windows and Linux, with a Skills Library of 2,247 skills you can search, read, make your own and hand to any bot.\n\nOpen any skill to read its instructions and files, choose which bots use it, and save your own copy. Settings now sit in one place, and you choose how Murage reaches you."
+  },
+  {
+    "id": "changelog/v1-0-19#new-in-1-0-19",
+    "title": "What changed in Murage 1.0.19",
+    "description": "A Skills Library for every bot, settings in one place, and more ways to hear from Murage.",
+    "heading": "New in 1.0.19",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.19",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.19",
+    "url": "https://murage.ai/docs/changelog/v1-0-19#new-in-1-0-19",
+    "text": "- The whole library, within reach. Browse 2,247 skills across 141 topics. Search, pick a topic, or narrow to On your bots or Your copies. Every skill is reachable, down to the last one in a large topic.\n- Read before you add. Open a skill to read its full instructions and see its files. Add or remove bots puts every choice in one place. Save as my copy keeps your edits yours, and Go back to the original returns a skill to the library version.\n- Settings, all in one place. Pages grouped around you, your bots and the app, with search in your own words. When nothing matches, ask your Chief of Staff with the words you typed.\n- Pick how Murage reaches you.…"
+  },
+  {
+    "id": "changelog/v1-0-19#better-in-1-0-19",
+    "title": "What changed in Murage 1.0.19",
+    "description": "A Skills Library for every bot, settings in one place, and more ways to hear from Murage.",
+    "heading": "Better in 1.0.19",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.19",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.19",
+    "url": "https://murage.ai/docs/changelog/v1-0-19#better-in-1-0-19",
+    "text": "- Fuigo 1.0.43 is the engine on board.\n- Fuigo keeps both copies of a history file when two share a name during an upgrade, so your chats carry over.\n- Connected apps show when they will retry, and Try again lets you retry recovery of saved sign-in details.\n- Flux counts work across retries, and Stop ends a waiting retry before another request starts.\n- Claude defaults to Sonnet 5.5, and Fable 5.2 joins its model list.\n- Your chosen access level carries through bots, apps, email, the browser and engine tools. Guests and other people's turns stay at Ask.\n- Routines and webhooks follow your bot's No limits choice, and Settings shows each bot's level.…"
+  },
+  {
+    "id": "changelog/v1-0-19#keep-your-work-in-1-0-19",
+    "title": "What changed in Murage 1.0.19",
+    "description": "A Skills Library for every bot, settings in one place, and more ways to hear from Murage.",
+    "heading": "Keep your work in 1.0.19",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.19",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.19",
+    "url": "https://murage.ai/docs/changelog/v1-0-19#keep-your-work-in-1-0-19",
+    "text": "- Restore remembers the job you started, and Windows saves restored files to disk as it goes.\n- Downgrading Murage on Windows preserves queued work and restore archives.\n- When a restore includes a bot's email address, you choose Keep or Remove, and you can review the choice in Settings. Deleting a bot names its email address, and you type the bot's name to confirm."
+  },
+  {
+    "id": "changelog/v1-0-19#how-to-update-in-1-0-19",
+    "title": "What changed in Murage 1.0.19",
+    "description": "A Skills Library for every bot, settings in one place, and more ways to hear from Murage.",
+    "heading": "How to update in 1.0.19",
+    "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.19",
+    "where": "Murage docs → Changelog → What changed in Murage 1.0.19",
+    "url": "https://murage.ai/docs/changelog/v1-0-19#how-to-update-in-1-0-19",
+    "text": "Murage shows an update banner when 1.0.19 is ready, or choose Check for updates in Settings.\n- What's new: https://murage.ai/blog/whats-new-in-murage-1-0-19\n- Download: https://murage.ai/download\n- Changelog: https://murage.ai/changelog"
   },
   {
     "id": "changelog/v1-0-2#memory-in-1-0-2",
@@ -1400,9 +1449,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Bots that read the projects and groups they belong to, a phone layout, ElevenLabs voices through Flux, a typed stop, and backups, routines and Linux starts that run straight through.",
     "heading": "Everyday use in 1.0.7",
     "breadcrumb": "Murage docs → Changelog → What changed in Murage 1.0.7",
-    "where": "Murage docs → Changelog → What changed in Murage 1.0.7",
+    "where": "Settings → About & help keeps the choice.",
     "url": "https://murage.ai/docs/changelog/v1-0-7#everyday-use-in-1-0-7",
-    "text": "- A phone layout. On a narrow screen the chat header and the composer fold into compact menus, with Stop, Attach and the approval level one tap away.\n- News from Murage. The first run asks once whether you want product news, and Settings > About keeps the choice.\n- Smoother on Linux. Murage uses the graphics card on Intel and AMD, and relaunches cleanly on Linux and WSL after a start from a terminal."
+    "text": "- A phone layout. On a narrow screen the chat header and the composer fold into compact menus, with Stop, Attach and the approval level one tap away.\n- News from Murage. The first run asks once whether you want product news, and Settings → About & help keeps the choice.\n- Smoother on Linux. Murage uses the graphics card on Intel and AMD, and relaunches cleanly on Linux and WSL after a start from a terminal."
   },
   {
     "id": "changelog/v1-0-8#fewer-interruptions-at-full-access-in-1-0-8",
@@ -1607,9 +1656,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Run desktop work inside an isolated Docker or Podman environment.",
     "heading": "Requirements",
     "breadcrumb": "Murage docs → Computers → Local VM",
-    "where": "Settings → Resources",
+    "where": "Murage docs → Computers → Local VM",
     "url": "https://murage.ai/docs/computers/local-vm#requirements",
-    "text": "- Docker Desktop, Docker Engine, or a supported Podman setup\n- Enough local memory and disk for the desktop image\n- A healthy container runtime available to the Murage process\n\nOn Windows, Podman is the preferred Local VM runtime. Murage checks Podman before Docker and validates the exact Windows-to-VM workspace mount before reusing a container.\n\nBefore starting two desktops on Windows, confirm the Podman machine is running and has enough shared CPU, memory, and disk for both. Podman Desktop exposes that machine under Settings → Resources; both Murage desktops consume the same machine budget."
+    "text": "- Docker Desktop, Docker Engine, or a supported Podman setup\n- Enough local memory and disk for the desktop image\n- A healthy container runtime available to the Murage process\n\nOn Windows, Podman is the preferred Local VM runtime. Murage checks Podman before Docker and validates the exact Windows-to-VM workspace mount before reusing a container.\n\nBefore starting two desktops on Windows, confirm the Podman machine is running and has enough shared CPU, memory, and disk for both. In Podman Desktop, open its Resources settings to find that machine; both Murage desktops consume the same machine budget."
   },
   {
     "id": "computers/local-vm#run-two-bot-desktops",
@@ -1846,7 +1895,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Devices → The Murage phone app",
     "where": "Murage docs → Devices → The Murage phone app",
     "url": "https://murage.ai/docs/devices/phone-app#what-stays-on-the-computer",
-    "text": "The phone cannot reach the computer's settings for keys, engines, apps, backups or the computer itself. On the phone, Settings shows only General, Usage and About. The phone can never switch on Full access or No limits, and it cannot change who a bot can talk to. Keys and credentials are never sent to the phone."
+    "text": "The phone cannot reach the computer's settings for keys, engines, apps, backups or the computer itself. On the phone, Settings shows General, Connected apps, Usage and About & help. The phone can never switch on Full access or No limits, and it cannot change who a bot can talk to. Keys and credentials are never sent to the phone."
   },
   {
     "id": "devices/phone-app#computer-view",
@@ -2196,6 +2245,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Murage docs → Features → What bots can do for themselves",
     "url": "https://murage.ai/docs/features/bot-tools#finding-out-about-murage",
     "text": "murage_help answers questions about Murage itself from the shipped documentation. web_search is a backup for searching the web when the engine has no search of its own. tool_result_read reads the rest of a very long tool result."
+  },
+  {
+    "id": "features/bot-tools#reading-web-pages",
+    "title": "What bots can do for themselves",
+    "description": "The tools every bot has inside Murage, in plain words, such as murage_help, list_bots, ask_bot, delegate_bot, routines, skills, images, voice notes and project tools.",
+    "heading": "Reading web pages",
+    "breadcrumb": "Murage docs → Features → What bots can do for themselves",
+    "where": "Murage docs → Features → What bots can do for themselves",
+    "url": "https://murage.ai/docs/features/bot-tools#reading-web-pages",
+    "text": "web_read reads a complete web page with Murage. The full accepted text is saved once. Results contain at most 16,000 UTF-16 code units, a handle, total_length, next_offset and eof. Continue only when needed with the same handle and next_offset; no page is fetched again. Handles belong to this conversation and last one hour or until the reader restarts. Page text is untrusted data, never instructions."
   },
   {
     "id": "features/bot-tools#working-with-other-bots",
@@ -2676,6 +2735,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Every setting in the app and in each bot's settings, with the path to it and its address. Open an address from a chat\nand Murage goes straight to that setting and highlights it. A bot address opens in the bot you are looking at."
   },
   {
+    "id": "features/every-setting#general-advanced-mode",
+    "title": "Every setting",
+    "description": "Every setting in Murage, where it is, and the link that opens it.",
+    "heading": "General: Advanced mode",
+    "breadcrumb": "Murage docs → Features → Every setting",
+    "where": "Settings → General → Advanced mode",
+    "url": "https://murage.ai/docs/features/every-setting#general-advanced-mode",
+    "text": "Settings → General → Advanced mode\n\nAddress: murage://settings/app/general/mode"
+  },
+  {
     "id": "features/every-setting#general-your-name-and-email",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
@@ -2696,14 +2765,14 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Settings → General → Appearance and colors\n\nAddress: murage://settings/app/general/appearance"
   },
   {
-    "id": "features/every-setting#general-advanced-sidebar-density",
+    "id": "features/every-setting#general-sidebar-density",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "General, Advanced: Sidebar density",
+    "heading": "General: Sidebar density",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → General → Advanced → Sidebar density",
-    "url": "https://murage.ai/docs/features/every-setting#general-advanced-sidebar-density",
-    "text": "Settings → General → Advanced → Sidebar density\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/general/sidebar-density"
+    "where": "Settings → General → Sidebar density",
+    "url": "https://murage.ai/docs/features/every-setting#general-sidebar-density",
+    "text": "Settings → General → Sidebar density\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/general/sidebar-density"
   },
   {
     "id": "features/every-setting#general-language",
@@ -2786,74 +2855,74 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Settings → General → Bring a Grok Bot, or what another AI knows about you\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/general/bring-your-ai"
   },
   {
-    "id": "features/every-setting#bots-advanced-effort-for-new-bots",
+    "id": "features/every-setting#calls-calls",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Bots, Advanced: Effort for new bots",
+    "heading": "Calls: Calls",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Bots → Advanced → Effort for new bots",
-    "url": "https://murage.ai/docs/features/every-setting#bots-advanced-effort-for-new-bots",
-    "text": "Settings → Bots → Advanced → Effort for new bots\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/botDefaults/new-bot-effort"
+    "where": "Settings → Calls → Calls",
+    "url": "https://murage.ai/docs/features/every-setting#calls-calls",
+    "text": "Settings → Calls → Calls\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/calls/calls"
   },
   {
-    "id": "features/every-setting#bots-advanced-show-tool-calls-in-the-conversation",
+    "id": "features/every-setting#how-every-bot-behaves-advanced-show-tool-calls-in-the-conversation",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Bots, Advanced: Show tool calls in the conversation",
+    "heading": "How every bot behaves, Advanced: Show tool calls in the conversation",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Bots → Advanced → Show tool calls in the conversation",
-    "url": "https://murage.ai/docs/features/every-setting#bots-advanced-show-tool-calls-in-the-conversation",
-    "text": "Settings → Bots → Advanced → Show tool calls in the conversation\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/botDefaults/tool-calls"
+    "where": "Settings → How every bot behaves → Advanced → Show tool calls in the conversation",
+    "url": "https://murage.ai/docs/features/every-setting#how-every-bot-behaves-advanced-show-tool-calls-in-the-conversation",
+    "text": "Settings → How every bot behaves → Advanced → Show tool calls in the conversation\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/botDefaults/tool-calls"
   },
   {
-    "id": "features/every-setting#bots-advanced-project-autonomy",
+    "id": "features/every-setting#how-every-bot-behaves-advanced-project-autonomy",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Bots, Advanced: Project autonomy",
+    "heading": "How every bot behaves, Advanced: Project autonomy",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Bots → Advanced → Project autonomy",
-    "url": "https://murage.ai/docs/features/every-setting#bots-advanced-project-autonomy",
-    "text": "Settings → Bots → Advanced → Project autonomy\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/botDefaults/project-autonomy"
+    "where": "Settings → How every bot behaves → Advanced → Project autonomy",
+    "url": "https://murage.ai/docs/features/every-setting#how-every-bot-behaves-advanced-project-autonomy",
+    "text": "Settings → How every bot behaves → Advanced → Project autonomy\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/botDefaults/project-autonomy"
   },
   {
-    "id": "features/every-setting#bots-advanced-time-limit-for-bot-activity-in-channels",
+    "id": "features/every-setting#how-every-bot-behaves-advanced-time-limit-for-bot-activity-in-channels",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Bots, Advanced: Time limit for bot activity in channels",
+    "heading": "How every bot behaves, Advanced: Time limit for bot activity in channels",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Bots → Advanced → Time limit for bot activity in channels",
-    "url": "https://murage.ai/docs/features/every-setting#bots-advanced-time-limit-for-bot-activity-in-channels",
-    "text": "Settings → Bots → Advanced → Time limit for bot activity in channels\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/botDefaults/channel-turns"
+    "where": "Settings → How every bot behaves → Advanced → Time limit for bot activity in channels",
+    "url": "https://murage.ai/docs/features/every-setting#how-every-bot-behaves-advanced-time-limit-for-bot-activity-in-channels",
+    "text": "Settings → How every bot behaves → Advanced → Time limit for bot activity in channels\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/botDefaults/channel-turns"
   },
   {
-    "id": "features/every-setting#bots-advanced-who-answers-in-channels",
+    "id": "features/every-setting#how-every-bot-behaves-advanced-who-answers-in-channels",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Bots, Advanced: Who answers in channels",
+    "heading": "How every bot behaves, Advanced: Who answers in channels",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Bots → Advanced → Who answers in channels",
-    "url": "https://murage.ai/docs/features/every-setting#bots-advanced-who-answers-in-channels",
-    "text": "Settings → Bots → Advanced → Who answers in channels\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/botDefaults/room-routing"
+    "where": "Settings → How every bot behaves → Advanced → Who answers in channels",
+    "url": "https://murage.ai/docs/features/every-setting#how-every-bot-behaves-advanced-who-answers-in-channels",
+    "text": "Settings → How every bot behaves → Advanced → Who answers in channels\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/botDefaults/room-routing"
   },
   {
-    "id": "features/every-setting#bots-starter-profiles",
+    "id": "features/every-setting#how-every-bot-behaves-starter-profiles",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Bots: Starter profiles",
+    "heading": "How every bot behaves: Starter profiles",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Bots → Starter profiles",
-    "url": "https://murage.ai/docs/features/every-setting#bots-starter-profiles",
-    "text": "Settings → Bots → Starter profiles\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/botDefaults/starter-profiles"
+    "where": "Settings → How every bot behaves → Starter profiles",
+    "url": "https://murage.ai/docs/features/every-setting#how-every-bot-behaves-starter-profiles",
+    "text": "Settings → How every bot behaves → Starter profiles\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/botDefaults/starter-profiles"
   },
   {
-    "id": "features/every-setting#bots-house-rules",
+    "id": "features/every-setting#how-every-bot-behaves-house-rules",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Bots: House rules",
+    "heading": "How every bot behaves: House rules",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Bots → House rules",
-    "url": "https://murage.ai/docs/features/every-setting#bots-house-rules",
-    "text": "Settings → Bots → House rules\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/botDefaults/house-rules"
+    "where": "Settings → How every bot behaves → House rules",
+    "url": "https://murage.ai/docs/features/every-setting#how-every-bot-behaves-house-rules",
+    "text": "Settings → How every bot behaves → House rules\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/botDefaults/house-rules"
   },
   {
     "id": "features/every-setting#skills-teach-a-skill",
@@ -2864,6 +2933,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Settings → Skills → Teach a skill",
     "url": "https://murage.ai/docs/features/every-setting#skills-teach-a-skill",
     "text": "Settings → Skills → Teach a skill\n\nOn the computer running Murage.\n\nWhen it is off: Off. Turn it on to let bots learn a skill from a recording or /learn.\n\nAddress: murage://settings/app/skills/recorder"
+  },
+  {
+    "id": "features/every-setting#skills-advanced-voice-transcription-key",
+    "title": "Every setting",
+    "description": "Every setting in Murage, where it is, and the link that opens it.",
+    "heading": "Skills, Advanced: Voice transcription key",
+    "breadcrumb": "Murage docs → Features → Every setting",
+    "where": "Settings → Skills → Advanced → Voice transcription key",
+    "url": "https://murage.ai/docs/features/every-setting#skills-advanced-voice-transcription-key",
+    "text": "Settings → Skills → Advanced → Voice transcription key\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/voice-key"
   },
   {
     "id": "features/every-setting#skills-skills-library-and-import",
@@ -2894,6 +2973,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Settings → Memory → Memory and what it learned",
     "url": "https://murage.ai/docs/features/every-setting#memory-memory-and-what-it-learned",
     "text": "Settings → Memory → Memory and what it learned\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/memory/overview"
+  },
+  {
+    "id": "features/every-setting#memory-open-memory",
+    "title": "Every setting",
+    "description": "Every setting in Murage, where it is, and the link that opens it.",
+    "heading": "Memory: Open memory",
+    "breadcrumb": "Murage docs → Features → Every setting",
+    "where": "Settings → Memory → Open memory",
+    "url": "https://murage.ai/docs/features/every-setting#memory-open-memory",
+    "text": "Settings → Memory → Open memory\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/memory/browser"
   },
   {
     "id": "features/every-setting#memory-how-memory-learns",
@@ -2954,16 +3043,6 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Settings → Memory → Advanced → Memory mode",
     "url": "https://murage.ai/docs/features/every-setting#memory-advanced-memory-mode",
     "text": "Settings → Memory → Advanced → Memory mode\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/memory/mode"
-  },
-  {
-    "id": "features/every-setting#memory-advanced-monthly-learning-limit",
-    "title": "Every setting",
-    "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Memory, Advanced: Monthly learning limit",
-    "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Memory → Advanced → Monthly learning limit",
-    "url": "https://murage.ai/docs/features/every-setting#memory-advanced-monthly-learning-limit",
-    "text": "Settings → Memory → Advanced → Monthly learning limit\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/memory/limit"
   },
   {
     "id": "features/every-setting#memory-advanced-learning-connection",
@@ -3086,6 +3165,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Settings → Models & engines → Advanced → Several Claude accounts\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/models/claude-accounts"
   },
   {
+    "id": "features/every-setting#models-engines-advanced-effort-for-new-bots",
+    "title": "Every setting",
+    "description": "Every setting in Murage, where it is, and the link that opens it.",
+    "heading": "Models & engines, Advanced: Effort for new bots",
+    "breadcrumb": "Murage docs → Features → Every setting",
+    "where": "Settings → Models & engines → Advanced → Effort for new bots",
+    "url": "https://murage.ai/docs/features/every-setting#models-engines-advanced-effort-for-new-bots",
+    "text": "Settings → Models & engines → Advanced → Effort for new bots\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/botDefaults/new-bot-effort"
+  },
+  {
     "id": "features/every-setting#models-engines-advanced-engine-command-lines",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
@@ -3096,64 +3185,54 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Settings → Models & engines → Advanced → Engine command lines\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/models/command-lines"
   },
   {
-    "id": "features/every-setting#tools-web-search-service",
+    "id": "features/every-setting#search-images-and-dictation-web-search-service",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Tools: Web search service",
+    "heading": "Search, images and dictation: Web search service",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Tools → Web search service",
-    "url": "https://murage.ai/docs/features/every-setting#tools-web-search-service",
-    "text": "Settings → Tools → Web search service\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/search"
+    "where": "Settings → Search, images and dictation → Web search service",
+    "url": "https://murage.ai/docs/features/every-setting#search-images-and-dictation-web-search-service",
+    "text": "Settings → Search, images and dictation → Web search service\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/search"
   },
   {
-    "id": "features/every-setting#tools-image-generation",
+    "id": "features/every-setting#search-images-and-dictation-image-generation",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Tools: Image generation",
+    "heading": "Search, images and dictation: Image generation",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Tools → Image generation",
-    "url": "https://murage.ai/docs/features/every-setting#tools-image-generation",
-    "text": "Settings → Tools → Image generation\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/images"
+    "where": "Settings → Search, images and dictation → Image generation",
+    "url": "https://murage.ai/docs/features/every-setting#search-images-and-dictation-image-generation",
+    "text": "Settings → Search, images and dictation → Image generation\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/images"
   },
   {
-    "id": "features/every-setting#tools-voice-notes-and-transcription",
+    "id": "features/every-setting#search-images-and-dictation-voice-notes-and-transcription",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Tools: Voice notes and transcription",
+    "heading": "Search, images and dictation: Voice notes and transcription",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Tools → Voice notes and transcription",
-    "url": "https://murage.ai/docs/features/every-setting#tools-voice-notes-and-transcription",
-    "text": "Settings → Tools → Voice notes and transcription\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/voice"
+    "where": "Settings → Search, images and dictation → Voice notes and transcription",
+    "url": "https://murage.ai/docs/features/every-setting#search-images-and-dictation-voice-notes-and-transcription",
+    "text": "Settings → Search, images and dictation → Voice notes and transcription\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/voice"
   },
   {
-    "id": "features/every-setting#tools-advanced-search-service-keys",
+    "id": "features/every-setting#search-images-and-dictation-advanced-search-service-keys",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Tools, Advanced: Search service keys",
+    "heading": "Search, images and dictation, Advanced: Search service keys",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Tools → Advanced → Search service keys",
-    "url": "https://murage.ai/docs/features/every-setting#tools-advanced-search-service-keys",
-    "text": "Settings → Tools → Advanced → Search service keys\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/provider-keys"
+    "where": "Settings → Search, images and dictation → Advanced → Search service keys",
+    "url": "https://murage.ai/docs/features/every-setting#search-images-and-dictation-advanced-search-service-keys",
+    "text": "Settings → Search, images and dictation → Advanced → Search service keys\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/provider-keys"
   },
   {
-    "id": "features/every-setting#tools-advanced-daily-image-check",
+    "id": "features/every-setting#search-images-and-dictation-advanced-daily-image-check",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Tools, Advanced: Daily image check",
+    "heading": "Search, images and dictation, Advanced: Daily image check",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Tools → Advanced → Daily image check",
-    "url": "https://murage.ai/docs/features/every-setting#tools-advanced-daily-image-check",
-    "text": "Settings → Tools → Advanced → Daily image check\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/daily-check"
-  },
-  {
-    "id": "features/every-setting#tools-advanced-voice-transcription-key",
-    "title": "Every setting",
-    "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Tools, Advanced: Voice transcription key",
-    "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Tools → Advanced → Voice transcription key",
-    "url": "https://murage.ai/docs/features/every-setting#tools-advanced-voice-transcription-key",
-    "text": "Settings → Tools → Advanced → Voice transcription key\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/voice-key"
+    "where": "Settings → Search, images and dictation → Advanced → Daily image check",
+    "url": "https://murage.ai/docs/features/every-setting#search-images-and-dictation-advanced-daily-image-check",
+    "text": "Settings → Search, images and dictation → Advanced → Daily image check\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/webSearch/daily-check"
   },
   {
     "id": "features/every-setting#connected-apps-connected-apps",
@@ -3206,134 +3285,144 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Settings → Connected apps → Advanced → Connected tools details\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/connections/mcp"
   },
   {
-    "id": "features/every-setting#messaging-apps-telegram",
+    "id": "features/every-setting#connected-apps-advanced-claude-code-setup",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Messaging apps: Telegram",
+    "heading": "Connected apps, Advanced: Claude Code setup",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Messaging apps → Telegram",
-    "url": "https://murage.ai/docs/features/every-setting#messaging-apps-telegram",
-    "text": "Settings → Messaging apps → Telegram\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/telegram"
+    "where": "Settings → Connected apps → Advanced → Claude Code setup",
+    "url": "https://murage.ai/docs/features/every-setting#connected-apps-advanced-claude-code-setup",
+    "text": "Settings → Connected apps → Advanced → Claude Code setup\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/connections/claude-code"
   },
   {
-    "id": "features/every-setting#messaging-apps-slack",
+    "id": "features/every-setting#connected-apps-telegram",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Messaging apps: Slack",
+    "heading": "Connected apps: Telegram",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Messaging apps → Slack",
-    "url": "https://murage.ai/docs/features/every-setting#messaging-apps-slack",
-    "text": "Settings → Messaging apps → Slack\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/slack"
+    "where": "Settings → Connected apps → Telegram",
+    "url": "https://murage.ai/docs/features/every-setting#connected-apps-telegram",
+    "text": "Settings → Connected apps → Telegram\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/telegram"
   },
   {
-    "id": "features/every-setting#messaging-apps-discord",
+    "id": "features/every-setting#connected-apps-slack",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Messaging apps: Discord",
+    "heading": "Connected apps: Slack",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Messaging apps → Discord",
-    "url": "https://murage.ai/docs/features/every-setting#messaging-apps-discord",
-    "text": "Settings → Messaging apps → Discord\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/discord"
+    "where": "Settings → Connected apps → Slack",
+    "url": "https://murage.ai/docs/features/every-setting#connected-apps-slack",
+    "text": "Settings → Connected apps → Slack\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/slack"
   },
   {
-    "id": "features/every-setting#messaging-apps-whatsapp",
+    "id": "features/every-setting#connected-apps-discord",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Messaging apps: WhatsApp",
+    "heading": "Connected apps: Discord",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Messaging apps → WhatsApp",
-    "url": "https://murage.ai/docs/features/every-setting#messaging-apps-whatsapp",
-    "text": "Settings → Messaging apps → WhatsApp\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/whatsapp"
+    "where": "Settings → Connected apps → Discord",
+    "url": "https://murage.ai/docs/features/every-setting#connected-apps-discord",
+    "text": "Settings → Connected apps → Discord\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/discord"
   },
   {
-    "id": "features/every-setting#messaging-apps-advanced-private-slack-app-setup",
+    "id": "features/every-setting#connected-apps-whatsapp",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Messaging apps, Advanced: Private Slack app setup",
+    "heading": "Connected apps: WhatsApp",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Messaging apps → Advanced → Private Slack app setup",
-    "url": "https://murage.ai/docs/features/every-setting#messaging-apps-advanced-private-slack-app-setup",
-    "text": "Settings → Messaging apps → Advanced → Private Slack app setup\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/slack-setup"
+    "where": "Settings → Connected apps → WhatsApp",
+    "url": "https://murage.ai/docs/features/every-setting#connected-apps-whatsapp",
+    "text": "Settings → Connected apps → WhatsApp\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/whatsapp"
   },
   {
-    "id": "features/every-setting#messaging-apps-advanced-private-discord-app-setup",
+    "id": "features/every-setting#connected-apps-advanced-private-slack-app-setup",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Messaging apps, Advanced: Private Discord app setup",
+    "heading": "Connected apps, Advanced: Private Slack app setup",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Messaging apps → Advanced → Private Discord app setup",
-    "url": "https://murage.ai/docs/features/every-setting#messaging-apps-advanced-private-discord-app-setup",
-    "text": "Settings → Messaging apps → Advanced → Private Discord app setup\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/discord-setup"
+    "where": "Settings → Connected apps → Advanced → Private Slack app setup",
+    "url": "https://murage.ai/docs/features/every-setting#connected-apps-advanced-private-slack-app-setup",
+    "text": "Settings → Connected apps → Advanced → Private Slack app setup\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/slack-setup"
   },
   {
-    "id": "features/every-setting#messaging-apps-advanced-whatsapp-allowed-contacts",
+    "id": "features/every-setting#connected-apps-advanced-private-discord-app-setup",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Messaging apps, Advanced: WhatsApp allowed contacts",
+    "heading": "Connected apps, Advanced: Private Discord app setup",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Messaging apps → Advanced → WhatsApp allowed contacts",
-    "url": "https://murage.ai/docs/features/every-setting#messaging-apps-advanced-whatsapp-allowed-contacts",
-    "text": "Settings → Messaging apps → Advanced → WhatsApp allowed contacts\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/allow-lists"
+    "where": "Settings → Connected apps → Advanced → Private Discord app setup",
+    "url": "https://murage.ai/docs/features/every-setting#connected-apps-advanced-private-discord-app-setup",
+    "text": "Settings → Connected apps → Advanced → Private Discord app setup\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/discord-setup"
   },
   {
-    "id": "features/every-setting#messaging-apps-advanced-whatsapp-groups",
+    "id": "features/every-setting#connected-apps-advanced-whatsapp-allowed-contacts",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Messaging apps, Advanced: WhatsApp groups",
+    "heading": "Connected apps, Advanced: WhatsApp allowed contacts",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Messaging apps → Advanced → WhatsApp groups",
-    "url": "https://murage.ai/docs/features/every-setting#messaging-apps-advanced-whatsapp-groups",
-    "text": "Settings → Messaging apps → Advanced → WhatsApp groups\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/whatsapp-groups"
+    "where": "Settings → Connected apps → Advanced → WhatsApp allowed contacts",
+    "url": "https://murage.ai/docs/features/every-setting#connected-apps-advanced-whatsapp-allowed-contacts",
+    "text": "Settings → Connected apps → Advanced → WhatsApp allowed contacts\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/allow-lists"
   },
   {
-    "id": "features/every-setting#devices-built-in-browser",
+    "id": "features/every-setting#connected-apps-advanced-whatsapp-groups",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Devices: Built-in browser",
+    "heading": "Connected apps, Advanced: WhatsApp groups",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Devices → Built-in browser",
-    "url": "https://murage.ai/docs/features/every-setting#devices-built-in-browser",
-    "text": "Settings → Devices → Built-in browser\n\nOn the computer running Murage.\n\nWhen it is off: Off. Turn it on to let bots use a browser tab you can watch and take over.\n\nAddress: murage://settings/app/companion/browser"
+    "where": "Settings → Connected apps → Advanced → WhatsApp groups",
+    "url": "https://murage.ai/docs/features/every-setting#connected-apps-advanced-whatsapp-groups",
+    "text": "Settings → Connected apps → Advanced → WhatsApp groups\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/channels/whatsapp-groups"
   },
   {
-    "id": "features/every-setting#devices-phone-and-other-devices",
+    "id": "features/every-setting#computer-browser-built-in-browser",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Devices: Phone and other devices",
+    "heading": "Computer & browser: Built-in browser",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Devices → Phone and other devices",
-    "url": "https://murage.ai/docs/features/every-setting#devices-phone-and-other-devices",
-    "text": "Settings → Devices → Phone and other devices\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/companion/pairing"
+    "where": "Settings → Computer & browser → Built-in browser",
+    "url": "https://murage.ai/docs/features/every-setting#computer-browser-built-in-browser",
+    "text": "Settings → Computer & browser → Built-in browser\n\nOn the computer running Murage.\n\nWhen it is off: Off. Turn it on to let bots use a browser tab you can watch and take over.\n\nAddress: murage://settings/app/companion/browser"
   },
   {
-    "id": "features/every-setting#devices-advanced-script-access",
+    "id": "features/every-setting#phone-and-other-devices-phone-and-other-devices",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Devices, Advanced: Script access",
+    "heading": "Phone and other devices: Phone and other devices",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Devices → Advanced → Script access",
-    "url": "https://murage.ai/docs/features/every-setting#devices-advanced-script-access",
-    "text": "Settings → Devices → Advanced → Script access\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/companion/script-access"
+    "where": "Settings → Phone and other devices → Phone and other devices",
+    "url": "https://murage.ai/docs/features/every-setting#phone-and-other-devices-phone-and-other-devices",
+    "text": "Settings → Phone and other devices → Phone and other devices\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/companion/pairing"
   },
   {
-    "id": "features/every-setting#devices-advanced-remote-computer-vps",
+    "id": "features/every-setting#computer-browser-advanced-script-access",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Devices, Advanced: Remote computer (VPS)",
+    "heading": "Computer & browser, Advanced: Script access",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Devices → Advanced → Remote computer (VPS)",
-    "url": "https://murage.ai/docs/features/every-setting#devices-advanced-remote-computer-vps",
-    "text": "Settings → Devices → Advanced → Remote computer (VPS)\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/companion/vps"
+    "where": "Settings → Computer & browser → Advanced → Script access",
+    "url": "https://murage.ai/docs/features/every-setting#computer-browser-advanced-script-access",
+    "text": "Settings → Computer & browser → Advanced → Script access\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/companion/script-access"
   },
   {
-    "id": "features/every-setting#devices-computer-and-browser",
+    "id": "features/every-setting#computer-browser-advanced-remote-computer-vps",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "Devices: Computer and browser",
+    "heading": "Computer & browser, Advanced: Remote computer (VPS)",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → Devices → Computer and browser",
-    "url": "https://murage.ai/docs/features/every-setting#devices-computer-and-browser",
-    "text": "Settings → Devices → Computer and browser\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/companion/computer"
+    "where": "Settings → Computer & browser → Advanced → Remote computer (VPS)",
+    "url": "https://murage.ai/docs/features/every-setting#computer-browser-advanced-remote-computer-vps",
+    "text": "Settings → Computer & browser → Advanced → Remote computer (VPS)\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/companion/vps"
+  },
+  {
+    "id": "features/every-setting#computer-browser-computer-and-browser",
+    "title": "Every setting",
+    "description": "Every setting in Murage, where it is, and the link that opens it.",
+    "heading": "Computer & browser: Computer and browser",
+    "breadcrumb": "Murage docs → Features → Every setting",
+    "where": "Settings → Computer & browser → Computer and browser",
+    "url": "https://murage.ai/docs/features/every-setting#computer-browser-computer-and-browser",
+    "text": "Settings → Computer & browser → Computer and browser\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/companion/computer"
   },
   {
     "id": "features/every-setting#backups-backups-and-recovery-key",
@@ -3376,104 +3465,144 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Settings → Usage → Memory learning this month\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/usage/learning"
   },
   {
-    "id": "features/every-setting#about-updates-app-version",
+    "id": "features/every-setting#usage-advanced-monthly-learning-limit",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "About & updates: App version",
+    "heading": "Usage, Advanced: Monthly learning limit",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → About & updates → App version",
-    "url": "https://murage.ai/docs/features/every-setting#about-updates-app-version",
-    "text": "Settings → About & updates → App version\n\nAddress: murage://settings/app/about/version"
+    "where": "Settings → Usage → Advanced → Monthly learning limit",
+    "url": "https://murage.ai/docs/features/every-setting#usage-advanced-monthly-learning-limit",
+    "text": "Settings → Usage → Advanced → Monthly learning limit\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/memory/limit"
   },
   {
-    "id": "features/every-setting#about-updates-check-for-updates",
+    "id": "features/every-setting#usage-monthly-spending-notice",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "About & updates: Check for updates",
+    "heading": "Usage: Monthly spending notice",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → About & updates → Check for updates",
-    "url": "https://murage.ai/docs/features/every-setting#about-updates-check-for-updates",
-    "text": "Settings → About & updates → Check for updates\n\nAddress: murage://settings/app/about/updates"
+    "where": "Settings → Usage → Monthly spending notice",
+    "url": "https://murage.ai/docs/features/every-setting#usage-monthly-spending-notice",
+    "text": "Settings → Usage → Monthly spending notice\n\nAddress: murage://settings/app/usage/spend-limit"
   },
   {
-    "id": "features/every-setting#about-updates-what-s-new",
+    "id": "features/every-setting#usage-this-month-by-routine",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "About & updates: What's new",
+    "heading": "Usage: This month by routine",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → About & updates → What's new",
-    "url": "https://murage.ai/docs/features/every-setting#about-updates-what-s-new",
-    "text": "Settings → About & updates → What's new\n\nAddress: murage://settings/app/about/whats-new"
+    "where": "Settings → Usage → This month by routine",
+    "url": "https://murage.ai/docs/features/every-setting#usage-this-month-by-routine",
+    "text": "Settings → Usage → This month by routine\n\nAddress: murage://settings/app/usage/by-routine"
   },
   {
-    "id": "features/every-setting#about-updates-advanced-news-from-us",
+    "id": "features/every-setting#usage-plan-usage",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "About & updates, Advanced: News from us",
+    "heading": "Usage: Plan usage",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → About & updates → Advanced → News from us",
-    "url": "https://murage.ai/docs/features/every-setting#about-updates-advanced-news-from-us",
-    "text": "Settings → About & updates → Advanced → News from us\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/about/announcements"
+    "where": "Settings → Usage → Plan usage",
+    "url": "https://murage.ai/docs/features/every-setting#usage-plan-usage",
+    "text": "Settings → Usage → Plan usage\n\nAddress: murage://settings/app/usage/account"
   },
   {
-    "id": "features/every-setting#about-updates-advanced-diagnostics-report",
+    "id": "features/every-setting#about-help-app-version",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "About & updates, Advanced: Diagnostics report",
+    "heading": "About & help: App version",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → About & updates → Advanced → Diagnostics report",
-    "url": "https://murage.ai/docs/features/every-setting#about-updates-advanced-diagnostics-report",
-    "text": "Settings → About & updates → Advanced → Diagnostics report\n\nAddress: murage://settings/app/about/diagnostics"
+    "where": "Settings → About & help → App version",
+    "url": "https://murage.ai/docs/features/every-setting#about-help-app-version",
+    "text": "Settings → About & help → App version\n\nAddress: murage://settings/app/about/version"
   },
   {
-    "id": "features/every-setting#about-updates-run-setup-again",
+    "id": "features/every-setting#about-help-what-s-new",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "About & updates: Run setup again",
+    "heading": "About & help: What's new",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → About & updates → Run setup again",
-    "url": "https://murage.ai/docs/features/every-setting#about-updates-run-setup-again",
-    "text": "Settings → About & updates → Run setup again\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/about/setup"
+    "where": "Settings → About & help → What's new",
+    "url": "https://murage.ai/docs/features/every-setting#about-help-what-s-new",
+    "text": "Settings → About & help → What's new\n\nAddress: murage://settings/app/about/whats-new"
   },
   {
-    "id": "features/every-setting#about-updates-keyboard-shortcuts",
+    "id": "features/every-setting#about-help-advanced-diagnostics-report",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "About & updates: Keyboard shortcuts",
+    "heading": "About & help, Advanced: Diagnostics report",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → About & updates → Keyboard shortcuts",
-    "url": "https://murage.ai/docs/features/every-setting#about-updates-keyboard-shortcuts",
-    "text": "Settings → About & updates → Keyboard shortcuts\n\nAddress: murage://settings/app/about/shortcuts"
+    "where": "Settings → About & help → Advanced → Diagnostics report",
+    "url": "https://murage.ai/docs/features/every-setting#about-help-advanced-diagnostics-report",
+    "text": "Settings → About & help → Advanced → Diagnostics report\n\nAddress: murage://settings/app/about/diagnostics"
   },
   {
-    "id": "features/every-setting#about-updates-go-back-to-a-previous-version",
+    "id": "features/every-setting#about-help-run-setup-again",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "About & updates: Go back to a previous version",
+    "heading": "About & help: Run setup again",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → About & updates → Go back to a previous version",
-    "url": "https://murage.ai/docs/features/every-setting#about-updates-go-back-to-a-previous-version",
-    "text": "Settings → About & updates → Go back to a previous version\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/about/previous-version"
+    "where": "Settings → About & help → Run setup again",
+    "url": "https://murage.ai/docs/features/every-setting#about-help-run-setup-again",
+    "text": "Settings → About & help → Run setup again\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/about/setup"
   },
   {
-    "id": "features/every-setting#about-updates-get-the-setup-guide-and-every-new-release",
+    "id": "features/every-setting#about-help-keyboard-shortcuts",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "About & updates: Get the setup guide and every new release",
+    "heading": "About & help: Keyboard shortcuts",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → About & updates → Get the setup guide and every new release",
-    "url": "https://murage.ai/docs/features/every-setting#about-updates-get-the-setup-guide-and-every-new-release",
-    "text": "Settings → About & updates → Get the setup guide and every new release\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/about/news"
+    "where": "Settings → About & help → Keyboard shortcuts",
+    "url": "https://murage.ai/docs/features/every-setting#about-help-keyboard-shortcuts",
+    "text": "Settings → About & help → Keyboard shortcuts\n\nAddress: murage://settings/app/about/shortcuts"
   },
   {
-    "id": "features/every-setting#about-updates-health",
+    "id": "features/every-setting#about-help-get-the-setup-guide-and-every-new-release",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
-    "heading": "About & updates: Health",
+    "heading": "About & help: Get the setup guide and every new release",
     "breadcrumb": "Murage docs → Features → Every setting",
-    "where": "Settings → About & updates → Health",
-    "url": "https://murage.ai/docs/features/every-setting#about-updates-health",
-    "text": "Settings → About & updates → Health\n\nAddress: murage://settings/app/about/health"
+    "where": "Settings → About & help → Get the setup guide and every new release",
+    "url": "https://murage.ai/docs/features/every-setting#about-help-get-the-setup-guide-and-every-new-release",
+    "text": "Settings → About & help → Get the setup guide and every new release\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/about/news"
+  },
+  {
+    "id": "features/every-setting#about-help-health",
+    "title": "Every setting",
+    "description": "Every setting in Murage, where it is, and the link that opens it.",
+    "heading": "About & help: Health",
+    "breadcrumb": "Murage docs → Features → Every setting",
+    "where": "Settings → About & help → Health",
+    "url": "https://murage.ai/docs/features/every-setting#about-help-health",
+    "text": "Settings → About & help → Health\n\nAddress: murage://settings/app/about/health"
+  },
+  {
+    "id": "features/every-setting#about-help-check-for-updates",
+    "title": "Every setting",
+    "description": "Every setting in Murage, where it is, and the link that opens it.",
+    "heading": "About & help: Check for updates",
+    "breadcrumb": "Murage docs → Features → Every setting",
+    "where": "Settings → About & help → Check for updates",
+    "url": "https://murage.ai/docs/features/every-setting#about-help-check-for-updates",
+    "text": "Settings → About & help → Check for updates\n\nAddress: murage://settings/app/about/updates"
+  },
+  {
+    "id": "features/every-setting#about-help-go-back-to-a-previous-version",
+    "title": "Every setting",
+    "description": "Every setting in Murage, where it is, and the link that opens it.",
+    "heading": "About & help: Go back to a previous version",
+    "breadcrumb": "Murage docs → Features → Every setting",
+    "where": "Settings → About & help → Go back to a previous version",
+    "url": "https://murage.ai/docs/features/every-setting#about-help-go-back-to-a-previous-version",
+    "text": "Settings → About & help → Go back to a previous version\n\nAddress: murage://settings/app/about/previous-version"
+  },
+  {
+    "id": "features/every-setting#about-help-advanced-news-from-us",
+    "title": "Every setting",
+    "description": "Every setting in Murage, where it is, and the link that opens it.",
+    "heading": "About & help, Advanced: News from us",
+    "breadcrumb": "Murage docs → Features → Every setting",
+    "where": "Settings → About & help → Advanced → News from us",
+    "url": "https://murage.ai/docs/features/every-setting#about-help-advanced-news-from-us",
+    "text": "Settings → About & help → Advanced → News from us\n\nOn the computer running Murage.\n\nAddress: murage://settings/app/about/announcements"
   },
   {
     "id": "features/every-setting#overview-what-is-this-bot-for",
@@ -3594,6 +3723,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "where": "Bot settings → Memory → Legacy notebook",
     "url": "https://murage.ai/docs/features/every-setting#memory-legacy-notebook",
     "text": "Bot settings → Memory → Legacy notebook\n\nAddress: murage://settings/bot/memory/notebook"
+  },
+  {
+    "id": "features/every-setting#memory-start-fresh-for-this-bot",
+    "title": "Every setting",
+    "description": "Every setting in Murage, where it is, and the link that opens it.",
+    "heading": "Memory: Start fresh for this bot",
+    "breadcrumb": "Murage docs → Features → Every setting",
+    "where": "Bot settings → Memory → Start fresh for this bot",
+    "url": "https://murage.ai/docs/features/every-setting#memory-start-fresh-for-this-bot",
+    "text": "Bot settings → Memory → Start fresh for this bot\n\nOn the computer running Murage.\n\nAddress: murage://settings/bot/memory/clear-revoked-marks"
   },
   {
     "id": "features/every-setting#routines-routines",
@@ -3816,6 +3955,16 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "text": "Bot settings → Voice & alerts → Notifications\n\nAddress: murage://settings/bot/voice/notifications"
   },
   {
+    "id": "features/every-setting#voice-alerts-calls",
+    "title": "Every setting",
+    "description": "Every setting in Murage, where it is, and the link that opens it.",
+    "heading": "Voice & alerts: Calls",
+    "breadcrumb": "Murage docs → Features → Every setting",
+    "where": "Bot settings → Voice & alerts → Calls",
+    "url": "https://murage.ai/docs/features/every-setting#voice-alerts-calls",
+    "text": "Bot settings → Voice & alerts → Calls\n\nAddress: murage://settings/bot/voice/calls"
+  },
+  {
     "id": "features/every-setting#history-history",
     "title": "Every setting",
     "description": "Every setting in Murage, where it is, and the link that opens it.",
@@ -3841,9 +3990,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "One set of rules every bot follows, and a short profile of you that your bots read on your own turns.",
     "heading": "House rules",
     "breadcrumb": "Murage docs → Features → House rules and About me",
-    "where": "Settings → House rules",
+    "where": "Settings → How every bot behaves → House rules",
     "url": "https://murage.ai/docs/features/house-rules-and-about-me#house-rules",
-    "text": "Settings → House rules holds one set of rules that every bot follows. They go first in every bot's instructions: direct chats, the Chief, handed-over work, routines, channels and calls.\n\nMurage ships a default covering who the bot works for, how it sounds, telling the truth, speaking for you, not making promises in your name, saying it is an AI when asked, treating what it reads as information and not orders, correcting itself, not inventing results, checking fresh facts and time zones, stopping after two identical failures, sharing only what someone needs to know, and tidying up after itself."
+    "text": "Settings → How every bot behaves → House rules holds one set of rules that every bot follows. They go first in every bot's instructions: direct chats, the Chief, handed-over work, routines, channels and calls.\n\nMurage ships a default covering who the bot works for, how it sounds, telling the truth, speaking for you, not making promises in your name, saying it is an AI when asked, treating what it reads as information and not orders, correcting itself, not inventing results, checking fresh facts and time zones, stopping after two identical failures, sharing only what someone needs to know, and tidying up after itself."
   },
   {
     "id": "features/house-rules-and-about-me#changing-the-house-rules",
@@ -3871,9 +4020,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "One set of rules every bot follows, and a short profile of you that your bots read on your own turns.",
     "heading": "About me",
     "breadcrumb": "Murage docs → Features → House rules and About me",
-    "where": "Settings → About me",
+    "where": "Settings → General → About me",
     "url": "https://murage.ai/docs/features/house-rules-and-about-me#about-me",
-    "text": "Settings → About me holds a short profile of you: who you are, what you do, how you like to work, and anything every bot should know. Write it once and every bot can use it.\n\nThe first time you open it, Murage starts it with what it already knows about you. Change anything you like, then press Save. Bots use it from their next reply. Undo changes throws away unsaved edits; saving it empty clears it. There is a limit of 4,000 characters."
+    "text": "Settings → General → About me holds a short profile of you: who you are, what you do, how you like to work, and anything every bot should know. Write it once and every bot can use it.\n\nThe first time you open it, Murage starts it with what it already knows about you. Change anything you like, then press Save. Bots use it from their next reply. Undo changes throws away unsaved edits; saving it empty clears it. There is a limit of 4,000 characters."
   },
   {
     "id": "features/house-rules-and-about-me#who-reads-about-me",
@@ -4040,9 +4189,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "A map of the capabilities currently available in Murage.",
     "heading": "Desktop experience",
     "breadcrumb": "Murage docs → Feature overview",
-    "where": "Settings → Devices",
+    "where": "Settings → Phone and other devices",
     "url": "https://murage.ai/docs/features#desktop-experience",
-    "text": "- macOS, Windows, and Ubuntu packages\n- Theme switching and accessible contrast\n- Sidebar sections, compact headers, pinned messages, spoilers, and image attachments\n- Automatic updates on macOS and Windows\n\nmacOS has the broadest native integration. Ubuntu chat, preview, Cloud, and Local VM are available, and local control works on Ubuntu 24.04 Xorg as a Beta. Windows release installers are signed. To reach your bots from your phone, pair it under Settings → Devices."
+    "text": "- macOS, Windows, and Ubuntu packages\n- Theme switching and accessible contrast\n- Sidebar sections, compact headers, pinned messages, spoilers, and image attachments\n- Automatic updates on macOS and Windows\n\nmacOS has the broadest native integration. Ubuntu chat, preview, Cloud, and Local VM are available, and local control works on Ubuntu 24.04 Xorg as a Beta. Windows release installers are signed. To reach your bots from your phone, pair it under Settings → Phone and other devices."
   },
   {
     "id": "features/mcp-servers#overview",
@@ -4129,9 +4278,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Give your bots more tools by pasting a link, a command or the settings text a service gives you. Sign in or add a key, and what each message from Test means.",
     "heading": "Use Murage from Claude Code, Codex and other apps",
     "breadcrumb": "Murage docs → Features → Connected tools (MCP servers)",
-    "where": "Settings → Devices",
+    "where": "Settings → Computer & browser → Advanced → Script access",
     "url": "https://murage.ai/docs/features/mcp-servers#use-murage-from-claude-code-codex-and-other-apps",
-    "text": "Murage includes its own MCP server, so Claude Code, Codex or any other MCP app on this computer can talk to one of your bots. First make script access for that bot: open Settings → Devices, then Advanced, then Scripts and other apps. Switch on \"Let scripts use a bot\", pick the bot, and choose whether it may also send. Murage shows the token once, so copy it then. On a headless install, the same card is under Settings → General in your browser.\n\nIn the other app, add Murage's MCP server as a command server. The command is the Murage app itself with the bundled script as its argument:…"
+    "text": "Murage includes its own MCP server, so Claude Code, Codex or any other MCP app on this computer can talk to one of your bots. First make script access for that bot: open Settings → Computer & browser → Advanced → Script access. Switch on \"Let scripts use a bot\", pick the bot, and choose whether it may also send. Murage shows the token once, so copy it then. On a headless install, the same card is under Settings → General in your browser.\n\nIn the other app, add Murage's MCP server as a command server. The command is the Murage app itself with the bundled script as its argument:…"
   },
   {
     "id": "features/mcp-servers#remove-a-server",
@@ -4269,9 +4418,19 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Set up Telegram, Slack, Discord or WhatsApp to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
     "heading": "What messaging apps do",
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
-    "where": "Settings → Messaging apps",
+    "where": "Settings → Connected apps",
     "url": "https://murage.ai/docs/features/messaging-apps#what-messaging-apps-do",
-    "text": "Messaging apps let you message your Chief of Staff from Telegram, Slack, Discord or WhatsApp. Set them up in Settings → Messaging apps. Murage must be running to receive messages. Telegram, Slack and Discord bring approval cards to you with buttons, so you can answer from your phone. WhatsApp approvals stay in Murage."
+    "text": "Messaging apps let you message your Chief of Staff from Telegram, Slack, Discord or WhatsApp. Set them up in Settings → Connected apps. Murage must be running to receive messages. Telegram, Slack and Discord bring approval cards to you with buttons, so you can answer from your phone. WhatsApp approvals stay in Murage."
+  },
+  {
+    "id": "features/messaging-apps#signal",
+    "title": "Telegram, Slack, Discord and WhatsApp",
+    "description": "Set up Telegram, Slack, Discord or WhatsApp to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
+    "heading": "Signal",
+    "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
+    "where": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
+    "url": "https://murage.ai/docs/features/messaging-apps#signal",
+    "text": "Signal is unavailable in this release while its release checks remain incomplete. You cannot link a Signal account yet. Use one of the messaging apps described on this page to reach your Chief of Staff."
   },
   {
     "id": "features/messaging-apps#what-you-need-first",
@@ -4289,9 +4448,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Set up Telegram, Slack, Discord or WhatsApp to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
     "heading": "Telegram: set up",
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
-    "where": "Settings → Messaging apps → Telegram",
+    "where": "Settings → Connected apps → Telegram",
     "url": "https://murage.ai/docs/features/messaging-apps#telegram-set-up",
-    "text": "1. Open BotFather in Telegram, send /newbot and follow the prompts. BotFather gives you a private code for your new bot, which Telegram calls the bot token. Copy it.\n2. In Settings → Messaging apps → Telegram, paste it into Bot token and press Save token.\n3. Press Pair with Chief to get a pairing code. Send /pair followed by that code to your new bot in a private Telegram chat.\n\nWhen it says Connected, message your bot to talk to your Chief. Messages share the Chief's current conversation. Buttons only you can use let you allow once or deny what a bot is waiting on (see Approvals from your phone). Use Revoke to disconnect, or Replace token to paste a new code from BotFather for the same bot."
+    "text": "1. Open BotFather in Telegram, send /newbot and follow the prompts. BotFather gives you a private code for your new bot, which Telegram calls the bot token. Copy it.\n2. In Settings → Connected apps → Telegram, paste it into Bot token and press Save token.\n3. Press Pair with Chief to get a pairing code. Send /pair followed by that code to your new bot in a private Telegram chat.\n\nWhen it says Connected, message your bot to talk to your Chief. Messages share the Chief's current conversation. Buttons only you can use let you allow once or deny what a bot is waiting on (see Approvals from your phone). Use Revoke to disconnect, or Replace token to paste a new code from BotFather for the same bot."
   },
   {
     "id": "features/messaging-apps#slack-set-up",
@@ -4319,9 +4478,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Set up Telegram, Slack, Discord or WhatsApp to message your Chief of Staff from your phone, step by step, with pairing codes and what each one can do.",
     "heading": "WhatsApp: set up",
     "breadcrumb": "Murage docs → Features → Telegram, Slack, Discord and WhatsApp",
-    "where": "Settings → Messaging apps → WhatsApp",
+    "where": "Settings → Connected apps → WhatsApp",
     "url": "https://murage.ai/docs/features/messaging-apps#whatsapp-set-up",
-    "text": "Murage links to WhatsApp the way WhatsApp Web does, from this computer, using your own number, by QR or phone code. WhatsApp does not offer this link officially, and it may restrict or remove a number it sees driven by other software, without notice. A spare number on a second SIM or eSIM, set up in the WhatsApp Business app, is the best way to use this; linking your main number is your number to risk. The session and its credentials stay on this computer. Only the linked number is the owner. Chosen contacts can chat after approval. Groups start disabled.\n\n1. In Settings → Messaging apps → WhatsApp, read the note, then press Link WhatsApp.\n2.…"
+    "text": "Murage links to WhatsApp the way WhatsApp Web does, from this computer, using your own number, by QR or phone code. WhatsApp does not offer this link officially, and it may restrict or remove a number it sees driven by other software, without notice. A spare number on a second SIM or eSIM, set up in the WhatsApp Business app, is the best way to use this; linking your main number is your number to risk. The session and its credentials stay on this computer. Only the linked number is the owner. Chosen contacts can chat after approval. Groups start disabled.\n\n1. In Settings → Connected apps → WhatsApp, read the note, then press Link WhatsApp.\n2.…"
   },
   {
     "id": "features/messaging-apps#approvals-from-your-phone",
@@ -4551,7 +4710,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
     "where": "Murage docs → Features → Where to find things in Settings",
     "url": "https://murage.ai/docs/features/settings-guide#app-settings-you-and-bots",
-    "text": "You: General (your profile, and how the app looks and behaves) and About me (what every bot should know about you). Bots: Bot defaults (how new bots start, and how bots take turns in channels and projects), House rules (rules every bot follows), Skills (know-how your bots can use) and Memory (what your bots remember between conversations)."
+    "text": "You: General (your profile, About me, and how the app looks and behaves) and Calls. All bots: How every bot behaves (including House rules), Skills (know-how your bots can use) and Memory (what your bots remember between conversations). Each bot opens settings for one bot."
   },
   {
     "id": "features/settings-guide#app-settings-models-and-tools",
@@ -4561,7 +4720,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
     "where": "Murage docs → Features → Where to find things in Settings",
     "url": "https://murage.ai/docs/features/settings-guide#app-settings-models-and-tools",
-    "text": "Models: Models (the AI models your bots think with, and their keys) and Engines (the programs on this computer that run your bots). Tools: Images (let bots make and edit pictures), Web search, Voice (turn speech into text for recorded skills), Connected apps (Gmail, Slack, Notion and others) and Computer & browser."
+    "text": "AI: Models & engines (the AI models, their keys and the programs that run your bots) and Search, images and dictation (web search, image generation, voice notes and transcription)."
   },
   {
     "id": "features/settings-guide#app-settings-messaging-and-app",
@@ -4571,7 +4730,17 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
     "where": "Murage docs → Features → Where to find things in Settings",
     "url": "https://murage.ai/docs/features/settings-guide#app-settings-messaging-and-app",
-    "text": "Messaging & phone: Messaging apps (Telegram, Slack and Discord, see Telegram, Slack and Discord) and Phone and other devices (see The Murage phone app). App: Backups, Usage (how much each bot has used) and About & updates (where Get Murage news signs you up for Murage news by email: new releases, how-tos and tutorials)."
+    "text": "Reach: Connected apps (including Telegram, Slack, Discord and WhatsApp), Computer & browser, and Phone and other devices. App: Backups, Usage (how much each bot has used) and About & help (updates, Murage news and help)."
+  },
+  {
+    "id": "features/settings-guide#moving-in-from-another-app",
+    "title": "Where to find things in Settings",
+    "description": "Every Settings page and every bot settings section, with what each one is for, so a bot can point to the right place.",
+    "heading": "Moving in from another app",
+    "breadcrumb": "Murage docs → Features → Where to find things in Settings",
+    "where": "leaves it alone. Under Settings → General,",
+    "url": "https://murage.ai/docs/features/settings-guide#moving-in-from-another-app",
+    "text": "If the first-run screen finds Grok Bot data on this computer, Move my bots imports it; Not now leaves it alone. Under Settings → General, Bring what you already use opens the Grok Bot import or Learn about me. Opening either option does not import anything; you review and choose what to bring over."
   },
   {
     "id": "features/settings-guide#built-in-browser",
@@ -4579,9 +4748,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Every Settings page and every bot settings section, with what each one is for, so a bot can point to the right place.",
     "heading": "Built-in browser",
     "breadcrumb": "Murage docs → Features → Where to find things in Settings",
-    "where": "Settings → Devices → Built-in browser",
+    "where": "Settings → Computer & browser → Built-in browser",
     "url": "https://murage.ai/docs/features/settings-guide#built-in-browser",
-    "text": "The built-in browser is on by default. Its workspace switch lives in Settings → Devices → Built-in browser. Each bot also has its own browser switch in Bot settings → Access. A switch you turned off stays off. Bots still hand steps such as entering credentials or agreeing to terms back to you."
+    "text": "The built-in browser is on by default. Its workspace switch lives in Settings → Computer & browser → Built-in browser. Each bot also has its own browser switch in Bot settings → Access. A switch you turned off stays off. Bots still hand steps such as entering credentials or agreeing to terms back to you."
   },
   {
     "id": "features/settings-guide#teach-a-skill",
@@ -4728,9 +4897,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "See what your AI plan last reported, and set a monthly dollar limit that gives you a heads-up on Today.",
     "heading": "Monthly limit",
     "breadcrumb": "Murage docs → Features → Plan usage and the monthly limit",
-    "where": "Murage docs → Features → Plan usage and the monthly limit",
+    "where": "Settings → Usage → Monthly spending notice",
     "url": "https://murage.ai/docs/features/usage-and-limits#monthly-limit",
-    "text": "Settings > Usage > Monthly limit shows what Flux billed this month against a limit you choose. The field starts at the suggested $1,000 a month, and nothing is applied until you press Save limit. Remove limit clears it."
+    "text": "Settings → Usage → Monthly spending notice shows what Flux billed this month against a limit you choose. The field starts at the suggested $1,000 a month, and nothing is applied until you press Save limit. Remove limit clears it."
   },
   {
     "id": "features/usage-and-limits#the-heads-up-on-today",
@@ -4750,7 +4919,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Voice, calls, notifications and memory",
     "where": "Murage docs → Features → Voice, calls, notifications and memory",
     "url": "https://murage.ai/docs/features/voice-and-memory#voice-through-flux",
-    "text": "Calls, spoken replies and voice notes speak, listen and look things up through Flux by default, using the Flux key saved under Models. Your own keys (OpenAI, xAI, ElevenLabs and others) are optional and still work."
+    "text": "Calls, spoken replies and voice notes speak, listen and look things up through Flux by default, using the Flux key saved under Models & engines. Your own keys (OpenAI, xAI, ElevenLabs and others) are optional and still work."
   },
   {
     "id": "features/voice-and-memory#default-voices",
@@ -4770,7 +4939,7 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "breadcrumb": "Murage docs → Features → Voice, calls, notifications and memory",
     "where": "Bot settings → Voice & alerts → Voice",
     "url": "https://murage.ai/docs/features/voice-and-memory#change-a-bot-s-voice",
-    "text": "Each bot has its own voice. Open Bot settings → Voice & alerts → Voice. Under Voice engine pick the voice service for this bot: Flux, xAI, ElevenLabs, or the built-in Mac or Windows voices. Bots in one room can sound different. xAI voices work with your own xAI key or through Flux.\n\nSettings → Voice is different: it turns speech into text for recorded skills. A bot's own voice is set under Bot settings → Voice & alerts."
+    "text": "Each bot has its own voice. Open Bot settings → Voice & alerts → Voice. Under Voice engine pick the voice service for this bot: Flux, xAI, ElevenLabs, or the built-in Mac or Windows voices. Bots in one room can sound different. xAI voices work with your own xAI key or through Flux.\n\nSettings → Search, images and dictation → Voice notes and transcription turns speech into text for recorded skills. A bot's own voice is set under Bot settings → Voice & alerts."
   },
   {
     "id": "features/voice-and-memory#voice-picker",
@@ -4808,9 +4977,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Pick a bot's voice with play buttons, call a bot, send voice notes, turn off notification sounds, and inspect what bots remember.",
     "heading": "Notification sounds",
     "breadcrumb": "Murage docs → Features → Voice, calls, notifications and memory",
-    "where": "Settings → General → Notifications",
+    "where": "Settings → General → Notifications and sounds",
     "url": "https://murage.ai/docs/features/voice-and-memory#notification-sounds",
-    "text": "To turn off notification sounds on this computer, open Settings → General → Notifications and switch off Play a sound. It applies to this computer only and changes right away, so you keep the banners without the sound, for example on a call. The same card chooses which notifications you get (Needs your attention, Task completed, Task failed) and quiet hours.\n\nEach bot also has Notifications under Bot settings → Voice & alerts."
+    "text": "To turn off notification sounds on this computer, open Settings → General → Notifications and sounds and switch off Play a sound. It applies to this computer only and changes right away, so you keep the banners without the sound, for example on a call. The same card chooses which notifications you get (Needs your attention, Task completed, Task failed) and quiet hours.\n\nEach bot also has Notifications under Bot settings → Voice & alerts."
   },
   {
     "id": "features/voice-and-memory#dictation",
@@ -4868,9 +5037,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "See what changed after an update, reopen What's new, and use the menu-bar or tray icon to answer approvals and message a bot.",
     "heading": "What's new",
     "breadcrumb": "Murage docs → Features → What's new and the tray",
-    "where": "Murage docs → Features → What's new and the tray",
+    "where": "Settings → About & help",
     "url": "https://murage.ai/docs/features/whats-new-and-tray#what-s-new",
-    "text": "After an update, Murage shows What's new once: a few cards about what changed. Click any card to try that feature right away. Next moves through the cards, and Read the full release notes opens the notes for the release.\n\nTo see it again later, open the menu under your name at the bottom of the sidebar and choose What's new, or open Settings > About & updates. It is there in the desktop app whenever the current version has a What's new page."
+    "text": "After an update, Murage shows What's new once: a few cards about what changed. Click any card to try that feature right away. Next moves through the cards, and Read the full release notes opens the notes for the release.\n\nTo see it again later, open the menu under your name at the bottom of the sidebar and choose What's new, or open Settings → About & help. It is there in the desktop app whenever the current version has a What's new page."
   },
   {
     "id": "features/whats-new-and-tray#announcements",
@@ -4878,9 +5047,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "See what changed after an update, reopen What's new, and use the menu-bar or tray icon to answer approvals and message a bot.",
     "heading": "Announcements",
     "breadcrumb": "Murage docs → Features → What's new and the tray",
-    "where": "Settings → About & updates → Announcements",
+    "where": "Settings → About & help → Advanced → News from us",
     "url": "https://murage.ai/docs/features/whats-new-and-tray#announcements",
-    "text": "Settings → About & updates → Announcements shows short notes from the Murage team: new features, a service problem, a fix to install. Switch off Show announcements to hide them. Security notices always show, even when this is off."
+    "text": "Settings → About & help → Advanced → News from us shows short notes from the Murage team: new features, a service problem, a fix to install. Switch off Show announcements to hide them. Security notices always show, even when this is off."
   },
   {
     "id": "features/whats-new-and-tray#tray-and-menu-bar",
@@ -4987,9 +5156,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Install Murage on macOS, Windows, or Ubuntu.",
     "heading": "Download a released build",
     "breadcrumb": "Murage docs → Getting started → Installation",
-    "where": "More info → Run anyway",
+    "where": "Murage docs → Getting started → Installation",
     "url": "https://murage.ai/docs/getting-started/installation#download-a-released-build",
-    "text": "Choose your computer below. Each link always downloads the latest published build.\n\n| Platform | Recommended package | Notes |\n|---|---|---|\n| macOS Apple silicon | Download .dmg | Signed and notarized. Drag to Applications. |\n| macOS Intel | Download .dmg | Signed and notarized. |\n| Windows x64 | Download installer | Per-user installer; Windows signing is not yet available. |\n| Ubuntu 24.04 x64 | Download .deb · AppImage | The .deb is recommended; the AppImage is portable. |\n\nThe Windows installer is not code-signed yet. Windows may show “Unknown publisher.” Verify that you downloaded it from the official Murage releases repository before choosing More info → Run anyway."
+    "text": "Choose your computer below. Each link always downloads the latest published build.\n\n| Platform | Recommended package | Notes |\n|---|---|---|\n| macOS Apple silicon | Download .dmg | Signed and notarized. Drag to Applications. |\n| macOS Intel | Download .dmg | Signed and notarized. |\n| Windows x64 | Download installer | Per-user installer, signed by Ferrox Labs, LLC. |\n| Ubuntu 24.04 x64 | Download .deb · AppImage | The .deb is recommended; the AppImage is portable. |\n\nThe Windows installer is signed by Ferrox Labs, LLC. Download it from the official Murage releases repository and check the publisher before installing."
   },
   {
     "id": "getting-started/installation#install-an-ai-app",
@@ -5175,9 +5344,9 @@ export const HELP_INDEX: readonly HelpEntry[] = [
     "description": "Use the AI apps and subscriptions you already have.",
     "heading": "Grok images",
     "breadcrumb": "Murage docs → Agent engines",
-    "where": "Settings → Tools → Image generation",
+    "where": "Settings → Search, images and dictation → Image generation",
     "url": "https://murage.ai/docs/providers#grok-images",
-    "text": "Bots can make and edit images with Grok. Add an xAI key under Models & engines, then open Settings → Tools → Image generation, pick the xAI connection and choose Grok Imagine Image 2.0. xAI has no default image model, so choose it yourself."
+    "text": "Bots can make and edit images with Grok. Add an xAI key under Models & engines, then open Settings → Search, images and dictation → Image generation, pick the xAI connection and choose Grok Imagine Image 2.0. xAI has no default image model, so choose it yourself."
   },
   {
     "id": "providers#detection",

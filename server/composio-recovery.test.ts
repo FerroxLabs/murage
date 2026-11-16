@@ -18,6 +18,8 @@ import {
   BROKER_UNREACHABLE,
   setFluxProbeBackoffMsForTests,
 } from "./composio.ts";
+import { composioAdmissionStatus } from "./composio-lifecycle.ts";
+import { setBackoffRandomForTests } from "./upstream-backoff.ts";
 import type { AppConfig } from "./config.ts";
 
 const TOKEN = "d".repeat(64);
@@ -69,6 +71,7 @@ const call = async (id: number, session?: string) => {
 };
 
 beforeEach(() => {
+  setBackoffRandomForTests(() => 1);
   online = true;
   healthStatus = 200;
   mcpN = 0;
@@ -83,6 +86,7 @@ beforeEach(() => {
 
 afterEach(() => {
   setFluxProbeBackoffMsForTests();
+  setBackoffRandomForTests();
   vi.useRealTimers();
   vi.unstubAllGlobals();
   resetManagedBrokerState();
@@ -95,7 +99,10 @@ describe("readiness heals itself", () => {
     await primeBrokerReadiness();
     expect(configured(cfg())).toBe(false);
     online = true;
-    vi.setSystemTime(Date.now() + 21_000);
+    const deadline = composioAdmissionStatus(`${BASE}/health`).retryAt!;
+    vi.setSystemTime(deadline - 1);
+    expect(configured(cfg())).toBe(false); // MAIN RULING 1115-COMPOSIO-A7
+    vi.setSystemTime(deadline);
     configured(cfg()); // a reader that never primes
     await flush();
     expect(configured(cfg())).toBe(true);
@@ -113,10 +120,16 @@ describe("readiness heals itself", () => {
 
 describe("one failed call does not poison the rest of a turn", () => {
   it("answers the next tool call after one 503", async () => {
+    // MAIN RULING 1115-COMPOSIO-429-REVIEW: a refused call waits for its backoff before recovery, with no intervening dispatch.
+    vi.useFakeTimers({ toFake: ["Date"] });
     await primeBrokerReadiness();
     mcp = (payload, _headers, n) => n === 1 ? new Response("<html>503</html>", { status: 503 }) : rpc(payload, "second");
     const first = await call(1);
     expect(JSON.stringify(first.json)).not.toMatch(/Connect Flux Router/);
+    const held = await call(3);
+    expect(held.delivery).toBe("not-sent");
+    expect(mcpN).toBe(1);
+    vi.setSystemTime(Date.now() + 31_000);
     const second = await call(2);
     expect(second.json.result.content[0].text).toBe("second");
   });
@@ -133,7 +146,8 @@ describe("one failed call does not poison the rest of a turn", () => {
     await primeBrokerReadiness();
     mcp = () => new Response("<html>nginx</html>", { status: 503 });
     const first = await call(1);
-    expect(first.json.result.content[0].text).toBe(BROKER_UNREACHABLE);
+    expect(first.json.result.content[0].text).toContain(BROKER_UNREACHABLE); // MAIN RULING 1115-COMPOSIO-A8
+    expect(first.json.result.content[0].text).toMatch(/Connected apps will retry at \d{2}:\d{2}\./); // MAIN RULING 1115-COMPOSIO-A8
     expect(BROKER_UNREACHABLE).not.toMatch(/—|safe|safety|composio|\$/i);
   });
 });
@@ -196,7 +210,10 @@ describe("the whole drop and recovery, with no restart and no user action", () =
     // The connection returns. Nobody restarts the app or presses anything:
     // a reader that never primes, one negative TTL later, is all it takes.
     online = true;
-    vi.setSystemTime(Date.now() + 21_000);
+    const deadline = composioAdmissionStatus(`${BASE}/health`).retryAt!;
+    vi.setSystemTime(deadline - 1);
+    expect(configured(cfg())).toBe(false); // MAIN RULING 1115-COMPOSIO-A7
+    vi.setSystemTime(deadline);
     configured(cfg());
     await flush();
     expect(configured(cfg())).toBe(true);

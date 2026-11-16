@@ -28,6 +28,7 @@
 // ask how it is going or talk about something else; a soft pulse fills the
 // silence instead of narration. When the host is unavailable the call is
 // the engine-only call it always was.
+import { CallEngineLimits } from "./EngineLimitRow";
 import { callSpeechReply, holdCallSession, sayOpener, takeBotCallOpener } from "@/lib/bot-call-session";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -2410,6 +2411,7 @@ export function Call({
   // whole call screen would silently stop taking clicks.
   const fullScreen = (
     <div className="pointer-events-auto absolute inset-0 isolate z-30 flex flex-col items-center justify-center gap-6 bg-app/95 backdrop-blur-sm">
+      <CallEngineLimits messages={messages} />
       <CallMood phase={auraPhase} color={avatarAura.mood} signals={signals} />
       <button
         onClick={() => endCall(bot.id)}

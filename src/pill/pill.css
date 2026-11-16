@@ -1,0 +1,10 @@
+/* Copyright 2026 Ferrox Labs
+ * SPDX-License-Identifier: AGPL-3.0-or-later */
+html, body, #root { background: transparent; height: 100%; margin: 0; }
+.pill { padding: 6px; border-radius: 24px; background: var(--color-app); }
+.pill .pill-capsule { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; min-height: 52px; border-radius: 22px; text-align: start; transition: background-color 120ms ease-out; }
+.pill-stack { list-style: none; padding: 0; margin: 8px 0 0; }
+.pill-stack > li + li { margin-top: 8px; }
+.pill[data-state="finished"] { padding: 12px 16px; }
+.pill [role="status"] { margin: 0; }
+@media (prefers-reduced-motion: reduce) { .pill .pill-capsule { transition: none; } }

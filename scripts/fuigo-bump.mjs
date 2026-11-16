@@ -714,9 +714,18 @@ export const readRealTurns = (dir) => readdirSync(dir).filter((name) => name.end
 });
 
 /** Step 10: a receipt with the real turns in hand, one row per OS. */
-export const mergeCheck = (receipt) => {
+export const mergeCheck = (receipt, files) => {
   const oses = Array.isArray(receipt.real_turns) ? receipt.real_turns.map((row) => row.os).sort().join() : "";
   if (oses !== Object.keys(REAL_TURN_OSES).sort().join()) throw new Error(`Fuigo ${receipt.fuigoVersion}: real turns are owed, this pin cannot merge`);
+  if (!Array.isArray(files)) throw new Error("Real-turn captures are required: pass --real-turns <evidence directory> to recheck the receipt.");
+  const want = { version: receipt.fuigoVersion, peeledTag: receipt.peeledTag, murageSha: receipt.murageSha,
+    packageVersion: receipt.packageVersion, assets: receipt.assets,
+    policySha256: typeof receipt.policySha256 === "string" && receipt.policySha256.startsWith("none:") ? null : receipt.policySha256 };
+  if (!isHex(want.murageSha, 40) || !isHex(want.peeledTag, 40) || typeof want.packageVersion !== "string" || !want.assets) {
+    throw new Error("The receipt is missing its source, package or asset binding; regenerate it from the real-turn evidence.");
+  }
+  const checked = checkRealTurns(files, want);
+  if (!isDeepStrictEqual(checked, receipt.real_turns)) throw new Error("The checked captures do not match the receipt's real-turn evidence.");
 };
 
 /** Writes every file or none: all staged beside their targets, then renamed; a failure puts back what was there. */
@@ -786,7 +795,10 @@ async function provenance(version, registry, targets, expected, checkoutHead) {
 }
 
 async function main() {
-  if (process.argv[2] === "--merge-check") return mergeCheck(JSON.parse(readFileSync(process.argv[3], "utf8")));
+  if (process.argv[2] === "--merge-check") {
+    const dir = process.argv[4] === "--real-turns" ? process.argv[5] : undefined;
+    return mergeCheck(JSON.parse(readFileSync(process.argv[3], "utf8")), dir ? readRealTurns(dir) : undefined);
+  }
   if (process.platform === "darwin" && process.env.MURAGE_GATE_BOX !== "1") throw new Error("release gate only: set MURAGE_GATE_BOX=1 on a disposable box");
   const args = parseArgs(process.argv.slice(2));
   const { version, evidence: evidenceDir } = args;
@@ -845,7 +857,7 @@ async function main() {
   const moved = movePin(readFileSync(prepareFile, "utf8"), version, head, assets);
   const oldVersion = /export const FUIGO_VERSION = "([^"]+)"/.exec(readFileSync(prepareFile, "utf8"))[1];
   const proofText = `${JSON.stringify(proof, null, 2)}\n`;
-  const receipt = { murageSha, fuigoVersion: version, peeledTag: head, trustBase: baseHead, assets, wrapperTarballSha256: packages[0].tarballSha256, releaseManifestSha256: sha("sha256", manifestBytes), policySha256: policySha256 ?? (realTurns === "owed" ? "owed: real-turn step" : "none: this Murage launches no policy file"), real_turns: realTurns };
+  const receipt = { murageSha, packageVersion, fuigoVersion: version, peeledTag: head, trustBase: baseHead, assets, wrapperTarballSha256: packages[0].tarballSha256, releaseManifestSha256: sha("sha256", manifestBytes), policySha256: policySha256 ?? (realTurns === "owed" ? "owed: real-turn step" : "none: this Murage launches no policy file"), real_turns: realTurns };
   commitFiles([
     [join(evidenceDir, `fuigo-${version}-provenance.json`), proofText],
     [join(evidenceDir, "reviewed-hunks.txt"), readFileSync(args["reviewed-hunks"])],

@@ -1,3 +1,4 @@
+// control: legacy cases retain their original assertions unless individually labelled red-at-4df086541 below.
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -19,6 +20,7 @@ import { createGracefulShutdown, SERVER_SHUTDOWN_TIMEOUT_MS } from "../graceful-
 import { loggedRuntimeEvent } from "../runtime-event-out.ts";
 import { EventBus } from "../harness/bus.ts";
 import { recordEvents } from "../testing/events.ts";
+import { bindOpenAIFixture } from "../testing/bound-openai-fixture.ts";
 import { ProviderStopUnconfirmedError } from "./child-teardown.ts";
 import { GrokDriver } from "./grok.ts";
 import { MinimaxDriver } from "./minimax.ts";
@@ -26,8 +28,9 @@ import { OpenAICompatDriver } from "./openai-compat.ts";
 import { fixedPrompt } from "../memory/fixed-prompt.ts";
 import { engineSeenInFull } from "../email/external-marks.ts";
 import { openLearningGate } from "../testing/open-learning-gate.ts";
+import { fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
 import {
-  MAX_CHAT_ROUNDS, MAX_TURN_TOOL_CALLS, NUDGE_ANNOUNCED_ACTION, PERMISSION_DENIED, TEXT_ONLY_NOTICE, TOOL_CALLS_TO_HELPER,
+  MAX_CHAT_ROUNDS, MAX_TURN_TOOL_CALLS, NUDGE_ANNOUNCED_ACTION, PERMISSION_DENIED, TEXT_ONLY_NOTICE, CLOUD_HOME_TOOLS_NOTICE, TOOL_CALLS_TO_HELPER,
   TOOL_INTERRUPTED,
 } from "./openai-chat-tools.ts";
 
@@ -73,6 +76,7 @@ const base = [
 const kind = process.env.FAKE_TOOLS ?? "base";
 const tools = kind.startsWith("many:")
   ? Array.from({ length: Number(kind.slice(5)) }, (_, i) => ({ name: "t" + i, inputSchema: { type: "object", properties: {} } }))
+  : kind === "webread" ? [{ name: "web_read", inputSchema: { type: "object", properties: {} } }]
   : kind === "bigschema" ? [...base, { name: "huge", inputSchema: wide(70, 1000) }]
   : kind === "bigcatalog" ? Array.from({ length: 10 }, (_, i) => ({ name: "w" + i, inputSchema: wide(30, 1000) }))
   : kind === "leaky" ? [...base,
@@ -102,6 +106,7 @@ function handle(m) {
   if (name === "noop" || name === "ask_user") return text(m.id, "done");
   if (name === "slow") { if (process.env.FAKE_GRANDCHILD === "orphan") orphan(); return; }
   if (name === "resource") return reply(m.id, { content: [{ type: "resource", resource: { uri: "file:///creds.txt", mimeType: "text/plain", text: "password=" + (process.env.FAKE_PASSWORD ?? "") } }] });
+  if (name === "web_read") return text(m.id, "x".repeat(60000) + "TAIL");
   if (name === "secret") return text(m.id, "r".repeat(Number(process.env.FAKE_PAD ?? "0")) + (process.env.FAKE_TOKEN ?? "") + " end");
   return text(m.id, "ran " + name);
 }
@@ -217,6 +222,7 @@ const setEnv = (name: string, value: string | undefined) => {
 const make = async (name: DriverName, url?: string): Promise<ProviderInstance> => {
   const spec = DRIVERS[name];
   const instance = name === "openai-compat" ? await DRIVERS["openai-compat"].create(spec.key, url) : await spec.create(spec.key);
+  bindOpenAIFixture(instance); // control: isolated generation, original transport clocks
   instances.push(instance);
   return instance;
 };
@@ -259,7 +265,8 @@ const allowAll = (instance: ProviderInstance) => answer(instance, () => ({ behav
 
 const start = async (instance: ProviderInstance, input: SendTurnInput) => {
   const recorder = recordEvents(instance.adapter);
-  const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), ...input });
+  // control: server-owned tool acceptance uses a real isolated bound ingress.
+  const { turnId } = await instance.adapter.sendTurn(fixtureMountTurn({ cwd: fixtureBotFolder(), ...input }));
   const events = recorder.events as unknown as Loose[];
   const done = () => recorder.until((event) => event.type === "turn.completed" && event.turnId === turnId).then((event) => event as unknown as Loose);
   return { turnId, events, done, recorder };
@@ -562,6 +569,25 @@ describe.each(NAMES)("%s: tool round loop (OPENAI-TOOLS-109 s11)", (name) => {
     expect(errors(second.events)).not.toContain(TEXT_ONLY_NOTICE);
   });
 
+  it("7a. on a Cloud home no tool server is started, the turn runs without tools, and the conversation is told once", async () => {
+    setEnv("MURAGE_CLOUD_ROLE", "home");
+    const instance = await make(name);
+    allowAll(instance);
+    const log = newLog();
+    script = [() => textReply("no tools here"), () => textReply("still none")];
+    const thread = threadId();
+    const first = await run(instance, { threadId: thread, text: "one", integrations: { custom: { fake: mount(log) } } });
+    expect(first.completed.ok).toBe(true);
+    expect(bodies[0]!.tools).toBeUndefined();
+    expect(errors(first.events)).toEqual([CLOUD_HOME_TOOLS_NOTICE]);
+    expect(answers(first.events)).toEqual(["no tools here"]);
+    const second = await run(instance, { threadId: thread, text: "two", integrations: { custom: { fake: mount(log) } } });
+    expect(second.completed.ok).toBe(true);
+    expect(bodies[1]!.tools).toBeUndefined();
+    expect(errors(second.events)).toEqual([]);
+    expect(boots(log)).toHaveLength(0);
+  });
+
   it("7b. a network error never triggers the text-only fallback", async () => {
     const instance = await make(name);
     allowAll(instance);
@@ -858,6 +884,21 @@ describe.each(NAMES)("%s: tool round loop (OPENAI-TOOLS-109 s11)", (name) => {
     if (spec.logsMessages) expect(nativeText(thread)).toContain("fake_noop");
   });
 
+  it("web reader transport exhaustion is an error, never a successful clipped page", async () => {
+    const instance = await make(name);
+    allowAll(instance);
+    const log = newLog();
+    script = [() => callsReply([{ id: "page", name: "fake_web_read" }]), () => textReply("done")];
+    const turn = await run(instance, { threadId: "web-read-limit", text: "read", integrations: { custom: {
+      fake: mount(log, { FAKE_TOOLS: "webread" }),
+    } } });
+    const completed = ofType(turn.events, "item.completed", "tool");
+    expect(completed).toHaveLength(1);
+    expect(completed[0]).toMatchObject({ ok: false });
+    expect(String(completed[0]!.result)).toContain("transport limit");
+    expect(toolMessages(bodies[1]!)[0]!.content).not.toContain("[cut:");
+  });
+
   it("11c. a mounted password holding a quote and a backslash, in an ordinary field, is absent from the native log and the event log", async () => {
     const instance = await make(name);
     allowAll(instance);
@@ -890,7 +931,8 @@ describe.each(NAMES)("%s: tool round loop (OPENAI-TOOLS-109 s11)", (name) => {
     expect(typeof live[0]!.input).toBe("string");
     const writes: string[] = [];
     const bus = new EventBus(((_file: string, data: string) => { writes.push(data); }) as never);
-    bus.publish(live[0] as unknown as RuntimeEvent);
+    bus.attach([instance]);
+    bus.publish(live[0] as unknown as RuntimeEvent, bus.admitNewTurn(instance.instanceId, thread));
     const row = JSON.parse(writes.join("").trim()) as Record<string, unknown>;
     expect(row.type).toBe("item.started");
     expect(Object.hasOwn(row, "input")).toBe(false);

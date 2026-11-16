@@ -1,3 +1,4 @@
+import { admittedFixtureInstance } from "../testing/mcp-admission-fixture.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // MCP elicitation on the Claude engine (MCP-ELICITATION-109). Claude Code
@@ -47,13 +48,13 @@ describe("Claude engine: MCP elicitation becomes the owner's question card", () 
   let log: string;
 
   const start = async (config: Record<string, unknown> = {}) => {
-    instance = await ClaudeDriver.create({
+    instance = await admittedFixtureInstance(ClaudeDriver.create({
       instanceId: "claude-elicit",
       displayName: "Claude",
       environment: {},
       enabled: true,
       config: { cli: FAKE_CLI, permissionMode: "bypassPermissions", ...config },
-    });
+    }));
     recorder = recordEvents(instance.adapter);
   };
 
@@ -184,6 +185,8 @@ describe("Claude engine: MCP elicitation becomes the owner's question card", () 
     const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-stop", text: "make the image" });
     const card = await opened(turnId);
     await instance.adapter.interruptTurn("t-stop", turnId);
+    expect(await instance.adapter.awaitTurnTeardown?.("t-stop", turnId)).toEqual({ closeConfirmed: true });
+    expect(await instance.adapter.awaitTurnTeardown?.("t-other", turnId)).toEqual({ closeConfirmed: false, reason: "stop-failed" });
     expect(await resolved(card.requestId!)).toMatchObject({ behavior: "deny", source: "system" });
     await completed(turnId);
     expect(replies().map((reply) => reply.response)).toEqual([{ subtype: "success", request_id: "cli-ctl-1", response: { action: "cancel" } }]);

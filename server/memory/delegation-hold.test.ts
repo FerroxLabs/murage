@@ -6,6 +6,7 @@
 // marker walk held replies "checking" (Sean's 3-bot design chat on 1.0.13: Finch in Dev Shop, Sable in Sean's Office, Kessler in Operations).
 // F1: the pair room keeps its section; only a room whose section matches neither member is re-homed, once. F2: a DM pair room's section is
 // placement only, never an audience fact. Positive controls: every fact an access rule reads still revokes.
+import { prepareRecallContextSync } from "./recall-view.ts";
 import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -103,13 +104,14 @@ describe("F1: a pair room stays where it is", () => {
  * each bot on its direct chat, its tasks and every room it is in, as an owner turn and as a turn nobody proved is the owner's; a person-bound
  * task; the owner reader sets pins use; background scopes. */
 function readers(store: Store, person: ReturnType<typeof resolveHumanBinding>, personThread: string) {
-  const roster = () => ({ bots: store.bots, groups: store.groups } as unknown as MemoryRoster);
+  const roster = () => store as unknown as MemoryRoster;
   const out: Record<string, string> = {};
   const one = (botId: string, thread: string, mode: "owner" | "not-owner" | "person") => {
     const key = `${botId}|${thread}|${mode}`;
     try {
       const registry = new InternalCapabilities(); registry.begin(botId, thread, "g", mode === "person" ? person : undefined);
       const token = registry.mint({ botId, threadId: thread, generation: "g", depth: 0, kind: "memory", skillAuthoring: false, ...(mode === "not-owner" ? { notOwnerAudience: true } : {}), ...(mode === "person" ? { humanPrincipal: person } : {}) });
+      prepareRecallContextSync(botId, thread, roster(), mode === "not-owner");
       out[key] = JSON.stringify([...memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, roster).scopeIds].sort());
     } catch (error) { out[key] = `ERR:${(error as Error).message}`; }
     out[`${key}|bg`] = JSON.stringify([...backgroundMemoryScopes(botId, thread, roster())].sort());

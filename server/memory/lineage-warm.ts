@@ -23,6 +23,7 @@
 // slices by the memory worker's idle loop (worker-controller.ts, EARLIEST WINS), which yields to the owner.
 import { isPrepared as isThreadPrepared, prepareThread } from "../branch-store.ts";
 import { database } from "../database.ts";
+import { withPreparedStatementReuse } from "../io-budget.ts";
 import { executionStore } from "../execution-audience.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
 import { authorityParts } from "./authority-epoch.ts";
@@ -41,6 +42,7 @@ import { resumeCursorOf } from "./session-incarnation.ts";
 import { turnReplayInputs, type ReplayLineIndex } from "./turn-replay-inputs.ts";
 import { verdictStore as store, type ConfirmCounters, type MapName, type Trace, type TraceStamps } from "./verdict-store.ts";
 import type { Message } from "../store.ts";
+import { sendReplayEpochsCurrent, type SendReplayProof } from "./replay-lineage.ts";
 
 export type { LineageFootprint, UserKind };
 
@@ -145,6 +147,7 @@ export interface ConfirmCounts {
 /** flagfold F2: one E1 pass of the confirm (producers branches are recorded by replay-lineage.ts when it reports them). */
 export interface ConfirmPass { room: "least" | "most"; clean: boolean; branches: Record<string, "listing" | "groups" | "pairs"> }
 interface WarmRecord {
+  replayEpochs?: SendReplayProof["epochs"];
   thread: string;
   /** the footprint the next confirm runs on (the turn's last recorded F) */
   footprint: LineageFootprint | null;
@@ -374,6 +377,7 @@ function rawEpochs(): { epoch: number; structure: number; authority: string | nu
  * transaction is open. An epoch-only change with no dirty row (a messages DELETE) fails it. */
 function epochsApplied(rec: WarmRecord, failed: (clause: "epochs" | "recapture-authority") => void): boolean {
   if (database().isTransaction || !rec.applied) { failed("epochs"); return false; }
+  if (!rec.replayEpochs || !sendReplayEpochsCurrent(rec.replayEpochs)) { failed("epochs"); return false; }
   const now = rawEpochs();
   if (now === null) { failed("epochs"); return false; }
   const a = rec.applied;
@@ -534,7 +538,7 @@ function confirmCursor(thread: string, f: LineageFootprint): { instanceId: strin
 /** One window of the widening loop as it was read (r15.1 Y4 T15(h4)); `window` is the turn's window W (the confirm reads W - headSlot).
  * skip/held/asked are those of the stopping window (the loop decides them there); earlier windows carry them empty. */
 export interface LineageWindowTrace { window: number; loaded: string[]; hasMore: boolean; skip: string[]; held: string[]; asked: string[][] }
-export function lineageReplayInputs(thread: string, f: LineageFootprint, headSlot: 0 | 1, extraSkip: readonly string[] = []): { messages: Message[]; skip: Set<string>; exact: boolean; windows: LineageWindowTrace[] } | null {
+export function lineageReplayInputs(thread: string, f: LineageFootprint, headSlot: 0 | 1, extraSkip: readonly string[] = []): { messages: Message[]; skip: Set<string>; exact: boolean; windows: LineageWindowTrace[]; replayEpochs: SendReplayProof["epochs"] } | null {
   const source = sources.lines();
   if (!source) return null;
   const windows: LineageWindowTrace[] = [];
@@ -557,7 +561,7 @@ export function lineageReplayInputs(thread: string, f: LineageFootprint, headSlo
   const exact = (result as { exact?: unknown }).exact === true;
   const last = windows.at(-1);
   if (last) { last.skip = [...result.skip].sort(); last.held = [...result.heldReplayIds].sort(); last.asked = [result.replayedMessages.map(m => m.id)]; }
-  return { messages: result.activeMessages, skip: result.skip, exact, windows };
+  return { messages: result.activeMessages, skip: result.skip, exact, windows, replayEpochs: result.replayProof.epochs };
 }
 const counterDelta = (before: ConfirmCounters, after: ConfirmCounters) => ({
   misses: after.misses - before.misses, listings: after.listings - before.listings, remember: after.remembers - before.remembers,
@@ -577,7 +581,7 @@ function padForTest(allowance: LineageAllowance, thread: string, base: number): 
 }
 /** One E1 pass: filterDirectReplay on the inputs (E3 inside), the limit error read as `hit`. */
 /** F's replay options (IX:12346): maxBytes -1 is the turn's "no model budget" (replayBudgetBytes undefined). */
-const replayOptionsOf = (f: LineageFootprint) => ({ maxBytes: f.maxBytes >= 0 ? f.maxBytes : undefined, minLines: f.minLines });
+const replayOptionsOf = (f: LineageFootprint) => ({ maxBytes: f.maxBytes >= 0 ? f.maxBytes : undefined, minLines: f.minLines, maxLines: f.maxLines });
 function e1(allowance: LineageAllowance, thread: string, access: MemoryAccess, inputs: { messages: Message[]; skip: Set<string> }, f: LineageFootprint): string[] {
   try {
     const result = filterDirectReplay(allowance, thread, inputs.messages, access, inputs.skip, replayOptionsOf(f));
@@ -718,7 +722,11 @@ function confirmRecord(rec: WarmRecord): void {
   // turn's renew path, and a match never spans renew(): no claim until the next send (a new cursor) or note
   // MUTANT:match-survives-revoke
   if (counts.clean && counts.revoked) { invalidate(rec); rec.reason = "revoked"; rec.due = false; return; }
-  if (counts.clean) { rec.uncleanRun = 0; cleanConfirm(rec, f, cursor, trace, head.seq, anchor, epochs, live); return; }
+  if (counts.clean) {
+    if (!sendReplayEpochsCurrent(inputs.replayEpochs)) { invalidate(rec); rec.reason = "replay: changed"; return; }
+    rec.replayEpochs = inputs.replayEpochs;
+    rec.uncleanRun = 0; cleanConfirm(rec, f, cursor, trace, head.seq, anchor, epochs, live); return;
+  }
   rec.uncleanRun++;
   invalidate(rec); rec.due = false;
   // T10(r): the pass refused at the edge bound before any clear (RL remember); with C-EDGES on the record can never be kept: OVERSIZE now,
@@ -1066,6 +1074,9 @@ function dueRecords(): WarmRecord[] {
 }
 /** Runs the warmer for about `sliceMs`, handing back sooner when `yieldNow` says the owner is waiting. True while there is more to do. Never throws. */
 export function lineageWarmStep(sliceMs = SLICE_MS, yieldNow?: () => boolean): boolean {
+  return withPreparedStatementReuse(() => lineageWarmStepWork(sliceMs,yieldNow));
+}
+function lineageWarmStepWork(sliceMs: number,yieldNow?: () => boolean): boolean {
   try {
     // retired (S6): there is no read-time verdict to warm; the write-time lookup is a fixed number of seeks cold or warm
     if (readTimeRetired(database())) { discovery = null; queue.length = 0; takeLineageWanted(); return false; } // (drains wantedThreads too: a turn that ran out of room on a retired file notes its thread, and nothing else would take it)

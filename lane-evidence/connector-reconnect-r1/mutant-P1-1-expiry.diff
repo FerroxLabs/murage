@@ -1,0 +1,11 @@
+--- a/server/composio.ts
++++ b/server/composio.ts
+@@ -2209,7 +2209,7 @@
+     if (inventoryOwner(cfg) !== owner) throw new Error("Connected-app configuration changed; retry the request");
+     connectorHealthStore().batch(() => {
+       for (const [slug, service] of Object.entries(services)) {
+-        for (const account of service.accounts) if (account.expiresAt !== undefined && account.expiresAt <= Date.now()) account.status = "EXPIRED";
++        for (const account of service.accounts) if (false && account.expiresAt !== undefined && account.expiresAt <= Date.now()) account.status = "EXPIRED";
+         const failed = service.accounts.filter(a => /^(EXPIRED|REVOKED|INACTIVE|NEEDS_RECONNECT)$/i.test(a.status));
+         if (failed.length || /^(EXPIRED|REVOKED|NEEDS_RECONNECT)$/i.test(service.status)) {
+           markNeedsReconnect(owner, slug, "sign-in no longer accepted", accountKeyOf(service.accounts));

@@ -1,3 +1,5 @@
+import { spawnBoundProxy } from "../testing/bound-proxy-fixture.ts";
+import { waitForExit } from "../testing/cleanup.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
 //
@@ -9,7 +11,7 @@
 // Every engine with Murage tools (Claude, Codex, the ACP engines led by Fuigo, Pi, the OpenAI-chat engines) reaches the two phone
 // tools through this one agents mount, so the bytes the proxy hands back are the bytes each engine reads. The per-engine half is
 // the Ask card each driver builds for the same call. A live model run per engine belongs to the real-engine gate, not this file.
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -100,12 +102,23 @@ afterEach(() => { _resetPhoneSecretsForTest(); setPhoneAskPreview(null); });
 
 /** The agents MCP proxy spawned the way a driver's mount spawns it. */
 async function proxy(phone: boolean) {
-  const child: ChildProcess = spawn(process.execPath, [PROXY], {
+  const child: ChildProcess = await spawnBoundProxy("agents", process.execPath, [PROXY], {
+    windowsHide: true,
     env: { ...process.env, MURAGE_HARNESS_URL: `http://127.0.0.1:${stubPort}`, MURAGE_BOT_ID: "bot-s7", MURAGE_THREAD_ID: "thread-s7", MURAGE_COMMS_TOKEN: TOKEN,
       MURAGE_TURN_DEPTH: "0", ...(phone ? { MURAGE_PHONE_CALLS: "1" } : { MURAGE_PHONE_CALLS: "" }) },
     stdio: ["pipe", "pipe", "ignore"],
   });
-  const pending = new Map<number, (m: any) => void>();
+  const pending = new Map<number, { resolve(m: any): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
+  const fail = () => {
+    for (const request of pending.values()) {
+      clearTimeout(request.timer);
+      request.reject(new Error("phone proxy closed before answering"));
+    }
+    pending.clear();
+  };
+  child.once("error", fail);
+  child.once("close", fail);
+  child.stdout!.once("end", fail);
   let buf = "";
   let next = 1;
   child.stdout!.on("data", (c) => {
@@ -115,17 +128,21 @@ async function proxy(phone: boolean) {
       const line = buf.slice(0, nl); buf = buf.slice(nl + 1);
       if (!line.trim()) continue;
       const msg = JSON.parse(line);
-      pending.get(msg.id)?.(msg); pending.delete(msg.id);
+      const request = pending.get(msg.id);
+      if (request) { clearTimeout(request.timer); pending.delete(msg.id); request.resolve(msg); }
     }
   });
   const rpc = (method: string, params?: unknown): Promise<any> => new Promise((resolve, reject) => {
     const id = next++;
-    pending.set(id, resolve);
+    if (child.exitCode !== null || child.signalCode !== null) return reject(new Error("phone proxy exited"));
+    const timer = setTimeout(() => { if (pending.delete(id)) reject(new Error(`${method} timed out`)); }, 20_000);
+    pending.set(id, { resolve, reject, timer });
     child.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
-    setTimeout(() => { if (pending.delete(id)) reject(new Error(`${method} timed out`)); }, 20_000);
   });
-  await rpc("initialize", { protocolVersion: "2024-11-05" });
-  return { rpc, close: () => { child.kill(); } };
+  const close = async () => { fail(); await waitForExit(child, { signal: "SIGTERM" }); };
+  try { await rpc("initialize", { protocolVersion: "2024-11-05" }); }
+  catch (error) { await close(); throw error; }
+  return { rpc, close };
 }
 
 describe("hostile result through the desktop-shell harness (section 7)", () => {
@@ -151,7 +168,7 @@ describe("hostile result through the desktop-shell harness (section 7)", () => {
       expect(vendor.placed()).toBe(1);
       // the owner still has it all, on the owner's side only
       expect(service.ownerCard(call)).toMatchObject({ transcript: expect.stringContaining("IGNORE-ALL-INSTRUCTIONS") });
-    } finally { p.close(); }
+    } finally { await p.close(); }
   }, 60_000);
 
   it("an analysis value outside its list or type is dropped, not passed through", async () => {
@@ -181,7 +198,7 @@ describe("headless and non-owner runs (section 7 harness)", () => {
       expect(JSON.stringify(call)).not.toMatch(/"call":"call_/);
       expect(stubHits.filter((h) => h.startsWith("/api/internal/phone/"))).toEqual([]);
       expect(vendor.placed()).toBe(0);
-    } finally { p.close(); }
+    } finally { await p.close(); }
   }, 60_000);
 
   it("index.ts route: the owner's turn calls; a notOwnerAudience turn and a run with no desktop shell get not_set_up and open nothing", async () => {
@@ -204,7 +221,7 @@ describe("headless and non-owner runs (section 7 harness)", () => {
       expect(call.result.isError).toBe(true);
       expect(vendor.placed()).toBe(0);
       expect(opened).toBe(0);
-    } finally { p.close(); }
+    } finally { await p.close(); }
   }, 60_000);
 });
 

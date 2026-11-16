@@ -12,11 +12,14 @@
 // "sensitive page" (password, code or card), which it never was.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { ownedCloseCli } from "./browser-owned-close.ts";
 import { UnifiedBrowserController, BROWSER_NOT_RUNNING } from "./browser-control.ts";
 import { browserOwnerRequest } from "./browser-owner-api.ts";
+import { nativeProcessList } from "./drivers/win-process-table.ts";
+import { captureDaemonIdentity } from "./browser-daemon-identity.ts";
 import { BrowserEngineError, createNativeBrowser, engineReason, windowsDaemonStopDecision, type NativeBrowser, type NativeBrowserOptions } from "./browser-native-relay.ts";
 import { BROWSER_REFUSALS } from "./browser-lock.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -100,7 +103,7 @@ describe("owner hand-back while the bot's browser engine is not answering", () =
     await expect(controller.dispatch("petra", "tools/call", { name: "agent_browser_snapshot" }, () => true)).resolves.toMatchObject({ content: [{ text: "did agent_browser_snapshot" }] });
   });
 
-  it("Reopen blank page starts a fresh engine even when closing the stuck one fails", async () => {
+  it("Reopen keeps the same engine refused when closing it is not acknowledged", async () => {
     let made = 0;
     const factory = (): NativeBrowser => {
       const index = ++made;
@@ -115,8 +118,9 @@ describe("owner hand-back while the bot's browser engine is not answering", () =
     const held = await controller.take("petra", "desktop");
     await expect(controller.navigate("petra", "desktop", held.generation, "https://example.com/")).rejects.toThrow();
     const status = controller.status("petra");
-    await expect(controller.reopen("petra", "desktop", status.generation)).resolves.toMatchObject({ protectedDocument: false });
-    expect(made).toBe(2);
+    await expect(controller.reopen("petra", "desktop", status.generation)).rejects.toMatchObject({ code: "browser_close_failed", status: 503 });
+    expect(controller.status("petra").closeFailed).toBe(true);
+    expect(made).toBe(1);
   });
 });
 
@@ -306,18 +310,32 @@ describe("a command that has to start the engine gets the start bound", () => {
   }, 20_000);
 });
 
-// A stuck daemon: it holds its session socket and pid file and never answers.
+// A stuck daemon: ordinary commands never answer; only a launch-bound close receipt can stop it.
 const STUCK_DAEMON = `const net = require("node:net"), fs = require("node:fs"), path = require("node:path");
-const [dir, session] = process.argv.slice(2);
-const server = net.createServer(() => {});
+const [dir, session, idleMs] = process.argv.slice(2);
+if (Number(idleMs) > 0) setTimeout(() => process.exit(0), Number(idleMs));
+const server = net.createServer(socket => {
+  let pending = '';
+  socket.on('data', chunk => {
+    pending += chunk;
+    if (!pending.includes('\\n')) return;
+    try {
+      const request = JSON.parse(pending.split('\\n')[0]);
+      const owner = JSON.parse(fs.readFileSync(path.join(dir, session + '.owner.json'), 'utf8'));
+      if (request.action === 'close' && request.closeOnly === true && request.launchId === owner.launchId) {
+        socket.end(JSON.stringify({ success: true, data: { closed: true, launchId: owner.launchId } }) + '\\n', () => process.exit(0));
+      }
+    } catch { /* ordinary commands and unowned requests stay stuck */ }
+  });
+});
 const ready = () => { fs.writeFileSync(path.join(dir, session + ".pid"), String(process.pid)); process.stdout.write("ready\\n"); };
 if (process.platform === "win32") server.listen(0, "127.0.0.1", () => { fs.writeFileSync(path.join(dir, session + ".port"), String(server.address().port)); ready(); });
 else server.listen(path.join(dir, session + ".sock"), ready);
 `;
-async function stuckDaemon(dir: string, session: string) {
+async function stuckDaemon(dir: string, session: string, idleMs = 0) {
   const script = join(dir, `daemon-${session}.cjs`);
   writeFileSync(script, STUCK_DAEMON);
-  const child = spawn(process.execPath, [script, dir, session], { stdio: ["ignore", "pipe", "inherit"] });
+  const child = spawn(process.execPath, [script, dir, session, String(idleMs)], { windowsHide: true, stdio: ["ignore", "pipe", "inherit"] });
   children.push(child);
   await new Promise<void>((done, fail) => { child.stdout!.on("data", (chunk: Buffer) => { if (chunk.toString().includes("ready")) done(); }); child.once("exit", () => fail(new Error("daemon fixture exited"))); });
   return child;
@@ -328,15 +346,57 @@ const exited = (child: ChildProcess, ms: number) => new Promise<boolean>(done =>
   child.once("exit", () => { clearTimeout(timer); done(true); });
 });
 
+// A fresh recovery close now refuses immediately without an ownership record.
+// Settle the complete close under fake time and assert neither recorded pid is signalled.
+const closeWithoutOwnershipRecord = async (dir: string): Promise<unknown> => {
+  const spec = { command: process.execPath, args: [], env: { PATH: process.env.PATH ?? "", HOME: dir, AGENT_BROWSER_SOCKET_DIR: dir, AGENT_BROWSER_SESSION: "handback", ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot ?? "" } : {}) } };
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+  try {
+    const closing = createNativeBrowser(spec, { closeOnly: true }).close().then(() => null, (error: unknown) => error ?? new Error("close rejected"));
+    await vi.advanceTimersByTimeAsync(75_000);
+    return await closing;
+  } finally { vi.useRealTimers(); }
+};
+const alive = (child: ChildProcess) => {
+  if (child.exitCode !== null || child.signalCode !== null) return false;
+  try { process.kill(child.pid!, 0); return true; } catch { return false; }
+};
+
 describe("Reopen blank page on a fresh server meets a stuck daemon", () => {
-  it("finds this session's daemon by its own pid file and socket, and stops only that one", async () => {
+  it("with no ownership record, signals neither this session's daemon nor another's", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const dir = temp();
+    const ours = await stuckDaemon(dir, "handback");
+    const theirs = await stuckDaemon(dir, "another");
+    const refusal = await closeWithoutOwnershipRecord(dir);
+    expect(String((refusal as Error | null)?.message ?? refusal)).toMatch(/ownership is unconfirmed/);
+    expect(alive(ours)).toBe(true);
+    expect(alive(theirs)).toBe(true);
+    expect(await exited(ours, 300)).toBe(false);
+  }, 30_000);
+
+  it("a restored matching daemon identity can stop this session's stuck daemon only", async () => {
     vi.spyOn(console, "error").mockImplementation(() => {});
     const dir = temp();
     const ours = await stuckDaemon(dir, "handback");
     const theirs = await stuckDaemon(dir, "another");
     const spec = { command: process.execPath, args: [], env: { PATH: process.env.PATH ?? "", HOME: dir, AGENT_BROWSER_SOCKET_DIR: dir, AGENT_BROWSER_SESSION: "handback", ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot ?? "C:\\Windows" } : {}) } };
-    // No command ever answered on this server, so no daemon pid was captured.
-    await createNativeBrowser(spec).close();
+    const identity = await captureDaemonIdentity(ours.pid!, spec.command);
+    expect(identity).toBeDefined();
+    const entry = process.platform === "darwin" ? nativeProcessList()?.find(row => row.pid === ours.pid) : undefined;
+    if (process.platform === "darwin") expect(entry?.start).toBeTypeOf("number");
+    const start = process.platform === "linux" ? `${identity!.bootId}:${identity!.start}`
+      : process.platform === "darwin" ? `${Math.floor(entry!.start!)}.${String(Math.round((entry!.start! % 1) * 1e6)).padStart(6, "0")}` : identity!.start;
+    writeFileSync(join(dir, "handback.owner.json"), JSON.stringify({ v: 1, session: "handback", launchId: "0123456789abcdef",
+      daemon: { pid: ours.pid, start, exe: realpathSync(process.execPath) }, group: { kind: process.platform === "win32" ? "job" : "sid" } }));
+    const native = createNativeBrowser(spec, { closeOnly: true }); native.seedDaemonIdentity!(identity!);
+    const run = vi.spyOn(ownedCloseCli, "run").mockImplementation(async () => {
+      ours.kill();
+      return { code: 0, stdout: JSON.stringify({ launchId: "0123456789abcdef", closed: true,
+        groupExhausted: true, treeExhausted: true, outsideSeen: 0, unconfirmed: null }) };
+    });
+    await native.close();
+    expect(run).toHaveBeenCalledWith(spec, "0123456789abcdef");
     expect(await exited(ours, 5000)).toBe(true);
     expect(await exited(theirs, 200)).toBe(false);
   }, 30_000);
@@ -348,7 +408,57 @@ describe("Reopen blank page on a fresh server meets a stuck daemon", () => {
     // This session's daemon is gone; its stale pid file now names a pid another session's daemon holds.
     writeFileSync(join(dir, "handback.pid"), String(theirs.pid));
     const spec = { command: process.execPath, args: [], env: { PATH: process.env.PATH ?? "", HOME: dir, AGENT_BROWSER_SOCKET_DIR: dir, AGENT_BROWSER_SESSION: "handback", ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot ?? "C:\\Windows" } : {}) } };
-    await createNativeBrowser(spec).close();
+    await expect(createNativeBrowser(spec, { closeOnly: true }).close()).rejects.toThrow("ownership is unconfirmed");
+    const refusal = await closeWithoutOwnershipRecord(dir);
+    expect(String((refusal as Error | null)?.message ?? refusal)).toMatch(/ownership is unconfirmed/);
+    expect(alive(theirs)).toBe(true);
     expect(await exited(theirs, 500)).toBe(false);
+  }, 30_000);
+});
+
+it("refuses an unreachable legacy daemon and leaves both sessions running", async () => {
+  const dir = temp();
+  const ours = await stuckDaemon(dir, "handback");
+  const theirs = await stuckDaemon(dir, "another");
+  const spec = { command: process.execPath, args: [], env: { PATH: process.env.PATH ?? "", HOME: dir,
+    AGENT_BROWSER_SOCKET_DIR: dir, AGENT_BROWSER_SESSION: "handback" } };
+  vi.spyOn(ownedCloseCli, "run").mockResolvedValue({ code: 3, stdout: JSON.stringify({ launchId: null,
+    closed: false, error: "daemon_unresponsive", saveStatus: "lost" }) });
+  await expect(createNativeBrowser(spec).close()).rejects.toMatchObject({ code: "daemon_unresponsive" });
+  expect(await exited(ours, 200)).toBe(false); expect(await exited(theirs, 200)).toBe(false);
+}, 30_000);
+
+describe("legacy close receipt observes daemon exit without signal authority", () => {
+  it("observes a legacy daemon's idle exit without signalling it or another session", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const dir = temp();
+    const ours = await stuckDaemon(dir, "handback", 1000);
+    const theirs = await stuckDaemon(dir, "another");
+    const spec = { command: process.execPath, args: [], env: { PATH: process.env.PATH ?? "", HOME: dir, AGENT_BROWSER_SOCKET_DIR: dir, AGENT_BROWSER_SESSION: "handback", ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot ?? "C:\\Windows" } : {}) } };
+    // No command ever answered on this server, so no daemon pid was captured.
+    vi.spyOn(ownedCloseCli, "run").mockResolvedValue({ code: 0, stdout: JSON.stringify({ launchId: null, closed: true, groupExhausted: true, outsideSeen: 0, unconfirmed: null }) });
+    await createNativeBrowser(spec).close();
+    expect(await exited(ours, 5000)).toBe(true);
+    expect(ours.exitCode).toBe(0);
+    expect(ours.signalCode).toBeNull();
+    expect(await exited(theirs, 200)).toBe(false);
+  }, 30_000);
+
+  it("never stops another session's daemon named by a stale pid file", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
+    const dir = temp();
+    const theirs = await stuckDaemon(dir, "another");
+    // This session's daemon is gone; its stale pid file now names a pid another session's daemon holds.
+    writeFileSync(join(dir, "handback.pid"), String(theirs.pid));
+    const spec = { command: process.execPath, args: [], env: { PATH: process.env.PATH ?? "", HOME: dir, AGENT_BROWSER_SOCKET_DIR: dir, AGENT_BROWSER_SESSION: "handback", ...(process.platform === "win32" ? { SystemRoot: process.env.SystemRoot ?? "C:\\Windows" } : {}) } };
+    vi.spyOn(ownedCloseCli, "run").mockResolvedValue({ code: 0, stdout: JSON.stringify({ launchId: null, closed: true, groupExhausted: true, outsideSeen: 0, unconfirmed: null }) });
+    let closed = false;
+    const closing = createNativeBrowser(spec).close().then(() => { closed = true; });
+    expect(await exited(theirs, 500)).toBe(false);
+    expect(closed).toBe(false);
+    // A legacy pid file confers no authority. Only the fixture owner ends this child;
+    // close merely observes that its pinned identity has gone.
+    theirs.kill();
+    await closing;
   }, 30_000);
 });

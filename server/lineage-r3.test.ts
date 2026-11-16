@@ -30,7 +30,8 @@ import { buildMemoryBundle } from "./memory/bundle.ts";
 import { captureBranchChange, captureSource } from "./memory/capture.ts";
 import { MemoryDispatchReceipt } from "./memory/dispatch.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "./testing/recall-access-fixture.ts";
 import { readableMemoryRecord } from "./memory/readable.ts";
 import {
   BundleList, capturedMessageVerdict, capturedMessageWithheld, foreignLineageWrite, forgetKeptLineageForTest, keptVerdictCount, prepareLineageCache, recordOutputRoots,

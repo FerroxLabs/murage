@@ -21,7 +21,7 @@ export const UPGRADE_TEXT = {
     wait: "This will take a while. Do not disconnect.", keep: "Keep Murage open.",
     "left.under": "Under a minute left.", "left.one": "About a minute left.", "left.many": "About {n} minutes left.",
     "slow.lead": "This step is taking a little longer. It is still moving.", "slow.percent": "{percent}% done.", "slow.long": "Still moving. Keep Murage open.",
-    "line.checking": "Looking at what you have", "line.copying": "Making a copy first", "line.migrating": "Setting up the new memory format", "line.committing": "Writing the change", "line.generic": "Getting your memory ready",
+    "line.checking": "Looking at what you have", "line.copying": "Making a copy first", "line.migrating": "Setting up the new memory format", "line.committing": "Writing the change", "line.generic": "Getting your memory ready", "line.indexing": "Finishing a one-time step", "quit.note.indexing": "You can close Murage. This step starts over the next time you open it.",
     "counter.messages": "{done} of {total} messages", "counter.bytes": "{done} of {total}", footer: "Nothing is removed. Your conversations and memory stay as they are.",
     "finishing.title": "Opening Murage", "finishing.line": "Murage opens in a moment.", "aria.percent": "{percent} percent done.",
     "working.still": "Murage is still working. Keep Murage open.", minimize: "Minimize", quit: "Quit Murage", "quit.note": "Quitting now pauses this. Murage continues next time you open it.",
@@ -33,7 +33,7 @@ export const UPGRADE_TEXT = {
     wait: "Das dauert eine Weile. Trenne die Verbindung nicht.", keep: "Lass Murage geöffnet.",
     "left.under": "Weniger als eine Minute übrig.", "left.one": "Noch etwa eine Minute.", "left.many": "Noch etwa {n} Minuten.",
     "slow.lead": "Dieser Schritt dauert etwas länger. Es geht trotzdem weiter.", "slow.percent": "{percent} % erledigt.", "slow.long": "Es läuft weiter. Lass Murage geöffnet.",
-    "line.checking": "Murage sieht sich an, was du hast", "line.copying": "Zuerst wird eine Kopie angelegt", "line.migrating": "Das neue Gedächtnisformat wird eingerichtet", "line.committing": "Die Änderung wird geschrieben", "line.generic": "Dein Gedächtnis wird vorbereitet",
+    "line.checking": "Murage sieht sich an, was du hast", "line.copying": "Zuerst wird eine Kopie angelegt", "line.migrating": "Das neue Gedächtnisformat wird eingerichtet", "line.committing": "Die Änderung wird geschrieben", "line.generic": "Dein Gedächtnis wird vorbereitet", "line.indexing": "Ein einmaliger Schritt wird abgeschlossen", "quit.note.indexing": "Du kannst Murage schließen. Dieser Schritt beginnt beim nächsten Öffnen von vorn.",
     "counter.messages": "{done} von {total} Nachrichten", "counter.bytes": "{done} von {total}", footer: "Nichts wird entfernt. Deine Unterhaltungen und dein Gedächtnis bleiben, wie sie sind.",
     "finishing.title": "Murage wird geöffnet", "finishing.line": "Murage öffnet sich gleich.", "aria.percent": "{percent} Prozent erledigt.",
     "working.still": "Murage arbeitet noch. Lass Murage geöffnet.", minimize: "Minimieren", quit: "Murage beenden", "quit.note": "Wenn du jetzt beendest, wird das angehalten. Murage macht beim nächsten Öffnen weiter.",
@@ -45,7 +45,7 @@ export const UPGRADE_TEXT = {
     wait: "Esto tardará un rato. No te desconectes.", keep: "Mantén Murage abierto.",
     "left.under": "Queda menos de un minuto.", "left.one": "Queda aproximadamente un minuto.", "left.many": "Quedan unos {n} minutos.",
     "slow.lead": "Este paso está tardando un poco más. Sigue avanzando.", "slow.percent": "{percent}% completado.", "slow.long": "Sigue avanzando. Mantén Murage abierto.",
-    "line.checking": "Revisando lo que tienes", "line.copying": "Haciendo primero una copia", "line.migrating": "Preparando el nuevo formato de memoria", "line.committing": "Escribiendo el cambio", "line.generic": "Preparando tu memoria",
+    "line.checking": "Revisando lo que tienes", "line.copying": "Haciendo primero una copia", "line.migrating": "Preparando el nuevo formato de memoria", "line.committing": "Escribiendo el cambio", "line.generic": "Preparando tu memoria", "line.indexing": "Terminando un paso que solo se hace una vez", "quit.note.indexing": "Puedes cerrar Murage. Este paso empieza de nuevo la próxima vez que lo abras.",
     "counter.messages": "{done} de {total} mensajes", "counter.bytes": "{done} de {total}", footer: "No se elimina nada. Tus conversaciones y tu memoria se quedan como están.",
     "finishing.title": "Abriendo Murage", "finishing.line": "Murage se abre en un momento.", "aria.percent": "{percent} por ciento completado.",
     "working.still": "Murage sigue trabajando. Mantén Murage abierto.", minimize: "Minimizar", quit: "Salir de Murage", "quit.note": "Si sales ahora, esto se pausa. Murage continúa la próxima vez que lo abras.",
@@ -57,7 +57,7 @@ export const UPGRADE_TEXT = {
     wait: "Cela prendra un moment. Ne te déconnecte pas.", keep: "Garde Murage ouvert.",
     "left.under": "Il reste moins d'une minute.", "left.one": "Il reste environ une minute.", "left.many": "Il reste environ {n} minutes.",
     "slow.lead": "Cette étape prend un peu plus de temps. Cela avance toujours.", "slow.percent": "{percent} % effectué.", "slow.long": "Cela avance toujours. Garde Murage ouvert.",
-    "line.checking": "Examen de ce que tu as", "line.copying": "Création d'une copie d'abord", "line.migrating": "Mise en place du nouveau format de mémoire", "line.committing": "Enregistrement du changement", "line.generic": "Préparation de ta mémoire",
+    "line.checking": "Examen de ce que tu as", "line.copying": "Création d'une copie d'abord", "line.migrating": "Mise en place du nouveau format de mémoire", "line.committing": "Enregistrement du changement", "line.generic": "Préparation de ta mémoire", "line.indexing": "Finalisation d'une étape unique", "quit.note.indexing": "Tu peux fermer Murage. Cette étape reprend depuis le début à la prochaine ouverture.",
     "counter.messages": "{done} sur {total} messages", "counter.bytes": "{done} sur {total}", footer: "Rien n'est supprimé. Tes conversations et ta mémoire restent telles quelles.",
     "finishing.title": "Ouverture de Murage", "finishing.line": "Murage s'ouvre dans un instant.", "aria.percent": "{percent} pour cent effectué.",
     "working.still": "Murage travaille toujours. Garde Murage ouvert.", minimize: "Réduire", quit: "Quitter Murage", "quit.note": "Quitter maintenant met cela en pause. Murage continue à la prochaine ouverture.",
@@ -69,7 +69,7 @@ export const UPGRADE_TEXT = {
     wait: "इसमें कुछ समय लगेगा। डिस्कनेक्ट न करें।", keep: "Murage को खुला रखें।",
     "left.under": "एक मिनट से कम बचा है।", "left.one": "लगभग एक मिनट बचा है।", "left.many": "लगभग {n} मिनट बचे हैं।",
     "slow.lead": "इस चरण में थोड़ा ज़्यादा समय लग रहा है। काम अभी भी आगे बढ़ रहा है।", "slow.percent": "{percent}% पूरा।", "slow.long": "काम आगे बढ़ रहा है। Murage को खुला रखें।",
-    "line.checking": "देखा जा रहा है कि आपके पास क्या है", "line.copying": "पहले एक कॉपी बनाई जा रही है", "line.migrating": "मेमोरी का नया फ़ॉर्मेट तैयार किया जा रहा है", "line.committing": "बदलाव लिखा जा रहा है", "line.generic": "आपकी मेमोरी तैयार की जा रही है",
+    "line.checking": "देखा जा रहा है कि आपके पास क्या है", "line.copying": "पहले एक कॉपी बनाई जा रही है", "line.migrating": "मेमोरी का नया फ़ॉर्मेट तैयार किया जा रहा है", "line.committing": "बदलाव लिखा जा रहा है", "line.generic": "आपकी मेमोरी तैयार की जा रही है", "line.indexing": "एक बार होने वाला चरण पूरा हो रहा है", "quit.note.indexing": "आप Murage बंद कर सकते हैं। अगली बार खोलने पर यह चरण शुरू से होगा।",
     "counter.messages": "{total} में से {done} संदेश", "counter.bytes": "{total} में से {done}", footer: "कुछ भी हटाया नहीं जाता। आपकी बातचीत और मेमोरी जैसी हैं वैसी ही रहती हैं।",
     "finishing.title": "Murage खुल रहा है", "finishing.line": "Murage कुछ ही पल में खुलेगा।", "aria.percent": "{percent} प्रतिशत पूरा।",
     "working.still": "Murage अभी भी काम कर रहा है। Murage को खुला रखें।", minimize: "छोटा करें", quit: "Murage बंद करें", "quit.note": "अभी बंद करने पर यह काम रुक जाएगा। अगली बार Murage खोलने पर यह आगे बढ़ेगा।",
@@ -81,7 +81,7 @@ export const UPGRADE_TEXT = {
     wait: "しばらく時間がかかります。接続を切らないでください。", keep: "Murage は開いたままにしてください。",
     "left.under": "残り1分未満です。", "left.one": "残り約1分です。", "left.many": "残り約{n}分です。",
     "slow.lead": "このステップには少し時間がかかっています。処理は進んでいます。", "slow.percent": "{percent}% 完了。", "slow.long": "処理は進んでいます。Murage は開いたままにしてください。",
-    "line.checking": "お持ちのデータを確認しています", "line.copying": "最初にコピーを作成しています", "line.migrating": "新しいメモリ形式を準備しています", "line.committing": "変更を書き込んでいます", "line.generic": "メモリを準備しています",
+    "line.checking": "お持ちのデータを確認しています", "line.copying": "最初にコピーを作成しています", "line.migrating": "新しいメモリ形式を準備しています", "line.committing": "変更を書き込んでいます", "line.generic": "メモリを準備しています", "line.indexing": "一度だけの処理を仕上げています", "quit.note.indexing": "Murage は閉じてもかまいません。次に開いたときに、この処理を最初からやり直します。",
     "counter.messages": "{total}件中{done}件のメッセージ", "counter.bytes": "{total}中{done}", footer: "何も削除されません。会話とメモリはそのまま残ります。",
     "finishing.title": "Murage を開いています", "finishing.line": "まもなく Murage が開きます。", "aria.percent": "{percent}パーセント完了。",
     "working.still": "Murage は作業を続けています。開いたままにしてください。", minimize: "最小化", quit: "Murage を終了", "quit.note": "今終了すると、この処理は一時停止します。次に Murage を開くと続きから進みます。",
@@ -93,7 +93,7 @@ export const UPGRADE_TEXT = {
     wait: "Isso vai levar um tempo. Não desconecte.", keep: "Mantenha o Murage aberto.",
     "left.under": "Falta menos de um minuto.", "left.one": "Falta cerca de um minuto.", "left.many": "Faltam cerca de {n} minutos.",
     "slow.lead": "Esta etapa está demorando um pouco mais. Continua avançando.", "slow.percent": "{percent}% concluído.", "slow.long": "Continua avançando. Mantenha o Murage aberto.",
-    "line.checking": "Vendo o que você tem", "line.copying": "Primeiro, fazendo uma cópia", "line.migrating": "Preparando o novo formato de memória", "line.committing": "Gravando a mudança", "line.generic": "Preparando sua memória",
+    "line.checking": "Vendo o que você tem", "line.copying": "Primeiro, fazendo uma cópia", "line.migrating": "Preparando o novo formato de memória", "line.committing": "Gravando a mudança", "line.generic": "Preparando sua memória", "line.indexing": "Concluindo uma etapa feita uma única vez", "quit.note.indexing": "Você pode fechar o Murage. Esta etapa recomeça na próxima vez que você abrir.",
     "counter.messages": "{done} de {total} mensagens", "counter.bytes": "{done} de {total}", footer: "Nada é removido. Suas conversas e sua memória continuam como estão.",
     "finishing.title": "Abrindo o Murage", "finishing.line": "O Murage abre em instantes.", "aria.percent": "{percent} por cento concluído.",
     "working.still": "O Murage ainda está trabalhando. Mantenha o Murage aberto.", minimize: "Minimizar", quit: "Sair do Murage", "quit.note": "Sair agora pausa isso. O Murage continua na próxima vez que você abrir.",
@@ -105,7 +105,7 @@ export const UPGRADE_TEXT = {
     wait: "这需要一些时间。请勿断开连接。", keep: "请保持 Murage 打开。",
     "left.under": "剩余不到一分钟。", "left.one": "大约还剩一分钟。", "left.many": "大约还剩 {n} 分钟。",
     "slow.lead": "这一步需要多花一点时间。它仍在推进。", "slow.percent": "已完成 {percent}%。", "slow.long": "仍在推进。请保持 Murage 打开。",
-    "line.checking": "正在查看你拥有的内容", "line.copying": "先创建一份副本", "line.migrating": "正在设置新的记忆格式", "line.committing": "正在写入更改", "line.generic": "正在准备你的记忆",
+    "line.checking": "正在查看你拥有的内容", "line.copying": "先创建一份副本", "line.migrating": "正在设置新的记忆格式", "line.committing": "正在写入更改", "line.generic": "正在准备你的记忆", "line.indexing": "正在完成一次性步骤", "quit.note.indexing": "你可以关闭 Murage。下次打开时,此步骤会从头开始。",
     "counter.messages": "{total} 条消息中的 {done} 条", "counter.bytes": "{total} 中的 {done}", footer: "不会删除任何内容。你的对话和记忆保持原样。",
     "finishing.title": "正在打开 Murage", "finishing.line": "Murage 即将打开。", "aria.percent": "已完成百分之 {percent}。",
     "working.still": "Murage 仍在工作。请保持 Murage 打开。", minimize: "最小化", quit: "退出 Murage", "quit.note": "现在退出会暂停这项工作。下次打开 Murage 时会继续。",
@@ -125,6 +125,7 @@ export function etaSentence(text, kind, minutes) {
 function lineKey(phaseId, step) {
   if (phaseId === "checking") return "line.checking";
   if (phaseId === "copying") return "line.copying";
+  if (phaseId === "indexing") return "line.indexing";
   if (phaseId === "migrating") return step === "committing" ? "line.committing" : "line.migrating";
   return "line.generic";
 }
@@ -175,7 +176,9 @@ export function createUpgradeScreen({ language, now = Date.now, describeBytes = 
     if (counterSentence) ariaParts.push(counterSentence);
     if (left) ariaParts.push(left);
     if (ariaParts.length === 0) ariaParts.push(line);
-    return { ...base, mode: v.slow ? "slow" : "blocking", title: text.title, lead: leadText, line, counter, percent: v.percent, indeterminate: v.indeterminate, elapsedMs: v.elapsedMs, keepOpen: v.keepOpen, aria: ariaParts.join(" ") };
+    // The one-time index is one statement: quitting starts it over, where every other step carries on.
+    const controls = v.phaseId === "indexing" ? { ...base.controls, quitNote: text["quit.note.indexing"] } : base.controls;
+    return { ...base, controls, mode: v.slow ? "slow" : "blocking", title: text.title, lead: leadText, line, counter, percent: v.percent, indeterminate: v.indeterminate, elapsedMs: v.elapsedMs, keepOpen: v.keepOpen, aria: ariaParts.join(" ") };
   };
   const dispatch = (event) => { ctx = reduce(ctx, { at: now(), ...event }); return render(); };
   return {

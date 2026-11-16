@@ -22,6 +22,8 @@ const messages=async(threadId:string)=>(await api("GET",`/api/threads/${threadId
 const dump=(second=false)=>JSON.parse(readFileSync(second?join(fixture.info.dataDir,"second-dump.json"):fixture.fixtureDumpPath,"utf8"));
 beforeAll(async()=>{
   fixture=await launchVerificationServer(process.env,undefined,{instrumentationSource:`
+      // This fixture CLI has no model host; unknown-host refusal has its own reach tests.
+      const { customAcpSupport: localFixtureHost } = await import(${JSON.stringify(new URL("./drivers/acp/custom.ts", import.meta.url).href)}); localFixtureHost.fluxReach = () => "elsewhere";
     const fs=await import('node:fs');const path=await import('node:path');
     const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
     cfg.instances.second={...cfg.instances.verification,displayName:'Second isolated account',environment:{FAKE_CLAUDE_DUMP:path.join(process.env.MURAGE_DATA_DIR,'second-dump.json')}};

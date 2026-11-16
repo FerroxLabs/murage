@@ -54,6 +54,7 @@ describe("the data-folder inventory guard", () => {
       "fs.writeFileSync((await import('node:url')).pathToFileURL(join(dir, 'url probe')), 'x');",
     ].join("\n");
     const result = spawnSync(process.execPath, ["--import", pathToFileURL(preload).href, "--input-type=module", "-e", writes], {
+      windowsHide: true,
       encoding: "utf8",
       env: { PATH: process.env.PATH ?? "", HOME: scratch, MURAGE_DATA_DIR: data },
     });

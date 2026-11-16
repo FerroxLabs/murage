@@ -44,7 +44,7 @@ const summarize = (samples: number[]) => {
 /** A close reason without its count: `child processes alive at settle (8)`. */
 /** The fixed part of a reason, up to any count or detail: a counter name, never a value.
  * A reason can end in an engine's own error text, which stays out of the gauge. */
-const reasonKey = (reason: string) => (/^key:[\w-]+/.exec(reason)?.[0] ?? reason.split(/[:(]/, 1)[0]!.trim()).slice(0, 60) || "other";
+const reasonKey = (reason: string) => (/^(?:key|fence):[\w-]+/.exec(reason)?.[0] ?? reason.split(/[:(]/, 1)[0]!.trim()).slice(0, 60) || "other";
 const bump = (counts: Record<string, number>, key: string) => {
   if (key in counts || Object.keys(counts).length < MAX_REASONS) counts[key] = (counts[key] ?? 0) + 1;
   else counts.other = (counts.other ?? 0) + 1;

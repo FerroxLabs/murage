@@ -6,7 +6,7 @@
 // turn's generation-bound record and the binding at every call (server/email/admission.ts), and the send handler is the one place that
 // applies the bot's email setting.
 
-/** The env the harness sets on the agents integration: "send" lists every email tool, "read" only the two reads (3.2: an engine that
+/** The env the harness sets on the agents integration: "send" lists every tool, "delegated" omits trust_offer, "read" only the two reads (3.2: an engine that
  *  cannot prove a send tool's name on its own agents mount reads email but does not send it). Absent: none. */
 export const EMAIL_TOOLS_ENV = "MURAGE_EMAIL";
 export const EMAIL_READ_TOOL_NAMES = ["email_list", "email_read"] as const;
@@ -77,6 +77,7 @@ export const EMAIL_TOOLS = [
 /** The tools one turn lists for its email mode. */
 export function emailToolsFor(mode: string | undefined): typeof EMAIL_TOOLS {
   if (mode === "send") return EMAIL_TOOLS;
+  if (mode === "delegated") return EMAIL_TOOLS.filter(tool => tool.name !== "email_trust_offer");
   if (mode === "read") return EMAIL_TOOLS.filter(tool => (EMAIL_READ_TOOL_NAMES as readonly string[]).includes(tool.name));
   return [];
 }

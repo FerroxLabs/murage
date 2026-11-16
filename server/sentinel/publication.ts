@@ -1,3 +1,4 @@
+import {writeFileSync} from "./io-meter.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -13,7 +14,7 @@
 // a source database or start a scan. Issue pages use an opaque cursor carrying the store revision; when the revision
 // moved the answer is `refresh`, never a mixed page. limit <= 50, response <= 64 KiB.
 import { randomBytes } from "node:crypto";
-import { chmodSync, lstatSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, lstatSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { posix, win32 } from "node:path";
 import { HEALTH_LIMITS } from "../../shared/health-protocol.mjs";
 import type { IssueRecord } from "./lifecycle.ts";

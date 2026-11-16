@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
+import { BOX_FRAME, BoxHead, BoxBody, BoxFoot } from "./ui/BoxShell";
 import { useEffect, useState } from "react";
 import { Switch } from "./SettingsPrimitives";
 import { api } from "@/state/store";
@@ -10,12 +11,13 @@ export function BrowserExternalClients() {
   const [profile, setProfile] = useState("");
   const [config, setConfig] = useState("");
   const [error, setError] = useState("");
+  const [review,setReview]=useState<{body:Record<string,unknown>;disclosure:{lines:string[];disclosureKey:string}}|null>(null);
   const [pending, setPending] = useState(false);
   const load = async () => setSettings(await api("/api/browser-extension/clients"));
   useEffect(() => { let mounted = true; void api("/api/browser-extension/clients").then(value => { if (mounted) setSettings(value); }).catch(cause => { if (mounted) setError(String(cause.message ?? cause)); }); return () => { mounted = false; }; }, []);
   const act = async (body: Record<string, unknown>) => {
     setPending(true); setError(""); setConfig("");
-    try { const response = await api("/api/browser-extension/clients", { method: "POST", body: JSON.stringify(body) }); if (response.config) setConfig(JSON.stringify(response.config, null, 2)); await load(); }
+    try { if(body.action==='pair'&&!body.disclosureKey){const response=await api("/api/browser-extension/clients",{method:"POST",body:JSON.stringify({...body,action:"preview"})});setReview({body,disclosure:response.disclosure});return;} const response = await api("/api/browser-extension/clients", { method: "POST", body: JSON.stringify(body) }); setReview(null); if (response.config) setConfig(JSON.stringify(response.config, null, 2)); await load(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : "Could not change browser connections."); }
     finally { setPending(false); }
   };
@@ -33,6 +35,7 @@ export function BrowserExternalClients() {
       </form>}
       {settings.clients.map(client => <div key={client.clientId} className="flex items-center justify-between gap-2 text-sm"><span className="min-w-0 break-words">{client.label}</span><button className={control} disabled={pending} onClick={() => void act({ action: "revoke", clientId: client.clientId })}>Revoke<span className="sr-only"> {client.label}</span></button></div>)}
     </>}
+    {review&&<div role="dialog" aria-label="Confirm browser connection" className={`${BOX_FRAME} max-h-[70dvh]`}><BoxHead>Confirm browser connection</BoxHead><BoxBody>{review.disclosure.lines.map((line,i)=><p key={i}>{line}</p>)}</BoxBody><BoxFoot><button disabled={pending} onClick={()=>void act({...review.body,disclosureKey:review.disclosure.disclosureKey})}>Use this browser from now on</button><button onClick={()=>setReview(null)}>Cancel</button></BoxFoot></div>}
     {config && <label className="flex flex-col gap-2 text-sm">Add this to your agent's MCP configuration<textarea readOnly rows={10} value={config} className="browser-extension-control w-full min-w-0 rounded-lg bg-inset p-3 font-mono text-xs focus-visible:outline-2 focus-visible:outline-accent" onFocus={event => event.currentTarget.select()} /><span className="text-xs text-ink-secondary">This points to a private pairing file on this computer. Revoking the connection disables it.</span></label>}
     {error && <p role="alert" className="text-sm text-danger">{error}</p>}
   </section>;

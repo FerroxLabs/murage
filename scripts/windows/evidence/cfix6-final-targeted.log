@@ -1,0 +1,45 @@
+SCANNER FIXTURE HIT RATE 57/57 (100%)
+✔ p11c 1: cleanup removes the fixed wrapper before any bounded snapshot diff (1.105317ms)
+✔ p11c 2: reviewer snapshot helper >300s has one job owner for every Node native (0.397073ms)
+✔ p11c 3: scanner flags every reviewer form recursively, including test/check/mutate (765.641365ms)
+✔ p11c 3: complete Windows tree passes exact-path ownership scanner (862.645998ms)
+✔ p11c 4: four additional real source mutants exist (0.326702ms)
+✔ p11c 3: owner basenames elsewhere are never allowlisted (491.404357ms)
+P11E SCANNER FIXTURE HIT RATE 94/94 (100%); PARSE-FAILURE COUNT 0
+P11E ALLOWED FIXTURES 45/45
+✔ p11e: crev5 exact parenthesized imported alias is rejected (26.291344ms)
+✔ p11e: every valid hostile allowlist fixture fails recursively (168.045541ms)
+✔ p11e: each allowed process form and harmless data remain accepted (54.566809ms)
+✔ both receipts of the same candidate pass (9.363978ms)
+✔ one desktop receipt cannot pass the gate (0.845556ms)
+✔ one handoff receipt cannot pass the gate (0.1952ms)
+✔ duplicate desktop is not a pair (0.954506ms)
+✔ pair rejects mismatched commit (0.558914ms)
+✔ pair rejects mismatched sha256 (0.440393ms)
+✔ pair rejects mismatched updateSha256 (0.287971ms)
+✔ pair rejects mismatched updateVersion (0.261621ms)
+✔ rejects invalid receipt: r=>r.groups.pop() (0.405663ms)
+✔ rejects invalid receipt: r=>r.groups[0].skipped++ (0.396902ms)
+✔ rejects invalid receipt: r=>r.groups[0].failed++ (0.302792ms)
+✔ rejects invalid receipt: r=>r.groups[0].passed=0 (3.560163ms)
+✔ rejects invalid receipt: r=>r.groups[0].artifacts=['../escape'] (0.322801ms)
+✔ rejects invalid receipt: r=>r.observer.visible.push('console') (0.324811ms)
+✔ rejects invalid receipt: r=>r.observer.samples=0 (0.451092ms)
+✔ rejects invalid receipt: r=>r.observer.maxGapMs=1001 (0.475864ms)
+✔ rejects invalid receipt: r=>r.observer.enumerationErrors.push(5) (0.268303ms)
+✔ rejects invalid receipt: r=>r.isolated=false (0.244301ms)
+✔ rejects invalid receipt: r=>r.fakeProvidersOnly=false (0.217592ms)
+✔ rejects invalid receipt: r=>r.updateVersion='1.0.19-gate.1' (1.046577ms)
+✔ handoff receipt must come from gate-win-nogit (0.220931ms)
+✔ same exe cannot hide a different packageSha256 (0.433622ms)
+✔ same exe cannot hide a different appManifest (0.510213ms)
+✔ legacy receipt without packageSha256 fails closed (2.627096ms)
+✔ legacy receipt without appManifest fails closed (0.123531ms)
+ℹ tests 34
+ℹ suites 0
+ℹ pass 34
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2426.708363
