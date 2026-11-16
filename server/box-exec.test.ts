@@ -249,7 +249,7 @@ describe("computer_exec on the box: silence, not a clock", () => {
 describe.skipIf(process.platform !== "linux")("computer_exec's box-side records (real shell)", () => {
   const home = mkdtempSync(join(tmpdir(), "box-exec-"));
   const env = { HOME: home, PATH: process.env.PATH ?? "/usr/bin:/bin" };
-  const sh = (script: string) => parseStatus(spawnSync("bash", ["-c", script], { env, encoding: "utf8", timeout: 30_000 }).stdout);
+  const sh = (script: string) => parseStatus(spawnSync("bash", ["-c", script], { windowsHide: true, env, encoding: "utf8", timeout: 30_000 }).stdout);
   // a zombie waiting for the container's init to reap it is dead
   const alive = (pid: number) => {
     try {
@@ -308,7 +308,7 @@ describe.skipIf(process.platform !== "linux")("computer_exec's box-side records 
   });
 
   it("the command keeps the box's own umask", () => {
-    const expected = spawnSync("bash", ["-c", "umask"], { env, encoding: "utf8" }).stdout.trim();
+    const expected = spawnSync("bash", ["-c", "umask"], { windowsHide: true, env, encoding: "utf8" }).stdout.trim();
     expect(sh(startScript("aa00000000000003", "umask", opts)).stdout.trim()).toBe(expected);
   });
 

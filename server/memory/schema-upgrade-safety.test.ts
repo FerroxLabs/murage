@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { MEMORY_PRE_V2_SNAPSHOT, MEMORY_SCHEMA_V1, MEMORY_SCHEMA_VERSION, downgradeMemorySchema, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
 import { readMemoryLearning } from "./learning-policy.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { ensureRecallViewSchema, ensureExternalRecallEpoch, recallSchemaObjects, recallExternalObjects } from './recall-view-schema.ts';
 
 const roots: string[] = [];
 const databases: DatabaseSync[] = [];
@@ -31,6 +32,20 @@ function legacyInstallation(mode = "active") {
   db.exec("INSERT INTO memory_records VALUES('fact',1,'scope','fact','Original preference','owner-statement','candidate',0,1,NULL,NULL,1);");
   return { root, file, db, snapshot: join(root, MEMORY_PRE_V2_SNAPSHOT) };
 }
+
+// Producer and consumer owner: recall-scope-d (exact derived-schema registration for offline restore).
+it('returns every exactly validated recall object to offline snapshot inspection in all validation modes',()=>{
+  const f=legacyInstallation();migrateMemorySchema(f.db,'off',{snapshotPath:f.snapshot});
+  ensureRecallViewSchema(f.db);
+  f.db.exec('CREATE TABLE team_identities(id);CREATE TABLE project_settings(id);');
+  ensureExternalRecallEpoch(f.db);
+  for(const options of [{},{structuralOnly:true},{incrementalShapes:true}]){
+    const validated=validateMemorySchema(f.db,options);
+    for(const name of [...recallSchemaObjects().keys(),...recallExternalObjects().keys()])expect(validated.has(name),name).toBe(true);
+  }
+  f.db.exec('DROP TRIGGER memory_recall_external_team_identities_update; CREATE TRIGGER memory_recall_external_team_identities_update AFTER UPDATE ON team_identities BEGIN SELECT 1; END;');
+  expect(()=>validateMemorySchema(f.db)).toThrow('MEMORY_SCHEMA_UNSUPPORTED');
+});
 /** The validator 0.1.53 shipped: every memory_* row must match the frozen v1
  * text exactly, with no extra objects, and memory_meta.schema_version must be 1. */
 function validateAs0153(db: DatabaseSync) {

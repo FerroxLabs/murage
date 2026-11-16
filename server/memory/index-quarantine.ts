@@ -7,7 +7,8 @@
 // their `-wal`/`-shm`, only regular files (never a link or a directory). No other quarantine (messages.db's included) is touched.
 import { closeSync, fsyncSync, lstatSync, openSync, readdirSync, renameSync, unlinkSync, type Stats } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
+import { traceSlowStep } from "./claim-trace.ts";
+import { DatabaseSync } from "../sqlite-open.ts";
 
 /** SQLITE_CORRUPT and SQLITE_NOTADB: the only errors that say the file itself is damaged. */
 const DAMAGED_CODES: ReadonlySet<number> = new Set([11, 26]);
@@ -98,6 +99,70 @@ export function quarantineIndex(path: string, now = Date.now(), rename: (from: s
     throw error;
   }
   return aside;
+}
+
+/** r3.2.8-H.1 7: like quarantineIndex, but every present member (main, then MOVED_SUFFIXES) is moved whatever its type: rename moves a link
+ * or a directory itself, never its target. No prepareIndexOpen, no UNSAFE refusal. The stop marker still never moves (residual, stated:
+ * a link at `-walstop` reads `unsafe` and is not moved by this; the start keeps failing UNSAFE until the link is removed). Same rollback
+ * as quarantineIndex (logs first, main last). */
+export function quarantineIndexAny(path: string, now = Date.now(), rename: (from: string, to: string) => void = renameSync): string {
+  const aside = `${path}.corrupt-${now}`, moved: Array<[from: string, to: string]> = [];
+  try {
+    for (const suffix of ["", ...MOVED_SUFFIXES]) {
+      const from = `${path}${suffix}`, to = `${aside}${suffix}`;
+      if (!entry(from)) continue;
+      rename(from, to);
+      moved.push([from, to]);
+    }
+  } catch (error) {
+    let whole = true;
+    for (const [from, to] of moved.reverse()) {
+      if (from === path && !whole) break;
+      try { rename(to, from); } catch { whole = false; }
+    }
+    throw error;
+  }
+  return aside;
+}
+
+/** r3.2.8-H.1 5 / H.2 2: a read-only, never-waiting look at the index file set. lstat of main and every LOG_SUFFIXES member first (a present
+ * link or non-regular member: `unsafe`; an lstat error other than ENOENT: `busy`, never `unsafe`); main ENOENT: `absent`; else a read-only
+ * open with timeout 0 reads index_meta reset_done: primary errcode 26 or 11: `damaged`; a value equal to `resetId`: `holds-R`; no such
+ * table or row (SQLITE_ERROR 1, or no row): `healthy`; every other result (BUSY, LOCKED, CANTOPEN, IOERR, PERM, READONLY, fs EBUSY/EPERM/
+ * EACCES): `busy`. The handle is closed before return. Synchronous. */
+export type IndexProbe = "absent" | "healthy" | "damaged" | "unsafe" | "holds-R" | "busy";
+/** probeIndexFile is for the memory index file only: a path whose name is messages.db (or its -wal/-shm) is refused before anything is looked at. */
+export class IndexProbeRefusedError extends Error { constructor(name: string) { super(`MEMORY_INDEX_PROBE_REFUSED:${name}`); } }
+export function probeIndexFile(path: string, resetId?: number): IndexProbe {
+  if (/^messages\.db(-wal|-shm)?$/.test(basename(path))) throw new IndexProbeRefusedError(basename(path));
+  const started = performance.now();
+  try { return probeCore(path, resetId); } finally { traceSlowStep("memory.index-probe", performance.now() - started); }
+}
+function probeCore(path: string, resetId: number | undefined): IndexProbe {
+  let main: Stats | null = null;
+  try {
+    for (const file of [path, ...LOG_SUFFIXES.map(suffix => `${path}${suffix}`)]) {
+      const stat = entry(file);
+      if (file === path) main = stat;
+      if (stat && (!stat.isFile() || stat.isSymbolicLink())) return "unsafe";
+    }
+  } catch { return "busy"; }
+  if (!main) return "absent";
+  let db: DatabaseSync | null = null;
+  try {
+    db = new DatabaseSync(path, { readOnly: true, timeout: 0 });
+    const row = db.prepare("SELECT value FROM index_meta WHERE key='reset_done'").get();
+    if (row === undefined) return "healthy";
+    return resetId !== undefined && String(row.value) === String(resetId) ? "holds-R" : "healthy";
+  } catch (error) {
+    const code = (error as { errcode?: unknown } | null)?.errcode;
+    if (typeof code === "number") {
+      const primary = code & 0xff;
+      if (primary === 26 || primary === 11) return "damaged";
+      if (primary === 1) return "healthy"; // no such table
+    }
+    return "busy";
+  } finally { try { db?.close(); } catch { /* read-only handle */ } }
 }
 
 /** Whether `<index>-walstop` is there (any content, any type). An lstat error other than ENOENT counts as present (fail closed). */

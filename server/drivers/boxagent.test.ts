@@ -7,10 +7,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
+import { fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
 import { BoxAgentDriver } from "./boxagent.ts";
 import { engineClosedLine } from "./stop-copy.ts";
 import { IntakeValve, installIntakeValve } from "../harness/intake.ts";
-import { _cloudComputerIdle, _cloudComputerTiming, _resetCloudComputerTurns, CLOUD_COMPUTER_TURNS_FILE } from "../cloud-computer-turns.ts";
+import { BOX_AGENT_API, _cloudComputerIdle, _cloudComputerTiming, _resetCloudComputerTurns, CLOUD_COMPUTER_TURNS_FILE } from "../cloud-computer-turns.ts";
 import { DATA_DIR } from "../config.ts";
 import { rmSync } from "node:fs";
 import { join } from "node:path";
@@ -87,12 +88,57 @@ describe("BoxAgentDriver turns (fake API)", () => {
     restoreFetch = undefined;
   });
 
+  it.each(['input','arguments','parameters','data.input','data.arguments','data.parameters','command'])("P1 retains the actual native tool input from %s", async field => {
+    const input={command:'printf "exact  bytes"',cwd:'/fixture',extra:{keep:true}};
+    const payload = field.startsWith('data.') ? {data:{[field.slice(5)]:input}} : field==='command' ? {command:input.command} : {[field]:input};
+    restoreFetch=installFakeBox([{events:[{id:'p1-tool',type:'tool',...payload}],status:{promptRun:{status:'finished',result:'done'}}}]);
+    await create();
+    const sent=await instance.adapter.sendTurn({threadId:'p1-box',text:'fixture',integrations:{computer}});
+    await recorder.until(e=>e.type==='turn.completed'&&e.turnId===sent.turnId);
+    expect(recorder.events.find(e=>e.type==='item.started'&&e.itemId==='p1-tool')).toMatchObject({input:field==='command'?{command:input.command}:input});
+  });
+
   it("two turns report no tokens so the ledger records work time only",async()=>{
     restoreFetch=installFakeBox([{events:[{id:"reply",type:"response",text:"done"}],status:{promptRun:{status:"finished",result:"done"}}}]);
     await create();
     for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({threadId:"usage-two",text:"hi",integrations:{computer}});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);}
     const completed=recorder.events.filter(e=>e.type==="turn.completed");expect(completed).toHaveLength(2);
     for(const event of completed)expect(event).not.toHaveProperty("usage");
+  });
+
+  // MAIN RULING 2026-11-14 consuming mounts never reach external destinations; this native cloud prompt control is non-consuming.
+  it("runs with an external integration and submits the native cloud prompt", async () => {
+    restoreFetch = installFakeBox([{ events: [], status: { promptRun: { status: "finished", result: "submitted" } } }]);
+    const fake = globalThis.fetch, writes: string[] = [];
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      if (String(init?.method ?? "GET").toUpperCase() !== "GET") writes.push(String(input));
+      return fake(input, init);
+    }) as typeof fetch;
+    await create();
+    const beforeSubmit = vi.fn();
+    const { turnId } = await instance.adapter.sendTurn({ threadId: "t-box-external", text: "fixture",
+      integrations: { computer }, beforeSubmit,
+    });
+    expect(await recorder.until(event => event.type === "turn.completed" && event.turnId === turnId)).toMatchObject({ ok: true });
+    expect(writes).toEqual([`${BOX_AGENT_API}/boxes/${BOX}/prompt`]);
+    expect(beforeSubmit).toHaveBeenCalled();
+    expect(recorder.events.some(event => event.type === "turn.started" && event.turnId === turnId)).toBe(true);
+    expect(instance.adapter.hasSession("t-box-external")).toBe(false);
+  });
+
+  it("refuses a consuming agents mount before an external cloud prompt", async () => {
+    restoreFetch = installFakeBox([{ events: [], status: { promptRun: { status: "finished" } } }]);
+    const fake = globalThis.fetch, writes: string[] = [];
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      if (String(init?.method ?? "GET").toUpperCase() !== "GET") writes.push(String(input));
+      return fake(input, init);
+    }) as typeof fetch;
+    await create();
+    await expect(instance.adapter.sendTurn(fixtureMountTurn({ threadId: "t-box-consuming", text: "fixture",
+      integrations: { computer, agents: { command: process.execPath, args: ["fixture-agents-proxy"], env: {} } },
+    }))).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(writes).toEqual([]);
+    expect(recorder.events).toEqual([]);
   });
 
   it("r26b: a run that finished with no output shows '(finished)' as Murage's own line, never as the engine's reply", async () => {
@@ -724,3 +770,20 @@ describe("BoxAgentDriver turns (fake API)", () => {
 
 // Adapter turns in this suite use an isolated durable store.
 useOutsideStoreFixture();
+
+describe('B11 No limits Box transport (fake HTTP)',()=>{
+ useOutsideStoreFixture();
+ it('submits and finishes without any permission card or native approval mode',async()=>{
+  ensureDirs();_resetCloudComputerTurns();_cloudComputerTiming({pauseMs:0});
+  const restore=installFakeBox([{events:[{id:'nolim-reply',type:'response',text:'fixture complete'}],status:{promptRun:{status:'finished',result:'fixture complete'}}}]);
+  let instance:ProviderInstance|undefined;
+  try{
+   instance=await BoxAgentDriver.create({instanceId:'nolim-box',displayName:'Fixture',environment:{BOX_TOKEN:'fixture-token'},enabled:true,config:{pollMs:0}});
+   const recorder=recordEvents(instance.adapter);
+   const sent=await instance.adapter.sendTurn({threadId:'nolim-box-thread',text:'fixture',noLimits:true,integrations:{computer}});
+   await recorder.until(e=>e.type==='turn.completed'&&e.turnId===sent.turnId);
+   expect(recorder.events.filter(e=>e.type==='request.opened')).toHaveLength(0);
+   expect(recorder.events).toContainEqual(expect.objectContaining({type:'turn.completed',turnId:sent.turnId,ok:true}));recorder.stop();
+  }finally{await instance?.dispose();await _cloudComputerIdle();restore();}
+ });
+});

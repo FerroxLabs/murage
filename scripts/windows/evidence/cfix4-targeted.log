@@ -1,0 +1,14 @@
+SCANNER FIXTURE HIT RATE 26/26 (100%)
+✔ p11c 1: cleanup removes the fixed wrapper before any bounded snapshot diff (0.900445ms)
+✔ p11c 2: reviewer snapshot helper >300s has one job owner for every Node native (0.351818ms)
+✔ p11c 3: scanner flags every reviewer form recursively, including test/check/mutate (202.450198ms)
+✔ p11c 3: complete Windows tree passes exact-path ownership scanner (85.282475ms)
+✔ p11c 4: four additional real source mutants exist (0.275018ms)
+ℹ tests 5
+ℹ suites 0
+ℹ pass 5
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 387.760412

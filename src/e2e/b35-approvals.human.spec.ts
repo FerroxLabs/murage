@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { openSidebar } from "./fixtures.ts";
@@ -71,7 +71,7 @@ test("B35 canonical offscreen approval survives reload and outage, opens exact t
   expect(snoozed).toMatchObject({ id: pending.id, status: "pending" });
   await api("/api/inbox/state", "POST", { id: snoozed.id, version: snoozed.version, snoozedUntil: null });
   expect((await api("/api/inbox?view=decisions")).total).toBe(1);
-  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); });
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin);
   for (const width of [390,820,1440]) {
     await page.setViewportSize({ width, height: 900 });

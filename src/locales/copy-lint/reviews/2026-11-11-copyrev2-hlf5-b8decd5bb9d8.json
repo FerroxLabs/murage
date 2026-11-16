@@ -1,0 +1,375 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "hlf5",
+  "date": "2026-11-11",
+  "base": "23b4947aa",
+  "scope": "Round 2 independent review of all F5 copy across both hlf5 rounds, including all applied replacements",
+  "strings": {
+    "en:highlevel.operation.forms.submissions": {
+      "text": "Read form responses",
+      "en": "Read form responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "en:highlevel.operation.forms.surveys.submissions": {
+      "text": "Read survey responses",
+      "en": "Read survey responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "en:highlevel.f5.urls": {
+      "text": "Use text without web links here.",
+      "en": "Use text without web links here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain instruction to enter text without links; no unexplained URL acronym. No dashes or No limits headline; no completed fix claim."
+    },
+    "en:highlevel.f5.location": {
+      "text": "Choose the HighLevel business connected here.",
+      "en": "Choose the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names the HighLevel business connected here. No dashes or No limits headline; no completed fix claim."
+    },
+    "en:highlevel.f5.contact": {
+      "text": "Choose a contact from the HighLevel business connected here.",
+      "en": "Choose a contact from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step asks for a contact from the connected HighLevel business. No dashes or No limits headline; no completed fix claim."
+    },
+    "en:highlevel.f5.automation": {
+      "text": "Choose a workflow or campaign from the HighLevel business connected here.",
+      "en": "Choose a workflow or campaign from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names workflows and campaigns in the connected business; these are HighLevel destination names. No dashes or No limits headline; no completed fix claim."
+    },
+    "en:highlevel.f5.dates": {
+      "text": "Choose a start date on or before the end date.",
+      "en": "Choose a start date on or before the end date.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Uses plain start and end date labels without exposing implementation field names. No dashes or No limits headline; no completed fix claim."
+    },
+    "de:highlevel.operation.forms.submissions": {
+      "text": "Formularantworten lesen",
+      "en": "Read form responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "de:highlevel.operation.forms.surveys.submissions": {
+      "text": "Umfrageantworten lesen",
+      "en": "Read survey responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "de:highlevel.f5.urls": {
+      "text": "Verwende hier Text ohne Links.",
+      "en": "Use text without web links here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain instruction to enter text without links; no unexplained URL acronym. No dashes or No limits headline; no completed fix claim."
+    },
+    "de:highlevel.f5.location": {
+      "text": "Wähle das Unternehmen, das hier mit HighLevel verbunden ist.",
+      "en": "Choose the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names the HighLevel business connected here. No dashes or No limits headline; no completed fix claim."
+    },
+    "de:highlevel.f5.contact": {
+      "text": "Wähle einen Kontakt aus dem Unternehmen, das hier mit HighLevel verbunden ist.",
+      "en": "Choose a contact from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step asks for a contact from the connected HighLevel business. No dashes or No limits headline; no completed fix claim."
+    },
+    "de:highlevel.f5.automation": {
+      "text": "Wähle einen Workflow oder eine Kampagne aus dem Unternehmen, das hier mit HighLevel verbunden ist.",
+      "en": "Choose a workflow or campaign from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names workflows and campaigns in the connected business; these are HighLevel destination names. No dashes or No limits headline; no completed fix claim."
+    },
+    "de:highlevel.f5.dates": {
+      "text": "Wähle ein Startdatum, das am Enddatum oder davor liegt.",
+      "en": "Choose a start date on or before the end date.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Uses plain start and end date labels without exposing implementation field names. No dashes or No limits headline; no completed fix claim."
+    },
+    "de:highlevel.f5.tooLarge": {
+      "text": "Dieses Ergebnis ist zu groß, um es hier vollständig anzuzeigen. Grenze die Anfrage ein oder sieh es dir in HighLevel an.",
+      "en": "This HighLevel result is too large to show in full. Narrow the request or check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Explains the display limit in ordinary words and gives a next step in HighLevel. No dashes or No limits headline; no completed fix claim."
+    },
+    "de:highlevel.f5.unsupported": {
+      "text": "Diese Antwort lässt sich hier nicht vollständig anzeigen. Sieh sie dir in HighLevel an.",
+      "en": "This HighLevel answer cannot be shown in full. Check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Explains that the full answer cannot be shown and gives a next step in HighLevel. No dashes or No limits headline; no completed fix claim."
+    },
+    "es:highlevel.operation.forms.submissions": {
+      "text": "Leer respuestas de formularios",
+      "en": "Read form responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "es:highlevel.operation.forms.surveys.submissions": {
+      "text": "Leer respuestas de encuestas",
+      "en": "Read survey responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "es:highlevel.f5.urls": {
+      "text": "Escribe texto sin enlaces aquí.",
+      "en": "Use text without web links here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain instruction to enter text without links; no unexplained URL acronym. No dashes or No limits headline; no completed fix claim."
+    },
+    "es:highlevel.f5.location": {
+      "text": "Elige el negocio de HighLevel conectado aquí.",
+      "en": "Choose the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names the HighLevel business connected here. No dashes or No limits headline; no completed fix claim."
+    },
+    "es:highlevel.f5.contact": {
+      "text": "Elige un contacto del negocio de HighLevel conectado aquí.",
+      "en": "Choose a contact from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step asks for a contact from the connected HighLevel business. No dashes or No limits headline; no completed fix claim."
+    },
+    "es:highlevel.f5.automation": {
+      "text": "Elige un flujo de trabajo o una campaña del negocio de HighLevel conectado aquí.",
+      "en": "Choose a workflow or campaign from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names workflows and campaigns in the connected business; these are HighLevel destination names. No dashes or No limits headline; no completed fix claim."
+    },
+    "es:highlevel.f5.dates": {
+      "text": "Elige una fecha de inicio igual o anterior a la fecha de fin.",
+      "en": "Choose a start date on or before the end date.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Uses plain start and end date labels without exposing implementation field names. No dashes or No limits headline; no completed fix claim."
+    },
+    "fr:highlevel.operation.forms.submissions": {
+      "text": "Lire les réponses aux formulaires",
+      "en": "Read form responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "fr:highlevel.operation.forms.surveys.submissions": {
+      "text": "Lire les réponses aux enquêtes",
+      "en": "Read survey responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "fr:highlevel.f5.urls": {
+      "text": "Écris du texte sans liens ici.",
+      "en": "Use text without web links here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain instruction to enter text without links; no unexplained URL acronym. No dashes or No limits headline; no completed fix claim."
+    },
+    "fr:highlevel.f5.location": {
+      "text": "Choisis l’établissement HighLevel connecté ici.",
+      "en": "Choose the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names the HighLevel business connected here. No dashes or No limits headline; no completed fix claim."
+    },
+    "fr:highlevel.f5.contact": {
+      "text": "Choisis un contact de l’établissement HighLevel connecté ici.",
+      "en": "Choose a contact from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step asks for a contact from the connected HighLevel business. No dashes or No limits headline; no completed fix claim."
+    },
+    "fr:highlevel.f5.automation": {
+      "text": "Choisis un workflow ou une campagne de l’établissement HighLevel connecté ici.",
+      "en": "Choose a workflow or campaign from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names workflows and campaigns in the connected business; these are HighLevel destination names. No dashes or No limits headline; no completed fix claim."
+    },
+    "fr:highlevel.f5.dates": {
+      "text": "Choisis une date de début au plus tard à la date de fin.",
+      "en": "Choose a start date on or before the end date.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Uses plain start and end date labels without exposing implementation field names. No dashes or No limits headline; no completed fix claim."
+    },
+    "fr:highlevel.f5.tooLarge": {
+      "text": "Ce résultat HighLevel est trop long pour être affiché en entier. Précise la demande ou regarde le résultat dans HighLevel.",
+      "en": "This HighLevel result is too large to show in full. Narrow the request or check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Explains the display limit in ordinary words and gives a next step in HighLevel. No dashes or No limits headline; no completed fix claim."
+    },
+    "fr:highlevel.f5.unsupported": {
+      "text": "Cette réponse HighLevel ne peut pas être affichée en entier. Regarde la réponse dans HighLevel.",
+      "en": "This HighLevel answer cannot be shown in full. Check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Explains that the full answer cannot be shown and gives a next step in HighLevel. No dashes or No limits headline; no completed fix claim."
+    },
+    "hi:highlevel.operation.forms.submissions": {
+      "text": "फ़ॉर्म के जवाब पढ़ें",
+      "en": "Read form responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "hi:highlevel.operation.forms.surveys.submissions": {
+      "text": "सर्वेक्षण के जवाब पढ़ें",
+      "en": "Read survey responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "hi:highlevel.f5.urls": {
+      "text": "यहाँ लिंक के बिना टेक्स्ट लिखें।",
+      "en": "Use text without web links here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain instruction to enter text without links; no unexplained URL acronym. No dashes or No limits headline; no completed fix claim."
+    },
+    "hi:highlevel.f5.location": {
+      "text": "यहाँ जुड़े HighLevel व्यवसाय को चुनें।",
+      "en": "Choose the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names the HighLevel business connected here. No dashes or No limits headline; no completed fix claim."
+    },
+    "hi:highlevel.f5.contact": {
+      "text": "यहाँ जुड़े HighLevel व्यवसाय का कोई संपर्क चुनें।",
+      "en": "Choose a contact from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step asks for a contact from the connected HighLevel business. No dashes or No limits headline; no completed fix claim."
+    },
+    "hi:highlevel.f5.automation": {
+      "text": "यहाँ जुड़े HighLevel व्यवसाय का कोई वर्कफ़्लो या अभियान चुनें।",
+      "en": "Choose a workflow or campaign from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names workflows and campaigns in the connected business; these are HighLevel destination names. No dashes or No limits headline; no completed fix claim."
+    },
+    "hi:highlevel.f5.dates": {
+      "text": "शुरू होने की तारीख, खत्म होने की तारीख के दिन या उससे पहले की चुनें।",
+      "en": "Choose a start date on or before the end date.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Uses plain start and end date labels without exposing implementation field names. No dashes or No limits headline; no completed fix claim."
+    },
+    "ja:highlevel.operation.forms.submissions": {
+      "text": "フォームの回答を読む",
+      "en": "Read form responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "ja:highlevel.operation.forms.surveys.submissions": {
+      "text": "アンケートの回答を読む",
+      "en": "Read survey responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "ja:highlevel.f5.urls": {
+      "text": "ここにはリンクを含まない文章を入力してください。",
+      "en": "Use text without web links here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain instruction to enter text without links; no unexplained URL acronym. No dashes or No limits headline; no completed fix claim."
+    },
+    "ja:highlevel.f5.location": {
+      "text": "ここに接続しているHighLevelの事業所を選んでください。",
+      "en": "Choose the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names the HighLevel business connected here. No dashes or No limits headline; no completed fix claim."
+    },
+    "ja:highlevel.f5.contact": {
+      "text": "ここに接続しているHighLevelの事業所の連絡先を選んでください。",
+      "en": "Choose a contact from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step asks for a contact from the connected HighLevel business. No dashes or No limits headline; no completed fix claim."
+    },
+    "ja:highlevel.f5.automation": {
+      "text": "ここに接続しているHighLevelの事業所のワークフローかキャンペーンを選んでください。",
+      "en": "Choose a workflow or campaign from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names workflows and campaigns in the connected business; these are HighLevel destination names. No dashes or No limits headline; no completed fix claim."
+    },
+    "ja:highlevel.f5.dates": {
+      "text": "開始日は終了日と同じ日か、それより前の日を選んでください。",
+      "en": "Choose a start date on or before the end date.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Uses plain start and end date labels without exposing implementation field names. No dashes or No limits headline; no completed fix claim."
+    },
+    "pt-br:highlevel.operation.forms.submissions": {
+      "text": "Ler respostas de formulários",
+      "en": "Read form responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "pt-br:highlevel.operation.forms.surveys.submissions": {
+      "text": "Ler respostas de pesquisas",
+      "en": "Read survey responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "pt-br:highlevel.f5.urls": {
+      "text": "Use texto sem links aqui.",
+      "en": "Use text without web links here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain instruction to enter text without links; no unexplained URL acronym. No dashes or No limits headline; no completed fix claim."
+    },
+    "pt-br:highlevel.f5.location": {
+      "text": "Escolha a empresa do HighLevel conectada aqui.",
+      "en": "Choose the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names the HighLevel business connected here. No dashes or No limits headline; no completed fix claim."
+    },
+    "pt-br:highlevel.f5.contact": {
+      "text": "Escolha um contato da empresa do HighLevel conectada aqui.",
+      "en": "Choose a contact from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step asks for a contact from the connected HighLevel business. No dashes or No limits headline; no completed fix claim."
+    },
+    "pt-br:highlevel.f5.automation": {
+      "text": "Escolha um fluxo de trabalho ou uma campanha da empresa do HighLevel conectada aqui.",
+      "en": "Choose a workflow or campaign from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names workflows and campaigns in the connected business; these are HighLevel destination names. No dashes or No limits headline; no completed fix claim."
+    },
+    "pt-br:highlevel.f5.dates": {
+      "text": "Escolha uma data de início igual ou anterior à data de fim.",
+      "en": "Choose a start date on or before the end date.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Uses plain start and end date labels without exposing implementation field names. No dashes or No limits headline; no completed fix claim."
+    },
+    "zh:highlevel.operation.forms.submissions": {
+      "text": "读取表单回答",
+      "en": "Read form responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "zh:highlevel.operation.forms.surveys.submissions": {
+      "text": "读取调查回答",
+      "en": "Read survey responses",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain action title for reading responses in this language; avoids the abstract English term submissions. No dashes or No limits headline; no completed fix claim."
+    },
+    "zh:highlevel.f5.urls": {
+      "text": "请在此处输入不含网页链接的文字。",
+      "en": "Use text without web links here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Plain instruction to enter text without links; no unexplained URL acronym. No dashes or No limits headline; no completed fix claim."
+    },
+    "zh:highlevel.f5.location": {
+      "text": "请选择此处连接的 HighLevel 商家。",
+      "en": "Choose the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names the HighLevel business connected here. No dashes or No limits headline; no completed fix claim."
+    },
+    "zh:highlevel.f5.contact": {
+      "text": "请选择此处连接的 HighLevel 商家的联系人。",
+      "en": "Choose a contact from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step asks for a contact from the connected HighLevel business. No dashes or No limits headline; no completed fix claim."
+    },
+    "zh:highlevel.f5.automation": {
+      "text": "请选择此处连接的 HighLevel 商家的工作流或营销活动。",
+      "en": "Choose a workflow or campaign from the HighLevel business connected here.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Concrete next step names workflows and campaigns in the connected business; these are HighLevel destination names. No dashes or No limits headline; no completed fix claim."
+    },
+    "zh:highlevel.f5.dates": {
+      "text": "请选择不晚于结束日期的开始日期。",
+      "en": "Choose a start date on or before the end date.",
+      "verdict": "pass",
+      "note": "Independent round 2 review: Uses plain start and end date labels without exposing implementation field names. No dashes or No limits headline; no completed fix claim."
+    }
+  },
+  "files": {}
+}

@@ -36,7 +36,7 @@ it("maps 401 and 403 to reconnect", async () => {
     const error = await fail(() => deployZip({ token: TOKEN, siteId: "s", zip, fetchImpl: async () => json(status, { message: "nope", echo: TOKEN }) }));
     expect(error).toBeInstanceOf(PublishError);
     expect(error.code).toBe("reconnect");
-    expect(error.message).toMatch(/reconnect Netlify/i);
+    expect(error.message).toBe("Netlify is off. Turn it on in Settings > Connections > Connected tools.");
   }
 });
 

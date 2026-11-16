@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Which Flux models the workspace key may call. A key on the Flux free plan (never paid) may call flux-fast and flux-auto only; any
-// flux-pinned-* id answers 403 "key not allowed to access model" (flux-router src/model_access_message.py, FREE_KEY_MODELS). Murage
+// flux-pinned-* id answers 403 "key not allowed to access model" (the Flux router's model access refusal handler, FREE_KEY_MODELS). Murage
 // asks for a pinned id in two places: memory learning (memory/extractor-connections.ts) and the browser action checker
 // (browser-action-checker-connection.ts). Both ask here first. Memory sends the pin only on "yes", so a free key never sends it; the
 // checker moves to the bot's own engine on "no" or a missing catalog when one can check (with no engine, it keeps its pinned ids

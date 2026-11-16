@@ -23,7 +23,7 @@
 import { test, expect, type Locator, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { createServer as createHttpServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -32,7 +32,7 @@ import { userInfo } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { crc32, deflateSync } from "node:zlib";
-import { openSidebar, SEND_KEY } from "./fixtures.ts";
+import { dismissFirstRunWelcome, openSidebar, SEND_KEY } from "./fixtures.ts";
 import { fakeLlamaCompletion, fakeLlamaToolStream } from "./fake-llama-completion";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
 import { laneDataDir } from "./lane-data-dir";
@@ -222,7 +222,7 @@ const workspaceOf = async (who: Bot) => (await api(`/api/artifacts/workspace?bot
 
 async function openApp(page: Page, { width = 1440, height = 900, skin = "light" } = {}) {
   await page.setViewportSize({ width, height });
-  await page.addInitScript((skin) => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", skin); }, skin);
+  await page.addInitScript((skin) => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", skin); localStorage.setItem("help.seen.chat.level-chip", "1"); }, skin);
   // A person uses the app once it has finished loading. The engine list is
   // the slowest part of that (about 3 s with the real CLIs probed); a send
   // before it lands is the startup race recorded in 0152-USER-SMOKE.md.
@@ -388,6 +388,9 @@ test("05 CTA1: no key → dimmed app grid behind 'Connect your apps', 'Add Flux 
   });
   for (const skin of ["light", "dark"] as const) {
     await openApp(page, { width: 1100, height: 800, skin });
+    // A fresh install first offers the full-window welcome. Enter the app the
+    // way a person does before opening the sidebar behind that screen.
+    await dismissFirstRunWelcome(page);
     const panel = await openConnectedApps(page);
     await expect(panel.getByText("Connect your apps", { exact: true })).toBeVisible({ timeout: 20_000 });
     const lock = panel.locator("[data-connected-apps-lock]");
@@ -428,6 +431,7 @@ test("05 CTA1: no key → dimmed app grid behind 'Connect your apps', 'Add Flux 
 
 test("07 regression sweep: create bot, fake turn, Claude question card, pane Markdown save, chat image lightbox, Local models, Composio CTA, narrow Stop", async ({ page }) => {
   await openApp(page);
+  await dismissFirstRunWelcome(page);
   const sidebar = await openSidebar(page);
   const before = ((await api("/api/bots?messages=0")).bots as Bot[]).length;
   await sidebar.getByRole("button", { name: "New or share", exact: true }).click();
@@ -502,11 +506,23 @@ test("07 regression sweep: create bot, fake turn, Claude question card, pane Mar
   await expect(lightbox(page)).toHaveCount(0);
 
   // Settings → Models: Local models.
-  const models = await openSettings(page, "Models & engines");
-  // 1.0.3: Local models sits under the Models page's one Advanced
-  const advanced = models.getByRole("button", { name: /^Advanced · / });
-  if ((await advanced.getAttribute("aria-expanded")) !== "true") await advanced.click();
-  await expect(advanced).toHaveAttribute("aria-expanded", "true");
+  // MAIN RULING 1115-CIINH-ADV: the global switch replaced the Models disclosure.
+  let models = await openSettings(page, "Models & engines");
+  await models.locator("[data-settings-mode-footer]").click();
+  const advanced = models.getByRole("switch", { name: "Advanced mode", exact: true });
+  // Exercise the switch from Off as well, so an inherited Advanced default cannot mask a lost save.
+  if ((await advanced.getAttribute("aria-checked")) === "true") await advanced.click();
+  await expect(advanced).toHaveAttribute("aria-checked", "false");
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("murage.settings.mode"))).toBe("simple");
+  if ((await advanced.getAttribute("aria-checked")) !== "true") await advanced.click();
+  await expect(advanced).toHaveAttribute("aria-checked", "true");
+  // A reload re-reads the saved choice; a switch that only changes this render must fail here.
+  await closeSettings(page);
+  await page.reload();
+  const general = await openSettings(page, "General");
+  await expect(general.getByRole("switch", { name: "Advanced mode", exact: true })).toHaveAttribute("aria-checked", "true");
+  await closeSettings(page);
+  models = await openSettings(page, "Models & engines");
   const local = models.locator("#local-models");
   await local.scrollIntoViewIfNeeded();
   await expect(local.getByRole("heading", { name: "Local models", exact: true })).toBeVisible();
@@ -526,6 +542,7 @@ test("07 regression sweep: create bot, fake turn, Claude question card, pane Mar
     await expect(pane(page)).toBeHidden();
   }
   await say(page, bot.name, "Hold this one. __fixture_hold_authority__");
+  await expect.poll(() => cliHolds("__fixture_hold_authority__"), { timeout: 30_000, message: "the fake must accept the held turn before the narrow Stop check" }).toBe(true);
   await expect.poll(() => busy(bot), { timeout: 30_000 }).toBe(true);
   await page.setViewportSize({ width: 390, height: 844 });
   const header = page.locator("[data-chat-header]");

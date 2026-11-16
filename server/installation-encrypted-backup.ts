@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 import { createHash } from "node:crypto";
 import { closeSync, createReadStream, existsSync, fsyncSync, linkSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
@@ -79,7 +80,7 @@ async function withWindowsPrivateStage<T>(parent:string,options:EncryptedBackupO
   try{
     const result=await runWindowsBackupTransport({operation:"private-stage",parentDirectory:parent,maxBytes:nativeBudget(budget(options).maxBytes),timeoutMs:options.timeoutMs,closeTimeoutMs:options.closeTimeoutMs,signal:options.signal,
       validate:async context=>{privateDirectory=context.directory;pending=Promise.resolve().then(()=>work(context.directory,combineSignal(context.signal,options.signal)));return{value:await pending};}},
-    {verifyHelper:runtime.verifyHelper,spawn});
+    {verifyHelper:runtime.verifyHelper,spawn: (file, args, options) => spawn(file, [...args], withHideInherit(options))});
     return{value:result.value,directory:result.directory};
   }catch(error){
     // A helper failure aborts context.signal. Wait for the caller's bounded age
@@ -107,15 +108,13 @@ function parseFidelity(value:unknown,options:ArchiveLimits):FidelityManifest{
   // Raw and recovery copies together: up to twice the item limit.
   validateArchiveFileList(manifest,{...options,maxEntries:2*maxFiles});
   const recovery=validateInstallationArchiveManifest(manifest.recovery,options);
-  const rawChannel=(path:string)=>path.startsWith("raw/channels/");
-  const rawOnly=(path:string)=>rawChannel(path)||path==="raw/startup-background.json"||path==="raw/memory-index.db";
+  const rawOnly=(path:string)=>path.startsWith("raw/")&&classifyDataDirEntry(path.slice(4).split("/")[0]!)?.backup==="retained";
   // Version 1 stored every file twice (raw/ and recovery/); version 2 keeps a
   // raw copy only of the records. Both still read.
   const expected=new Set(recovery.files.flatMap(file=>manifest.version===1||rawRecord(file.path)?[`raw/${file.path}`,`recovery/${file.path}`]:[`recovery/${file.path}`]));
   const declared=new Set(manifest.files.map(file=>file.path));
   if([...expected].some(path=>!declared.has(path))||manifest.files.some(file=>!expected.has(file.path)&&!rawOnly(file.path)))fail("FIDELITY_RECOVERY_MISMATCH");
-  if(manifest.files.some(file=>rawChannel(file.path))&&!manifest.coverage.components.some(component=>component.path==="channels"&&component.status==="included"))fail("FIDELITY_RECOVERY_MISMATCH");
-  if(declared.has("raw/memory-index.db")&&!manifest.coverage.components.some(component=>component.path==="memory-index.db"&&component.status==="included"))fail("FIDELITY_RECOVERY_MISMATCH");
+  for(const file of manifest.files)if(rawOnly(file.path)&&!manifest.coverage.components.some(component=>component.path===file.path.slice(4).split("/")[0]&&component.status==="included"))fail("FIDELITY_RECOVERY_MISMATCH");
   const byPath=new Map(manifest.files.map(file=>[file.path,file]));
   for(const file of recovery.files){const copy=byPath.get(`recovery/${file.path}`);if(copy?.bytes!==file.bytes||copy.sha256!==file.sha256)fail("FIDELITY_RECOVERY_MISMATCH");}
   return manifest;
@@ -145,7 +144,7 @@ export async function inspectEncryptedInstallationBackup(archive:string,outputPa
         report("readback-hash");
         const sha256=await hashFile(archive,signal);
         return{value:{directory:context.directory,stateDirectory:join(inspected.directory,"state"),manifest:inspected.manifest,sha256},ciphertextSha256:sha256};
-      })();return pending;}},{verifyHelper:runtime.verifyHelper,spawn});
+      })();return pending;}},{verifyHelper:runtime.verifyHelper,spawn: (file, args, options) => spawn(file, [...args], withHideInherit(options))});
     return result.value;
     }catch(error){
       let reported=error;

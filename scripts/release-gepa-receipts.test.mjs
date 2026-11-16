@@ -18,6 +18,8 @@ import { dirname, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
+import { assertSigningWorkflowIsolation, signingWorkflows } from "./fixtures/windows-signing-workflows.mjs";
+
 const workflows = join(dirname(dirname(fileURLToPath(import.meta.url))), ".github", "workflows");
 const source = readFileSync(join(workflows, "release.yml"), "utf8");
 const release = parse(source);
@@ -27,13 +29,18 @@ describe("release.yml GEPA receipts", () => {
   it("builds, pins and packages the memory worker on every platform job", () => {
     expect(runs("mac")).toContain("native/gepa/build-mac.py");
     expect(runs("mac")).toContain("--config.extraMetadata.murageGepaManifests.darwin-arm64=$gepa_hash");
-    expect(runs("windows")).toContain("native/gepa/build-windows.py");
-    expect(runs("windows")).toContain("--config.extraMetadata.murageGepaManifests.win32-x64=$hash");
+    // MAIN RULING 1115-WINSAC-WF: the unsigned Windows worker build is credential-free and outside the signing job.
+    const workerJobs = Object.values(release.jobs).filter(job => job.steps?.some(step => step.run?.includes("native/gepa/build-windows.py")));
+    expect(workerJobs).toHaveLength(1);
+    // MAIN RULING 1115-WINSAC-WF: unsigned worker production never receives Azure credentials.
+    expect(JSON.stringify(workerJobs[0])).not.toContain("secrets.AZURE_");
     expect(runs("linux")).toContain("native/gepa/build-linux.py");
     expect(runs("linux")).toContain("--config.extraMetadata.murageGepaManifests.linux-x64=$gepa_hash");
   });
 
   it("signs the Windows worker before freezing its manifest, as package-win.yml does", () => {
+    // MAIN RULING 1115-WINSAC-WF: all workflows enforce the single fresh driver and prohibit other Azure credential placements.
+    assertSigningWorkflowIsolation(signingWorkflows());
     const steps = release.jobs.windows.steps.map((step) => step.name ?? step.uses ?? "");
     const build = steps.findIndex((name) => name.startsWith("Build unsigned pinned GEPA worker"));
     const sign = steps.findIndex((name) => name.startsWith("Sign GEPA native images"));
@@ -64,10 +71,11 @@ describe("release.yml GEPA receipts", () => {
       const pin = win.match(new RegExp(`${action}[0-9a-f]{40}`))[0];
       expect(source, action).toContain(pin);
     }
+    for (const content of [source, win]) { expect(content).toContain("node scripts/windows-gepa-ci.mjs"); expect(content).not.toContain("files-folder-recurse: true"); }
   });
 
   it("keeps evidence artifacts out of the assembled asset set", () => {
-    const download = release.jobs.assemble.steps.find((step) => String(step.uses).startsWith("actions/download-artifact"));
+    const download = release.jobs.stage.steps.find((step) => String(step.uses).startsWith("actions/download-artifact"));
     expect(download.with.pattern).toBe("*-release");
     for (const job of ["mac", "windows", "linux"]) {
       const names = release.jobs[job].steps
@@ -77,7 +85,10 @@ describe("release.yml GEPA receipts", () => {
       // Besides evidence, the mac job hands its x64 app to the native Intel
       // smoke job (mac-x64); that handoff never matches the "*-release" pattern.
       const handoffs = job === "mac" ? ["mac-x64-app-smoke"] : [];
-      expect(names.filter((name) => !name.endsWith("-release") && !handoffs.includes(name)).every((name) => name.endsWith("-gepa-evidence")), job).toBe(true);
+      // MAIN RULING: the SAC inventory is release-CI evidence too; it must stay outside the *-release installer set.
+      const sacEvidence = job === "windows" ? ["windows-sac-inventory"] : [];
+      expect(names.filter((name) => !name.endsWith("-release") && !handoffs.includes(name)).every((name) => name.endsWith("-gepa-evidence") || sacEvidence.includes(name)), job).toBe(true);
+      for (const name of sacEvidence) { expect(names).toContain(name); expect(name.endsWith("-release")).toBe(false); }
     }
   });
 
@@ -95,11 +106,11 @@ describe("release.yml GEPA receipts", () => {
     expect(release.jobs.linux["timeout-minutes"]).toBeGreaterThanOrEqual(90);
   });
 
-  it("proves the release token can write before any signed build starts", () => {
-    const probe = release.jobs.prepare.steps.find((step) => String(step.name).startsWith("Prove the release token"));
-    expect(probe.if).toBe("steps.pin.outputs.should_release == 'true'");
-    expect(probe.env.GH_TOKEN).toBe("${{ secrets.RELEASES_PAT }}");
-    expect(probe.run).toContain("-F draft=true");
-    expect(probe.run).toContain("--method DELETE");
+  it("keeps release credentials out of every build and preparation job", () => {
+    for (const [name, job] of Object.entries(release.jobs)) {
+      if (name !== 'assemble') expect(JSON.stringify(job)).not.toContain('RELEASES_PAT');
+    }
+    expect(release.jobs.assemble.steps.some(step => step.run === 'node scripts/release-guard.mjs wait-stage')).toBe(true);
+    expect(release.jobs.stage.permissions.contents).toBe('read');
   });
 });

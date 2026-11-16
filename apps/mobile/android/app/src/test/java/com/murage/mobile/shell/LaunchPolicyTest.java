@@ -5,7 +5,7 @@ import static org.junit.Assert.*;
 import org.junit.Test;
 
 public class LaunchPolicyTest {
-    private final WorkspaceOrigin mac = WorkspaceOrigin.parse("https://mac.tailnet123.ts.net");
+    private final WorkspaceOrigin mac = WorkspaceOrigin.parse("https://mac.tail000000.ts.net");
 
     private WorkspaceBook book() {
         WorkspaceBook book = new WorkspaceBook();
@@ -61,7 +61,7 @@ public class LaunchPolicyTest {
 
     // B6 (Astra B6): a notification tap for a different computer must not
     // silently end a call in progress on the one already on screen.
-    private final WorkspaceOrigin pc = WorkspaceOrigin.parse("https://pc.tailnet123.ts.net");
+    private final WorkspaceOrigin pc = WorkspaceOrigin.parse("https://pc.tail000000.ts.net");
 
     @Test public void holdsADifferentComputersNotificationWhileACallIsOpen() {
         assertTrue(LaunchPolicy.mustHoldCrossComputerOpen(mac, true, pc));

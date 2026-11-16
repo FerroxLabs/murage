@@ -22,7 +22,7 @@ import { composerReferenceTarget, type ComposerReferenceTarget } from "@/lib/ima
 import {
   cancelScheduledCall, costText, dashboardLink, defaultPhoneSettings, editLanguage, findNumbers, keyErrorKey, lengthText, minutesToSeconds,
   phoneCallsAvailable, phoneErrorKey, phoneKeyBridge, readPhoneStatus, recentCalls, savePhoneSettings, shareTranscript, timeText,
-  usePhoneCopy, withLineWords, type PhoneCallCard, type PhoneCopy, type PhoneCopyKey, type PhoneNumberInfo, type PhoneSettings, type PhoneStatus,
+  usePhoneCopy, watchRecentCalls, withLineWords, type PhoneCallCard, type PhoneCopy, type PhoneCopyKey, type PhoneNumberInfo, type PhoneSettings, type PhoneStatus,
 } from "@/lib/phone-calls";
 
 const VAPI_HOME = "https://vapi.ai";
@@ -262,11 +262,7 @@ function OlderScheduled({ copy, status, onChanged }: { copy: PhoneCopy; status: 
 
 function RecentCalls({ copy }: { copy: PhoneCopy }) {
   const [calls, setCalls] = useState<PhoneCallCard[] | null>(null);
-  useEffect(() => {
-    let live = true;
-    recentCalls(api).then((list) => { if (live) setCalls(list); }, () => { if (live) setCalls([]); });
-    return () => { live = false; };
-  }, []);
+  useEffect(() => watchRecentCalls(api, setCalls), []);
   if (!calls) return null;
   return (
     <div className="space-y-2">

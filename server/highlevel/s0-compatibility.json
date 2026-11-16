@@ -1,0 +1,142 @@
+{
+  "base": "5daadeac8ebbdc4100d9b9f2805c5e4135262c5a",
+  "legacyPublicSignaturesSha256": "71f4929c28ea6e9f7db0be8f1b91c9b1131d37c3457bbb90df0105062d26ed65",
+  "historicalAdditiveFreezeSha256": {
+    "server/highlevel/frozen-f02-contract.json": "41b1e9199da65be37ddd0cde78774645222e5d3797a3c557ffc1072c2b677277",
+    "server/highlevel/frozen-f022-contract.json": "5881ae42272066ea43e8bd8c546182d178bf151769d413288688b489c4011db1",
+    "server/highlevel/frozen-f023-contract.json": "c67d253621634835d84a946060d3cfc4f387c81181311fac8271a81f8ebf60d8",
+    "server/highlevel/frozen-f024-contract.json": "7019067218d1da4adaf73e5361f20b482663ad10a23184849485f753abcd5dcd"
+  },
+  "amendments": [
+    {
+      "seat": "0a",
+      "amendments": [
+        "HL-PLAN-1",
+        "HL-SOURCE-1",
+        "HL-RECOVERY-2"
+      ],
+      "legacyHashDeltas": []
+    },
+    {
+      "seat": "0b",
+      "amendments": [
+        "HL-BATCH-1",
+        "HL-F10-12:04"
+      ],
+      "legacyHashDeltas": [
+        {
+          "path": "server/highlevel/operations/manifest-data.json",
+          "before": "d449867f6a79fbf3be64e5cd70ffc46a378ba0eb14c145c13cd685925cca5b44",
+          "after": "bb74cc7fb5eb843c10f7d6fd4c130c20e49b1b6c3cfa32393ad65364c3d02906"
+        },
+        {
+          "path": "server/highlevel/operations/schemas/contacts.ts",
+          "before": "bf61275fcdcace75a5f45f30515baffabfecc2075f2ff5ab98ce6057035b357e",
+          "after": "d2179d641bb33c44d423c0118dce55937968cc8372c6a020666d7585c38f528d"
+        },
+        {
+          "path": "server/highlevel/operations/schemas/funnels.ts",
+          "before": "f30faee9a11e34e8046ff18e4199d5a2c745a69459145a6aea326b31ec76954f",
+          "after": "28a6e32c0089822c7ead108a5ec681d1be7fe27dff3f85ac3b9065ae3de9f46e"
+        }
+      ],
+      "expectations": [
+        {
+          "test": "F024 every write declares reconciliation",
+          "before": "nonempty for all writes",
+          "after": "exact courses.import exception; every other write unchanged",
+          "authority": "MAIN 2026-11-11 12:04Z"
+        },
+        {
+          "test": "MAIN P1 shared guard rejects every incomplete search",
+          "before": "all incomplete first pages must throw",
+          "after": "completeness separated from page safety; negative flags and unknown/no-resend retained",
+          "authority": "Astra-agreed r2.1 section 2.1"
+        }
+      ]
+    },
+    {
+      "seat": "0c",
+      "amendments": [
+        "HL-LOCATOR-1",
+        "HL-RECOVERY-2-dispatch-evidence",
+        "O1-checker-owner-adoption"
+      ],
+      "legacyHashDeltas": [],
+      "checkerDelta": {
+        "path": "scripts/highlevel-f0-snapshot.ts",
+        "before": "44c6b9c1971f42145dd86845afa5c44a07a55a56a4c8b5b878f0d0818dee8baa",
+        "after": "c405a3fff51f6c6e29d4a2251f12f8d16463bd04a2e53fac3b78fbac6de05e72"
+      },
+      "expectations": [
+        {
+          "test": "portable annotated readonly fields",
+          "before": "bodyless constructor, definite assertion and field initializer can fold",
+          "after": "only one implemented constructor and exact plain readonly field fold; name/type/readonly/constructor/unannotated/extra-field negatives refuse",
+          "authority": "Astra-agreed r2.1 section 3/O1"
+        }
+      ],
+      "privateContractHashDeltas": [
+        {
+          "path": "server/highlevel/recovery-contract.ts",
+          "before": "942208ea3c89794e1932a17e210c33eb7da5f66ae10bccbd6d19b37bd4b28413",
+          "after": "ac70992225fe43c6670f49972ee7552884e922b6b9502bdcbe46815855d1d8aa"
+        },
+        {
+          "path": "server/highlevel/operations/invocation-plans.ts",
+          "before": "1351d93b3d6d8c130571e31334d1c8f473fbe7497037955c3d572b2446e33c68",
+          "after": "eae0c487a8222fc5817f5d8468fe53cb75aed3758b4f6a063066b9ba83eb6f29"
+        }
+      ],
+      "additiveContracts": [
+        "bounded locator metadata/payload/envelope/reference and opaque storage/lifecycle types",
+        "exact-dispatch evidence schema and opaque validation/persistence adapter",
+        "canonical bound plan digest, approvedEffectDigest, closed parents, unique reader slots",
+        "effectDigest composite and private RecoveryPlanBindingLookup without RPC/context signature changes",
+        "owner-copy handoff locale inventory"
+      ]
+    },
+    {
+      "seat": "afix-BLOCK-1",
+      "amendments": [
+        "HL-PLAN-1-send-dependency-closure"
+      ],
+      "legacyHashDeltas": [],
+      "privateContractHashDeltas": [
+        {
+          "path": "server/highlevel/operations/invocation-plan-inventory.json",
+          "before": "37108d38910cde1ac501a10764b7b0e5929cca61b1ef8cab8190a2160d304e0c",
+          "after": "d9090617db63d06c5daef89304e21ca6cddea992bb07759ecbfa05e2ca5d2948"
+        }
+      ]
+    },
+    {
+      "seat": "afix-BLOCK-2",
+      "amendments": [
+        "HL-PLAN-1-bulk-array-direct-recovery"
+      ],
+      "legacyHashDeltas": [],
+      "privateContractHashDeltas": [
+        {
+          "path": "server/highlevel/operations/invocation-plan-inventory.json",
+          "before": "d9090617db63d06c5daef89304e21ca6cddea992bb07759ecbfa05e2ca5d2948",
+          "after": "0d5e5759b2a84c5f4d85749cb7b3d2ec3fbcfd4486710ffab83743a89c27d9ef"
+        }
+      ]
+    },
+    {
+      "seat": "afix-BLOCK-3",
+      "amendments": [
+        "HL-PLAN-1-custom-field-definition-preparation"
+      ],
+      "legacyHashDeltas": [],
+      "privateContractHashDeltas": [
+        {
+          "path": "server/highlevel/operations/invocation-plan-inventory.json",
+          "before": "0d5e5759b2a84c5f4d85749cb7b3d2ec3fbcfd4486710ffab83743a89c27d9ef",
+          "after": "dd125c49f54e52272e61cd25ecc542d41f4f51ed037962e6f4c17937c172c0a9"
+        }
+      ]
+    }
+  ]
+}

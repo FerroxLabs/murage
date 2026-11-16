@@ -28,7 +28,7 @@ class Helper extends EventEmitter {
     if (message.type === "init") setTimeout(() => this.emit("message", { type: "initialised", wasm: this.wasm }), 0);
     if (message.type === "warm") setTimeout(() => this.emit("message", { type: "model-ready" }), 0);
     if (message.type === "query") setTimeout(() => this.emit("message", { type: "query-result", requestId: message.requestId, result: { hits: [], vectorRows: 0, unvectored: [] } }), 0);
-    if (message.type === "idle-exit") setTimeout(() => this.emit("exit", 0), this.exitAfterMs);
+    if (message.type === "idle-exit" || message.type === "reset-exit") setTimeout(() => this.emit("exit", 0), this.exitAfterMs);
     return true;
   });
   kill = vi.fn(() => { this.emit("exit", 0); return true; });
@@ -50,13 +50,16 @@ const input = { query: "car fuel", scopeIds: ["s"], policyRevision: 0, deletionE
 const search = () => controller.search(input as never, new AbortController().signal);
 const settle = (ms = 20) => vi.advanceTimersByTimeAsync(ms);
 const enqueue = (id: string) => captureSource(database(), { id, threadId: "thread", kind: "text", speaker: "owner", outcome: "recorded", text: "A notebook remembers the owner's context" });
-/** A search starts the first helper; the helper then asks to leave and is given leave. Returns once leave is given, before the process ends. */
-async function leaving() {
+/** A search starts a fully initialized helper. */
+async function running() {
   controller.start();
   const first = search();
   await settle();
   await first;
-  const old = helpers[0];
+  return helpers[0];
+}
+async function leaving() {
+  const old = await running();
   old.emit("message", { type: "idle-exit-request" });
   expect(old.sent.some(m => m.type === "idle-exit")).toBe(true);
   return old;
@@ -172,4 +175,20 @@ it("a search that arrives before the model is warm is sent at once (the helper a
   await expect(early).resolves.toMatchObject({ vectorRows: 0 });
   expect(controller.modelWarm).toBe(false);
   release();
+});
+
+it.each(["idle", "reset"])("%s retirement preserves a queued capture's retry allowance", async retirement => {
+  const old = await running();
+  if (retirement === "reset") (controller as unknown as { plannedResetExit(child: unknown): void }).plannedResetExit(old);
+  else old.emit("message", { type: "idle-exit-request" });
+  old.emit("message", { type: "ready" }); // a queued readiness frame cannot revive a retiring helper
+  expect(old.sent.filter(m => m.type === "init")).toHaveLength(1);
+  enqueue("retirement-capture");
+  await settle(5);
+  expect(old.sent.filter(m => (m as { stage?: string }).stage === "capture")).toHaveLength(0);
+  expect(database().prepare("SELECT status,attempts FROM memory_jobs").get()).toMatchObject({ status: "pending", attempts: 0 });
+  await settle(300);
+  expect(helpers).toHaveLength(2);
+  expect(helpers[1].sent.filter(m => (m as { stage?: string }).stage === "capture")).toHaveLength(1);
+  expect(database().prepare("SELECT attempts FROM memory_jobs").get()!.attempts).toBe(0);
 });

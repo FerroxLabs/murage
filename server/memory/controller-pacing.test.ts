@@ -1,3 +1,4 @@
+import {settleFixtureIndexGrant} from "./testing/helper-permits.ts";
 // The real MemoryWorkerController with a stand-in child process and fake
 // timers: one deadline (nextEligibleWorkAt) paces every entry into a work
 // cycle, every wake-up included; each cycle's own synchronous time is
@@ -36,12 +37,13 @@ beforeEach(() => {
   closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep();
   state.claimCost = 0; state.cost = 0; state.claims.length = 0; state.gapArgs.length = 0; sent = []; killed = 0;
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate", "Date"] });
+  vi.setSystemTime(new Date("2026-10-10T00:00:00Z"));
   vi.spyOn(performance, "now").mockImplementation(() => Date.now() + state.cost);
   controller = new MemoryWorkerController();
   internals = controller as unknown as Internals;
   // The stand-in worker: work goes to `sent`; index batches are acknowledged at once.
   internals.child = { kill: () => { killed++; }, on() {}, send: (message: any) => {
-    if (message.type === "index") internals.onWorkerMessage(internals.child, { type: "index-result", requestId: message.requestId, records: message.records, embeddingStatus: "indexed" });
+    if (message.type === "index") { settleFixtureIndexGrant(message,event=>internals.onWorkerMessage(internals.child,event)); internals.onWorkerMessage(internals.child, { type: "index-result", requestId: message.requestId, records: message.records, embeddingStatus: "indexed" }); }
     else sent.push(message);
   } };
   internals.ready = true;

@@ -1,3 +1,4 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Client for the root launcher's unscoped bot-state modes (CLOUD-ENGINES-DESIGN.md r9, "launcher
@@ -13,10 +14,11 @@
 // Active only on a Cloud home (MURAGE_CLOUD_ROLE=home); elsewhere every function is a no-op.
 import { spawn, type ChildProcess } from "node:child_process";
 import type { Writable } from "node:stream";
-import { cloudHomeCopy } from "./copy.ts";
+import { cloudHomeCopy, cloudHomeInternal } from "./copy.ts";
 import { TURN_LAUNCHER } from "./turn-process.ts";
 
-export interface BotStateEngine { mode: "apikey" | "oauth-token" | "chatgpt" | "oauth" | null; signedIn: boolean; expiresAt: number | null }
+/** `source`: which store answered, the home-wide one or the bot's own (null when the launcher does not say). */
+export interface BotStateEngine { mode: "apikey" | "oauth-token" | "chatgpt" | "oauth" | null; signedIn: boolean; expiresAt: number | null; source?: "home" | "bot" | null; needsSignin?: boolean; generation?: number; epoch?: number }
 export interface BotStateQuery { tombstoned: boolean; engines: Record<string, BotStateEngine> }
 /** Test seam: how a launcher request is run. */
 export type CloudLauncherSpawn = (request: Record<string, unknown>) => ChildProcess;
@@ -27,14 +29,22 @@ const OUTPUT_CAP = 64 * 1024;
 const CALL_TIMEOUT_MS = 30_000;
 const tombstoned = new Set<string>();
 const released = new Set<string>();
+const refusedEpochs = new Map<string, number>();
 
 const onHome = (): boolean => process.env.MURAGE_CLOUD_ROLE === "home";
 
-/** `sudo -n -C 4 -- murage-turn-launch` with the request on FD 3, like every launcher call. */
-export function spawnCloudLauncher(request: Record<string, unknown>): ChildProcess {
-  const child = spawn("/usr/bin/sudo", ["-n", "-C", "4", "--", TURN_LAUNCHER], {
+/** `sudo -n -C 4 -- murage-turn-launch` with the request on FD 3, like every launcher call. A B-mode sign-in relay asks for
+ * `commitChannel`: a fifth stdio entry (FD 4, a socketpair that reads and writes) and `-C 5`, so the launcher can ask the relay
+ * once, with the fixed line `ready`, whether to publish the new sign-in (AGY-ON-CLOUD design 13 r2). */
+export function spawnCloudLauncher(request: Record<string, unknown>, options: { commitChannel?: boolean } = {}): ChildProcess {
+  const commit = options.commitChannel === true;
+  // Keep the ordinary four-descriptor launch identical to the audited POSIX
+  // boundary. Only the explicit sign-in handshake opens the fifth descriptor.
+  const child = !commit ? spawn("/usr/bin/sudo", ["-n", "-C", "4", "--", TURN_LAUNCHER], withHideInherit({
     env: { PATH: "/usr/bin:/bin" }, cwd: "/", detached: true, stdio: ["pipe", "pipe", "pipe", "pipe"],
-  });
+  })) : spawn("/usr/bin/sudo", ["-n", "-C", "5", "--", TURN_LAUNCHER], withHideInherit({
+    env: { PATH: "/usr/bin:/bin" }, cwd: "/", detached: true, stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
+  }));
   const channel = child.stdio[3] as Writable;
   channel.on("error", () => {});
   channel.end(JSON.stringify(request));
@@ -61,7 +71,7 @@ function runLauncher(request: Record<string, unknown>, launch: CloudLauncherSpaw
     let done = false;
     const finish = (fn: () => void) => { if (done) return; done = true; clearTimeout(timer); fn(); };
     const timer = setTimeout(() => {
-      finish(() => { try { child.kill("SIGKILL"); } catch { /* gone */ } reject(new Error(cloudHomeCopy.cloudBotStateUnreadable)); });
+      finish(() => { try { child.kill("SIGKILL"); } catch { /* gone */ } reject(Object.assign(new Error(cloudHomeCopy.cloudBotStateUnreadable), { code: "launcher-timeout" })); });
     }, CALL_TIMEOUT_MS);
     timer.unref?.();
     child.stdout?.on("data", keep("stdout"));
@@ -80,7 +90,13 @@ function parseQuery(stdout: string): BotStateQuery {
       // An entry that is not an object says nothing about the engine: it is left out.
       if (!value || typeof value !== "object" || Array.isArray(value)) continue;
       const mode = typeof value?.mode === "string" && MODES.has(value.mode) ? value.mode as BotStateEngine["mode"] : null;
-      engines[name] = { mode, signedIn: value?.signedIn === true, expiresAt: typeof value?.expiresAt === "number" ? value.expiresAt : null };
+      const source = value?.source === "home" || value?.source === "bot" ? value.source : null;
+      engines[name] = {
+        mode, signedIn: value?.signedIn === true, expiresAt: typeof value?.expiresAt === "number" ? value.expiresAt : null, source,
+        ...(value?.needsSignin === true ? { needsSignin: true } : {}),
+        ...(typeof value?.generation === "number" && Number.isInteger(value.generation) && value.generation >= 0 ? { generation: value.generation } : {}),
+        ...(typeof value?.epoch === "number" && Number.isInteger(value.epoch) && value.epoch >= 0 ? { epoch: value.epoch } : {}),
+      };
     }
   }
   return { tombstoned: raw.tombstoned === true, engines };
@@ -90,13 +106,33 @@ function parseQuery(stdout: string): BotStateQuery {
  * only the engine-wide stores are reported. Any launcher failure throws; callers decide whether that matters. */
 export async function queryCloudBotState(bot?: string, launch: CloudLauncherSpawn = spawnCloudLauncher): Promise<BotStateQuery> {
   if (!onHome()) return { tombstoned: false, engines: {} };
-  if (bot !== undefined && !BOT_ID.test(bot)) throw new Error(cloudHomeCopy.cloudBotStateUnreadable);
+  if (bot !== undefined && !BOT_ID.test(bot)) throw Object.assign(new Error(cloudHomeCopy.cloudBotStateUnreadable), { code: "launcher-invalid-bot" });
   const result = await runLauncher({ mode: "bot-state-query", ...(bot ? { bot } : {}) }, launch);
-  if (result.code !== 0) throw new Error(firstLine(result.stderr) || cloudHomeCopy.cloudBotStateUnreadable);
+  if (result.code !== 0) throw Object.assign(new Error(firstLine(result.stderr) || cloudHomeCopy.cloudBotStateUnreadable), { code: "launcher-exit" });
   let parsed: BotStateQuery;
-  try { parsed = parseQuery(result.stdout); } catch { throw new Error(cloudHomeCopy.cloudBotStateUnreadable); }
+  try { parsed = parseQuery(result.stdout); } catch { throw Object.assign(new Error(cloudHomeCopy.cloudBotStateUnreadable), { code: "launcher-unreadable" }); }
   if (bot && parsed.tombstoned) tombstoned.add(bot);
+  const refused = bot ? refusedEpochs.get(bot) : undefined;
+  if (bot && refused !== undefined) {
+    const state = parsed.engines.antigravity;
+    if (state?.epoch && state.epoch > refused) refusedEpochs.delete(bot);
+    else if (state) parsed.engines.antigravity = { ...state, signedIn: false, needsSignin: true };
+  }
   return parsed;
+}
+
+/** Antigravity refused for its sign-in: ask the launcher to record `needs-signin` against `epoch`, the login epoch the turn ran with.
+ * The launcher marks only while that epoch is still current (a token refresh keeps it; a newer login moves it), so a newer sign-in is never marked. Best effort: a failure
+ * is not an error for the turn that already ended. */
+export async function markCloudSigninRefused(bot: string, epoch: number, launch: CloudLauncherSpawn = spawnCloudLauncher): Promise<boolean> {
+  if (!onHome() || !BOT_ID.test(bot) || !Number.isInteger(epoch) || epoch < 1) return false;
+  refusedEpochs.set(bot, Math.max(refusedEpochs.get(bot) ?? 0, epoch));
+  try {
+    const result = await runLauncher({ mode: "signin-refused", engine: "antigravity", bot, epoch }, launch);
+    if (result.code === 0) return true;
+  } catch { /* The process-local refusal still closes the next admission. */ }
+  console.warn(cloudHomeInternal.signinRefusalNotSaved);
+  return false;
 }
 
 /** Ask the launcher to erase a deleted bot's state and tombstone its id. Exit 0 is the only success; any
@@ -153,4 +189,4 @@ export function installCloudBotGuards(store: { botIdGuard?: (id: string) => void
 }
 
 /** Test helper: forget what the module learned. */
-export function resetCloudBotStateForTests(): void { tombstoned.clear(); released.clear(); }
+export function resetCloudBotStateForTests(): void { tombstoned.clear(); refusedEpochs.clear(); released.clear(); }

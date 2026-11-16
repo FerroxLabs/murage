@@ -688,7 +688,7 @@ describe("OpenCode model source", () => {
 describe("OpenCode one-off sessions (set-up check, learning)", () => {
   it("never touch another repository an inherited GIT_DIR, GIT_WORK_TREE or GIT_INDEX_FILE points at", async () => {
     const other = mkdtempSync(join(tmpdir(), "murage-other-repo-"));
-    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { cwd: other, encoding: "utf8" }).trim();
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", ...args], { windowsHide: true, cwd: other, encoding: "utf8" }).trim();
     try {
       git("init", "-q");
       git("commit", "-q", "--allow-empty", "-m", "theirs");
@@ -703,7 +703,7 @@ describe("OpenCode one-off sessions (set-up check, learning)", () => {
       vi.unstubAllEnvs();
       expect(git("rev-parse", "HEAD")).toBe(head);
       expect(git("diff", "--cached", "--name-only")).toBe("staged.txt");
-      expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: folder, encoding: "utf8" }).trim()).toBe("1");
+      expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { windowsHide: true, cwd: folder, encoding: "utf8" }).trim()).toBe("1");
     } finally {
       vi.unstubAllEnvs();
       resetOpenCodeOneShotFolderForTests();
@@ -716,10 +716,24 @@ describe("OpenCode one-off sessions (set-up check, learning)", () => {
     expect(await openCodeOneShotFolder()).toBe(folder);
     expect(dirname(folder)).toBe(tmpdir());
     expect(existsSync(join(folder, ".git"))).toBe(true);
-    const head = execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: folder, encoding: "utf8" }).trim();
+    const head = execFileSync("git", ["rev-list", "--count", "HEAD"], { windowsHide: true, cwd: folder, encoding: "utf8" }).trim();
     expect(head).toBe("1");
   });
 });
 
 // Adapter turns in this suite use an isolated durable store.
 useOutsideStoreFixture();
+it("c11-permission-safety rebuilds all OpenCode agent copies from a clean baseline", async () => {
+  const { applyOpenCodeTurnPermission, applyToolCatalogDenies } = await import("./opencode-go.ts");
+  const env: Record<string, string | undefined> = {};
+  applyOpenCodeTurnPermission(env);
+  const base = JSON.parse(env.OPENCODE_CONFIG_CONTENT!);
+  applyToolCatalogDenies(env, [["apps_*", "deny"], ["apps_kept", "ask"]], base);
+  const reduced = JSON.parse(env.OPENCODE_CONFIG_CONTENT!);
+  for (const name of ["build", "plan", "general", "explore"]) expect(reduced.agent[name].permission).toEqual(reduced.permission);
+  expect(reduced.permission.read).toEqual(base.permission.read);
+  expect(Object.keys(reduced.permission).slice(-2)).toEqual(["apps_*", "apps_kept"]);
+  for (const pattern of ["codesearch", "code*", "read", "plan_*", "*"]) expect(() => applyToolCatalogDenies(env, [[pattern, "deny"]], base)).toThrow();
+  applyToolCatalogDenies(env, [], base);
+  expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT!)).toEqual(base);
+});

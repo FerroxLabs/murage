@@ -1,0 +1,27 @@
+{
+  "version": "nolim-export-v1",
+  "window": {"since": "2026-11-09T12:00:00Z", "untilExclusive": "2026-11-10T02:00:00Z", "annexUntilExclusive": "2026-11-10T02:15:00Z"},
+  "required": ["bot", "tool", "reason", "origin", "unattended", "cmd", "level", "owner", "suppressed"],
+  "tools": ["Bash", "bash", "shell", "exec_command", "run_shell_command", "PowerShell", "powershell", "Read", "Write", "Edit", "read_file", "write_file", "apply_patch", "unknown", "execute", "run_command", "computer_exec", "terminal", "pwsh"],
+  "enums": {
+    "reason": ["always-ask:delete-root", "always-ask:delete-home", "always-ask:delete-system-folder", "always-ask:disk-erase", "always-ask:fork-bomb", "always-ask:unknown-target", "always-ask:protected-path", "always-ask:own-tool", "unreadable", "unread-call:U20", "unread-call:U19", "unread-call:truncated", "unread-call:scan", "unread-call:stamp-spelling", "unread-call:identity", "unread-call:contract", "unread-call:actions", "stop-line:delete", "stop-line:pay", "stop-line:message", "stop-line:other", "sensitive-guard", "outside-turn", "no-grant", "reader-failed", "prompt-guard", "destructive-guard", "unattended-block", "local-computer-block", "question-tool", "narrow"],
+    "origin": ["owner", "owner-channel", "routine", "other"],
+    "level": ["ask", "auto", "full", "no-limits"],
+    "cmd": ["none", "shell", "pwsh"],
+    "unattended": ["0", "1"],
+    "owner": ["0", "1"],
+    "held": ["key-row", "home-glob", "local-hold", "real-path", "unread"],
+    "reader": ["shell", "pwsh", "unseen", "plain", "failed", "unknown", "held"],
+    "row": ["credential-files", "harness-keys", "shell-profiles", "engine-hooks", "ssh", "aws", "gcloud", "kube", "npm", "git", "env", "credentials-json", "shell-rc", "murage-desktop-secrets", "windows-credential-files", "keys-and-cluster-configs", "shell-startup", "system-startup", "gitconfig", "project-git", "project-tooling", "murage-exec", "murage-engine-hooks", "agy-workspace-hooks", "envrc", "fuigo-engine-config", "keychain", "key-name", "bearer", "key-literal", "env-grep", "env-dump", "cmd-autorun", "private-key", "token-literal", "bearer-literal"],
+    "why": ["path", "value", "field", "mcp", "summary", "unmodeled", "pwsh", "local-hold", "no-extension", "no-slash", "dot-dot", "cd-form", "cd-missing", "or-join", "file-missing", "not-regular", "device", "tilde-escape", "no-home", "relayed", "windows-path", "windows-link", "windows", "tokenizer", "value-path", "file-fed-args", "unavailable-exec", "scan-gate", "command", "unseen-script", "reader-failed", "named"],
+    "outside": ["web", "web-read", "tool", "file", "unknown", "outside-content", "channel-message", "tool-result", "file-read", "network-command", "package-install", "git", "archive", "interpreter", "downloaded-file", "cloned-folder", "web-page", "outside-tool", "web-search", "email", "another-person", "another-bot", "browser-page", "helper", "earlier-turn", "earlier-session", "memory"],
+    "shape": ["eval", "pipe-to-shell", "sed-i", "perl-pe", "export-path", "env-prefix-script", "local-script", "var-target", "interpreter", "other"]
+  },
+  "maxLineBytes": 65536,
+  "maxBundleBytes": 134217728,
+  "maxCases": 10000,
+  "maxDepth": 128,
+  "maxEvents": 100000,
+  "hookDecision": "superseded",
+  "policyAuthority": "sean-b6-2026-11-10-main-r13b"
+}

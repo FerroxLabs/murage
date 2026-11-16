@@ -11,8 +11,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { applyManagedBrokerMessage, connectorAccess, primeBrokerReadiness, relayMcp, resetManagedBrokerState, setFluxProbeBackoffMsForTests, FLUX_PROBE_DEADLINE_MS, FLUX_PROBE_TIMEOUT_MS } from "./composio.ts";
+import { composioAdmissionStatus } from "./composio-lifecycle.ts";
+import { setBackoffRandomForTests } from "./upstream-backoff.ts";
+import { setTimeout as realDelay } from "node:timers/promises";
 import type { AppConfig } from "./config.ts";
 
+const realNow = Date.now.bind(Date);
 const URL_ = "http://127.0.0.1:9/composio";
 const cfg = (): AppConfig => ({}) as AppConfig;
 const access = () => connectorAccess({ cfg: cfg(), botComposio: undefined, installedFromPackage: false, engineMountsConnectors: false, mounted: false });
@@ -35,6 +39,7 @@ const calls = (path: string) => fetchMock.mock.calls.filter((call) => String(cal
 
 beforeEach(() => {
   resetManagedBrokerState();
+  setBackoffRandomForTests(() => 1);
   vi.spyOn(console, "warn").mockImplementation(() => {});
   fetchMock = vi.fn();
   vi.stubGlobal("fetch", fetchMock);
@@ -45,6 +50,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
   setFluxProbeBackoffMsForTests();
+  setBackoffRandomForTests();
 });
 
 describe("the readiness probe on a jittery link", () => {
@@ -54,7 +60,10 @@ describe("the readiness probe on a jittery link", () => {
     fetchMock.mockImplementation(async () => { n++; if (n <= 2) throw netError("ETIMEDOUT"); return healthy(); });
     shellFlux();
     const done = primeBrokerReadiness();
-    await vi.advanceTimersByTimeAsync(3_000);
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(calls("/health")).toBe(1); // MAIN RULING 1115-COMPOSIO-A7: no second attempt below the authority floor.
+    expect(composioAdmissionStatus(`${URL_}/health`)).toMatchObject({ outcome: "held", attempted: false }); // MAIN RULING 1115-COMPOSIO-A7
+    await vi.advanceTimersByTimeAsync(60_001);
     await done;
     expect(calls("/health")).toBe(3);
     expect(ready()).toBe(true);
@@ -63,16 +72,31 @@ describe("the readiness probe on a jittery link", () => {
   it("the attempt's real AbortSignal timeout is retried; a failure that is not a network one is final (fix round)", async () => {
     // fetch honours the signal it is given, as undici does: each attempt ends only when production's own
     // AbortSignal.timeout(FLUX_PROBE_TIMEOUT_MS) fires (real timers: AbortSignal.timeout is not a faked timer)
+    vi.useFakeTimers();
     setFluxProbeBackoffMsForTests([5, 5]);
-    const reasons: string[] = [];
+    const reasons: string[] = [], attemptDurations: number[] = [];
     fetchMock.mockImplementation((_url: string, init: RequestInit) => new Promise<Response>((_, reject) => {
-      init.signal!.addEventListener("abort", () => { reasons.push((init.signal!.reason as Error).name); reject(init.signal!.reason); });
+      const startedAt = realNow();
+      init.signal!.addEventListener("abort", () => {
+        attemptDurations.push(realNow() - startedAt);
+        reasons.push((init.signal!.reason as Error).name); reject(init.signal!.reason);
+      });
     }));
     shellFlux();
     const started = Date.now();
-    await primeBrokerReadiness();
+    const pending = primeBrokerReadiness();
+    for (const floor of [30_000, 60_000]) {
+      await realDelay(FLUX_PROBE_TIMEOUT_MS + 50);
+      await vi.advanceTimersByTimeAsync(floor - 1);
+      expect(calls("/health")).toBe(reasons.length); // MAIN RULING 1115-COMPOSIO-A7
+      await vi.advanceTimersByTimeAsync(1);
+    }
+    await realDelay(FLUX_PROBE_TIMEOUT_MS + 50);
+    await pending;
     expect(calls("/health")).toBe(3);
     expect(reasons).toEqual(["TimeoutError", "TimeoutError", "TimeoutError"]);
+    expect(attemptDurations).toHaveLength(3); // MAIN RULING 1115-COMPOSIO-A7
+    expect(attemptDurations.every(ms => ms >= FLUX_PROBE_TIMEOUT_MS - 100)).toBe(true); // MAIN RULING 1115-COMPOSIO-A7: real signal time excludes central fake-clock waits.
     expect(Date.now() - started).toBeGreaterThanOrEqual(3 * FLUX_PROBE_TIMEOUT_MS - 100);
     expect(ready()).toBe(false);
   }, 30_000);
@@ -104,7 +128,7 @@ describe("the readiness probe on a jittery link", () => {
     await vi.advanceTimersByTimeAsync(200);
     await done;
     expect(calls("/health")).toBe(3);
-    expect(FLUX_PROBE_DEADLINE_MS).toBe(14_000);
+    expect(FLUX_PROBE_DEADLINE_MS).toBe(102_000) // MAIN RULING 1115-COMPOSIO-A7;
     expect(ready()).toBe(false);
   });
 
@@ -121,7 +145,7 @@ describe("the readiness probe on a jittery link", () => {
     expect(ready()).toBe(true);
     await vi.advanceTimersByTimeAsync(8_000);
     expect(ready()).toBe(true);
-    await vi.advanceTimersByTimeAsync(7_000);
+    await vi.advanceTimersByTimeAsync(FLUX_PROBE_DEADLINE_MS - 8_000); // MAIN RULING 1115-COMPOSIO-A7
     expect(ready()).toBe(false);
   });
 
@@ -135,7 +159,8 @@ describe("the readiness probe on a jittery link", () => {
     const mount = primeBrokerReadiness({ turn: true, mount: true }).then(() => { mounted = true; });
     await vi.advanceTimersByTimeAsync(6_000);
     expect(mounted).toBe(false);
-    await vi.advanceTimersByTimeAsync(4_500);
+    expect(calls("/health")).toBe(1); // MAIN RULING 1115-COMPOSIO-A7
+    await vi.advanceTimersByTimeAsync(92_000); // MAIN RULING 1115-COMPOSIO-A7: third answer at 98 s.
     await mount;
     await first;
     expect(ready()).toBe(true);
@@ -151,12 +176,15 @@ describe("a connector tool call on a jittery link", () => {
   }
 
   it("a call that was never sent is tried again, twice at most", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    vi.useFakeTimers();
     await readyBroker();
     let n = 0;
     fetchMock.mockImplementation(async () => { n++; if (n <= 2) throw netError("ECONNREFUSED"); return rpc(); });
     const reply = relayMcp(cfg(), call);
-    await vi.advanceTimersByTimeAsync(2_500);
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(calls("/v1/mcp")).toBe(1); // MAIN RULING 1115-COMPOSIO-A7
+    expect(composioAdmissionStatus(`${URL_}/v1/mcp`)).toMatchObject({ outcome: "held", attempted: false }); // MAIN RULING 1115-COMPOSIO-A7
+    await vi.advanceTimersByTimeAsync(60_001);
     const done = await reply;
     expect(calls("/v1/mcp")).toBe(3);
     expect(done.status).toBe(200);
@@ -164,11 +192,14 @@ describe("a connector tool call on a jittery link", () => {
   });
 
   it("gives up after three tries, as not sent", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    vi.useFakeTimers();
     await readyBroker();
     fetchMock.mockImplementation(async () => { throw netError("ETIMEDOUT"); });
     const reply = relayMcp(cfg(), call);
-    await vi.advanceTimersByTimeAsync(2_500);
+    await vi.advanceTimersByTimeAsync(29_999);
+    expect(calls("/v1/mcp")).toBe(1); // MAIN RULING 1115-COMPOSIO-A7
+    expect(composioAdmissionStatus(`${URL_}/v1/mcp`)).toMatchObject({ outcome: "held", attempted: false }); // MAIN RULING 1115-COMPOSIO-A7
+    await vi.advanceTimersByTimeAsync(60_001);
     const done = await reply;
     expect(calls("/v1/mcp")).toBe(3);
     expect(done.delivery).toBe("not-sent");

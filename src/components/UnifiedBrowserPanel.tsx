@@ -1,9 +1,13 @@
-import { BrowserExtensionPanel, pairedExtensionProfile, upgradedToExtension, type BrowserExtensionPanelStatus } from "./BrowserExtensionPanel";
+import { useBrowserPopout } from "@/lib/use-browser-popout";
+import { t } from '@/lib/i18n';
+import { BrowserChoice } from './BrowserChoice';
+import { browserOwnerFields, browserInputFailure } from '@/lib/browser-owner-request';
+import { BrowserCloseFailure } from './BrowserCloseFailure';
+import { BrowserExtensionPanel } from "./BrowserExtensionPanel";
 import { useEffect, useRef, useState } from "react";
 import { acceptBrowserGeneration, expectedStaleBrowserFrame } from "@/lib/browser-view-state";
-import { Hand, Maximize2, RotateCcw } from "lucide-react";
-import { api, useStore, type Bot } from "@/state/store";
-import { fromAnswer } from "@/state/answer-tag";
+import { Hand, Maximize2, RotateCcw, ExternalLink } from "lucide-react";
+import { api, type Bot } from "@/state/store";
 import { BrowserLiveView, type LiveBrowserFrame } from "./BrowserLiveView";
 import { describeDesktopOnlyRouteError, routeErrorFrom } from "@/lib/desktop-only-route-error";
 /** Select value for "Use my Chrome"; "@" can never appear in a profile id. */
@@ -52,7 +56,7 @@ export function BrowserChoiceRefusal({ botName, refusal, busy, onStop }: { botNa
 }
 /** The live view's words for the owner's Chrome while its first connection waits. */
 export const WAITING_FOR_CHROME = "Waiting for Chrome: click Allow in its remote debugging prompt.";
-type Status = { owned?: boolean; canReclaim?: boolean; generation: number; held: boolean; connected: boolean; protectedDocument: boolean; protectedReason?: "owner-input" | "sensitive-page" | null; url: string; notRunning?: boolean; problem?: string; problemCode?: string; waitingForChrome?: boolean; control?: number };
+type Status = { selectionRevision?: number; sessionKey?: string; closing?: boolean; closeFailed?: boolean; owned?: boolean; canReclaim?: boolean; generation: number; held: boolean; connected: boolean; protectedDocument: boolean; protectedReason?: "owner-input" | "sensitive-page" | null; url: string; notRunning?: boolean; problem?: string; problemCode?: string; waitingForChrome?: boolean; control?: number };
 /** The locked-page note, in the owner's words: why the bot cannot use the
  * page and the one step that gives it back. */
 export function ProtectedBrowserNotice({ botName, reason, held, pending, onReopen }: { botName: string; reason?: Status["protectedReason"]; held: boolean; pending: boolean; onReopen: () => void }) {
@@ -89,12 +93,12 @@ export function BrowserSandboxEnable({ pending, note, onEnable }: { pending: boo
 }
 /** The refusal code the server sends when Enable browser can fix it. */
 export const BROWSER_SANDBOX_ENABLE_CODE = "browser_sandbox_enable";
-type UnifiedBrowserPanelProps = { bot: Bot; size?: "compact" | "expanded"; onExpand?: () => void; control?: unknown; controlPending?: boolean; onControl?: unknown; onCollapse?: () => void };
+type UnifiedBrowserPanelProps = { bot: Bot; popout?: boolean; size?: "compact" | "expanded"; onExpand?: () => void; control?: unknown; controlPending?: boolean; onControl?: unknown; onCollapse?: () => void };
 export function UnifiedBrowserPanel(props: UnifiedBrowserPanelProps) {
-  return props.bot.useMyChrome && props.bot.browserTransport === "extension" ? <BrowserExtensionPanel key={props.bot.id} bot={props.bot} /> : <LegacyBrowserPanel {...props} />;
+  return <BrowserChoice bot={props.bot}>{choose => props.bot.useMyChrome && props.bot.browserTransport === "extension" ? <BrowserExtensionPanel key={props.bot.id} bot={props.bot} onChoose={choose} /> : <LegacyBrowserPanel {...props} />}</BrowserChoice>;
 }
-function LegacyBrowserPanel({ bot, size = "compact", onExpand }: UnifiedBrowserPanelProps) {
-  const { state, dispatch } = useStore();
+export function LegacyBrowserPanel({ bot, size = "compact", onExpand, popout = false }: UnifiedBrowserPanelProps) {
+  const view = useBrowserPopout(bot.id, popout);
   const [status, setStatus] = useState<Status | null>(null);
   const [frame, setFrame] = useState<LiveBrowserFrame | null>(null);
   const [address, setAddress] = useState("");
@@ -103,14 +107,7 @@ function LegacyBrowserPanel({ bot, size = "compact", onExpand }: UnifiedBrowserP
   const [connectionError, setConnectionError] = useState("");
   const [canEnable, setCanEnable] = useState(false);
   const [enableNote, setEnableNote] = useState("");
-  const [refusal, setRefusal] = useState("");
-  // The server said the bot is working (it can know before this panel does): offer Stop with the reason.
-  const [refusalBusy, setRefusalBusy] = useState(false);
   const [pending, setPending] = useState(false);
-  const [confirmMyChrome, setConfirmMyChrome] = useState(false);
-  const [switching, setSwitching] = useState(false);
-  // Whether this copy has Murage for Chrome at all (read by the remote debugging upgrade check below).
-  const [extensionBuild, setExtensionBuild] = useState<BrowserExtensionPanelStatus["extensionBuild"]>(undefined);
   const current = useRef<Status | null>(null);
   const epoch = useRef(0);
   const queue = useRef(Promise.resolve());
@@ -123,7 +120,7 @@ function LegacyBrowserPanel({ bot, size = "compact", onExpand }: UnifiedBrowserP
   };
   useEffect(() => {
     let alive = true; const identity = ++epoch.current;
-    current.current = null; setStatus(null); setFrame(null); setAddress(""); setError(""); setConnectionError(""); setRefusal("");
+    current.current = null; setStatus(null); setFrame(null); setAddress(""); setError(""); setConnectionError("");
     let timer: ReturnType<typeof setTimeout>;
     let lastStatus = 0;
     const poll = async () => {
@@ -143,48 +140,11 @@ function LegacyBrowserPanel({ bot, size = "compact", onExpand }: UnifiedBrowserP
         if (next?.generation === generation) setFrame(old => old?.seq === next.seq ? old : next);
       } catch (cause) {
         if (alive) { setConnectionError(describeDesktopOnlyRouteError(cause instanceof Error ? routeErrorFrom(cause) : { message: "Browser connection unavailable" })); setCanEnable(cause instanceof Error && routeErrorFrom(cause).code === BROWSER_SANDBOX_ENABLE_CODE); setFrame(null); lastStatus = 0; }
-      } finally { if (alive) timer = setTimeout(poll, document.hidden ? 1000 : 100); }
+      } finally { if (alive) timer = setTimeout(poll, document.hidden || current.current?.waitingForChrome ? 1000 : 100); }
     };
     void poll();
     return () => { alive = false; epoch.current++; clearTimeout(timer); };
   }, [base, bot.browserProfile, bot.useMyChrome]);
-  // On remote debugging, Murage for Chrome pairing moves the bot over by
-  // itself, once it is idle and the owner is not holding control.
-  const remoteDebugging = !!bot.useMyChrome && bot.browserTransport !== "extension";
-  const busy = !!bot.busy;
-  useEffect(() => {
-    if (!remoteDebugging || busy) return;
-    let alive = true; let timer: ReturnType<typeof setTimeout>;
-    const check = async () => {
-      try {
-        const next = await api(`/api/bots/${encodeURIComponent(bot.id)}/browser-extension`) as BrowserExtensionPanelStatus;
-        if (alive) setExtensionBuild(next?.extensionBuild);
-        const paired = pairedExtensionProfile(next?.profiles ?? []);
-        // Only with exactly one Chrome profile, read successfully, while idle and not held.
-        if (alive && paired.profileId && !current.current?.held) {
-          upgradedToExtension.add(bot.id);
-          const result = await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify({ useMyChrome: true, browserTransport: "extension", browserExtensionProfileId: paired.profileId }) });
-          if (alive) dispatch({ type: "botPatched", ...fromAnswer(result.bot), bot: result.bot });
-          return;
-        }
-      } catch { upgradedToExtension.delete(bot.id); /* tried again on the next check */ }
-      if (alive) timer = setTimeout(check, 3000);
-    };
-    timer = setTimeout(check, 1000);
-    return () => { alive = false; clearTimeout(timer); };
-  }, [bot.id, remoteDebugging, busy]);
-  const chooseBrowser = async (body: Record<string, unknown>) => {
-    setRefusal(""); setRefusalBusy(false);
-    try {
-      // Holding control: give it back first, then switch (the hold never locks the picker).
-      if (current.current?.held && current.current.owned !== false) { setSwitching(true); await api(base, { method: "POST", body: JSON.stringify({ action: "release", generation: current.current.generation, control: current.current.control }) }); }
-      const result = await api(`/api/bots/${encodeURIComponent(bot.id)}`, { method: "PATCH", body: JSON.stringify(body) }); dispatch({ type: "botPatched", ...fromAnswer(result.bot), bot: result.bot }); setConfirmMyChrome(false);
-    }
-    // Refused: close the confirmation (the picker falls back to the saved
-    // choice) and say why where nothing else can cover it.
-    catch (cause) { setConfirmMyChrome(false); setRefusal(cause instanceof Error ? cause.message : `Could not change ${bot.name}'s browser. Try again.`); setRefusalBusy(cause instanceof Error && routeErrorFrom(cause).code === "bot_busy"); }
-    finally { setSwitching(false); }
-  };
   const enableBrowser = async () => {
     setPending(true); setEnableNote("");
     try {
@@ -197,51 +157,42 @@ function LegacyBrowserPanel({ bot, size = "compact", onExpand }: UnifiedBrowserP
   const action = async (name: string, extra: Record<string, unknown> = {}) => {
     const identity = epoch.current; setPending(true); setError("");
     try {
-      const next = await api(base, { method: "POST", body: JSON.stringify({ action: name, generation: current.current?.generation, control: current.current?.control, ...extra }) }) as Status;
+      const next = await api(base, { method: "POST", body: JSON.stringify({ action: name, generation: current.current?.generation, control: current.current?.control, ...browserOwnerFields(current.current), ...extra }) }) as Status;
       if (identity === epoch.current && next?.generation) accept(next);
     } catch (cause) { if (identity === epoch.current) setError(describeDesktopOnlyRouteError(cause instanceof Error ? routeErrorFrom(cause) : { message: "Browser action failed" })); }
     finally { if (identity === epoch.current) setPending(false); }
   };
   const input = (event: Record<string, unknown>) => {
-    const generation = current.current?.generation, identity = epoch.current;
-    if (!current.current?.held || current.current.owned === false || pending) return;
+    const generation = current.current?.generation, identity = epoch.current, selection = browserOwnerFields(current.current);
+    if (!current.current?.held || current.current.owned === false || current.current.closing || pending) return;
     if (queueSize.current >= 24) { setError("Input is catching up. Wait a moment before typing again."); return; }
     queueSize.current++;
     queue.current = queue.current.then(async () => {
       if (epoch.current !== identity || current.current?.generation !== generation) return;
-      await api(base, { method: "POST", body: JSON.stringify({ action: "input", generation, event }) });
-    }).catch(() => { if (epoch.current === identity) setError("Input stopped because browser control changed."); }).finally(() => { queueSize.current--; });
+      await api(base, { method: "POST", body: JSON.stringify({ action: "input", generation, event, ...selection }) });
+    }).catch(cause => { if (epoch.current === identity) setError(browserInputFailure(cause instanceof Error ? routeErrorFrom(cause) : {})); }).finally(() => { queueSize.current--; });
   };
   return <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-1">
     <div className="flex items-center justify-between gap-2 text-sm"><span>{bot.name}'s browser</span>{size === "compact" && onExpand && <button aria-label="Expand browser" className="rounded p-2 focus-visible:ring-2 focus-visible:ring-accent" onClick={onExpand}><Maximize2 size={16} /></button>}</div>
     <form className="flex min-w-0 gap-2" onSubmit={e => { e.preventDefault(); void action("navigate", { url: address }); }}>
-      <input aria-label="Web address" value={address} onChange={e => setAddress(e.target.value)} placeholder={status?.url || "https://example.com"} disabled={!status?.held || pending} className="min-w-0 flex-1 rounded-lg bg-inset px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent" />
-      <button disabled={!status?.held || pending || !address.trim()} className="rounded-lg bg-control px-3 text-sm disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent">Go</button>
+      <input aria-label="Web address" value={address} onChange={e => setAddress(e.target.value)} placeholder={status?.url || "https://example.com"} disabled={!status?.held || status.closing || pending} className="min-w-0 flex-1 rounded-lg bg-inset px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent" />
+      <button disabled={!status?.held || status.closing || pending || !address.trim()} className="rounded-lg bg-control px-3 text-sm disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent">Go</button>
     </form>
-    <div className="relative overflow-hidden rounded-xl border border-hairline"><BrowserLiveView frame={frame} generation={status?.generation ?? 0} held={!!status?.held && status.owned !== false && !pending} onInput={input} />{!frame && <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-ink-secondary" role="status">{status?.notRunning ? "Browser not running" : status?.waitingForChrome ? WAITING_FOR_CHROME : bot.useMyChrome && (connectionError || status?.problem) ? "Chrome did not connect." : connectionError || status?.problem ? "Browser unavailable" : status?.connected ? "Waiting for the page…" : "Connecting to browser…"}</div>}</div>
-    {status?.held && status.owned !== false && <form className="flex gap-2" onSubmit={event => { event.preventDefault(); if(pageText){input({type:"input_keyboard",eventType:"char",text:pageText});setPageText("");} }}>
+    {view.open ? <p role="status" className="rounded-xl border border-hairline p-6 text-sm text-ink-secondary">{t("browser.popoutShown")} · <button disabled={view.busy} onClick={() => void view.toggle()} className="rounded underline focus-visible:ring-2 focus-visible:ring-accent">{t("browser.bringBack")}</button></p> : <div className="relative overflow-hidden rounded-xl border border-hairline" style={popout ? { width: "100%", maxWidth: `${55 * (frame && frame.height > 0 ? frame.width / frame.height : 1.6)}dvh`, alignSelf: "center" } : undefined}><BrowserLiveView frame={frame} generation={status?.generation ?? 0} held={!!status?.held && status.owned !== false && !status.closing && !pending} onInput={input} />{!frame && <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-sm text-ink-secondary" role="status">{status?.closeFailed ? "Restart to continue" : status?.closing ? "Restarting browser…" : status?.notRunning ? "Browser not running" : status?.waitingForChrome ? WAITING_FOR_CHROME : bot.useMyChrome && (connectionError || status?.problem) ? "Chrome did not connect." : connectionError || status?.problem ? "Browser unavailable" : status?.connected ? "Waiting for the page…" : "Connecting to browser…"}</div>}</div>}
+    {status?.held && !status.closing && status.owned !== false && <form className="flex gap-2" onSubmit={event => { event.preventDefault(); if(pageText){input({type:"input_keyboard",eventType:"char",text:pageText});setPageText("");} }}>
       <input type="password" autoComplete="off" aria-label="Text for focused browser field" placeholder="Focus a page field, then type here" maxLength={100} value={pageText} onChange={event => setPageText(event.target.value)} className="min-w-0 flex-1 rounded-lg bg-inset px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-accent" />
       <button disabled={!pageText || pending} className="rounded-lg bg-control px-3 text-sm disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent">Send text</button>
     </form>}
-    <div className="flex flex-wrap items-center justify-between gap-2"><span role="status" className="text-xs text-ink-secondary">{status?.notRunning ? "Not running" : status?.waitingForChrome ? "Waiting for Chrome" : connectionError || status?.problem ? "Unavailable" : status?.connected ? (bot.useMyChrome ? "Connected to your Chrome" : "Live") : "Disconnected"} · {status?.held ? "Human control" : "Bot control"}</span><button disabled={!status || pending || (status.held && status.owned === false && !status.canReclaim)} onClick={() => void action(status?.held && status.owned === false ? "reclaim" : status?.held ? "release" : "take")} className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-accent-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><Hand size={14} />{pending ? "Please wait…" : status?.held && status.owned === false ? "Take control here" : status?.held ? "Return to bot" : "Take control"}</button></div>
-    {status?.notRunning && !bot.useMyChrome && status.owned !== false && <BrowserNotRunningNotice botName={bot.name} pending={pending} onRestart={() => void action("restart")} />}
-    {bot.useMyChrome && !status?.waitingForChrome && !status?.connected && (status?.problem || connectionError) && <UserChromeRetryNotice botName={bot.name} pending={pending} onRetry={() => void action("retry")} />}
-    {!bot.useMyChrome && status?.problem && status.problemCode !== BROWSER_SANDBOX_ENABLE_CODE && !status.notRunning && !status.protectedDocument && status.owned !== false && <BrowserRestartNotice botName={bot.name} held={status.held} pending={pending} onReopen={() => void action("reopen")} />}
-    {status?.protectedDocument && <ProtectedBrowserNotice botName={bot.name} reason={status.protectedReason} held={status.held} pending={pending} onReopen={() => void action("reopen")} />}
-    <label className="flex min-w-0 items-center gap-2 text-sm">Profile<select aria-label="Browser profile" value={confirmMyChrome || bot.useMyChrome ? MY_CHROME : bot.browserProfile ?? ""} disabled={bot.busy || pending || switching} className="min-w-0 flex-1 rounded bg-inset p-2 focus-visible:ring-2 focus-visible:ring-accent" onChange={event => {
-      const patch = browserChoicePatch(bot, event.target.value);
-      // Nothing changes until the owner confirms what attaching means.
-      if (!patch) { setConfirmMyChrome(true); return; }
-      setConfirmMyChrome(false);
-      if (Object.keys(patch).length) void chooseBrowser(patch);
-    }}><option value="">{bot.name}'s own</option>{(state.config?.browserProfiles ?? []).map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}<option value="guest">Guest</option><option value={MY_CHROME}>Use my Chrome</option></select></label>
-    <BrowserChoiceRefusal botName={bot.name} refusal={refusal} busy={!!bot.busy || refusalBusy} onStop={() => { setRefusal(""); setRefusalBusy(false); dispatch({ type: "interrupt", botId: bot.id }); }} />
-    {bot.busy ? <p className="text-xs text-ink-secondary">Stop {bot.name}'s turn to change its browser.</p> : switching ? <p role="status" className="text-xs text-ink-secondary">Returning control, then switching…</p> : status?.held && status.owned !== false && <p className="text-xs text-ink-secondary">Choosing another browser returns control to {bot.name} first.</p>}
-    {confirmMyChrome && !bot.useMyChrome && <MyChromeConsent botName={bot.name} pending={pending || switching} onConfirm={() => void chooseBrowser({ ...USE_MY_CHROME_PATCH })} onCancel={() => setConfirmMyChrome(false)} />}
-    {bot.useMyChrome && <p className="text-xs text-ink-secondary">Using your Chrome, signed in as you. {bot.name} works in tabs of its own, and your tabs stay yours.</p>}
-    {remoteDebugging && extensionBuild !== undefined && extensionBuild !== "none" && <RemoteDebuggingUpgrade botName={bot.name} pending={pending || switching || busy} onSwitch={() => void chooseBrowser({ useMyChrome: true, browserTransport: "extension" })} />}
+    {!status?.closeFailed && <div className="flex flex-wrap items-center justify-between gap-2"><span role="status" className="text-xs text-ink-secondary">{status?.notRunning ? "Not running" : status?.waitingForChrome ? "Waiting for Chrome" : connectionError || status?.problem ? "Unavailable" : status?.connected ? (bot.useMyChrome ? "Connected to your Chrome" : "Live") : "Disconnected"} · {status?.held ? "Human control" : "Bot control"}</span><button disabled={!status || status.closing || pending || (status.held && status.owned === false && !status.canReclaim)} onClick={() => void action(status?.held && status.owned === false ? "reclaim" : status?.held ? "release" : "take")} className="flex items-center gap-2 rounded-lg bg-accent px-3 py-2 text-sm text-accent-ink disabled:opacity-40 focus-visible:ring-2 focus-visible:ring-accent"><Hand size={14} />{pending ? "Please wait…" : status?.held && status.owned === false ? "Take control here" : status?.held ? t('browser.handback') : "Take control"}</button></div>}
+    {status?.closeFailed && <BrowserCloseFailure botName={bot.name} pending={pending} onRestart={() => void action("restart")} />}
+    {!status?.closing && status?.notRunning && !bot.useMyChrome && status.owned !== false && <BrowserNotRunningNotice botName={bot.name} pending={pending} onRestart={() => void action("restart")} />}
+    {!status?.closing && bot.useMyChrome && !status?.waitingForChrome && !status?.connected && (status?.problem || connectionError) && <UserChromeRetryNotice botName={bot.name} pending={pending} onRetry={() => void action("retry")} />}
+    {!status?.closing && !bot.useMyChrome && status?.problem && status.problemCode !== BROWSER_SANDBOX_ENABLE_CODE && !status.notRunning && !status.protectedDocument && status.owned !== false && <BrowserRestartNotice botName={bot.name} held={status.held} pending={pending} onReopen={() => void action("reopen")} />}
+    {!status?.closing && status?.protectedDocument && <ProtectedBrowserNotice botName={bot.name} reason={status.protectedReason} held={status.held} pending={pending} onReopen={() => void action("reopen")} />}
+    {view.available && !view.open && <button disabled={view.busy} onClick={() => void view.toggle()} className="flex items-center gap-2 rounded-lg bg-control px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-accent disabled:opacity-40"><ExternalLink size={14} />{t("browser.popout")}</button>}
+    {view.error && <p role="status" className="text-xs text-ink-secondary">{view.error}</p>}
     <p className="text-xs text-ink-secondary">Take control before interacting. Disconnecting keeps human control until you return it. Tab leaves the browser page.</p>
-    <BrowserPanelAlerts refusal="" problem={connectionError || error || status?.problem || ""} />
+    <BrowserPanelAlerts refusal="" problem={error || (status?.closeFailed ? "" : connectionError || status?.problem || "")} />
     {((canEnable && connectionError) || (!connectionError && status?.problemCode === BROWSER_SANDBOX_ENABLE_CODE)) && <BrowserSandboxEnable pending={pending} note={enableNote} onEnable={() => void enableBrowser()} />}
   </div>;
 }

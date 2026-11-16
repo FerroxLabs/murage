@@ -70,16 +70,20 @@ describe("G1: only the owner's send route can ask for a typed stop (F7)", () => 
       return source.slice(match.index!, at + 1);
     });
     expect(calls.length).toBeGreaterThanOrEqual(2);
-    expect(calls.filter((call) => call.includes("typedStop"))).toEqual([expect.stringContaining("typedStop: true")]);
+    // MAIN RULING INT-CONFLICT-DEFAULT 6502c329b6d / 09c032b6c6b: the sole owner route also excludes no-steer sends and explicit typedStop=false.
+    const ownerStop = "typedStop: body.noSteer !== true && body.typedStop !== false";
+    expect(calls.filter((call) => call.includes("typedStop"))).toEqual([expect.stringContaining(ownerStop)]);
     // share and ask: the Send again on a phone's via line (queue-only third-party words) passes no typedStop, so a shared "stop" is queued text.
     // The route has one call: its via branch states ownerActs false and the via standing, and only its owner branch asks for a typed stop.
     const viaCalls = calls.filter((call) => call.includes("viaStanding"));
     expect(viaCalls).toHaveLength(1);
     const viaBranch = /viaStanding \? \{([^}]*)\} : \{([^}]*)\}/.exec(viaCalls[0]!);
     expect(viaBranch?.[1]).toBe(" ownerActs: false, ...viaStanding ");
-    expect(viaBranch?.[2]).toContain("typedStop: true");
+    // MAIN RULING INT-CONFLICT-DEFAULT 6502c329b6d / 09c032b6c6b: keep this exact guarded owner branch and the unchanged via exclusion.
+    expect(viaBranch?.[2]).toContain(ownerStop);
     expect(viaCalls[0]!.replace(viaBranch![0], "")).not.toContain("typedStop");
-    expect(calls.filter((call) => call.includes("queueOnly") && call.includes("typedStop"))).toEqual([]);
+    // MAIN RULING INT-CONFLICT-DEFAULT 6502c329b6d / 09c032b6c6b: the guarded no-steer spread never combines queue-only with an unconditional typed stop.
+    expect(calls.filter((call) => call.includes("queueOnly") && /typedStop:\s*true\b/.test(call))).toEqual([]);
     // the card answer, the late answer and acceptBotSend's ordinary path all reach admitDirectSend, which has no typed-stop branch
     expect([...source.matchAll(/admitDirectSend\(\{[^}]*\}/g)].filter((match) => match[0].includes("typedStop"))).toEqual([]);
   });

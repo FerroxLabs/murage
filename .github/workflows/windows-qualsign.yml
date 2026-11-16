@@ -1,0 +1,213 @@
+# Workflow/helper/lock producer: winsac-qualsign; verifier producer: winsac-qualsign-verifier; approval/fetch consumer: MAIN.
+name: Windows qualification signing (collector only)
+on:
+  push:
+    branches: ['ci/try-*']
+permissions:
+  contents: read
+concurrency:
+  group: windows-qualsign-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  sign-collector:
+    if: startsWith(github.event.head_commit.message, 'QUALSIGN collector ')
+    runs-on: windows-latest
+    environment: windows-qualsign
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      dev_sha: ${{ steps.guard.outputs.dev_sha }}
+      dev_sha12: ${{ steps.guard.outputs.dev_sha12 }}
+      collector: ${{ steps.trees.outputs.collector }}
+      signingProcess: ${{ steps.trees.outputs.signingProcess }}
+      processApi: ${{ steps.trees.outputs.processApi }}
+      plan: ${{ steps.trees.outputs.plan }}
+      workflow: ${{ steps.trees.outputs.workflow }}
+      helper: ${{ steps.trees.outputs.helper }}
+      lock_sha256: ${{ steps.trees.outputs.lock_sha256 }}
+      packs_sha256: ${{ steps.restore.outputs.packs_sha256 }}
+      sdk_version: ${{ steps.sdk.outputs.sdk_version }}
+      dotnet_sha256: ${{ steps.sdk.outputs.dotnet_sha256 }}
+      unsigned_sha256: ${{ steps.presign.outputs.unsigned_sha256 }}
+    steps:
+      - name: Require exact qualification commit and ci-try ref
+        id: guard
+        shell: pwsh
+        run: |
+          node --input-type=module -e @'
+          import { readFileSync, appendFileSync } from 'node:fs';
+          const event = JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8'));
+          const subject = event.head_commit?.message?.split(/\r?\n/, 1)[0] ?? '';
+          const match = /^QUALSIGN collector ([0-9a-f]{40})$/.exec(subject);
+          if (!match || !/^ci\/try-[0-9a-f]{12}$/.test(process.env.GITHUB_REF_NAME) ||
+              !/^[0-9a-f]{40}$/.test(process.env.GITHUB_SHA) || event.head_commit.id !== process.env.GITHUB_SHA)
+            throw Error('Exact qualification commit and ci-try ref required');
+          appendFileSync(process.env.GITHUB_OUTPUT, `dev_sha=${match[1]}\ndev_sha12=${match[1].slice(0,12)}\n`);
+          '@
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Bind the six collector and workflow inputs
+        id: trees
+        shell: pwsh
+        run: ./infra/windows-signing/qualsign/Write-QualsignReceipt.ps1 -Mode Bind
+      - uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309
+        with:
+          dotnet-version: '10.0.115'
+      - name: Measure the pinned SDK and lock file
+        id: sdk
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $dotnet = (Get-Command dotnet.exe -CommandType Application).Source
+          $selection = "$env:RUNNER_TEMP/qualsign-sdk-selection"
+          $null = New-Item -ItemType Directory -Path $selection
+          '{"sdk":{"version":"10.0.115","rollForward":"disable","allowPrerelease":false}}' | Set-Content -LiteralPath "$selection/global.json" -Encoding utf8
+          Push-Location $selection
+          try {
+            if ((& $dotnet --version) -cne '10.0.115' -or $LASTEXITCODE -ne 0) { throw 'Pinned SDK required' }
+          } finally { Pop-Location }
+          $hash = (Get-FileHash -LiteralPath $dotnet -Algorithm SHA256).Hash.ToLowerInvariant()
+          $lock = (Get-FileHash -LiteralPath 'infra/windows-signing/collector/packages.lock.json' -Algorithm SHA256).Hash.ToLowerInvariant()
+          @{sdkVersion='10.0.115'; dotnetSha256=$hash; lockFileSha256=$lock} | ConvertTo-Json | Set-Content -LiteralPath "$env:RUNNER_TEMP/qualsign-sdk.json" -Encoding utf8
+          "sdk_version=10.0.115" >> $env:GITHUB_OUTPUT
+          "dotnet=$dotnet" >> $env:GITHUB_OUTPUT
+          "dotnet_sha256=$hash" >> $env:GITHUB_OUTPUT
+      - name: Restore only content-locked packages
+        id: restore
+        shell: pwsh
+        env:
+          NUGET_PACKAGES: ${{ runner.temp }}/qualsign-nuget-packages
+          NUGET_HTTP_CACHE_PATH: ${{ runner.temp }}/qualsign-nuget-http
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $null = New-Item -ItemType Directory -Path $env:NUGET_PACKAGES
+          $null = New-Item -ItemType Directory -Path $env:NUGET_HTTP_CACHE_PATH
+          Push-Location "$env:RUNNER_TEMP/qualsign-sdk-selection"
+          try {
+            & '${{ steps.sdk.outputs.dotnet }}' restore "$env:GITHUB_WORKSPACE/infra/windows-signing/collector/WitnessCollector.csproj" -r win-x64 --locked-mode "-p:BaseIntermediateOutputPath=$env:RUNNER_TEMP\obj\"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally { Pop-Location }
+          ./infra/windows-signing/qualsign/Write-QualsignReceipt.ps1 -Mode Packs
+      - name: Build the single NativeAOT collector
+        id: build
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $lines = & ./infra/windows-signing/collector/Build.ps1 -Dotnet '${{ steps.sdk.outputs.dotnet }}' -DotnetSha256 '${{ steps.sdk.outputs.dotnet_sha256 }}' -SdkVersion '10.0.115' -Intermediate "$env:RUNNER_TEMP\obj" -Output "$env:RUNNER_TEMP\pub"
+          $lines | Write-Output
+          if (-not ($lines -match '^WINDOWS_WITNESS_NATIVE_CORE_BUILT ')) { throw 'Native core build witness missing' }
+          $images = @(Get-ChildItem -LiteralPath "$env:RUNNER_TEMP/pub" -File -Recurse | Where-Object {
+            $stream = [IO.File]::OpenRead($_.FullName)
+            try { $stream.ReadByte() -eq 0x4d -and $stream.ReadByte() -eq 0x5a } finally { $stream.Dispose() }
+          })
+          if ($images.Count -ne 1 -or $images[0].FullName -cne "$env:RUNNER_TEMP\pub\witness-collector.exe") { throw 'Exactly one collector PE required' }
+          $null = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/tosign"
+          Copy-Item -LiteralPath $images[0].FullName -Destination "$env:RUNNER_TEMP/tosign/witness-collector.exe"
+      - name: Require an empty PE certificate table before signing
+        id: presign
+        shell: pwsh
+        run: ./infra/windows-signing/qualsign/Write-QualsignReceipt.ps1 -Mode PreSign
+      - uses: azure/login@eec3c95657c1536435858eda1f3ff5437fee8474
+        with:
+          client-id: ${{ vars.QUALSIGN_AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.QUALSIGN_AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+      - name: Sign only the qualification collector
+        id: sign
+        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82
+        with:
+          endpoint: https://eus.codesigning.azure.net
+          signing-account-name: ferrox-labs-signing
+          certificate-profile-name: ferroxlabs
+          files-folder: ${{ runner.temp }}/tosign
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-digest: SHA256
+          timeout: 300
+          exclude-environment-credential: true
+          exclude-workload-identity-credential: true
+          exclude-managed-identity-credential: true
+          exclude-shared-token-cache-credential: true
+          exclude-visual-studio-credential: true
+          exclude-azure-powershell-credential: true
+          exclude-interactive-browser-credential: true
+          exclude-azure-cli-credential: false
+      - name: Clear cached Azure signing credentials
+        id: scrub
+        if: always()
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          & az logout
+          if ($LASTEXITCODE -ne 0) { throw 'Azure logout failed' }
+          & az account clear
+          if ($LASTEXITCODE -ne 0) { throw 'Azure account clear failed' }
+          $config = if ($env:AZURE_CONFIG_DIR) { $env:AZURE_CONFIG_DIR } else { Join-Path $HOME '.azure' }
+          if (Test-Path -LiteralPath $config) { Remove-Item -LiteralPath $config -Recurse -Force }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: qualsign-signed-${{ steps.guard.outputs.dev_sha12 }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tosign/witness-collector.exe
+          if-no-files-found: error
+          retention-days: 1
+  verify-collector:
+    needs: sign-collector
+    runs-on: windows-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      signed_sha256: ${{ steps.verify.outputs.signed_sha256 }}
+      receipt_sha256: ${{ steps.receipt.outputs.receipt_sha256 }}
+    steps:
+      - name: Require no OIDC credential in verification job
+        id: token-absence
+        shell: pwsh
+        run: |
+          if ($env:ACTIONS_ID_TOKEN_REQUEST_URL -or $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN -or $env:AZURE_FEDERATED_TOKEN) { throw 'Verification job holds signing credential' }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Validate signing outputs and compare all bound inputs
+        id: binding
+        shell: pwsh
+        env:
+          QUALSIGN_BIND: ${{ toJSON(needs.sign-collector.outputs) }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          ./infra/windows-signing/qualsign/Write-QualsignReceipt.ps1 -Mode Bind
+          $null = New-Item -ItemType Directory -Path "$env:RUNNER_TEMP/tosign"
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: qualsign-signed-${{ needs.sign-collector.outputs.dev_sha12 }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/tosign
+      - name: Verify embedded signature and approved identity
+        id: verify
+        shell: pwsh
+        env:
+          QUALSIGN_EXPECTED_SUBJECT: ${{ vars.QUALSIGN_EXPECTED_SUBJECT }}
+          QUALSIGN_EXPECTED_ISSUER_PREFIX: ${{ vars.QUALSIGN_EXPECTED_ISSUER_PREFIX }}
+          QUALSIGN_EXPECTED_ROOT_CN: ${{ vars.QUALSIGN_EXPECTED_ROOT_CN }}
+          QUALSIGN_EXPECTED_ROOT_SHA256: ${{ vars.QUALSIGN_EXPECTED_ROOT_SHA256 }}
+          QUALSIGN_EXPECTED_EKU: ${{ vars.QUALSIGN_EXPECTED_EKU }}
+        run: ./infra/windows-signing/qualsign/Write-QualsignReceipt.ps1 -Mode Verify
+      - name: Write the SHA-bound qualification receipt
+        id: receipt
+        shell: pwsh
+        run: ./infra/windows-signing/qualsign/Write-QualsignReceipt.ps1 -Mode Receipt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: qualsign-collector-${{ needs.sign-collector.outputs.dev_sha12 }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/tosign/witness-collector.exe
+            ${{ runner.temp }}/tosign/qualsign-receipt.json
+          if-no-files-found: error
+          retention-days: 1

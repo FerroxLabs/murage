@@ -3,7 +3,7 @@
 //
 // Write-time privacy, S4 tests: a v10 messages.db with the rows the S1 writers and the S3 marker would leave, written directly, so the read
 // side (deny-read.ts) is tested on exactly the marks it reads. Test tree only.
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync,copyFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -38,10 +38,13 @@ export class WritetimeFixture {
   private readonly dir: string | undefined;
   private tombs = 0;
   /** A new file, or (`existing`) the rows written into an open messages.db (the app's database() in a test's data dir). */
-  constructor(existing?: DatabaseSync) {
+  constructor(existing?: DatabaseSync, storage: {template?:string} = {}) {
     this.dir = existing ? undefined : mkdtempSync(join(tmpdir(), "murage-s4-"));
-    this.db = existing ?? new DatabaseSync(join(this.dir!, "messages.db"));
-    if (!existing) { migrateMemorySchema(this.db, "active"); ensureRevokeLateObjects(this.db); }
+    const path=this.dir&&join(this.dir,"messages.db");
+    if(path&&storage.template)copyFileSync(storage.template,path);
+    this.db = existing ?? new DatabaseSync(path!);
+    if(storage.template)this.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;");
+    if (!existing&&!storage.template) { migrateMemorySchema(this.db, "active"); ensureRevokeLateObjects(this.db); }
     this.db.exec(MESSAGES_SQL);
     this.db.exec(BRANCH_TABLES_SQL); // the read gate (deny.ts BRANCH_CHANGE_PENDING) seeks branch_change
     for (const scope of ["s-room", "s-bot", "s-other", "s-project"]) this.scope(scope);
@@ -65,6 +68,11 @@ export class WritetimeFixture {
   /** An owner line with its lineage row (generated 0). */
   owner(thread: string, id: string, lsn: number, extra: Record<string, unknown> = {}): this { return this.message(thread, id, "user", extra).lineage(thread, id, lsn, { generated: false, turnLsn: null }); }
   denyLine(thread: string, lsn: number, revoke = 1): this { this.db.prepare("INSERT INTO memory_deny_line(thread_id,lsn,revoke_id,mark_lsn,reason) VALUES(?,?,?,?,'test')").run(thread, lsn, revoke, lsn); return this; }
+  audienceFlip(thread: string, lsn: number, revoke = 7): this {
+    this.db.prepare("INSERT OR IGNORE INTO memory_revoke_audience(revoke_id) VALUES(?)").run(revoke);
+    return this.denyLine(thread, lsn, revoke);
+  }
+  generation(): number { return Number(this.db.prepare("SELECT value FROM memory_lineage_lsn_meta WHERE key='deny_generation'").get()!.value); }
   denyRange(thread: string, from: number, until: number, revoke = 1): this { this.db.prepare("INSERT INTO memory_deny_range(thread_id,from_lsn,until_turn_lsn,revoke_id,reason) VALUES(?,?,?,?,'test')").run(thread, from, until, revoke); return this; }
   pending(thread: string, since: number, revoke = 1): this { this.db.prepare("INSERT INTO memory_deny_pending(thread_id,since_lsn,revoke_id) VALUES(?,?,?)").run(thread, since, revoke); return this; }
   /** The revoke's job row: its started_lsn is the cap of its walk and of its pending window (deny-read.ts lookupPage). */
@@ -117,4 +125,13 @@ export class WritetimeFixture {
     this.db.prepare("INSERT INTO memory_scope_bindings(id,scope_id,subject_type,subject_id,revision,state,intent) VALUES('job','s-room','system','memory-revocation',0,'granted','{}')").run();
     return this;
   }
+}
+
+export function fixtureEvidenceStamp() { return { baseline: "c12aaad9341e8f87126a193f35b5c2768f0aa66f", head: process.env.SCOPES7C_TEST_SHA ?? "test-only-working-tree" }; }
+
+/** Contract-only helper: absence is an explicit infrastructure failure, never
+ * counted as a behavioral privacy RED. It always imports the real module. */
+export async function fixtureContract<T = unknown>(url: URL, requirement: string): Promise<T> {
+  try { return await import(url.href) as T; }
+  catch (cause) { throw new Error(`Missing test contract: ${requirement}`, { cause }); }
 }

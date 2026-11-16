@@ -57,7 +57,7 @@ export function classifierInBotFolder(inner: FeedbackClassifier, resolveBot: (tu
   return { classify: (input, signal) => withBotLearningFolder(resolveBot(input.turn), () => inner.classify(input, signal)) };
 }
 function resolveFeedbackBot(roster: MemoryRoster, thread: string, turn: ClassifierInput["turn"]): string | null {
-  return turn?.botId ?? roster.bots.find(bot => bot.threadId === thread || bot.tasks?.some(task => task.threadId === thread))?.id ?? null;
+  return turn?.botId ?? (roster.botByThread ? roster.botByThread(thread) : roster.bots.find(bot => bot.threadId === thread || bot.tasks?.some(task => task.threadId === thread)))?.id ?? null;
 }
 export function leasedFeedbackClassifier(extractor: TextOnlyExtractor, gateFor: (input: ClassifierInput) => LearningGate): FeedbackClassifier {
   return {

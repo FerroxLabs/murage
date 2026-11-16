@@ -1,0 +1,929 @@
+[
+  {
+    "id": "M1",
+    "file": "server/consuming-turn-response.ts",
+    "locator": {
+      "kind": "stmt",
+      "in": "emitConsumingTurnResponse",
+      "nth": 3,
+      "pattern": "^assertConsumingBinding\\(binding\\);"
+    },
+    "edit": "",
+    "tests": [
+      "server/internal-response-fence.test.ts",
+      "server/sc-safety-r4-regression.test.ts"
+    ],
+    "killers": [
+      "A3-3 revalidates",
+      "T-ALL-RETURNS gate:"
+    ],
+    "mutation": "drop final isCurrent check before write"
+  },
+  {
+    "id": "M2",
+    "file": "server/consuming-turn-response.ts",
+    "locator": {
+      "kind": "stmt",
+      "in": "consumingHttpWriter",
+      "pattern": "^if\\ \\(!declared\\)\\ refuseConsumingTurn\\(binding\\);"
+    },
+    "edit": "",
+    "tests": [
+      "server/internal-response-fence.test.ts"
+    ],
+    "killers": [
+      "A3-7 unannotated"
+    ],
+    "mutation": "accept an HTTP response without staged provenance"
+  },
+  {
+    "id": "M3",
+    "file": "server/consuming-turn-response.ts",
+    "locator": {
+      "kind": "decl",
+      "name": "release",
+      "text": "if (sealed) return false;"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "if (sealed) return false;",
+      "to": "if (sealed) return false; if (mode === \"chunk\" && raw.headersSent) return raw.write(data!, encoding ?? \"utf8\");"
+    },
+    "tests": [
+      "server/internal-response-fence.test.ts"
+    ],
+    "killers": [
+      "T-ALL-RETURNS stream drain"
+    ],
+    "mutation": "skip consuming recheck for chunk following drain"
+  },
+  {
+    "id": "M4",
+    "file": "server/drivers/openai-chat.ts",
+    "locator": {
+      "kind": "call",
+      "name": "providerDispatcher",
+      "text": "releaseNativeWire"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "(wire, write) => releaseNativeWire(round.releaseBinding, \"openai:fetch\", wire, write)",
+      "to": "undefined"
+    },
+    "tests": [
+      "server/sc-safety-r4-regression.test.ts"
+    ],
+    "killers": [
+      "A-F1a"
+    ],
+    "mutation": "check only at fetch entry instead of connected write"
+  },
+  {
+    "id": "M5",
+    "file": "server/model-gateway.ts",
+    "locator": {
+      "kind": "call",
+      "name": "providerDispatcher",
+      "text": "emitConsumingTurnResponse"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "(wire, write) => emitConsumingTurnResponse(binding, gatewayDescriptors.request,\n      { bytes: Buffer.byteLength(wire), refs: [], write })",
+      "to": "undefined"
+    },
+    "tests": [
+      "server/sc-safety-r4-regression.test.ts"
+    ],
+    "killers": [
+      "A-F1b"
+    ],
+    "mutation": "check only at fetch entry instead of connected write"
+  },
+  {
+    "id": "M6",
+    "file": "server/consuming-turn-response.ts",
+    "locator": {
+      "kind": "stmt",
+      "in": "emitConsumingTurnResponse",
+      "pattern": "^if\\ \\(isDatabaseBusy\\(error\\)\\)"
+    },
+    "edit": "{ refuseConsumingTurn(binding); }",
+    "tests": [
+      "server/sc-safety-r4-regression.test.ts",
+      "server/consuming-response-busy-budget.test.ts"
+    ],
+    "killers": [
+      "A-F2a",
+      "consuming release bounds real SQLite contention: live"
+    ],
+    "mutation": "busy writer refusal is misclassified as revoke"
+  },
+  {
+    "id": "M7",
+    "file": "server/consuming-turn-response.ts",
+    "locator": {
+      "kind": "call",
+      "name": "setBusy",
+      "in": "emitConsumingTurnResponse",
+      "text": "BACKGROUND_BUSY_MS"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "BACKGROUND_BUSY_MS",
+      "to": "1000"
+    },
+    "tests": [
+      "server/consuming-response-busy-budget.test.ts"
+    ],
+    "killers": [
+      "consuming release bounds real SQLite contention:"
+    ],
+    "mutation": "release foreground wait"
+  },
+  {
+    "id": "M8",
+    "file": "server/decision/records.ts",
+    "locator": {
+      "kind": "stmt",
+      "in": "saveContinuationRecord",
+      "pattern": "^if\\(existing!==undefined\\)"
+    },
+    "edit": "",
+    "tests": [
+      "server/decision/continuation-contention.test.ts"
+    ],
+    "killers": [
+      "an unchanged continuation remains readable while another connection owns the writer",
+      "a conflicting continuation stays a conflict"
+    ],
+    "mutation": "rewrite existing continuation"
+  },
+  {
+    "id": "M9",
+    "file": "server/decision/records.ts",
+    "locator": {
+      "kind": "call",
+      "name": "setBusy",
+      "in": "saveContinuationRecord",
+      "text": "Math.min"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "Math.min(waitMs,BACKGROUND_BUSY_MS)",
+      "to": "waitMs"
+    },
+    "tests": [
+      "server/decision/continuation-contention.test.ts"
+    ],
+    "killers": [
+      "a new continuation has a bounded busy response"
+    ],
+    "mutation": "continuation foreground wait"
+  },
+  {
+    "id": "M10",
+    "file": "server/decision/records.ts",
+    "locator": {
+      "kind": "stmt",
+      "in": "saveContinuationRecord",
+      "pattern": "^if\\(readContinuationRecord\\(db,key\\)!==value\\)"
+    },
+    "edit": "",
+    "tests": [
+      "server/sc-safety-r4-regression.test.ts",
+      "server/decision/continuation-contention.test.ts"
+    ],
+    "killers": [
+      "A-F2c",
+      "a competing first writer is rechecked"
+    ],
+    "mutation": "ignore competing continuation writer"
+  },
+  {
+    "id": "M11",
+    "file": "server/drivers/engine-input.ts",
+    "locator": {
+      "kind": "body",
+      "name": "fencedSubmit"
+    },
+    "edit": "{ return write(); }",
+    "tests": [
+      "server/drivers/engine-release-atomic.test.ts",
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "a consuming binding cannot submit a prompt without its captured writer",
+      "H-FENCE-1",
+      "H-FENCE-2"
+    ],
+    "mutation": "fencedSubmit directly invokes writer"
+  },
+  {
+    "id": "M12",
+    "file": "server/drivers/engine-input.ts",
+    "locator": {
+      "kind": "stmt",
+      "in": "fencedSubmit",
+      "pattern": "^if\\ \\(turn\\.releaseBinding\\)"
+    },
+    "edit": "",
+    "tests": [
+      "server/drivers/engine-release-atomic.test.ts",
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "a consuming binding cannot submit a prompt without its captured writer",
+      "H-FENCE-1",
+      "H-FENCE-2"
+    ],
+    "mutation": "drop releaseBinding fail-closed throw"
+  },
+  {
+    "id": "M13",
+    "file": "server/drivers/codex.ts",
+    "locator": {
+      "kind": "call",
+      "name": "fencedSubmit",
+      "in": "send",
+      "text": "write, wire"
+    },
+    "edit": "write()",
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "every sink in server/",
+      "every hook-to-write chain is synchronous"
+    ],
+    "mutation": "send Codex turn/start outside fencedSubmit"
+  },
+  {
+    "id": "M14",
+    "file": "server/drivers/acp/core.ts",
+    "locator": {
+      "kind": "call",
+      "name": "fencedSubmit",
+      "text": "write, wire"
+    },
+    "edit": "write()",
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "every sink in server/",
+      "every hook-to-write chain is synchronous"
+    ],
+    "mutation": "send ACP session/prompt outside fencedSubmit"
+  },
+  {
+    "id": "M15",
+    "file": "server/drivers/claude.ts",
+    "locator": {
+      "kind": "call",
+      "name": "send",
+      "in": "runReview",
+      "text": "cliStdinWrite"
+    },
+    "edit": "(gate.check(), child.stdin.end(prompt), child.stdin.end(prompt))",
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "every sink in server/",
+      "every hook-to-write chain is synchronous"
+    ],
+    "mutation": "Claude stdin outside gate.send"
+  },
+  {
+    "id": "M16",
+    "file": "server/drivers/cli-memory-learning.ts",
+    "locator": {
+      "kind": "stmt",
+      "pattern": "^if\\ \\(adapter\\.capabilities\\?\\.fencedLearningWrite"
+    },
+    "edit": "",
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "every sink in server/"
+    ],
+    "mutation": "remove fencedLearningWrite fail-closed check"
+  },
+  {
+    "id": "M17",
+    "file": "server/index.ts",
+    "locator": {
+      "kind": "call",
+      "name": "issueDecisionAuthority",
+      "text": "internalClaim",
+      "nth": 1
+    },
+    "edit": "Promise.resolve(undefined)",
+    "tests": [
+      "server/internal-response-fence.test.ts"
+    ],
+    "killers": [
+      "T-ALL-RETURNS inventory HighLevel",
+      "T-ALL-RETURNS inventory routines"
+    ],
+    "mutation": "remove internal decision authority acquisition"
+  },
+  {
+    "id": "M18",
+    "file": "server/index.ts",
+    "locator": {
+      "kind": "call",
+      "name": "consumingHttpWriter",
+      "text": "originalResponse"
+    },
+    "edit": "originalResponse",
+    "tests": [
+      "server/internal-response-fence.test.ts"
+    ],
+    "killers": [
+      "T-ALL-RETURNS inventory credential delegate"
+    ],
+    "mutation": "producer keeps originalResponse instead of consuming writer"
+  },
+  {
+    "id": "M19",
+    "file": "server/drivers/claude-s2-qualification.ts",
+    "locator": {
+      "kind": "decl",
+      "name": "matchesClaudeS2Qualification"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "receipt.version === version && receipt.build === build",
+      "to": "receipt.version === version"
+    },
+    "tests": [
+      "server/drivers/claude-s2-safety-regression.test.ts"
+    ],
+    "killers": [
+      "A-F3a"
+    ],
+    "mutation": "drop digest match, version-only S2"
+  },
+  {
+    "id": "M20",
+    "file": "server/drivers/claude-s2-qualification.ts",
+    "locator": {
+      "kind": "body",
+      "name": "claudeS2Qualified"
+    },
+    "edit": "{ if (_env.NODE_ENV === \"test\") return true; return matchesClaudeS2Qualification(receipts, platform, arch, version, build); }",
+    "tests": [
+      "server/drivers/claude-s2-safety-regression.test.ts"
+    ],
+    "killers": [
+      "A-F3b"
+    ],
+    "mutation": "restore ambient NODE_ENV test S2 unlock"
+  },
+  {
+    "id": "M21",
+    "file": "server/drivers/claude-s2-qualification.ts",
+    "locator": {
+      "kind": "body",
+      "name": "nativeIdentity"
+    },
+    "edit": "{ return [stat.dev, stat.ino].join(\":\"); }",
+    "tests": [
+      "server/drivers/claude-s2-safety-regression.test.ts"
+    ],
+    "killers": [
+      "A-F3c"
+    ],
+    "mutation": "cache ignores size and times"
+  },
+  {
+    "id": "M22",
+    "file": "server/drivers/claude.ts",
+    "locator": {
+      "kind": "stmt",
+      "pattern": "^if\\ \\(!turnId\\ \\&\\&\\ kept\\ \\&\\&\\ !kept\\.turn\\)\\ closeSession\\(threadId,\\ \"stop\"\\);"
+    },
+    "edit": "",
+    "tests": [
+      "server/drivers/claude-s2-safety-regression.test.ts"
+    ],
+    "killers": [
+      "A-F3d"
+    ],
+    "mutation": "Stop skips retained mount teardown"
+  },
+  {
+    "id": "M23",
+    "file": "server/testing/source-extract.ts",
+    "locator": {
+      "kind": "body",
+      "name": "unresolved"
+    },
+    "edit": "{ return undefined as never; }",
+    "tests": [
+      "server/testing/source-extract.test.ts"
+    ],
+    "killers": [
+      "H-SCOPE-3"
+    ],
+    "mutation": "unresolved name silently binds undefined"
+  },
+  {
+    "id": "M24",
+    "file": "server/testing/source-extract.ts",
+    "locator": {
+      "kind": "body",
+      "name": "admitCaseOverride"
+    },
+    "edit": "{ if(name === \"issueDecisionAuthority\") return {category:\"IO\",reason:\"planted legacy bypass\"}; const declaration=resolveCaseDeclaration(source,name); const port=casePortFor(declaration); if(!port)throw overrideRefused(name,declaration,source); return port; }",
+    "tests": [
+      "server/testing/source-extract.test.ts"
+    ],
+    "killers": [
+      "H-SCOPE-4"
+    ],
+    "mutation": "legacy authority override bypass; broad override coverage superseded by M47",
+    "supersededBy": "M47"
+  },
+  {
+    "id": "M25",
+    "file": "server/memory/learning-send-boundary.test.ts",
+    "locator": {
+      "kind": "decl",
+      "name": "insideConsuming"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "let deferred: ts.Node | undefined;",
+      "to": "return true; let deferred: ts.Node | undefined;"
+    },
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "H-FENCE-4"
+    ],
+    "mutation": "consuming fence admits writes outside callback"
+  },
+  {
+    "id": "M26",
+    "file": "server/testing/ast-plant.ts",
+    "locator": {
+      "kind": "decl",
+      "name": "plant"
+    },
+    "edit": {
+      "kind": "body",
+      "text": "{ return source ?? readFileSync(file, \"utf8\"); }"
+    },
+    "tests": [
+      "server/testing/ast-plant.test.ts"
+    ],
+    "killers": [
+      "H-PLANT-1"
+    ],
+    "mutation": "plant silently returns input on zero matches"
+  },
+  {
+    "id": "M27",
+    "file": "server/auto-approve.ts",
+    "locator": {
+      "kind": "decl",
+      "name": "COMMAND_READ_MAX_WORK"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "16 * 1024",
+      "to": "Number.MAX_SAFE_INTEGER"
+    },
+    "tests": [
+      "server/s10-bounded-admission-1019.test.ts"
+    ],
+    "killers": [
+      "Auto holds the whole"
+    ],
+    "mutation": "remove COMMAND_READ_MAX_WORK admission bound in private copy"
+  },
+  {
+    "id": "M28",
+    "file": "server/memory/learning-send-boundary.test.ts",
+    "locator": {
+      "kind": "decl",
+      "name": "isAsyncFn"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "fnLike(n) && !!ts.getModifiers(n)?.some(m => m.kind === ts.SyntaxKind.AsyncKeyword)",
+      "to": "false"
+    },
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "rejects a genuinely async muse launch callback",
+      "rejects a genuinely async codex launch callback"
+    ],
+    "mutation": "accept async gate.launch callback"
+  },
+  {
+    "id": "M29",
+    "file": "server/outside-register.ts",
+    "locator": {
+      "kind": "decl",
+      "name": "skip"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "noOpCdOperand(raw, text, segments, ctx)",
+      "to": "null"
+    },
+    "tests": [
+      "server/outside-register-r9-matrix.test.ts",
+      "server/outside-register-cloned-r9.test.ts"
+    ],
+    "killers": [
+      "W1 real marks and timestamp windows",
+      "the no-op cd in"
+    ],
+    "mutation": "disable no-op cd whitelist"
+  },
+  {
+    "id": "M30",
+    "file": "server/outside-register.ts",
+    "locator": {
+      "kind": "stmt",
+      "in": "noOpCdOperand",
+      "pattern": "^return\\ forbidden\\(raw\\)\\ \\|\\|\\ forbidden\\(text\\)\\ \\?\\ null\\ :\\ operand;"
+    },
+    "edit": "return operand;",
+    "tests": [
+      "server/outside-register-r9-matrix.test.ts",
+      "server/outside-register-cloned-r9.test.ts"
+    ],
+    "killers": [
+      "A1 deny-list retains BASE"
+    ],
+    "mutation": "unconditional no-op cd whitelist"
+  },
+  {
+    "id": "M31",
+    "file": "server/outside-register.ts",
+    "locator": {
+      "kind": "decl",
+      "name": "urlParts"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "word.includes(\"://\") && /\\s/.test(word) ? word.split(/\\s+/) : null",
+      "to": "null"
+    },
+    "tests": [
+      "server/outside-register-r9-matrix.test.ts",
+      "server/outside-register-cloned-r9.test.ts"
+    ],
+    "killers": [
+      "r8 ",
+      "a URL-bearing generated script"
+    ],
+    "mutation": "disable registration T1 URL tokenization"
+  },
+  {
+    "id": "M32",
+    "file": "server/outside-register.ts",
+    "locator": {
+      "kind": "decl",
+      "name": "cut"
+    },
+    "edit": {
+      "kind": "replace",
+      "text": "cut = -1"
+    },
+    "tests": [
+      "server/outside-register-r9-matrix.test.ts",
+      "server/outside-register-cloned-r9.test.ts"
+    ],
+    "killers": [
+      "r8 ",
+      "a URL-bearing generated script"
+    ],
+    "mutation": "disable registration T2 expansion cut"
+  },
+  {
+    "id": "M33",
+    "file": "server/outside-register.ts",
+    "locator": {
+      "kind": "stmt",
+      "pattern": "^if\\ \\(generatedWrite\\ \\&\\&\\ !ctx\\.readOnly\\)"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "generatedWrite && !ctx.readOnly",
+      "to": "false"
+    },
+    "tests": [
+      "server/outside-register-r9-matrix.test.ts",
+      "server/outside-register-cloned-r9.test.ts"
+    ],
+    "killers": [
+      "r8 ",
+      "a URL-bearing generated script"
+    ],
+    "mutation": "disable registration T3 generated writer parents"
+  },
+  {
+    "id": "M34",
+    "file": "server/drivers/engine-input.ts",
+    "locator": {
+      "kind": "call",
+      "name": "fencedWrite",
+      "in": "fencedSubmit"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "write, validate,",
+      "to": "write, undefined,"
+    },
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "H-FENCE-1"
+    ],
+    "mutation": "drop validator forwarding"
+  },
+  {
+    "id": "M35",
+    "file": "server/drivers/engine-input.ts",
+    "locator": {
+      "kind": "call",
+      "name": "fencedWrite",
+      "in": "fencedSubmit"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "serialized === undefined ? undefined : Buffer.byteLength(serialized)",
+      "to": "0"
+    },
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "H-FENCE-1"
+    ],
+    "mutation": "drop exact serialized byte charge"
+  },
+  {
+    "id": "M36",
+    "file": "server/drivers/engine-input.ts",
+    "locator": {
+      "kind": "stmt",
+      "in": "fencedSubmit",
+      "pattern": "^validate\\?\\.\\(\\);$"
+    },
+    "edit": "",
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "H-FENCE-1"
+    ],
+    "mutation": "skip fallback validation"
+  },
+  {
+    "id": "M37",
+    "file": "server/drivers/engine-input.ts",
+    "locator": {
+      "kind": "body",
+      "name": "fencedSubmit"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "validate?.();\n  return write();",
+      "to": "return write();\n  validate?.();"
+    },
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "H-FENCE-1"
+    ],
+    "mutation": "move fallback validator after write"
+  },
+  {
+    "id": "M38",
+    "file": "server/drivers/codex.ts",
+    "locator": {
+      "kind": "call",
+      "name": "fencedSubmit"
+    },
+    "edit": "fencedSubmit(turn, write, wire)",
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "every sink in server/",
+      "every hook-to-write chain is synchronous"
+    ],
+    "mutation": "drop adapter validator"
+  },
+  {
+    "id": "M39",
+    "file": "server/drivers/acp/core.ts",
+    "locator": {
+      "kind": "call",
+      "name": "fencedSubmit"
+    },
+    "edit": "fencedSubmit(turn, write, wire)",
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "every sink in server/",
+      "every hook-to-write chain is synchronous"
+    ],
+    "mutation": "drop adapter validator"
+  },
+  {
+    "id": "M40",
+    "file": "server/drivers/claude.ts",
+    "locator": {
+      "kind": "call",
+      "name": "fencedSubmit"
+    },
+    "edit": "fencedSubmit(input, emit, wire)",
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "every sink in server/",
+      "every hook-to-write chain is synchronous"
+    ],
+    "mutation": "drop adapter validator"
+  },
+  {
+    "id": "M41",
+    "file": "server/drivers/pi.ts",
+    "locator": {
+      "kind": "call",
+      "name": "fencedSubmit"
+    },
+    "edit": "fencedSubmit(turn, write, wire)",
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "every sink in server/",
+      "every hook-to-write chain is synchronous"
+    ],
+    "mutation": "drop adapter validator"
+  },
+  {
+    "id": "M42",
+    "file": "server/memory/learning-send-boundary.test.ts",
+    "locator": {
+      "kind": "decl",
+      "name": "insideConsuming"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "!!declaration && declaration === consumingDeclarations[0]",
+      "to": "call.expression.getText() === \"emitConsumingTurnResponse\""
+    },
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "H-FENCE-8"
+    ],
+    "mutation": "match consuming fence by name instead of declaration identity"
+  },
+  {
+    "id": "M43",
+    "file": "server/memory/learning-send-boundary.test.ts",
+    "locator": {
+      "kind": "decl",
+      "name": "insideConsuming"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": "if (isAsyncFn(cur) || isGenerator(cur) || deferred)",
+      "to": "if (false)"
+    },
+    "tests": [
+      "server/memory/learning-send-boundary.test.ts"
+    ],
+    "killers": [
+      "H-FENCE-9"
+    ],
+    "mutation": "ignore deferred work inside a consuming fence"
+  },
+  {
+    "id": "M44",
+    "file": "server/drivers/claude-s2-qualification.ts",
+    "locator": {
+      "kind": "stmt",
+      "in": "claudeS2NativeBuild",
+      "pattern": "^if \\(nativeIdentity\\(after\\)"
+    },
+    "edit": "",
+    "tests": [
+      "server/drivers/claude-s2-digest-races.test.ts"
+    ],
+    "killers": [
+      "A-F3e rename-over"
+    ],
+    "mutation": "publish a descriptor/path identity race"
+  },
+  {
+    "id": "M45",
+    "file": "server/drivers/claude-s2-qualification.ts",
+    "locator": {
+      "kind": "stmt",
+      "in": "prepareClaudeS2NativeBuild",
+      "pattern": "^if \\(digestEpochs\\.get\\(file\\)"
+    },
+    "edit": "entry.digest = digest;",
+    "tests": [
+      "server/drivers/claude-s2-digest-races.test.ts"
+    ],
+    "killers": [
+      "A-F3f"
+    ],
+    "mutation": "store stale result despite invalidation epoch"
+  },
+  {
+    "id": "M46",
+    "file": "server/drivers/claude-s2-qualification.ts",
+    "locator": {
+      "kind": "stmt",
+      "in": "claudeS2QualifiedCliNow",
+      "pattern": "^if \\(!identity \\|\\| !entry"
+    },
+    "edit": {
+      "kind": "replaceText",
+      "from": " || entry.identity !== identity",
+      "to": ""
+    },
+    "tests": [
+      "server/drivers/claude-s2-digest-races.test.ts"
+    ],
+    "killers": [
+      "A-F3f"
+    ],
+    "mutation": "omit launch identity comparison"
+  },
+  {
+    "id": "M47",
+    "file": "server/testing/source-extract.ts",
+    "locator": {
+      "kind": "body",
+      "name": "admitCaseOverride"
+    },
+    "edit": "{ return {category:\"IO\",reason:\"planted bypass\"}; }",
+    "tests": [
+      "server/testing/source-extract.test.ts",
+      "server/testing/source-extract-v2.test.ts"
+    ],
+    "killers": [
+      "H-SCOPE-4 an authority",
+      "H-SCOPE-4'",
+      "H-SCOPE-6"
+    ],
+    "mutation": "allow unreviewed case overrides"
+  },
+  {
+    "id": "M48",
+    "file": "server/testing/case-ports.ts",
+    "locator": {
+      "kind": "body",
+      "name": "resolveCaseDeclaration"
+    },
+    "edit": "{}",
+    "tests": [
+      "server/testing/source-extract-v2.test.ts"
+    ],
+    "killers": [
+      "H-SCOPE-7",
+      "H-SCOPE-8"
+    ],
+    "mutation": "resolve case authority by spelling"
+  },
+  {
+    "id": "M49",
+    "file": "server/testing/port-integrity.ts",
+    "locator": {
+      "kind": "body",
+      "name": "assertPortsPristine"
+    },
+    "edit": "{}",
+    "tests": [
+      "server/testing/source-extract-v2.test.ts"
+    ],
+    "killers": [
+      "H-SCOPE-9"
+    ],
+    "mutation": "disable pristine authority port checks"
+  }
+]

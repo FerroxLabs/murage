@@ -1,0 +1,445 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "preB-locale-astra-builder",
+  "date": "2026-11-11",
+  "base": "d0236fbc995ba5bfe3005d2093f4c3c317a80256",
+  "scope": "sol-browser-rr: read-only re-review of the 86 corrected browser strings",
+  "strings": {
+    "en:browser.BrowserPreflight.1": {
+      "text": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks. Chrome asks again after it restarts.",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks. Chrome asks again after it restarts.",
+      "verdict": "pass"
+    },
+    "en:browser.BrowserSetupCard.2": {
+      "text": "Setup also enables browser tools in this workspace.",
+      "en": "Setup also enables browser tools in this workspace.",
+      "verdict": "pass"
+    },
+    "en:browser.BrowserSetupCard.10": {
+      "text": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks.",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks.",
+      "verdict": "pass"
+    },
+    "en:browser.BrowserSetupCard.16": {
+      "text": "Share a tab in the extension. If the task is paused, check the page and press Resume there first. If it is stopped, choose Continue here to start a new task.",
+      "en": "Share a tab in the extension. If the task is paused, check the page and press Resume there first. If it is stopped, choose Continue here to start a new task.",
+      "verdict": "pass"
+    },
+    "en:browser.extensionScope": {
+      "text": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    },
+    "en:browser.server.browser-extension-setup.23": {
+      "text": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "en:browser.server.browser-extension-setup.24": {
+      "text": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "de:browser.BrowserPreflight.1": {
+      "text": "Öffne chrome://inspect/#remote-debugging in Chrome, aktiviere dort das Remote-Debugging, lass Chrome geöffnet und klicke auf Zulassen, wenn Chrome fragt. Nach einem Neustart fragt Chrome erneut.",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks. Chrome asks again after it restarts.",
+      "verdict": "pass"
+    },
+    "de:browser.BrowserSetupCard.10": {
+      "text": "Öffne chrome://inspect/#remote-debugging in Chrome, aktiviere dort das Remote-Debugging, lass Chrome geöffnet und klicke auf Zulassen, wenn Chrome fragt.",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks.",
+      "verdict": "pass"
+    },
+    "de:browser.BrowserSetupCard.16": {
+      "text": "Gib in der Erweiterung einen Tab frei. Wenn die Aufgabe pausiert ist, prüfe zuerst die Seite und klicke dort auf Fortsetzen. Wenn sie gestoppt ist, wähle hier Weiter, um eine neue Aufgabe zu starten.",
+      "en": "Share a tab in the extension. If the task is paused, check the page and press Resume there first. If it is stopped, choose Continue here to start a new task.",
+      "verdict": "pass"
+    },
+    "de:browser.directScope": {
+      "text": "{name} nutzt deine Anmeldungen in eigenen Tabs. Murage beschränkt den Bot auf diese Tabs und überlässt dir die Eingabe von Passwörtern und das Bezahlen. Auswahl pro Website und Nachfragestufen gibt es bei „Mein Chrome, angemeldet“.",
+      "en": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and hands passwords and payments back to you. Per-site choices and ask levels belong to My Chrome, signed in.",
+      "verdict": "pass"
+    },
+    "de:browser.extensionScope": {
+      "text": "{name} kann Tabs nutzen, die du freigibst, und ist dabei mit deinen Konten angemeldet. Du legst den Zugriff für jede Website fest und wie oft der Bot vor dem Klicken, Tippen, Senden oder Veröffentlichen nachfragt.",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    },
+    "de:browser.continueWithout": {
+      "text": "Wähle Nicht jetzt, um ohne die Erweiterung fortzufahren.",
+      "en": "Choose Not now to continue without it.",
+      "verdict": "pass"
+    },
+    "de:browser.disclosure.chrome": {
+      "text": "deinen Chrome",
+      "en": "your Chrome",
+      "verdict": "pass"
+    },
+    "de:browser.server.browser-extension-setup.23": {
+      "text": "Diese Browseraufgabe wurde gestoppt. Bitte den Bot, eine neue Browseraufgabe zu starten, und wähle dann erneut Weiter.",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "de:browser.server.browser-extension-setup.24": {
+      "text": "Diese Browseraufgabe wurde gestoppt. Bitte den Bot, eine neue Browseraufgabe zu starten, und wähle dann erneut Weiter.",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "de:browser.server.browser-mode-transition.3": {
+      "text": "Gib zuerst die Steuerung zurück und ändere dann den Browser von {value0}.",
+      "en": "Hand back first, then change {value0}'s browser.",
+      "verdict": "pass"
+    },
+    "de:browser.server.route.5": {
+      "text": "Für dich pausiert · Zuerst die Steuerung zurückgeben",
+      "en": "Paused for you · Hand back first",
+      "verdict": "pass"
+    },
+    "es:browser.BrowserPreflight.1": {
+      "text": "Abre chrome://inspect/#remote-debugging en Chrome, activa la depuración remota, mantén Chrome abierto y haz clic en Permitir cuando Chrome lo solicite. Chrome volverá a preguntar después de reiniciarse.",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks. Chrome asks again after it restarts.",
+      "verdict": "pass"
+    },
+    "es:browser.BrowserSetupCard.10": {
+      "text": "Abre chrome://inspect/#remote-debugging en Chrome, activa la depuración remota, mantén Chrome abierto y haz clic en Permitir cuando Chrome lo solicite.",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks.",
+      "verdict": "pass"
+    },
+    "es:browser.BrowserSetupCard.16": {
+      "text": "Comparte una pestaña en la extensión. Si la tarea está en pausa, revisa primero la página y pulsa Reanudar allí. Si está detenida, elige Continuar aquí para iniciar una tarea nueva.",
+      "en": "Share a tab in the extension. If the task is paused, check the page and press Resume there first. If it is stopped, choose Continue here to start a new task.",
+      "verdict": "pass"
+    },
+    "es:browser.directScope": {
+      "text": "{name} usa tus inicios de sesión en sus propias pestañas. Murage limita el bot a esas pestañas y te cede el control para introducir contraseñas y realizar pagos. Las opciones por sitio y los niveles de consulta corresponden a Mi Chrome, con sesión iniciada.",
+      "en": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and hands passwords and payments back to you. Per-site choices and ask levels belong to My Chrome, signed in.",
+      "verdict": "pass"
+    },
+    "es:browser.extensionScope": {
+      "text": "{name} puede usar las pestañas que compartas, con tu sesión iniciada. Tú eliges el acceso de cada sitio y con qué frecuencia pregunta antes de hacer clic, escribir, enviar o publicar.",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    },
+    "es:browser.profileWaiting": {
+      "text": "Abre {browser} con Murage for Chrome para conectar tu perfil de {name}. Tu tarea no se ha reiniciado.",
+      "en": "Open {browser} with Murage for Chrome to connect your profile for {name}. Your task has not restarted.",
+      "verdict": "pass"
+    },
+    "es:browser.server.browser-extension-setup.21": {
+      "text": "Murage for Chrome tiene un nuevo perfil de navegador. Abre el panel Navegador, elígelo y vuelve a elegir Continuar.",
+      "en": "Murage for Chrome has a new browser profile. Open the Browser panel, choose it, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "es:browser.server.browser-extension-setup.23": {
+      "text": "Esta tarea del navegador se detuvo. Pide al bot que inicie una tarea nueva en el navegador y vuelve a elegir Continuar.",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "es:browser.server.browser-extension-setup.24": {
+      "text": "Esta tarea del navegador se detuvo. Pide al bot que inicie una tarea nueva en el navegador y vuelve a elegir Continuar.",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "fr:browser.yourchrome.ask": {
+      "text": "Pour cette tâche, {name} a besoin d'accéder aux sites où tu es déjà connecté. Utiliser ton Chrome à partir de maintenant ?",
+      "en": "{name} needs your logins for this. Use your Chrome from now on?",
+      "verdict": "pass"
+    },
+    "fr:browser.BrowserPreflight.1": {
+      "text": "Ouvre chrome://inspect/#remote-debugging dans Chrome, active le débogage à distance, garde Chrome ouvert et clique sur Autoriser quand Chrome le demande. Chrome redemande après chaque redémarrage.",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks. Chrome asks again after it restarts.",
+      "verdict": "pass"
+    },
+    "fr:browser.BrowserSetupCard.10": {
+      "text": "Ouvre chrome://inspect/#remote-debugging dans Chrome, active le débogage à distance, garde Chrome ouvert et clique sur Autoriser quand Chrome le demande.",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks.",
+      "verdict": "pass"
+    },
+    "fr:browser.BrowserSetupCard.16": {
+      "text": "Partage un onglet dans l'extension. Si la tâche est en pause, vérifie d'abord la page et appuie sur Reprendre dans l'extension. Si elle est arrêtée, choisis Continuer ici pour lancer une nouvelle tâche.",
+      "en": "Share a tab in the extension. If the task is paused, check the page and press Resume there first. If it is stopped, choose Continue here to start a new task.",
+      "verdict": "pass"
+    },
+    "fr:browser.chromeSummary": {
+      "text": "Ton Chrome · Utilise tes sessions ouvertes dans ses propres onglets",
+      "en": "Your Chrome · Uses your logins in tabs of its own",
+      "verdict": "pass"
+    },
+    "fr:browser.directScope": {
+      "text": "{name} utilise tes sessions ouvertes dans ses propres onglets. Murage limite le bot à ces onglets et te rend la main pour les mots de passe et les paiements. Les choix par site et les niveaux de confirmation relèvent de Mon Chrome, connecté.",
+      "en": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and hands passwords and payments back to you. Per-site choices and ask levels belong to My Chrome, signed in.",
+      "verdict": "pass"
+    },
+    "fr:browser.extensionScope": {
+      "text": "{name} peut utiliser les onglets que tu partages, connecté avec ton compte. Tu choisis l'accès pour chaque site et la fréquence des demandes avant de cliquer, saisir du texte, envoyer ou publier.",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    },
+    "fr:browser.disclosure.direct": {
+      "text": "Utilise tes sessions ouvertes dans ses propres onglets. Les choix par site et les niveaux de confirmation relèvent de Mon Chrome, connecté.",
+      "en": "Uses your logins in tabs of its own. Per-site choices and ask levels belong to My Chrome, signed in.",
+      "verdict": "pass"
+    },
+    "fr:browser.disclosure.extension": {
+      "text": "Utilise tes sessions ouvertes ; tu choisis ses sites et la fréquence de ses demandes.",
+      "en": "Uses your logins; you choose its sites and how often it asks.",
+      "verdict": "pass"
+    },
+    "fr:browser.server.browser-extension-setup.23": {
+      "text": "Cette tâche de navigateur a été arrêtée. Demande au bot de lancer une nouvelle tâche de navigateur, puis choisis à nouveau Continuer.",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "fr:browser.server.browser-extension-setup.24": {
+      "text": "Cette tâche de navigateur a été arrêtée. Demande au bot de lancer une nouvelle tâche de navigateur, puis choisis à nouveau Continuer.",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "hi:browser.BrowserPreflight.1": {
+      "text": "Chrome में chrome://inspect/#remote-debugging खोलें, रिमोट डीबगिंग चालू करें, Chrome को खुला रखें और Chrome के पूछने पर Allow पर क्लिक करें। Chrome रीस्टार्ट होने के बाद फिर से पूछता है।",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks. Chrome asks again after it restarts.",
+      "verdict": "pass"
+    },
+    "hi:browser.BrowserSetupCard.10": {
+      "text": "Chrome में chrome://inspect/#remote-debugging खोलें, रिमोट डीबगिंग चालू करें, Chrome को खुला रखें और Chrome के पूछने पर Allow पर क्लिक करें।",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks.",
+      "verdict": "pass"
+    },
+    "hi:browser.BrowserSetupCard.16": {
+      "text": "एक्सटेंशन में कोई टैब शेयर करें। अगर टास्क रुका हुआ है, तो पहले पेज जाँचें और वहाँ फिर शुरू करें दबाएँ। अगर टास्क रोक दिया गया है, तो नया टास्क शुरू करने के लिए यहाँ जारी रखें चुनें।",
+      "en": "Share a tab in the extension. If the task is paused, check the page and press Resume there first. If it is stopped, choose Continue here to start a new task.",
+      "verdict": "pass"
+    },
+    "hi:browser.directScope": {
+      "text": "{name} अपने अलग टैब में आपके लॉगिन का उपयोग करता है। Murage बॉट को उन्हीं टैब तक सीमित रखता है और पासवर्ड भरने व भुगतान करने का काम आपको सौंपता है। हर साइट के लिए चुनाव और पूछने के स्तर मेरा Chrome, साइन इन में मिलते हैं।",
+      "en": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and hands passwords and payments back to you. Per-site choices and ask levels belong to My Chrome, signed in.",
+      "verdict": "pass"
+    },
+    "hi:browser.extensionScope": {
+      "text": "{name} आपके शेयर किए गए टैब में आपकी साइन-इन की हुई साइटों का इस्तेमाल कर सकता है। हर साइट की एक्सेस और क्लिक करने, टाइप करने, भेजने या पोस्ट करने से पहले वह कितनी बार पूछे, यह आप चुनते हैं।",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.browser-extension-setup.21": {
+      "text": "Murage for Chrome में एक नई ब्राउज़र प्रोफ़ाइल है। ब्राउज़र पैनल खोलें, उसे चुनें, फिर दोबारा जारी रखें चुनें।",
+      "en": "Murage for Chrome has a new browser profile. Open the Browser panel, choose it, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.browser-extension-setup.23": {
+      "text": "यह ब्राउज़र कार्य रोक दिया गया है। बॉट से नया ब्राउज़र कार्य शुरू करने को कहें, फिर दोबारा जारी रखें चुनें।",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.browser-extension-setup.24": {
+      "text": "यह ब्राउज़र कार्य रोक दिया गया है। बॉट से नया ब्राउज़र कार्य शुरू करने को कहें, फिर दोबारा जारी रखें चुनें।",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.browser-extension-setup.25": {
+      "text": "Chrome या Murage बंद हो गया, इसलिए यह कार्य रुका हुआ है। Murage साइड पैनल में फिर शुरू करें दबाएँ, फिर दोबारा जारी रखें चुनें।",
+      "en": "Chrome or Murage closed, so this task is paused. Press Resume in the Murage side panel, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "ja:browser.yourchrome.ask": {
+      "text": "この操作には、{name} があなたのログイン済みのブラウザを使う必要があります。今後はお使いの Chrome を使用しますか？",
+      "en": "{name} needs your logins for this. Use your Chrome from now on?",
+      "verdict": "pass"
+    },
+    "ja:browser.BrowserChoice.4": {
+      "text": "今後このブラウザを使う",
+      "en": "Switch from now on",
+      "verdict": "pass"
+    },
+    "ja:browser.BrowserPreflight.1": {
+      "text": "Chrome で chrome://inspect/#remote-debugging を開き、リモートデバッグを有効にしてください。Chrome を開いたままにして、Chrome から確認されたら［許可］をクリックしてください。Chrome を再起動すると、再度確認されます。",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks. Chrome asks again after it restarts.",
+      "verdict": "pass"
+    },
+    "ja:browser.BrowserSetupList.6": {
+      "text": "今後このブラウザを使う",
+      "en": "Switch from now on",
+      "verdict": "pass"
+    },
+    "ja:browser.BrowserSetupCard.10": {
+      "text": "Chrome で chrome://inspect/#remote-debugging を開き、リモートデバッグを有効にしてください。Chrome を開いたままにして、Chrome から確認されたら［許可］をクリックしてください。",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks.",
+      "verdict": "pass"
+    },
+    "ja:browser.BrowserSetupCard.16": {
+      "text": "拡張機能でタブを共有してください。タスクが一時停止中の場合は、まずページを確認してから拡張機能で［再開］を押してください。タスクが停止済みの場合は、ここで［続行］を選択して新しいタスクを開始してください。",
+      "en": "Share a tab in the extension. If the task is paused, check the page and press Resume there first. If it is stopped, choose Continue here to start a new task.",
+      "verdict": "pass"
+    },
+    "ja:browser.chromeSummary": {
+      "text": "お使いの Chrome · 専用タブでログイン済みの状態でサイトを使用します",
+      "en": "Your Chrome · Uses your logins in tabs of its own",
+      "verdict": "pass"
+    },
+    "ja:browser.directScope": {
+      "text": "{name} は専用タブでログイン済みの状態でサイトを使用します。Murage はボットの操作をそれらのタブに限定し、パスワードや支払いの操作はあなたに戻します。サイトごとの設定や確認レベルは「自分の Chrome（ログイン済み）」で利用できます。",
+      "en": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and hands passwords and payments back to you. Per-site choices and ask levels belong to My Chrome, signed in.",
+      "verdict": "pass"
+    },
+    "ja:browser.extensionScope": {
+      "text": "{name} は、あなたが共有したタブをあなたとしてログインした状態で使用できます。各サイトへのアクセスと、クリック、入力、送信、投稿の前に確認する頻度はあなたが選択できます。",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    },
+    "ja:browser.profileWaiting": {
+      "text": "{name} のプロファイルを接続するには、Murage for Chrome がインストールされている {browser} を開いてください。タスクは再開されていません。",
+      "en": "Open {browser} with Murage for Chrome to connect your profile for {name}. Your task has not restarted.",
+      "verdict": "pass"
+    },
+    "ja:browser.disclosure.direct": {
+      "text": "専用タブでログイン済みの状態でサイトを使用します。サイトごとの設定や確認レベルは「自分の Chrome（ログイン済み）」で利用できます。",
+      "en": "Uses your logins in tabs of its own. Per-site choices and ask levels belong to My Chrome, signed in.",
+      "verdict": "pass"
+    },
+    "ja:browser.disclosure.extension": {
+      "text": "ログイン済みの状態でサイトを使用します。使用するサイトと確認の頻度はあなたが選択できます。",
+      "en": "Uses your logins; you choose its sites and how often it asks.",
+      "verdict": "pass"
+    },
+    "ja:browser.server.browser-extension-setup.23": {
+      "text": "このブラウザタスクは停止しました。ボットに新しいブラウザタスクの開始を依頼してから、もう一度［続行］を選択してください。",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "ja:browser.server.browser-extension-setup.24": {
+      "text": "このブラウザタスクは停止しました。ボットに新しいブラウザタスクの開始を依頼してから、もう一度［続行］を選択してください。",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.BrowserPreflight.1": {
+      "text": "Abra chrome://inspect/#remote-debugging no Chrome, ative a depuração remota, mantenha o Chrome aberto e clique em Permitir quando o Chrome solicitar. O Chrome solicitará novamente após reiniciar.",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks. Chrome asks again after it restarts.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.BrowserSetupCard.10": {
+      "text": "Abra chrome://inspect/#remote-debugging no Chrome, ative a depuração remota, mantenha o Chrome aberto e clique em Permitir quando o Chrome solicitar.",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.BrowserSetupCard.16": {
+      "text": "Compartilhe uma guia na extensão. Se a tarefa estiver pausada, verifique primeiro a página e clique em Retomar na extensão. Se estiver interrompida, escolha Continuar aqui para iniciar uma nova tarefa.",
+      "en": "Share a tab in the extension. If the task is paused, check the page and press Resume there first. If it is stopped, choose Continue here to start a new task.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.directScope": {
+      "text": "{name} usa seus logins em guias próprias. O Murage mantém o bot restrito a essas guias e devolve a você o controle de senhas e pagamentos. Escolhas por site e níveis de confirmação pertencem ao modo Meu Chrome, com login.",
+      "en": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and hands passwords and payments back to you. Per-site choices and ask levels belong to My Chrome, signed in.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.extensionScope": {
+      "text": "{name} pode usar as guias que você compartilhar, conectado como você. Você escolhe o acesso de cada site e com que frequência ele pede confirmação antes de clicar, digitar, enviar ou publicar.",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.profileWaiting": {
+      "text": "Abra o {browser} com o Murage for Chrome para conectar seu perfil de {name}. Sua tarefa não foi reiniciada.",
+      "en": "Open {browser} with Murage for Chrome to connect your profile for {name}. Your task has not restarted.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.server.browser-extension-setup.21": {
+      "text": "O Murage for Chrome tem um novo perfil de navegador. Abra o painel Navegador, selecione-o e escolha Continuar novamente.",
+      "en": "Murage for Chrome has a new browser profile. Open the Browser panel, choose it, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.server.browser-extension-setup.23": {
+      "text": "Esta tarefa de navegador foi interrompida. Peça ao bot para iniciar uma nova tarefa de navegador e escolha Continuar novamente.",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.server.browser-extension-setup.24": {
+      "text": "Esta tarefa de navegador foi interrompida. Peça ao bot para iniciar uma nova tarefa de navegador e escolha Continuar novamente.",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "zh:browser.yourchrome.ask": {
+      "text": "{name} 需要使用你已登录的网站来完成此操作。今后改用你的 Chrome 吗？",
+      "en": "{name} needs your logins for this. Use your Chrome from now on?",
+      "verdict": "pass"
+    },
+    "zh:browser.BrowserPreflight.1": {
+      "text": "在 Chrome 中打开 chrome://inspect/#remote-debugging，开启远程调试，保持 Chrome 打开，并在 Chrome 询问时点击“允许”。Chrome 重启后会再次询问。",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks. Chrome asks again after it restarts.",
+      "verdict": "pass"
+    },
+    "zh:browser.BrowserSetupCard.10": {
+      "text": "在 Chrome 中打开 chrome://inspect/#remote-debugging，开启远程调试，保持 Chrome 打开，并在 Chrome 询问时点击“允许”。",
+      "en": "Open chrome://inspect/#remote-debugging in Chrome, turn on remote debugging, keep Chrome open, and click Allow when Chrome asks.",
+      "verdict": "pass"
+    },
+    "zh:browser.BrowserSetupCard.16": {
+      "text": "在扩展程序中共享一个标签页。如果任务已暂停，请先检查页面并在扩展程序中点击“继续”。如果任务已停止，请在此处选择“继续”以启动新任务。",
+      "en": "Share a tab in the extension. If the task is paused, check the page and press Resume there first. If it is stopped, choose Continue here to start a new task.",
+      "verdict": "pass"
+    },
+    "zh:browser.chromeSummary": {
+      "text": "你的 Chrome · 在独立的标签页中使用你的登录状态",
+      "en": "Your Chrome · Uses your logins in tabs of its own",
+      "verdict": "pass"
+    },
+    "zh:browser.directScope": {
+      "text": "{name} 会在其专用标签页中使用你的登录状态。Murage 会将机器人限制在这些标签页内，并将密码和付款操作交还给你处理。按网站设置和询问级别仅适用于“我的 Chrome（已登录）”。",
+      "en": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and hands passwords and payments back to you. Per-site choices and ask levels belong to My Chrome, signed in.",
+      "verdict": "pass"
+    },
+    "zh:browser.extensionScope": {
+      "text": "{name} 可以以你的登录身份使用你共享的标签页。你可以为每个网站设置访问权限，并选择机器人在点击、输入、发送或发布前询问你的频率。",
+      "en": "{name} can use tabs you share, signed in as you. You choose each site's access and how often it asks before clicking, typing, sending or posting.",
+      "verdict": "pass"
+    },
+    "zh:browser.profileWaiting": {
+      "text": "请打开已安装 Murage for Chrome 的 {browser}，以连接你用于 {name} 的浏览器配置文件。任务尚未恢复。",
+      "en": "Open {browser} with Murage for Chrome to connect your profile for {name}. Your task has not restarted.",
+      "verdict": "pass"
+    },
+    "zh:browser.cause.uncertain.action": {
+      "text": "检查页面并在 Chrome 中点击“继续”",
+      "en": "Check the page and Resume in Chrome",
+      "verdict": "pass"
+    },
+    "zh:browser.cause.connection_lost.action": {
+      "text": "检查页面并在 Chrome 中点击“继续”",
+      "en": "Check the page and Resume in Chrome",
+      "verdict": "pass"
+    },
+    "zh:browser.cause.paused.action": {
+      "text": "在 Chrome 中点击“继续”",
+      "en": "Resume in Chrome",
+      "verdict": "pass"
+    },
+    "zh:browser.disclosure.direct": {
+      "text": "在独立的标签页中使用你的登录状态。按网站设置和询问级别仅适用于“我的 Chrome（已登录）”。",
+      "en": "Uses your logins in tabs of its own. Per-site choices and ask levels belong to My Chrome, signed in.",
+      "verdict": "pass"
+    },
+    "zh:browser.disclosure.extension": {
+      "text": "使用你的登录状态；由你选择其可访问的网站以及询问频率。",
+      "en": "Uses your logins; you choose its sites and how often it asks.",
+      "verdict": "pass"
+    },
+    "zh:browser.server.browser-extension-setup.23": {
+      "text": "此浏览器任务已停止。请让机器人启动一个新的浏览器任务，然后再次选择“继续”。",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "zh:browser.server.browser-extension-setup.24": {
+      "text": "此浏览器任务已停止。请让机器人启动一个新的浏览器任务，然后再次选择“继续”。",
+      "en": "This browser task stopped. Ask the bot to start a new browser task, then choose Continue again.",
+      "verdict": "pass"
+    },
+    "zh:browser.server.browser-extension-setup.25": {
+      "text": "Chrome 或 Murage 已关闭，因此此任务已暂停。请在 Murage 侧边栏中点击“继续”，然后在此处再次选择“继续”。",
+      "en": "Chrome or Murage closed, so this task is paused. Press Resume in the Murage side panel, then choose Continue again.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

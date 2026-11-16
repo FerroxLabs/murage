@@ -32,11 +32,12 @@ export interface BrowserExtensionEngineBackend {
   call(name:string,args:Json):Promise<unknown>;
   resolveTarget(selector:string):Promise<EngineObject>;
   resolveTab(tab?:string):Promise<ExtensionDocument>;
-  event(tabId:number,navigationEpoch:number,method:string,params:Json):void;
+  event(tabId:number,navigationEpoch:number,method:string,params:Json,sessionId?:string):void;
   close():Promise<void>;
 }
 export interface BrowserExtensionEngineOptions {
   dataDir:string; realmId:string; bindingId:string;
+  noLimits?:()=>boolean;
   transport:BrowserExtensionEngineTransport;
   authorize:()=>boolean;
   authorizationError?:()=>Error;
@@ -57,6 +58,7 @@ export class BrowserExtensionEngine {
   private starting?:Promise<void>;
   private sessions=new Map<string,number>();
   private known=new Map<number,ExtensionDocument>();
+  private children=new Map<string,{tabId:number;epoch:number;native:string;target:Json}>();
   private capture?:EngineObject;
   private closed=false;
   private sequence=0;
@@ -69,9 +71,38 @@ export class BrowserExtensionEngine {
   private authorized(){if(this.closed||!this.options.authorize())throw this.options.authorizationError?.() ?? Error("Browser control is no longer authorised.");}
   private emit(message:Json){if(this.socket?.readyState===WebSocket.OPEN)this.socket.send(JSON.stringify(message));}
   private target(document:ExtensionDocument){return{targetId:targetId(document.tabId),type:"page",title:"",url:document.url,attached:true,canAccessOpener:false,browserContextId:"murage-binding"};}
-  private session(tabId:number){let id=[...this.sessions].find(([,tab])=>tab===tabId)?.[0];if(!id){id=`murage-tab-${++this.sequence}`;this.sessions.set(id,tabId);}return id;}
-  private async inventory(){this.authorized();const docs=await this.options.transport.documents();this.authorized();for(const doc of docs)this.known.set(doc.tabId,doc);for(const id of this.known.keys())if(!docs.some(doc=>doc.tabId===id)){this.known.delete(id);const session=[...this.sessions].find(([,tab])=>tab===id);if(session){this.sessions.delete(session[0]);this.emit({method:"Target.detachedFromTarget",params:{sessionId:session[0],targetId:targetId(id)}});}this.emit({method:"Target.targetDestroyed",params:{targetId:targetId(id)}});}return docs;}
-  private async document(sessionId:string){const tabId=this.sessions.get(sessionId);if(tabId===undefined)throw Error("Browser session does not belong to this binding.");const doc=(await this.inventory()).find(doc=>doc.tabId===tabId);if(!doc)throw Error("The shared tab was removed.");return doc;}
+  private session(tabId:number){let id=[...this.sessions].find(([id,tab])=>tab===tabId&&!this.children.has(id))?.[0];if(!id){id=`murage-tab-${++this.sequence}`;this.sessions.set(id,tabId);}return id;}
+  private forgetChild(id:string){
+    const child=this.children.get(id);if(!child)return;
+    this.children.delete(id);this.sessions.delete(id);
+    const root=[...this.sessions].find(([session,tab])=>tab===child.tabId&&!this.children.has(session))?.[0];
+    if(root)this.emit({sessionId:root,method:"Target.detachedFromTarget",params:{sessionId:id,targetId:child.target.targetId}});
+  }
+  private rememberDocument(doc:ExtensionDocument){
+    const known=this.known.get(doc.tabId);
+    if(known&&doc.navigationEpoch<known.navigationEpoch)return;
+    for(const [id,child] of this.children)if(child.tabId===doc.tabId&&child.epoch!==doc.navigationEpoch)this.forgetChild(id);
+    this.known.set(doc.tabId,doc);
+  }
+  private async inventory(){
+    this.authorized();const docs=await this.options.transport.documents();this.authorized();
+    for(const doc of docs)this.rememberDocument(doc);
+    for(const id of this.known.keys())if(!docs.some(doc=>doc.tabId===id)){
+      this.known.delete(id);
+      for(const [session,child] of this.children)if(child.tabId===id)this.forgetChild(session);
+      for(const [session,tab] of this.sessions)if(tab===id){this.sessions.delete(session);this.emit({method:"Target.detachedFromTarget",params:{sessionId:session,targetId:targetId(id)}});}
+      this.emit({method:"Target.targetDestroyed",params:{targetId:targetId(id)}});
+    }
+    return docs;
+  }
+  private async document(sessionId:string){
+    const tabId=this.sessions.get(sessionId);if(tabId===undefined)throw Error("Browser session does not belong to this binding.");
+    const wasChild=this.children.has(sessionId);
+    const doc=(await this.inventory()).find(doc=>doc.tabId===tabId);if(!doc)throw Error("The shared tab was removed.");
+    const child=this.children.get(sessionId);
+    if(wasChild&&(!child||!this.options.noLimits?.()||child.epoch!==doc.navigationEpoch))throw Error("Child session is no longer current.");
+    return child?{...doc,sessionId:child.native}:doc;
+  }
   /** Optional engine probes may recover from CDP errors. An authority or policy refusal cannot be recovered that way: it belongs to the tool call in flight. */
   private keepRefusal(error:unknown,refusal:{first?:unknown}|undefined){
     const code=(error as {code?:string})?.code;
@@ -125,13 +156,17 @@ export class BrowserExtensionEngine {
         if(method==="Target.closeTarget"){await this.options.transport.closeTab(doc.tabId);await this.inventory();return{success:true};}
         await this.options.transport.selectTab(doc.tabId);return{};
       }
-      if(method==="Target.detachFromTarget"){if(typeof params.sessionId!=="string"||!this.sessions.has(params.sessionId))throw Error("Unknown browser session.");this.sessions.delete(params.sessionId);return{};}
+      if(method==="Target.detachFromTarget"){if(typeof params.sessionId!=="string"||!this.sessions.has(params.sessionId))throw Error("Unknown browser session.");this.sessions.delete(params.sessionId);this.children.delete(params.sessionId);return{};}
       throw Error("Browser-wide command is not permitted.");
     }
     if(method.startsWith("Storage.")||(method.startsWith("Network.")&&!['Network.enable','Network.disable'].includes(method)))throw Error("Browser storage and network payload access is not permitted.");
     const doc=await this.document(sessionId);
-    if(method==="Target.getTargetInfo")return{targetInfo:this.target(doc)};
-    if(method==="Target.setAutoAttach")return{}; // Child frames remain protected, never exposed as new authority.
+    if(method==="Target.getTargetInfo")return{targetInfo:this.children.get(sessionId)?.target??this.target(doc)};
+    if(method==="Target.setAutoAttach"){
+      if(!this.options.noLimits?.())return{};
+      if(params.flatten!==true)throw Error("Flattened target sessions required.");
+      return this.options.transport.send(method,{autoAttach:params.autoAttach===true,waitForDebuggerOnStart:false,flatten:true,filter:[{type:"iframe",exclude:false},{exclude:true}]},doc);
+    }
     if(method==="Page.bringToFront"){await this.options.transport.selectTab(doc.tabId);return{};}
     if(doc.url==="about:blank"){
       if(BOOTSTRAP_SETUP.has(method))return this.options.transport.send(method,params,doc);
@@ -194,7 +229,8 @@ export class BrowserExtensionEngine {
     this.starting=(async()=>{
       const secret=randomBytes(32).toString("hex");this.relaySecret=secret;const route=`/devtools/browser/${secret}`;
       const server=createServer((_req,res)=>{res.writeHead(404);res.end();});this.server=server;
-      const sockets=new WebSocketServer({noServer:true,maxPayload:1024*1024});this.sockets=sockets;
+      // The trusted pinned engine may outlive a permission promotion. Native requests are sized/chunked by the service.
+      const sockets=new WebSocketServer({noServer:true,maxPayload:0});this.sockets=sockets;
       await new Promise<void>((resolve,reject)=>{server.once("error",reject);server.listen(0,"127.0.0.1",resolve)});
       // A close() (sharing turned off) or a lost grant during any await below ends the start here: dispose() already ran and saw no
       // engine, so one spawned after it would be owned by nothing (upstream 4a6a9c4e1).
@@ -244,13 +280,33 @@ export class BrowserExtensionEngine {
     if(response.isError||matches.length!==1)throw Error("The browser tab is not available in this binding.");
     const document=(await this.inventory()).find(doc=>targetId(doc.tabId)===matches[0].targetId);if(!document)throw Error("The browser tab is no longer shared.");return structuredClone(document);
   }
-  event(tabId:number,navigationEpoch:number,method:string,params:Json){if(this.closed||!this.options.authorize())return;const session=[...this.sessions].find(([,id])=>id===tabId)?.[0];if(!session)return;const known=this.known.get(tabId);if(!known||navigationEpoch<known.navigationEpoch)return;if(method==="Page.javascriptDialogOpening"&&SELF_ANSWERED_DIALOGS.has(String(params.type))){this.answerOwnDialog(session);return;}this.emit({sessionId:session,method,params});}
+  event(tabId:number,navigationEpoch:number,method:string,params:Json,nativeSessionId?:string){
+    if(this.closed||!this.options.authorize())return;
+    const known=this.known.get(tabId);if(!known||navigationEpoch<known.navigationEpoch)return;
+    // Runtime events carry the current epoch before any command has refreshed inventory.
+    if(navigationEpoch>known.navigationEpoch)this.rememberDocument({...known,navigationEpoch});
+    const root=[...this.sessions].find(([id,tab])=>tab===tabId&&!this.children.has(id))?.[0];if(!root)return;
+    let session=root;
+    if(nativeSessionId){const child=[...this.children].find(([,c])=>c.tabId===tabId&&c.epoch===navigationEpoch&&c.native===nativeSessionId);if(!child||!this.options.noLimits?.())return;session=child[0];}
+    if(method==="Target.attachedToTarget"){
+      if(!this.options.noLimits?.()||(params.targetInfo as Json)?.type!=="iframe"||typeof params.sessionId!=="string")return;
+      const existing=[...this.children].find(([,child])=>child.tabId===tabId&&child.native===params.sessionId&&child.epoch===navigationEpoch);
+      const id=existing?.[0]??`murage-child-${++this.sequence}`;this.sessions.set(id,tabId);this.children.set(id,{tabId,epoch:navigationEpoch,native:params.sessionId,target:params.targetInfo as Json});
+      this.emit({sessionId:session,method,params:{...params,sessionId:id}});return;
+    }
+    if(method==="Target.detachedFromTarget"){
+      const child=[...this.children].find(([,c])=>c.tabId===tabId&&c.native===params.sessionId);if(!child)return;
+      this.children.delete(child[0]);this.sessions.delete(child[0]);this.emit({sessionId:session,method,params:{...params,sessionId:child[0]}});return;
+    }
+    if(method==="Page.javascriptDialogOpening"&&SELF_ANSWERED_DIALOGS.has(String(params.type))){this.answerOwnDialog(session);return;}
+    this.emit({sessionId:session,method,params});
+  }
   async dispose(){
     if(this.client){const client=this.client;this.client=undefined;try{if(this.socket?.readyState===WebSocket.OPEN)await client.request("tools/call",{name:"agent_browser_close",arguments:{}});}catch{}await client.close();}
     this.socket?.terminate();this.socket=undefined;this.sockets?.close();this.sockets=undefined;
-    const server=this.server;this.server=undefined;if(server)await new Promise<void>(resolve=>server.close(()=>resolve()));this.sessions.clear();this.known.clear();this.starting=undefined;
+    const server=this.server;this.server=undefined;if(server)await new Promise<void>(resolve=>server.close(()=>resolve()));this.sessions.clear();this.children.clear();this.known.clear();this.starting=undefined;
   }
   /** Murage-owned snapshot, refs and diff for one document (spec 6.1). The core lane keeps one per tab and calls it from the executor. */
-  readLayer(document:ExtensionDocument,origin:()=>string):ReadLayer{return new ReadLayer((method,params)=>this.options.transport.send(method,(params??{}) as Json,document),{origin,url:()=>document.url});}
+  readLayer(document:ExtensionDocument,origin:()=>string):ReadLayer{return new ReadLayer((method,params)=>this.options.transport.send(method,(params??{}) as Json,document),{origin,url:()=>document.url,noLimits:this.options.noLimits});}
   async close(){this.closed=true;await this.dispose();}
 }

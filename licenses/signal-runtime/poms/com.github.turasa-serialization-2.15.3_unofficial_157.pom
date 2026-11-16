@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <!-- This module was also published with a richer model, Gradle metadata,  -->
+  <!-- which should be used instead. Do not delete the following line which  -->
+  <!-- is to indicate to Gradle or any Gradle module metadata file consumer  -->
+  <!-- that they should prefer consuming it instead. -->
+  <!-- do_not_remove: published-with-gradle-metadata -->
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.github.turasa</groupId>
+  <artifactId>serialization</artifactId>
+  <version>2.15.3_unofficial_157</version>
+  <name>serialization</name>
+  <description>Signal Service communication library for Java, unofficial fork</description>
+  <url>https://github.com/Turasa/libsignal-service-java</url>
+  <licenses>
+    <license>
+      <name>GPLv3</name>
+      <url>https://www.gnu.org/licenses/gpl-3.0.txt</url>
+    </license>
+  </licenses>
+  <developers>
+    <developer>
+      <name>Moxie Marlinspike</name>
+    </developer>
+    <developer>
+      <name>Sebastian Scheibner</name>
+    </developer>
+    <developer>
+      <name>Tilman Hoffbauer</name>
+    </developer>
+  </developers>
+  <scm>
+    <connection>scm:git@github.com:Turasa/libsignal-service-java.git</connection>
+    <developerConnection>scm:git@github.com:Turasa/libsignal-service-java.git</developerConnection>
+    <url>scm:git@github.com:Turasa/libsignal-service-java.git</url>
+  </scm>
+  <dependencies>
+    <dependency>
+      <groupId>io.arrow-kt</groupId>
+      <artifactId>arrow-core-jvm</artifactId>
+      <version>2.2.2.1</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlin</groupId>
+      <artifactId>kotlin-stdlib</artifactId>
+      <version>2.2.21</version>
+      <scope>compile</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.github.turasa</groupId>
+      <artifactId>util-jvm</artifactId>
+      <version>2.15.3_unofficial_157</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.jetbrains.kotlinx</groupId>
+      <artifactId>kotlinx-serialization-json-jvm</artifactId>
+      <version>1.9.0</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.signal</groupId>
+      <artifactId>libsignal-client</artifactId>
+      <version>0.106.1</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+      <version>2.22.1</version>
+      <scope>runtime</scope>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.module</groupId>
+      <artifactId>jackson-module-kotlin</artifactId>
+      <version>2.22.1</version>
+      <scope>runtime</scope>
+      <optional>true</optional>
+    </dependency>
+    <dependency>
+      <groupId>com.willowtreeapps.assertk</groupId>
+      <artifactId>assertk</artifactId>
+      <version>0.28.1</version>
+      <scope>runtime</scope>
+      <optional>true</optional>
+    </dependency>
+  </dependencies>
+</project>

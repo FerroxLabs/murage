@@ -1,3 +1,4 @@
+// secret-scan: fixture
 // Auto mode's decision rules. These are the only place a tool runs
 // WITHOUT a human looking, so they get pinned down hard: what auto mode
 // waves through, what it refuses to wave through, and the fact that a
@@ -755,13 +756,15 @@ describe("always-ask reads the whole command, and asks on a cut copy", () => {
   });
 
   it("an uncut ACP summary is read whole", () => {
+    // MAIN RULING 2026-11-13 wipe-only: give the ordinary no-card case the same stored owner authority as production.
     expect(autoVerdict(NO_LIMITS, "shell", "rm -rf ~")).toMatchObject({ source: "always-ask", rule: "delete-home" });
-    expect(autoVerdict(NO_LIMITS, "shell", "git status").approve).not.toBeNull();
+    expect(autoVerdict(NO_LIMITS, "shell", "git status", { fullAccessOrigin: "owner" }).approve).not.toBeNull();
   });
 
   it("a non-command tool's summary is read as text: an apostrophe never asks", () => {
-    expect(autoVerdict(NO_LIMITS, "Edit", "Edit /Users/alex/it's notes.md").approve).not.toBeNull();
-    expect(autoVerdict(NO_LIMITS, "Edit", `Edit ${"x".repeat(5_000)}`).approve).not.toBeNull();
+    // MAIN RULING 2026-11-13 wipe-only: these no-card cases are authenticated owner turns.
+    expect(autoVerdict(NO_LIMITS, "Edit", "Edit /Users/alex/it's notes.md", { fullAccessOrigin: "owner" }).approve).not.toBeNull();
+    expect(autoVerdict(NO_LIMITS, "Edit", `Edit ${"x".repeat(5_000)}`, { fullAccessOrigin: "owner" }).approve).not.toBeNull();
   });
 
   it("a command tool's unparseable summary asks", () => {

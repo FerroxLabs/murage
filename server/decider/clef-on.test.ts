@@ -1,7 +1,7 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// The decision model on by default with a Flux key: defaults, paid and free
-// plans, the 2,048 token state limit, and fail-open on every error.
+// Explicit decision model choices, account plans, the 2,048 token state limit,
+// and local fallback on every error.
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -43,40 +43,41 @@ describe("defaults", () => {
     const s = readDecisionModelSettings(undefined);
     expect(s.enabled).toBe(false);
     expect(s.jobs.roomRouting).toBe(false);
-    expect(readDecisionModelSettings({}, { defaultOn: false }).enabled).toBe(false);
+    expect(readDecisionModelSettings({}).enabled).toBe(false);
   });
-  it("with a key and nothing saved, the master switch and room routing are on", () => {
-    const s = readDecisionModelSettings({}, { defaultOn: true });
-    expect(s.enabled).toBe(true);
-    expect(s.jobs.roomRouting).toBe(true);
+  it("nothing saved leaves both switches off", () => {
+    const s = readDecisionModelSettings({});
+    expect(s.enabled).toBe(false);
+    expect(s.jobs.roomRouting).toBe(false);
   });
   it("what the owner saved wins, either way", () => {
-    expect(readDecisionModelSettings({ enabled: false }, { defaultOn: true }).enabled).toBe(false);
-    expect(readDecisionModelSettings({ enabled: true, jobs: { roomRouting: false } }, { defaultOn: true }).jobs.roomRouting).toBe(false);
-    expect(readDecisionModelSettings({ enabled: true, jobs: { roomRouting: true } }, { defaultOn: false })).toMatchObject({ enabled: true, jobs: { roomRouting: true } });
-    expect(readDecisionModelSettings({ provider: "other" as never }, { defaultOn: true }).enabled).toBe(false);
+    expect(readDecisionModelSettings({ enabled: false }).enabled).toBe(false);
+    expect(readDecisionModelSettings({ enabled: true, jobs: { roomRouting: false } }).jobs.roomRouting).toBe(false);
+    expect(readDecisionModelSettings({ enabled: true, jobs: { roomRouting: true } })).toMatchObject({ enabled: true, jobs: { roomRouting: true } });
+    expect(readDecisionModelSettings({ provider: "other" as never }).enabled).toBe(false);
   });
-  it("the default settings path turns on when a Flux key is present, off when not", async () => {
+  it("the default settings path stays off with or without a key", async () => {
     const f = vi.fn<typeof fetch>().mockImplementation(async () => ok());
     const on = createDecider({ credential: () => KEY, fetch: f as unknown as typeof fetch, dataDir });
-    expect(await decideRoomResponder(on, input())).toMatchObject({ kind: "member", botId: "maya" });
+    expect(await decideRoomResponder(on, input())).toMatchObject({ kind: "fallback", reason: "disabled" });
+    expect(f).not.toHaveBeenCalled();
     const none = vi.fn<typeof fetch>();
     const off = createDecider({ credential: () => null, fetch: none as unknown as typeof fetch, dataDir });
     expect(await decideRoomResponder(off, input())).toMatchObject({ kind: "fallback", reason: "disabled" });
     expect(none).not.toHaveBeenCalled();
   });
   it("describes availability for the app without a key", () => {
-    const s = readDecisionModelSettings({}, { defaultOn: true });
+    const s = readDecisionModelSettings({});
     expect(describeDecisionModelSettings(s).available).toBe(true);
     expect(describeDecisionModelSettings(s, { available: false }).available).toBe(false);
     expect(JSON.stringify(describeDecisionModelSettings(s))).not.toContain("sk-");
   });
 });
 
-describe("paid and free plans", () => {
-  it("a free plan (403 paid_plan_required) is remembered and not asked again, fail-open", async () => {
+describe("account plans", () => {
+  it("a restricted plan (403 paid_plan_required) is remembered and not asked again, fail-open", async () => {
     const f = vi.fn<typeof fetch>().mockImplementation(async () => planRefusal());
-    const decider = createDecider({ credential: () => KEY, fetch: f as unknown as typeof fetch, dataDir });
+    const decider = createDecider({ settings: () => readDecisionModelSettings({ enabled: true, jobs: { roomRouting: true } }), credential: () => KEY, fetch: f as unknown as typeof fetch, dataDir });
     expect(await decideRoomResponder(decider, input())).toEqual({ kind: "fallback", reason: "plan_required" });
     expect(deciderUnavailable(KEY)).toBe(true);
     expect(await decideRoomResponder(decider, input())).toEqual({ kind: "fallback", reason: "plan_required" });
@@ -93,7 +94,7 @@ describe("paid and free plans", () => {
   });
   it("a paid plan with other 403 bodies is not marked unavailable", async () => {
     const f = vi.fn<typeof fetch>().mockImplementation(async () => new Response("forbidden", { status: 403 }));
-    const decider = createDecider({ credential: () => KEY, fetch: f as unknown as typeof fetch, dataDir });
+    const decider = createDecider({ settings: () => readDecisionModelSettings({ enabled: true, jobs: { roomRouting: true } }), credential: () => KEY, fetch: f as unknown as typeof fetch, dataDir });
     expect(await decideRoomResponder(decider, input())).toMatchObject({ kind: "fallback", reason: "disabled" });
     expect(deciderUnavailable(KEY)).toBe(false);
   });
@@ -146,14 +147,14 @@ describe("fail-open", () => {
   for (const [name, make] of cases) {
     it(`${name} falls back to the lead and never throws`, async () => {
       const f = vi.fn<typeof fetch>().mockImplementation(make);
-      const decider = createDecider({ credential: () => KEY, fetch: f as unknown as typeof fetch, dataDir });
+      const decider = createDecider({ settings: () => readDecisionModelSettings({ enabled: true, jobs: { roomRouting: true } }), credential: () => KEY, fetch: f as unknown as typeof fetch, dataDir });
       expect((await decideRoomResponder(decider, input())).kind).toBe("fallback");
     });
   }
   it("a hung call ends inside the 1.1 second budget", async () => {
     expect(ROOM_ROUTING_TIMEOUT_MS).toBe(1_100);
     const hang = vi.fn<typeof fetch>((_u, init) => new Promise((_r, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted")))));
-    const decider = createDecider({ credential: () => KEY, fetch: hang as unknown as typeof fetch, dataDir });
+    const decider = createDecider({ settings: () => readDecisionModelSettings({ enabled: true, jobs: { roomRouting: true } }), credential: () => KEY, fetch: hang as unknown as typeof fetch, dataDir });
     const started = Date.now();
     const route = await decideRoomResponder(decider, input());
     expect(route).toEqual({ kind: "fallback", reason: "timeout" });
@@ -183,7 +184,7 @@ describe("a busy room with a long message and six bots", () => {
 describe("no-retain and the route log", () => {
   it("the Flux call asks Flux not to keep the text, like the browser checker", async () => {
     const f = vi.fn<typeof fetch>().mockImplementation(async () => ok());
-    const decider = createDecider({ credential: () => KEY, fetch: f as unknown as typeof fetch, dataDir });
+    const decider = createDecider({ settings: () => readDecisionModelSettings({ enabled: true, jobs: { roomRouting: true } }), credential: () => KEY, fetch: f as unknown as typeof fetch, dataDir });
     await decideRoomResponder(decider, input());
     const headers = (f.mock.calls[0]![1] as RequestInit).headers as Record<string, string>;
     expect(headers["x-flux-no-retain"]).toBe("1");

@@ -369,7 +369,11 @@ public final class PhoneAskContract {
         public final String threadId;
         public final String id;
         public final boolean notify;
-        public AskSent(String state, String askId, String threadId, String id, boolean notify) {
+        /** The host's answer says whether it held the owner's proof for this ask. Absent from an older host; Android sends no proof, so it only carries it. */
+        public final Boolean proven;
+        public AskSent(String state, String askId, String threadId, String id, boolean notify) { this(state, askId, threadId, id, notify, null); }
+        public AskSent(String state, String askId, String threadId, String id, boolean notify, Boolean proven) {
+            this.proven = proven;
             this.state = state;
             this.askId = askId;
             this.threadId = threadId;
@@ -379,13 +383,14 @@ public final class PhoneAskContract {
         public static AskSent parse(Object value) {
             if (!(value instanceof JSONObject)) return null;
             JSONObject o = (JSONObject) value;
-            if (!keys(o, "state", "askId", "threadId", "id", "notify")) return null;
+            if (!keys(o, "state", "askId", "threadId", "id", "notify", "proven")) return null;
             if (!field(o, "state", "enum:sent", false, false)) return null;
             if (!field(o, "askId", "string", false, false)) return null;
             if (!field(o, "threadId", "string", false, false)) return null;
             if (!field(o, "id", "string", false, false)) return null;
             if (!field(o, "notify", "bool", false, false)) return null;
-            return new AskSent((String) o.opt("state"), (String) o.opt("askId"), (String) o.opt("threadId"), (String) o.opt("id"), (Boolean) o.opt("notify"));
+            if (!field(o, "proven", "bool", true, false)) return null;
+            return new AskSent((String) o.opt("state"), (String) o.opt("askId"), (String) o.opt("threadId"), (String) o.opt("id"), (Boolean) o.opt("notify"), o.has("proven") ? (Boolean) o.opt("proven") : null);
         }
         public JSONObject encode() {
             try {
@@ -395,6 +400,7 @@ public final class PhoneAskContract {
                 o.put("threadId", threadId);
                 o.put("id", id);
                 o.put("notify", notify);
+                if (proven != null) o.put("proven", proven.booleanValue());
                 return parse(o) == null ? null : o;
             } catch (JSONException e) { return null; }
         }

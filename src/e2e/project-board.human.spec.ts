@@ -3,7 +3,7 @@
 import { test, expect, type Page, type Locator } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -59,7 +59,7 @@ function benchmark() {
 type Call = { path: string; method: string; body: Record<string, unknown> | null; query: string };
 async function enter(page: Page, width: number, room = ROOM) {
   await page.setViewportSize({ width, height: 900 });
-  await page.addInitScript(() => localStorage.setItem("murage-email-gate", "skipped"));
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.route("https://**/*", route => route.abort());
   await page.goto(origin); const sidebar = await openSidebar(page); await sidebar.getByText(room, { exact: true }).click();
   await expect(page.getByRole("tab", { name: "Board", exact: true })).toBeVisible();

@@ -88,7 +88,7 @@ export function SidebarSectionHeader({
             <Loader2
               aria-hidden="true"
               size={11}
-              className="shrink-0 animate-spin text-ink-secondary"
+              className="shrink-0 animate-spin text-accent"
             />
           )}
           <span className="h-px flex-1 bg-hairline/40" />

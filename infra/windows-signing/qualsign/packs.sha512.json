@@ -1,0 +1,27 @@
+[
+  {
+    "id": "microsoft.aspnetcore.app.runtime.win-x64",
+    "version": "10.0.15",
+    "sha512": "iOp/XLbRe/wvAeKpYZXPdAtK1WZnCl7C5XZJsm6otvS2AYun+9ODisD9eZYXv/KdT/CtKZn3ITaL3X75EFwsMQ=="
+  },
+  {
+    "id": "microsoft.netcore.app.host.win-x64",
+    "version": "10.0.15",
+    "sha512": "0V8Y4723H7JCI61sq+tOxSRGceDs2MTMZw4H4L+gBJiX92Db5DohcqYugYEqpoqdPYEeBxrfirlx1ji7kDIX3Q=="
+  },
+  {
+    "id": "microsoft.netcore.app.runtime.nativeaot.win-x64",
+    "version": "10.0.15",
+    "sha512": "ZSAK0P3kkGCw+9+V0hBVR2zNXKrXad+MqjajUD3ZVpOlm5oKhXV5hdlqWcBuZ3UTtVfQ8KVZCr7LfYyQwOFHzA=="
+  },
+  {
+    "id": "microsoft.netcore.app.runtime.win-x64",
+    "version": "10.0.15",
+    "sha512": "vzCVKwBmeXZ31VkaU956oQE1zda/pweaw1q0vtnRWzivoPa4jyz9zVrmhrora1UJlPkzfBteQHf9bOYAF2ZuVw=="
+  },
+  {
+    "id": "runtime.win-x64.microsoft.dotnet.ilcompiler",
+    "version": "10.0.15",
+    "sha512": "WEtOJ41ItA7fJ+pqQFYgCmZxiX5d6AByfLWbifqEjyjkfFXmD9/T9V7xTwrvh5OxkJkBhnZsygcdU0Al9MNcVw=="
+  }
+]

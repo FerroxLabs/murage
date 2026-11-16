@@ -1,7 +1,9 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-// MEMW 1.0.18 Part A WP1: state table T2(8f)-(8u), S20-S24, T14e (helper half), T14f. A "kill" leaves the connections open and
-// unclosed (no close checkpoint, as a real exit), and the next open runs in the same process. Throwaway temp dirs only.
+// MEMW state-table unit cases retain unclosed handles. The R4 matrix below additionally
+// kills a child and opens the same files in fresh processes at every named crash cut.
+import {spawn,type ChildProcess} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import { createHash } from "node:crypto";
 import { closeSync, existsSync, mkdtempSync, openSync, readdirSync, readFileSync, statSync, truncateSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -36,10 +38,10 @@ async function open(path: string, charge: ChargeTransport = grant): Promise<Open
   if (o.verdict.state !== "stopped") o.verdict = await o.wal.openCheck();
   return o;
 }
-/** A kill: nothing closed, nothing sealed; the handles stay open until the test ends. */
-function kill(o: OpenedIndexWal): void { live.splice(live.indexOf(o), 1); killed.push(o); }
+/** Unit-state simulation only: no close checkpoint. Process-death witnesses are separate below. */
+function retainUnclosed(o: OpenedIndexWal): void { live.splice(live.indexOf(o), 1); killed.push(o); }
 /** Windows refuses to unlink an -shm whose handles are open (EBUSY): there the killed handles are closed first (writable first, so no
- * close checkpoint) and the unlink tolerates a file the close already removed. Elsewhere the handles stay open, as a real kill leaves them. */
+ * close checkpoint) and the unlink tolerates a file the close already removed. The Unix unit-state cases retain their handles; the subprocess matrix tests actual death. */
 function removeShm(path: string, o: OpenedIndexWal): void {
   if (process.platform === "win32") {
     const at = killed.indexOf(o); if (at >= 0) killed.splice(at, 1);
@@ -126,7 +128,7 @@ it("8h S8: exits leave the -wal with every frame: prepareExit seals best effort 
 it("8m S13: a non-seal write, a full PASSIVE, an exit and the -wal/-shm gone: the open stops (log 0 is not a pass without -walok)", async () => {
   const path = fresh(), o = await open(path);
   await fill(o, "open", 4 * MB, 100_000);
-  kill(o);
+  retainUnclosed(o);
   (o.wal as IndexWalWriter).closeForQuarantine(); killed.splice(killed.indexOf(o), 1); // the close removes the log, as an unlink would
   for (const s of ["-wal", "-shm"]) { try { unlinkSync(`${path}${s}`); } catch { /* gone */ } }
   const b = await open(path);
@@ -177,7 +179,7 @@ it("8q S17: an open over a breach is stopped and never TRUNCATEs; a clean 1.0.17
   // An unchecked 6 MB write the rule must catch (same generation, over the newest row's reserve). No reader pin: a TRUNCATE run before
   // the rule would complete here and hide the breach.
   const raw = new DatabaseSync(path); raw.exec("PRAGMA wal_autocheckpoint=0"); rows(raw, 6 * MB);
-  kill(o);
+  retainUnclosed(o);
   walCheckpointModes(true);
   const b = await open(path);
   expect(b.verdict).toMatchObject({ state: "stopped", reason: "open_rise" });
@@ -193,7 +195,7 @@ it("8q S17: an open over a breach is stopped and never TRUNCATEs; a clean 1.0.17
 it("8r S18: a downgrade after a breach keeps the stop and writes nothing; after a pass it clears the checks, then reopens writable", async () => {
   const path = fresh(), o = await open(path);
   await expect(fill(o, "fill", MEMW_W_STEP_BYTES, 6 * MB)).rejects.toThrow(WalStop);
-  kill(o);
+  retainUnclosed(o);
   expect(await runOpenRuleForDowngrade(path)).toMatchObject({ state: "stopped" });
   expect(existsSync(`${path}-walstop`)).toBe(true);
 
@@ -276,7 +278,7 @@ it("S20: the header unreadable at Lb 10 MB: no write starts, the check stays owe
   await expect(o.wal.check()).rejects.toThrow(Exited);
   expect(newestSeq(o)).toBe(seq + 1);
   delete walTestHooks.walHeader;
-  kill(o);
+  retainUnclosed(o);
   expect((await open(path)).verdict).toEqual({ state: "writable" });
 });
 
@@ -305,7 +307,7 @@ it("S24: unresolved checkpoint answers (BUSY, missing counts, log < ckpt, -1/-1,
 it("S23: a breach whose PASSIVE copied it fully, then the stop: sidecar present -> stopped; the reopen stays stopped", async () => {
   const path = fresh(), o = await open(path);
   await expect(fill(o, "fill", MEMW_W_STEP_BYTES, 6 * MB)).rejects.toThrow(WalStop);
-  kill(o);
+  retainUnclosed(o);
   expect((await open(path)).verdict).toMatchObject({ state: "stopped" });
 });
 
@@ -319,7 +321,7 @@ it("S21a: a 1 MB tail after a TRUNCATE and a failed attempt is resolved by the l
   await o.wal.check();
   expect(o.wal.stopped).toBe(false);
   expect(marker(path)).toMatchObject({ state: "resolved", seq: newestSeq(o) + 1, checkedEnd: walLen(path) });
-  kill(o);
+  retainUnclosed(o);
   expect((await open(path)).verdict).toEqual({ state: "writable" });
 });
 
@@ -330,7 +332,7 @@ it("S21b: a 20 MB tail after a failed attempt is a live OVERRUN, marker left in_
   truncateSync(`${path}-wal`, walLen(path) + 20 * MB);
   await expect(o.wal.check()).rejects.toThrow(WalStop);
   expect(marker(path)).toMatchObject({ state: "in_flight" });
-  kill(o);
+  retainUnclosed(o);
   expect((await open(path)).verdict).toMatchObject({ state: "stopped" });
 });
 
@@ -339,7 +341,7 @@ it("S21c: S21b's tail with the helper killed before any check: the reopen's stop
   await fill(o, "open", 4 * MB, 100_000);
   expect(() => o.wal.write("fill", MEMW_W_STEP_BYTES, () => { throw new Error("SQLITE_FULL"); })).toThrow("SQLITE_FULL");
   truncateSync(`${path}-wal`, walLen(path) + 20 * MB);
-  kill(o);
+  retainUnclosed(o);
   walTestHooks.fault = (name: string, op: string) => { if (name === "-walstop" && op === "write") throw new Error("EIO"); };
   await expect(open(path)).rejects.toThrow(Exited);
   delete walTestHooks.fault;
@@ -354,7 +356,7 @@ it("S21e: a kill after the marker before the first frame: the open goes on", asy
   await fill(o, "open", 4 * MB, 100_000);
   walTestHooks.fault = (name, op) => { if (name === "-walattempt" && op === "fsync") { /* marker written */ } };
   writeSidecar(path, "-walattempt", { fileId: o.wal.fileId.toString(), seq: newestSeq(o) + 1, kind: "fill", reserve: MEMW_W_STEP_BYTES, state: "in_flight", checkedEnd: 0 }, false);
-  kill(o);
+  retainUnclosed(o);
   expect((await open(path)).verdict).toEqual({ state: "writable" });
 });
 
@@ -368,7 +370,7 @@ it("S21g: a resolved rollback then a commit at the same seq leaves a tail: the o
     await o.wal.check();
     o.wal.write("fill", MEMW_W_STEP_BYTES, () => rows(o.writable, 4000)); // commits at the marker's seq; the tail stays past its frames
     if (past) truncateSync(`${path}-wal`, 3 * MB + (o.wal.pageSize + 24));
-    kill(o);
+    retainUnclosed(o);
     const b = await open(path);
     expect(b.verdict.state).toBe(past ? "stopped" : "writable");
   }
@@ -380,7 +382,7 @@ it("S21h: an in_flight marker with seq = newest - 1 and Lw <= checked_end stops 
   await fill(o, "fill", MEMW_W_STEP_BYTES, 4000);
   truncateSync(`${path}-wal`, walLen(path) + 64 * 1024);
   writeSidecar(path, "-walattempt", { fileId: o.wal.fileId.toString(), seq: newestSeq(o) - 1, kind: "fill", reserve: MEMW_W_STEP_BYTES, state: "in_flight", checkedEnd: walLen(path) }, false);
-  kill(o);
+  retainUnclosed(o);
   expect((await open(path)).verdict).toMatchObject({ state: "stopped", reason: "open_tail" });
 });
 
@@ -477,13 +479,13 @@ for (const shm of ["kept", "removed"] as const) {
     const p1 = fresh(), a = await open(p1);
     await fill(a, "open", 4 * MB, 100_000);
     a.wal.write("fill", MEMW_W_STEP_BYTES, () => rows(a.writable, 3 * MB));
-    kill(a); drop(p1, a);
+    retainUnclosed(a); drop(p1, a);
     expect((await open(p1)).verdict).toEqual({ state: "writable" });
     // A breaching commit killed before its check: the first reopen's stop sidecar fails (exit, no stop row); the next reopen is stopped.
     const p2 = fresh(), b = await open(p2);
     await fill(b, "open", 4 * MB, 100_000);
     b.wal.write("fill", MEMW_W_STEP_BYTES, () => rows(b.writable, 6 * MB));
-    kill(b); drop(p2, b);
+    retainUnclosed(b); drop(p2, b);
     failStopWrite();
     await expect(open(p2)).rejects.toThrow(Exited);
     delete walTestHooks.fault;
@@ -497,7 +499,7 @@ for (const shm of ["kept", "removed"] as const) {
     spill(p3, 2 * MB);
     await c.wal.check();
     expect(marker(p3)).toMatchObject({ state: "resolved" });
-    kill(c); drop(p3, c);
+    retainUnclosed(c); drop(p3, c);
     expect((await open(p3)).verdict).toEqual({ state: "writable" });
   });
 }
@@ -513,7 +515,7 @@ it("8k S11: s+1 died after the log restarted (new generation, base 32 B): the re
   expect(o.wal.L()).toBeGreaterThan(8 * MB);
   o.wal.write("fill", MEMW_W_STEP_BYTES, () => rows(o.writable, 3 * MB));
   expect(readWalHeader(path)!.id).not.toBe(id0);
-  kill(o);
+  retainUnclosed(o);
   expect((await open(path)).verdict).toEqual({ state: "writable" });
 });
 
@@ -529,7 +531,7 @@ it("8l S12: a kill inside the seal's TRUNCATE (every frame copied, the file not 
   };
   expect(await o.wal.sealAndTruncate()).toEqual({ truncated: false });
   delete walTestHooks.checkpoint;
-  kill(o);
+  retainUnclosed(o);
   const seal = JSON.parse(String(meta(o, "wal_check"))) as { kind: string; idb: string | null };
   const H = readWalHeader(path)!;
   expect(seal.kind).toBe("seal");
@@ -547,7 +549,7 @@ it("8o S15: a seal over its 4 frames killed before its check: the reopen is stop
   await expect(o.wal.sealAndTruncate()).rejects.toThrow("killed");
   delete walTestHooks.point; delete walTestHooks.sealBody;
   expect(JSON.parse(String(meta(o, "wal_check"))).kind).toBe("seal");
-  kill(o);
+  retainUnclosed(o);
   expect((await open(path)).verdict).toMatchObject({ state: "stopped", reason: "open_rise" });
 });
 
@@ -573,7 +575,7 @@ for (const shm of ["kept", "removed"] as const) {
       await fill(o, "open", 4 * MB, 100_000);
       await breach(o, path);
       delete walTestHooks.point; delete walTestHooks.sealBody;
-      kill(o);
+      retainUnclosed(o);
       expect(existsSync(`${path}-shm`)).toBe(true);
       if (shm === "removed") removeShm(path, o);
       failStopWrite();
@@ -623,7 +625,7 @@ it("S-STOPDUR: a stop in place is durable: a kill right after the sidecar's dire
   walTestHooks.point = name => { if (name === "after-walstop") throw new Error("kill -9"); };
   await expect(a.wal.check()).rejects.toThrow("kill -9");
   delete walTestHooks.point;
-  kill(a);
+  retainUnclosed(a);
   expect(a.writable.prepare("SELECT value FROM index_meta WHERE key='wal_over_stop'").get()).toBeUndefined(); // no SQLite write
   expect((await open(p1)).verdict).toMatchObject({ state: "stopped", fileId: a.wal.fileId });
   // (2) a 1.0.17 file's first MEMW transaction fails and leaves a log past C: no file_id was ever stored
@@ -634,7 +636,7 @@ it("S-STOPDUR: a stop in place is durable: a kill right after the sidecar's dire
   spill(p2, MEMW_C_BYTES);
   await expect(b.wal.check()).rejects.toThrow(WalStop);
   expect(readSidecar(p2, "-walstop").state).toBe("ok");
-  kill(b);
+  retainUnclosed(b);
   expect((await open(p2)).verdict).toMatchObject({ state: "stopped", reason: "stopped" }); // the sidecar binds (not the (U) tail)
   expect(existsSync(`${p2}-walstop`)).toBe(true);
   // (3) the sidecar's fsync fails: exit(1), no statement, no close
@@ -745,4 +747,60 @@ it("S21i (1): a truncate that did not shorten the file after a restart (emulated
   expect(w.counters.truncate_failed).toBe(1);
   expect(w.counters.false_bound_stops).toBe(1);
   expect(readSidecar(path, "-walstop").state).toBe("ok");
+});
+
+// Each subprocess uses production open/write/check/recovery, with existing WAL fault seams only.
+const crashChild=fileURLToPath(new URL('./testing/wal-crash-child.ts',import.meta.url));
+const crashChildren=new Set<ChildProcess>();
+afterEach(async()=>{
+ for(const child of crashChildren){if(child.exitCode===null&&child.signalCode===null){const done=new Promise<void>(resolve=>child.once('exit',()=>resolve()));child.kill('SIGKILL');await done;}}
+ crashChildren.clear();
+});
+function walProcess(path:string,mode:string,cut:string){
+ const child=spawn(process.execPath,['--experimental-strip-types',crashChild,mode,path,cut],{stdio:['ignore','ignore','pipe','ipc']});crashChildren.add(child);
+ let errors='';child.stderr!.on('data',bytes=>{errors+=String(bytes);});
+ const exited=new Promise<{code:number|null;signal:NodeJS.Signals|null}>(resolve=>child.once('exit',(code,signal)=>{crashChildren.delete(child);resolve({code,signal});}));
+ const message=new Promise<any>((resolve,reject)=>{
+  child.once('message',resolve);child.once('error',reject);
+  child.once('exit',(code,signal)=>reject(Error(`WAL child exited before its witness: ${code}/${signal}: ${errors}`)));
+ });
+ return {child,message,exited};
+}
+const crashCuts=[
+ ['8i-pass-commit','writable'],['8i-breach-commit','stopped'],['8i-resolved-tail','writable'],
+ ['8k-restart-commit','writable'],['8l-truncate-copy','writable'],['8o-seal-commit','stopped'],
+ ['S21d-seal-commit','stopped'],['S21d-group-commit','stopped'],['S21d-rollback-tail','stopped'],
+ ['S21e-marker-before-frame','writable'],['S21g-resolved-commit','writable'],['S21g-past-checked-end','stopped'],
+ ['S21h-stale-marker','stopped'],['8q-unchecked-rise','stopped'],['S23-stopped','stopped'],
+ ['S21a-resolved-rollback','writable'],['S21c-unchecked-tail','stopped'],['S21b-stopped-tail','stopped'],
+ ['S-STOPDUR-after-walstop','stopped'],['8m-remove-log','stopped'],['S20-unreadable-exit','writable'],
+] as const;
+for(const shm of ['kept','removed'] as const)it.each(crashCuts)('R4 process death %s, shm '+shm,async(cut,state)=>{
+ const path=fresh(),writer=walProcess(path,'write',cut),before=await writer.message;
+ expect(before).toMatchObject({pid:writer.child.pid,cut});expect(before.handlesOpen).toBe(true);expect(before.pid).not.toBe(process.pid);
+ expect(before.walBytes).toBeGreaterThan(0);
+ if(cut==='S21e-marker-before-frame')expect(before.marker).toMatchObject({state:'ok',value:{state:'in_flight'}});
+ if(cut==='S-STOPDUR-after-walstop')expect(before.stopRow).toBeUndefined();
+ expect(writer.child.kill('SIGKILL')).toBe(true);
+ expect(await writer.exited).toEqual({code:null,signal:'SIGKILL'});
+ // These files were left by a dead process, with no graceful close or prepareExit.
+ expect(existsSync(path+'-shm')).toBe(true);
+ if(shm==='removed')unlinkSync(path+'-shm');
+ if(cut==='8m-remove-log'){
+  unlinkSync(path+'-wal');if(existsSync(path+'-shm'))unlinkSync(path+'-shm');
+ }
+ if(['8i-breach-commit','S21d-seal-commit','S21d-group-commit','S21d-rollback-tail','S21c-unchecked-tail'].includes(cut)){
+  const failed=walProcess(path,'reopen-failed-stop',cut),failure=await failed.message;
+  expect(failure).toMatchObject({pid:failed.child.pid,cut,exit:1});expect(failure.pid).not.toBe(before.pid);
+  expect(failed.child.kill('SIGKILL')).toBe(true);expect(await failed.exited).toEqual({code:null,signal:'SIGKILL'});
+ }
+ const reopened=walProcess(path,'reopen',cut),after=await reopened.message;
+ expect(await reopened.exited).toEqual({code:0,signal:null});
+ expect(after.pid).not.toBe(before.pid);expect(after.pid).not.toBe(process.pid);
+ expect(after.verdict.state).toBe(state);
+ if(state==='stopped')expect(after.checkpoints.TRUNCATE).toBe(0);
+ if(cut==='8m-remove-log')expect(after.verdict.reason).toBe('no_walok');
+ const again=walProcess(path,'reopen',cut),durable=await again.message;
+ expect(await again.exited).toEqual({code:0,signal:null});expect(durable.pid).not.toBe(after.pid);
+ expect(durable.verdict.state).toBe(state);
 });
