@@ -23,7 +23,7 @@ for (const kind of ["primary", "child", "reaper"]) test(`real archive restores s
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "murage-separate-archive-"))); roots.push(root);
   const original = path.join(root, "original"), userData = path.join(root, "desktop"), archive = path.join(root, "snapshot.zip"); mkdirSync(original); mkdirSync(userData);
   const env = { PATH: path.dirname(process.execPath), HOME: root, USERPROFILE: root, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) };
-  const run = (args, delegated = {}) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { env: { ...env, ...delegated }, timeout: 30_000, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  const run = (args, delegated = {}) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { windowsHide: true, env: { ...env, ...delegated }, timeout: 30_000, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
   writeFileSync(path.join(original, "config.json"), JSON.stringify({ profile: { name: "Offline archive fixture" }, instances: { fixture: { driver: "openai-compat", enabled: true, config: { key: "PRIVATE_FAKE_CANARY" } } } }));
   writeFileSync(path.join(original, "bots.json"), JSON.stringify([{ id: "bot", threadId: "thread", name: "Preserved history", autoApprove: true, computer: "host", busy: true }]));
   writeFileSync(path.join(original, "groups.json"), "[]");
@@ -32,7 +32,7 @@ for (const kind of ["primary", "child", "reaper"]) test(`real archive restores s
   migrateMemorySchema(db, "active"); db.close();
   // Valid backup is produced BEFORE planting the foreign claim. No live/raw copy.
   const saved = run(["backup", "--data-dir", original, "--output", archive]);
-  const paths = dataDirLeasePaths(original), dead = Number(execFileSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { env, encoding: "utf8" }));
+  const paths = dataDirLeasePaths(original), dead = Number(execFileSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { windowsHide: true, env, encoding: "utf8" }));
   const record = (host, pid = process.pid) => ({ version: 1, pid, host, token: randomUUID(), createdAt: Date.now() - 1000 });
   const foreign = record("foreign-fixture.invalid");
   let anchor = kind === "child" ? paths.childLeasePath : paths.leasePath;
@@ -66,7 +66,7 @@ for (const kind of ["primary", "child", "reaper"]) test(`real archive restores s
   assert.equal(report.engines, "disabled"); assert.equal(report.schedules, "paused");
   run(["activate", "--data-dir", selected.dataDirectory, "--review-hash", report.reviewHash]);
   const startup = `import {resolveInstallationSelection} from ${JSON.stringify(new URL("./installation-selection.mjs", import.meta.url).href)};import {assertRestoreReviewed} from ${JSON.stringify(new URL("./restore-review.mjs", import.meta.url).href)};import {acquireDataDirLease} from ${JSON.stringify(new URL("./data-dir-lease.mjs", import.meta.url).href)};const s=resolveInstallationSelection(process.argv[1],process.argv[2]);const lease=acquireDataDirLease(s.dataDirectory);try{assertRestoreReviewed(s.dataDirectory);process.stdout.write(JSON.stringify(s));}finally{lease.release();}`;
-  const restarted = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", startup, userData, original], { env, encoding: "utf8", timeout: 15_000 }));
+  const restarted = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", startup, userData, original], { windowsHide: true, env, encoding: "utf8", timeout: 15_000 }));
   assert.equal(restarted.dataDirectory, selected.dataDirectory);
   assert.deepEqual(files.map(file => [file, fingerprint(file)]), before);
   assert.equal(inspectDataDirLease(original).code, "LEASE_FOREIGN_HOST");
@@ -80,7 +80,7 @@ test("recorder save after separate restore writes only the selected installation
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "murage-separate-recorder-"))); roots.push(root);
   const original = path.join(root, "original"), userData = path.join(root, "desktop"), archive = path.join(root, "snapshot.zip"); mkdirSync(original); mkdirSync(userData);
   const env = { PATH: path.dirname(process.execPath), HOME: root, USERPROFILE: root, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) };
-  const run = (args, delegated = {}) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { env: { ...env, ...delegated }, timeout: 30_000, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  const run = (args, delegated = {}) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { windowsHide: true, env: { ...env, ...delegated }, timeout: 30_000, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
   writeFileSync(path.join(original, "config.json"), JSON.stringify({ profile: { name: "Recorder root fixture" } }));
   writeFileSync(path.join(original, "bots.json"), JSON.stringify([{ id: "bot", threadId: "thread", name: "Original sentinel" }]));
   writeFileSync(path.join(original, "groups.json"), "[]");
@@ -134,7 +134,7 @@ test("recorder save after separate restore writes only the selected installation
       const result = handlerFor(owned)(event, payload);
       process.stdout.write(JSON.stringify({ selected: selection.dataDirectory, requested: canonical, refusals, skillsBeforeSave, result }));
     } finally { owner.release(); }`;
-  const relaunched = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", relaunch, userData, root], { env: { ...env, MURAGE_DATA_DIR: original }, encoding: "utf8", timeout: 15_000 }));
+  const relaunched = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e", relaunch, userData, root], { windowsHide: true, env: { ...env, MURAGE_DATA_DIR: original }, encoding: "utf8", timeout: 15_000 }));
 
   assert.equal(relaunched.selected, plan.dataDirectory);
   // Windows canonical roots are deliberately case-folded (data-dir-lease.mjs).
@@ -156,10 +156,10 @@ test("changed archive hash cannot publish startup selection", () => {
   const original = path.join(root, "original"), userData = path.join(root, "desktop"); mkdirSync(original); mkdirSync(userData);
   writeFileSync(path.join(original, "config.json"), "{}");
   const archive = path.join(root, "snapshot.zip"), env = { PATH: path.dirname(process.execPath), HOME: root, USERPROFILE: root };
-  execFileSync(process.execPath, [cli, "backup", "--data-dir", original, "--output", archive], { env, stdio: "pipe", timeout: 30_000 });
+  execFileSync(process.execPath, [cli, "backup", "--data-dir", original, "--output", archive], { windowsHide: true, env, stdio: "pipe", timeout: 30_000 });
   const plan = allocateSeparateInstallation(planSeparateInstallation(userData, original, original));
   let failure;
-  try { execFileSync(process.execPath, [cli, "restore", "--data-dir", plan.dataDirectory, "--archive", archive, "--sha256", "0".repeat(64)], { env, stdio: "pipe", timeout: 30_000 }); } catch (error) { failure = error; }
+  try { execFileSync(process.execPath, [cli, "restore", "--data-dir", plan.dataDirectory, "--archive", archive, "--sha256", "0".repeat(64)], { windowsHide: true, env, stdio: "pipe", timeout: 30_000 }); } catch (error) { failure = error; }
   assert.equal(JSON.parse(String(failure.stderr)).error, "ARCHIVE_HASH_CHANGED");
   assert.equal(existsSync(plan.selector), false);
   assert.equal(resolveInstallationSelection(userData, original).dataDirectory, dataDirLeasePaths(original).canonicalDataDir);
@@ -174,7 +174,7 @@ for (const via of ["undo", "startup"]) test(`undoing a separate restore hands st
   const root = realpathSync(mkdtempSync(path.join(tmpdir(), "murage-separate-undo-"))); roots.push(root);
   const original = path.join(root, "original"), userData = path.join(root, "desktop"), archive = path.join(root, "snapshot.zip"); mkdirSync(original); mkdirSync(userData);
   const env = { PATH: path.dirname(process.execPath), HOME: root, USERPROFILE: root, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) };
-  const run = (args, delegated = {}) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { env: { ...env, ...delegated }, timeout: 30_000, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
+  const run = (args, delegated = {}) => JSON.parse(execFileSync(process.execPath, [cli, ...args], { windowsHide: true, env: { ...env, ...delegated }, timeout: 30_000, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
   writeFileSync(path.join(original, "config.json"), JSON.stringify({ profile: { name: "Undo fixture" }, instances: {} }));
   writeFileSync(path.join(original, "bots.json"), "[]"); writeFileSync(path.join(original, "groups.json"), "[]");
   const db = new DatabaseSync(path.join(original, "messages.db"));

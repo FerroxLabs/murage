@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { constants, closeSync, copyFileSync, createWriteStream, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { constants, closeSync, copyFileSync, createWriteStream, existsSync, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { pipeline } from "node:stream/promises";
@@ -9,6 +9,8 @@ import yauzl from "yauzl";
 import { fetchPinned } from "./download-retry.mjs";
 import { WINDOWS_BACKUP_ARCHIVE, WINDOWS_BACKUP_RAW_SHA256 } from "../shared/windows-backup-tools.mjs";
 import { RESTIC_PINS } from "../shared/backup-restic-pin.mjs";
+import { loadWindowsBackupSignedPins } from "../shared/windows-backup-signed-pins.mjs";
+import { verifySignedWindowsPe } from "../shared/windows-signed-pe.mjs";
 
 const maxBytes = 64 * 1024 ** 2;
 const members = new Map([["age/age.exe", ["age.exe", WINDOWS_BACKUP_RAW_SHA256.age]], ["age/age-keygen.exe", ["age-keygen.exe", WINDOWS_BACKUP_RAW_SHA256.keygen]], ["age/LICENSE", ["LICENSE", WINDOWS_BACKUP_RAW_SHA256.license]]]);
@@ -28,9 +30,19 @@ function hash(file) {
 function realDirectory(path) { const stat = lstatSync(path); if (!stat.isDirectory() || stat.isSymbolicLink()) throw Error("WINDOWS_BACKUP_DIRECTORY_UNSAFE"); }
 export function verifyWindowsBackupTools(directory, { restic = true } = {}) {
   realDirectory(directory);
-  for (const [name, digest] of members.values()) if (hash(join(directory, name)) !== digest) throw Error(`WINDOWS_BACKUP_RAW_MISMATCH: ${name}`);
-  // Off-site copies: the raw upstream restic.exe, never signed or rewritten.
-  if (restic && hash(join(directory, RESTIC_PINS["win32-x64"].executable)) !== RESTIC_PINS["win32-x64"].originalSha256) throw Error("WINDOWS_BACKUP_RAW_MISMATCH: restic.exe");
+  const signed = loadWindowsBackupSignedPins(directory);
+  const verify = (name, digest) => {
+    const file = join(directory, name), pin = signed?.[name], observed = hash(file);
+    if (signed && name.endsWith(".exe")) {
+      if (!pin || pin.originalSha256 !== digest || observed !== pin.sha256) throw Error(`WINDOWS_BACKUP_SIGNED_MISMATCH: ${name}`);
+      if (pin.sha256 !== digest) {
+        if (pin.unsigned?.sha256 !== digest) throw Error("WINDOWS_BACKUP_SIGNED_PINS_INVALID");
+        verifySignedWindowsPe(readFileSync(file), pin.unsigned);
+      }
+    } else if (observed !== digest) throw Error(`WINDOWS_BACKUP_RAW_MISMATCH: ${name}`);
+  };
+  for (const [name, digest] of members.values()) verify(name, digest);
+  if (restic) verify(RESTIC_PINS["win32-x64"].executable, RESTIC_PINS["win32-x64"].originalSha256);
 }
 async function extract(archive, directory) {
   const zip = await new Promise((resolve, reject) => yauzl.open(archive, { lazyEntries: true, autoClose: false, strictFileNames: true, validateEntrySizes: true }, (error, zip) => error ? reject(error) : resolve(zip)));

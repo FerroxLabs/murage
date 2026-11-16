@@ -12,8 +12,9 @@ import type { GrantCall, ResolvedCall } from "../shared/app-action-grant.ts";
 export const PATH_RULES: readonly RegExp[] = SENSITIVE_PATHS.map((row) => row.re);
 export const TEXT_RULES: readonly RegExp[] = SENSITIVE_TEXT.map((row) => row.re);
 
-/** A card number by network prefix: Visa, Mastercard, American Express, Discover. */
-const secretCardShape = /(?<![\d-])(?:4\d|5[1-5]|2[2-7]|3[47]|6[05])(?:[ -]?\d){11,17}(?![\d-])/;
+/** A card number by network prefix: Visa, Mastercard, American Express, Discover.
+ * A number inside an identifier (such as Meta's act_<digits>) is not a card. */
+const secretCardShape = /(?<![\w-])(?:4\d|5[1-5]|2[2-7]|3[47]|6[05])(?:[ -]?\d){11,17}(?![\d-])/;
 
 /** A card number at the key guard: a known card prefix and length, passing the Luhn check. Bare Luhn would stop one
  * command in ten that carries a 13-digit millisecond time. `secretShapeIn` keeps its wider read for a template's body. */

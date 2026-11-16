@@ -1,0 +1,56 @@
+[
+  {
+    "command": "env printf bash",
+    "control": "operand",
+    "inputDigest": "403aa63b13692795e9764072f825f28a25f883f735b231938b4e25104e2c6915",
+    "expectedBashOccurrences": []
+  },
+  {
+    "command": "find . -exec printf bash \\;",
+    "control": "operand",
+    "inputDigest": "b16b75a431a1a3364efe91404e6fbd6da2ff3653ee6693e106f5b294b212cf60",
+    "expectedBashOccurrences": []
+  },
+  {
+    "command": "printf bash",
+    "control": "operand",
+    "inputDigest": "52657534e381a9371e0a417d11fc8069d9371d6e587be9e09670acd3a10117ae",
+    "expectedBashOccurrences": []
+  },
+  {
+    "command": "printf 'é日本語' && bash hello.sh",
+    "control": "unicode-offset",
+    "inputDigest": "969e399bca517bc7fb5b232d3e9425d24656ed4fae51e8f371430e1598301b88",
+    "expectedBashOccurrences": [
+      {
+        "startByte": 24,
+        "endByte": 28,
+        "source": "bash"
+      }
+    ]
+  },
+  {
+    "command": "env bash hello.sh",
+    "control": "wrapper-target",
+    "inputDigest": "4b5a1136503c5f07c7aea0f990d4b759a76f5068c93b8da9861d9c106eebd08c",
+    "expectedBashOccurrences": [
+      {
+        "startByte": 4,
+        "endByte": 8,
+        "source": "bash"
+      }
+    ]
+  },
+  {
+    "command": "find . -exec bash hello.sh \\;",
+    "control": "finder-target",
+    "inputDigest": "00b342219a1c71d54d7e50aa5736829ab519a45b1a42ccad61a5e2643e9a8737",
+    "expectedBashOccurrences": [
+      {
+        "startByte": 13,
+        "endByte": 17,
+        "source": "bash"
+      }
+    ]
+  }
+]

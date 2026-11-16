@@ -19,6 +19,8 @@ import {
   THEME_PREFERENCES,
   readPreference,
   resolveSkin,
+  skinInUse,
+  themeStatusLabel,
   watchSystemSkin,
 } from "./skins";
 
@@ -225,5 +227,31 @@ describe("automatic", () => {
     watchSystemSkin((id) => seen.push(id))();
     mq.emit(true);
     expect(seen).toEqual([]);
+  });
+});
+
+describe("the status line names the theme actually in use", () => {
+  const paint = (skin: string | undefined, osDark: boolean) => {
+    vi.stubGlobal("document", { documentElement: { dataset: skin ? { skin } : {} } });
+    vi.stubGlobal("window", { matchMedia: () => ({ matches: osDark }) });
+  };
+
+  it("reads the palette stamped on the page, not the OS query (UI dark while the OS query says light)", () => {
+    paint("dark", false);
+    expect(skinInUse()).toBe("dark");
+    paint("light", true);
+    expect(skinInUse()).toBe("light");
+  });
+
+  it("falls back to what the preference resolves to before anything is painted", () => {
+    paint(undefined, true);
+    expect(skinInUse()).toBe("dark");
+  });
+
+  it("labels System with the resolved theme and an explicit choice by its own name", () => {
+    expect(themeStatusLabel("auto", "dark")).toBe("System (Dark)");
+    expect(themeStatusLabel("auto", "light")).toBe("System (Light)");
+    expect(themeStatusLabel("dark", "dark")).toBe("Dark");
+    expect(themeStatusLabel("light", "light")).toBe("Light");
   });
 });

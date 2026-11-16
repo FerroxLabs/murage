@@ -3,13 +3,13 @@
 //
 // 1.0.18 ERRORS-NAME relay 4. Flux names why it refused in a code, but not always in the same place. Recorded on flux-router
 // origin/master:
-//   rate_limiter.py  429 {"error":{"type":"rate_limit_exceeded","state":"free_cap_reached","message":"Your account's monthly
+//   Rate-limit gate  429 {"error":{"type":"rate_limit_exceeded","state":"free_cap_reached","message":"Your account's monthly
 //                    free-tier token allowance is exhausted. ..."}}: the code is in `state`, never in the sentence, and LiteLLM
 //                    flattens the dict into error.message as a Python repr ('state': 'free_cap_reached').
-//   forge_hook.py    402 credit_exhausted (metering on): the body is a plain sentence plus "Top up at ..."; the code rides only the
+//   Billing gate     402 credit_exhausted (metering on): the body is a plain sentence plus "Top up at ..."; the code rides only the
 //                    X-Flux-Hold-Reason header. Metering off: {"error":"credit_exhausted","message":...}.
-//   flux_credit_state.py  402 credit_unresolved; 429 hold with X-Flux-Hold-Reason and "Retry in Ns." in the message.
-//   forge_hook.py    429 {"error":"hourly_burn_limit", ..., "retry_after": <seconds>} from the hourly spend gate (FLUX-BURN-COPY-1018);
+//   Credit gate      402 credit_unresolved; 429 hold with X-Flux-Hold-Reason and "Retry in Ns." in the message.
+//   Billing gate     429 {"error":"hourly_burn_limit", ..., "retry_after": <seconds>} from the hourly spend gate (FLUX-BURN-COPY-1018);
 //                    Fuigo relays it as ACP -32003 "API error (status 429 Too Many Requests): None: hourly_burn_limit".
 // The engine relays some of this as sanitised prose (embedded JSON removed), so the code is read here from the raw error, its
 // RPC data and Fuigo's retry notice, and travels on the runtime.error as its own field.
@@ -45,11 +45,12 @@ export function fluxRefusalCode(...sources: unknown[]): FluxRefusalCode | undefi
   for (const [key, text] of found) {
     // A code this module already read and carried structurally (ProviderHttpError.data.flux_code) reads back as itself: a
     // header-only hold stores the bare word "hold", which the text patterns below do not match.
-    if (key === "flux_code" && text === "hold") { hold = true; continue; }
-    if (/\bfree_cap_reached\b/i.test(text)) return "free_cap_reached";
+    if (["flux_code", "state", "code", "error"].includes(key) && text === "hold") { hold = true; continue; }
+    if (/\bfree_cap_reached\b|monthly free-tier token allowance/i.test(text)) return "free_cap_reached";
     if (/\bcredit_exhausted\b/i.test(text)) credit = "credit_exhausted";
     else if (!credit && /\bcredit_unresolved\b/i.test(text)) credit = "credit_unresolved";
     if (/\bhourly_burn_limit\b/i.test(text)) hourly = true;
+    if (/["'](?:state|code|error)["']\s*:\s*["']hold["']/i.test(text)) hold = true;
     if (HOLD_HEADER.test(key) || /x-flux-hold-reason/i.test(text) || HOLD_TEXT.test(text)) hold = true;
   }
   return credit ?? (hourly ? "hourly_burn_limit" : hold ? "hold" : undefined);
@@ -63,7 +64,7 @@ export function fluxRefusalFinal(code: FluxRefusalCode | undefined): boolean {
 // FLUX-BURN-COPY-1018 design r16: the hourly reset time is read only from a refusal body document, never from prose, a header,
 // an array or any key outside the wrappers below. A document is one whole JSON / Python-repr object, optionally after one of
 // the exact transport prefixes Fuigo was recorded sending.
-/** forge_hook.py sends at least 60 seconds and about an hour at most; anything outside two hours is not trusted as a time. */
+/** The Flux service sends at least 60 seconds and about an hour at most; anything outside two hours is not trusted as a time. */
 const RETRY_AFTER_MAX_S = 2 * 60 * 60;
 const BODY_WRAPPERS = ["detail", "error", "data", "body"] as const;
 const BODY_DEPTH = 6;
@@ -241,7 +242,7 @@ export function fluxHourlyResetsAt(now: number, ...sources: unknown[]): number |
 }
 
 /** A refusal that is still the hourly gate but whose last answer named no reset keeps the reset an earlier notice named. */
-export function fluxRefusalFieldsKeeping(code: FluxRefusalCode | undefined, now: number, saved: { code: FluxRefusalCode; resetsAt?: number } | undefined, ...sources: unknown[]): { gatewayCode?: FluxRefusalCode; gatewayResetsAt?: number } {
+export function fluxRefusalFieldsKeeping(code: FluxRefusalCode | undefined, now: number, saved: { code?: FluxRefusalCode; resetsAt?: number } | undefined, ...sources: unknown[]): { gatewayCode?: FluxRefusalCode; gatewayResetsAt?: number } {
   const fields = fluxRefusalFields(code, now, ...sources);
   if (code === "hourly_burn_limit" && fields.gatewayResetsAt === undefined && saved?.code === "hourly_burn_limit" && saved.resetsAt !== undefined) return { ...fields, gatewayResetsAt: saved.resetsAt };
   return fields;
@@ -252,4 +253,18 @@ export function fluxRefusalFields(code: FluxRefusalCode | undefined, now: number
   if (!code) return {};
   const resetsAt = code === "hourly_burn_limit" ? fluxHourlyResetsAt(now, ...sources) : undefined;
   return resetsAt === undefined ? { gatewayCode: code } : { gatewayCode: code, gatewayResetsAt: resetsAt };
+}
+
+/** HTTP evidence from ACP data or the recorded Fuigo transport prefix; never the JSON-RPC code (-32003). */
+export function refusalHttpStatus(...sources: unknown[]): number | undefined {
+  const found: Array<[string, string]> = [];
+  for (const source of sources) strings(source, found, "", 0, true);
+  for (const [key, value] of found) {
+    if (["http_status", "httpStatus", "status", "status_code"].includes(key) && /^[45]\d{2}$/.test(value)) return Number(value);
+  }
+  for (const [, value] of found) {
+    const match = /^(?:API error \(status |HTTP )([45]\d{2})\b/.exec(value);
+    if (match) return Number(match[1]);
+  }
+  return undefined;
 }

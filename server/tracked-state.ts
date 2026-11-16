@@ -19,6 +19,11 @@
 //   root (cached per root), so `run.watch.outcome = x` marks the run.
 
 const targets = new WeakMap<object, object>();
+const roots = new WeakMap<object, object>();
+/** The tracking root owning a nested proxy, without walking its payload. */
+export function trackedRoot(value: unknown): object | undefined {
+  return value !== null && typeof value === "object" ? roots.get(value) : undefined;
+}
 
 function plainContainer(value: unknown): value is Record<PropertyKey, unknown> {
   if (value === null || typeof value !== "object") return false;
@@ -68,8 +73,16 @@ export function plainCopy<T>(value: T): T {
 }
 
 /** Hold `root` behind a proxy that calls `onWrite` on any write at any depth. A tracked value is returned as is. */
-export function track<T extends object>(root: T, onWrite: () => void): T {
+export interface TrackedWrite {
+  operation: "track" | "set" | "deleteProperty" | "defineProperty" | "setPrototypeOf" | "preventExtensions";
+  target: object;
+  key?: PropertyKey;
+  descriptor?: PropertyDescriptor;
+  value?: unknown;
+}
+export function track<T extends object>(root: T, onWrite: () => void, beforeWrite?: (write: TrackedWrite) => void): T {
   if (targets.has(root)) return root;
+  beforeWrite?.({ operation: "track", target: root });
   strip(root);
   const cache = new WeakMap<object, object>();
   const wrap = (target: object): object => {
@@ -78,6 +91,7 @@ export function track<T extends object>(root: T, onWrite: () => void): T {
       proxy = new Proxy(target, handler);
       cache.set(target, proxy);
       targets.set(proxy, target);
+      roots.set(proxy, cache.get(root) ?? proxy);
     }
     return proxy;
   };
@@ -91,6 +105,7 @@ export function track<T extends object>(root: T, onWrite: () => void): T {
       return wrap(value);
     },
     set(target, key, value) {
+      beforeWrite?.({ operation: "set", target, key, value });
       const next = strip(value);
       if (Object.prototype.hasOwnProperty.call(target, key) && Object.is(target[key as string], next)) return true;
       const done = Reflect.set(target, key, next);
@@ -98,18 +113,21 @@ export function track<T extends object>(root: T, onWrite: () => void): T {
       return done;
     },
     deleteProperty(target, key) {
+      beforeWrite?.({ operation: "deleteProperty", target, key });
       const had = Object.prototype.hasOwnProperty.call(target, key);
       const done = Reflect.deleteProperty(target, key);
       if (done && had) onWrite();
       return done;
     },
     defineProperty(target, key, descriptor) {
+      beforeWrite?.({ operation: "defineProperty", target, key, descriptor });
       const next = "value" in descriptor ? { ...descriptor, value: strip(descriptor.value) } : descriptor;
       const done = Reflect.defineProperty(target, key, next);
       if (done) onWrite();
       return done;
     },
-    setPrototypeOf() { return false; },
+    setPrototypeOf(target) { beforeWrite?.({ operation: "setPrototypeOf", target }); return false; },
+    preventExtensions(target) { beforeWrite?.({ operation: "preventExtensions", target }); return false; },
   };
   return wrap(root) as T;
 }

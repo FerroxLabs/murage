@@ -1,0 +1,82 @@
+[
+  {
+    "name": "M2-nonce-binding",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M2-post-wait-authority",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M3-surface-proof",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M4-modulo-bias",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M4-weak-fallback",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M4-missing-class",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M5-persist-dialog",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M5-auto-close-success",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M6-unprotected-copy",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M7-provider-echo",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M8-nonatomic-claim",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M9-partial-inventory",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M10-opaque-secret",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M11-bot-capture",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M12-focus-trap",
+    "killed": true,
+    "status": 1
+  },
+  {
+    "name": "M12-hidden-custom",
+    "killed": true,
+    "status": 1
+  }
+]

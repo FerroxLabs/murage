@@ -89,7 +89,7 @@ function ageFailure(report,predicate,result){
   }catch{/* Diagnostic collection never changes the trust result. */}
   return false;
 }
-const nativeCodesign=args=>{const started=Date.now(),result=spawnSync("/usr/bin/codesign",args,{stdio:["ignore","pipe","pipe"],encoding:"utf8",timeout:10000,maxBuffer:65536});result.attestationElapsedMs=Date.now()-started;return result;};
+const nativeCodesign=args=>{const started=Date.now(),result=spawnSync("/usr/bin/codesign",[...args],{stdio:["ignore","pipe","pipe"],encoding:"utf8",timeout:10000,maxBuffer:65536});result.attestationElapsedMs=Date.now()-started;return result;};
 /** Injectable command runner is a test seam; production always uses codesign.
  * `arch` is a test seam too: the pinned fixture is the darwin-arm64 payload,
  * so a test on an x64 host names the arch the fixture was built for. */
@@ -145,7 +145,7 @@ export const BACKUP_CODESIGN_RETRY_MS=120000;
 export function asyncBackupCodesign(args,{signal,spawnCommand=spawn,timeoutMs=BACKUP_CODESIGN_TIMEOUT_MS}={}){
   return new Promise(resolve=>{
     if(signal?.aborted){resolve({status:null,error:Error("Attestation aborted")});return;}
-    let child;try{child=spawnCommand("/usr/bin/codesign",args,{stdio:["ignore","pipe","pipe"]});}catch(error){resolve({status:null,error});return;}
+    let child;try{child=spawnCommand("/usr/bin/codesign",[...args],{stdio:["ignore","pipe","pipe"]});}catch(error){resolve({status:null,error});return;}
     let stdout=Buffer.alloc(0),stderr=Buffer.alloc(0),error;
     const stop=reason=>{error??=reason;child.kill("SIGKILL");};
     const abort=()=>stop(Error("Attestation aborted"));

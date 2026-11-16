@@ -4,9 +4,12 @@
 // startup failure (that behavior is what makes settings forward/backward
 // compatible — do not remove it); dispose tears an instance down without
 // touching its siblings.
+import { orderModels } from "../../shared/model-order.ts";
 import { isDeepStrictEqual } from "node:util";
 import { forgetAllInstanceMarks, forgetInstanceMark, withInstanceMark } from "../key-rejections.ts";
-import { findCliCandidates } from "../env-path.ts";
+import { augmentedPath } from "../env-path.ts";
+import { findEngineCliCandidates } from "../procs.ts";
+import { probeFolder } from "../probe-folder.ts";
 import { withWslNote } from "./wsl-launch.ts";
 import { MODEL_CATALOG_REFRESH_MS } from "../model-catalog-refresh.ts";
 /** An empty catalogue is read again after this long, at most EMPTY_CATALOG_RETRIES times before the 24 h age applies. */
@@ -17,6 +20,7 @@ import { runInLocalProbeScope } from "../drivers/local-inject.ts";
 import { decorateMemoryInstance } from "./memory-adapter.ts";
 import { decorateHoldInstance, InstanceHolds, type HoldResult } from "./instance-holds.ts";
 import { decorateAskNoteInstance } from "./ask-note-adapter.ts";
+import { decorateConsumingMcpInstance } from "./consuming-mcp-policy.ts";
 import { decorateDraftOnlyInstance } from "./draft-only-adapter.ts";
 import type {
   AnyProviderDriver,
@@ -228,13 +232,14 @@ export class ProviderRegistry {
       // so reading `cli` there would flag every instance as overridden.
       const rawCli = cliOfRaw(entry.config);
       if (rawCli) this.cliByInstance.set(instanceId, rawCli);
-      const live = await driver.create({
+      const created = await driver.create({
         instanceId,
         displayName: entry.displayName ?? driver.metadata.displayName,
         environment: entry.environment ?? {},
         enabled: entry.enabled ?? true,
         config,
       });
+      const live = decorateConsumingMcpInstance(created);
       // Outermost: every engine call for a draft-only bot is judged here before any other wrapper runs (draft-only-adapter.ts).
       const decorated = decorateDraftOnlyInstance(decorateAskNoteInstance(decorateHoldInstance(decorateMemoryInstance(live), this.holds)));
       this.catalogRefreshes.set(decorated, { attemptedAt: this.now() });
@@ -428,15 +433,15 @@ export class ProviderRegistry {
   }
 
   private async scan(dueOnly: boolean) {
-    // Multiple instances may share a driver. Scan each default binary once
-    // per response instead of repeating filesystem work for every row.
+    // Multiple instances may share a driver. Discovery shares the launch presence cache;
+    // only an explicit scan bypasses its ten-minute deadline.
     const candidatesByName = new Map<string, string[]>();
     const candidatesFor = (driver: AnyProviderDriver | undefined): string[] => {
       const name = cliDefaultOf(driver);
       if (!name) return [];
       const cached = candidatesByName.get(name);
       if (cached) return cached;
-      const found = findCliCandidates(name);
+      const found = findEngineCliCandidates(name, { PATH: augmentedPath() }, probeFolder(), !dueOnly);
       candidatesByName.set(name, found);
       return found;
     };
@@ -483,7 +488,7 @@ export class ProviderRegistry {
           // point every catalog crosses on its way to the UI, so a driver that
           // forgets mergeFluxCatalog still cannot offer a Flux row on an engine
           // with no Flux surface (or with no key configured).
-          models: filterFluxRows(inst.models, inst.driverKind),
+          models: (() => { const catalog = filterFluxRows(inst.models, inst.driverKind); return { ...catalog, options: orderModels(catalog.options) }; })(),
           capabilities: {
             computerMcp: inst.adapter.capabilities.computerMcp === true,
             agentsMcp: inst.adapter.capabilities.agentsMcp === true,
@@ -503,8 +508,7 @@ export class ProviderRegistry {
           cli,
           cliDefault: cliDefaultOf(driver),
           // every copy of the driver's default binary on the augmented PATH —
-          // the dropdown's "detected" entries. Snapshotted per describe() so a
-          // newly installed CLI shows up on the next refresh.
+          // the dropdown's "detected" entries. Explicit refreshes bypass the presence cache.
           cliCandidates: candidatesFor(driver),
         };
       }),

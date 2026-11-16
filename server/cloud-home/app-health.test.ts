@@ -10,7 +10,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { healthSchema } from "../../cloudflare/control-plane/src/ops-monitor";
 import { classifyDataDirEntry } from "../data-dir-inventory.ts";
-import { HEALTH_PROBE_DIR_NAME, prepareHealthProbeDir } from "./supervisor.ts";
+import { HEALTH_PROBE_DIR_NAME, prepareHealthProbeDir } from "./home-volume-spec.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 const control = fileURLToPath(new URL("../../deploy/cloud-home/murage-control", import.meta.url));
@@ -125,7 +125,7 @@ print(json.dumps(out))
 
 describe("app health probe", () => {
   it("true only when the app itself answers through Caddy with the public host; hung, failing, foreign or closed is false", () => {
-    const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, control], { encoding: "utf8", timeout: 60_000 }));
+    const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, control], { windowsHide: true, encoding: "utf8", timeout: 60_000 }));
     expect(out).toMatchObject({ ok: true, error: false, other: false, hang: false, html: false, closed: false });
     expect(out.seen).toEqual({ path: "/api/health", host: "home-1.murage.test" });
     expect(out.health).toEqual({ appResponding: false });
@@ -133,7 +133,7 @@ describe("app health probe", () => {
     expect(healthSchema.parse(out.health)).toEqual({ appResponding: false }); // exactly what the Worker accepts on the heartbeat
   });
   it("uiRenders is the app's own render answer on /api/health: \"ok\" true, any other value false, absent omitted (Astra AUTOCANARY-4 P1)", () => {
-    const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, control], { encoding: "utf8", timeout: 60_000 }));
+    const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, control], { windowsHide: true, encoding: "utf8", timeout: 60_000 }));
     const bare = { uiAt: "MISSING", instance: null, door: null, ownerFactor: false };
     expect(out.reports).toEqual({ ok: { ok: true, ui: null, ...bare }, uiOk: { ok: true, ui: true, ...bare }, uiFailed: { ok: true, ui: false, ...bare },
       uiPending: { ok: true, ui: false, ...bare }, uiNumber: { ok: true, ui: false, ...bare }, uiForeign: { ok: false, ui: null, ...bare },
@@ -159,7 +159,7 @@ describe("app health probe", () => {
     expect(src).toContain("collect_health(app=app, boot_id=boot_id, ui_renders=ui, ui_at=ui_at,");
   });
   it("uiAt and instance ride with uiRenders from the same answer; missing or malformed are omitted (Astra AUTOCANARY-5 P1)", () => {
-    const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, control], { encoding: "utf8", timeout: 60_000 }));
+    const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, control], { windowsHide: true, encoding: "utf8", timeout: 60_000 }));
     expect(out.stamps.present).toMatchObject({ uiRenders: true, uiAt: 1760000000000, uiInstance: "AbCdEfGhIjKlMnOpQrSt_-" });
     expect(out.stamps.pending).toMatchObject({ uiRenders: false, uiAt: null, uiInstance: "AbCdEfGhIjKlMnOpQrSt_-" });
     expect(out.stamps.missing).toMatchObject({ uiRenders: true });
@@ -176,7 +176,7 @@ describe("app health probe", () => {
     expect(healthSchema.safeParse({ appResponding: true, checks: { ...out.stamps.present, uiAt: 1.5 } }).success).toBe(false);
   });
   it("a render dated more than two minutes ahead of the home's wall clock is reported failed with a reason; the clock sample rides (Astra AUTOCANARY-6 P1)", () => {
-    const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, control], { encoding: "utf8", timeout: 60_000 }));
+    const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, control], { windowsHide: true, encoding: "utf8", timeout: 60_000 }));
     expect(out.ahead.over.checks).toMatchObject({ uiRenders: false, uiReason: "clock_ahead", uiAt: 1760000120001, uiInstance: "AbCdEfGhIjKlMnOpQrSt_-" });
     for (const name of ["edge", "now"]) {
       expect(out.ahead[name].checks, name).toMatchObject({ uiRenders: true });
@@ -190,11 +190,11 @@ describe("app health probe", () => {
     expect(out.ahead.over.checks.uiAgeMs).toBe(-120001);
     expect(out.ahead.now.checks.uiAgeMs).toBe(0);
     const src = readFileSync(control, "utf8");
-    expect(src).toContain("ui_instance=ui_instance, clock=after)");
+    expect(src).toContain("ui_instance=ui_instance, clock=after, allowed_events=allowed, journal_owns_legacy=True)");
     expect(src).not.toContain("boot_sequence");
   });
   it("a clock_ahead refusal is persisted in the runtime's state and repeated for that render until the app reports a new uiAt (Astra AUTOCANARY-7 P1)", () => {
-    const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, control], { encoding: "utf8", timeout: 60_000 }));
+    const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, control], { windowsHide: true, encoding: "utf8", timeout: 60_000 }));
     const T = 1760000000000;
     for (const name of ["first", "later", "past"]) {
       expect(out.durable[name], name).toMatchObject({ uiRenders: false, uiReason: "clock_ahead", uiAt: T + 1_800_000 });
@@ -213,7 +213,7 @@ describe("app health probe", () => {
     expect(src).toContain('UI_REJECTED = CONTROL_STATE + "/ui-render-rejected.json"');
   });
   it("the heartbeat carries the kernel boot id, so the control plane can prove a reboot happened (Astra SELFSERVICE4 #1)", () => {
-    const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, control], { encoding: "utf8", timeout: 60_000 }));
+    const out = JSON.parse(execFileSync("python3", ["-I", "-c", script, control], { windowsHide: true, encoding: "utf8", timeout: 60_000 }));
     expect([out.boot, out.badBoot, out.missingBoot]).toEqual(["1b4e28ba-2fa1-41d2-883f-0016d3cca427", null, null]);
     expect(healthSchema.parse(out.withBoot)).toEqual({ appResponding: true, bootId: "1b4e28ba-2fa1-41d2-883f-0016d3cca427" });
     const control_src = readFileSync(control, "utf8");
@@ -263,7 +263,7 @@ out["last"] = bodies[-1]
 out["constants"] = [hasattr(control, "boot_sequence"), hasattr(control, "BOOT_SEQ"), control.UI_REJECTED]
 print(json.dumps(out))
 `;
-    const out = JSON.parse(execFileSync("python3", ["-I", "-c", pollScript, control], { encoding: "utf8", timeout: 60_000 }));
+    const out = JSON.parse(execFileSync("python3", ["-I", "-c", pollScript, control], { windowsHide: true, encoding: "utf8", timeout: 60_000 }));
     // Every poll got as far as the desired request (refused here), except the acks that were refused themselves.
     expect(out.results).toEqual(["Invalid control response", "Invalid control response", "Invalid control response", "Invalid control response",
       "Heartbeat refused", "Heartbeat refused", "Invalid control response", "Invalid control response", "Invalid control response"]);
@@ -363,7 +363,7 @@ control.machine_request(real, "desired")
 out["headers"] = seen
 print(json.dumps(out))
 `;
-    const out = JSON.parse(execFileSync("python3", ["-I", "-c", rolloutScript, control], { encoding: "utf8", timeout: 60_000 }));
+    const out = JSON.parse(execFileSync("python3", ["-I", "-c", rolloutScript, control], { windowsHide: true, encoding: "utf8", timeout: 60_000 }));
     // Every ack was taken; the polls stopped at the stubbed desired request (or at the 503).
     expect(out.results.slice(0, 3)).toEqual(["Invalid control response", "Invalid control response", "Invalid control response"]);
     const [first, second, third] = out.bodies as { generation: number; health: Record<string, unknown> }[];
@@ -458,7 +458,7 @@ steps = [poll("new"),                       # no epoch yet: the oldest shape; th
          poll("old", True)]                 # the full report and its fallback both answered 400: one fallback, then fenced
 print(json.dumps({"steps": steps, "log": log}))
 `;
-    const out = JSON.parse(execFileSync("python3", ["-I", "-c", negotiationScript, control], { encoding: "utf8", timeout: 60_000 }));
+    const out = JSON.parse(execFileSync("python3", ["-I", "-c", negotiationScript, control], { windowsHide: true, encoding: "utf8", timeout: 60_000 }));
     const steps = out.steps as { cp: string; result: string; requests: number; fenced: number; shapes: string[] }[];
     expect(steps.map((s) => [s.cp, s.result, s.shapes.join(">"), s.fenced])).toEqual([
       ["new", "ok", "oldest", 0],
@@ -541,7 +541,7 @@ for home in range(500):
 out["fleet"] = [{"min": min(r), "max": max(r), "stdev": statistics.pstdev(r), "distinct": len({int(d) for d in r})} for r in rounds]
 print(json.dumps(out))
 `;
-    const out = JSON.parse(execFileSync("python3", ["-I", "-c", scheduleScript, control], { encoding: "utf8", timeout: 60_000 }));
+    const out = JSON.parse(execFileSync("python3", ["-I", "-c", scheduleScript, control], { windowsHide: true, encoding: "utf8", timeout: 60_000 }));
     // Every retry in the real loop starts at least Retry-After (5 s) after the slow 503 arrived, and the delays grow (doubling).
     expect(out.afterAnswer.length).toBeGreaterThanOrEqual(4);
     for (const d of out.afterAnswer as number[]) expect(d).toBeGreaterThanOrEqual(5);
@@ -564,14 +564,38 @@ print(json.dumps(out))
 
 // The data volume in these runs is /dev/shm: a real mount point (tmpfs, root 1777: sticky, like /data's root:murage 1771) on a different
 // device from the temp directory, which stands in for the root file system a missing volume would leave /data on. The probe directory is a
-// top-level entry of the volume, as /data/.murage-health is. Without a writable /dev/shm mount, or without root (the probe directory
-// and its ancestors must be root owned), the volume cases cannot run; both are asserted rather than skipped.
+// top-level entry of the volume, as /data/.murage-health is. The code requires the probe directory to be root owned, so as root the run
+// uses real chown. As a non-root user (the CI and qualification containers) chown to another owner is impossible, so the script gives the
+// code's os.lstat an ownership view instead: entries the test user owns read as root's, and the cases that chown read the owner recorded
+// by own(). The decision logic under test (modes, devices, ancestors, EROFS) is the code's own either way; only who owns a path is
+// simulated, and the result carries "ownership" so the run says which. A host with no writable /dev/shm mount cannot run these cases and
+// the test fails rather than skipping.
 const checksScript = String.raw`
 import errno, importlib.machinery, importlib.util, json, os, shutil, sys, tempfile
 loader = importlib.machinery.SourceFileLoader("murage_control", sys.argv[1])
 spec = importlib.util.spec_from_loader("murage_control", loader)
 control = importlib.util.module_from_spec(spec)
 loader.exec_module(control)
+real_root = os.geteuid() == 0
+owners = {}
+def own(path, uid):
+    if real_root:
+        os.chown(path, uid, uid)
+    else:
+        owners[os.path.abspath(path)] = uid
+if not real_root:
+    import types
+    me = os.geteuid()
+    shim = types.ModuleType("os")
+    shim.__dict__.update(os.__dict__)
+    def lstat(path, *args, **kwargs):
+        info = os.lstat(path, *args, **kwargs)
+        uid = owners.get(os.path.abspath(os.fspath(path)), 0 if info.st_uid == me else info.st_uid)
+        fields = list(info)
+        fields[4] = uid
+        return os.stat_result(fields)
+    shim.lstat = lstat
+    control.os = shim
 root = tempfile.mkdtemp()
 os.chmod(root, 0o755)
 dist = os.path.join(root, "dist"); os.mkdir(dist)
@@ -593,7 +617,7 @@ for name in ("assets/index-B9x_Qe-2.js", "assets/index-Cc3.css", "assets/logo-Dd
     with open(os.path.join(dist, name), "w") as f:
         f.write("x")
 control.UI_DIST = dist
-out = {"root": os.geteuid() == 0}
+out = {"root": real_root, "ownership": "real" if real_root else "simulated"}
 # Manifest completeness (Astra AUTOCANARY-4 P1): every file the manifest names must be a non-empty regular file.
 out["bundleComplete"] = control.ui_bundle_complete()
 chunk = os.path.join(dist, "assets", "Settings-Ee5.js")
@@ -626,7 +650,7 @@ out["bundleBad"]["manifestSymlink"] = control.ui_bundle_complete()
 os.unlink(manifest_path)
 write_manifest(manifest)
 out["bundleAgain"] = control.ui_bundle_complete()
-mount = "/dev/shm"
+mount = os.environ.get("MURAGE_TEST_DATA_VOLUME", "/dev/shm")
 out["mount"] = os.path.ismount(mount) and os.access(mount, os.W_OK) and os.stat(mount).st_dev != os.stat(root).st_dev
 # diskUsedPercent (the file system under test) is not under test here.
 strip = lambda h: {k: v for k, v in (h or {}).items() if k != "diskUsedPercent"}
@@ -638,7 +662,7 @@ os.makedirs(plain, mode=0o755)
 control.DATA_PROBE_DIR = os.path.join(plain, ".murage-health")
 os.mkdir(control.DATA_PROBE_DIR, 0o700)
 out["notMounted"] = health(plain)
-if out["mount"] and out["root"]:
+if out["mount"]:
     probe = tempfile.mkdtemp(prefix=".murage-health-test-", dir=mount)  # a top-level entry of the volume, root 0700
     os.chmod(probe, 0o700)
     control.DATA_PROBE_DIR = probe
@@ -663,18 +687,18 @@ if out["mount"] and out["root"]:
     os.chmod(probe, 0o755)
     out["notExactly0700"] = health(mount)
     os.chmod(probe, 0o700)
-    os.chown(probe, 4242, 4242)
+    own(probe, 4242)
     out["notRootOwned"] = health(mount)
-    os.chown(probe, 0, 0)
+    own(probe, 0)
     # Not a top-level entry: below a directory the murage user owns (the old server-home/.health layout), even root 0700 itself.
     nest = tempfile.mkdtemp(dir=mount)
     os.chmod(nest, 0o700)
     nested = os.path.join(nest, ".murage-health"); os.mkdir(nested, 0o700)
-    os.chown(nest, 4242, 4242)
+    own(nest, 4242)
     control.DATA_PROBE_DIR = nested
     out["underMurageOwned"] = health(mount)
     out["ancestorsMurageOwned"] = control.root_controlled_ancestors(nested)
-    os.chown(nest, 0, 0)
+    own(nest, 0)
     out["ancestorsRootOwned"] = control.root_controlled_ancestors(nested)
     out["nestedRootOwned"] = health(mount)  # still refused: its parent is not the mount point
     os.chmod(nest, 0o777)
@@ -734,7 +758,7 @@ print(json.dumps(out))
 
 describe("readiness checks on the heartbeat (Astra AUTOCANARY-2 P1): the UI bundle is on the image and the data volume takes a write", () => {
   let cached: Record<string, unknown> | undefined;
-  const out = () => (cached ??= JSON.parse(execFileSync("python3", ["-I", "-c", checksScript, control], { encoding: "utf8", timeout: 60_000 })));
+  const out = () => (cached ??= JSON.parse(execFileSync("python3", ["-I", "-c", checksScript, control], { windowsHide: true, encoding: "utf8", timeout: 60_000 })));
   const notWritable = { appResponding: true, checks: { uiBundle: true, dataWritable: false } };
   it("a missing volume never passes: /data on the root file system is refused", () => {
     expect(out().notMounted).toEqual(notWritable);
@@ -742,10 +766,10 @@ describe("readiness checks on the heartbeat (Astra AUTOCANARY-2 P1): the UI bund
   it("checks are omitted when they cannot be evaluated (no data mount)", () => {
     expect(out().noMount).toEqual({ appResponding: true });
   });
-  it("the volume cases need a writable /dev/shm mount on its own device, and root", () => {
+  it("the volume cases need a writable /dev/shm mount on its own device; root ownership is real as root and simulated otherwise", () => {
     // Fails loudly rather than skipping the volume cases unnoticed.
     expect(out().mount).toBe(true);
-    expect(out().root).toBe(true);
+    expect(out().ownership).toBe(process.getuid?.() === 0 ? "real" : "simulated");
   });
   it("both true with the index file and the probe directory on the volume, and the probe file is never left behind", () => {
     const o = out();
@@ -802,7 +826,7 @@ describe("readiness checks on the heartbeat (Astra AUTOCANARY-2 P1): the UI bund
   it("the unit makes only /data/.murage-health writable, has no pre-start, restarts for the fallback and keeps the sandbox", () => {
     const unit = readFileSync(fileURLToPath(new URL("../../deploy/cloud-home/murage-control.service", import.meta.url)), "utf8");
     const writable = unit.split("\n").filter(line => line.startsWith("ReadWritePaths="));
-    expect(writable).toEqual(["ReadWritePaths=/run/murage-control", "ReadWritePaths=-/var/lib/murage-home/events", "ReadWritePaths=-/data/.murage-health"]);
+    expect(writable).toEqual(["ReadWritePaths=/run/murage-control", "ReadWritePaths=-/var/lib/murage-home/events", "ReadWritePaths=-/data/.murage-events", "ReadWritePaths=-/data/.murage-health"]);
     for (const line of ["ProtectSystem=strict", "NoNewPrivileges=yes", "CapabilityBoundingSet=", "AmbientCapabilities=", "Restart=on-failure",
       "RestartSec=10", "RuntimeDirectoryPreserve=restart", "RestartPreventExitStatus=78"]) expect(unit).toContain(`\n${line}\n`);
     expect(unit).not.toMatch(/^ExecStartPre=/m);
@@ -844,7 +868,7 @@ describe("the supervisor's health probe directory", () => {
     expect(() => prepareHealthProbeDir(other, () => undefined)).toThrow();
   });
   it("bindHomeVolume makes it only after the binding marker is validated, so an unbound volume never holds it", () => {
-    const source = readFileSync(fileURLToPath(new URL("./supervisor.ts", import.meta.url)), "utf8");
+    const source = readFileSync(fileURLToPath(new URL("./home-volume-spec.ts", import.meta.url)), "utf8");
     const bind = source.slice(source.indexOf("export function bindHomeVolume("));
     const marker = bind.indexOf("validateVolumeMarker(stat"), probe = bind.indexOf("prepareHealthProbeDir(dataDir)");
     expect(marker).toBeGreaterThan(-1);
@@ -921,7 +945,7 @@ control.machine_request(b, "desired", None, door=True)
 out["headers"] = [{"door": h.get("x-murage-door"), "evidence": h.get("x-murage-evidence")} for h in seen]
 print(json.dumps(out))
 `;
-    const out = JSON.parse(execFileSync("python3", ["-I", "-c", doorScript, control], { encoding: "utf8", timeout: 60_000 }));
+    const out = JSON.parse(execFileSync("python3", ["-I", "-c", doorScript, control], { windowsHide: true, encoding: "utf8", timeout: 60_000 }));
     expect(out.steps).toEqual([false, true, true, true, true, false, false]);
     expect(out.calls).toEqual([false, true, true, true, true, false, false]);
     expect(out.headers).toEqual([{ door: null, evidence: "epoch" }, { door: "v2", evidence: "epoch" }, { door: null, evidence: null }, { door: null, evidence: null }]);

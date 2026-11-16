@@ -83,12 +83,18 @@ const system32 = (env: NodeJS.ProcessEnv, tool: string) => win32.join(env.System
 
 export const defaultRunner: ToolRunner = (file, args) => execFileSync(file, [...args], { encoding: "utf8", windowsHide: true, timeout: 2_000, stdio: ["ignore", "pipe", "ignore"] });
 
-/** The current user's SID from `whoami /user /fo csv /nh`. */
-export function currentUserSid(run: ToolRunner = defaultRunner, env: NodeJS.ProcessEnv = process.env): string | null {
+// A process token's user SID is stable. Partition injected runners so independent
+// native-tool fixtures cannot share identity evidence; never cache a failed read.
+export const nativeUserSidScope = {};
+const userSids = new WeakMap<object,string>();
+/** The current user's SID from `whoami /user /fo csv /nh`, once per process. */
+export function currentUserSid(run: ToolRunner = defaultRunner, env: NodeJS.ProcessEnv = process.env, scope:object=run===defaultRunner?nativeUserSidScope:run): string | null {
+  const cached=userSids.get(scope);if(cached){userSids.set(run,cached);return cached;}
   try {
     const out = run(system32(env, "whoami.exe"), ["/user", "/fo", "csv", "/nh"]);
     const sid = /"(S-1-[0-9-]+)"/.exec(out)?.[1] ?? null;
-    return sid && SID.test(sid) ? sid : null;
+    if(!sid||!SID.test(sid))return null;
+    userSids.set(scope,sid);userSids.set(run,sid);return sid;
   } catch { return null; }
 }
 
@@ -115,7 +121,7 @@ export function restrictArguments(path: string, sid: string, directory: boolean)
 
 /** Replaces `path`'s DACL with owner-only access (current user + SYSTEM, inheritance removed). True on success. A link
  * is never restricted (false). */
-export function windowsAclRestrict(path: string, run: ToolRunner = defaultRunner, env: NodeJS.ProcessEnv = process.env, kind: (path: string) => Stats = lstatSync): boolean {
+export function windowsAclRestrict(path: string, run: ToolRunner = defaultRunner, env: NodeJS.ProcessEnv = process.env, kind: (path: string) => Pick<Stats, 'isSymbolicLink' | 'isDirectory' | 'isFile'> = lstatSync): boolean {
   let directory: boolean;
   try {
     const stat = kind(path);

@@ -368,7 +368,16 @@ try {
   ]) {
     const mod = await import(new URL(specifier, mainUrl).href);
     const channels = [];
-    register(mod, { handle: (channel) => channels.push(channel), on: (channel) => channels.push(channel) });
+    const { createOwnedMainIpc } = await import(new URL("./main-ipc-trust.mjs", mainUrl).href);
+    const gated = new Map();
+    register(mod, createOwnedMainIpc({
+      ipcMain: { handle: (channel, listener) => { channels.push(channel); gated.set(channel, listener); } },
+      isTrusted: () => false,
+    }));
+    for (const [channel, listener] of gated) {
+      try { await listener(foreignEvent(), "fixture-argument"); report.handles[channel] = { settled: "resolved" }; }
+      catch (error) { report.handles[channel] = { settled: "rejected", code: error?.code }; }
+    }
     report.registrars[name] = channels;
   }
   report.rawRegistrationsByRegistrars = record.handles.size - before;
@@ -394,6 +403,7 @@ function loadMainUnderStub() {
       if (key.startsWith("MURAGE_") || key.startsWith("ELECTRON_")) delete environment[key];
     }
     const result = spawnSync(process.execPath, ["--input-type=module", "-e", childSource], {
+      windowsHide: true,
       cwd: scratch,
       encoding: "utf8",
       timeout: 60_000,
@@ -447,6 +457,11 @@ test("every IPC channel main.mjs registers refuses a foreign sender before its l
     "desktop:unread-count": { threw: false, hasReturnValue: false, returnValue: null },
     // call audio for a fed recognizer session (0.1.59): fire-and-forget
     "speech:pcm": { threw: false, hasReturnValue: false, returnValue: null },
+    // the renderer's answer to a readiness probe (WIN-NOROUTE-1019 A14): fire-and-forget
+    "app-readiness:alive": { threw: false, hasReturnValue: false, returnValue: null },
+    // the window's ack of the payloads it dropped (NOTIFY-EVERYWHERE-1019 S3R R4): fire-and-forget, one per window family
+    "attention:freed": { threw: false, hasReturnValue: false, returnValue: null },
+    "cloud-attention:freed": { threw: false, hasReturnValue: false, returnValue: null },
   });
 
   // Every channel the preload can reach is registered by main.mjs through the
@@ -465,11 +480,26 @@ test("every IPC channel main.mjs registers refuses a foreign sender before its l
 
 test("main.mjs routes its registrars and the main window through the B6 policy", () => {
   const source = fs.readFileSync(path.join(electronDir, "main.mjs"), "utf8");
-  // The raw Electron ipcMain is reachable in exactly three places: its import,
-  // the gate that wraps it, and the recovery window with its own exact-file
-  // sender check (installation-recovery-window.node-test.mjs).
+  // The raw Electron ipcMain is reachable in exactly four places: its import,
+  // the gate that wraps it, the recovery window with its own exact-file
+  // sender check (installation-recovery-window.node-test.mjs), and the notification attention windows (S6 panel, S9 bubble and dock),
+  // which register their OWN sender-checked gate on it on purpose (attention-surfaces.mjs, NOTIFY-EVERYWHERE-1019).
   assert.match(source, /import \{[^}]*\bipcMain as electronIpcMain\b[^}]*\} from "electron";/);
-  assert.equal([...source.matchAll(/\belectronIpcMain\b/g)].length, 3);
+  // Each of the four uses is pinned by its exact site, not only by count: a fifth use, or a use that moves out of its call, leaves a token no
+  // site accounts for and fails here. The attention-surfaces site must sit inside the createAttentionSurfaces({ ... }) options object.
+  const tokenIndexes = [...source.matchAll(/\belectronIpcMain\b/g)].map(m => m.index);
+  const sites = [
+    /import \{[^}]*\bipcMain as electronIpcMain\b[^}]*\} from "electron";/,
+    /const ipcMain = createOwnedMainIpc\(\{\s*ipcMain: electronIpcMain,/,
+    /BrowserWindow, ipcMain: electronIpcMain, dialog, baseDir: __dirname,/,
+    /createAttentionSurfaces\(\{[^]{0,1200}?\bipcMain:\s*electronIpcMain,/,
+  ];
+  const pinned = sites.map(site => {
+    const hits = [...source.matchAll(new RegExp(site.source, "g"))];
+    assert.equal(hits.length, 1, "exactly one site for " + site);
+    return hits[0].index + hits[0][0].lastIndexOf("electronIpcMain");
+  });
+  assert.deepEqual([...pinned].sort((a, b) => a - b), tokenIndexes, "every raw electronIpcMain use is one of the four pinned sites");
   assert.match(source, /const ipcMain = createOwnedMainIpc\(\{\s*ipcMain: electronIpcMain,/);
   assert.match(source, /BrowserWindow, ipcMain: electronIpcMain, dialog, baseDir: __dirname,/);
   assert.match(source, /registerCuaIpc\(ipcMain\);/);
@@ -482,4 +512,20 @@ test("main.mjs routes its registrars and the main window through the B6 policy",
   assert.match(createWindow, /win\.webContents\.on\("will-navigate", navigationGuard\.willNavigate\);/);
   assert.match(createWindow, /win\.webContents\.on\("will-redirect", navigationGuard\.willRedirect\);/);
   assert.match(createWindow, /createMainNavigationGuard\(\{\s*origin: trustedRendererOrigin,/);
+});
+
+test("update notice is outbound only and its report is explicitly local-only", () => {
+  assert.match(preloadSource, /ipcRenderer\.on\("update:notice", handler\)/);
+  assert.ok(!preloadChannels.some(({ channel }) => channel === "update:notice"));
+  const classes = fs.readFileSync(path.join(electronDir, "ipc-channel-classes.mjs"), "utf8");
+  assert.match(classes.slice(classes.indexOf("export const LOCAL_ONLY_CHANNELS")), /"update:notice-report"/);
+});
+
+test('Cloud preload has no updater bridge and remains wired from main to Cloud windows', () => {
+  const preload = fs.readFileSync(path.join(electronDir, 'preload-cloud.cjs'), 'utf8');
+  const main = fs.readFileSync(path.join(electronDir, 'main.mjs'), 'utf8');
+  const cloud = fs.readFileSync(path.join(electronDir, 'cloud-home-window.mjs'), 'utf8');
+  assert.doesNotMatch(preload, /updater|update:|reportNotice/);
+  assert.match(main, /cloudPreload:\s*path\.join\(__dirname,\s*["']preload-cloud\.cjs["']\)/);
+  assert.match(cloud, /preload:\s*cloudPreload/);
 });

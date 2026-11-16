@@ -21,7 +21,8 @@ import { captureBranchChange, captureSource } from "./capture.ts";
 import { setMemoryCaptureRoster } from "./capture-scope.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
 import { admissibleActionSources } from "./pip-admission.ts";
-import { memoryAccess, reconcileMemoryRoster } from "./policy.ts";
+import { reconcileMemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { readableMemoryRecord } from "./readable.ts";
 import { setMemoryMode } from "./repository.ts";
 import { restoreArchivedMemoryRecord } from "./retention.ts";
@@ -185,7 +186,7 @@ it("a slice that fails after the drop rolls back whole, and the next drain ends 
 async function crashDrain(commits: number): Promise<void> {
   closeDatabase();
   const reached = join(DATA_DIR, "crash-reached");
-  const child = fork(join(import.meta.dirname, "testing", "branch-drain-crash-child.ts"), [String(commits), reached], { execArgv: ["--experimental-strip-types", "--no-warnings"], env: { ...process.env, MURAGE_DATA_DIR: DATA_DIR }, stdio: "ignore" });
+  const child = fork(join(import.meta.dirname, "testing", "branch-drain-crash-child.ts"), [String(commits), reached], { windowsHide: true, execArgv: ["--experimental-strip-types", "--no-warnings"], env: { ...process.env, MURAGE_DATA_DIR: DATA_DIR }, stdio: "ignore" });
   const deadline = setTimeout(() => child.kill("SIGKILL"), 30_000); // always before the test's own timeout, so no child outlives its data folder
   const [code, signal] = await once(child, "exit").finally(() => clearTimeout(deadline)) as [number | null, NodeJS.Signals | null];
   // the kill itself, not an error on the way there: the child exits 3, 4 or 5 on any other path, and a Windows kill ends a process with code 1

@@ -43,15 +43,24 @@ export const REQUIRED_JOB = "required CI completion";
 /** ci.yml's Vitest shards per OS. release-ci-gate-full-run.test.mjs holds these lists to ci.yml itself. */
 export const VITEST_SHARDS = { "macos-latest": 10, "ubuntu-24.04": 10, "windows-latest": 12 };
 
-/** Every job a complete run must show green, by its name in the Actions API. These are the jobs REQUIRED_JOB needs. */
+// Logical matrix names match required.needs inventory; Actions reports one job
+// per OS. Aggregate all members so none can be absent, skipped or red.
+const MATRIX_JOBS = {
+  "wipe proof (${{ matrix.os }})": Object.keys(VITEST_SHARDS).map(os => `wipe proof (${os})`),
+};
+
+/** Every job (or complete matrix) REQUIRED_JOB needs must be green. */
 export const FULL_RUN_JOBS = [
   ...Object.keys(VITEST_SHARDS).map(os => `quality gates (${os})`),
   ...Object.entries(VITEST_SHARDS).flatMap(([os, shards]) => Array.from({ length: shards }, (_, i) => `Vitest shard ${i + 1}/${shards} (${os})`)),
   ...Array.from({ length: 6 }, (_, i) => `human specs ${i + 1}/6 (Ubuntu)`),
   "S4 power block (Linux arm64)",
   "control-plane check + workerd tests + dry run",
+  "push-relay tests (isolated SQLite fixtures)",
   "phone app shell contracts (Ubuntu)",
   "package + smoke (Ubuntu 24.04 x64)",
+  "OpenCode 1.19.5 engine gate (Ubuntu)",
+  ...Object.keys(MATRIX_JOBS),
 ];
 
 /** Whether a run with its required job skipped shows the mark of a scoped dispatch. A full run cut short shows none. */
@@ -78,7 +87,16 @@ export function judgeRun(jobs) {
     if (looksScoped(list)) return { proof: "scoped", reason: `its "${REQUIRED_JOB}" job was skipped, so it was a scoped run` };
     return { proof: "incomplete", reason: `its "${REQUIRED_JOB}" job was skipped and it does not show a scoped dispatch` };
   }
-  const conclusionOf = name => list.find(job => job?.name === name)?.conclusion;
+  const conclusionOf = name => {
+    const direct = list.find(job => job?.name === name);
+    if (direct) return direct.conclusion;
+    const members = MATRIX_JOBS[name];
+    if (!members) return undefined;
+    const outcomes = members.map(member => list.find(job => job?.name === member)?.conclusion);
+    if (outcomes.every(outcome => outcome === "success")) return "success";
+    const absent = outcomes.findIndex(outcome => ["skipped", null, undefined].includes(outcome));
+    return absent >= 0 ? outcomes[absent] : "failure";
+  };
   if (required.conclusion !== "success") {
     const ranAll = FULL_RUN_JOBS.every(name => !["skipped", null, undefined].includes(conclusionOf(name)));
     return { proof: "red", ranAll, reason: `its "${REQUIRED_JOB}" job ended ${required.conclusion ?? "without a result"}` };
@@ -121,6 +139,39 @@ export function ciVerdict(runs, sha, { jobsFor } = {}) {
     return refused(run, judged);
   }
   return { state: "fail", reason: `no complete full CI run for ${sha} (${scoped}); run the full CI on this commit` };
+}
+
+/** Exact-SHA engine evidence is independent of the ancestor-compatible slow nightly. */
+export const REAL_ENGINES = ["claude", "codex", "gemini", "fuigo", "opencode"];
+export function realEngineVerdict(runs, sha, { jobsFor, now = Date.now(), explicitWaiver = "", eventName = "" } = {}) {
+  if (explicitWaiver) {
+    const prefix = `${sha}: `;
+    if (eventName !== "workflow_dispatch" || !explicitWaiver.startsWith(prefix) || !explicitWaiver.slice(prefix.length).trim() || /[\r\n]/.test(explicitWaiver))
+      return { state: "fail", reason: "REAL_ENGINE_EXPLICIT_WAIVER requires workflow_dispatch and '<RC SHA>: <reviewed reason>'" };
+    return { state: "waived", reason: `REAL-ENGINE EXPLICIT WAIVER: ${explicitWaiver}` };
+  }
+  const mine = runsNewestFirst(runs, sha);
+  if (!mine.length) return { state: "none", reason: `REAL-ENGINE: NOT-RUN (no verdict for RC ${sha})` };
+  if (mine.some(run => run.status !== "completed")) return { state: "wait", reason: `real-engine nightly for ${sha} is still running` };
+  const run = mine[0], jobs = jobsFor?.(run) ?? [];
+  for (const engine of REAL_ENGINES) {
+    const job = jobs.find(job => job.name === `real-engine (${engine})`);
+    const age = now - Date.parse(job?.completed_at);
+    if (job?.conclusion !== "success" || !job.steps?.some(step => step.name === "Real-engine verdict" && step.conclusion === "success"))
+      return { state: "fail", run, reason: `REAL-ENGINE: NOT-PASSED (${engine}: ${job?.conclusion ?? "NOT-RUN"}; explicit verdict required)` };
+    if (!Number.isFinite(age) || age < 0 || age > 72 * 3_600_000)
+      return { state: "fail", run, reason: `real-engine ${engine} verdict is invalid or older than 72 h for ${sha}` };
+  }
+  return { state: "pass", run, reason: `all five real engines passed on RC ${sha} within 72 h` };
+}
+
+/** Only the new engine jobs may be waived; preserve every other nightly failure. */
+export function slowNightlyRun(run, jobs) {
+  if (!jobs.some(job => job.name.startsWith("real-engine ("))) return run;
+  const independent = jobs.filter(job => !job.name.startsWith("real-engine (") && job.name !== "package for real engines (RC SHA)");
+  const passed = independent.some(job => job.name === "nightly" && job.conclusion === "success") &&
+    independent.every(job => job.conclusion === "success");
+  return { ...run, conclusion: passed ? "success" : "failure" };
 }
 
 /**
@@ -316,8 +367,8 @@ function listRunJobs({ repository, run }) {
   });
 }
 
-function listNightlyRuns({ repository, workflow }) {
-  const result = spawnSync("gh", ["api", `repos/${repository}/actions/workflows/${workflow}/runs?per_page=30`, "--jq", ".workflow_runs"], { encoding: "utf8" });
+function listNightlyRuns({ repository, workflow, sha }) {
+  const result = spawnSync("gh", ["api", `repos/${repository}/actions/workflows/${workflow}/runs?per_page=30${sha ? `&head_sha=${sha}` : ""}`, "--jq", ".workflow_runs"], { encoding: "utf8" });
   if (result.status !== 0) throw new Error(`gh api failed: ${(result.stderr || result.stdout).trim()}`);
   return JSON.parse(result.stdout || "[]");
 }
@@ -363,7 +414,13 @@ async function main() {
   const graceMs = Number(process.env.CI_GRACE_MINUTES ?? 10) * 60_000;
   const started = Date.now();
   const judgeNightly = () => {
-    const nightlyRuns = listNightlyRuns({ repository, workflow: nightlyWorkflow });
+    let nightlyRuns = listNightlyRuns({ repository, workflow: nightlyWorkflow });
+    const newest = nightlyRuns.filter(run => run.status === "completed")
+      .sort((a, b) => Date.parse(b.created_at ?? 0) - Date.parse(a.created_at ?? 0))[0];
+    if (newest) {
+      const slow = slowNightlyRun(newest, listAttemptJobs({ repository, run: newest }));
+      nightlyRuns = nightlyRuns.map(run => run.id === newest.id ? slow : run);
+    }
     return {
       nightlyRuns,
       pending: nightlyPending(nightlyRuns, sha),
@@ -373,12 +430,25 @@ async function main() {
       }),
     };
   };
+  const judgeRealEngines = () => realEngineVerdict(
+    listNightlyRuns({ repository, workflow: nightlyWorkflow, sha }), sha, {
+      jobsFor: run => listAttemptJobs({ repository, run }),
+      explicitWaiver: process.env.REAL_ENGINE_EXPLICIT_WAIVER ?? "", eventName,
+    });
+  const requireRealEngines = () => {
+    const real = judgeRealEngines();
+    if (!["pass", "waived"].includes(real.state)) {
+      console.error(`::error::${real.reason}; refusing release`); process.exit(1);
+    }
+    console.log(`${real.state === "waived" ? "::warning::" : ""}${real.reason}`);
+    record([real.reason], { real_engine_waived: String(real.state === "waived") });
+  };
   // Judged again right before the gate passes: CI may have taken hours, and a
   // nightly that was fresh and green at the start can have aged out or been
   // beaten by a newer red one. Strict: no waiting here.
   const recheckNightly = () => {
     const { pending, nightly } = judgeNightly();
-    if (nightly.ok && !pending) return;
+    if (nightly.ok && !pending) { requireRealEngines(); return; }
     console.error(`::error::${pending ? `a ${nightlyWorkflow} run for ${sha} has not completed` : nightly.reason} (rechecked after CI); refusing`);
     process.exit(1);
   };
@@ -400,6 +470,15 @@ async function main() {
       process.exit(1);
     }
     console.log(`${pending ? `a ${nightlyWorkflow} run for ${sha} is still running` : nightly.reason}; checking again in 60s`);
+    await new Promise(resolve => setTimeout(resolve, 60_000));
+  }
+  for (;;) {
+    const real = judgeRealEngines();
+    if (["pass", "waived"].includes(real.state)) { requireRealEngines(); break; }
+    if (real.state === "fail" || Date.now() - started >= waitMs) {
+      console.error(`::error::${real.reason}; refusing release`); process.exit(1);
+    }
+    console.log(`${real.reason}; checking again in 60s`);
     await new Promise(resolve => setTimeout(resolve, 60_000));
   }
   // The Windows ACL tests live in native-addon-msvc.yml, outside ci.yml: required here, no waiver, bounded wait for a running one.

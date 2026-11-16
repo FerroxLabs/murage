@@ -1,3 +1,4 @@
+import { syncMessageSearchRow } from "./message-search-index.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -81,7 +82,7 @@ describe("GET /api/search?view=chats", () => {
           const text = `slice2-lease ${id}`;
           const message = { id, at, role: "user", kind: "text", text, ...(forgotten ? { withheldFromBots: "forgotten" } : {}) };
           const result = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,'user','text',?,?)").run(thread, id, at, text, JSON.stringify(message));
-          db.prepare("INSERT INTO messages_fts(rowid,t) VALUES(?,?)").run(result.lastInsertRowid, text);
+          syncMessageSearchRow(db, Number(result.lastInsertRowid), text);
           db.prepare("INSERT INTO thread_state(thread_id,active_leaf_id) VALUES(?,?) ON CONFLICT(thread_id) DO UPDATE SET active_leaf_id=excluded.active_leaf_id").run(thread, id);
           syncThreadSummary(db, thread);
         };
@@ -242,7 +243,8 @@ it("T-GROUP-UNAUTHORIZED: HTTP rejects an existing pending chat outside current 
     const page=await phoneApi("GET","/api/chats");
     const token=encodeGroupedContinuation({v:1,after:null,pending:{thread:{threadId:bot.threadId,createdAt:1},beforeAt:10,beforeRowid:1},gen:page.body.gen,query:"preview",filters:normalizedSearchFilters({})});
     const answer=await phoneApi("GET","/api/search?view=chats&group_by=thread&q=preview&before="+token);
-    expect(answer).toEqual({status:400,body:{error:"before is not a position this search gave"}});
+    // COMPANION-CHATS-1019 O2: hidden and nonexistent pending threads are indistinguishable.
+    expect(answer).toEqual({status:200,body:{hits:[],next:null,partial:false,gen:page.body.gen}});
   } finally {await desktopApi("DELETE",`/api/bots/${bot.id}`);}
 });
 
@@ -279,7 +281,7 @@ it("RULE paths 14 to 16 owner search keeps forgotten lines, excludes hidden tool
     const put=(id:string,kind:string,json:Record<string,unknown>)=>{
       const text=`rule-search ${id}`;
       const result=db.prepare('INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)').run(bot.threadId,id,Date.now(),'user',kind,text,JSON.stringify({id,at:Date.now(),role:'user',kind,text,...json}));
-      db.prepare('INSERT INTO messages_fts(rowid,t) VALUES(?,?)').run(result.lastInsertRowid,kind==='activity'?`rule-search ${id}`:text);
+      syncMessageSearchRow(db, Number(result.lastInsertRowid), text);
     };
     put('kept','text',{});put('forgotten','text',{withheldFromBots:'forgotten'});put('changed','text',{withheldFromBots:true});
     put('hidden','activity',{tool:{name:'rule-search hidden',ok:true}});

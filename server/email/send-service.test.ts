@@ -1,3 +1,5 @@
+import { createMemoryEmailSecrets } from "../testing/email-store-fixture.ts";
+import { legacyEmailDecisionFixture } from "./testing/legacy-decision-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -5,7 +7,7 @@
 import { DatabaseSync } from "node:sqlite";
 import { beforeEach, describe, expect, it } from "vitest";
 import { FluxEmailClient } from "./flux-email-client.ts";
-import { EmailSecretStore, emailCredentialProvider } from "./email-secrets.ts";
+import { emailCredentialProvider } from "./email-secrets.ts";
 import { EmailStore, type SendRow } from "./email-store.ts";
 import { EmailSendService, HOLD_LIFETIME_MS, type EmailOutcomeEvent } from "./send-service.ts";
 import { EmailBindingService } from "./binding-service.ts";
@@ -21,17 +23,18 @@ let service: EmailSendService;
 let outcomes: EmailOutcomeEvent[];
 let refusals: string[];
 
-function setup(policy: "ask" | "auto" = "auto") {
+async function setup(policy: "ask" | "auto" = "auto") {
+  const authority = await legacyEmailDecisionFixture();
   clock = 1_800_000_000_000;
   fake = new FakeFlux();
   store = new EmailStore(new DatabaseSync(":memory:"));
-  const secrets = new EmailSecretStore();
+  const secrets = createMemoryEmailSecrets();
   secrets.setOwner({ token: "owner-token", keyId: "key_owner" });
   secrets.setBotKey("b1", { token: "bot-token", keyId: "key_b1" });
   const client = new FluxEmailClient({ fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test", credentials: emailCredentialProvider(secrets, () => null), timeoutMs: 100 });
   outcomes = []; refusals = [];
   let n = 0;
-  service = new EmailSendService({ store, client, installId: "inst", now: () => clock, newId: () => `send-${++n}`, onOutcome: event => outcomes.push(event), onRefusal: code => refusals.push(code) });
+  service = new EmailSendService({ store, client, authorityFor: () => authority, installId: "inst", now: () => clock, newId: () => `send-${++n}`, onOutcome: event => outcomes.push(event), onRefusal: code => refusals.push(code) });
   store.insertBinding({ botId: "b1", inboxId: INBOX, address: "juniper@murage.email", username: "juniper", displayName: "Juniper", emailKeyRef: "key_b1", fluxAccountId: null, state: "active", step: null, opId: null, opStartedAt: null, policy, failure: null, updatedAt: clock });
   store.addTrusted("b1", "jane@acme.test", "allow", "owner", clock);
   return { secrets, client };
@@ -45,7 +48,7 @@ const heldItem = (id: string, ref: string, patch: Record<string, unknown> = {}) 
 const approval = (items: unknown[], approvalId = "apr_1"): FakeReply => ({ status: 200, body: { id: approvalId, state: "pending", held_ids: (items as Array<{ id: string }>).map(item => item.id), held: items } });
 const row = (id: string): SendRow => store.getSend(id)!;
 
-beforeEach(() => { setup(); });
+beforeEach(async () => { await setup(); });
 
 describe("dispatch without the owner (auto, approved address)", () => {
   it("200: sent, with Idempotency-Key :1, client_reference = send_id and the key id of the attempt", async () => {
@@ -139,7 +142,7 @@ describe("Murage-held: the owner's Send (4.4)", () => {
   });
 
   it("ask holds even an approved address", async () => {
-    setup("ask");
+    await setup("ask");
     expect((await submit()).row).toMatchObject({ state: "awaiting_owner", why: "waiting_ask" });
   });
 
@@ -481,7 +484,7 @@ describe("every other ending (4.5, F9 to F11, M2, L1, L3)", () => {
   });
 
   it("F25: Remove with cards open: every open row withdrawn(inbox_removed)", async () => {
-    const { secrets, client } = { ...setup() };
+    const { secrets, client } = await setup();
     const bindings = new EmailBindingService({ store, client, secrets, installId: "inst", now: () => clock, withdrawSends: (botId, reason) => service.withdrawAllForBot(botId, reason) });
     store.addTrusted("b1", "new@x.test", "allow", "owner", clock);
     fake.on("POST", /\/messages$/, held("hld_1"));
@@ -588,4 +591,49 @@ describe("delivery events", () => {
     store.noteComplaintOrBounce("b1", "pat@x.test", clock + 11);
     expect(store.trustOfferEligible("b1", "pat@x.test", clock + 12)).toBe(false);
   });
+});
+
+it("PAUSE100 a local hold retains an email and its identity, then a wake sends it exactly once", async () => {
+  const { installFluxStartGate } = await import("../flux-start-gate.ts");
+  const { SpendGateRefusal } = await import("../spend-gate.ts");
+  let held = true;
+  installFluxStartGate({ authorizeFluxDispatch: async () => { if (held) throw new SpendGateRefusal([{ kind: "limit" }]); } } as never);
+  try {
+    fake.on("POST", /\/messages$/, sentOk());
+    const accepted = await submit();
+    expect(accepted.row).toMatchObject({ state: "prepared", code: "spend_limit", idemSuffix: 1, attempts: [] });
+    expect(fake.requests).toHaveLength(0);
+    expect(outcomes).toEqual([]);
+    const { sendLine } = await import("./tools.ts");
+    expect(sendLine(accepted.row!)).toContain("This email waits.");
+    expect(sendLine(accepted.row!)).not.toContain("waiting for the owner");
+    expect(emailCardView(accepted.row!, { botName: "Fixture", text: "Synthetic", approved: () => true })).toMatchObject({ emailSend: { actions: ["dont_send"] } });
+    await service.replaySpendWaits();
+    expect(fake.requests).toHaveLength(0);
+    held = false;
+    await Promise.all([service.replaySpendWaits(), service.replaySpendWaits()]);
+    expect(row("send-1")).toMatchObject({ state: "sent", idemSuffix: 1 });
+    expect(fake.requests).toHaveLength(1);
+    expect(fake.requests[0]?.headers["idempotency-key"]).toBe("murage-email:inst:send-1:1");
+  } finally { installFluxStartGate(null); }
+});
+
+
+it("PAUSE100 withdrawal while the admission is pending cannot resurrect a send", async () => {
+  const { installFluxStartGate } = await import("../flux-start-gate.ts");
+  const { SpendGateRefusal } = await import("../spend-gate.ts");
+  let reject!: (reason: unknown) => void;
+  let entered!: () => void;
+  const pending = new Promise<void>(resolve => { entered = resolve; });
+  installFluxStartGate({ authorizeFluxDispatch: () => { entered(); return new Promise<void>((_resolve, fail) => { reject = fail; }); } } as never);
+  try {
+    const sending = submit();
+    await pending;
+    store.casSend("send-1", row("send-1").revision, { state: "withdrawn", stopRequested: true }, clock);
+    reject(new SpendGateRefusal([{ kind: "limit" }]));
+    await sending;
+    expect(row("send-1")).toMatchObject({ state: "withdrawn", stopRequested: true });
+    await service.replaySpendWaits();
+    expect(fake.requests).toHaveLength(0);
+  } finally { installFluxStartGate(null); }
 });

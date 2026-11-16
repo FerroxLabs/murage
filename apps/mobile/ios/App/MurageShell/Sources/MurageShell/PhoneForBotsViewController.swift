@@ -48,6 +48,36 @@ import MurageShellCore
         }
     }
     func refresh() { Task { try? await model.refresh() } }
+
+    /// The bot the legacy-phone line names, resolved by `loadRePairBot` (cached targets, else the targets load).
+    private var rePairBot: String?
+    /// Resolves the bot name through the same targets load the share sheet uses, so the line does not depend on a cached roster.
+    func loadRePairBot() async {
+        guard let root = ShareContainer.root else { return }
+        let origin = origin
+        let targetsHTTP = ShareTargetsHTTP(); defer { targetsHTTP.close() }
+        let client = ShareTargetsClient(cache: ShareTargetCache(root: root),
+            readToken: { origin in
+                guard UIApplication.shared.applicationState == .active, UIApplication.shared.isProtectedDataAvailable,
+                      !PhoneAskSetup.removalPending(origin) else { return nil }
+                return try PhoneAskTokenStore().readForAsk(origin: origin)
+            }, removeToken: PhoneAskTokenStore().remove, fetch: targetsHTTP.fetch)
+        rePairBot = await AskRePairHintBot.name(origin: origin, client: client, now: Int64(Date().timeIntervalSince1970 * 1000))
+    }
+    /// The legacy-phone line (D8): no device id pinned for this pairing and not dismissed.
+    private var rePairState: (keyId: String, text: String)? {
+        guard let bot = rePairBot else { return nil }
+        let defaults = UserDefaults(suiteName: ShareContainer.group)
+        let keyId = PhoneAskSigner.enrolled().keyId(origin: origin)
+        let hint = AskRePairHint(defaults: defaults)
+        guard hint.visible(origin: origin, keyId: keyId, asking: (try? PhoneAskTokenStore().readForAsk(origin: origin)) != nil,
+                           pin: AskDevicePin(defaults: defaults)), let keyId else { return nil }
+        return (keyId, hint.text(botName: bot))
+    }
+    var rePairText: String? { rePairState?.text }
+    func dismissRePair() {
+        if let state = rePairState { AskRePairHint(defaults: UserDefaults(suiteName: ShareContainer.group)).dismiss(origin: origin, keyId: state.keyId) }
+    }
     func close() { http.close() }
 }
 
@@ -67,17 +97,57 @@ import MurageShellCore
         navigationItem.leftBarButtonItem = UIBarButtonItem(title: PhoneJobStrings.text("share_outbox_waiting"),
             style: .plain, target: self, action: #selector(openOutbox))
         observer = NotificationCenter.default.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.tableView.reloadData() }
+            Task { @MainActor in self?.reload() }
         }
         stateObserver = NotificationCenter.default.addObserver(forName: .phoneJobsStateChanged, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.tableView.reloadData() }
+            Task { @MainActor in self?.reload() }
         }
         Task {
             do { try await session.checkAvailability(); _ = try session.model.state() }
             catch { status = (error as? PhoneJobsMintError)?.errorDescription ?? PhoneJobStrings.text("phone_failed") }
-            tableView.reloadData()
+            reload()
+            await session.loadRePairBot()
+            reload()
         }
     }
+    private func reload() { updateRePairHint(); tableView.reloadData() }
+    /// One plain, dismissible line above the rows for a phone that has no pinned device id.
+    private var hintWidth: CGFloat = 0
+    /// The header is laid out by hand, so it is laid out again when the width (rotation, split view) or the text size changes.
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        if tableView.tableHeaderView != nil, tableView.bounds.width != hintWidth { updateRePairHint() }
+    }
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        if previous?.preferredContentSizeCategory != traitCollection.preferredContentSizeCategory { updateRePairHint() }
+    }
+    private func updateRePairHint() {
+        guard let text = session.rePairText else { tableView.tableHeaderView = nil; return }
+        let width = tableView.bounds.width
+        hintWidth = width
+        let label = UILabel()
+        label.text = text
+        label.numberOfLines = 0
+        label.font = .preferredFont(forTextStyle: .footnote)
+        label.textColor = .secondaryLabel
+        let dismiss = UIButton(type: .system)
+        dismiss.setTitle(PhoneJobStrings.text("ask_ok"), for: .normal)
+        dismiss.addTarget(self, action: #selector(dismissRePair), for: .touchUpInside)
+        dismiss.sizeToFit()
+        let inset: CGFloat = 20
+        let textWidth = max(0, width - inset * 2 - dismiss.bounds.width - 8)
+        let height = max(44, ceil(label.sizeThatFits(CGSize(width: textWidth, height: .greatestFiniteMagnitude)).height) + 16)
+        let header = UIView(frame: CGRect(x: 0, y: 0, width: width, height: height))
+        label.frame = CGRect(x: inset, y: 8, width: textWidth, height: height - 16)
+        dismiss.frame = CGRect(x: width - inset - dismiss.bounds.width, y: (height - dismiss.bounds.height) / 2,
+                               width: dismiss.bounds.width, height: dismiss.bounds.height)
+        dismiss.accessibilityLabel = text
+        header.addSubview(label)
+        header.addSubview(dismiss)
+        tableView.tableHeaderView = header
+    }
+    @objc private func dismissRePair() { session.dismissRePair(); reload() }
     deinit { if let observer { NotificationCenter.default.removeObserver(observer) }; if let stateObserver { NotificationCenter.default.removeObserver(stateObserver) } }
     @objc private func openSettings() { UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!) }
     @objc private func done() { dismiss(animated: true) }

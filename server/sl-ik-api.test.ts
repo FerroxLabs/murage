@@ -272,3 +272,29 @@ it("#3 #9 a saved backup hidden behind the hide check (a stale save, a crash rem
   expect((await task(b.id, b.threadId))?.modelSelection?.instanceId).not.toBe("spare");
   expect((await api("GET", `/api/bots/${b.id}`)).body.bot.modelSelection.instanceId).not.toBe("spare");
 }, 120000);
+
+// MAIN RULING: a proven owner's No limits non-wipe backup selection RUNS;
+// it must not inherit Ask mode's expectation of an engine-choice card.
+it("No limits answers on a usable backup without posting a non-wipe permission card", async () => {
+  const b = await bot({ instanceId: "limited", model: claudeModel });
+  expect((await raiseLevel(api, b.id, { autoApprove: true, fullAccess: true, noLimits: true, acknowledgeFullAccess: true, acknowledgeNoLimits: true })).status).toBe(200);
+  expect((await api("POST", `/api/bots/${b.id}/messages`, { threadId: b.threadId, text: "no-limits-backup-source" })).status).toBe(202);
+  await expect.poll(() => codexPrompts().includes("no-limits-backup-source"), { timeout: 30000 }).toBe(true);
+  await idle(b.id);
+  expect((await messages(b.threadId)).some(message => message.card?.tool === "murage_limit_offer")).toBe(false);
+}, 120000);
+
+
+// MAIN RULING: a non-wipe Ask card must RUN if its owner raises the chat
+// to No limits. Accepting the card as Wait would lose the requested work.
+it("raising an open backup card to No limits runs a usable engine", async () => {
+  const b = await bot({ instanceId: "limited", model: claudeModel });
+  expect((await api("POST", `/api/bots/${b.id}/messages`, { threadId: b.threadId, text: "raised-no-limits-backup-source" })).status).toBe(202);
+  await expect.poll(async () => (await messages(b.threadId)).some(message => message.card?.tool === "murage_limit_offer" && !message.card.answered), { timeout: 30000 }).toBe(true);
+  await fixture.restart(); await proof();
+  expect((await messages(b.threadId)).some(message => message.card?.tool === "murage_limit_offer" && !message.card.answered)).toBe(true);
+  expect((await raiseLevel(api, b.id, { autoApprove: true, fullAccess: true, noLimits: true, acknowledgeFullAccess: true, acknowledgeNoLimits: true })).status).toBe(200);
+  await expect.poll(() => codexPrompts().includes("raised-no-limits-backup-source"), { timeout: 30000 }).toBe(true);
+  await idle(b.id);
+  expect((await messages(b.threadId)).some(message => message.card?.tool === "murage_limit_offer" && !message.card.answered)).toBe(false);
+}, 120000);

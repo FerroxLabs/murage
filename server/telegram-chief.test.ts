@@ -102,14 +102,14 @@ it("actual pair route resolves the workspace Chief and rejects supplied other re
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   const start = source.indexOf('      const body = await readBody(req);', source.indexOf('if (path === "/api/telegram/pair"'));
   const end = source.indexOf('\n    }', start);
-  // Local role: bind the absent home gate explicitly for the extracted route.
-  const route = new Function("readBody", "req", "store", "json", "res", "cfg", "telegram", "saveConfig", "homeExecutionGate", `return (async () => {${source.slice(start, end)}})()`);
+  // Local role: bind the absent home gate and the owner event recorder explicitly for the extracted route.
+  const route = new Function("readBody", "req", "store", "json", "res", "cfg", "telegram", "saveConfig", "homeExecutionGate", "ownerEvent", `return (async () => {${source.slice(start, end)}})()`);
   const pair = vi.fn(async () => ({ code: "fake" })), cfg = { telegram: { botToken: "FAKE_TOKEN" } };
   for (const targetBotId of ["other", "team-chief"]) {
-    const result = await route(async () => ({ targetBotId }), {}, { workspaceChief: () => ({ id: "chief" }) }, (_res: unknown, status: number) => status, {}, cfg, { pair }, vi.fn(), undefined);
+    const result = await route(async () => ({ targetBotId }), {}, { workspaceChief: () => ({ id: "chief" }) }, (_res: unknown, status: number) => status, {}, cfg, { pair }, vi.fn(), undefined, vi.fn());
     expect(result).toBe(409);
   }
   expect(pair).not.toHaveBeenCalled();
-  expect(await route(async () => ({}), {}, { workspaceChief: () => ({ id: "chief" }) }, (_res: unknown, status: number) => status, {}, cfg, { pair }, vi.fn(), undefined)).toBe(200);
+  expect(await route(async () => ({}), {}, { workspaceChief: () => ({ id: "chief" }) }, (_res: unknown, status: number) => status, {}, cfg, { pair }, vi.fn(), undefined, vi.fn())).toBe(200);
   expect(pair).toHaveBeenCalledWith("FAKE_TOKEN", "chief");
 });

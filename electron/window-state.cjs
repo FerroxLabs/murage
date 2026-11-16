@@ -38,7 +38,7 @@ function validWorkAreas(workAreas) {
 
 /** Keep restored windows reachable after monitor, resolution, or DPI changes.
  * workAreas must put the primary display first. */
-function resolveWindowState(state, workAreas, defaults = DEFAULT_BOUNDS) {
+function resolveWindowState(state, workAreas, defaults = DEFAULT_BOUNDS, minimums = MIN_BOUNDS) {
   const areas = validWorkAreas(workAreas);
   const primary = areas[0];
   const defaultBounds = {
@@ -58,8 +58,8 @@ function resolveWindowState(state, workAreas, defaults = DEFAULT_BOUNDS) {
     }
   }
 
-  const minWidth = Math.min(MIN_BOUNDS.width, target.width);
-  const minHeight = Math.min(MIN_BOUNDS.height, target.height);
+  const minWidth = Math.min(minimums.width, target.width);
+  const minHeight = Math.min(minimums.height, target.height);
   const width = clamp(parsed.bounds.width, minWidth, target.width);
   const height = clamp(parsed.bounds.height, minHeight, target.height);
   if (bestArea === 0) {

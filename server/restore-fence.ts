@@ -1,3 +1,6 @@
+import { sanitizeOwnWriteHoldsForRestore } from "./own-write-holds.ts";
+import { cancelOpenRecords } from "./decision/records.ts";
+import { RETIRED_SEARCH_OBJECTS } from "./settle-copy.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -67,6 +70,13 @@ export interface RestoreFencedStore { store: string; medium: "sqlite" | "json"; 
 /** Every persisted store that represents pending or resumable work, how a restore fences it, and the consumers that
  * must not act on it. `tables` names the SQL tables the entry covers (the structural test reads them). */
 export const RESTORE_FENCED_STORES: readonly RestoreFencedStore[] = [
+  { store: "owner limit applications", medium: "sqlite", tables: ["owner_limit_applications"], mode: "dropped", consumers: ["LimitApplications.pending", "LimitApplications.current"],
+    note: "pre-restore backup execution tickets are removed; only a fresh owner decision can create another application",
+    proof: ["SELECT COUNT(*) AS n FROM owner_limit_applications"] },
+  { store: "reviewed own writes", medium: "sqlite", tables: ["own_write_holds"], mode: "terminalized", consumers: ["OwnWriteHolds.recover", "OwnWriteHolds.answer"], note: "restore removes every executable body and approval receipt; applying becomes unknown and is never replayed", proof: ["SELECT COUNT(*) AS n FROM own_write_holds WHERE state IN ('waiting','approved','applying')"] },
+  { store: "approval records", medium: "sqlite", tables: ["approval_records"], mode: "terminalized", consumers: ["decision.recover", "answerApproval", "answerApprovalSync"],
+    note: "restore preparation cancels open records before expiring their transcript cards; retained queue source data is never activated",
+    proof: ["SELECT COUNT(*) AS n FROM approval_records WHERE state='open' OR (state='answered' AND delivery='pending')"] },
   { store: "room_requests", medium: "sqlite", tables: ["room_requests"], mode: "terminalized", consumers: ["roomDispatcher", "recoverOwnerSends", "holdFencedFanouts", "resumeProjectCloses", "resumeGoalCloseSummaries", "sweepOwedDeliveries"],
     note: "queued/running/waiting rows become expired and get a restore hold; owed owner words and unfinished fan-out are fenced by outcome note" },
   { store: "owner_sends", medium: "sqlite", tables: ["owner_sends"], mode: "held", consumers: ["drainQueuedSends", "drainQueuedChannelSends", "send retry", "Send again"],
@@ -119,8 +129,16 @@ export const RESTORE_NOT_PENDING_WORK: Readonly<Record<string, string>> = Object
   restore_holds: "the fence's own record",
   send_restore_generation: "the current restore token",
   owner_deleted_threads: "a deletion record",
+  flux_mem_owed: "Flux Memory forgets owed for conversations and bots the owner deleted (flux-memory-forget.ts): each row names a deleted conversation or bot, so the worker resumes it after a restore; it starts no bot work",
+  flux_mem_tombstone: "Flux Memory tombstones: conversations and bot spaces never captured again; a record, not work",
+  flux_mem_used: "where each Flux Memory capture went (flux-memory-spaces.ts); a record, not work",
+  flux_mem_receipt: "Flux Memory capture receipts, read only by an owed forget; a record, not work",
+  flux_mem_limit: "bot spaces at the Flux account's limit, rechecked by a real turn; a record, not work",
+  flux_mem_proven: "bot spaces where a Flux Memory capture was accepted (the route is proven there); a record, not work",
   meta: "key/value settings",
   messages_fts: "search index, rebuilt",
+  search_intents: "search queue, rebuilt",
+  ...Object.fromEntries(RETIRED_SEARCH_OBJECTS.map(name => [name, "retired search index, removed from restored copies"])),
   inbox_raw: "the Inbox projection (inbox.ts), derived from messages by triggers: a restore empties it and it is rebuilt on first open",
   inbox_items: "the Inbox projection (inbox.ts), derived from messages by triggers: a restore empties it and it is rebuilt on first open",
   thread_key: "the branch and line index's record of how far each thread's fill has got (branch-store.ts): derived from messages, so a restore leaves it to be filled again per thread",
@@ -143,6 +161,9 @@ interface CloseDetail { closeSeq?: unknown; goalSummary?: unknown; step?: unknow
 /** Marks every pending SQL row with the restore generation. Runs before the project tables are rewritten so it can
  * still see which requests were pending. Returns one note per fenced kind of work. */
 export function fenceRestoredSql(db: DatabaseSync, generation: string): Array<{ component: string; action: string }> {
+  sanitizeOwnWriteHoldsForRestore(db);
+  cancelOpenRecords(db, "Cancelled (restore)");
+  if (hasTable(db, "owner_limit_applications")) db.exec("DELETE FROM owner_limit_applications");
   db.exec(RESTORE_HOLDS_DDL);
   const notes: Array<{ component: string; action: string }> = [];
   // holds of an earlier restore take the new generation: they stay held until the owner acts after THIS restore

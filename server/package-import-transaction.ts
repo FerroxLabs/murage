@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, rmdirSync, unlinkSync } from "node:fs";
 import { dirname, isAbsolute, join, relative as relativePath } from "node:path";
 import { rootsFor, WorkspaceTreeError } from "./data-roots.ts";
 import { z } from "zod";

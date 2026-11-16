@@ -13,11 +13,14 @@ import { closeDatabase, database } from "../database.ts";
 import { appendMessage } from "../message-db.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { threadHumanPrincipal, OWNER } from "../human-principals.ts";
-import { assertMemoryAccess, inMemoryAccessPass, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { assertMemoryAccess, inMemoryAccessPass, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { inEligibilityPass } from "./eligibility-pass.ts";
 import { buildMemoryBundle } from "./bundle.ts";
-import { catchUpRecentMemory } from "./recent.ts";
+
+import { fixtureCatchUpRecentMemory as catchUpRecentMemory } from "../testing/recall-access-fixture.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
+import { RecallViewLost } from './recall-recovery.ts';
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
@@ -38,7 +41,8 @@ function runCounter(db: ReturnType<typeof database>, needle: string): () => numb
   void real;
   return () => runs;
 }
-const CONFIRM = "WHERE id=? AND kind=? AND owner_key=?";
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
+const CONFIRM = "WHERE s.kind='bot' AND s.owner_key=? LIMIT 1";
 const BINDING = "memory_scope_bindings WHERE id=? AND subject_type='human-thread'";
 const empty = { search: async () => ({ hits: [], vectorRows: 0, degradedReason: "keyword-only" }) };
 
@@ -83,8 +87,9 @@ it("inside a pass, repeated access checks walk the roster once; outside one each
   mark = confirms();
   for (let i = 0; i < 40; i++) assertMemoryAccess(access);
   const outside = confirms() - mark;
-  expect(inside).toBeLessThanOrEqual(260);
-  expect(outside).toBeGreaterThan(inside * 30);
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild)
+  expect(inside).toBe(1);
+  expect(outside).toBe(40);
 });
 
 it("a scope deleted or renamed mid-pass is not answered from the memo", () => {
@@ -93,13 +98,19 @@ it("a scope deleted or renamed mid-pass is not answered from the memo", () => {
   inMemoryAccessPass(() => {
     expect(() => assertMemoryAccess(access, room)).not.toThrow();
     db.prepare("UPDATE memory_scopes SET owner_key='renamed' WHERE id=?").run(room);
-    expect(() => assertMemoryAccess(access, room)).toThrow("MEMORY_SCOPE_DENIED");
+    expect(() => assertMemoryAccess(access, room))// MAIN RULING 1115-RECALL-R7 (GrokBuild): structural mutation invalidates the issued view before membership can answer.
+      .toThrow(RecallViewLost);
   });
-  const other = String(db.prepare("SELECT id FROM memory_scopes WHERE kind='room' AND owner_key='r4'").get()!.id);
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild): independently prepare the current reader before the deletion scenario.
+  const second = setup();
+  const other = String(second.db.prepare("SELECT id FROM memory_scopes WHERE kind='room' AND owner_key='r4'").get()!.id);
   inMemoryAccessPass(() => {
-    expect(() => assertMemoryAccess(access, other)).not.toThrow();
-    db.prepare("DELETE FROM memory_scopes WHERE id=?").run(other);
-    expect(() => assertMemoryAccess(access, other)).toThrow("MEMORY_SCOPE_DENIED");
+    expect(() => assertMemoryAccess(second.access, other)).not.toThrow();
+    // MAIN RULING 1115-RECALL-R7 (GrokBuild): model disappearance despite the view's fixture foreign key.
+    second.db.exec('PRAGMA foreign_keys=OFF');
+    try { second.db.prepare("DELETE FROM memory_scopes WHERE id=?").run(other); }
+    finally { second.db.exec('PRAGMA foreign_keys=ON'); }
+    expect(() => assertMemoryAccess(second.access, other)).toThrow(RecallViewLost);
   });
 });
 

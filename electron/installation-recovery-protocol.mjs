@@ -75,6 +75,10 @@ export function recoveryDesktopSummary(result) {
       if (!file(result.phoneCallsPreservedAt)) invalid();
       summary.phoneCallsPreservedAt = result.phoneCallsPreservedAt;
     }
+    if (result.applicationDataPreservedAt !== undefined) {
+      if (!file(result.applicationDataPreservedAt)) invalid();
+      summary.applicationDataPreservedAt = result.applicationDataPreservedAt;
+    }
   }
   if (result.operation === "restore") summary.sha256 = result.sha256 ?? result.archiveSha256;
   for (const key of ["files", "bytes"]) if (result[key] !== undefined) {

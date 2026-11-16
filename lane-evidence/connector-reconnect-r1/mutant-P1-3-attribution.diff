@@ -1,0 +1,11 @@
+--- a/server/composio.ts
++++ b/server/composio.ts
+@@ -1743,7 +1743,7 @@
+     const aliases = requirements.filter(r => r.tool.split("_")[0]?.toLowerCase() === slug).map(r => r.account);
+     // An unqualified multi-account answer is unknown, never every account.
+     if (!aliases.length || aliases.some(a => !a)) return inventory.length === 1 ? inventory : [];
+-    return inventory.filter(a => aliases.includes(a.id) || (a.alias && aliases.includes(a.alias)));
++    return inventory;
+   };
+   connectorHealthStore().batch(() => {
+     for (const [slug, cause] of reading.failed) noteNeedsReconnect(cfg, slug, cause, selected(slug));

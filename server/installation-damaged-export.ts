@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, createReadStream, createWriteStream, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readSync, rmSync, writeSync, type Stats } from "node:fs";
+import { createWriteStream, writeSync } from "./counted-fs.ts";
+import { closeSync, constants, createReadStream, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readdirSync, readSync, rmSync, type Stats } from "node:fs";
 import { basename, dirname, join, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { Readable } from "node:stream";

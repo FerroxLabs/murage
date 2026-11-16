@@ -88,13 +88,14 @@ describe("imported bots start at Ask", () => {
     const routineLevel = build((m) => { m.definition.package.routines[0].permissionMode = "unlimited"; });
     await expect(previewBotPackageContents(routineLevel, { selection })).rejects.toThrow();
   });
-  it("creates every bot at Ask and every routine paused at Ask", async () => {
+  it("creates every bot at Ask and every routine paused with an inherited level", async () => {
     const f = await run(build());
     await f.attempt();
     const [bot] = f.prepared()!.bots;
     expect(bot).toMatchObject({ autoApprove: false, fullAccess: false, noLimits: false, computer: "off", browser: false, composio: false, chiefOfStaff: false });
     expect(bot.alwaysAllow ?? []).toEqual([]);
-    expect(f.prepared()!.routines[0]).toMatchObject({ enabled: false, permissionMode: "ask", nextRunAt: null });
+    expect(f.prepared()!.routines[0]).toMatchObject({ enabled: false, nextRunAt: null });
+    expect(f.prepared()!.routines[0]).not.toHaveProperty("permissionMode");
   });
 });
 
