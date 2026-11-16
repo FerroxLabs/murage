@@ -9,7 +9,7 @@
 // Everything else, 404 and 5xx and offline included, means "try later".
 import { describe, expect, it, vi } from "vitest";
 
-import { claimLegacyComposioInstall, prepareLegacyComposioClaim } from "./composio-legacy-claim.mjs";
+import { claimLegacyComposioInstall, prepareLegacyComposioClaim } from "./testing/composio-fixture.mjs";
 import { readComposioLegacyClaim } from "./managed-composio.mjs";
 import { sha256Hex } from "./flux-composio-token.mjs";
 

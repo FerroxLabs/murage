@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { awaitSites, bodyPoints, check, createRulesProgram, formatDiagnostics, launchCallbacks } from "./stop-gate.rules.checker.ts";
 import type { Ctx, Diagnostic, RuleId } from "./stop-gate.rules.checker.ts";
-import { ENGINES, PENDING_ENGINES } from "./stop-gate.rules.config.ts";
+import { ENGINES as CONFIG_ENGINES, PENDING_ENGINES } from "./stop-gate.rules.config.ts";
 import type { EngineRules } from "./stop-gate.rules.config.ts";
 
 const T0 = performance.now();
@@ -30,6 +30,27 @@ const SCANNED = [
   "server/drivers/codex.ts",
   "server/cloud-computer-turns.ts",
 ];
+
+// MAIN RULING INT-CONFLICT-DEFAULT 628bc2fabe / e572fd9653: explicitly inventory the reviewed wipe-guard await in each turn setup.
+// These are test locators only. Production rules, exemptions and every wrapper mutation remain unchanged.
+const guardInsertions: Record<string, { at: number; operand: string }> = {
+  "codex>create>sendTurnBody>launchBody": { at: 8, operand: "wipeGuardTurnEnvironment({ turn, turnId, env: handed.env, signal: entry.signal, isLive: () => !entry.done && !stopReques...[780]" },
+  "claude>create>dispatchTurn": { at: 7, operand: "wipeGuardTurnEnvironment({ turn, turnId, env: handed.env, signal: e.signal, posixShell: !!execShell, isLive: () => !e.do...[582]" },
+  "muse-code>create>ensureSession": { at: 3, operand: "wipeGuardTurnEnvironment({ turn, turnId: active.turnId, env: childEnv(), signal: e.signal, isLive: () => state.active ==...[977]" },
+  "antigravity>create>startTurn": { at: 6, operand: "wipeGuardTurnEnvironment({ turn, turnId, env: childEnv, signal: entry.signal, isLive: () => !entry.done && !settled && !...[749]" },
+};
+const ENGINES: EngineRules[] = CONFIG_ENGINES.map(engine => ({ ...engine, fixtures: [
+  ...engine.fixtures.map(fixture => {
+    const inserted = guardInsertions[fixture.key];
+    if (!inserted || fixture.ordinal < inserted.at) return fixture;
+    // MAIN RULING INT-CONFLICT-DEFAULT 628bc2fabe / e572fd9653: Muse carries the same guard environment into its existing host setup.
+    const operand = fixture.key === "muse-code>create>ensureSession" && fixture.ordinal === 5
+      ? "startHost(args, cwd, key, mcpServers !== null, (launch) => { launch.owner = active.turnId; launch.state = state; launch....[373]"
+      : fixture.operand;
+    return { ...fixture, ordinal: fixture.ordinal + 1, operand };
+  }),
+  ...Object.entries(guardInsertions).filter(([key]) => key.startsWith(`${engine.id}>`)).map(([key, row]) => ({ key, ordinal: row.at, wrapper: "step" as const, operand: row.operand })),
+] }));
 
 const isPending = (e: EngineRules): boolean => PENDING_ENGINES.includes(e.id);
 const enforced = ENGINES.filter((e) => !isPending(e));
@@ -92,7 +113,13 @@ function buildPlan(engine: EngineRules, id: PlanId): Plan {
     switch (id) {
       case "unwrap": {
         // drop each fixture's gate wrapper: `await gate.step(e, X)` becomes `await (X)`; every one must turn R1 red at its own key and ordinal
-        const edits = wrapped.map((s) => ({ start: s.start, end: s.end, text: `await (${original.slice(s.argStart, s.argEnd)})` }));
+        // Mutate only each call's delimiters so a wrapper whose operand
+        // contains another wrapped await still loses BOTH gates. Replacing
+        // whole await expressions made the nested edits overlap.
+        const edits = wrapped.flatMap((s) => [
+          { start: s.start, end: s.argStart, text: "await (" },
+          { start: s.argEnd, end: s.end, text: ")" },
+        ]);
         plan.text = applyEdits(plan.name, original, edits);
         plan.verify = (ds) => {
           const missed = wrapped.filter((s) => !has(ds, (d) => d.rule === "R1" && d.kind === "await" && d.key === s.key && d.ordinal === s.ordinal));
@@ -131,7 +158,10 @@ function buildPlan(engine: EngineRules, id: PlanId): Plan {
         plan.verify = (ds) => {
           const r3 = ds.filter((d) => d.rule === "R3");
           expect(direct.filter((c) => !has(r3, (d) => d.key === c.cbKey)).map((c) => c.cbKey), "launch callbacks whose primitive stayed green outside gate.launch").toEqual([]);
-          expect(r3.length).toBeGreaterThanOrEqual(direct.length + (helper.length > 0 ? 1 : 0));
+          // MAIN RULING INT-CONFLICT-DEFAULT 628bc2fabe / b2c9cd39c07: an outer helper launch and its inner actual-write launch share one primitive; keep the per-primitive red checks above.
+          const helperTargets = helper.map(c => /=>\s*([A-Za-z_$][\w$]*)\(\)$/.exec(c.callbackText)?.[1]);
+          const indirectOnly = helperTargets.some(name => !name || !direct.some(c => c.cbKey.includes(`>${name}>`)));
+          expect(r3.length).toBeGreaterThanOrEqual(direct.length + (indirectOnly ? 1 : 0));
         };
         break;
       }

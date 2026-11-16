@@ -1,12 +1,20 @@
+// control: legacy cases retain their assertions unless individually labelled red-at-4df086541 below.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { Readable, Writable } from "node:stream";
 import { describe,it,expect,vi } from "vitest";
 import { runBrowserExtensionMcp, parseBrowserExtensionMcpConfig } from "./browser-extension-mcp.ts";
+// control migration: capture the shared release destination; protocol assertions stay unchanged.
+const releaseSink = vi.hoisted(() => ({ write: (_frame: string) => {} }));
+vi.mock("../proxy-turn-release.ts", () => ({
+  releaseProxyFrame: async (_role: string, frame: string) => { releaseSink.write(frame + "\n"); },
+  reserveProxyUpstream: async () => {}, proxyUpstreamResponse: (_role: string, response: Response) => response, proxyTransportLost: () => {},
+}));
 const config={endpoint:"http://127.0.0.1:12345/api/browser-extension/mcp",clientId:"paired_client",token:"a".repeat(43)};
 async function run(messages:unknown[],response:unknown={content:[{type:"text",text:"fixture observation"}]}){
  const calls:unknown[][]=[];let stdout="";
  const fetcher=vi.fn(async(...args:unknown[])=>{calls.push(args);return Response.json(response);});
  const output=new Writable({write(chunk,_encoding,callback){stdout+=chunk.toString();callback();}});
+ releaseSink.write = frame => { output.write(frame); };
  await runBrowserExtensionMcp({config,input:Readable.from(messages.map(message=>JSON.stringify(message)+"\n")),output,fetch:fetcher as unknown as typeof fetch});
  return {calls,stdout,replies:stdout.trim().split("\n").filter(Boolean).map(line=>JSON.parse(line))};
 }
@@ -18,8 +26,9 @@ describe("paired browser MCP stdio",()=>{
  it("forwards only validated tool arguments with paired credentials",async()=>{const result=await run([{id:1,method:"tools/call",params:{name:"agent_browser_snapshot",arguments:{}}}]);expect(result.calls).toHaveLength(1);const init=result.calls[0][1] as RequestInit;expect(init.redirect).toBe("error");expect(init.headers).toMatchObject({authorization:`Bearer ${config.token}`,"x-murage-browser-client":config.clientId});expect(JSON.parse(init.body as string)).toEqual({method:"tools/call",params:{name:"agent_browser_snapshot",arguments:{}}});expect(result.replies[0].result.content[0].text).toBe("fixture observation");});
  it.each([{name:"agent_browser_evaluate",arguments:{script:"1"}},{name:"agent_browser_snapshot",arguments:{extraArgs:["--cdp=x"]}},{name:"agent_browser_snapshot",arguments:{},botId:"other"}])("refuses malformed or privileged call %j",async params=>{const result=await run([{id:1,method:"tools/call",params}]);expect(result.calls).toHaveLength(0);expect(result.replies[0].result.isError).toBe(true);});
  it("does not forward approval or identity methods",async()=>{const result=await run([{id:1,method:"approvals/allow",params:{requestId:"x"}}]);expect(result.calls).toHaveLength(0);expect(result.replies[0].error.code).toBe(-32601);});
- it("malformed input emits a protocol error without leaking input",async()=>{let output="";await runBrowserExtensionMcp({config,input:Readable.from(["not-json-secret\n"]),output:new Writable({write(chunk,_encoding,cb){output+=chunk.toString();cb();}})});expect(JSON.parse(output).error.code).toBe(-32700);expect(output).not.toContain("secret");});
- it("host failure yields generic refusal without backend secrets",async()=>{let output="";await runBrowserExtensionMcp({config,input:Readable.from([JSON.stringify({id:1,method:"tools/call",params:{name:"agent_browser_snapshot",arguments:{}}})+"\n"]),output:new Writable({write(chunk,_encoding,cb){output+=chunk.toString();cb();}}),fetch:async()=>new Response("private failure",{status:403})});expect(JSON.parse(output).result.isError).toBe(true);expect(output).not.toContain("private failure");});
+ it("malformed input emits a protocol error without leaking input",async()=>{let output="";releaseSink.write=frame=>{output+=frame;};await runBrowserExtensionMcp({config,input:Readable.from(["not-json-secret\n"]),output:new Writable({write(chunk,_encoding,cb){output+=chunk.toString();cb();}})});expect(JSON.parse(output).error.code).toBe(-32700);expect(output).not.toContain("secret");});
+ // red-at-4df086541: an unreadable host failure must seal instead of returning recoverable tool content.
+ it("host failure terminates without backend secrets or ordinary content",async()=>{let output="";releaseSink.write=frame=>{output+=frame;};await expect(runBrowserExtensionMcp({config,input:Readable.from([JSON.stringify({id:1,method:"tools/call",params:{name:"agent_browser_snapshot",arguments:{}}})+"\n"]),output:new Writable({write(chunk,_encoding,cb){output+=chunk.toString();cb();}}),fetch:async()=>new Response("private failure",{status:403})})).rejects.toThrow("MEMORY_CONTEXT_REVOKED");expect(output).toBe("");expect(output).not.toContain("private failure");});
  it("rejects oversized request frame",async()=>{await expect(runBrowserExtensionMcp({config,input:Readable.from(["x".repeat(65537)]),output:new Writable({write(_chunk,_encoding,cb){cb();}})})).rejects.toThrow("frame exceeds");});
  it("accepts RMCP progress metadata but never forwards it",async()=>{const result=await run([{id:1,method:"tools/call",params:{_meta:{progressToken:0},name:"agent_browser_snapshot",arguments:{}}}]);expect(result.calls).toHaveLength(1);expect(JSON.parse(String((result.calls[0][1] as RequestInit).body))).toEqual({method:"tools/call",params:expect.not.objectContaining({_meta:expect.anything()})});expect(result.replies[0].result).toBeDefined();});
  it.each([null,[],"p",{progressToken:{}},{progressToken:1.5},{progressToken:Number.MAX_SAFE_INTEGER+1},{progressToken:0,botId:"other"},{botId:"other"}])("refuses malformed or extra metadata %j",async meta=>{const result=await run([{id:1,method:"tools/call",params:{_meta:meta,name:"agent_browser_snapshot",arguments:{}}}]);expect(result.calls).toHaveLength(0);expect(result.replies[0].result.isError).toBe(true);});

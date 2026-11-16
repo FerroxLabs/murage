@@ -11,7 +11,7 @@ import {
   downloadRegistry, markTurnOutside, noteSessionEdits, noteSessionWrote, outsideTurnKey, ownWrite, ownWritten, readOnlySoFar, runningOutsideInstance, sessionEdits,
   SESSION_EDITS_OVERFLOW, turnBegunAt, turnOutsideExempt, turnOutsideRead, type OutsideSource,
 } from "./email/external-marks.ts";
-import { engineEnvDenied, enginePathOf, installPrograms, interpreterBranches, noteEnginePath, outsideScanMarks, readOnlyShape, type DiskProbe, type OutsideScanHooks, type ReadOnlyHooks } from "./outside-scan.ts";
+import { engineEnvDenied, enginePathOf, installPrograms, scanFailClosed, noteEnginePath, outsideScanMarks, readOnlyShape, type DiskProbe, type OutsideScanHooks, type ReadOnlyHooks } from "./outside-scan.ts";
 import { closeSync, existsSync, openSync, readSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, delimiter, dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
@@ -61,8 +61,30 @@ const READ_NAMES: ReadonlySet<string> = new Set(["read", "notebookread", "glob",
   "askuserquestion", "skill", "slashcommand", "enterplanmode"]);
 const READ_KINDS: ReadonlySet<string> = new Set(["read", "search", "think", "switch_mode", "fetch"]);
 
+/** Host-authenticated execution namespace. A remote path never addresses this
+ * server's filesystem. The legacy local callers are retained while adapters
+ * acquire explicit authorities; this does not qualify a remote adapter. */
+export type OutsideFilesystemAuthority = { kind: "local" | "cloud-launcher" | "box" | "remote" | "unknown"; id: string; namespaceId: string };
+
+// These builtin adapters execute their filesystem tools in their local CLI
+// namespace. A custom ACP command can be an SSH/remote wrapper and cannot be
+// inferred to address the server's disk from its display name or input paths.
+const LOCAL_FILESYSTEM_DRIVERS = new Set([
+  "claudeAgent", "codex", "piAgent", "antigravityAgent", "fuigoAgent", "grokAgent", "geminiAgent",
+  "cursorAgent", "kimiAgent", "droidAgent", "clineAgent", "opencodeGo",
+]);
+/** Inputs come from the active server driver binding and server launch role,
+ * never tool arguments. This scopes observation; it does not grant relief. */
+export function outsideAuthorityForExecution(threadId: string, driverKind: string | undefined, role?: string): OutsideFilesystemAuthority {
+  const kind = role === "home" ? "cloud-launcher" : (role === undefined || role === "desktop") && driverKind !== undefined && LOCAL_FILESYSTEM_DRIVERS.has(driverKind) ? "local" : "unknown";
+  return Object.freeze({ kind, id: threadId, namespaceId: `${kind}:${process.pid}` });
+}
+
+
 export interface ToolStart {
   origin: "engine" | "murage";
+  /** Untrusted hints may only narrow local access. They never grant authority. */
+  provenance?: unknown;
   title?: string;
   input?: unknown;
   toolKind?: string;
@@ -153,6 +175,8 @@ const ACP_RAW_READERS: ReadonlySet<string> = new Set(["read", "notebookread", "g
  *  qualified tool a wrapper names, rawInput, kind, stamp), not a display label, and a missing kind with no stamp marks
  *  unless the call is a local reader by the F5 rule. */
 export interface ToolJudgeOptions {
+  /** Set by the adapter/host, never copied from model input. */
+  authority?: OutsideFilesystemAuthority;
   acpRaw?: boolean;
   /** GrokBuild review (NOLIMITS 1.0.18): the disk the shell scan reads (scanDisk), when the turn's folder is known. */
   scan?: ScanDisk;
@@ -651,8 +675,22 @@ function spanWorthy(item: ToolStart, threadId: string, cwd: string | undefined, 
   return !(kind !== undefined && kind !== "" ? LOCAL_KINDS.has(kind) : LOCAL_NAMES.has(tool));
 }
 
+/** A supplied remote/unknown namespace cannot borrow the server's FsHooks.
+ * Even an untrusted hint may refuse local access; it cannot override the host. */
+function localFilesystemCall(item: ToolStart, options: ToolJudgeOptions): boolean {
+  if (options.authority && options.authority.kind !== "local") return false;
+  if (item.provenance !== undefined) {
+    const hint = item.provenance as { authority?: { kind?: unknown } } | null;
+    if (!hint || typeof hint !== "object" || hint.authority?.kind !== "local") return false;
+  }
+  return true;
+}
+
 /** Record installer provenance before a driver releases a tool for execution. */
 export function recordOutsideInstallChange(threadId: string, item: ToolStart, turnCwd?: string, options: ToolJudgeOptions = {}): boolean {
+  if (!localFilesystemCall(item, options)) return true;
+  // An explicitly invalid call cwd is never repaired with the turn cwd or HOME.
+  if (commandCwdOf(item) === null) return ownWrite(PATH_UNKNOWN_KEY);
   const identity = split(item, options);
   const tool = identity.tool;
   if (identity.server !== undefined || !(SHELL_NAMES.has(tool) || kindOf(item, identity) === "execute")) return true;
@@ -763,12 +801,21 @@ function commandCwdOf(item: ToolStart): string | null | undefined {
 /** Keep call provenance even when this call cannot earn the one-call exemption. */
 export function markCallOutside(threadId: string, source: OutsideSource, item: Pick<ToolStart, "callKey" | "lateFrame">): void {
   const by = item.lateFrame || source === "interpreter" ? undefined : item.callKey; // M-PR-5b
-  markTurnOutside(threadId, source, by, { callKey: item.callKey, late: item.lateFrame }, source === "interpreter" ? `item:interpreter branch=${interpreterBranches()}` : `item:${source}`);
+  markTurnOutside(threadId, source, by, { callKey: item.callKey, late: item.lateFrame }, source === "interpreter" ? `item:interpreter branch=${scanFailClosed.interpreterBranches}` : `item:${source}`);
 }
 
 /** item.started of an engine tool: mark the running turn first (3.1 timing), then, on a marked turn, note a session write. */
 export function noteToolStartOutside(threadId: string, item: ToolStart, turnCwd?: string, options: ToolJudgeOptions = {}): void {
   if (item.origin !== "engine") return;
+  if (!localFilesystemCall(item, options)) {
+    markCallOutside(threadId, "outside tool", item);
+    return;
+  }
+  if (commandCwdOf(item) === null) {
+    markCallOutside(threadId, "outside tool", item);
+    spanTurn(threadId, undefined);
+    return;
+  }
   if (!recordOutsideInstallChange(threadId, item, turnCwd, options)) throw new Error("Murage could not record this change. Check available disk space.");
   // Astra acct5 r1 H4: a shell call runs in the folder it names (Codex keeps input.cwd), so its disk and registry hooks are
   // built there; a folder it names that cannot be placed marks
@@ -789,14 +836,19 @@ export function noteToolStartOutside(threadId: string, item: ToolStart, turnCwd?
  *  cannot be judged marks `outside tool`. The display item's own judging (item.started) still runs beside it and registers
  *  what the started call brings in, so a start and an ask only mark here; an update that changed the call, or one with no
  *  start (`register`), also registers (V4) and notes the session write (6.3) as a start would. */
-export function noteAcpCallOutside(threadId: string, call: ToolStart, cwd?: string, register = false): void {
+export function noteAcpCallOutside(threadId: string, call: ToolStart, cwd?: string, register = false, options: ToolJudgeOptions = {}): void {
   const item: ToolStart = { ...call, origin: "engine" };
   try {
-    if (register) { noteToolStartOutside(threadId, item, cwd, { acpRaw: true }); return; }
+    if (!localFilesystemCall(item, options) || commandCwdOf(item) === null) {
+      markCallOutside(threadId, "outside tool", item);
+      if (register && localFilesystemCall(item, options)) spanTurn(threadId, undefined);
+      return;
+    }
+    if (register) { noteToolStartOutside(threadId, item, cwd, { ...options, acpRaw: true }); return; }
     const own = commandCwdOf(item);
     const at = typeof own === "string" ? own : cwd;
     let source: OutsideSource | null;
-    try { source = own === null ? "outside tool" : toolStartOutside(item, dlFor(threadId, at), { acpRaw: true, scan: scanDisk(threadId, at) }); } catch { source = "downloaded file"; }
+    try { source = own === null ? "outside tool" : toolStartOutside(item, dlFor(threadId, at), { ...options, acpRaw: true, scan: scanDisk(threadId, at) }); } catch { source = "downloaded file"; }
     // Astra acct5 r1 H1 with the relay 5 rule: no session edit here. Unregistered is an ask before its answer (the owner may
     // deny it; registerOnAllow judges it again with `register` once allowed) or a start its allowed ask already recorded.
     // What an allowed call writes is recorded on the register path above (noteToolStartOutside), so a denied call records nothing.
@@ -810,20 +862,23 @@ export function noteAcpCallOutside(threadId: string, call: ToolStart, cwd?: stri
  *  running turn's folder: `judge` is noteAcpCallOutside (1.0.19 A5: one judge per call, registering at its start); `mark`
  *  (a helper frame, an unknown vendor method, a pre-prompt frame) marks the turn and, 1.0.19 A2, opens its span, so what a
  *  helper wrote Matches in a later chat (as a Codex helper does, codex.ts). */
-export function acpOutsideHooks(cwdOf: (threadId: string) => string | undefined): {
+export function acpOutsideHooks(cwdOf: (threadId: string) => string | undefined, authorityOf?: (threadId: string) => OutsideFilesystemAuthority): {
   judge(threadId: string, call: ToolStart, register: boolean): void;
-  mark(threadId: string, source: OutsideSource, site?: string): void;
+  mark(threadId: string, source: OutsideSource, site?: string, lifecycle?: boolean): void;
 } {
   return {
-    judge: (threadId, call, register) => { noteAcpCallOutside(threadId, call, cwdOf(threadId), register); },
-    mark: (threadId, source, site) => { markTurnOutside(threadId, source, undefined, undefined, site); spanTurn(threadId, cwdOf(threadId)); },
+    judge: (threadId, call, register) => { noteAcpCallOutside(threadId, call, cwdOf(threadId), register, { authority: authorityOf?.(threadId) }); },
+    mark: (threadId, source, site, lifecycle) => {
+      markTurnOutside(threadId, source, undefined, undefined, site, lifecycle);
+      if (!authorityOf || authorityOf(threadId).kind === "local") spanTurn(threadId, cwdOf(threadId));
+    },
   };
 }
 
 /** M9 (b), r4 3.2: the union of the project instruction files and folders every engine loads from the working folder and
  *  its ancestors (Claude, Codex, Gemini, Cursor, Fuigo). */
 export const INSTRUCTION_NAMES: readonly string[] = [
-  "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "AGENTS.override.md", "GEMINI.md", ".cursorrules", ".claude", ".cursor", ".codex", ".fuigo",
+  ".mcp.json", "CLAUDE.md", "CLAUDE.local.md", "AGENTS.md", "AGENTS.override.md", "GEMINI.md", ".cursorrules", ".claude", ".cursor", ".codex", ".fuigo",
 ];
 
 /** v1 V2 (M9): at turn start, before the prompt is sent. The working folder Matches the registry (DL step 2 in full: it is,
@@ -832,6 +887,7 @@ export const INSTRUCTION_NAMES: readonly string[] = [
 export function cwdOutsideMark(
   cwd: string | undefined, registry: DownloadRegistry = downloadRegistry(), fsHooks: FsHooks = nodeFsHooks(), driverKind?: string, listDir: ListDir = nodeListDir,
 ): OutsideSource | null {
+  if (!cwd) return "folder not checked";
   if (registry.empty()) return null;
   const folderMark = cwdAndAncestorsMark(cwd, registry, fsHooks);
   if (folderMark) return folderMark;
@@ -851,29 +907,25 @@ export const BELOW_CWD_MAX_DIRS = 200;
  *  engine's folder bound, with no depth cutoff, and Match every instruction file or folder found (its ctime in a span, or
  *  any entry). A listing that reaches the bound before it ends, a folder that cannot be listed, or a spent budget marks. */
 function belowCwdInstructionMark(cwd: string, registry: DownloadRegistry, fsHooks: FsHooks, listDir: ListDir): OutsideSource | null {
+  // Coarse spans apply by ctime anywhere, including below a cwd that is not the
+  // span's stored path. Exact entries are already covered by the ancestor check.
   if (registry.spanCount() === 0) return null;
   const names = INSTRUCTION_SET();
-  const budget = new TextBudget(fsHooks);
-  const options = { cwd, budget };
-  const queue: string[] = [cwd];
-  let listed = 0;
+  const budget = new TextBudget(fsHooks), options = { cwd, budget };
+  const queue = [cwd]; let listed = 0;
   try {
     for (let at = 0; at < queue.length; at++) {
-      if (listed >= BELOW_CWD_MAX_DIRS) return "cloned folder";
-      const folder = queue[at]!;
-      listed++;
-      const entries = listDir(folder);
-      if (!entries) continue;
-      for (const entry of entries) {
-        const path = join(folder, entry.name);
-        if (names.has(entry.name.toLowerCase()) && registry.matchPath(path, options)) return "cloned folder";
-        if (budget.spent()) return "cloned folder";
-        if (entry.dir) queue.push(path);
+      if (listed++ >= BELOW_CWD_MAX_DIRS) return 'cloned folder';
+      const children = listDir(queue[at]);
+      if (!children) return 'cloned folder';
+      for (const child of children) {
+        const path = join(queue[at], child.name);
+        if (names.has(child.name.toLowerCase()) && registry.matchPath(path, options)) return 'cloned folder';
+        if (budget.spent()) return 'cloned folder';
+        if (child.dir) queue.push(path);
       }
     }
-  } catch {
-    return "cloned folder";
-  }
+  } catch { return 'cloned folder'; }
   return null;
 }
 
@@ -889,12 +941,14 @@ function cwdAndAncestorsMark(cwd: string | undefined, registry: DownloadRegistry
   const budget = new TextBudget(fsHooks);
   const options = { cwd, budget };
   try {
-    if (registry.matchPath(cwd, options)) return "cloned folder";
+    const cwdLabel = registry.matchPath(cwd, options);
+    if (cwdLabel) return budget.failed() || budget.spent() ? "cloned folder" : cwdLabel;
     for (let folder = cwd; ; ) {
       for (const name of INSTRUCTION_NAMES) {
         const file = join(folder, name);
         if (fsHooks.lstat(file) === null) continue;
-        if (registry.matchPath(file, options)) return "cloned folder";
+        const label = registry.matchPath(file, options);
+        if (label) return budget.failed() || budget.spent() ? "cloned folder" : label;
       }
       if (budget.spent()) return "cloned folder";
       if (fsHooks.lstat(join(folder, ".git")) !== null) break;

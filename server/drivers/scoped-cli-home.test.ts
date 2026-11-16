@@ -38,6 +38,7 @@ const quarantine = () => join(scopedCliHomeRoot("gemini"), SCOPE_QUARANTINE);
 
 beforeEach(() => { ensureDirs(); resetScopeBookkeeping(); setScopeRetentionHooks({ botExists: () => false }); });
 afterEach(() => {
+  vi.restoreAllMocks();
   setScopeRetentionHooks({});
   for (const d of dirs.splice(0)) removeTempDirSync(d);
 });
@@ -283,7 +284,8 @@ describe("quarantine is bounded", () => {
 
 describe("startup and pruning exclude each other", () => {
   const spec = (real: string, bot: string) => ({ kind: "leasetest", realHome: real, botId: bot, share: ["auth.json"], cache: ["tmp"] });
-  afterEach(() => { setLeaseWaitMs(30_000); });
+  afterEach(() => {
+  vi.restoreAllMocks(); setLeaseWaitMs(30_000); });
 
   it("a lease held 3 s: startup waits asynchronously, the event loop stays free, a notice fires once, and the scope is only used after release", async () => {
     const real = tmp("murage-lease-real-");
@@ -292,7 +294,7 @@ describe("startup and pruning exclude each other", () => {
     const lock = scopeLockPath(root);
     writeFileSync(lock, JSON.stringify({ pid: process.ppid, id: null }));
     expect(() => scopedCliHome(spec(real, "bot-lease"))).toThrow(/tidied up/); // the sync build never hands out a scope mid-prune, cached or not
-    const child = spawn(process.execPath, ["-e", `setTimeout(()=>{try{require("fs").unlinkSync(${JSON.stringify(lock)})}catch{}},3000)`], { stdio: "ignore", detached: true });
+    const child = spawn(process.execPath, ["-e", `setTimeout(()=>{try{require("fs").unlinkSync(${JSON.stringify(lock)})}catch{}},3000)`], { windowsHide: true, stdio: "ignore", detached: true });
     child.unref();
     let last = Date.now(); let maxGap = 0;
     const tick = setInterval(() => { const n = Date.now(); maxGap = Math.max(maxGap, n - last); last = n; }, 10);
@@ -419,7 +421,7 @@ describe("quarantine byte pressure and old-format logins", () => {
   });
 });
 
-import { linkSync, lstatSync, lutimesSync, readlinkSync, renameSync, symlinkSync } from "node:fs";
+import { linkSync, lstatSync, lutimesSync, readlinkSync, renameSync, symlinkSync, unlinkSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -428,7 +430,8 @@ import { prefixRebaseLinks, prefixRebaseSeams, setRelinkNotice } from "../link-r
 import { resetIsolationCache } from "./isolation-cache.ts";
 
 describe("S5 site 10", () => {
-  afterEach(() => { vi.restoreAllMocks(); setRelinkNotice(line => console.warn(line)); resetIsolationCache(); });
+  afterEach(() => {
+  vi.restoreAllMocks(); vi.restoreAllMocks(); setRelinkNotice(line => console.warn(line)); resetIsolationCache(); });
   function fixture() {
     const dir = mkdtempSync(join(DATA_DIR, "carry-rebase-")); dirs.push(dir);
     const spec = { kind: "s5carry", realHome: dir, botId: dir, share: [] };
@@ -515,7 +518,7 @@ describe("S5 site 10", () => {
   it.each((process.platform === "win32" ? ["symlink"] : ["outside", "symlink", "fifo"]) as Array<"outside" | "symlink" | "fifo">)("S5 site 10 refuses %s", mode => {
     const c = fixture(), target = join(c.dir, "target"), link = join(c.dest, "state");
     if (mode === "fifo") {
-      try { execFileSync("mkfifo", [target], { stdio: ["pipe", "pipe", "pipe"] }); }
+      try { execFileSync("mkfifo", [target], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }); }
       catch (error) { if (!lstatSync(target, { throwIfNoEntry: false })?.isFIFO()) throw error; }
       expect(lstatSync(target).isFIFO()).toBe(true);
     }
@@ -547,4 +550,69 @@ describe("S5 site 10", () => {
     [hard, copy].forEach((path, i) => { expect(lstatSync(path).ino).toBe(before[i]!.ino); expect(lstatSync(path).nlink).toBe(before[i]!.nlink); });
     expect(readFileSync(copy, "utf8")).toBe("copy fixture"); expect(c.lines).toEqual([]);
   });
+});
+
+
+it('Fuigo upgrade keeps real sessions, preserves conflicting private bytes and continues every turn', async () => {
+  const {applyFuigoNoLimitsHome}=await import('./acp/fuigo-no-limits.ts');
+  const {scopeId,SCOPE_MARKER}=await import('./scoped-cli-home.ts');
+  const {resetIsolationCache}=await import('./isolation-cache.ts');
+  const real=tmp('fuigo-session-upgrade-'),botId='conflicting-history';
+  const root=join(scopedCliHomeRoot('fuigo-no-limits'),scopeId(real,botId));
+  mkdirSync(join(real,'sessions'),{recursive:true});
+  writeFileSync(join(real,'sessions','same.jsonl'),'REAL HISTORY');
+  writeFileSync(join(real,'sessions','identical.jsonl'),'IDENTICAL');
+  // A committed private home from before sessions were shared.
+  scopedCliHome({kind:'fuigo-no-limits',realHome:real,botId,share:[]});
+  mkdirSync(join(root,'sessions'),{recursive:true});
+  writeFileSync(join(root,'sessions','same.jsonl'),'PRIVATE HISTORY');
+  writeFileSync(join(root,'sessions','identical.jsonl'),'IDENTICAL');
+  writeFileSync(join(root,'sessions','private.jsonl'),'PRIVATE ONLY');
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  const env={FUIGO_HOME:real};
+  expect(()=>applyFuigoNoLimitsHome(env,botId)).not.toThrow();
+  expect(readFileSync(join(real,'sessions','same.jsonl'),'utf8')).toBe('REAL HISTORY');
+  const conflicts=readdirSync(join(real,'sessions')).filter(name=>name.includes('.murage-conflict-'));
+  expect(conflicts).toHaveLength(1);
+  expect(conflicts[0]).toMatch(/^same\.jsonl\.murage-conflict-\d+-\d+$/);
+  expect(readFileSync(join(real,'sessions',conflicts[0]!), 'utf8')).toBe('PRIVATE HISTORY');
+  expect(readFileSync(join(real,'sessions','private.jsonl'),'utf8')).toBe('PRIVATE ONLY');
+  expect(readFileSync(join(env.FUIGO_HOME,'sessions','same.jsonl'),'utf8')).toBe('REAL HISTORY');
+  expect(JSON.parse(readFileSync(join(root,SCOPE_MARKER),'utf8')).mergedSharedDirectories).toContain('sessions');
+  resetIsolationCache();
+  expect(()=>applyFuigoNoLimitsHome(env,botId)).not.toThrow();
+  expect(readdirSync(join(real,'sessions')).filter(name=>name.includes('.murage-conflict-'))).toEqual(conflicts);
+  expect(warn.mock.calls.filter(([line])=>String(line).includes('conflicting sessions'))).toHaveLength(1);
+});
+
+it('M4 a partially failed history merge preserves one copy per state across rebuilds and restarts with bounded retries', async () => {
+  const { scopeId } = await import('./scoped-cli-home.ts');
+  const { resetIsolationCache } = await import('./isolation-cache.ts');
+  const real = tmp('history-partial-'), botId = 'partial-history';
+  const spec = {kind:'partial-history',realHome:real,botId,share:['sessions'],mergeSharedDirectories:['sessions']};
+  const root = join(scopedCliHomeRoot(spec.kind), scopeId(real, botId));
+  scopedCliHome({...spec, share:[], mergeSharedDirectories:[]});
+  mkdirSync(join(root, 'sessions'), {recursive:true}); mkdirSync(join(real, 'sessions'));
+  writeFileSync(join(root, 'sessions', 'a.jsonl'), 'PRIVATE');
+  writeFileSync(join(real, 'sessions', 'a.jsonl'), 'OWNER');
+  symlinkSync(real, join(root, 'sessions', 'z-unsafe'));
+  vi.spyOn(console, 'warn').mockImplementation(() => {});
+  for (let i = 0; i < 10; i++) {
+    resetIsolationCache(); resetScopeBookkeeping();
+    expect(() => scopedCliHome(spec, 10_000 + i)).not.toThrow();
+  }
+  const conflicts = () => readdirSync(join(real, 'sessions')).filter(name => name.includes('.murage-conflict-'));
+  expect(conflicts()).toHaveLength(1);
+  expect(readFileSync(join(real, 'sessions', conflicts()[0]!), 'utf8')).toBe('PRIVATE');
+  const attempts = () => JSON.parse(readFileSync(join(root, SCOPE_MARKER), 'utf8')).sharedDirectoryMergeAttempts.sessions;
+  expect(attempts().attempts).toBe(3);
+  expect(JSON.parse(readFileSync(join(root, SCOPE_MARKER), 'utf8')).mergedSharedDirectories).not.toContain('sessions');
+  writeFileSync(join(root, 'sessions', 'a.jsonl'), 'PRIVATE UPDATED');
+  resetIsolationCache(); resetScopeBookkeeping(); scopedCliHome(spec, 20_000);
+  expect(conflicts()).toHaveLength(2); expect(attempts().attempts).toBe(1);
+  unlinkSync(join(root, 'sessions', 'z-unsafe'));
+  resetIsolationCache(); scopedCliHome(spec, 30_000);
+  expect(conflicts()).toHaveLength(2);
+  expect(JSON.parse(readFileSync(join(root, SCOPE_MARKER), 'utf8')).mergedSharedDirectories).toContain('sessions');
+  expect(readFileSync(join(real, 'sessions', 'a.jsonl'), 'utf8')).toBe('OWNER');
 });

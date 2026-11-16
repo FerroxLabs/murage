@@ -1,0 +1,391 @@
+{
+  "RED": [
+    {
+      "id": "T-BOUND-BYTES",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "owner sync writes"
+    },
+    {
+      "id": "T-NO-FTS-MAIN",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "owner sync writes"
+    },
+    {
+      "id": "T-INTENT-SIZE",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "large drop"
+    },
+    {
+      "id": "T-NO-PLAINTEXT",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "large drop"
+    },
+    {
+      "id": "T-IDENTITY-ROLLBACK",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "same owner"
+    },
+    {
+      "id": "T-IDENTITY-REBUILD",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "a rebuild records"
+    },
+    {
+      "id": "T-LINEAGE-STEADY",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "pruning a strict prefix"
+    },
+    {
+      "id": "T-IDENTITY-REOPEN",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "immediate reopen"
+    },
+    {
+      "id": "T-SEARCH-PENDING",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "pending sync is found"
+    },
+    {
+      "id": "T-SEARCH-SNAPSHOT",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "worker commit between"
+    },
+    {
+      "id": "T-SEARCH-INTENT-CAP",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "pending sync is found"
+    },
+    {
+      "id": "T-SEARCH-REUSE",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "live verification candidates"
+    },
+    {
+      "id": "T-SEARCH-ORDER",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "newer sync cannot"
+    },
+    {
+      "id": "T-SEARCH-PARTIAL",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "pending sync is found"
+    },
+    {
+      "id": "T-SEARCH-OVERSIZED",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "bounded fetch skips"
+    },
+    {
+      "id": "T-SEARCH-READER",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "disabled reader"
+    },
+    {
+      "id": "T-SEARCH-START-FAILURE",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "constructor refusal"
+    },
+    {
+      "id": "T-SEARCHDB-WAL",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "only main-file worker"
+    },
+    {
+      "id": "T-SEARCHDB-FULL",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "only main-file worker"
+    },
+    {
+      "id": "T-RO",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "only main-file worker"
+    },
+    {
+      "id": "T-DISPATCH",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "io/fence refusal"
+    },
+    {
+      "id": "T-REBUILD-NO-MAIN",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "legacy fill entry"
+    },
+    {
+      "id": "T-RETIRE",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "legacy FTS is inert"
+    },
+    {
+      "id": "T-RETIRE-COLLISION",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "ninth legacy writer"
+    },
+    {
+      "id": "T-RETIRE-RENAME-FAILURE",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "rotation commits"
+    },
+    {
+      "id": "T-RETIRE-OFFLINE",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "inert indexes remain"
+    },
+    {
+      "id": "T-RESET-HANDSHAKE",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "main reader and prune cache"
+    },
+    {
+      "id": "T-STATUS",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "injected database reports"
+    },
+    {
+      "id": "T-THREAD-KEY",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "long ids and raw"
+    },
+    {
+      "id": "T-BOUND",
+      "file": "server/search-index-r3-bound.test.ts",
+      "pattern": "1k vs 1.04M"
+    },
+    {
+      "id": "T-CKPT-DOWN",
+      "file": "server/search-index-r3-bound.test.ts",
+      "pattern": "refusal never enables"
+    },
+    {
+      "id": "T-CKPT-ADMISSION",
+      "file": "server/search-index-r3-bound.test.ts",
+      "pattern": "failed recovery bounds"
+    },
+    {
+      "id": "T-EDIT-REPLACE",
+      "file": "server/message-search-index.test.ts",
+      "pattern": "replacement emits"
+    },
+    {
+      "id": "T-RETIRE-BOUND",
+      "file": "server/search-merge-inherited.test.ts",
+      "pattern": "inherited debt"
+    },
+    {
+      "id": "T-WARM",
+      "file": "server/memory/roster-scoped-revokes.test.ts",
+      "pattern": "60 real worker commits"
+    },
+    {
+      "id": "T-WARM-LIFECYCLE",
+      "file": "server/memory/roster-scoped-revokes.test.ts",
+      "pattern": "60 real worker commits"
+    },
+    {
+      "id": "T-WARM-RACE",
+      "file": "server/memory/roster-scoped-revokes.test.ts",
+      "pattern": "FTS commit between"
+    },
+    {
+      "id": "C2",
+      "file": "server/search-index-r3-crash.test.ts",
+      "pattern": "C2: SIGKILL"
+    },
+    {
+      "id": "C4",
+      "file": "server/search-index-r3-crash.test.ts",
+      "pattern": "C4: SIGKILL"
+    },
+    {
+      "id": "C6",
+      "file": "server/search-index-r3-crash.test.ts",
+      "pattern": "C6: SIGKILL"
+    },
+    {
+      "id": "C7b",
+      "file": "server/search-index-r3-crash.test.ts",
+      "pattern": "C7b: SIGKILL"
+    },
+    {
+      "id": "C8",
+      "file": "server/search-index-r3-crash.test.ts",
+      "pattern": "C8: SIGKILL"
+    },
+    {
+      "id": "C9",
+      "file": "server/search-index-r3-crash.test.ts",
+      "pattern": "C9: SIGKILL"
+    },
+    {
+      "id": "C10",
+      "file": "server/search-index-r3-crash.test.ts",
+      "pattern": "C10: SIGKILL"
+    },
+    {
+      "id": "C12",
+      "file": "server/search-index-r3-crash.test.ts",
+      "pattern": "C12: SIGKILL"
+    },
+    {
+      "id": "C15'",
+      "file": "server/search-index-r3-crash.test.ts",
+      "pattern": "C15': SIGKILL"
+    },
+    {
+      "id": "C5",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "terminating after FTS"
+    },
+    {
+      "id": "C5'",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "terminating after FTS"
+    },
+    {
+      "id": "C6'",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "committed drop cursor"
+    },
+    {
+      "id": "C7",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "writing merge crash"
+    },
+    {
+      "id": "C10b",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "reader-busy TRUNCATE"
+    },
+    {
+      "id": "C11b",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "old scrub completion"
+    },
+    {
+      "id": "C14",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "rebuild rows and progress roll back"
+    },
+    {
+      "id": "C14'",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "rebuild rows and cursor"
+    },
+    {
+      "id": "C17",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "pruned lineage"
+    },
+    {
+      "id": "T-REC-RESET",
+      "file": "server/search-index-review-recovery.test.ts",
+      "pattern": "T-REC-RESET:"
+    },
+    {
+      "id": "T-REC-PERSISTENT",
+      "file": "server/search-index-review-recovery.test.ts",
+      "pattern": "T-REC-PERSISTENT:"
+    },
+    {
+      "id": "T-REC-WINDOW",
+      "file": "server/search-index-review-recovery.test.ts",
+      "pattern": "T-REC-WINDOW:"
+    },
+    {
+      "id": "T-REC-DEFER",
+      "file": "server/search-index-review-recovery.test.ts",
+      "pattern": "T-REC-DEFER:"
+    },
+    {
+      "id": "T-REC-ONCE",
+      "file": "server/search-index-review-recovery.test.ts",
+      "pattern": "T-REC-ONCE:"
+    },
+    {
+      "id": "T-SCRUB-BACKOFF",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "T-SCRUB-BACKOFF:"
+    },
+    {
+      "id": "T-SCRUB-NOSTARVE",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "T-SCRUB-NOSTARVE:"
+    },
+    {
+      "id": "T-SCRUB-RECOVER",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "T-SCRUB-RECOVER:"
+    },
+    {
+      "id": "T-TURN-OPS",
+      "file": "server/search-index-review-bound.test.ts",
+      "pattern": "T-TURN-OPS:"
+    },
+    {
+      "id": "C2'",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "owner prune is"
+    },
+    {
+      "id": "C11",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "reader-busy"
+    },
+    {
+      "id": "C15",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "main reader and prune cache"
+    },
+    {
+      "id": "T-RETIRE-REOPEN",
+      "file": "server/search-merge-inherited.test.ts",
+      "pattern": "inherited debt"
+    }
+  ],
+  "PRESERVE": [
+    {
+      "id": "T-SEARCH-SCOPED",
+      "file": "server/message-search-index.test.ts",
+      "pattern": "limits count|withheld and forgotten"
+    },
+    {
+      "id": "T-SEARCH-LIKE",
+      "file": "server/message-search-index.test.ts",
+      "pattern": "indexed and pending LIKE"
+    },
+    {
+      "id": "T-SCAN-WRITES",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "closed mutation inventory"
+    },
+    {
+      "id": "T-SCAN-TRIG",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "closed mutation inventory"
+    },
+    {
+      "id": "C1",
+      "file": "server/search-index-r3-crash.test.ts",
+      "pattern": "C1: SIGKILL"
+    },
+    {
+      "id": "C3",
+      "file": "server/search-index-r3-crash.test.ts",
+      "pattern": "C3: SIGKILL"
+    },
+    {
+      "id": "T-SCRUB-CAP",
+      "file": "server/search-index-r3.test.ts",
+      "pattern": "T-SCRUB-CAP:"
+    }
+  ],
+  "Q3": [
+    {
+      "id": "C16",
+      "reason": "merged SHA RC gate"
+    },
+    {
+      "id": "C18",
+      "reason": "merged SHA RC gate"
+    }
+  ]
+}

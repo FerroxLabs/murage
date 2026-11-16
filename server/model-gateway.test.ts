@@ -8,7 +8,7 @@ import { createServer, type Server } from "node:http";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import { ModelSignIns, planLimitLine } from "./model-signin.ts";
 import { gatewayBaseUrl, handleModelGateway, isPlanLimit, limitResetsAt, redact } from "./model-gateway.ts";
 import { chatToResponses, collectResponse, createChatStreamTranslator, createSseParser, normalizeResponsesBody, responseToChatCompletion } from "./model-gateway-translate.ts";
@@ -16,6 +16,8 @@ import { ProviderConnectionsService, normalizeProviderModels } from "./provider-
 import { applyProviderRoute, type ProviderTurnRoute } from "./provider-routing.ts";
 import { providerEngineProtocol, signInEngineGap } from "../shared/provider-engine.ts";
 import type { ProviderCatalog } from "../shared/provider-connections.ts";
+import { consumingFixture } from "./testing/consuming-fixture.ts";
+import { issueGatewayTurnCredential, revokeGatewayTurnCredentials } from "./model-gateway-release.ts";
 
 const TOKEN = "plan-access-token-SECRET-123";
 const entry = (over: Record<string, unknown> = {}) => ({ provider: "chatgpt", connectionId: "signin-chatgpt", revision: "rev-1", state: "connected", accessToken: TOKEN, accountId: "acct-9", expiresAt: Date.now() + 3_600_000, email: "o@example.com", plan: "plus", ...over });
@@ -226,7 +228,16 @@ async function gateway(opts: { upstream: (call: UpstreamCall, n: number) => Resp
   const port = (server.address() as { port: number }).port;
   const base = (id = "signin-chatgpt") => gatewayBaseUrl(port, id);
   const keys = new Map<string, string>();
-  const auth = (id = "signin-chatgpt") => { if (!keys.has(id)) keys.set(id, signIns.issueGatewayKey(id)); return { authorization: `Bearer ${keys.get(id)}`, "content-type": "application/json" }; };
+  // Inference uses the same admitted generation as production; connection keys
+  // remain catalog-only. Every fixture owns its retained database and lifetime.
+  const auth = (id = "signin-chatgpt") => {
+    if (!keys.has(id)) {
+      const fixture = consumingFixture();
+      keys.set(id, issueGatewayTurnCredential(id, fixture.binding));
+      onTestFinished(() => { revokeGatewayTurnCredentials(fixture.binding.identity.dispatchGeneration); fixture.close(); });
+    }
+    return { authorization: `Bearer ${keys.get(id)}`, "content-type": "application/json" };
+  };
   return { calls, signIns, base, auth };
 }
 
@@ -237,6 +248,16 @@ describe("the model gateway", () => {
     expect(none.status).toBe(401);
     const real = await fetch(`${g.base()}/responses`, { method: "POST", headers: { authorization: `Bearer ${TOKEN}` }, body: "{}" });
     expect(real.status).toBe(401);
+    expect(g.calls).toHaveLength(0);
+  });
+
+  it("keeps a valid connection credential catalog-only", async () => {
+    const g = await gateway({ upstream: () => sse([]) });
+    const headers = { authorization: `Bearer ${g.signIns.issueGatewayKey("signin-chatgpt")}` };
+    const catalog = await fetch(`${g.base()}/models`, { headers });
+    expect(catalog.status).toBe(200);
+    const inference = await fetch(`${g.base()}/responses`, { method: "POST", headers, body: "{}" });
+    expect(inference.status).toBe(409);
     expect(g.calls).toHaveLength(0);
   });
 

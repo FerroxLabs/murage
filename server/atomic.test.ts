@@ -134,6 +134,19 @@ describe("renameWithRetry", () => {
   });
 });
 
+it("a checked rename owns one bounded retry schedule even on native Windows", () => {
+  const dir = mkdtempSync(join(tmpdir(), "murage-atomic-checked-"));
+  const failure = Object.assign(new Error("locked"), { code: "EPERM" });
+  let attempts = 0;
+  try {
+    expect(() => writeFileAtomic(join(dir, "state"), "new", { platform: "win32", renameHandlesRetry: true,
+      rename: (from, to) => renameWithRetry(from, to, () => { attempts++; throw failure; }, "win32", () => {}),
+    })).toThrow(failure);
+    expect(attempts).toBe(6);
+    expect(readdirSync(dir)).toEqual([]);
+  } finally { removeTempDirSync(dir); }
+});
+
 describe("writeFileAtomic when the replacement is refused", () => {
   let dir: string;
   const platform = Object.getOwnPropertyDescriptor(process, "platform")!;

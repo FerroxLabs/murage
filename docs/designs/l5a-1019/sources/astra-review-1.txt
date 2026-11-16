@@ -1,0 +1,63 @@
+DISAGREE
+
+Answers to the designer’s open questions (§7, in order):
+
+1. **Missing review evidence:** Treat it as a build gate. Recover the named Fable/r3.2 documents and reconcile findings individually; the available early BLOCK summaries cannot substitute for them. The supplied ledger already contains an omitted binding requirement.
+2. **Over-masking:** Accept end-of-unit and monotonic turn masking for wrapped labels. Do not infer safe endings from punctuation, blank lines or subsequent labels. Preserve trusted controls and execution inputs separately.
+3. **Collector dependency:** Require the collector before activating the user-text policy. Assign it to the historical **U1G3+L7 work within current L5a**, not current lane L7, which owns ENGINES-ACP. [Current ownership](/work/fuigo-builds/orph/ORPHAN-PLAN-1019.md:93)
+4. **Streaming latency:** Accept completed-line presentation, but detect and latch incrementally as chunks arrive. Status, Stop and approval controls must remain usable while text is buffered.
+5. **Historical secrets:** Do not rewrite stored history. Scrub bot-authored display copies at transcript output boundaries in this train; “not certified” is insufficient for a known bypass.
+6. **Repeat masking:** Require monotonic secrecy and Markdown-pass idempotence, not an invented global fixed-point guarantee. Preserve caller-specific expectations except where an explicit new rule changes them.
+7. **Performance:** Require separate detector and end-to-end measurements, including one-character chunks and many stream identities. Budget exhaustion must produce bounded safe output without another unrestricted traversal.
+8. **Native cleanup:** Accept preservation tests plus deliberate mutations; no genuine new behavioral RED is required for unreachable-code removal. The projection-based reachability argument is correct.
+9. **Review gates:** Require independent Astra, Fable UX review and the recorded file-reading Grok security review unless MAIN explicitly supersedes that requirement. The evidence says “required,” not “may also require.” [Security gate](/work/fuigo-builds/orph/_ev/handoffs/SWARM-W1-STATUS.md:1690)
+
+Required amendments, as exact changes:
+
+1. **Restore the omitted plain-label requirement in D3, T3 and the golden corpus.** Add the binding colon-only, single-word, end-of-line rule; `password: 1234` must mask and `tokens: 1200` must remain unchanged. Carry over the exact type-list requirement, including `token`, from the authoritative review packet. Preserve existing rules outside this addition. Current `KEY_VALUE` requires eight characters, so the password example is a real predicted RED. [Binding ruling](/work/fuigo-builds/orph/_ev/handoffs/FIX-LEDGER.md:3547), [current rule](/work/fuigo-builds/orph/_base/server/redact.ts:151)
+
+2. **Replace D10’s detection-at-line-completion contract with immediate incremental detection.** Feed every raw delta to the shared scanner before delivering any subsequent carrier. For `reasoning.delta("**password**:")` followed by assistant/tool text `hunter2`, latch before the second event even without a newline. On detection, mask every pending carrier and every later audience event. Add this interleaving and all chunk splits to T5/T6. Whole-line buffering alone does not establish fail-closed cross-carrier behavior.
+
+3. **Make newline semantics identical across whole-text and streaming paths.** Retain bare CR in detector context until LF or authoritative completion; do not clear normalization state or release a segment merely on CR. The current detector splits only on LF. Add whole-versus-stream comparisons for `*\rthe token: alpha beta`, split CRLF and repeated CR. Specify reset, cancellation and session-exit handling: sanitize pending content or discard it, never release it raw.
+
+4. **Replace the proposed collector “boundary” with a concrete typed contract and subscriber migration table.** Specify trusted admission, event intake, zero-or-more audience emissions, terminal retirement and immutable execution delivery. `foldRuntimeEvent` needs internal separation: it sends speech at :9211 and handles permission decisions at :9543. Giving that entire subscriber either raw or sanitized events is insufficient. Preserve execution arguments, paths, grants and request identities; remove `raw` from audience projections. [Mixed consumer](/work/fuigo-builds/orph/_base/server/index.ts:9207), [permission branch](/work/fuigo-builds/orph/_base/server/index.ts:9543)
+
+5. **Complete D7–D14 with admission, ordering and replay rules.** Name the harness admission sites that mint/bind generations; optional provider `turnId` is not that authority. Bind late events to their original generation, never whichever turn is currently active. Compute audience output once at intake, queue that immutable result and retry without advancing the scanner again. Define deterministic identities for synthetic buffered emissions, flush-before-terminal ordering and completed-snapshot behavior that cannot restore masked content. Test held writers, retries, reused thread IDs, provider replacement and restart. [Current identity fields](/work/fuigo-builds/orph/_base/server/contracts.ts:85), [delivery paths](/work/fuigo-builds/orph/_base/server/harness/bus.ts:267)
+
+6. **Replace the partial sink inventory with an exhaustive carrier manifest.** Enumerate every `RuntimeEvent` variant and text path, including plan entries, subtask labels, async questions/options, command descriptions, image alt text, request details and nested tool previews. Classify structural fields by validated provenance; field names alone do not make strings safe. Unknown variants/subtrees must become fixed omission payloads, including arbitrary object keys. Assign every manifest entry an actual serialized-output test and every execution consumer an unchanged-input test.
+
+7. **Finish the resource-limit contract in D11.** Bound stream-entry count as well as pending characters; empty item IDs must not create unlimited entries. Make absence of a valid CLEAN admission mean MASKED without an unbounded masked-state/tombstone table. Charge work before allocation, enumeration and buffering; on exhaustion emit a fixed typed skeleton without walking the remaining payload. Add empty-stream floods, wide objects, huge scalar fields and one-unit chunk tests; retain the specified 64 Ki and 256-CLEAN boundaries.
+
+8. **Replace D15’s historical-output disclaimer with an implemented display boundary.** `wireThread` currently forwards message fields while shaping sequence metadata; `checkStoredRow` does not redact message text. Add copy-only bot-display sanitization for `message`, `messages` and `openCards`, preserving owner-authored text, sequence metadata and stored originals. Test existing stored Markdown secrets through paginated, unpaginated, branch and reconnect outputs. [Verified bypass](/work/fuigo-builds/orph/_base/server/transcript-page.ts:42)
+
+9. **Make D20’s UX acceptance concrete.** Specify one stable marker per contiguous suppressed region, usable progress/Stop controls during buffering, and no duplicate speech on completed snapshots. Masking must not erase trusted approval action labels or substitute display strings into execution. Add desktop/phone, light/dark scenarios for clean multiline replies, unterminated replies, cancellation, redaction followed by approval, and reconnect. No new Settings switch is needed; the changed conversation behavior still requires Fable’s UX proof.
+
+10. **Correct ownership, sequencing and native-test wording in §6.** Identify historical L7 explicitly as current L5a work; merge collector integration before user-text activation, then native cleanup. Preserve `streamDelta` recognition, `STREAM_FIELDS` where needed, the renamed phone bound, `rawChars` ordering and UTF-8 rejection. T11 must prohibit removed streaming/tail machinery—not all Markdown scanning, because the surviving sink redactor still needs it. Include all repository references when removing `LATCHED_MAX`. [Native ordering](/work/fuigo-builds/orph/_base/server/drivers/native.ts:285)
+
+Ordered build slices I would seat, after the amended design passes review; paths below are relative to `_base`:
+
+1. **Wave 1A — shared detector and turn policy, M–L; parallel with 1B.**  
+   Files: `shared/md-secret-label.mjs`, `.d.mts`, shared test corpus, new `server/redact-turn.ts` and `.test.ts`.  
+   RED first: missing plain-form behavior, empty-value immediate latch, every split, cross-carrier interleaving, CR equivalence, pending-buffer limits, identity floods and detector failure. Retain machine/speech guards.
+
+2. **Wave 1B — collector and execution/audience separation, L; parallel with 1A against a frozen interface.**  
+   Files: `server/contracts.ts`, `server/harness/bus.ts`, new collector module, `server/index.ts`, `server/harness/bus.test.ts`, new boundary integration tests.  
+   RED first: raw immediate/no-log delivery, mixed permission/display handling, missing-generation output, queued replay, terminal flush, unknown carriers and cross-provider late events. Assert authorized execution inputs remain byte-for-byte intact.
+
+3. **Wave 2A — activate whole-text policy, M; after Wave 1 integration, parallel with 2B.**  
+   Files: `server/redact.ts`, `server/redact.test.ts`, `server/md-secret-label.test.ts`, `server/testing/md-secret-label-user-text.base.json`.  
+   RED first: T1–T4, short wrapped values, numeric passwords, count-label preservation, exact/fake markers and caller-specific expectations.
+
+4. **Wave 2B — transcript and standalone boundaries, M–L; parallel with 2A.**  
+   Files: `server/transcript-page.ts` and tests, `server/store.ts`, `server/inbox.ts`, `server/tool-results.ts`, `server/routines.ts`, boundary integration tests; `index.ts` returns to its single owner after 1B.  
+   RED first: historical message/open-card exports, cross-field cards, channel/routine/notification output and model-facing results. Cover memory/artifact consumers explicitly in the manifest; test original storage and execution payloads remain unchanged.
+
+5. **Wave 3A — native dead-mask cleanup, S; after REDACT integration, parallel with 3B.**  
+   Files: `server/drivers/native.ts`, `native-md-stream.test.ts`, `native.test.ts`, `server/runtime-event-out.test.ts`.  
+   Preservation tests first: projection, phone tracking, lifecycle UUIDs, early-size ordering and encoded-size rejection. Mutations removing projection or reordering the guard must fail; report these honestly as guards, not base REDs.
+
+6. **Wave 3B — complete sink/UX verification and registration, M; parallel with 3A.**  
+   Files: boundary integration tests, `electron/diagnostics.test.mjs`, applicable conversation UI tests, `ci/gate-tests.txt` and existing tier lists.  
+   RED first where behavior is missing: buffered cancellation, approval usability, duplicate speech and reconnect exposure. Diagnostics tests remain guards. Finish the full carrier matrix, performance checks and packaged UX review on the combined head.
+
+This was read-only source review; no project code, tests or builds were executed.

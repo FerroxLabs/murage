@@ -11,7 +11,7 @@ import * as archive from "./installation-archive.ts";
 import { restoreEncryptedInstallationNew, writeEncryptedInstallationBackup } from "./installation-encrypted-backup.ts";
 import { backupWorkRoot, createBackupWork, sweepBackupWork } from "./backup-local-work.ts";
 import { publishNoReplace } from "./publish-file.ts";
-import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
+import { backupFixture, testAgeKeys, optionalBackupAgeUnavailable } from "./testing/backup-fixture.ts";
 import { MAX_RESTORABLE_PATH_BYTES } from "../shared/backup-limits.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -20,7 +20,7 @@ const tree = (root: string): string[] => existsSync(root) ? readdirSync(root, { 
 afterEach(() => vi.restoreAllMocks());
 
 for (const failAt of [null, "readback"] as const) {
-  it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)(`only ciphertext ever sits in the backup folder${failAt ? ", also when the readback fails" : ""}`, async () => {
+  it.skipIf(optionalBackupAgeUnavailable())(`only ciphertext ever sits in the backup folder${failAt ? ", also when the readback fails" : ""}`, async () => {
     const f = backupFixture(), keys = testAgeKeys();
     const destination = join(f.parent, "USB STICK", "Murage Backups"); mkdirSync(destination, { recursive: true });
     const seen: { destination: string[]; plaintextLocal: boolean } [] = [];
@@ -60,7 +60,7 @@ it("a crash's plaintext work folder is swept once its process has gone, never a 
 
 // Codex's scenario, scaled to what macOS can create: nested names of colons
 // and accented letters whose percent-encoded path passes the restore bound.
-it.skipIf(!process.env.MURAGE_BACKUP_TEST_AGE_DIR)("a path another computer can't hold is left out and listed; the backup restores", async () => {
+it.skipIf(optionalBackupAgeUnavailable())("a path another computer can't hold is left out and listed; the backup restores", async () => {
   const f = backupFixture(), keys = testAgeKeys();
   const name = ":".repeat(60) + "é".repeat(20);
   const deep = join(f.data, "workspaces", "bot", ...Array(5).fill(name));

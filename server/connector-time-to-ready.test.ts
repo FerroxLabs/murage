@@ -1,3 +1,5 @@
+import { spawnBoundProxy } from "./testing/bound-proxy-fixture.ts";
+import { fixtureStdioRpc } from "./testing/stdio-rpc.ts";
 // How long the connected-apps MCP server takes to be ready, as an engine sees
 // it: spawn, initialize answered, then tools/list answered. Measured end to
 // end through the real stdio bridge (connector-proxy.ts) and the real harness
@@ -13,7 +15,6 @@ import { once } from "node:events";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -121,6 +122,7 @@ async function freshApp(): Promise<void> {
 }
 
 afterAll(async () => {
+  for (const loop of loops.splice(0)) loop.kill("SIGKILL");
   resetManagedBrokerState();
   await new Promise<void>((resolve) => harness.close(() => resolve()));
   await new Promise<void>((resolve) => broker.close(() => resolve()));
@@ -130,26 +132,22 @@ afterAll(async () => {
  * the initialized notice and tools/list. Resolves with ms to tools/list. */
 async function timeToReady(): Promise<{ initializeMs: number; readyMs: number; tools: string[] }> {
   const started = Date.now();
-  const child = spawn(process.execPath, ["--experimental-strip-types", ENTRY], {
+  const child = await spawnBoundProxy("connectors", process.execPath, ["--experimental-strip-types", ENTRY], {
+    windowsHide: true,
     env: { ...process.env, MURAGE_CONNECTOR_UPSTREAM_URL: `${harnessUrl}/api/internal/connectors/mcp`, MURAGE_CONNECTOR_UPSTREAM_HEADERS: "{}", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: mkdtempSync(join(tmpdir(), "ttr-cache-")) },
     stdio: ["pipe", "pipe", "pipe"],
   });
+  const rpc = fixtureStdioRpc(child);
   try {
-    const lines = readline.createInterface({ input: child.stdout! });
-    const replies = new Map<number, (message: any) => void>();
-    lines.on("line", (line) => {
-      try { const message = JSON.parse(line); replies.get(message.id)?.(message); } catch { /* not ours */ }
-    });
-    const ask = (id: number, method: string) => new Promise<any>((resolve) => {
-      replies.set(id, resolve);
-      child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params: method === "initialize" ? { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "ttr", version: "1" } } : {} })}\n`);
-    });
+    const ask = (id: number, method: string) => rpc.request(id, method, method === "initialize"
+      ? { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "ttr", version: "1" } } : {});
     await ask(1, "initialize");
     const initializeMs = Date.now() - started;
     child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
     const list = await ask(2, "tools/list");
     return { initializeMs, readyMs: Date.now() - started, tools: serviceTools(list.result?.tools ?? []).map((tool: { name: string }) => tool.name) };
   } finally {
+    rpc.close();
     child.kill("SIGKILL");
   }
 }
@@ -157,7 +155,7 @@ async function timeToReady(): Promise<{ initializeMs: number; readyMs: number; t
 describe("connected apps time to ready under CPU load", () => {
   for (const busyLoops of [2, 4]) {
     it(`answers initialize at once and is ready within its budgets (${busyLoops} busy loops)`, { timeout: 90_000, ...windowsPerfBudget() }, async () => {
-      for (let i = 0; i < busyLoops; i++) loops.push(spawn(process.execPath, ["-e", "for(;;){}"], { stdio: "ignore" }));
+      for (let i = 0; i < busyLoops; i++) loops.push(spawn(process.execPath, ["-e", "for(;;){}"], { windowsHide: true, stdio: "ignore" }));
       try {
         await freshApp();
         toolsListDelayMs = BROKER_TOOLS_LIST_MS;
@@ -192,27 +190,20 @@ describe("connected apps time to ready under CPU load", () => {
  * provisional list being replaced by the real one. */
 async function mountAndWatch(watchMs: number): Promise<{ first: any; changedAtMs: number | null; relisted: any }> {
   const started = Date.now();
-  const child = spawn(process.execPath, ["--experimental-strip-types", ENTRY], {
+  const child = await spawnBoundProxy("connectors", process.execPath, ["--experimental-strip-types", ENTRY], {
+    windowsHide: true,
     env: { ...process.env, MURAGE_CONNECTORS_TOKEN: "turn-token", MURAGE_CONNECTOR_UPSTREAM_URL: `${harnessUrl}/api/internal/connectors/mcp`, MURAGE_CONNECTOR_UPSTREAM_HEADERS: "{}", MURAGE_CONNECTOR_TOOLS_CACHE_DIR: mkdtempSync(join(tmpdir(), "ttr-cache-")) },
     stdio: ["pipe", "pipe", "pipe"],
   });
+  let changed: () => void = () => {};
+  const changedSeen = new Promise<void>(resolve => { changed = resolve; });
+  let changedAtMs: number | null = null;
+  const rpc = fixtureStdioRpc(child, frame => {
+    if (frame.method === "notifications/tools/list_changed") { changedAtMs ??= Date.now() - started; changed(); }
+  });
   try {
-    const lines = readline.createInterface({ input: child.stdout! });
-    const replies = new Map<number, (message: any) => void>();
-    let changed: () => void = () => {};
-    const changedSeen = new Promise<void>((resolve) => { changed = resolve; });
-    let changedAtMs: number | null = null;
-    lines.on("line", (line) => {
-      try {
-        const message = JSON.parse(line);
-        if (message.method === "notifications/tools/list_changed") { changedAtMs ??= Date.now() - started; changed(); }
-        else replies.get(message.id)?.(message);
-      } catch { /* not ours */ }
-    });
-    const ask = (id: number, method: string) => new Promise<any>((resolve) => {
-      replies.set(id, resolve);
-      child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params: method === "initialize" ? { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "ttr", version: "1" } } : {} })}\n`);
-    });
+    const ask = (id: number, method: string) => rpc.request(id, method, method === "initialize"
+      ? { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "ttr", version: "1" } } : {});
     const init = await ask(1, "initialize");
     expect(init.result.capabilities.tools).toEqual({ listChanged: true });
     child.stdin!.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
@@ -221,6 +212,7 @@ async function mountAndWatch(watchMs: number): Promise<{ first: any; changedAtMs
     const relisted = changedAtMs === null ? null : await ask(3, "tools/list");
     return { first, changedAtMs, relisted };
   } finally {
+    rpc.close();
     child.kill("SIGKILL");
   }
 }

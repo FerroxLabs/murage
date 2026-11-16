@@ -1,7 +1,7 @@
 import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { readFileSync, existsSync, realpathSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -34,7 +34,7 @@ test.beforeAll(async()=>{
 test.afterAll(async()=>{try{await vite?.close();}finally{await fixture?.close();}if(fixture)expect(existsSync(fixture.info.dataDir)).toBe(false);});
 
 test("registered engine Markdown opens beside chat, edits only working bytes and survives restart",async({page},info)=>{
-  await page.addInitScript(()=>{localStorage.setItem("murage-email-gate","skipped");localStorage.setItem("murage-flux-invite-dismissed","1");});
+  await page.addInitScript(()=>{localStorage.setItem("murage-email-gate","skipped");localStorage.setItem("murage-flux-invite-dismissed","1");localStorage.setItem("help.seen.chat.level-chip","1");});
   await page.setViewportSize({width:1440,height:1000});await page.goto(origin);
   // The row's name is its own hit target (sidebar hit areas); on a phone the
   // bot list is a drawer to open first.

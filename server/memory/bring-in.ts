@@ -1,3 +1,4 @@
+import { beginWrite, endWrite, undoWrite } from "../write-tx.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -26,15 +27,17 @@ import { redactSecretsInText } from "../redact.ts";
 import type { MemoryRoster } from "./policy.ts";
 import { capturedMessageWithheld, LineageAllowance, messageCopy, messageSourceForgotten } from "./replay-lineage.ts";
 import { scopeRow } from "./scope-id.ts";
-import { addTurnParents, writeRecordLineage } from "./lineage-write.ts";
+import { commitTurnParents, proposeTurnParents, writeRecordLineage } from "./lineage-write.ts";
 import type { LineageRef, TurnLineage } from "./lineage-types.ts";
 import { inheritEdge } from "./revoke-commit.ts";
 import { insertMemoryRecord } from "./record-write.ts";
+import { scopedTx } from "../tx-scope.ts";
+import type { StagedResultProvenance } from "./lineage-types.ts";
 
 export const BRING_IN_MAX_CHARS = 1000;
 
 export type BringInInput = { recordId?: string; sourceMessageId?: string; threadId?: string; text?: string };
-export type BringInResult = { ok: true; recordId: string } | { ok: false; status: 400 | 403 | 404 | 409; error: string };
+export type BringInResult = { ok: true; recordId: string; provenance?: StagedResultProvenance } | { ok: false; status: 400 | 403 | 404 | 409; error: string };
 
 const refuse = (status: 400 | 403 | 404 | 409, error: string): BringInResult => ({ ok: false, status, error });
 const NOT_OWNERS = "Only the owner's own material can be brought into a project. This came from a conversation with someone else.";
@@ -90,6 +93,7 @@ export function bringInToProject(db: DatabaseSync, input: {
   /** The running turn of the bot that brings it in (write-time hole 2): what it brings joins the turn, and the copy rests on the turn.
    * Absent outside a turn (the owner's UI): nothing is recorded. */
   turn?: TurnLineage;
+  staged?: boolean;
 } & BringInInput): BringInResult {
   const mode = db.prepare("SELECT mode FROM memory_meta WHERE id=1").get()?.mode;
   if (mode === "off" || mode === "paused" || memoryGate(db, "bring-in") !== "ok") return refuse(409, "Memory is off, so nothing can be brought in.");
@@ -156,7 +160,10 @@ export function bringInToProject(db: DatabaseSync, input: {
     origin = { threadId, messageId: input.sourceMessageId!, speaker: String(source.speaker) };
   }
   // An excerpt must be the original's own words.
-  const text = redactSecretsInText(excerpt ? excerpt : original.trim().slice(0, BRING_IN_MAX_CHARS));
+  const safeOriginal = redactSecretsInText(original);
+  // An excerpt can omit the label that made its bytes secret. Judge the
+  // complete source first; authorization still compares the original below.
+  const text = (excerpt ? safeOriginal !== original ? "«redacted»" : redactSecretsInText(excerpt) : safeOriginal).trim().slice(0, BRING_IN_MAX_CHARS);
   if (excerpt && !original.includes(excerpt)) return refuse(400, "The text must be an exact excerpt of what you bring in.");
   if (!text.trim()) return refuse(400, "Nothing to bring in.");
 
@@ -166,9 +173,15 @@ export function bringInToProject(db: DatabaseSync, input: {
   // Write-time hole 2 (DESIGN-WRITETIME 2.2): until now bring-in only judged its material at read. What it brings in was shown to the
   // turn (the original, its evidence lines, the sources the copy names in memory_source_origins), so all of it joins the running turn.
   const broughtRefs = bringInRefs(from, origin ? [origin, ...evidenceLines] : evidenceLines);
-  if (input.turn) addTurnParents(input.turn, broughtRefs);
-  if (existing) return { ok: true, recordId: String(existing.id) };
+  if (input.staged && !input.turn) throw new Error("MEMORY_CONTEXT_REVOKED");
+  if (existing) {
+    if (input.staged) return { ok: true, recordId: String(existing.id), provenance: { refs: broughtRefs, consumingTurn: input.turn } };
+    if (input.turn) commitTurnParents(proposeTurnParents(input.turn, broughtRefs));
+    return { ok: true, recordId: String(existing.id) };
+  }
   if (db.prepare("SELECT 1 FROM memory_sources WHERE id=?").get(newSource)) return refuse(409, "That was brought in before and has since been forgotten.");
+  const recordId = randomUUID();
+  const commit = () => {
   const payload = JSON.stringify({ text, kind: "bring-in", speaker: input.botId, outcome: "recorded", occurredAt: input.now, actorId: input.botId, broughtFrom: from });
   const hash = createHash("sha256").update(payload).digest("hex");
   const meta = db.prepare("SELECT policy_revision, deletion_epoch FROM memory_meta WHERE id=1").get()!;
@@ -179,7 +192,6 @@ export function bringInToProject(db: DatabaseSync, input: {
   // no chunking: the brought-in note is the record below
   db.prepare("INSERT INTO memory_jobs(id,source_id,source_revision,stage,stage_version,status,cursor,policy_revision,deletion_epoch) VALUES(?,?,1,'capture','1','complete',?,?,?)")
     .run(randomUUID(), newSource, Buffer.byteLength(text), meta.policy_revision, meta.deletion_epoch);
-  const recordId = randomUUID();
   insertMemoryRecord(db, { id: recordId, version: 1, scopeId: room, kind, text, assertion: "assistant-inference", state: "active", validFrom: input.now, createdAt: input.now });
   db.prepare("INSERT INTO memory_evidence VALUES(?,1,?,1,0,?)").run(recordId, newSource, Buffer.byteLength(text));
   inheritEdge(db, { kind: "record", id: recordId, version: 1 }, { kind: "source", id: newSource });
@@ -188,6 +200,18 @@ export function bringInToProject(db: DatabaseSync, input: {
   // the copy is a record a bot wrote in its turn: a prefix carry from the turn (2.5); its evidence and derivation are written above
   if (input.turn) writeRecordLineage(db, { kind: "record", id: recordId, version: 1, scopeId: room }, input.turn);
   db.exec("UPDATE memory_meta SET data_revision=data_revision+1 WHERE id=1");
+  };
+  if (input.staged) return { ok: true, recordId, provenance: { refs: broughtRefs, consumingTurn: input.turn, commit } };
+  scopedTx(() => {
+    beginWrite(db, "bring_in_acceptance");
+    try {
+      if (input.turn) commitTurnParents(proposeTurnParents(input.turn, broughtRefs));
+      commit();
+      endWrite(db, "bring_in_acceptance");
+    } catch (error) {
+      undoWrite(db, "bring_in_acceptance"); throw error;
+    }
+  });
   return { ok: true, recordId };
 }
 

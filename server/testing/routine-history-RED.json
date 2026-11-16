@@ -1,0 +1,66 @@
+{
+  "owner": "rhist-s1b (harness), rhist-h1 (H1), MAIN (deferred 1.0.20 scheduling)",
+  "base": "2287ecb7491ea7e7dd65b567e422e759dfe00125",
+  "entrypoint": "pnpm exec vitest run --config server/testing/routine-history-bound.config.mjs",
+  "gateMechanism": "The explicit *.red.ts file is outside vite.config.ts's server/**/*.test.ts discovery. Every assertion executes with the explicit config; no .skip, expected-failure wrapper or disabled assertion.",
+  "RED": [
+    {
+      "id": "H2",
+      "file": "server/routines-history-bound.red.ts",
+      "owner": "MAIN: deferred 1.0.20"
+    },
+    {
+      "id": "H3",
+      "file": "server/routines-history-bound.red.ts",
+      "owner": "MAIN: deferred 1.0.20"
+    },
+    {
+      "id": "H4",
+      "file": "server/routines-history-bound.red.ts",
+      "owner": "MAIN: deferred 1.0.20"
+    },
+    {
+      "id": "H5",
+      "file": "server/routines-history-bound.red.ts",
+      "owner": "MAIN: deferred 1.0.20"
+    },
+    {
+      "id": "H6",
+      "file": "server/routines-history-bound.red.ts",
+      "owner": "MAIN: deferred 1.0.20"
+    },
+    {
+      "id": "H7",
+      "file": "server/routines-history-bound.red.ts",
+      "owner": "MAIN: deferred 1.0.20"
+    },
+    {
+      "id": "H8",
+      "file": "server/routines-history-bound.red.ts",
+      "owner": "MAIN: deferred 1.0.20"
+    },
+    {
+      "id": "F1",
+      "file": "server/routines-history-bound.red.ts",
+      "owner": "MAIN: deferred 1.0.20"
+    },
+    {
+      "id": "W1",
+      "file": "server/routines-history-bound.red.ts",
+      "owner": "MAIN: deferred 1.0.20"
+    },
+    {
+      "id": "R1",
+      "file": "server/routines-history-bound.red.ts",
+      "owner": "MAIN: deferred 1.0.20"
+    }
+  ],
+  "design": "DESIGN-ROUTINE-HISTORY-BOUND-1019-v2.md",
+  "GATED": [
+    {
+      "id": "H1",
+      "file": "server/routines-history-h1.test.ts",
+      "owner": "rhist-h1"
+    }
+  ]
+}

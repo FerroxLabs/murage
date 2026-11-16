@@ -1,0 +1,37 @@
+[
+  {
+    "mutant": "status-mapping",
+    "exit": 1,
+    "killed_at_assertion": true
+  },
+  {
+    "mutant": "swallow-auth",
+    "exit": 1,
+    "killed_at_assertion": true
+  },
+  {
+    "mutant": "skip-preflight",
+    "exit": 1,
+    "killed_at_assertion": true
+  },
+  {
+    "mutant": "flux-key-confusion",
+    "exit": 1,
+    "killed_at_assertion": true
+  },
+  {
+    "mutant": "skip-error-refresh",
+    "exit": 1,
+    "killed_at_assertion": true
+  },
+  {
+    "mutant": "ignore-active-auth",
+    "exit": 1,
+    "killed_at_assertion": true
+  },
+  {
+    "mutant": "generic-as-auth",
+    "exit": 1,
+    "killed_at_assertion": true
+  }
+]

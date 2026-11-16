@@ -1,0 +1,63 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/connected-app-health.test.ts (26 tests | 1 failed | 25 skipped) 48ms
+     ↓ flips Gmail to needs-reconnect while Calendar stays active
+     ↓ keeps the failed account when inventory says connected:false
+     ↓ learns an expired account from inventory without a tool call
+     ↓ a healthy second account or a newly added account cannot erase the expired account
+     ↓ clears when a call to that app succeeds
+     ↓ clears when the person signs in again (a new account)
+     ↓ is not set by an ordinary tool error, a lookup, or a broker that is dark
+     ↓ marks the one app that failed when a call touches two
+     ↓ never removes the active account before the new sign-in is active, then retires exactly that one
+     ↓ a mark made before any inventory was held still clears when a new account signs in
+     ↓ names the app by its own curated label, letters, digits and spaces only, whatever the catalog says
+     ↓ names the app that needs reconnecting, and differs from the unreachable line
+     ↓ names several apps and follows the copy rules
+     ↓ reads a single-tool error answer and an event stream
+     ↓ reads success and ordinary errors as not an authorization failure
+     ↓ does not read a 403, forbidden or a missing scope as a sign-in failure: signing in again would not change it
+     ↓ reads a row only for an app the request named, at the answer's own level
+     ↓ reads the broker's structured signal, never free words in a message
+     ↓ ignores another request's frame
+   ↓ P1-1 ACTIVE inventory cannot hide a known expired grant
+   ↓ P1-2 verified same-owner proactive renewal keeps UUID and cooldown
+   ↓ P1-3 reconnecting A never implicates healthy B
+   ↓ P1-3 success clears only its account and preserves the other incident UUID
+   ↓ P2-5 one inventory check writes once at 10 and 1000 connectors; unchanged writes zero
+   × P1-1 idle Buffer probe detects an ACTIVE revoked grant without an expiry field 41ms
+   ↓ P1-3 mixed results for two accounts of one app mark only the failed row
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connected-app-health.test.ts > P1-1 idle Buffer probe detects an ACTIVE revoked grant without an expiry field
+AssertionError: expected undefined to deeply equal [ { id: 'buffer-a', alias: 'work' } ]
+
+- Expected:
+[
+  {
+    "alias": "work",
+    "id": "buffer-a",
+  },
+]
+
++ Received:
+undefined
+
+ ❯ server/connected-app-health.test.ts:432:80
+    430|   rows = [{ tool_slug: "BUFFER_GET_ACCOUNT_CONTEXT", ok: false, error:…
+    431|   await checkIdleConnectorHealth(cfg());
+    432|   expect(appsNeedingReconnect(cfg()).find(a => a.slug === "buffer")?.a…
+       |                                                                                ^
+    433| });
+    434|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 25 skipped (26)
+   Start at  03:35:28
+   Duration  4.75s (transform 3.67s, setup 4.40s, import 183ms, tests 48ms, environment 0ms)
+

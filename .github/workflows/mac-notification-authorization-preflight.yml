@@ -15,6 +15,8 @@ jobs:
   compile:
     runs-on: macos-15
     timeout-minutes: 10
+    env:
+      EXPECTED_SHA: ${{ inputs.source_sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -28,7 +30,7 @@ jobs:
           EXPECTED_SHA: ${{ inputs.source_sha }}
         run: |
           set -euo pipefail
-          test "$EXPECTED_SHA" = "$GITHUB_SHA"
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           test "$(uname -m)" = arm64
           test "$(id -un)" = runner
@@ -40,15 +42,21 @@ jobs:
           cp dist-native/notification-authorization/x64/build.json "$RUNNER_TEMP/notification-auth-evidence/x64-build.json"
           lipo dist-native/notification-authorization/arm64/notification-authorization.node -verify_arch arm64
           lipo dist-native/notification-authorization/x64/notification-authorization.node -verify_arch x86_64
-      - name: Load arm64 exports without invoking notification APIs
+      - name: Load notification addon and record all six exports
+        run: node scripts/notification-authorization-evidence.mjs dist-native/notification-authorization/arm64/notification-authorization.node "$RUNNER_TEMP/notification-auth-evidence/export-load.json"
+      - name: Verify notification banner and presence guard build and source contracts
+        run: node --test scripts/build-notification-authorization.node-test.mjs electron/notification-banners-native-contract.node-test.mjs scripts/build-presence-guard.node-test.mjs electron/presence-guard-native-contract.node-test.mjs
+      - name: Compile and verify both presence guard architectures
         run: |
           set -euo pipefail
-          node --input-type=commonjs - <<'NODE'
-          const fs = require('node:fs');
-          const binding = require('./dist-native/notification-authorization/arm64/notification-authorization.node');
-          if (typeof binding.status !== 'function' || typeof binding.request !== 'function') throw Error('NATIVE_EXPORTS_MISSING');
-          fs.writeFileSync(process.env.RUNNER_TEMP + '/notification-auth-evidence/export-load.json', JSON.stringify({loaded: true, node: process.version, arch: process.arch, statusExport: true, requestExport: true, authorizationMethodsCalled: false, osPermissionRequested: false}) + '\n');
-          NODE
+          node scripts/build-presence-guard.mjs
+          lipo dist-native/presence-guard/darwin-arm64/presence-guard.node -verify_arch arm64
+          lipo dist-native/presence-guard/darwin-x64/presence-guard.node -verify_arch x86_64
+      - name: EVIDENCE - load arm64 presence guard in plain Node
+        run: |
+          set -euo pipefail
+          test "$(node -p process.arch)" = arm64
+          node scripts/presence-guard-evidence.mjs dist-native/presence-guard/darwin-arm64/presence-guard.node dist-native/presence-guard/darwin-arm64/presence-evidence.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         if: always()
         with:
@@ -56,5 +64,52 @@ jobs:
           path: |
             ${{ runner.temp }}/notification-auth-evidence/
             dist-native/notification-authorization/*/notification-authorization.node
+            dist-native/presence-guard/darwin-arm64/presence-guard.node
+            dist-native/presence-guard/darwin-arm64/build.json
+            dist-native/presence-guard/darwin-arm64/presence-evidence.json
+            dist-native/presence-guard/darwin-x64/presence-guard.node
+            dist-native/presence-guard/darwin-x64/build.json
           if-no-files-found: warn
+          retention-days: 7
+
+  # A native Intel load complements arm64; neither hosted runner is real-OS N1/N5
+  # acceptance for macOS 14/15/26 installed GUI packages.
+  load-x64:
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    env:
+      EXPECTED_SHA: ${{ inputs.source_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24.20.0
+          architecture: x64
+      - name: Admit exact source and native Intel execution
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(uname -m)" = x86_64
+          test "$(node -p process.arch)" = x64
+          mkdir -m 700 "$RUNNER_TEMP/notification-auth-evidence"
+      - name: Compile both addons and load x64 exports and subscriptions
+        run: |
+          set -euo pipefail
+          node scripts/build-notification-authorization.mjs
+          node scripts/build-presence-guard.mjs
+          node scripts/notification-authorization-evidence.mjs dist-native/notification-authorization/x64/notification-authorization.node "$RUNNER_TEMP/notification-auth-evidence/export-load.json"
+          node scripts/presence-guard-evidence.mjs dist-native/presence-guard/darwin-x64/presence-guard.node dist-native/presence-guard/darwin-x64/presence-evidence.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: mac-notification-auth-x64-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/notification-auth-evidence/
+            dist-native/notification-authorization/x64/
+            dist-native/presence-guard/darwin-x64/
+          if-no-files-found: error
           retention-days: 7

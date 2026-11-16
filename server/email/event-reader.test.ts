@@ -1,15 +1,18 @@
+import { createMemoryEmailSecrets } from "../testing/email-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // The #28 event reader (5.1, F24), arrivals and the Filtered list (5.2), against a fake Flux. Dark launch: nothing polls while the switch
 // is off or no binding can receive.
+import { serviceQueueFixture } from '../testing/service-queue-fixture.ts';
+import { Store } from '../store.ts';
 import { DatabaseSync } from "node:sqlite";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { FluxEmailClient } from "./flux-email-client.ts";
-import { EmailSecretStore, emailCredentialProvider } from "./email-secrets.ts";
+import { emailCredentialProvider } from "./email-secrets.ts";
 import { EmailStore, type BindingState } from "./email-store.ts";
 import { EmailBindingService } from "./binding-service.ts";
 import { EmailSendService, type EmailOutcomeEvent } from "./send-service.ts";
@@ -20,6 +23,7 @@ import { BOT_VISIBLE_STATUS, MurageStatus, emailAddrOf, status, botName, statusF
 import { FakeFlux, fluxError } from "../testing/fake-flux-email.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
+import { provenInsert } from "../testing/email-proven.ts";
 const INBOX = "ibx_1";
 let clock = 0;
 let fake: FakeFlux;
@@ -33,7 +37,7 @@ let arrivals: Array<{ botId: string; list: EmailArrival[] }>;
 let outcomes: EmailOutcomeEvent[];
 let root: string;
 
-const bind = (state: BindingState = "active") => store.insertBinding({ botId: "b1", inboxId: INBOX, address: "juniper@murage.email", username: "juniper", displayName: "Juniper", emailKeyRef: "key_b1", fluxAccountId: null, state, step: null, opId: null, opStartedAt: null, policy: "auto", failure: null, updatedAt: clock });
+const bind = (state: BindingState = "active") => provenInsert(store, { botId: "b1", inboxId: INBOX, address: "juniper@murage.email", username: "juniper", displayName: "Juniper", emailKeyRef: "key_b1", fluxAccountId: null, state, step: null, opId: null, opStartedAt: null, policy: "auto", failure: null, updatedAt: clock });
 const received = (id: string, from: string, extra: Record<string, unknown> = {}) => ({ id, type: "email.message.received", created: `2026-11-10T10:00:0${id.slice(-1)}Z`, inbox_id: INBOX, bot_id: "b1", data: { message_id: `msg_${id}`, thread_id: "thr_1", from, subject: "Hello", preview: "Hi there", trust: "untrusted", sender_authenticated: true, spam: false, held_for_owner: false, ...extra } });
 const page = (data: unknown[], next = "c_2") => ({ status: 200, body: { object: "list", data, next_cursor: next } });
 
@@ -43,13 +47,15 @@ beforeEach(() => {
   arrivals = []; outcomes = [];
   fake = new FakeFlux();
   store = new EmailStore(new DatabaseSync(":memory:"));
-  const secrets = new EmailSecretStore();
+  const secrets = createMemoryEmailSecrets();
   secrets.setOwner({ token: "owner-token", keyId: "key_owner" });
   secrets.setBotKey("b1", { token: "bot-token", keyId: "key_b1" });
   client = new FluxEmailClient({ fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test", credentials: emailCredentialProvider(secrets, () => null), timeoutMs: 100 });
   bindings = new EmailBindingService({ store, client, secrets, installId: "inst", now: () => clock });
   let n = 0;
-  send = new EmailSendService({ store, client, installId: "inst", now: () => clock, newId: () => `send-${++n}`, onOutcome: event => outcomes.push(event) });
+  const producer = serviceQueueFixture(new Store(() => ({instanceId:"fixture",model:"fixture"})),{cancelAtEnd:true});
+  send = new EmailSendService({ authorityFor:producer.authorityFor, store, client, installId: "inst", now: () => clock, newId: () => `send-${++n}`, onOutcome: event => outcomes.push(event) });
+  producer.queue(send.approvalQueue());
   reader = new EmailEventReader({ store, client, send, bindings, enabled: () => enabled, now: () => clock, onArrivals: (botId, list) => arrivals.push({ botId, list }) });
   root = mkdtempSync(join(tmpdir(), "email-events-"));
 });

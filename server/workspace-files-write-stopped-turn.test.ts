@@ -1,3 +1,6 @@
+import { stoppedTurnFixture } from "./testing/stopped-turn-fixture.ts";
+import { engineCloseGate } from "./testing/engine-close-gate.ts";
+import { fixturePlatformEnv, stopFixtureServer } from "./testing/platform-fixtures.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -5,7 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { freePortBlock } from "./testing/ports.ts";
-import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 import { openSse, type SseRecorder } from "./testing/sse.ts";
 
 // STOPRESTORE2: the workspace editor's Save inside the Stop → engine-close
@@ -28,6 +31,7 @@ type Api = (method: string, path: string, body?: unknown) => Promise<{ status: n
 type Answer = { status: number; body: any };
 
 interface Fixture {
+  closeGate?: ReturnType<typeof engineCloseGate>;
   root: string; project: string; note: string; dump: string;
   child: ChildProcess; api: Api; events: SseRecorder;
   until: <T>(what: string, check: () => T | Promise<T>) => Promise<NonNullable<T>>;
@@ -55,7 +59,7 @@ function processAlive(pid: number): boolean {
 const NOTE = "# Notes\n\nWritten before the turn.\n";
 const EDIT = "# Notes\n\nEdited by the owner right after Stop.\n";
 
-async function startFixture(signal: AbortSignal, env: Record<string, string>): Promise<Fixture> {
+async function startFixture(signal: AbortSignal, env: Record<string, string>, gateClose = false): Promise<Fixture> {
   const root = mkdtempSync(join(tmpdir(), "murage-editor-stopped-turn-"));
   const data = join(root, "data"), project = join(root, "project"), dump = join(root, "fake-engine.json");
   for (const path of [data, project]) mkdirSync(path);
@@ -64,11 +68,13 @@ async function startFixture(signal: AbortSignal, env: Record<string, string>): P
   writeFileSync(join(data, "config.json"), JSON.stringify({ engineDiscovery: "explicit", instances: { fixture: { driver: "claudeAgent", config: { cli: fakeCli } } } }));
   const port = await freePortBlock([0, 1]), secret = "7".repeat(64);
   const desktop = { "x-murage-surface": "desktop", "x-murage-surface-secret": secret };
-  const child = spawn(process.execPath, [fileURLToPath(new URL("./index.ts", import.meta.url))], { cwd: fileURLToPath(new URL("..", import.meta.url)), env: {
+  const execution = stoppedTurnFixture(root);
+  const closeGate = gateClose ? engineCloseGate(root) : undefined;
+  const child = spawn(process.execPath, [...execution.args, ...(closeGate?.args ?? []), fileURLToPath(new URL("./index.ts", import.meta.url))], { windowsHide: true, cwd: fileURLToPath(new URL("..", import.meta.url)), env: { ...fixturePlatformEnv(),
     HOME: root, USERPROFILE: root, PATH: process.env.PATH ?? "/usr/bin:/bin", MURAGE_DATA_DIR: data,
-    MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: secret, FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: dump,
+    MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1", MURAGE_DEV_DESKTOP_SECRET: secret, FAKE_CLAUDE_MODE: "hang", FAKE_CLAUDE_DUMP: dump,
     ...env,
-  }, stdio: ["ignore", "ignore", "pipe"] });
+  }, stdio: ["ignore", "ignore", "pipe", "ipc"] });
   let stderr = ""; child.stderr!.on("data", chunk => { stderr += chunk; });
   const api: Api = async (method, path, body) => {
     const response = await fetch(`http://127.0.0.1:${port}${path}`, { method, signal, headers: { ...desktop, ...(body ? { "content-type": "application/json" } : {}) }, body: body ? JSON.stringify(body) : undefined });
@@ -89,7 +95,7 @@ async function startFixture(signal: AbortSignal, env: Record<string, string>): P
     events = await openSse(`http://127.0.0.1:${port}/api/events`, desktop);
   } catch (error) {
     events?.close();
-    await waitForExit(child, { signal: "SIGTERM" });
+    await stopFixtureServer(child);
     await removeTempDir(root);
     throw error;
   }
@@ -124,23 +130,25 @@ async function startFixture(signal: AbortSignal, env: Record<string, string>): P
   const saveNote = (botId: string, threadId: string, revision: string, content: string) =>
     api("POST", "/api/workspace-files/write", { scope: { botId, threadId }, relativePath: "notes.md", baseRevision: revision, requestId: "editor-save-1", content, bom: false });
   const idle = async (botId: string) => (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === botId).busy === false;
-  const terminalFrame = (threadId: string) => frames.frames.find((frame: any) =>
-    frame?.kind === "runtime" && frame.event?.threadId === threadId && frame.event.turnId
-    && (frame.event.type === "turn.completed" || frame.event.type === "session.exited"));
-  return { root, project, note, dump, child, api, events: frames, until, create, holdTurn, openNote, saveNote, idle, terminalFrame, stderr: () => stderr };
+  // MAIN RULING INT-CONFLICT-DEFAULT: native terminal evidence stays private; public SSE is unchanged.
+  const terminalFrame = execution.terminalFrame;
+  return { closeGate, root, project, note, dump, child, api, events: frames, until, create, holdTurn, openNote, saveNote, idle, terminalFrame, stderr: () => stderr };
 }
 
 async function stopFixture(fixture: Fixture | undefined, pending: Array<Promise<unknown> | undefined>): Promise<void> {
   if (!fixture) return;
   fixture.events.close();
+  if (fixture.closeGate) writeFileSync(fixture.closeGate.release, "cleanup");
   for (const promise of pending) await promise?.catch(() => undefined);
-  await waitForExit(fixture.child, { signal: "SIGTERM" });
+  await stopFixtureServer(fixture.child);
   await removeTempDir(fixture.root);
 }
 
-const posix = it.skipIf(process.platform === "win32");
+// Windows TerminateProcess cannot deliver a catchable SIGTERM to the delayed-exit fixture.
+// The live-writer row and the native Windows Stop/Save twin still run there.
+const delayedSigterm = it.skipIf(process.platform === "win32");
 
-posix("Stop then an immediate editor Save waits for the stopped turn's engine to close, then writes", async ({ signal }) => {
+delayedSigterm("Stop then an immediate editor Save waits for the stopped turn's engine to close, then writes", async ({ signal }) => {
   let fixture: Fixture | undefined;
   let save: Promise<Answer> | undefined;
   try {
@@ -182,7 +190,7 @@ posix("Stop then an immediate editor Save waits for the stopped turn's engine to
   expect(fixture!.child.exitCode, fixture!.stderr()).toBe(0);
 }, 30000);
 
-posix("an editor Save while a live (not stopped) turn holds the folder is still refused at once with bot-writing", async ({ signal }) => {
+it("an editor Save while a live (not stopped) turn holds the folder is still refused at once with bot-writing", async ({ signal }) => {
   let fixture: Fixture | undefined;
   try {
     fixture = await startFixture(signal, { FAKE_CLAUDE_SIGTERM_DELAY_MS: "2000" });
@@ -208,7 +216,7 @@ posix("an editor Save while a live (not stopped) turn holds the folder is still 
   expect(fixture!.child.exitCode, fixture!.stderr()).toBe(0);
 }, 30000);
 
-posix("a stopped turn that does not close within the engine's budget refuses the Save as workspace_stopped_turn_closing, and a retry after the close writes", async ({ signal }) => {
+delayedSigterm("a stopped turn that does not close within the engine's budget refuses the Save as workspace_stopped_turn_closing, and a retry after the close writes", async ({ signal }) => {
   let fixture: Fixture | undefined;
   try {
     // A 1 s close budget (the isolated fixture may shorten it, never disable
@@ -238,4 +246,63 @@ posix("a stopped turn that does not close within the engine's budget refuses the
     await stopFixture(fixture, []);
   }
   expect(fixture!.child.exitCode, fixture!.stderr()).toBe(0);
+}, 30000);
+
+for (const expire of [false, true]) it(`controlled Windows-compatible close boundary: Save budget expires=${expire}`, async ({ signal }) => {
+  let fixture: Fixture | undefined;
+  let save: Promise<Answer> | undefined;
+  try {
+    fixture = await startFixture(signal, { MURAGE_PROVIDER_CLOSE_MS: "1000" }, true);
+    const { api, until, note, closeGate } = fixture;
+    const bot = await fixture.create();
+    const { threadId } = await fixture.holdTurn(bot.id, "work on the notes");
+    const opened = await fixture.openNote(bot.id, threadId);
+    expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+    await until("the engine close notification to be held", () => existsSync(closeGate!.ready));
+    expect(fixture.terminalFrame(threadId)).toBeUndefined();
+    save = fixture.saveNote(bot.id, threadId, opened.revision, EDIT);
+    let answer: Answer | undefined;
+    save.then(value => { answer = value; }, () => undefined);
+    await until("admission to wait or answer", () => existsSync(closeGate!.waiting) || answer);
+    expect(answer, "the action must wait while close is unconfirmed").toBeUndefined();
+    expect(existsSync(closeGate!.waiting)).toBe(true);
+    if (expire) {
+      expect(await save).toMatchObject({ status: 423, body: { code: "workspace_stopped_turn_closing" } });
+      expect(readFileSync(note, "utf8")).toBe(NOTE);
+      expect(fixture.terminalFrame(threadId)).toBeUndefined();
+    } else {
+      expect(readFileSync(note, "utf8")).toBe(NOTE);
+    }
+    writeFileSync(closeGate!.release, "allow close");
+    if (expire) {
+      await until("the stopped turn's terminal event", () => fixture!.terminalFrame(threadId));
+      save = fixture.saveNote(bot.id, threadId, opened.revision, EDIT);
+    }
+    expect(await save).toMatchObject({ status: 200, body: { requestId: "editor-save-1", previousRevision: opened.revision } });
+    expect(readFileSync(note, "utf8")).toBe(EDIT);
+    await until("the stopped turn's terminal event", () => fixture!.terminalFrame(threadId));
+    const artifacts = await api("GET", `/api/artifacts?botId=${bot.id}`);
+    expect(artifacts.status).toBe(200);
+    expect(JSON.stringify(artifacts.body)).toContain("notes.md");
+  } finally { await stopFixture(fixture, [save]); }
+}, 30000);
+
+// Retain the original platform-specific receipt test alongside the controlled close-window cases.
+it.runIf(process.platform === "win32")("Windows Stop then editor Save joins the engine close and records the previous revision", async ({ signal }) => {
+  let fixture: Fixture | undefined;
+  try {
+    fixture = await startFixture(signal, {});
+    const { api, until, note } = fixture;
+    const bot = await fixture.create();
+    const { threadId, pid } = await fixture.holdTurn(bot.id, "work on the notes");
+    const opened = await fixture.openNote(bot.id, threadId);
+    expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
+    await until("the stopped engine's terminal event", () => fixture!.terminalFrame(threadId));
+    expect(processAlive(pid)).toBe(false);
+    expect(await fixture.saveNote(bot.id, threadId, opened.revision, EDIT)).toMatchObject({ status: 200, body: { requestId: "editor-save-1", previousRevision: opened.revision } });
+    expect(readFileSync(note, "utf8")).toBe(EDIT);
+    const artifacts = await api("GET", `/api/artifacts?botId=${bot.id}`);
+    expect(artifacts.status).toBe(200);
+    expect(JSON.stringify(artifacts.body)).toContain("notes.md");
+  } finally { await stopFixture(fixture, []); }
 }, 30000);

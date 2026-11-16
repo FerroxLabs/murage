@@ -55,7 +55,7 @@ describe("ssh argument vector",()=>{
     expect(args).toContain("UserKnownHostsFile='/Users/Sam Lee/control/ssh-abc123/known_hosts'");
     if(existsSync("/usr/bin/ssh")){
       const posix={identityFile:"/tmp/a b/key",knownHostsFile:"/tmp/c d/known_hosts"},opts=sftpSshArguments(target,posix);
-      const config=execFileSync("/usr/bin/ssh",["-G",...opts.slice(0,opts.indexOf("-s"))," nas.example.com".trim()],{encoding:"utf8"});
+      const config=execFileSync("/usr/bin/ssh",["-G",...opts.slice(0,opts.indexOf("-s"))," nas.example.com".trim()],{ windowsHide: true,encoding:"utf8"});
       expect(config).toMatch(/^identityfile \/tmp\/a b\/key$/m);expect(config).toMatch(/^userknownhostsfile \/tmp\/c d\/known_hosts$/m);expect(config).toMatch(/^stricthostkeychecking true$/m);
     }
   });
@@ -82,9 +82,9 @@ describe("server identity",()=>{
   it("fingerprints like OpenSSH and pins one alias line",()=>{
     const root=scratch();
     if(existsSync("/usr/bin/ssh-keygen")){
-      execFileSync("/usr/bin/ssh-keygen",["-q","-t","ed25519","-N","","-f",join(root,"host")]);
+      execFileSync("/usr/bin/ssh-keygen",["-q","-t","ed25519","-N","","-f",join(root,"host")], { windowsHide: true });
       const key=readFileSync(join(root,"host.pub"),"utf8").split(" ")[1];
-      expect(sshFingerprint(key)).toBe(execFileSync("/usr/bin/ssh-keygen",["-lf",join(root,"host.pub")],{encoding:"utf8"}).split(" ")[1]);
+      expect(sshFingerprint(key)).toBe(execFileSync("/usr/bin/ssh-keygen",["-lf",join(root,"host.pub")],{ windowsHide: true,encoding:"utf8"}).split(" ")[1]);
     }
     expect(knownHostsLine(hostKey)).toBe(`murage-backup-server ssh-ed25519 ${hostKey.key}\n`);
   });
@@ -114,7 +114,7 @@ describe("Murage's own key",()=>{
     expect(pair.privateKey).toMatch(/^-----BEGIN OPENSSH PRIVATE KEY-----\n/);expect(pair.publicKey).not.toBe(other.publicKey);
     if(existsSync("/usr/bin/ssh-keygen")){
       const root=scratch(),file=join(root,"key");writeFileSync(file,pair.privateKey,{mode:0o600});
-      expect(execFileSync("/usr/bin/ssh-keygen",["-y","-f",file],{encoding:"utf8"}).trim()).toBe(pair.publicKey);
+      expect(execFileSync("/usr/bin/ssh-keygen",["-y","-f",file],{ windowsHide: true,encoding:"utf8"}).trim()).toBe(pair.publicKey);
     }
   });
   it("touches disk only as 0600 files in a fresh 0700 folder, removed afterwards",()=>{

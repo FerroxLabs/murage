@@ -1,3 +1,4 @@
+import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -7,14 +8,15 @@
 // names the failure it prevents (design page section 5). The service runs
 // on real RoutineManager and WebhookManager files in a temp directory, so a
 // "restart" is a fresh manager reading the same files.
-import { mkdtempSync, readFileSync } from "node:fs";
+import { lookupApproval } from './decision/index.ts';
+import { routineServiceFixture } from './testing/service-queue-fixture.ts';
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
-  RoutineRequestService,
   routineRequestFingerprint,
   webhookIdForRequest,
   type RoutineRequestMessage,
@@ -42,7 +44,9 @@ class MemoryStore implements RoutineRequestStore {
 
   patchMessage(threadId: string, messageId: string, patch: { card: RoutineRequestOptionCard }): RoutineRequestMessage | null {
     // a crash after the change and before the card was settled
-    if (this.failNextPatch) {
+    // The decision now records the answer before execution. Crash at the
+    // receipt stamp, after the automation changed, as this fixture promises.
+    if (this.failNextPatch && typeof patch.card.answeredAt === "number") {
       this.failNextPatch = false;
       throw new Error("simulated crash before the card was settled");
     }
@@ -80,7 +84,7 @@ function world(dir = mkdtempSync(join(tmpdir(), "murage-slj-")), store = new Mem
       return { id: `run-${queued.length}` };
     },
   });
-  const service = new RoutineRequestService({ store, routines, webhooks: () => webhooks, now: () => clock.now, timeZone: () => "UTC" });
+  const service = routineServiceFixture({ store, routines, webhooks: () => webhooks, now: () => clock.now, timeZone: () => "UTC" });
   // "restart": fresh managers over the same files and the same transcript
   const restart = () => world(dir, store, clock);
   return { dir, store, clock, routines, webhooks, service, queued, restart };
@@ -88,10 +92,10 @@ function world(dir = mkdtempSync(join(tmpdir(), "murage-slj-")), store = new Mem
 
 type World = ReturnType<typeof world>;
 
-const card = (w: World, requestId: string) => w.store.messagesFor(THREAD).find((message) => message.card?.requestId === requestId)!;
+const card = (w: World, requestId: string) => w.service.readCard(THREAD,requestId)!;
 const confirm = (w: World, requestId: string) => w.service.resolve({ botId: BOT, threadId: THREAD, requestId, behavior: "allow" });
 const undo = (w: World, requestId: string) => w.service.resolve({ botId: BOT, threadId: THREAD, requestId, behavior: "undo" });
-const receiptsOnDisk = (w: World) => JSON.parse(readFileSync(join(w.dir, "routines.json"), "utf8")).routineRequestReceipts as Array<Record<string, unknown>>;
+const receiptsOnDisk = (w: World) => readRoutinesWithRuns(join(w.dir, "routines.json")).routineRequestReceipts as Array<Record<string, unknown>>;
 
 const proposeWebhook = (w: World, webhook: Record<string, unknown> = {}) => w.service.propose({
   botId: BOT, threadId: THREAD,
@@ -142,10 +146,13 @@ describe("SL-J J1: a webhook from chat, same card, same guard", () => {
     const proposed = await proposeWebhookAction(w, "update", created.webhook.id, { instructions: "Handle it carefully" });
     // the clock does not move: the owner's write still moves updatedAt
     w.webhooks.update(created.webhook.id, { name: "Owner renamed" });
+    const actionHash=lookupApproval(THREAD,card(w,proposed.requestId).id)!.actionHash;
     const answer = confirm(w, proposed.requestId);
     expect(answer).toMatchObject({ claimed: true, state: "invalid", status: 409 });
     expect(card(w, proposed.requestId).card!.held).toContain("changed after this confirmation card was prepared");
     expect(w.webhooks.get(created.webhook.id)).toMatchObject({ name: "Owner renamed", prompt: "Handle it" });
+    expect(lookupApproval(THREAD,card(w,proposed.requestId).id)?.actionHash).toBe(actionHash);
+    expect(w.store.messagesFor(THREAD).find(row=>row.card?.requestId===proposed.requestId)?.card?.held).toBeUndefined();
   });
 
   it("refuses rotate and run now from chat, and a webhook of another bot", async () => {

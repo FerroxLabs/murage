@@ -1,0 +1,52 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/connected-app-health.test.ts (18 tests | 1 failed) 252ms
+     ✓ flips Gmail to needs-reconnect while Calendar stays active 39ms
+     ✓ keeps the failed account when inventory says connected:false 9ms
+     × learns an expired account from inventory without a tool call 12ms
+     ✓ clears when a call to that app succeeds 9ms
+     ✓ clears when the person signs in again (a new account) 7ms
+     ✓ is not set by an ordinary tool error, a lookup, or a broker that is dark 10ms
+     ✓ marks the one app that failed when a call touches two 5ms
+     ✓ never removes the active account before the new sign-in is active, then retires exactly that one 119ms
+     ✓ a mark made before any inventory was held still clears when a new account signs in 9ms
+     ✓ names the app by its own curated label, letters, digits and spaces only, whatever the catalog says 10ms
+     ✓ names the app that needs reconnecting, and differs from the unreachable line 5ms
+     ✓ names several apps and follows the copy rules 1ms
+     ✓ reads a single-tool error answer and an event stream 1ms
+     ✓ reads success and ordinary errors as not an authorization failure 1ms
+     ✓ does not read a 403, forbidden or a missing scope as a sign-in failure: signing in again would not change it 1ms
+     ✓ reads a row only for an app the request named, at the answer's own level 1ms
+     ✓ reads the broker's structured signal, never free words in a message 2ms
+     ✓ ignores another request's frame 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connected-app-health.test.ts > one app's authorization failure > learns an expired account from inventory without a tool call
+AssertionError: expected [] to deeply equal [ 'gmail' ]
+
+- Expected
++ Received
+
+- [
+-   "gmail",
+- ]
++ []
+
+ ❯ server/connected-app-health.test.ts:151:58
+    149|     accounts.gmail = [{ id: "ca_gmail1", alias: "work", status: "EXPIR…
+    150|     await connectedServices(cfg(), { fresh: true });
+    151|     expect(appsNeedingReconnect(cfg()).map(a => a.slug)).toEqual(["gma…
+       |                                                          ^
+    152|   });
+    153|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 17 passed (18)
+   Start at  02:23:52
+   Duration  7.75s (transform 5.83s, setup 7.11s, import 240ms, tests 252ms, environment 0ms)
+

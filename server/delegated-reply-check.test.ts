@@ -7,8 +7,10 @@
 // line); now the hand-off waits, bounded, re-runs its gate, and the asker gets the real reply once the check clears, or a line that names the
 // worker and where the words are. The fixture is delegation-nohold.test.ts's: a leader hands off to a researcher whose reply lands inside an
 // install-wide pending revoke window (the gate reads "checking: pending" until the marker has walked it).
-import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import fs, { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { boundaryStore } from "./boundary-ports.ts";
 import { botRows, botViewer, doorEgress } from "./bot-read.ts";
@@ -172,10 +174,126 @@ function openPendingWindow() {
 /** Every store a bot could be handed words from: files under the data dir (not the databases), the saved wakes, the leader's rows. */
 function storesText(w: ReturnType<typeof world>): string {
   const files: string[] = [];
-  const walk = (dir: string) => { for (const name of readdirSync(dir)) { const path = join(dir, name); if (statSync(path).isDirectory()) walk(path); else if (!/\.(db|sqlite)(-wal|-shm)?$/.test(name)) files.push(path); } };
+  const walk = (dir: string) => {
+    const entries = readdirSync(dir, { withFileTypes: true });
+    const names = entries.map(entry => entry.name);
+    const journals = new Set(names.filter(name => /\.(db|sqlite)$/.test(name) && statSync(join(dir, name)).isFile()).map(name => name + "-journal"));
+    for (const entry of entries) {
+      const name = entry.name;
+      const excluded = /\.(db|sqlite)(-wal|-shm)?$/.test(name);
+      // SQLite can remove excluded database sidecars before stat or read.
+      if (journals.has(name) || (!entry.isDirectory() && !entry.isSymbolicLink() && excluded)) continue;
+      const path = join(dir, name);
+      if (statSync(path).isDirectory()) walk(path); else if (!excluded) files.push(path);
+    }
+  };
   walk(DATA_DIR);
   return [...files.map(file => readFileSync(file, "utf8")), JSON.stringify([...w.saved]), ...w.store.messagesFor(w.leader.threadId).map(m => JSON.stringify(m))].join("\n");
 }
+
+it.each(["after enumeration", "before read"])("storesText completes when SQLite removes its rollback journal %s", when => {
+  const w = world();
+  const file = join(DATA_DIR, "census.db"), journal = file + "-journal";
+  const db = new DatabaseSync(file);
+  const originalList = fs.readdirSync, originalRead = fs.readFileSync;
+  try {
+    db.exec("PRAGMA journal_mode=DELETE; CREATE TABLE fixture(words TEXT); BEGIN IMMEDIATE; INSERT INTO fixture VALUES('database words')");
+    expect(fs.existsSync(journal)).toBe(true);
+    fs.writeFileSync(join(DATA_DIR, "reply.json"), "CENSUS_TEXT_WORDS");
+    let committed = false;
+    const list = vi.spyOn(fs, "readdirSync").mockImplementation(((...args: unknown[]) => {
+      const entries = Reflect.apply(originalList, fs, args);
+      if (String(args[0]) === DATA_DIR) {
+        expect(entries.map((entry: string | fs.Dirent) => typeof entry === "string" ? entry : entry.name)).toContain("census.db-journal");
+        if (when === "after enumeration") { db.exec("COMMIT"); committed = true; }
+      }
+      return entries;
+    }) as typeof fs.readdirSync);
+    const read = vi.spyOn(fs, "readFileSync").mockImplementation(((...args: unknown[]) => {
+      if (when === "before read" && !committed) {
+        db.exec("COMMIT"); committed = true;
+      }
+      return Reflect.apply(originalRead, fs, args);
+    }) as typeof fs.readFileSync);
+    syncBuiltinESMExports();
+    try {
+      let text = "";
+      expect(() => { text = storesText(w); }).not.toThrow();
+      expect(committed).toBe(true);
+      expect(fs.existsSync(journal)).toBe(false);
+      expect(text).toContain("CENSUS_TEXT_WORDS");
+    } finally {
+      list.mockRestore(); read.mockRestore(); syncBuiltinESMExports();
+    }
+  } finally { db.close(); }
+});
+
+it("storesText completes when SQLite removes its WAL and SHM after enumeration", () => {
+  const w = world(), file = join(DATA_DIR, "census.db");
+  const db = new DatabaseSync(file);
+  const originalList = fs.readdirSync;
+  let closed = false;
+  try {
+    db.exec("PRAGMA journal_mode=WAL; CREATE TABLE fixture(words TEXT); INSERT INTO fixture VALUES('database words')");
+    expect(fs.existsSync(file + "-wal")).toBe(true);
+    expect(fs.existsSync(file + "-shm")).toBe(true);
+    fs.writeFileSync(join(DATA_DIR, "reply.json"), "CENSUS_TEXT_WORDS");
+    const list = vi.spyOn(fs, "readdirSync").mockImplementation(((...args: unknown[]) => {
+      const entries = Reflect.apply(originalList, fs, args);
+      if (String(args[0]) === DATA_DIR) {
+        expect(entries.map((entry: string | fs.Dirent) => typeof entry === "string" ? entry : entry.name)).toContain("census.db-wal");
+        expect(entries.map((entry: string | fs.Dirent) => typeof entry === "string" ? entry : entry.name)).toContain("census.db-shm");
+        db.close(); closed = true;
+      }
+      return entries;
+    }) as typeof fs.readdirSync);
+    syncBuiltinESMExports();
+    try {
+      let text = "";
+      expect(() => { text = storesText(w); }).not.toThrow();
+      expect(closed).toBe(true);
+      expect(fs.existsSync(file + "-wal")).toBe(false);
+      expect(fs.existsSync(file + "-shm")).toBe(false);
+      expect(text).toContain("CENSUS_TEXT_WORDS");
+    } finally { list.mockRestore(); syncBuiltinESMExports(); }
+  } finally { if (!closed) db.close(); }
+});
+
+it("storesText propagates a disappearing ordinary text file", () => {
+  const w = world(), file = join(DATA_DIR, "reply.json");
+  fs.writeFileSync(file, "CENSUS_TEXT_WORDS");
+  const originalRead = fs.readFileSync;
+  const read = vi.spyOn(fs, "readFileSync").mockImplementation(((...args: unknown[]) => {
+    if (String(args[0]) === file) fs.unlinkSync(file);
+    return Reflect.apply(originalRead, fs, args);
+  }) as typeof fs.readFileSync);
+  syncBuiltinESMExports();
+  try { expect(() => storesText(w)).toThrowError(expect.objectContaining({ code: "ENOENT", path: file })); }
+  finally { read.mockRestore(); syncBuiltinESMExports(); }
+});
+
+it.each(["x-journal", "orphan.db-journal", "orphan.sqlite-journal"])("storesText includes deleted text in a non-sidecar file named %s", name => {
+  const w = world();
+  fs.writeFileSync(join(DATA_DIR, name), "DELETED_REPLY_WORDS");
+  expect(storesText(w)).toContain("DELETED_REPLY_WORDS");
+});
+
+it.each(["archive.db", "archive.sqlite", "archive.db-wal", "archive.db-shm", "archive.sqlite-wal", "archive.sqlite-shm"])("storesText traverses a directory and its symlink named %s", name => {
+  const w = world(), directory = join(DATA_DIR, name);
+  mkdirSync(directory);
+  fs.writeFileSync(join(directory, "reply.json"), "DIRECTORY_REPLY_WORDS");
+  expect(storesText(w)).toContain("DIRECTORY_REPLY_WORDS");
+  fs.renameSync(directory, join(DATA_DIR, "archive"));
+  fs.symlinkSync(join(DATA_DIR, "archive"), directory, "dir");
+  expect(storesText(w).split("DIRECTORY_REPLY_WORDS")).toHaveLength(3);
+});
+
+it.each(["archive.db", "archive.sqlite", "archive.db-wal", "archive.db-shm", "archive.sqlite-wal", "archive.sqlite-shm"])("storesText excludes a file symlink named %s", name => {
+  const w = world(), file = join(DATA_DIR, "reply.json");
+  fs.writeFileSync(file, "FILE_REPLY_WORDS");
+  fs.symlinkSync(file, join(DATA_DIR, name));
+  expect(storesText(w).split("FILE_REPLY_WORDS")).toHaveLength(2);
+});
 
 it("a reply the gate is still checking is waited for: nothing is written or woken, the memory side is hurried, and when the window closes the asker gets the real reply once", async () => {
   const w = world();

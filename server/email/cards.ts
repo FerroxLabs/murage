@@ -1,3 +1,6 @@
+import l2c from "../../src/locales/en-ux/l2c.json" with { type: "json" };
+import { producerBase, serviceOwnerNoLimits } from '../narrow-denials.ts';
+import { openApprovals, readApproval } from '../decision/index.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -6,9 +9,9 @@
 // record (never from the bot's words). It is never an engine request: no adapter, no askMessageByRequest, no grant. The thread itself is
 // reached through an injected host, so this file never imports the store or index.ts.
 import type { EmailStore, SendRow, SendState } from "./email-store.ts";
-import { partsDraft, type AnswerResult, type EmailOutcomeEvent, type EmailSendService } from "./send-service.ts";
+import { partsDraft, type EmailOutcomeEvent, type EmailSendService } from "./send-service.ts";
 import { emailRef, type EmailDraft } from "./canonical.ts";
-import { activityLine, checkLine, EMAIL_CARD_COPY, EMAIL_TRUST_COPY, type EmailCardAction, type EmailCardPayload, type EmailCardPhase, type EmailTrustOfferPayload } from "../../shared/email-copy.ts";
+import { emailDisplayPatch, type EmailCardDisplay, activityLine, checkLine, EMAIL_CARD_COPY, EMAIL_TRUST_COPY, type EmailCardAction, type EmailCardPayload, type EmailCardPhase, type EmailTrustOfferPayload } from "../../shared/email-copy.ts";
 import { sha256Hex } from "./canonical.ts";
 export type { EmailCardAction, EmailCardPayload, EmailCardPhase };
 import { emailRefOf, type EmailOutcomeCode, type EmailRef } from "../murage-status.ts";
@@ -34,9 +37,11 @@ export interface EmailCardHost {
   threadExists(threadId: string): boolean;
   /** The card message on the thread, through the card index. */
   card(threadId: string, requestId: string): { messageId: string; dismissed?: boolean; emailSend?: unknown; emailTrustOffer?: unknown } | null;
+  /** Earlier immutable approvals of the same send remain visible as history. */
+  cardMessages?(threadId: string, requestId: string): readonly { messageId: string }[];
   /** Appends the card as a Murage row; the host raises the normal approval notification for it. */
   appendCard(threadId: string, botId: string, card: EmailCardFields | EmailTrustCardFields): string;
-  patchCard(threadId: string, messageId: string, card: EmailCardFields | EmailTrustCardFields): void;
+  patchCard(threadId: string, messageId: string, display: EmailCardDisplay): void;
   /** The bot-visible `email_outcome` status row (4.6). */
   outcome(threadId: string, data: { ref: EmailRef; outcome: EmailOutcomeCode }): void;
   /** An owner-only Murage-voice activity row (3.5), never in BOT_VISIBLE_STATUS. */
@@ -76,19 +81,21 @@ export function trustCardView(botName: string, offer: EmailTrustOfferPayload): E
   };
 }
 
-export const isEmailRequestId = (requestId: string | null | undefined): boolean => typeof requestId === "string" && requestId.startsWith(EMAIL_CARD_PREFIX) && requestId.length > EMAIL_CARD_PREFIX.length;
-export const emailRequestId = (sendId: string): string => `${EMAIL_CARD_PREFIX}${sendId}`;
-const sendIdOf = (requestId: string): string => requestId.slice(EMAIL_CARD_PREFIX.length);
+export const isEmailRequestId = (requestId: string | null | undefined): boolean => typeof requestId==='string' && (requestId.startsWith(EMAIL_CARD_PREFIX)&&requestId.length>EMAIL_CARD_PREFIX.length || openApprovals().some(record=>record.queue?.kind==='email'&&record.requestId===requestId));
+export const emailRequestId = (sendId: string): string => EMAIL_CARD_PREFIX+sendId;
+const sendIdOf = (requestId:string):string => requestId.startsWith(EMAIL_CARD_PREFIX)?requestId.slice(EMAIL_CARD_PREFIX.length):requestId;
 
 function size(bytes: number): string { return bytes >= 1_048_576 ? `${(bytes / 1_048_576).toFixed(1)} MB` : bytes >= 1024 ? `${Math.round(bytes / 1024)} KB` : `${bytes} bytes`; }
 
 /** The card's words and buttons for a row: built from the frozen record and the store's trust table only. */
-export function emailCardView(row: SendRow, input: { botName: string; text: string; restored?: boolean; approved: (address: string) => boolean; note?: string; siblingRequestId?: string }): EmailCardFields {
+export function emailCardView(row: SendRow, input: { botName: string; text: string; restored?: boolean; approved: (address: string) => boolean; note?: string; siblingRequestId?: string; waitingSibling?: boolean }): EmailCardFields {
   const bot = input.botName;
   const recipients = row.kind === "reply" && row.summary.replySource ? [row.summary.replySource.from.toLowerCase(), ...row.summary.cc] : [...row.summary.to, ...row.summary.cc];
   const fresh = recipients.filter(address => !input.approved(address));
   const known = recipients.filter(address => input.approved(address));
-  const phase: EmailCardPhase = OPEN.has(row.state) ? "open" : ANSWERED.has(row.state) ? "answered" : "settled";
+  const waitingSibling = row.state === 'held' && input.waitingSibling === true;
+  const spendWait = row.code === "spend_limit" && ["prepared", "held", "approved_unsent"].includes(row.state);
+  const phase: EmailCardPhase = waitingSibling ? 'answered' : spendWait || OPEN.has(row.state) ? "open" : ANSWERED.has(row.state) ? "answered" : "settled";
   const ref = emailRef(row.sendId);
   let title: string;
   let note = input.note;
@@ -99,6 +106,7 @@ export function emailCardView(row: SendRow, input: { botName: string; text: stri
   else if (fresh.length) title = `New contact: ${bot} wants to email ${fresh.join(", ")} for the first time.`;
   else title = row.kind === "reply" ? `${bot} wants to send this reply.` : `${bot} wants to send this email.`;
   if (OPEN.has(row.state) && row.state !== "approved_unsent" && row.state !== "unknown_expired") actions = ["send", "edit", "dont_send"];
+  if (waitingSibling) actions = [];
   // a restored row whose payload was not carried (section 7): Don't send only
   if (input.restored && OPEN.has(row.state)) { actions = ["dont_send"]; note = EMAIL_CARD_COPY.restoredWaiting; }
   if (row.state === "withdraw_pending" || (row.state === "withdrawn" && row.code === "stopped")) note = EMAIL_CARD_COPY.stopped;
@@ -110,6 +118,7 @@ export function emailCardView(row: SendRow, input: { botName: string; text: stri
   else if (row.state === "sent") note = EMAIL_CARD_COPY.sent;
   else if (row.state === "refused") note = EMAIL_CARD_COPY.refused;
   else if (row.state === "dispatching" || row.state === "approving" || row.state === "unknown") note = EMAIL_CARD_COPY.sending;
+  if (spendWait) { note = l2c["ux.l2c.pause.botWaits"].replace("{bot}", "This email"); actions = ["dont_send"]; }
   const lines: string[] = [];
   if (row.kind === "reply" && row.summary.replySource) lines.push(`Reply to: ${row.summary.replySource.from}`); else lines.push(`To: ${row.summary.to.join(", ")}`);
   if (row.summary.cc.length) lines.push(`Cc: ${row.summary.cc.join(", ")}`);
@@ -117,20 +126,23 @@ export function emailCardView(row: SendRow, input: { botName: string; text: stri
   if (fresh.length) lines.push(`New: ${fresh.join(", ")}`);
   if (known.length) lines.push(`Already allowed: ${known.join(", ")}`);
   lines.push("", input.text);
+  const bodyEnd = lines.join("\n").length;
   if (row.summary.attachments.length) {
     lines.push("", "Attachments:");
     for (const file of row.summary.attachments) lines.push(`${file.name} (${size(file.size)}, SHA-256 ${file.sha256})`);
   }
   const options = actions.map(action => action === "send" ? EMAIL_CARD_COPY.send : action === "edit" ? EMAIL_CARD_COPY.edit : action === "retry" ? EMAIL_CARD_COPY.retry : EMAIL_CARD_COPY.dontSend);
-  const draft = { to: row.summary.to, cc: row.summary.cc, subject: row.summary.subject, text: input.text };
+  const subtitle = lines.join("\n");
+  const draft = { to: row.summary.to, cc: row.summary.cc, subject: row.summary.subject, text: input.text,
+    presentation: { textLength: input.text.length, trailingLength: subtitle.length - bodyEnd } };
   const answered = phase === "settled" ? (row.state === "sent" ? "allow" : row.state === "declined" ? "deny" : "unavailable") : undefined;
   return {
-    kind: EMAIL_CARD_KIND, tool: EMAIL_CARD_TOOL, requestId: emailRequestId(row.sendId), title, subtitle: lines.join("\n"),
+    kind: EMAIL_CARD_KIND, tool: EMAIL_CARD_TOOL, requestId: emailRequestId(row.sendId), title, subtitle,
     pushBody: fresh.length ? `${bot} wants to email someone new` : `${bot} wants to send an email`,
     options, ...(answered ? { answered } : {}),
     emailSend: {
       sendId: row.sendId, revision: row.revision, payloadHash: row.payloadHash, heldIds: [...row.heldIds].sort(), state: row.state, phase, ref, botId: row.botId,
-      ...(note ? { note } : {}), ...(input.siblingRequestId && phase === "open" ? { siblingRequestId: input.siblingRequestId } : {}), actions, draft,
+      ...(note ? { note } : {}), ...(input.siblingRequestId && (phase === "open" || waitingSibling) ? { siblingRequestId: input.siblingRequestId } : {}), actions, draft,
       links: { manage: EMAIL_CARD_COPY.manage(bot), ...(row.state === "unknown_expired" ? { checkSent: EMAIL_CARD_COPY.checkSent } : {}) },
     },
   };
@@ -142,8 +154,24 @@ export class EmailCards {
   private readonly options: EmailCardsOptions;
   private readonly now: () => number;
   /** Notes that live with a card until its row moves (a sibling wait, a refresh). */
+  private readonly trustResults = new Map<string,ResolveResult>();
   private readonly notes = new Map<string, { revision: number; note: string; siblingRequestId?: string }>();
-  constructor(options: EmailCardsOptions) { this.options = options; this.now = options.now ?? Date.now; }
+  constructor(options: EmailCardsOptions) {
+    this.options=options;this.now=options.now??Date.now;
+    options.send.configureTrustDelivery(async(item,answer)=>{
+      const input=item.call.input as {threadId:string;botId:string;address:string;offeredAt:number};
+      const result=await this.applyTrust(input.threadId,item.ref,answer.behavior==='allow'?'add':'not_now',{botId:input.botId,address:input.address,offeredAt:input.offeredAt,phase:'open'});
+      if(result.body.ok){
+        const phase=(result.body.card as unknown as EmailTrustCardFields|undefined)?.emailTrustOffer.phase;
+        if(phase==='added'||phase==='declined')options.send.approvalQueue().updateProgress(item.ref,{trustPhase:phase});
+      }
+      this.trustResults.set(item.ref,result);
+      if(this.trustResults.size>256)this.trustResults.delete(this.trustResults.keys().next().value!);
+      // The service accepted the exact owner intent. A remote trust outage is
+      // retryable under that retained decision, without minting a new approval.
+      options.send.approvalQueue().updateProgress(item.ref, { trustRetry: !result.body.ok });
+    });
+  }
   private get store() { return this.options.store; }
   private get host() { return this.options.host; }
 
@@ -156,25 +184,37 @@ export class EmailCards {
     const kept = this.notes.get(row.sendId);
     const fresh = kept && kept.revision === row.revision ? kept : undefined;
     const draft = this.draft(row);
-    return emailCardView(row, { botName: this.host.botName(row.botId), text: draft?.text ?? "", restored: !draft, approved: address => this.store.isApproved(row.botId, address), note: fresh?.note, siblingRequestId: fresh?.siblingRequestId });
+    const siblingId = this.options.send.approvalQueue().progressFor(row.sendId).waitingSibling;
+    const sibling = typeof siblingId === 'string' && row.state === 'held' ? this.store.getSend(siblingId) : null;
+    const note = fresh?.note ?? (sibling ? EMAIL_CARD_COPY.sibling(this.host.botName(row.botId), sibling.summary.to[0] ?? 'that contact') : undefined);
+    return emailCardView(row, { botName: this.host.botName(row.botId), text: draft?.text ?? "", restored: !draft, approved: address => this.store.isApproved(row.botId, address), note, siblingRequestId: fresh?.siblingRequestId ?? (sibling ? emailRequestId(sibling.sendId) : undefined), waitingSibling: !!sibling });
   }
 
   /** The send service's onChange: the card follows its row (9.3). A row reaching an open state gets its card; any other row only updates
    * a card it already has. A card whose thread is gone is a Don't send (Fable M3). */
   sync(row: SendRow): void {
-    const requestId = emailRequestId(row.sendId);
-    const existing = this.host.card(row.threadId, requestId);
-    if (!existing) {
-      if (!OPEN.has(row.state)) return;
-      if (!this.host.threadExists(row.threadId)) { void this.options.send.dontSend(row.sendId, row.revision).catch(() => undefined); return; }
-      this.host.appendCard(row.threadId, row.botId, this.view(row));
-      this.statusNotice(row);
-      return;
-    }
-    // a dismissed card is the owner's Don't send (4.5)
-    if (existing.dismissed && OPEN.has(row.state)) { void this.options.send.dontSend(row.sendId, row.revision).catch(() => undefined); return; }
-    this.host.patchCard(row.threadId, existing.messageId, this.view(row));
+    if(!OPEN.has(row.state))this.notes.delete(row.sendId);
+    // A queue/row is a presentation of the same immutable approval. Lifecycle
+    // progress is separate status text; never replace its action or grant keys.
+    this.syncDisplay(row);
+    void this.options.send.syncApproval(row).then(() => {
+      this.syncDisplay(this.store.getSend(row.sendId) ?? row);
+    }).catch(()=>{this.host.activity(row.threadId,'Email approval could not be shown. Try again.',false);});
     this.statusNotice(row);
+  }
+
+  private syncDisplay(row: SendRow): void {
+    const kept = this.host.card(row.threadId, row.sendId) ?? this.host.card(row.threadId, emailRequestId(row.sendId));
+    if (!kept) return;
+    const display = emailDisplayPatch(this.view(row));
+    const messages = new Set([kept.messageId, ...(this.host.cardMessages?.(row.threadId, row.sendId) ?? []).map(card => card.messageId)]);
+    for (const messageId of messages) {
+      const historical = messageId !== kept.messageId || kept.dismissed;
+      const shown = historical && display.emailSend?.phase === 'open'
+        ? { ...display, options: [], emailSend: { ...display.emailSend, phase: 'answered' as const, actions: [] } }
+        : display;
+      this.host.patchCard(row.threadId, messageId, shown);
+    }
   }
 
   /** The send service's onOutcome: the bot hears `email_outcome` on the thread that made it, the owner reads the activity line. */
@@ -199,11 +239,19 @@ export class EmailCards {
       return { status: 200, body: { ok: true, outcome, card: current ? this.view(current) : null } };
     };
     if (!OPEN.has(row.state) || revision !== row.revision) return final(OPEN.has(row.state) ? "changed" : "settled", row);
-    let result: AnswerResult | { status: "done"; row: SendRow; replaced: SendRow } | { status: "stale"; row: SendRow | null };
+    if(action==='send'||action==='retry'||action==='dont_send'){
+      const item=this.options.send.pendingApprovals().find(item=>item.ref===sendId);
+      if(!item)return final('settled',row);
+      const result=await this.options.send.answerSendApproval(sendId,action==='dont_send'?'deny':'allow');
+      if(result?.status==='waiting_sibling') {
+        const sibling=this.store.getSend(result.siblingSendId);
+        const address=sibling?.summary.to[0]??'that contact';
+        this.notes.set(sendId,{revision:result.row.revision,note:`Waiting for your answer on the other email ${this.host.botName(row.botId)} wrote to ${address}.`,siblingRequestId:emailRequestId(result.siblingSendId)});
+      }
+      return final(result?.status??'retry_later');
+    }
+    let result: { status: "done"; row: SendRow; replaced: SendRow } | { status: "stale"; row: SendRow | null };
     switch (action) {
-      case "send": if (row.state === "approved_unsent" || !this.draft(row)) return final("not_offered", row); result = await this.options.send.ownerSend(sendId, revision, input.device ?? "desktop"); break;
-      case "retry": if (row.state !== "approved_unsent") return final("not_offered", row); result = await this.options.send.ownerSend(sendId, revision, input.device ?? "desktop"); break;
-      case "dont_send": result = await this.options.send.dontSend(sendId, revision); break;
       case "edit": {
         if (!(row.state === "awaiting_owner" || row.state === "held") || !input.draft || typeof input.draft.text !== "string") return final("not_offered", row);
         const frozen = this.draft(row);
@@ -220,14 +268,6 @@ export class EmailCards {
       }
     }
     const current = this.store.getSend(sendId);
-    if (result.status === "waiting_sibling" && current) {
-      const sibling = this.store.getSend(result.siblingSendId);
-      const address = sibling ? (sibling.summary.to[0] ?? sibling.summary.replySource?.from ?? "") : "";
-      this.notes.set(sendId, { revision: current.revision, note: EMAIL_CARD_COPY.sibling(this.host.botName(current.botId), address), siblingRequestId: emailRequestId(result.siblingSendId) });
-      return final("waiting_sibling", current);
-    }
-    if (result.status === "refresh" && current) { this.notes.set(sendId, { revision: current.revision, note: EMAIL_CARD_COPY.refreshed }); return final("refresh", current); }
-    if (result.status === "retry_later") return final("retry_later", current);
     return final(result.status === "stale" ? "changed" : "done", current);
   }
 
@@ -236,7 +276,7 @@ export class EmailCards {
 
   /** Boot (9.3): every card is rebuilt from its row, so a withdrawn or declined send never shows its buttons again. */
   rebuild(): void {
-    for (const row of this.store.sendsInStates(["awaiting_owner", "held", "approved_unsent", "unknown_expired", "dispatching", "approving", "unknown", "withdraw_pending"])) {
+    for (const row of this.store.sendsInStates(["prepared", "awaiting_owner", "held", "approved_unsent", "unknown_expired", "dispatching", "approving", "unknown", "withdraw_pending"])) {
       try { this.sync(row); } catch { /* one card never stops the rest */ }
     }
   }
@@ -245,7 +285,7 @@ export class EmailCards {
   async sweep(): Promise<void> {
     for (const row of this.store.sendsInStates([...OPEN])) {
       const gone = !this.host.threadExists(row.threadId);
-      const card = gone ? null : this.host.card(row.threadId, emailRequestId(row.sendId));
+      const card = gone ? null : this.host.card(row.threadId,row.sendId) ?? this.host.card(row.threadId,emailRequestId(row.sendId));
       if (gone || card?.dismissed) await this.options.send.dontSend(row.sendId, row.revision).catch(() => undefined);
     }
   }
@@ -258,27 +298,98 @@ export class EmailCards {
   // ---- earned trust (3.5) ----
 
   /** Every unanswered offer of the bot gets its proposal card on the thread the offer came from (once). */
-  syncTrustOffers(botId: string): number {
+  private readonly trustFlights = new Map<string, Promise<number>>();
+  private readonly trustAgain = new Set<string>();
+  syncTrustOffers(botId: string, threadId?: string): Promise<number> {
+    const key = JSON.stringify([botId, threadId]);
+    const pending = this.trustFlights.get(key);
+    if (pending) { this.trustAgain.add(key); return pending; }
+    const flight = (async () => {
+      let made = 0;
+      do {
+        this.trustAgain.delete(key);
+        made += await this.syncTrustOffersNow(botId, threadId);
+      } while (this.trustAgain.has(key));
+      return made;
+    })().finally(() => { this.trustFlights.delete(key); this.trustAgain.delete(key); });
+    this.trustFlights.set(key, flight);
+    return flight;
+  }
+  private async syncTrustOffersNow(botId: string, threadId?: string): Promise<number> {
     let made = 0;
     for (const offer of this.store.pendingTrustOffers(botId)) {
-      if (!offer.threadId || !this.host.threadExists(offer.threadId)) continue;
+      if (threadId !== undefined && offer.threadId !== threadId) continue;
       const requestId = trustRequestId(botId, offer.address, offer.offeredAt);
-      if (this.host.card(offer.threadId, requestId)) continue;
-      this.host.appendCard(offer.threadId, botId, trustCardView(this.host.botName(botId), { botId, address: offer.address, offeredAt: offer.offeredAt, phase: "open" }));
+      if (!offer.threadId || !this.host.threadExists(offer.threadId)) continue;
+      const authority = this.options.send.authorityFor(offer.threadId, botId);
+      const noLimits = serviceOwnerNoLimits(authority);
+      const waiting = this.options.send.pendingApprovals().filter(item => {
+        const input = item.call.input as { kind?: string; botId?: string; address?: string };
+        return item.call.tool === 'email_trust_offer' && input.kind === 'trust' && input.botId === botId && input.address === offer.address;
+      });
+      if (!noLimits && (waiting.some(item => item.ref === requestId) || this.options.send.approvalQueue().progressFor(requestId).trustRetry === true)) continue;
+      const queue = this.options.send.approvalQueue();
+      if (noLimits && waiting.length) {
+        for (const item of waiting) await queue.stop(item.approvalId);
+        this.store.recordTrustOffer(botId, offer.address, offer.threadId, offer.reason, offer.offeredAt);
+      }
+      const card=trustCardView(this.host.botName(botId),{botId,address:offer.address,offeredAt:offer.offeredAt,phase:'open'});
+      const {title,subtitle,requestId:_id,answered:_answered,...action}=card;
+      const request=queue.open({authority,ref:requestId,tool:'email_trust_offer',input:{kind:'trust',botId,address:offer.address,offeredAt:offer.offeredAt,threadId:offer.threadId},action:{...action,requestId,emailSend:{sendId:requestId}},view:{title,subtitle},base:producerBase(true)});
+      if(request.outcome.kind==='refuse')continue;
+      if(request.outcome.kind==='run') {
+        await queue.execute(request, async call => {
+          const input = call.input as { botId: string; address: string; offeredAt: number; threadId: string };
+          const result = await this.applyTrust(input.threadId, requestId, 'add', { botId: input.botId, address: input.address, offeredAt: input.offeredAt, phase: 'open' });
+          if (!result.body.ok) throw new Error(result.body.error ?? 'Trust could not be added.');
+        });
+        continue;
+      }
+      queue.presentNow(request,request.outcome.ref);
       made++;
     }
     return made;
   }
 
+  /** Lifecycle display comes from durable queue progress, independently of
+   * the immutable action on the permission row. This also works after restart. */
+  trustView(threadId:string,requestId:string):EmailTrustCardFields|null {
+    const kept=this.host.card(threadId,requestId);
+    const offer=kept?.emailTrustOffer as EmailTrustOfferPayload|undefined;
+    if(!offer||typeof offer.botId!=='string'||typeof offer.address!=='string'||typeof offer.offeredAt!=='number')return null;
+    const saved=this.options.send.approvalQueue().progressFor(requestId).trustPhase;
+    const phase=saved==='added'||saved==='declined'?saved:offer.phase;
+    return trustCardView(this.host.botName(offer.botId),{...offer,phase});
+  }
+
   /** "Add [address]" (exact address, source earned) or "Not now" (no new offer for 30 days). A second click returns the settled card. */
-  async resolveTrust(threadId: string, requestId: string, action: "add" | "not_now"): Promise<ResolveResult> {
+  async resolveTrust(threadId:string,requestId:string,action:'add'|'not_now'):Promise<ResolveResult> {
+    const item=this.options.send.pendingApprovals().find(item=>item.ref===requestId);
+    if(!item||readApproval(item.approvalId)?.threadId!==threadId){
+      const queue = this.options.send.approvalQueue();
+      const retained = queue.continuations('email_trust_offer').find(entry => entry.ref === requestId);
+      const approval = retained && readApproval(retained.approvalId);
+      if (retained && approval?.threadId === threadId && approval.state === 'answered' && approval.delivery === 'accepted' && queue.progressFor(requestId).trustRetry === true) {
+        const input = retained.call.input as { botId: string; address: string; offeredAt: number };
+        const result = await this.applyTrust(threadId, requestId, action, { botId: input.botId, address: input.address, offeredAt: input.offeredAt, phase: 'open' });
+        queue.updateProgress(requestId, { trustRetry: !result.body.ok });
+        return result;
+      }
+      const card=this.trustView(threadId,requestId);
+      if(card&&card.emailTrustOffer.phase!=='open')return {status:200,body:{ok:true,outcome:'settled',card:card as unknown as EmailCardFields}};
+      return {status:404,body:{ok:false,error:'This suggestion is no longer waiting.',card:null}};
+    }
+    await this.options.send.approvalQueue().answer(item.approvalId,{behavior:action==='add'?'allow':'deny'});
+    return this.trustResults.get(requestId)??{status:502,body:{ok:false,error:EMAIL_TRUST_COPY.failed}};
+  }
+  private async applyTrust(threadId: string, requestId: string, action: "add" | "not_now", authorizedOffer?: EmailTrustOfferPayload): Promise<ResolveResult> {
     const kept = this.host.card(threadId, requestId);
-    const offer = kept?.emailTrustOffer as EmailTrustOfferPayload | undefined;
-    if (!kept || !offer || typeof offer.address !== "string" || typeof offer.botId !== "string") return { status: 404, body: { ok: false, error: "This suggestion is no longer waiting.", card: null } };
+    const offer = authorizedOffer ?? kept?.emailTrustOffer as EmailTrustOfferPayload | undefined;
+    if ((!kept && !authorizedOffer) || !offer || typeof offer.address !== "string" || typeof offer.botId !== "string") return { status: 404, body: { ok: false, error: "This suggestion is no longer waiting.", card: null } };
     const botName = this.host.botName(offer.botId);
     if (offer.phase !== "open") return { status: 200, body: { ok: true, outcome: "settled", card: trustCardView(botName, offer) as unknown as EmailCardFields } };
     // the offer must still be the one Murage recorded; a cleared offer settles the card as it is
-    const pending = this.store.pendingTrustOffers(offer.botId).some(item => item.address === offer.address && item.offeredAt === offer.offeredAt);
+    const pending = this.store.trustOfferPending(offer.botId, offer.address, offer.offeredAt);
     let phase: EmailTrustOfferPayload["phase"];
     if (action === "add") {
       if (!pending && !this.store.isApproved(offer.botId, offer.address)) return { status: 409, body: { ok: false, error: "This suggestion is no longer waiting.", card: null } };
@@ -293,7 +404,10 @@ export class EmailCards {
       phase = "declined";
     }
     const card = trustCardView(botName, { ...offer, phase });
-    this.host.patchCard(threadId, kept.messageId, card);
+    // Progress survives a restart; the delivered message carries the same view.
+    const queue = this.options.send.approvalQueue();
+    if (queue.continuations('email_trust_offer').some(item => item.ref === requestId)) queue.updateProgress(requestId, { trustPhase: phase });
+    if (kept) this.host.patchCard(threadId, kept.messageId, emailDisplayPatch(card));
     return { status: 200, body: { ok: true, outcome: phase, card: card as unknown as EmailCardFields } };
   }
 

@@ -19,3 +19,9 @@ export function engineClosedLine(engine: string, code: number | null | undefined
   const how = [code !== null && code !== undefined ? `exit code ${code}` : "", signal ? `signal ${signal}` : ""].filter(Boolean).join(", ");
   return `${engine} closed${how ? ` (${how})` : ""} before it finished its reply${lastWords ? `: ${lastWords}` : ""}`;
 }
+
+/** A mounted turn ends before its prompt when a required connected app never connected: the relay fails closed, and the owner
+ * reads why and what to do, not an exit code. Nothing was sent to the engine. */
+export function mountNeverConnectedLine(engine: string): string {
+  return `${engine} stopped because a connected app this bot needs did not connect. Nothing was sent. Send your message again in a moment.`;
+}

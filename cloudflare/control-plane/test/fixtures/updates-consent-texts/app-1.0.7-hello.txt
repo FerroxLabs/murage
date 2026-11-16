@@ -1,0 +1,7 @@
+# cloud monorepo 833c3a3c5 (package.json 1.0.7; same block through 1.0.11 f23d9fbff) src/lib/first-run-copy.ts:205-210; newsConsentText('hello') = heading + a newline + lead, sliced to 500 (src/lib/news-consent.ts:39-46 at 833c3a3c5)
+      heading: "Where should I send your setup guide?",
+      lead:
+        "We've put together a short guide to getting the most out of Murage from day one, and I'd like to send it to you. "
+        + "Tell me your name so I know who I'm working for, and your email so the guide is yours, along with every new "
+        + "release, insight, how-to and tutorial we put out. "
+        + "Or just press Skip.",

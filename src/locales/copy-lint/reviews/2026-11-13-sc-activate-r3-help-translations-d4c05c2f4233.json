@@ -1,0 +1,1569 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "sc-ui-4ff6775140",
+  "date": "2026-11-13",
+  "base": "0167cdbb4f5dd066c920981d4a12e332da988b7d",
+  "scope": "Missing Help translations imported only for existing exact English strings, reviewed against UX bar and release wording",
+  "strings": {
+    "de:ux.l4b.heading": {
+      "text": "Zu diesem Bildschirm fragen",
+      "en": "Ask about this screen",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.label": {
+      "text": "Deine Frage",
+      "en": "Your question",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.placeholder": {
+      "text": "Was möchtest du wissen?",
+      "en": "What would you like to know?",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.answers": {
+      "text": "{name} antwortet",
+      "en": "{name} answers",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.sentFrom": {
+      "text": "(Aus der Hilfe zum Bildschirm „{screen}“ gefragt.)",
+      "en": "(Asked from help on the {screen} screen.)",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.preview": {
+      "text": "Nachrichtenvorschau",
+      "en": "Message preview",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.before": {
+      "text": "Deine Frage und der Name dieses Bildschirms gehen in den Chat mit {name}. Die üblichen Speicher- und Berechtigungsregeln gelten. Antworten zählen zur Nutzung.",
+      "en": "Your question and this screen's name go to {name}'s chat. Its usual memory and permissions apply. Replies count toward usage.",
+      "verdict": "pass",
+      "note": "Names the disclosed question and screen, destination chat, usual memory/permissions, and usage. No attachment or free-use promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.ask": {
+      "text": "Fragen",
+      "en": "Ask",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.openInChat": {
+      "text": "Im Chat öffnen",
+      "en": "Open in chat",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.done": {
+      "text": "Fertig",
+      "en": "Done",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.sending": {
+      "text": "Deine Frage wird gesendet…",
+      "en": "Sending your question…",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.queued": {
+      "text": "Deine Frage wartet in der Warteschlange.",
+      "en": "Your question is in line.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.working": {
+      "text": "{name} antwortet gerade.",
+      "en": "{name} is answering.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.approval": {
+      "text": "{name} braucht deine Freigabe.",
+      "en": "{name} needs your approval.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.saved": {
+      "text": "Im Chat mit {name} gespeichert.",
+      "en": "Saved in {name}'s chat.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.removed": {
+      "text": "Aus der Warteschlange entfernt.",
+      "en": "Removed from the line.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.refused": {
+      "text": "Deine Frage konnte nicht gestartet werden.",
+      "en": "Your question could not start.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.failed": {
+      "text": "Deine Frage wurde nicht gesendet.",
+      "en": "Your question did not send.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.submittedFailed": {
+      "text": "Deine Frage wurde gesendet, aber die Antwort konnte nicht abgeschlossen werden.",
+      "en": "Your question was sent, but the answer could not finish.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.stopped": {
+      "text": "Gestoppt.",
+      "en": "Stopped.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.unknown": {
+      "text": "Wir konnten nicht bestätigen, was passiert ist.",
+      "en": "We couldn't confirm what happened.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.indexing": {
+      "text": "Der Zugriff auf die Unterhaltung wird vorbereitet.",
+      "en": "Preparing faster conversation access.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.indexSaved": {
+      "text": "Deine Nachricht ist gespeichert. Versuche das Senden gleich noch einmal.",
+      "en": "Your message is saved. Try sending again shortly.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.removing": {
+      "text": "Deine Frage wird entfernt…",
+      "en": "Removing your question…",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.stopping": {
+      "text": "Wird gestoppt…",
+      "en": "Stopping…",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.removeFailed": {
+      "text": "Entfernen fehlgeschlagen.",
+      "en": "Could not remove it.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.stopFailed": {
+      "text": "Wir konnten nicht bestätigen, dass es gestoppt wurde.",
+      "en": "Could not confirm it stopped.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.missing": {
+      "text": "Öffne den Chat, um diese Frage zu prüfen.",
+      "en": "Open chat to check this question.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.duplicate": {
+      "text": "Dadurch wird deine Frage möglicherweise zweimal gesendet.",
+      "en": "This may send your question twice.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.removeFromLine": {
+      "text": "Aus Warteschlange entfernen",
+      "en": "Remove from line",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.tryAgain": {
+      "text": "Erneut versuchen",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.checkAgain": {
+      "text": "Erneut prüfen",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.sendAgain": {
+      "text": "Erneut senden",
+      "en": "Send again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.stop": {
+      "text": "Stoppen",
+      "en": "Stop",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.cancel": {
+      "text": "Abbrechen",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.noChief": {
+      "text": "Füge einen Chief hinzu, um Fragen zu stellen.",
+      "en": "Add a Chief to ask questions.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "de:ux.l4b.addChief": {
+      "text": "Chief hinzufügen",
+      "en": "Add a Chief",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.heading": {
+      "text": "Pregunta sobre esta pantalla",
+      "en": "Ask about this screen",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.label": {
+      "text": "Tu pregunta",
+      "en": "Your question",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.placeholder": {
+      "text": "¿Qué te gustaría saber?",
+      "en": "What would you like to know?",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.answers": {
+      "text": "{name} responde",
+      "en": "{name} answers",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.sentFrom": {
+      "text": "(Pregunta desde la ayuda de la pantalla {screen}.)",
+      "en": "(Asked from help on the {screen} screen.)",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.preview": {
+      "text": "Vista previa del mensaje",
+      "en": "Message preview",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.before": {
+      "text": "Tu pregunta y el nombre de esta pantalla van al chat de {name}. Se aplican su memoria y permisos habituales. Las respuestas cuentan como uso.",
+      "en": "Your question and this screen's name go to {name}'s chat. Its usual memory and permissions apply. Replies count toward usage.",
+      "verdict": "pass",
+      "note": "Names the disclosed question and screen, destination chat, usual memory/permissions, and usage. No attachment or free-use promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.ask": {
+      "text": "Preguntar",
+      "en": "Ask",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.openInChat": {
+      "text": "Abrir en el chat",
+      "en": "Open in chat",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.done": {
+      "text": "Listo",
+      "en": "Done",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.sending": {
+      "text": "Enviando tu pregunta…",
+      "en": "Sending your question…",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.queued": {
+      "text": "Tu pregunta está en la cola.",
+      "en": "Your question is in line.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.working": {
+      "text": "{name} está respondiendo.",
+      "en": "{name} is answering.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.approval": {
+      "text": "{name} necesita tu aprobación.",
+      "en": "{name} needs your approval.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.saved": {
+      "text": "Guardado en el chat de {name}.",
+      "en": "Saved in {name}'s chat.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.removed": {
+      "text": "Eliminado de la cola.",
+      "en": "Removed from the line.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.refused": {
+      "text": "Tu pregunta no pudo iniciarse.",
+      "en": "Your question could not start.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.failed": {
+      "text": "Tu pregunta no se envió.",
+      "en": "Your question did not send.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.submittedFailed": {
+      "text": "Tu pregunta se envió, pero la respuesta no pudo completarse.",
+      "en": "Your question was sent, but the answer could not finish.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.stopped": {
+      "text": "Detenido.",
+      "en": "Stopped.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.unknown": {
+      "text": "No pudimos confirmar qué ocurrió.",
+      "en": "We couldn't confirm what happened.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.indexing": {
+      "text": "Preparando el acceso a la conversación.",
+      "en": "Preparing faster conversation access.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.indexSaved": {
+      "text": "Tu mensaje está guardado. Intenta enviarlo de nuevo en un momento.",
+      "en": "Your message is saved. Try sending again shortly.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.removing": {
+      "text": "Eliminando tu pregunta…",
+      "en": "Removing your question…",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.stopping": {
+      "text": "Deteniendo…",
+      "en": "Stopping…",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.removeFailed": {
+      "text": "No se pudo eliminar.",
+      "en": "Could not remove it.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.stopFailed": {
+      "text": "No pudimos confirmar que se detuvo.",
+      "en": "Could not confirm it stopped.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.missing": {
+      "text": "Abre el chat para comprobar esta pregunta.",
+      "en": "Open chat to check this question.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.duplicate": {
+      "text": "Esto podría enviar tu pregunta dos veces.",
+      "en": "This may send your question twice.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.removeFromLine": {
+      "text": "Quitar de la cola",
+      "en": "Remove from line",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.tryAgain": {
+      "text": "Volver a intentar",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.checkAgain": {
+      "text": "Comprobar de nuevo",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.sendAgain": {
+      "text": "Enviar de nuevo",
+      "en": "Send again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.stop": {
+      "text": "Detener",
+      "en": "Stop",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.cancel": {
+      "text": "Cancelar",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.noChief": {
+      "text": "Añade un Chief para hacer preguntas.",
+      "en": "Add a Chief to ask questions.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "es:ux.l4b.addChief": {
+      "text": "Añadir un Chief",
+      "en": "Add a Chief",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.heading": {
+      "text": "Poser une question sur cet écran",
+      "en": "Ask about this screen",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.label": {
+      "text": "Ta question",
+      "en": "Your question",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.placeholder": {
+      "text": "Que veux-tu savoir ?",
+      "en": "What would you like to know?",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.answers": {
+      "text": "{name} répond",
+      "en": "{name} answers",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.sentFrom": {
+      "text": "(Question posée depuis l’aide de l’écran {screen}.)",
+      "en": "(Asked from help on the {screen} screen.)",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.preview": {
+      "text": "Aperçu du message",
+      "en": "Message preview",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.before": {
+      "text": "Ta question et le nom de cet écran sont envoyés dans le chat de {name}. Sa mémoire et ses autorisations habituelles s’appliquent. Les réponses comptent dans l’utilisation.",
+      "en": "Your question and this screen's name go to {name}'s chat. Its usual memory and permissions apply. Replies count toward usage.",
+      "verdict": "pass",
+      "note": "Names the disclosed question and screen, destination chat, usual memory/permissions, and usage. No attachment or free-use promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.ask": {
+      "text": "Demander",
+      "en": "Ask",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.openInChat": {
+      "text": "Ouvrir dans le chat",
+      "en": "Open in chat",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.done": {
+      "text": "Terminé",
+      "en": "Done",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.sending": {
+      "text": "Envoi de ta question…",
+      "en": "Sending your question…",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.queued": {
+      "text": "Ta question est dans la file d’attente.",
+      "en": "Your question is in line.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.working": {
+      "text": "{name} répond.",
+      "en": "{name} is answering.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.approval": {
+      "text": "{name} a besoin de ton accord.",
+      "en": "{name} needs your approval.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.saved": {
+      "text": "Enregistré dans le chat de {name}.",
+      "en": "Saved in {name}'s chat.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.removed": {
+      "text": "Retiré de la file d’attente.",
+      "en": "Removed from the line.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.refused": {
+      "text": "Ta question n’a pas pu démarrer.",
+      "en": "Your question could not start.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.failed": {
+      "text": "Ta question n’a pas été envoyée.",
+      "en": "Your question did not send.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.submittedFailed": {
+      "text": "Ta question a été envoyée, mais la réponse n’a pas pu être terminée.",
+      "en": "Your question was sent, but the answer could not finish.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.stopped": {
+      "text": "Arrêté.",
+      "en": "Stopped.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.unknown": {
+      "text": "Nous n’avons pas pu confirmer ce qui s’est passé.",
+      "en": "We couldn't confirm what happened.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.indexing": {
+      "text": "Préparation de l’accès à la conversation.",
+      "en": "Preparing faster conversation access.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.indexSaved": {
+      "text": "Ton message est enregistré. Réessaie de l’envoyer dans un instant.",
+      "en": "Your message is saved. Try sending again shortly.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.removing": {
+      "text": "Suppression de ta question…",
+      "en": "Removing your question…",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.stopping": {
+      "text": "Arrêt en cours…",
+      "en": "Stopping…",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.removeFailed": {
+      "text": "Impossible de la supprimer.",
+      "en": "Could not remove it.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.stopFailed": {
+      "text": "Nous n’avons pas pu confirmer l’arrêt.",
+      "en": "Could not confirm it stopped.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.missing": {
+      "text": "Ouvre le chat pour vérifier cette question.",
+      "en": "Open chat to check this question.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.duplicate": {
+      "text": "Ta question pourrait être envoyée deux fois.",
+      "en": "This may send your question twice.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.removeFromLine": {
+      "text": "Retirer de la file",
+      "en": "Remove from line",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.tryAgain": {
+      "text": "Réessayer",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.checkAgain": {
+      "text": "Vérifier à nouveau",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.sendAgain": {
+      "text": "Renvoyer",
+      "en": "Send again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.stop": {
+      "text": "Arrêter",
+      "en": "Stop",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.cancel": {
+      "text": "Annuler",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.noChief": {
+      "text": "Ajoute un Chief pour poser des questions.",
+      "en": "Add a Chief to ask questions.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "fr:ux.l4b.addChief": {
+      "text": "Ajouter un Chief",
+      "en": "Add a Chief",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.heading": {
+      "text": "इस स्क्रीन के बारे में पूछें",
+      "en": "Ask about this screen",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.label": {
+      "text": "आपका सवाल",
+      "en": "Your question",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.placeholder": {
+      "text": "आप क्या जानना चाहते हैं?",
+      "en": "What would you like to know?",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.answers": {
+      "text": "{name} जवाब देता है",
+      "en": "{name} answers",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.sentFrom": {
+      "text": "({screen} स्क्रीन की मदद से पूछा गया।)",
+      "en": "(Asked from help on the {screen} screen.)",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.preview": {
+      "text": "संदेश का पूर्वावलोकन",
+      "en": "Message preview",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.before": {
+      "text": "आपका सवाल और इस स्क्रीन का नाम {name} की चैट में जाते हैं। उसकी सामान्य याददाश्त और अनुमतियाँ लागू होती हैं। जवाब उपयोग में गिने जाते हैं।",
+      "en": "Your question and this screen's name go to {name}'s chat. Its usual memory and permissions apply. Replies count toward usage.",
+      "verdict": "pass",
+      "note": "Names the disclosed question and screen, destination chat, usual memory/permissions, and usage. No attachment or free-use promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.ask": {
+      "text": "पूछें",
+      "en": "Ask",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.openInChat": {
+      "text": "चैट में खोलें",
+      "en": "Open in chat",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.done": {
+      "text": "हो गया",
+      "en": "Done",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.sending": {
+      "text": "आपका सवाल भेजा जा रहा है…",
+      "en": "Sending your question…",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.queued": {
+      "text": "आपका सवाल कतार में है।",
+      "en": "Your question is in line.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.working": {
+      "text": "{name} जवाब दे रहा है।",
+      "en": "{name} is answering.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.approval": {
+      "text": "{name} को आपकी मंज़ूरी चाहिए।",
+      "en": "{name} needs your approval.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.saved": {
+      "text": "{name} की चैट में सहेजा गया।",
+      "en": "Saved in {name}'s chat.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.removed": {
+      "text": "कतार से हटा दिया गया।",
+      "en": "Removed from the line.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.refused": {
+      "text": "आपका सवाल शुरू नहीं हो सका।",
+      "en": "Your question could not start.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.failed": {
+      "text": "आपका सवाल नहीं भेजा गया।",
+      "en": "Your question did not send.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.submittedFailed": {
+      "text": "आपका सवाल भेज दिया गया, लेकिन जवाब पूरा नहीं हो सका।",
+      "en": "Your question was sent, but the answer could not finish.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.stopped": {
+      "text": "रोक दिया गया।",
+      "en": "Stopped.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.unknown": {
+      "text": "हम पुष्टि नहीं कर सके कि क्या हुआ।",
+      "en": "We couldn't confirm what happened.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.indexing": {
+      "text": "बातचीत तक पहुँच तैयार की जा रही है।",
+      "en": "Preparing faster conversation access.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.indexSaved": {
+      "text": "आपका संदेश सहेजा गया है। थोड़ी देर में फिर भेजने की कोशिश करें।",
+      "en": "Your message is saved. Try sending again shortly.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.removing": {
+      "text": "आपका सवाल हटाया जा रहा है…",
+      "en": "Removing your question…",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.stopping": {
+      "text": "रोका जा रहा है…",
+      "en": "Stopping…",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.removeFailed": {
+      "text": "हटाया नहीं जा सका।",
+      "en": "Could not remove it.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.stopFailed": {
+      "text": "हम पुष्टि नहीं कर सके कि यह रुक गया है।",
+      "en": "Could not confirm it stopped.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.missing": {
+      "text": "इस सवाल की जाँच के लिए चैट खोलें।",
+      "en": "Open chat to check this question.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.duplicate": {
+      "text": "इससे आपका सवाल दो बार भेजा जा सकता है।",
+      "en": "This may send your question twice.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.removeFromLine": {
+      "text": "कतार से हटाएँ",
+      "en": "Remove from line",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.tryAgain": {
+      "text": "फिर कोशिश करें",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.checkAgain": {
+      "text": "फिर जाँचें",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.sendAgain": {
+      "text": "फिर भेजें",
+      "en": "Send again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.stop": {
+      "text": "रोकें",
+      "en": "Stop",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.cancel": {
+      "text": "रद्द करें",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.noChief": {
+      "text": "सवाल पूछने के लिए एक Chief जोड़ें।",
+      "en": "Add a Chief to ask questions.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "hi:ux.l4b.addChief": {
+      "text": "Chief जोड़ें",
+      "en": "Add a Chief",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.heading": {
+      "text": "この画面について質問",
+      "en": "Ask about this screen",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.label": {
+      "text": "質問",
+      "en": "Your question",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.placeholder": {
+      "text": "何を知りたいですか？",
+      "en": "What would you like to know?",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.answers": {
+      "text": "{name}が回答します",
+      "en": "{name} answers",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.sentFrom": {
+      "text": "（{screen}画面のヘルプからの質問です。）",
+      "en": "(Asked from help on the {screen} screen.)",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.preview": {
+      "text": "メッセージのプレビュー",
+      "en": "Message preview",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.before": {
+      "text": "質問とこの画面の名前が{name}のチャットに送られます。通常のメモリと権限が適用されます。回答は使用量に含まれます。",
+      "en": "Your question and this screen's name go to {name}'s chat. Its usual memory and permissions apply. Replies count toward usage.",
+      "verdict": "pass",
+      "note": "Names the disclosed question and screen, destination chat, usual memory/permissions, and usage. No attachment or free-use promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.ask": {
+      "text": "質問する",
+      "en": "Ask",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.openInChat": {
+      "text": "チャットで開く",
+      "en": "Open in chat",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.done": {
+      "text": "完了",
+      "en": "Done",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.sending": {
+      "text": "質問を送信中…",
+      "en": "Sending your question…",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.queued": {
+      "text": "質問は順番待ちです。",
+      "en": "Your question is in line.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.working": {
+      "text": "{name}が回答中です。",
+      "en": "{name} is answering.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.approval": {
+      "text": "{name}にはあなたの承認が必要です。",
+      "en": "{name} needs your approval.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.saved": {
+      "text": "{name}のチャットに保存しました。",
+      "en": "Saved in {name}'s chat.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.removed": {
+      "text": "待機列から削除しました。",
+      "en": "Removed from the line.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.refused": {
+      "text": "質問を開始できませんでした。",
+      "en": "Your question could not start.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.failed": {
+      "text": "質問は送信されませんでした。",
+      "en": "Your question did not send.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.submittedFailed": {
+      "text": "質問は送信されましたが、回答を完了できませんでした。",
+      "en": "Your question was sent, but the answer could not finish.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.stopped": {
+      "text": "停止しました。",
+      "en": "Stopped.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.unknown": {
+      "text": "何が起きたか確認できませんでした。",
+      "en": "We couldn't confirm what happened.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.indexing": {
+      "text": "会話へのアクセスを準備中です。",
+      "en": "Preparing faster conversation access.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.indexSaved": {
+      "text": "メッセージは保存されています。少し待ってから再送してください。",
+      "en": "Your message is saved. Try sending again shortly.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.removing": {
+      "text": "質問を削除中…",
+      "en": "Removing your question…",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.stopping": {
+      "text": "停止中…",
+      "en": "Stopping…",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.removeFailed": {
+      "text": "削除できませんでした。",
+      "en": "Could not remove it.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.stopFailed": {
+      "text": "停止したことを確認できませんでした。",
+      "en": "Could not confirm it stopped.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.missing": {
+      "text": "チャットを開いてこの質問を確認してください。",
+      "en": "Open chat to check this question.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.duplicate": {
+      "text": "質問が2回送信される可能性があります。",
+      "en": "This may send your question twice.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.removeFromLine": {
+      "text": "待機列から削除",
+      "en": "Remove from line",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.tryAgain": {
+      "text": "再試行",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.checkAgain": {
+      "text": "再確認",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.sendAgain": {
+      "text": "再送信",
+      "en": "Send again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.stop": {
+      "text": "停止",
+      "en": "Stop",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.cancel": {
+      "text": "キャンセル",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.noChief": {
+      "text": "質問するにはChiefを追加してください。",
+      "en": "Add a Chief to ask questions.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "ja:ux.l4b.addChief": {
+      "text": "Chiefを追加",
+      "en": "Add a Chief",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.heading": {
+      "text": "Pergunte sobre esta tela",
+      "en": "Ask about this screen",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.label": {
+      "text": "Sua pergunta",
+      "en": "Your question",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.placeholder": {
+      "text": "O que você gostaria de saber?",
+      "en": "What would you like to know?",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.answers": {
+      "text": "{name} responde",
+      "en": "{name} answers",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.sentFrom": {
+      "text": "(Pergunta feita pela ajuda da tela {screen}.)",
+      "en": "(Asked from help on the {screen} screen.)",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.preview": {
+      "text": "Prévia da mensagem",
+      "en": "Message preview",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.before": {
+      "text": "Sua pergunta e o nome desta tela vão para o chat de {name}. A memória e as permissões habituais se aplicam. As respostas contam como uso.",
+      "en": "Your question and this screen's name go to {name}'s chat. Its usual memory and permissions apply. Replies count toward usage.",
+      "verdict": "pass",
+      "note": "Names the disclosed question and screen, destination chat, usual memory/permissions, and usage. No attachment or free-use promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.ask": {
+      "text": "Perguntar",
+      "en": "Ask",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.openInChat": {
+      "text": "Abrir no chat",
+      "en": "Open in chat",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.done": {
+      "text": "Concluído",
+      "en": "Done",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.sending": {
+      "text": "Enviando sua pergunta…",
+      "en": "Sending your question…",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.queued": {
+      "text": "Sua pergunta está na fila.",
+      "en": "Your question is in line.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.working": {
+      "text": "{name} está respondendo.",
+      "en": "{name} is answering.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.approval": {
+      "text": "{name} precisa da sua aprovação.",
+      "en": "{name} needs your approval.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.saved": {
+      "text": "Salvo no chat de {name}.",
+      "en": "Saved in {name}'s chat.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.removed": {
+      "text": "Removido da fila.",
+      "en": "Removed from the line.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.refused": {
+      "text": "Sua pergunta não pôde ser iniciada.",
+      "en": "Your question could not start.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.failed": {
+      "text": "Sua pergunta não foi enviada.",
+      "en": "Your question did not send.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.submittedFailed": {
+      "text": "Sua pergunta foi enviada, mas a resposta não pôde ser concluída.",
+      "en": "Your question was sent, but the answer could not finish.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.stopped": {
+      "text": "Interrompido.",
+      "en": "Stopped.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.unknown": {
+      "text": "Não foi possível confirmar o que aconteceu.",
+      "en": "We couldn't confirm what happened.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.indexing": {
+      "text": "Preparando o acesso à conversa.",
+      "en": "Preparing faster conversation access.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.indexSaved": {
+      "text": "Sua mensagem está salva. Tente enviá-la novamente em instantes.",
+      "en": "Your message is saved. Try sending again shortly.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.removing": {
+      "text": "Removendo sua pergunta…",
+      "en": "Removing your question…",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.stopping": {
+      "text": "Interrompendo…",
+      "en": "Stopping…",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.removeFailed": {
+      "text": "Não foi possível remover.",
+      "en": "Could not remove it.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.stopFailed": {
+      "text": "Não foi possível confirmar a interrupção.",
+      "en": "Could not confirm it stopped.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.missing": {
+      "text": "Abra o chat para conferir esta pergunta.",
+      "en": "Open chat to check this question.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.duplicate": {
+      "text": "Isso pode enviar sua pergunta duas vezes.",
+      "en": "This may send your question twice.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.removeFromLine": {
+      "text": "Remover da fila",
+      "en": "Remove from line",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.tryAgain": {
+      "text": "Tentar novamente",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.checkAgain": {
+      "text": "Conferir novamente",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.sendAgain": {
+      "text": "Enviar novamente",
+      "en": "Send again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.stop": {
+      "text": "Interromper",
+      "en": "Stop",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.cancel": {
+      "text": "Cancelar",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.noChief": {
+      "text": "Adicione um Chief para fazer perguntas.",
+      "en": "Add a Chief to ask questions.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "pt-br:ux.l4b.addChief": {
+      "text": "Adicionar um Chief",
+      "en": "Add a Chief",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.heading": {
+      "text": "询问此屏幕",
+      "en": "Ask about this screen",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.label": {
+      "text": "你的问题",
+      "en": "Your question",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.placeholder": {
+      "text": "你想了解什么？",
+      "en": "What would you like to know?",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.answers": {
+      "text": "{name}回答",
+      "en": "{name} answers",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.sentFrom": {
+      "text": "（从{screen}屏幕的帮助中提问。）",
+      "en": "(Asked from help on the {screen} screen.)",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.preview": {
+      "text": "消息预览",
+      "en": "Message preview",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.before": {
+      "text": "你的问题和此屏幕的名称将发送到{name}的聊天中。使用其常规记忆和权限，回答计入用量。",
+      "en": "Your question and this screen's name go to {name}'s chat. Its usual memory and permissions apply. Replies count toward usage.",
+      "verdict": "pass",
+      "note": "Names the disclosed question and screen, destination chat, usual memory/permissions, and usage. No attachment or free-use promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.ask": {
+      "text": "提问",
+      "en": "Ask",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.openInChat": {
+      "text": "在聊天中打开",
+      "en": "Open in chat",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.done": {
+      "text": "完成",
+      "en": "Done",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.sending": {
+      "text": "正在发送你的问题…",
+      "en": "Sending your question…",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.queued": {
+      "text": "你的问题正在排队。",
+      "en": "Your question is in line.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.working": {
+      "text": "{name}正在回答。",
+      "en": "{name} is answering.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.approval": {
+      "text": "{name}需要你的批准。",
+      "en": "{name} needs your approval.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.saved": {
+      "text": "已保存在{name}的聊天中。",
+      "en": "Saved in {name}'s chat.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.removed": {
+      "text": "已从队列中移除。",
+      "en": "Removed from the line.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.refused": {
+      "text": "无法开始处理你的问题。",
+      "en": "Your question could not start.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.failed": {
+      "text": "你的问题未发送。",
+      "en": "Your question did not send.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.submittedFailed": {
+      "text": "你的问题已发送，但回答未能完成。",
+      "en": "Your question was sent, but the answer could not finish.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.stopped": {
+      "text": "已停止。",
+      "en": "Stopped.",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.unknown": {
+      "text": "无法确认发生了什么。",
+      "en": "We couldn't confirm what happened.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.indexing": {
+      "text": "正在准备访问对话。",
+      "en": "Preparing faster conversation access.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.indexSaved": {
+      "text": "你的消息已保存。请稍后尝试重新发送。",
+      "en": "Your message is saved. Try sending again shortly.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.removing": {
+      "text": "正在移除你的问题…",
+      "en": "Removing your question…",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.stopping": {
+      "text": "正在停止…",
+      "en": "Stopping…",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.removeFailed": {
+      "text": "无法移除。",
+      "en": "Could not remove it.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.stopFailed": {
+      "text": "无法确认是否已停止。",
+      "en": "Could not confirm it stopped.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.missing": {
+      "text": "请打开聊天查看此问题。",
+      "en": "Open chat to check this question.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.duplicate": {
+      "text": "这可能会将你的问题发送两次。",
+      "en": "This may send your question twice.",
+      "verdict": "pass",
+      "note": "Distinguishes delivery, uncertain outcome and recovery; does not claim a second send is harmless or that nothing ran. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.removeFromLine": {
+      "text": "从队列移除",
+      "en": "Remove from line",
+      "verdict": "pass",
+      "note": "Plain queue or stop action/state; no transport details and no hidden permission promise. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.tryAgain": {
+      "text": "重试",
+      "en": "Try again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.checkAgain": {
+      "text": "重新检查",
+      "en": "Check again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.sendAgain": {
+      "text": "重新发送",
+      "en": "Send again",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.stop": {
+      "text": "停止",
+      "en": "Stop",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.cancel": {
+      "text": "取消",
+      "en": "Cancel",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.noChief": {
+      "text": "请添加一位Chief以便提问。",
+      "en": "Add a Chief to ask questions.",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    },
+    "zh:ux.l4b.addChief": {
+      "text": "添加Chief",
+      "en": "Add a Chief",
+      "verdict": "pass",
+      "note": "Short, recognizable Help action or current state; preserves the screen/chat identity and all English placeholders. Translation checked against the exact unchanged English source and MURAGE-UX-BAR."
+    }
+  },
+  "files": {}
+}

@@ -1,0 +1,127 @@
+
+ RUN  v4.1.12 /work
+
+stdout | server/app-action-grant.test.ts > the key a connected-app card offers > keeps two servers that offer the same action apart
+approvals: asked bot=unknown tool=other reason=no-grant origin=owner unattended=0 cmd=none level=ask owner=0 suppressed=0
+
+stdout | server/app-action-grant.test.ts > identity is proven against the turn's mounts, never read from a name > holds a stamp that fits no mount, two mounts, no list, or that could not be read, at every level
+approvals: asked bot=unknown tool=other reason=unread-call:identity origin=owner unattended=0 cmd=none level=ask owner=0 held=unread suppressed=0
+
+stdout | server/app-action-grant.test.ts > identity is proven against the turn's mounts, never read from a name > keys a stamped MCP tool by itself even under a named kind
+approvals: asked bot=unknown tool=read reason=no-grant origin=owner unattended=0 cmd=none level=ask owner=0 suppressed=0
+
+stdout | server/app-action-grant.test.ts > what a remembered connected-app grant answers > gives a grant saved before 1.0.3 nothing to match
+approvals: asked bot=unknown tool=mcp__murage_connectors__APPS_MULTI_EXECUTE_TOOL reason=no-grant origin=owner unattended=0 cmd=none level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=unknown reason=no-grant origin=owner unattended=0 cmd=none level=ask owner=0 suppressed=0
+
+stdout | server/app-action-grant.test.ts > what a remembered connected-app grant answers > never answers past the guards, at any level
+approvals: asked bot=unknown tool=other reason=sensitive-guard origin=owner unattended=0 cmd=none level=ask owner=0 held=key-row suppressed=0 row=ssh
+approvals: asked bot=unknown tool=other reason=always-ask:delete-root origin=owner unattended=0 cmd=none level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=other reason=unattended-block origin=other unattended=1 cmd=none level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=other reason=local-computer-block origin=owner unattended=0 cmd=none level=ask owner=0 suppressed=0
+
+stdout | server/app-action-grant.test.ts > the stop line judges the tool the engine stamped, never the title > holds the stopped call at Ask, Auto and Full access, granted or not
+approvals: asked bot=unknown tool=other reason=stop-line:message origin=owner unattended=0 cmd=none level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=other reason=stop-line:delete origin=owner unattended=0 cmd=none level=ask owner=0 suppressed=0
+
+stdout | server/app-action-grant.test.ts > the key guard reads structured arguments, not only the title > finds a key file past the old 2,000-node mark, and holds what it cannot scan whole (Astra r2; Rule 37 bounds)
+approvals: asked bot=unknown tool=other reason=unread-call:scan origin=owner unattended=0 cmd=none level=ask owner=0 held=unread suppressed=0
+
+ ✓ server/app-action-grant.test.ts > the key a connected-app card offers > names the app and the action on Fuigo, Claude, Pi and a wrapped call alike 4ms
+ ✓ server/app-action-grant.test.ts > the key a connected-app card offers > tells reading mail from sending it, and Gmail from Slack 0ms
+ ✓ server/app-action-grant.test.ts > the key a connected-app card offers > never offers the bare kind, the execute tool or Pi's label 1ms
+ ✓ server/app-action-grant.test.ts > the key a connected-app card offers > offers no standing grant where one action cannot be named 1ms
+ ✓ server/app-action-grant.test.ts > the key a connected-app card offers > names a stamped MCP tool by its stamped name, server included, never normalised 0ms
+ ✓ server/app-action-grant.test.ts > the key a connected-app card offers > writes a lookup grant in one spelling on every engine 0ms
+ ✓ server/app-action-grant.test.ts > the key a connected-app card offers > keeps two servers that offer the same action apart 18ms
+ ✓ server/app-action-grant.test.ts > the key a connected-app card offers > leaves every other tool's grant as it was 1ms
+ ✓ server/app-action-grant.test.ts > identity is proven against the turn's mounts, never read from a name > keeps a custom mount named mcp__murage_connectors apart from the connector (Astra r2) 2ms
+ ✓ server/app-action-grant.test.ts > identity is proven against the turn's mounts, never read from a name > holds a stamp that fits no mount, two mounts, no list, or that could not be read, at every level 15ms
+ ✓ server/app-action-grant.test.ts > identity is proven against the turn's mounts, never read from a name > keys a stamped MCP tool by itself even under a named kind 1ms
+ ✓ server/app-action-grant.test.ts > what a remembered connected-app grant answers > answers the one action it names, on any engine, and nothing else 3ms
+ ✓ server/app-action-grant.test.ts > what a remembered connected-app grant answers > gives a grant saved before 1.0.3 nothing to match 3ms
+ ✓ server/app-action-grant.test.ts > what a remembered connected-app grant answers > never answers past the guards, at any level 4ms
+ ✓ server/app-action-grant.test.ts > grants not in a shape the key builder writes > are dropped in every spelling an older release or engine saved 1ms
+ ✓ server/app-action-grant.test.ts > grants not in a shape the key builder writes > leave every grant the builder writes, and every grant outside the domain, alone 1ms
+ ✓ server/app-action-grant.test.ts > a connected-app grant in plain words > names the app and the action 1ms
+ ✓ server/app-action-grant.test.ts > the stop line judges the tool the engine stamped, never the title > stops a send to someone new and a delete under a neutral title 2ms
+ ✓ server/app-action-grant.test.ts > the stop line judges the tool the engine stamped, never the title > lets a title add a stop, never clear one, and stops a stamp it cannot read 1ms
+ ✓ server/app-action-grant.test.ts > the stop line judges the tool the engine stamped, never the title > stops a send whose recipient it cannot read 1ms
+ ✓ server/app-action-grant.test.ts > the stop line judges the tool the engine stamped, never the title > holds the stopped call at Ask, Auto and Full access, granted or not 6ms
+ ✓ server/app-action-grant.test.ts > wrappers are opened to a fixed point under a cap, and both readers see the same call > reads a doubly and triply wrapped send as the send (Astra r2) 2ms
+ ✓ server/app-action-grant.test.ts > wrappers are opened to a fixed point under a cap, and both readers see the same call > holds a call wrapped past the cap, or a wrapper that names no tool 3ms
+ ✓ server/app-action-grant.test.ts > wrappers are opened to a fixed point under a cap, and both readers see the same call > judges a wrapped engine tool by that tool and its own arguments 2ms
+ ✓ server/app-action-grant.test.ts > the key guard reads structured arguments, not only the title > holds a granted read of a key file at Ask, Auto, Full access and No limits 4ms
+ ✓ server/app-action-grant.test.ts > the key guard reads structured arguments, not only the title > still answers the same granted read of an ordinary file 1ms
+stdout | server/app-action-grant.test.ts > the key guard reads structured arguments, not only the title > holds a call the driver cut before it could be checked
+approvals: asked bot=unknown tool=other reason=unread-call:truncated origin=owner unattended=0 cmd=none level=ask owner=0 held=unread suppressed=0
+
+stdout | server/app-action-grant.test.ts > round 3: a missing, null, cut or unknown value never grants, approves or clears a stop > 1. holds a Pi call the gate cut, at every level, and never keys it by the engine's name
+approvals: asked bot=unknown tool=Bash reason=unreadable origin=owner unattended=0 cmd=shell reader=held level=ask owner=0 held=unread suppressed=0 why=tokenizer shape=other
+approvals: auto bot=unknown tool=Bash reason=unreadable level=no-limits initiator=routine
+approvals: asked bot=unknown tool=murage_connectors_apps_multi_execute_tool reason=unread-call:truncated origin=owner unattended=0 cmd=none level=ask owner=0 held=unread suppressed=0
+approvals: auto bot=unknown tool=murage_connectors_apps_multi_execute_tool reason=unread-call:truncated level=no-limits initiator=routine
+approvals: asked bot=unknown tool=github_create_issue reason=unread-call:truncated origin=owner unattended=0 cmd=none level=ask owner=0 held=unread suppressed=0
+approvals: auto bot=unknown tool=github_create_issue reason=unread-call:truncated level=no-limits initiator=routine
+approvals: asked bot=unknown tool=Write reason=unread-call:truncated origin=owner unattended=0 cmd=none level=ask owner=0 held=unread suppressed=0
+approvals: auto bot=unknown tool=Write reason=unread-call:truncated level=no-limits initiator=routine
+approvals: asked bot=unknown tool=pi reason=no-grant origin=owner unattended=0 cmd=none level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=Pi reason=no-grant origin=owner unattended=0 cmd=none level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=claude reason=no-grant origin=owner unattended=0 cmd=none level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=codex reason=no-grant origin=owner unattended=0 cmd=none level=ask owner=0 suppressed=0
+approvals: asked bot=unknown tool=fuigo reason=no-grant origin=owner unattended=0 cmd=none level=ask owner=0 suppressed=0
+
+ ✓ server/app-action-grant.test.ts > the key guard reads structured arguments, not only the title > finds a key file past the old 2,000-node mark, and holds what it cannot scan whole (Astra r2; Rule 37 bounds) 30ms
+ ✓ server/app-action-grant.test.ts > the key guard reads structured arguments, not only the title > holds a call the driver cut before it could be checked 2ms
+stdout | server/app-action-grant.test.ts > round 3: a missing, null, cut or unknown value never grants, approves or clears a stop > 2. reads a terminal command under any key or tool, so a key-file read holds and a destructive line is guarded
+approvals: auto bot=unknown tool=other reason=sensitive-guard row=ssh level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=sensitive-guard row=ssh level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=sensitive-guard row=credential-files level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=sensitive-guard row=env level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=sensitive-guard row=credential-files level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=sensitive-guard row=ssh level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=sensitive-guard row=credential-files level=no-limits initiator=routine
+approvals: asked bot=unknown tool=mcp__custom__run reason=sensitive-guard origin=owner unattended=0 cmd=none level=ask owner=0 held=key-row suppressed=0 row=keychain
+approvals: auto bot=unknown tool=mcp__custom__run reason=sensitive-guard row=keychain level=no-limits initiator=routine
+approvals: asked bot=unknown tool=other reason=unreadable origin=owner unattended=0 cmd=none reader=held level=ask owner=0 held=unread suppressed=0 why=tokenizer shape=other
+approvals: auto bot=unknown tool=other reason=unreadable level=no-limits initiator=routine
+approvals: asked bot=unknown tool=other reason=destructive-guard origin=owner unattended=0 cmd=none level=auto owner=0 suppressed=0
+
+stdout | server/app-action-grant.test.ts > round 3: a missing, null, cut or unknown value never grants, approves or clears a stop > 3. reads an explicit null, empty, wrong-type or malformed stamp as an identity it cannot prove
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+approvals: auto bot=unknown tool=other reason=unread-call:identity level=no-limits initiator=routine
+
+ ✓ server/app-action-grant.test.ts > round 3: a missing, null, cut or unknown value never grants, approves or clears a stop > 1. holds a Pi call the gate cut, at every level, and never keys it by the engine's name 245ms
+ ✓ server/app-action-grant.test.ts > round 3: a missing, null, cut or unknown value never grants, approves or clears a stop > 2. reads a terminal command under any key or tool, so a key-file read holds and a destructive line is guarded 44ms
+ ✓ server/app-action-grant.test.ts > round 3: a missing, null, cut or unknown value never grants, approves or clears a stop > 3. reads an explicit null, empty, wrong-type or malformed stamp as an identity it cannot prove 40ms
+ ✓ server/app-action-grant.test.ts > round 3: a missing, null, cut or unknown value never grants, approves or clears a stop > 4. stops a reply that carries a thread id to someone new under any address key, or to an address it cannot read 6ms
+ ✓ server/app-action-grant.test.ts > round 3: a missing, null, cut or unknown value never grants, approves or clears a stop > stops a connected-app run with no tools list, on every engine, and offers it no grant 1ms
+ ✓ server/app-action-grant.test.ts > round 3: a missing, null, cut or unknown value never grants, approves or clears a stop > judges an unwrapped engine stamp by its stamped name, so a neutral title cannot hide a delete or a shell line 0ms
+
+ Test Files  1 passed (1)
+      Tests  34 passed (34)
+   Start at  21:35:25
+   Duration  6.24s (transform 4.60s, setup 4.72s, import 944ms, tests 450ms, environment 0ms)
+

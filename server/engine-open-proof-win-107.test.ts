@@ -33,7 +33,7 @@ describe.skipIf(!built || !windows)("the real addon on Windows: the open-home pr
 
   /** A Node process working in `cwd` that holds `file` open for reading until it is ended. */
   const holder = (cwd: string, file: string): Promise<ChildProcess> => new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["-e", "const fd=require('fs').openSync(process.argv[1],'r');process.stdout.write('ready');setInterval(()=>{},1000)", file], { cwd, stdio: ["ignore", "pipe", "ignore"] });
+    const child = spawn(process.execPath, ["-e", "const fd=require('fs').openSync(process.argv[1],'r');process.stdout.write('ready');setInterval(()=>{},1000)", file], { windowsHide: true, cwd, stdio: ["ignore", "pipe", "ignore"] });
     children.push(child);
     const timer = setTimeout(() => reject(new Error("the holder did not start")), 15_000);
     child.stdout!.once("data", () => { clearTimeout(timer); resolve(child); });

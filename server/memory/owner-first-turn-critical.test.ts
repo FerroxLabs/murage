@@ -59,6 +59,17 @@ it("a starting turn's own prompt capture is claimed, published and rolls its che
   release();
 });
 
+it("a starting turn's own capture uses the loaded helper while its search index is still opening", async () => {
+  say("turn-thread", "p1", "The owner's prompt while the search index opens");
+  internals.ready = false;
+  internals.onWorkerMessage(internals.child, { type: "ready" });
+  start("turn-thread");
+  controller.start();
+  await vi.advanceTimersByTimeAsync(200);
+  expect(captures().map(threadOf)).toEqual(["turn-thread"]);
+  expect(internals.ready).toBe(false);
+});
+
 it("another thread's capture stays held while a turn starts, and goes once the start ends", async () => {
   say("other-thread", "o1", "Background evidence from a different conversation");
   const release = start("turn-thread");
@@ -104,4 +115,15 @@ it("the 3 s turn hold does not hold the starting turn's own capture either", asy
   controller.start();
   await vi.advanceTimersByTimeAsync(200);
   expect(captures().map(threadOf)).toEqual(["turn-thread"]);
+});
+
+it.each(["idle", "reset"])("a starting turn waits through %s retirement without claiming its capture", async retirement => {
+  internals.onWorkerMessage(internals.child, { type: "ready" });
+  if (retirement === "idle") internals.onWorkerMessage(internals.child, { type: "idle-exit-request" });
+  else (controller as unknown as { plannedResetExit(child: unknown): void }).plannedResetExit(internals.child);
+  say("retiring-thread", "retiring-prompt", "The owner prompt waits for a live helper");
+  start("retiring-thread"); controller.start();
+  await vi.advanceTimersByTimeAsync(200);
+  expect(captures()).toHaveLength(0);
+  expect(statusOf("retiring-thread")).toBe("pending");
 });

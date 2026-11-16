@@ -1,3 +1,4 @@
+// control: legacy cases retain their original assertions unless individually labelled red-at-4df086541 below.
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
@@ -25,9 +26,10 @@ import { fluxMemoryBreaker, setFluxMemorySettings } from "../flux-memory-headers
 import { fluxThreadIdValue } from "../flux-usage-tags.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
+import { fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
 import { ClaudeDriver } from "./claude.ts";
 import { CodexDriver } from "./codex.ts";
-import { createOpenAIChatRuntime } from "./openai-chat.ts";
+import { createOpenAIChatRuntime } from "../testing/bound-openai-fixture.ts";
 import { FuigoAgentDriver } from "./acp/fuigo.ts";
 import { GeminiAgentDriver } from "./acp/gemini.ts";
 import { GrokAgentDriver } from "./acp/grok.ts";
@@ -45,10 +47,12 @@ const FLUX_KEY = "sk-flux-Mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm"; // secre
 
 const APP = { "x-flux-memory-app": "murage" };
 const OFF = { ...APP, "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" };
+/** An owner memory-on turn: capture is explicit-only (Murage's own POST), so the wire still says capture off; inject stays on. */
+const OWNER_H = { ...APP, "x-flux-memory-capture": "off" };
 
 /** The four audiences of the matrix, as the harness stamps them on a turn. */
 const CASES: Array<{ name: string; turn: Partial<SendTurnInput>; headers: Record<string, string>; external?: boolean }> = [
-  { name: "owner", turn: { warmIdentity: { botId: "b", audience: "owner", decidedOwner: true } }, headers: APP },
+  { name: "owner", turn: { warmIdentity: { botId: "b", audience: "owner", decidedOwner: true } }, headers: OWNER_H },
   // "Use Flux memory" off (lane 2.2): no Flux capture and no Flux inject on the owner's own turn either
   { name: "owner with Use Flux memory off", turn: { warmIdentity: { botId: "b", audience: "owner", decidedOwner: true } }, headers: OFF, external: false },
   { name: "non-owner", turn: { warmIdentity: { botId: "b", audience: "non-owner", decidedOwner: false } }, headers: OFF },
@@ -98,7 +102,7 @@ const parseLines = (value: string | undefined): Record<string, string> =>
 async function oneTurn(turn: Partial<SendTurnInput> & { threadId: string; model: string }): Promise<void> {
   const completed = () => recorder!.events.filter((event) => event.type === "turn.completed").length;
   const before = completed();
-  await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), text: "hi", ...turn });
+  await instance!.adapter.sendTurn(fixtureMountTurn({ cwd: fixtureBotFolder(), text: "hi", ...turn }));
   await vi.waitFor(() => expect(completed()).toBeGreaterThan(before), { timeout: 10_000, interval: 25 });
 }
 
@@ -132,7 +136,7 @@ describe("claude: ANTHROPIC_CUSTOM_HEADERS in the spawn env", () => {
   it("a user's own ANTHROPIC_CUSTOM_HEADERS never rides a Flux turn", async () => {
     process.env.ANTHROPIC_CUSTOM_HEADERS = "x-flux-memory-inject: on\nx-team: a";
     try {
-      expect(parseLines((await spawnFor(CASES[0]!.turn)).env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(tagged(CASES[0]!.turn, APP));
+      expect(parseLines((await spawnFor(CASES[0]!.turn)).env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(tagged(CASES[0]!.turn, OWNER_H));
     } finally { delete process.env.ANTHROPIC_CUSTOM_HEADERS; }
   });
 
@@ -145,7 +149,7 @@ describe("claude: ANTHROPIC_CUSTOM_HEADERS in the spawn env", () => {
     const id = threadId("claude-respawn");
     await oneTurn({ threadId: id, model: "flux-auto", ...CASES[0]!.turn });
     const owner = JSON.parse(readFileSync(dump, "utf8")) as { pid: number; env: Record<string, string> };
-    expect(parseLines(owner.env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(tagged(CASES[0]!.turn, APP, id));
+    expect(parseLines(owner.env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(tagged(CASES[0]!.turn, OWNER_H, id));
     await oneTurn({ threadId: id, model: "flux-auto", ...CASES[2]!.turn });
     const other = JSON.parse(readFileSync(dump, "utf8")) as { pid: number; env: Record<string, string> };
     expect(parseLines(other.env.ANTHROPIC_CUSTOM_HEADERS)).toEqual(tagged(CASES[2]!.turn, OFF, id));
@@ -180,15 +184,17 @@ describe("codex: three provider tables, one chosen per thread", () => {
       // the switch as the decision reads it (a config load in the driver re-reads the saved value, so the override layer carries it here)
       setFluxMemorySettings(external === undefined ? {} : { external });
     const seen = await spawnFor(turn);
-    const provider = headers === APP ? "flux" : "flux-off";
+    const provider = headers === OWNER_H ? "flux" : "flux-off";
     expect(providerOf(seen)).toBe(provider);
     // the usage tags ride this thread's start config (the override replaces the table's http_headers, so it repeats them)
     expect(seen.calls.find((call) => call.method === "thread/start")?.params?.config).toEqual({ [`model_providers.${provider}.http_headers`]: tagged(turn, headers) });
     const argv = seen.argv.join("\n");
-    // the tables never change with the audience: one app-server serves every thread
-    expect(argv).toContain('model_providers.flux.http_headers={ "x-flux-memory-app" = "murage" }');
+    // the tables never change with the audience: one app-server serves every thread. Explicit-only capture: every table says
+    // capture off (the owner's "flux" table included), so the base table differs from the others only by inject
+    expect(argv).toContain('model_providers.flux.http_headers={ "x-flux-memory-app" = "murage", "x-flux-memory-capture" = "off" }');
+    expect(argv).not.toContain('model_providers.flux.http_headers={ "x-flux-memory-app" = "murage" }');
     expect(argv).toContain('model_providers.flux-off.http_headers={ "x-flux-memory-app" = "murage", "x-flux-memory-capture" = "off", "x-flux-memory-inject" = "off" }');
-    expect(argv).toContain('model_providers.flux-noinject.http_headers={ "x-flux-memory-app" = "murage", "x-flux-memory-inject" = "off" }');
+    expect(argv).toContain('model_providers.flux-noinject.http_headers={ "x-flux-memory-app" = "murage", "x-flux-memory-capture" = "off", "x-flux-memory-inject" = "off" }');
   });
 
   it("the inject kill switch starts the owner's thread on the no-recall table", async () => {
@@ -248,10 +254,16 @@ describe("ACP engines: the headers land in the spawn env after the route settles
       // the home is the one shared Flux home, whatever the audience
       expect(seen.env.HERMES_HOME).toBe(join(scratch, "state", "flux-hermes-home"));
       const shared = readFileSync(join(seen.env.HERMES_HOME!, "config.yaml"), "utf8");
-      expect(shared).not.toContain("extra_headers");
+      // explicit-only capture: Murage's own home says capture off on every request, the same bytes for every audience; the
+      // turn's own headers (inject) ride only the overlay
+      expect((parseYaml(shared) as { model?: { extra_headers?: Record<string, string> } }).model?.extra_headers).toEqual(OWNER_H);
+      expect(shared).not.toMatch(/x-flux-memory-(inject|space|read)/);
       // 03-4: the tier (model.default) rides the per-turn overlay too, so overlapping turns on different tiers never share it
       expect((parseYaml(shared) as { model?: { default?: string } }).model?.default).toBeUndefined();
-      const overlay = parseYaml(readFileSync(join(seen.env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")) as { model: { default: string; extra_headers: Record<string, string> }; hooks: { pre_tool_call: Array<{ fail_closed: boolean }> } };
+      const overlayText = readFileSync(join(seen.env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8");
+      // Hermes reads PyYAML (YAML 1.1), where a bare off is the boolean false: the header value must stay a quoted string after the ask hook rewrite
+      expect(overlayText).not.toMatch(/:\s*off\s*$/m);
+      const overlay = parseYaml(overlayText, { version: "1.1" }) as { model: { default: string; extra_headers: Record<string, string> }; hooks: { pre_tool_call: Array<{ fail_closed: boolean }> } };
       // the overlay also carries the Ask hook gate (applyHermesAskHook): the headers stay strict, the hooks block is the gate
       expect(Object.keys(overlay).sort()).toEqual(["hooks", "model"]);
       expect(overlay.model).toEqual({ default: "flux-auto", extra_headers: tagged(turn, headers) });

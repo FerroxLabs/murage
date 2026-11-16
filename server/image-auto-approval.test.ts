@@ -6,6 +6,9 @@
 // it: no card, a compact record with the full prompt, Stop still cancels, the
 // library still gets the image and its kept prompt, and a decision that says
 // "ask" leaves the card exactly as it was.
+import { serviceQueueFixture } from './testing/service-queue-fixture.ts';
+import { serviceQueue } from './narrow-denials.ts';
+import { finalDecision } from "../shared/no-limits-decision.ts";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -26,7 +29,10 @@ afterEach(() => closeDatabase());
 function fixture(decide: (ask: ImageAutoAsk) => ImageAutoApproval | null, extra: { speaker?: ConstructorParameters<typeof ImageOperations>[0]["speaker"] } = {}) {
   const store = new Store(() => ({ instanceId: "fixture", model: "fixture" })); const bot = store.createBot();
   const controller = new AbortController();
+  const producer = serviceQueueFixture(store);
+  producer.queue(serviceQueue('image'));
   const actor = { botId: bot.id, threadId: bot.threadId, generation: randomUUID(), signal: controller.signal, assertActive: () => {} };
+  Object.assign(actor, {authority:producer.authorityFor(actor.threadId,actor.botId,{generation:actor.generation})});
   const waiting = vi.fn();
   const asked = vi.fn((_actor: unknown, ask: ImageAutoAsk) => decide(ask));
   const logged = vi.fn();
@@ -136,7 +142,7 @@ it("a repeated request_id is not decided twice", async () => {
 const FULL = { autoApprove: true, fullAccess: true };
 const level = (askAfter?: number) => (ask: ImageAutoAsk): ImageAutoApproval | null => {
   const d = decideImageApproval({ level: FULL, origin: "owner", ownerAudience: true, askAfter, ...ask });
-  return d.ask ? null : { basis: d.basis };
+  return finalDecision(d.reads, "generate_image").verdict === "run" && "basis" in d ? { basis: d.basis } : null;
 };
 const request = (n: number, extra: Record<string, unknown> = {}) => ({ connectionId: "flux", prompt: `scene ${n}`, ...extra });
 

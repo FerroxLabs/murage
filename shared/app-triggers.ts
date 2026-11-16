@@ -327,3 +327,8 @@ export type AppInboxDisposition = (typeof APP_INBOX_DISPOSITIONS)[number];
 export const APP_RUN_STATES = ["sealed", "budget_wait", "reserved", "starting", "running", "completed", "failed", "cancelled", "outcome_unknown", "refused"] as const;
 export type AppRunState = (typeof APP_RUN_STATES)[number];
 export const APP_RUN_TERMINAL: ReadonlySet<AppRunState> = new Set(["completed", "failed", "cancelled", "outcome_unknown", "refused"]);
+
+/** Provider event names, frozen separately from the Flux v1 catalogue. F8 owns the mapping. */
+export const HIGHLEVEL_EVENT_TYPES = ["ContactCreate", "ContactUpdate", "ContactDelete", "ContactTagUpdate", "NoteCreate", "TaskCreate", "OpportunityCreate", "OpportunityStageUpdate", "OpportunityStatusUpdate", "InboundMessage", "OutboundMessage", "AppointmentCreate", "AppointmentUpdate", "AppointmentDelete", "InvoicePaid", "FormSubmission"] as const;
+export type HighLevelEventType = typeof HIGHLEVEL_EVENT_TYPES[number];
+export const highlevelEventTypeSchema = z.enum(HIGHLEVEL_EVENT_TYPES);

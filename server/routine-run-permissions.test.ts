@@ -145,7 +145,8 @@ describe("the routine behind a working thread", () => {
     h.manager.runNow(routine.id);
     await h.manager.tick();
     const threadId = h.started[0]!.threadId;
-    expect(h.manager.routineRunForThread(threadId)).toEqual({ runId: h.manager.listRuns()[0]!.id, routineId: routine.id, botId: "dax", permissionMode: "ask", alwaysAllow: [] });
+    // MAIN RULING 2026-11-13 wipe-only: dispatch must distinguish an inherited fallback from an explicit Ask ceiling.
+    expect(h.manager.routineRunForThread(threadId)).toEqual({ permissionExplicit: false, runId: h.manager.listRuns()[0]!.id, routineId: routine.id, botId: "dax", permissionMode: "ask", alwaysAllow: [] });
     h.manager.update(routine.id, { permissionMode: "auto" });
     expect(h.manager.routineRunForThread(threadId)?.permissionMode).toBe("auto");
   });

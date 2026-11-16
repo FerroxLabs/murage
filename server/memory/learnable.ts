@@ -45,7 +45,7 @@ export function learnableSourceSettings(db:DatabaseSync,source:Record<string,imp
  }else if(!settings.learnFrom.chats)return no("chats-off");
  const roster=ctx.roster??memoryCaptureRoster();
  const room=roster.groups.some(g=>g.threadId===thread||g.tasks?.some(t=>t.threadId===thread));
- const bot=roster.bots.find(b=>b.threadId===thread||b.tasks?.some(t=>t.threadId===thread));
+ const bot=(roster.botByThread ? roster.botByThread(thread) : roster.bots.find(b=>b.threadId===thread||b.tasks?.some(t=>t.threadId===thread)));
  const scope=db.prepare("SELECT kind FROM memory_scopes WHERE id=?").get(source.scope_id);
  if(scope?.kind==='room'&&!settings.learnFrom.chats)return no("chats-off");
  if(!room&&bot&&settings.botsPaused.includes(bot.id))return no("bot-paused");
@@ -86,7 +86,7 @@ export function isOutcomeEvidence(db:DatabaseSync,source:{id:string;revision:num
  if(db.prepare("SELECT 1 FROM memory_scope_bindings b,json_each(b.intent,'$.excludedThreadIds') e WHERE b.id='memory-owner-settings' AND e.value=?").get(row.thread_id))return no("excluded-thread");
  const thread=String(row.thread_id??"");
  const roster=ctx.roster??memoryCaptureRoster();
- const owning=roster.bots.find(b=>b.threadId===thread||b.tasks?.some(t=>t.threadId===thread));
+ const owning=(roster.botByThread ? roster.botByThread(thread) : roster.bots.find(b=>b.threadId===thread||b.tasks?.some(t=>t.threadId===thread)));
  if(owning&&owning.id!==bot.id)return no("not-this-bot");
  const text=JSON.parse(String(row.payload)).text;
  if(typeof text!=="string")return no("no-text");

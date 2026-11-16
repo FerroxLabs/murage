@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 import { cn } from "@/lib/cn";
 import { announceTranscriptionStatus } from "@/lib/transcription-status";
 import { t } from "@/lib/i18n";
-import { InAdvanced } from "./SettingsPrimitives";
+import { useStore } from "@/state/store";
 
-export function TranscriptionSettings() {
+function useTranscriptionKey() {
   const bridge = window.muragebox?.transcription;
   const [configured, setConfigured] = useState<boolean | null>(null);
   const [value, setValue] = useState("");
@@ -38,8 +38,31 @@ export function TranscriptionSettings() {
     }
   };
 
+  return { bridge, configured, value, setValue, saving, error, clearing, save };
+}
+
+/** The voice card on Search, images and dictation: where transcription stands, and where its key lives. The key itself is
+ *  one field on the Skills page (TranscriptionKey), next to Teach a skill, and is mounted nowhere else. */
+export function VoiceNotesStatus({ route }: { route?: string | null }) {
+  // /api/config -> tts.describeVoice -> describeVoiceRoutes uses the same
+  // connection selection as POST /api/voice/transcribe. This is configuration,
+  // not a health probe; tts.ready describes speech OUT, not transcription.
+  const service = route === "flux" ? "Flux" : route === "groq" ? "Groq" : route === "openai" ? "OpenAI" : null;
+  return <section className="mb-4 space-y-1.5 border-b border-hairline/40 pb-4">
+    <h3 className="text-[13px] font-medium text-ink">{t("settings.l4.voiceNotes.title")}</h3>
+    <p role="status" className="text-[12px] leading-relaxed text-ink-secondary">
+      {service ? t("settings.l4.voiceNotes.configured", { service }) : route === null ? t("settings.l4.voiceNotes.notConfigured") : t("settings.l4.voiceNotes.unknown")}
+    </p>
+    <p className="text-[12px] leading-relaxed text-ink-secondary">{t("settings.l4.voiceNotes.attachments")}</p>
+  </section>;
+}
+
+export function TranscriptionSettings() {
+  const { configured } = useTranscriptionKey();
+  const { state, dispatch } = useStore();
   return (
     <div>
+      <VoiceNotesStatus route={state.config?.tts?.routes?.transcribe} />
       <div className="mb-1.5 flex items-center gap-2 text-[13px] text-ink-secondary">
         <span className={cn("size-1.5 rounded-full", configured ? "bg-success" : "bg-raised-hover")} />
         <span>AssemblyAI transcription</span>
@@ -48,8 +71,28 @@ export function TranscriptionSettings() {
       <p className="mb-2 text-[12px] leading-relaxed text-ink-secondary">
         Live narration for recorded skills. Audio is sent to AssemblyAI while recording; the API key is protected by your operating system.
       </p>
-      {!configured && <p className="mb-2 text-[12px] leading-relaxed text-ink-secondary">{t("settings.l4.voiceKey.where")}</p>}
-      <InAdvanced><div id="voice-key-heading" tabIndex={-1} className="rounded-xl bg-card p-4 outline-none">
+      <p className="mb-2 text-[12px] leading-relaxed text-ink-secondary">
+        {configured ? t("settings.l4.voiceKey.change") : t("settings.l4.voiceKey.where")}
+        {" "}
+        <button
+          type="button"
+          data-setting-control="voice-settings-heading"
+          onClick={() => dispatch({ type: "toggleAppSettings", open: true, section: "skills", anchor: "voice-key-heading" })}
+          className="font-medium text-accent underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus"
+        >
+          {t("settings.l4.voiceKey.open")}
+        </button>
+      </p>
+    </div>
+  );
+}
+
+/** The one AssemblyAI key field (Skills page, next to Teach a skill). Same credential and the same Save, Clear and Enter
+ *  behaviour as before; it only moved. */
+export function TranscriptionKey() {
+  const { bridge, configured, value, setValue, saving, error, clearing, save } = useTranscriptionKey();
+  return (
+    <div tabIndex={-1} className="rounded-xl bg-card p-4 outline-none">
       <div className="mb-2 text-[15px] font-medium text-ink">{t("settings.l4.voiceKey.title")}</div>
       <div className="flex gap-2">
         <input
@@ -86,7 +129,6 @@ export function TranscriptionSettings() {
         Open AssemblyAI dashboard <ExternalLink size={12} />
       </a>
       {error && <div role="alert" className="mt-1 text-[12px] text-danger">{error}</div>}
-      </div></InAdvanced>
       {!bridge && <div className="mt-1 text-[12px] text-warning">Available in the installed desktop app.</div>}
     </div>
   );

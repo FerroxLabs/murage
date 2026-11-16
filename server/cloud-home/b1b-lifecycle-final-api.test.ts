@@ -6,13 +6,14 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
 import { launchVerificationServer } from "../../scripts/control-murage.ts";
+import { stepPurpose } from "../cloud-request-auth.ts";
 const origin="https://home.example.test",secret="fixture-b1b-final-bootstrap-secret"; // secret-scan: fixture
 const PNG="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 async function fixture(race=false,advanced?: "avatar-denial"|"avatar-body"|"channels") {
   const instrumentationSource=[
     "const fs=await import('node:fs'),path=await import('node:path'),url=await import('node:url');const root=process.env.MURAGE_DATA_DIR;",
     "const controlFixture=await import(url.pathToFileURL(path.join(process.cwd(),'server/cloud-home/control-state-verification.fixture.mjs')).href);controlFixture.installVerificationControl("+JSON.stringify(origin)+");",
-    "const secrets=await import(url.pathToFileURL(path.join(process.cwd(),'server/cloud-home/server-secrets.ts')).href);secrets.updateServerCredentials({openaiImageApiKey:'sk-proj-FAKE_FINAL_IMAGE_KEY',fluxApiKey:'sk-flux-FAKE_FINAL_FLUX_KEY',telegramBotToken:'FAKE_FINAL_TELEGRAM_TOKEN'});",
+    "const secrets=await import(url.pathToFileURL(path.join(process.cwd(),'server/cloud-home/server-secrets.ts')).href);secrets.updateServerCredentials({openaiImageApiKey:'sk-proj-FAKE_FINAL_IMAGE_KEY',fluxApiKey:'sk-flux-home-FAKE_FINAL_FLUX_KEY_00000',telegramBotToken:'FAKE_FINAL_TELEGRAM_TOKEN'});",  // secret-scan: fixture
     "const file=path.join(root,'config.json'),config=JSON.parse(fs.readFileSync(file,'utf8'));config.automationsPaused=true;"+(race?"config.telegram={targetBotId:'fixture-target',botToken:''};":"")+"fs.writeFileSync(file,JSON.stringify(config));",
     race?"const {TelegramService}=await import(url.pathToFileURL(path.join(process.cwd(),'server/telegram-service.ts')).href);TelegramService.prototype.resume=async function(){if(!fs.existsSync(path.join(root,'hold-resume')))return false;fs.writeFileSync(path.join(root,'resume-entered'),'1');while(!fs.existsSync(path.join(root,'release-resume')))await new Promise(resolve=>setTimeout(resolve,5));return true;};const http=await import('node:http'),emit=http.Server.prototype.emit;http.Server.prototype.emit=function(event,...args){if(event==='request'&&args[0]?.url==='/api/cloud/stop'&&fs.existsSync(path.join(root,'hold-resume')))fs.writeFileSync(path.join(root,'later-stop-received'),'1');return emit.call(this,event,...args);};":"",
     advanced==="channels" ? [
@@ -37,7 +38,7 @@ async function fixture(race=false,advanced?: "avatar-denial"|"avatar-body"|"chan
   try {
     const identity=await api("GET","/.well-known/murage/environment"),key=generateKeyPairSync("ed25519"),factor=generateKeyPairSync("ed25519"),mint=await control("/api/cloud/pairing",{account:"owner",scope:"owner-desktop",publicKey:key.publicKey.export({type:"spki",format:"pem"}).toString(),assertionKey:factor.publicKey.export({type:"spki",format:"pem"}).toString()});expect(mint.status).toBe(200);
     const msg=Buffer.from("murage-pair:"+identity.body.environmentId+":"+mint.body.code+":owner"),pair=await api("POST","/api/cloud/pair",{account:"owner",code:mint.body.code,signature:sign(null,msg,key.privateKey).toString("base64url"),assertionSignature:sign(null,msg,factor.privateKey).toString("base64url")});expect(pair.status).toBe(200);
-    return {server,api,control,token:pair.body.accessToken as string,dispatches:()=>{const p=join(server.info.dataDir,"paid-dispatches");return existsSync(p)?readFileSync(p,"utf8").trim().split("\n").length:0;}};
+    return {server,api,control,factor,deviceId:pair.body.deviceId as string,environmentId:identity.body.environmentId as string,token:pair.body.accessToken as string,dispatches:()=>{const p=join(server.info.dataDir,"paid-dispatches");return existsSync(p)?readFileSync(p,"utf8").trim().split("\n").length:0;}};
   } catch(error) {await server.close();throw error;}
 }
 it("B1b repeated signed resume preserves the owner's prior automation pause",async()=>{
@@ -52,6 +53,45 @@ it("B1b repeated signed resume preserves the owner's prior automation pause",asy
     expect((await f.api("GET","/api/automation-admission",undefined,f.token)).body.paused).toBe(true);
     expect((await f.control("/api/cloud/account/resume")).status).toBe(200);
     expect((await f.api("GET","/api/automation-admission",undefined,f.token)).body.paused).toBe(true);
+  } finally {await f.server.close();}
+},90_000);
+const setPause=(f:Awaited<ReturnType<typeof fixture>>,paused:boolean)=>f.api("POST","/api/automation-admission",{paused},f.token);
+const readPause=async(f:Awaited<ReturnType<typeof fixture>>)=>(await f.api("GET","/api/automation-admission",undefined,f.token)).body.paused;
+it("an owner unpause during a lifecycle hold survives resume (snapshot was paused)",async()=>{
+  const f=await fixture();try {
+    expect(await readPause(f)).toBe(true);
+    expect((await f.control("/api/cloud/stop")).status).toBe(200);
+    expect((await setPause(f,false)).body.paused).toBe(false);
+    expect((await f.control("/api/cloud/account/resume")).status).toBe(200);
+    expect(await readPause(f)).toBe(false);
+  } finally {await f.server.close();}
+},90_000);
+it("an owner pause during a lifecycle hold survives resume (snapshot was unpaused)",async()=>{
+  const f=await fixture();try {
+    expect((await setPause(f,false)).body.paused).toBe(false);
+    expect((await f.control("/api/cloud/stop")).status).toBe(200);
+    expect((await setPause(f,true)).body.paused).toBe(true);
+    expect((await f.control("/api/cloud/account/resume")).status).toBe(200);
+    expect(await readPause(f)).toBe(true);
+  } finally {await f.server.close();}
+},90_000);
+it("an owner pause set through the general settings write during a hold survives resume",async()=>{
+  const f=await fixture();try {
+    expect((await setPause(f,false)).body.paused).toBe(false);
+    expect((await f.control("/api/cloud/stop")).status).toBe(200);
+    const body={automationsPaused:true},purpose=stepPurpose("PATCH","/api/config",body),challenge=await f.api("POST","/api/cloud/challenge",{deviceId:f.deviceId,purpose},f.token),at=Date.now();
+    const assertion=Buffer.from(JSON.stringify({challenge:challenge.body.challenge,at,signature:sign(null,Buffer.from(`murage:${f.environmentId}:${f.deviceId}:${purpose}:${challenge.body.challenge}:${at}`),f.factor.privateKey).toString("base64url")})).toString("base64url");
+    expect((await f.api("PATCH","/api/config",body,f.token,{"x-murage-step-up":assertion})).status).toBe(200);
+    expect((await f.control("/api/cloud/account/resume")).status).toBe(200);
+    expect(await readPause(f)).toBe(true);
+  } finally {await f.server.close();}
+},90_000);
+it("with no owner change during the hold, resume restores the unpaused snapshot",async()=>{
+  const f=await fixture();try {
+    expect((await setPause(f,false)).body.paused).toBe(false);
+    expect((await f.control("/api/cloud/stop")).status).toBe(200);
+    expect((await f.control("/api/cloud/account/resume")).status).toBe(200);
+    expect(await readPause(f)).toBe(false);
   } finally {await f.server.close();}
 },90_000);
 it.each([false,true])("B3 lease restoration preserves the owner's explicit stop: %s",async ownerStops=>{

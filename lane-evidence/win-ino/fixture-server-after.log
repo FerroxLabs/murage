@@ -1,0 +1,8 @@
+[sqlite] storage file=2 wal=0 freelist=0
+[own-write] legacy wildcard keys at boot: 0
+murage webhook receiver on http://127.0.0.1:20113
+[decision] engine approval builder installed
+murage server on http://127.0.0.1:20112
+[startup] writes before first health=0
+[memory] index build start name=memory_tombstones_forgets
+[memory] index build done name=memory_tombstones_forgets ms=64

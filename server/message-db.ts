@@ -1,3 +1,5 @@
+import { routineMessageAnchor } from "./routine-message-links.ts";
+import { assertCardAuthorized, terminalLegacy } from './decision/records.ts';
 import { DATA_DIR } from "./config.ts";
 import { dataRoots, ownedPath } from "./data-roots.ts";
 import { rebaseAttachmentRecord } from "./attachment-paths.ts";
@@ -18,6 +20,7 @@ import { syncThreadSummary } from "./thread-summary.ts";
 import { noteThreadChanged, threadActivitySeq, threadsChangedSince } from "./thread-activity.ts";
 import { bumpForMessage, bumpMessagesVersion } from "./inbox-version.ts";
 import { initializeOwnerSends } from "./send-store.ts";
+import { deleteSpeechSendMarkers } from "./tts/reply-schema.ts";
 import { noteHandoffEvidence } from "./handoff-evidence.ts";
 import type { ProviderReply } from "./provider-reply.ts";
 import { scrubOwnerSendsOfThread } from "./room-requests.ts";
@@ -26,7 +29,7 @@ import { chmodSync, readFileSync, renameSync } from "node:fs";
 import type { DatabaseSync, SQLInputValue, StatementSync } from "node:sqlite";
 
 import { isOpenCardJson } from "./message-tables.ts";
-import { prioritizeThread, threadCardsReady, readIndexState, writeIndexState, attachmentNamesIn, keyedCardsOf, mayBeKeyed, startTranscriptBackfill, stepUpRow, type KeyedFamily } from "./transcript-backfill.ts";
+import { prioritizeThread, stepPriorityThreads, threadCardsReady, readIndexState, writeIndexState, attachmentNamesIn, keyedCardsOf, mayBeKeyed, startTranscriptBackfill, stepUpRow, type KeyedFamily } from "./transcript-backfill.ts";
 
 import { SEQ_INDEX, newestSeqOf, nextSeq, rowToMessage, seqOfRow, storedJson, threadNumbered } from "./transcript-seq.ts";
 import { checkStoredRow } from "./stored-row-check.ts";
@@ -40,17 +43,18 @@ import { imagePathsOf, tagImagePaths } from "./message-image-paths.ts";
 import {
   MIN_INDEXED_QUERY_CODEPOINTS,
   dropThreadSearchRows,
-  mergeMessageSearchIndex,
-  disableMessageSearchIndex,
-  messageSearchIndexReady,
   searchableText,
   trigramQuery,
+  readMessageSearchCandidates,
+  pruneMessageSearchIntents,
   syncMessageSearchRow,
 } from "./message-search-index.ts";
 import { captureMessage, captureBranchChange, captureThreadDeletion, exportPasteNoted } from "./memory/capture.ts";
 import { noteFluxCaptureHold } from "./flux-capture-hold.ts";
 import { threadKey as keyOfThread, LINE_TEXT } from "./branch-index.ts";
 import { lineClassesOf } from "./line-classes.ts";
+import { TURN_CANDIDATE, TURN_EXPR, TURN_INDEX, TURN_INDEX_LEGACY_EXPR, TURN_INDEX_LEGACY_CANDIDATE, TURN_INDEX_NOT_READY, TurnIndexNotReadyError } from "./message-tables.ts";
+import { optionalIndexReady } from "./memory/optional-index.ts";
 import { boundedBranchWalk, isPrepared as isThreadPrepared, branchRows, branchTester, childRowids, requirePrepared, afterInsert, afterSpliceAfter, afterSpliceBefore, afterUpdate, forgetThread } from "./branch-store.ts";
 import { closeThreadTurns, currentTurnLineage, extendLineage, markThreadNotReady, noLineageToken, openTurnsBegan, openTurnsParents, readyImportedThread, runningTurnFor, turnOfProvider, turnsOfProviderAnywhere, writeLineage, writerTurnFor } from "./memory/lineage-write.ts";
 import { isMurageLine } from "./murage-line.ts";
@@ -154,9 +158,8 @@ function messageRowid(threadId: string, messageId: string): number | null {
 /** The first row (storage order) written at or after `at`, else the newest
  * row; null for a thread with no rows. Two indexed reads, never the thread. */
 export function firstMessageSince(threadId: string, at: number): Message | null {
-  const row = (db().prepare("SELECT seq, json FROM messages WHERE thread_id = ? AND at >= ? ORDER BY rowid LIMIT 1").get(threadId, at)
-    ?? db().prepare("SELECT seq, json FROM messages WHERE thread_id = ? ORDER BY rowid DESC LIMIT 1").get(threadId)) as { json: string } | undefined;
-  return row ? rowToMessage(row) : null;
+  const id = routineMessageAnchor(db(), threadId, at);
+  return id === undefined ? null : readMessage(threadId, id);
 }
 
 /** One row of a thread by id, through the (thread, id) key. Null when this
@@ -270,31 +273,39 @@ export function readThreadAfter(threadId: string, messageId: string, limit: numb
   return rows.map(rowToMessage);
 }
 
-/** The rows of one turn, oldest first, every one: from the turn's first row (turn_first, kept by the writer and filled
- * with the thread) onward, so the work is the rows written since the turn began and no cap cuts a long turn short.
- * Empty when the turn wrote nothing. The thread is prepared first. */
+export { TURN_INDEX_NOT_READY, TurnIndexNotReadyError };
+/** The one read of a turn's rows. INDEXED BY: the planner may not pick another path, whatever its statistics say. */
+export const TURN_ROWS_SQL = `SELECT seq, json FROM messages INDEXED BY ${TURN_INDEX} WHERE thread_id = ? AND ${TURN_CANDIDATE} AND ${TURN_EXPR} = ? ORDER BY rowid`;
+
+/** The rows of one turn, oldest first, every one, through messages_turn: the work is that turn's rows, never the thread's history, and it is exact
+ * for any writer. No derived table is read, so a thread being filled answers the same. Empty when the turn wrote nothing. The decoded check drops
+ * a non-text turn id, which the index also holds. */
 export function turnRows(threadId: string, turnId: string): Message[] {
-  requirePrepared(threadId, "turnRows");
-  const kept = db().prepare("SELECT first_rowid AS first FROM turn_first WHERE thread_id = ? AND turn_id = ?").get(threadId, turnId) as { first: number } | undefined;
-  if (!kept) return [];
+  if (!optionalIndexReady(db(), TURN_INDEX)) throw new TurnIndexNotReadyError();
   const out: Message[] = [];
-  for (const row of db().prepare("SELECT seq, json FROM messages WHERE thread_id = ? AND rowid >= ? ORDER BY rowid").iterate(threadId, kept.first) as Iterable<{ json: string }>) {
+  // A failed atomic replacement leaves an exact prior index usable. Select
+  // its indexed expression, never a history scan. Both forms bound the read by
+  // this turn's rows, including after rollback on a locked or full database.
+  const definition = db().prepare("SELECT sql FROM sqlite_schema WHERE type='index' AND name=?").get(TURN_INDEX)?.sql;
+  const sql = typeof definition === "string" && definition.includes(TURN_INDEX_LEGACY_EXPR)
+    ? `SELECT seq, json FROM messages INDEXED BY ${TURN_INDEX} WHERE thread_id = ? AND ${TURN_INDEX_LEGACY_CANDIDATE} AND ${TURN_INDEX_LEGACY_EXPR} = ? ORDER BY rowid`
+    : TURN_ROWS_SQL;
+  for (const row of db().prepare(sql).iterate(threadId, turnId) as Iterable<{ json: string }>) {
     const message = rowToMessage(row);
     if (message.turnId === turnId) out.push(message);
   }
   return out;
 }
 
-/** The text lines of one turn, oldest first, through the line index: the activity rows a long turn writes between its
- * replies are never read. */
+/** The lines of one turn in `classes`, oldest first: the turn's rows, each classed from its own current JSON, so a raw write or a stale line row
+ * changes nothing. A row comes once per entry of `classes` it belongs to, as the per-class reads did. */
 export function turnTextRows(threadId: string, turnId: string, classes: readonly number[] = [LINE_TEXT]): Message[] {
-  requirePrepared(threadId, "turnTextRows");
-  const kept = db().prepare("SELECT first_rowid AS first FROM turn_first WHERE thread_id = ? AND turn_id = ?").get(threadId, turnId) as { first: number } | undefined;
-  const tk = keyOfThread(db(), threadId);
-  if (!kept || !tk) return [];
-  const read = db().prepare("SELECT l.mrow AS mrow, m.seq AS seq, m.json AS json FROM line l JOIN messages m ON m.rowid = l.mrow WHERE l.key = ? AND l.cls = ? AND l.mrow >= ? ORDER BY l.mrow");
-  const rows = classes.flatMap((cls) => read.all(tk.key, cls, kept.first) as Array<{ mrow: number; json: string }>).sort((a, b) => a.mrow - b.mrow);
-  return rows.map(rowToMessage).filter((message) => message.turnId === turnId);
+  const out: Message[] = [];
+  for (const message of turnRows(threadId, turnId)) {
+    const own = lineClassesOf(message);
+    for (const cls of classes) if (own.includes(cls)) out.push(message);
+  }
+  return out;
 }
 
 /** Visit text lines newest first, a page at a time, until `visit` returns true; returns whether it did. */
@@ -609,6 +620,33 @@ export function openRequestCardsStatus(threadId: string, limit: number): { cards
     .all(threadId, limit) as Array<{ json: string; position: number }>;
   return { cards: rows.map((row) => ({ message: rowToMessage(row), rowid: row.position })), incomplete: false };
 }
+/** Rev 3.3 X2: the open request cards of one thread whose `card.requestId` is in `requestIds` (at most 200), in ONE query, with no LIMIT:
+ *  independent of the sweep and history limits. Orphaned rows are read apart (keyed family, matched in JS by the caller). `unknown` when the
+ *  card index cannot answer for the thread yet; the thread is then queued for the walker. */
+export function openCardsForRequests(threadId: string, requestIds: readonly string[]): { found: Map<string, Message>; unknown: boolean } {
+  const found = new Map<string, Message>();
+  if (!requestIds.length) return { found, unknown: false };
+  if (!openCardIndexUsable(threadId)) { prioritizeThread(db(), threadId); return { found, unknown: true }; }
+  const marks = requestIds.map(() => "?").join(",");
+  const rows = db()
+    .prepare(`SELECT m.seq AS seq, m.json AS json FROM open_card c JOIN messages m ON m.thread_id = c.thread_id AND m.id = c.id WHERE c.thread_id = ? AND json_extract(m.json, '$.card.requestId') IN (${marks})`)
+    .all(threadId, ...requestIds) as Array<{ json: string }>;
+  for (const row of rows) {
+    const message = rowToMessage(row);
+    const id = message.card?.requestId;
+    if (id && !found.has(id)) found.set(id, message);
+  }
+  return { found, unknown: false };
+}
+/** Rev 3.3 W2: one bounded walker step for this thread's card index, inline. "ready" once the index answers exactly for it. */
+export function prepareOpenCardIndex(threadId: string, budgetMs = 250): "ready" | "pending" | "failed" {
+  try {
+    if (openCardIndexUsable(threadId)) return "ready";
+    prioritizeThread(db(), threadId);
+    stepPriorityThreads(db(), { deadline: performance.now() + budgetMs });
+    return openCardIndexUsable(threadId) ? "ready" : "pending";
+  } catch { return "failed"; }
+}
 export function openRequestCards(threadId: string, limit: number): Array<{ message: Message; rowid: number }> {
   return openRequestCardsStatus(threadId, limit).cards;
 }
@@ -756,7 +794,7 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
   // takes its lsn (and its rowid) in time order, so a positional range written later (a forget of an early line) reads the thread as it was.
   // A stable sort: lines with the same time, or none, keep their place in the file.
   // U4 S3: every line of the file passes the stored-row check before it is inserted, recorded or returned (a hand-edited or old file included)
-  messages = messages.map((message) => checkStoredRow(message));
+  messages = messages.map((message) => terminalLegacy(checkStoredRow(message)));
   messages = messages.map(message => {
     const next = rebaseAttachmentRecord(message);
     if (next !== message) {
@@ -807,6 +845,7 @@ function importLegacy(threadId: string, legacyFile: string): ThreadRows {
  * included) takes MAX(seq)+1 in this same write transaction; else NULL, and the walk numbers it at its rowid. `message.seq` is
  * set to what was stored (removed for NULL): every delivery path hands this same object on. The JSON never holds it. */
 function replaceRow(insert: StatementSync, threadId: string, message: Message, structure: "append" | "none" = "append", preview: "sync" | "defer" = "sync"): void {
+  assertCardAuthorized(db(), threadId, message);
   const prior = db().prepare("SELECT rowid AS position, seq FROM messages WHERE thread_id = ? AND id = ?").get(threadId, message.id) as
     | { position: number; seq: number | null }
     | undefined;
@@ -822,7 +861,8 @@ function replaceRow(insert: StatementSync, threadId: string, message: Message, s
   trackAttachmentNames(db(), threadId, message);
   if (message.turnId) trackTurnFirst(threadId, message, Number(result.lastInsertRowid));
   const text = searchableText(message);
-  if (text !== null) syncMessageSearchRow(db(), Number(result.lastInsertRowid), text);
+  syncMessageSearchRow(db(), Number(result.lastInsertRowid), text);
+  pruneMessageSearchIntents(db());
 }
 
 /** Record a turn's first row as it is written: the lowest position any row of the turn has had. The fill of a thread
@@ -1131,13 +1171,29 @@ export function updateMessage(threadId: string, message: Message, within?: () =>
   stampEmailDerived(threadId, message);
   assertStillClassified(db(), threadId, message);
   transaction(database => {
+    const cardKind = message.kind === 'options' || ['secret','mcpSignIn','connector'].includes(message.kind);
     const prior = database.prepare(
-      "SELECT rowid AS position, seq, kind, text, CASE kind WHEN 'activity' THEN json_extract(json, '$.tool.name') END AS tool_name, CASE WHEN json_valid(json) THEN json_type(json, '$.parentId') END AS parent_type, CASE WHEN json_valid(json) THEN json_extract(json, '$.parentId') END AS parent FROM messages WHERE thread_id=? AND id=?",
-    ).get(threadId, message.id) as { position: number; seq: number | null; kind: string; text: string | null; tool_name: string | null; parent_type: string | null; parent: string | null } | undefined;
+      "SELECT rowid AS position, seq, kind, text, CASE WHEN json_valid(json) THEN json_extract(json,'$.copyOf') ELSE 'invalid' END AS prior_copy, CASE WHEN kind='activity' AND json_valid(json) THEN json_extract(json, '$.tool.name') END AS tool_name, CASE WHEN json_valid(json) THEN json_type(json, '$.parentId') END AS parent_type, CASE WHEN json_valid(json) THEN json_extract(json, '$.parentId') END AS parent, CASE WHEN kind='options' OR ? THEN json END AS card_json, CASE WHEN json_valid(json) THEN json_remove(json, '$.dispatchedIn', '$.turnTerminal', '$.turnHelpers') END AS replay_json FROM messages WHERE thread_id=? AND id=?",
+    ).get(cardKind ? 1 : 0, threadId, message.id) as { position: number; seq: number | null; kind: string; text: string | null; tool_name: string | null; parent_type: string | null; parent: string | null; card_json: string | null; replay_json: string | null; prior_copy: string | null } | undefined;
+    // A card introduction/erasure remains kind-gated here and is independently
+    // enforced by the SQL trigger.
+    // Use the persisted action from the same point read, so authorization does
+    // not add a second row read to every bounded card patch.
+    if (cardKind || prior?.kind === 'options') {
+      assertCardAuthorized(database,threadId,message,prior ? rowToMessage({json:String(prior.card_json)}) : undefined);
+    }
     // the patched object carries the row's number from this read (r7 R3), never one copied from elsewhere; the JSON never holds it
     if (prior) { if (prior.seq === null) delete message.seq; else message.seq = Number(prior.seq); }
+    const encoded = storedJson(message);
+    const encodedCopy = JSON.parse(encoded).copyOf;
+    const copyChanged = prior?.prior_copy !== (encodedCopy === undefined || encodedCopy === null ? null : typeof encodedCopy === "object" ? JSON.stringify(encodedCopy) : typeof encodedCopy === "boolean" ? Number(encodedCopy) : encodedCopy);
+    // Authorization still precedes serialization. Compare the exact stored
+    // shape under this writer lock; only receipt metadata may be ignored.
+    const replayUnchanged = prior?.replay_json !== null && prior !== undefined
+      && (message.copyOf || message.kind === "text" || prior.kind === "text")
+      && prior.replay_json === database.prepare("SELECT json_remove(?, '$.dispatchedIn', '$.turnTerminal', '$.turnHelpers') AS shape").get(encoded)?.shape;
     database.prepare("UPDATE messages SET at=?, role=?, kind=?, text=?, json=? WHERE thread_id=? AND id=?")
-      .run(message.at,message.role,message.kind,message.text??null,storedJson(message),threadId,message.id);
+      .run(message.at,message.role,message.kind,message.text??null,encoded,threadId,message.id);
     // A generated line patched inside its turn (a streamed reply growing) also rests on what its turn was shown since it was first written:
     // only the refs it does not carry yet are added. A row that is not that turn's engine output (a routine card turned Completed) adds only
     // the refs of what it now quotes. A line with no lineage row keeps none (it reads "checking" until the backfill).
@@ -1154,13 +1210,13 @@ export function updateMessage(threadId: string, message: Message, within?: () =>
     if (prior) {
       const before = searchableText({ kind: prior.kind, text: prior.text, tool: { name: prior.tool_name } });
       const after = searchableText(message);
-      if (before !== after) syncMessageSearchRow(database, prior.position, after);
+      if (before !== after) { syncMessageSearchRow(database, prior.position, after); pruneMessageSearchIntents(database); }
     }
     // An answered or dismissed card is no longer open, or sought on any branch.
     trackOpenCard(database, threadId, message);
     trackBrowserCheck(database, threadId, message);
     trackKeyedCards(database, threadId, message, prior?.kind === "options" || mayBeKeyed(message));
-    if (prior) afterUpdate(database, threadId, message, prior.position, (prior.parent_type === null ? undefined : prior.parent) !== message.parentId, splicing, prior.kind);
+    if (prior) afterUpdate(database, threadId, message, prior.position, (prior.parent_type === null ? undefined : prior.parent) !== message.parentId, splicing, prior.kind, Boolean(replayUnchanged), copyChanged);
     trackImages(database, threadId, message);
     trackAttachmentNames(database, threadId, message);
     noteFluxCaptureHold(database,threadId,message);
@@ -1480,7 +1536,7 @@ export function deleteThread(threadId: string): void {
     captureThreadDeletion(database,threadId);
     // the durable proof that the OWNER deleted this conversation, committed with its rows (owner-deletions.ts)
     recordOwnerDeletion(database, threadId);
-    const indexed = dropThreadSearchRows(database, threadId); // before the rows it is keyed by go
+    dropThreadSearchRows(database, threadId); // one fixed-size intent in this transaction
     database.prepare("DELETE FROM messages WHERE thread_id=?").run(threadId);
     lowerSweepMarks(database);
     setupFactsCache(database).forget(threadId);
@@ -1495,9 +1551,10 @@ export function deleteThread(threadId: string): void {
     // the owner's sends for this conversation go with it (the words of a waiting or unconfirmed one live there)
     initializeOwnerSends(database);
     database.prepare("DELETE FROM owner_sends WHERE thread_id=?").run(threadId);
+    // ...with their spoken-reply prompt markers (D24-SPEECH-RETENTION design r5.1 P)
+    deleteSpeechSendMarkers(database, threadId, "thread");
     // ...and so do the words of its room requests (a request closed later must not make a chip for a conversation that is gone)
     scrubOwnerSendsOfThread(database, threadId);
-    if (indexed) mergeMessageSearchIndex(database);
     bumpMessagesVersion();
     noteThreadChanged(threadId);
   });
@@ -1711,44 +1768,21 @@ export function searchMessagesWithMeta(
       verified.push(...verifyChunk(got.map(row => row.rowid)));
       if (verified.length || !got.length || groupedWalk.walked === budget) { partial = walk.more(); break; }
     }
-  } else if ([...needle].length >= MIN_INDEXED_QUERY_CODEPOINTS && messageSearchIndexReady(handle)) {
-    // The trigram index names the candidates (code points, not UTF-16 units); they are verified in RESULT order, (at DESC, rowid DESC), because rowid is
-    // insertion order and an import gives old messages new rowids.
-    try {
-      const match = trigramQuery(needle);
-      if (!threadIds) {
-        // No scope (the owner's desktop): the candidates are read from the index alone (rowids, no row touched) and put in time order by the
-        // at index, never by reading each candidate's row for its timestamp. That read was one random table page per candidate, 2,001 for a
-        // common word: 1,888 page misses and 1.4 s on a cold cache on the owner's copy, and 53 to 249 ms a search in the rc13 data run while
-        // the memory upgrade's commits kept dropping the page cache (/api/search?q=email p95 129 ms, 176 ms after the upgrade).
-        const candidates = (handle.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ? ORDER BY rowid DESC LIMIT ?")
-          .all(match, TRIGRAM_CANDIDATE_CAP + 1) as Array<{ rowid: number }>).map((row) => Number(row.rowid));
-        if (candidates.length > TRIGRAM_CANDIDATE_CAP) { candidates.length = TRIGRAM_CANDIDATE_CAP; partial = true; }
-        verifyNewestCandidates(candidates);
-      } else {
-        // At most CAP+1 index matches are EXAMINED, the highest rowids first, whatever the scope: the scope is checked on those rows (one primary-key
-        // probe each), never by reading on through the index until enough in-scope rows turn up (thread A's one match behind 100,000 newer
-        // matches in thread B was 100,000 probes). LEFT JOIN keeps the index row's place in the count when its message is gone.
-        const inScope = "s.thread_id IN (SELECT value FROM json_each(?))";
-        const examined = handle.prepare(
-          `SELECT f.rowid AS rowid, s.at AS at, ${inScope} AS ok FROM (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ? ORDER BY rowid DESC LIMIT ?) f ` +
-          "LEFT JOIN messages s ON s.rowid = f.rowid",
-        ).all(...scopeParams, match, TRIGRAM_CANDIDATE_CAP + 1) as Array<{ rowid: number; at: number | null; ok: number | null }>;
-        const capped = examined.length > TRIGRAM_CANDIDATE_CAP;
-        if (capped && perThread) {
-          // A few threads, and the index holds more matches than one read may examine: walk those threads' own rows newest first (the kind index)
-          // and check each chunk with the LIKE, as a short query does. The window bounds the walk; running out of the scope first is a complete
-          // answer. (Asking the trigram index about each walked row by rowid was measured on the owner's copy: 134 ms of CPU per 500 rows, against
-          // under 1 ms for the LIKE on the same rows.)
-          walkWindow(perThread);
-        } else {
-          if (capped) { examined.length = TRIGRAM_CANDIDATE_CAP; partial = true; }
-          const all = examined.filter((row): row is { rowid: number; at: number; ok: number } => row.at !== null && Boolean(row.ok) && (before === undefined || row.at < before || row.at === before && beforeRowid !== undefined && row.rowid < beforeRowid));
-          all.sort((x, y) => y.at - x.at || y.rowid - x.rowid);
-          for (let i = 0; i < all.length && !enough(); i += SEARCH_CHUNK) verified.push(...verifyChunk(all.slice(i, i + SEARCH_CHUNK).map((row) => row.rowid)));
-        }
-      }
-    } catch (error) { disableMessageSearchIndex(handle, error); verified.length = 0; partial = false; walkWindow(perThread); }
+  } else if ([...needle].length >= MIN_INDEXED_QUERY_CODEPOINTS) {
+    const candidates = readMessageSearchCandidates(handle, trigramQuery(needle), TRIGRAM_CANDIDATE_CAP);
+    partial = candidates.partial;
+    if (!threadIds) verifyNewestCandidates(candidates.rowids);
+    else {
+      // Scope probes on main follow the already-capped search.db snapshot.
+      // Missing live rows still consumed their candidate slot before this probe.
+      const rows = handle.prepare(
+        "SELECT m.rowid AS rowid,m.at AS at,m.thread_id IN (SELECT value FROM json_each(?)) AS ok " +
+        "FROM json_each(?) c CROSS JOIN messages m ON m.rowid=c.value",
+      ).all(...scopeParams, JSON.stringify(candidates.rowids)) as Array<{ rowid: number; at: number; ok: number }>;
+      const scoped = rows.filter(row => row.ok && (before === undefined || row.at < before || row.at === before && beforeRowid !== undefined && row.rowid < beforeRowid));
+      scoped.sort((x,y) => y.at-x.at || y.rowid-x.rowid);
+      for (let i=0; i<scoped.length && !enough(); i+=SEARCH_CHUNK) verified.push(...verifyChunk(scoped.slice(i,i+SEARCH_CHUNK).map(row => row.rowid)));
+    }
   } else walkWindow(perThread);
   if (enough()) partial = true;
 

@@ -1,3 +1,4 @@
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
 // A team lead builds a client team in a NEW team of its own, and still cannot
 // add bots to a team it did not start (1.0.16 TEAM-SECTION, Sean 11-04).
 //
@@ -62,9 +63,10 @@ posixOnly("a team lead starts a client team, and only its own", () => {
       engineDiscovery: "explicit",
       instances: { claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE } } },
     }));
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: {
+      env: { ...powerBlockTestEnv(),
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home,
         USERPROFILE: home,

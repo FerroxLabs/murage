@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { mkdirSync, renameSync, writeFileSync } from "node:fs";
@@ -27,7 +27,7 @@ function slackEvent(id: string, text: string, user = "UOTHER") {
   renameSync(name + ".tmp", name + ".json");
 }
 async function openWorkspaceMemory(page: Page) {
-  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); });
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin);
   const sidebar = await openSidebar(page);
   await sidebar.getByRole("button", { name: "App settings", exact: true }).click();

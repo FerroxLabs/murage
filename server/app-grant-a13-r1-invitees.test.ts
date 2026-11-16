@@ -21,8 +21,9 @@ const fuigo = (...rows: unknown[]): Ask => ({
   toolIdentity: { namespace: "mcp", name: EXECUTE }, toolCall: { name: "Run app tools", input: { tools: rows } }, mcpMounts: [OWN],
 });
 const place: StopLinePlace = { home: "/Users/ada", cwd: "/Users/ada/work", roots: ["/Users/ada/work"], knownRecipients: new Set(["ada@example.com"]), realpath: (p: string) => p };
+// MAIN RULING 2026-11-13 wipe-only: these grants operate under an explicit Ask ceiling.
 const judge = (ask: Ask, alwaysAllow: string[]) => routineTurnApproval({
-  bot: { autoApprove: true, fullAccess: true, noLimits: true }, run: { permissionMode: "ask", alwaysAllow }, tool: ask.tool, summary: ask.summary,
+  bot: { autoApprove: true, fullAccess: true, noLimits: true }, run: { permissionMode: "ask", permissionExplicit: true, alwaysAllow }, tool: ask.tool, summary: ask.summary,
   context: { call: ask, stopLine: classifyAsk(ask, place), stopRows: classifyAskRows(ask, place) },
 }).verdict;
 

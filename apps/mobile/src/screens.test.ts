@@ -23,8 +23,8 @@ import {
 } from "./screens";
 
 const NOW = Date.UTC(2026, 8, 25, 12, 0, 0);
-const MAC: SavedWorkspace = { origin: "https://mac.tailnet123.ts.net", name: "Sean's Mac", lastConnected: NOW - 7 * 60_000 };
-const SERVER: SavedWorkspace = { origin: "https://server.tailnet123.ts.net", name: "server", lastConnected: NOW - 3 * 3_600_000 };
+const MAC: SavedWorkspace = { origin: "https://mac.tail000000.ts.net", name: "Sean's Mac", lastConnected: NOW - 7 * 60_000 };
+const SERVER: SavedWorkspace = { origin: "https://server.tail000000.ts.net", name: "server", lastConnected: NOW - 3 * 3_600_000 };
 const state = (over: Partial<ShellState> = {}): ShellState => ({ workspaces: [], active: null, closed: null, platform: "ios", tailscale: TAILSCALE_UNKNOWN, ...over });
 const OFF: TailscaleState = { installed: true, connected: false };
 const ON: TailscaleState = { installed: true, connected: true };
@@ -677,25 +677,25 @@ it("keeps shell-types free of runtime imports, so Node loads it without Capacito
 
 describe("a refused pairing code (1.0.16 F1)", () => {
   it("returns to the type screen on the same address, with the computer's line", () => {
-    expect(screenForClose({ origin: "https://mac.tailnet123.ts.net", reason: "pairRefused", message: "That code is no longer valid." }, [])).toEqual({
+    expect(screenForClose({ origin: "https://mac.tail000000.ts.net", reason: "pairRefused", message: "That code is no longer valid." }, [])).toEqual({
       kind: "type",
-      origin: "https://mac.tailnet123.ts.net",
+      origin: "https://mac.tail000000.ts.net",
       error: "That code is no longer valid.",
     });
   });
 
   it("uses the default sentence when there is no line, or only blanks", () => {
     for (const message of [undefined, "", "   "]) {
-      expect(screenForClose({ origin: "https://mac.tailnet123.ts.net", reason: "pairRefused", message }, [])).toEqual({
+      expect(screenForClose({ origin: "https://mac.tail000000.ts.net", reason: "pairRefused", message }, [])).toEqual({
         kind: "type",
-        origin: "https://mac.tailnet123.ts.net",
+        origin: "https://mac.tail000000.ts.net",
         error: COPY.codeRefused,
       });
     }
   });
 
   it("an unknown reason from a newer or older native still goes home", () => {
-    expect(screenForClose({ origin: "https://mac.tailnet123.ts.net", reason: "somethingNew" as never }, [])).toEqual({ kind: "welcome" });
+    expect(screenForClose({ origin: "https://mac.tail000000.ts.net", reason: "somethingNew" as never }, [])).toEqual({ kind: "welcome" });
   });
 });
 

@@ -85,19 +85,20 @@ describe("B3 outside turn durability", () => {
     const before = view();
     marks.wireOutsideStore({ ...disk, openTurn: fail }, () => now);
     // Execute the actual admission block with its dependencies supplied by this fixture.
+    // This is a BASE turn: the No limits outside-store exception does not apply.
     const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
-    const block = source.match(/if \(!beginGuardedOutsideTurn\(threadId, instanceId, undefined, resumedSession\)\) \{[^}]+\{ status: 409 \}\);\s*\}/)?.[0];
+    const block = source.match(/if \(!beginGuardedOutsideTurn\(threadId, instanceId, undefined, resumedSession\)[^{]+\{[^}]+\{ status: 409 \}\);\s*\}/)?.[0];
     expect(block).toBeDefined();
-    const admission = new Function("beginGuardedOutsideTurn", "threadId", "instanceId", "resumedSession", "dispatch", "outsideRefusalMessage", `${block}\ndispatch();`);
+    const admission = new Function("beginGuardedOutsideTurn", "threadId", "instanceId", "resumedSession", "dispatch", "outsideRefusalMessage", "continueWithoutOutsideStore", "humanIsOwner", "fullAccessOrigin", "bot", `${block}\ndispatch();`);
     const dispatch = vi.fn();
     let error: unknown;
-    try { admission(marks.beginGuardedOutsideTurn, "t", "i", true, dispatch, marks.outsideRefusalMessage); } catch (caught) { error = caught; }
+    try { admission(marks.beginGuardedOutsideTurn, "t", "i", true, dispatch, marks.outsideRefusalMessage, () => false, true, "owner", {}); } catch (caught) { error = caught; }
     expect(error).toMatchObject({ status: 409 });
     expect(dispatch).not.toHaveBeenCalled();
-    const roomBlock = source.match(/if \(!openOutsideTurn\(threadId, instance.instanceId\)\) \{[^}]+\{ status: 409 \}\);\s*\}/)?.[0];
+    const roomBlock = source.match(/if \(!openOutsideTurn\(threadId, instance.instanceId\)[^{]+\{[^}]+\{ status: 409 \}\);\s*\}/)?.[0];
     expect(roomBlock).toBeDefined();
-    const roomAdmission = new Function("openOutsideTurn", "threadId", "instance", "dispatch", "outsideRefusalMessage", `${roomBlock}\ndispatch();`);
-    expect(() => roomAdmission(marks.openOutsideTurn, "t", { instanceId: "i" }, dispatch, marks.outsideRefusalMessage)).toThrow();
+    const roomAdmission = new Function("openOutsideTurn", "threadId", "instance", "dispatch", "outsideRefusalMessage", "continueWithoutOutsideStore", "roomOwnerAudience", "decisionNoLimitsOrigin", "roomProvenance", "bot", `${roomBlock}\ndispatch();`);
+    expect(() => roomAdmission(marks.openOutsideTurn, "t", { instanceId: "i" }, dispatch, marks.outsideRefusalMessage, () => false, true, () => "owner", {}, {})).toThrow();
     expect(dispatch).not.toHaveBeenCalled();
     await restart();
     expect(view()).toEqual(before);
@@ -404,12 +405,12 @@ describe("B3 outside turn durability", () => {
     else await shutdown();
     const before = readFileSync(path, "utf8");
     const source = readFileSync(new URL("../index.ts", import.meta.url), "utf8");
-    const block = source.match(/if \(!beginGuardedOutsideTurn\(threadId, instanceId, undefined, resumedSession\)\) \{[^}]+\{ status: 409 \}\);\s*\}/)?.[0];
+    const block = source.match(/if \(!beginGuardedOutsideTurn\(threadId, instanceId, undefined, resumedSession\)[^{]+\{[^}]+\{ status: 409 \}\);\s*\}/)?.[0];
     expect(block).toBeDefined();
-    const admit = new Function("beginGuardedOutsideTurn", "threadId", "instanceId", "resumedSession", "dispatch", "outsideRefusalMessage", `${block}\ndispatch();`);
+    const admit = new Function("beginGuardedOutsideTurn", "threadId", "instanceId", "resumedSession", "dispatch", "outsideRefusalMessage", "continueWithoutOutsideStore", "humanIsOwner", "fullAccessOrigin", "bot", `${block}\ndispatch();`);
     const dispatch = vi.fn();
     let error: unknown;
-    try { admit(marks.beginGuardedOutsideTurn, "t", "i", true, dispatch, marks.outsideRefusalMessage); } catch (caught) { error = caught; }
+    try { admit(marks.beginGuardedOutsideTurn, "t", "i", true, dispatch, marks.outsideRefusalMessage, () => false, true, "owner", {}); } catch (caught) { error = caught; }
     expect(error).toMatchObject({ status: 409 });
     expect(dispatch).not.toHaveBeenCalled();
     expect(readFileSync(path, "utf8")).toBe(before);

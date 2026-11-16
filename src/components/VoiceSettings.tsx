@@ -380,7 +380,7 @@ export function VoiceSettings({
         <div>
           <div className="text-[13px] font-medium text-ink">Clean up dictation</div>
           <div className="mt-0.5 text-[11.5px] leading-relaxed text-ink-secondary">
-            Clean up dictation on this device: removes ums, fixes punctuation and corrections. Undo anytime.
+            Tidy dictation with your AI model before you send (removes ums, fixes punctuation). Your words go to that model.
           </div>
         </div>
         <Switch

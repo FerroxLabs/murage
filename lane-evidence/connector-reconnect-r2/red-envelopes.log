@@ -1,0 +1,81 @@
+
+ RUN  v4.1.12 /work
+
+stderr | server/connector-reconnect-r2.test.ts > R2 preflight catches an ACTIVE idle lapse and stops scheduled work
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: project-key HTTP 401 is an outage, never a user reconnect
+connected apps: unreachable (tool call): HTTP 401 token rejected
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: preflight upstream 401 with ACTIVE status raises reconnect
+connected apps: gmail needs reconnecting: HTTP 401
+
+stderr | server/connector-reconnect-r2.test.ts > Flux contract: preflight upstream 403 with ACTIVE status raises reconnect
+connected apps: gmail needs reconnecting: HTTP 403
+
+ ❯ server/connector-reconnect-r2.test.ts (25 tests | 2 failed) 237ms
+   ✓ R2 status INITIATED marks only the non-ACTIVE account 30ms
+   ✓ R2 status INITIALIZING marks only the non-ACTIVE account 7ms
+   ✓ R2 status FAILED marks only the non-ACTIVE account 5ms
+   ✓ R2 status INACTIVE marks only the non-ACTIVE account 5ms
+   ✓ R2 status EXPIRED marks only the non-ACTIVE account 5ms
+   ✓ R2 status UNKNOWN marks only the non-ACTIVE account 4ms
+   ✓ R2 broker JSON-RPC error message invalid_credentials becomes an attributed visible failure with no retry 18ms
+   ✓ R2 broker JSON-RPC error message Token has expired becomes an attributed visible failure with no retry 10ms
+   ✓ R2 broker JSON-RPC error message authentication failed becomes an attributed visible failure with no retry 13ms
+   ✓ R2 broker JSON-RPC error message invalid_auth becomes an attributed visible failure with no retry 9ms
+   ✓ R2 broker JSON-RPC error message token_revoked becomes an attributed visible failure with no retry 6ms
+   ✓ R2 broker JSON-RPC error message account is not active becomes an attributed visible failure with no retry 6ms
+   ✓ R2 successful content and permission refusals never impersonate an auth failure 3ms
+   ✓ R2 scheduled preflight uses one safe read per account, hourly, before work; never probes unknown toolkits 29ms
+   ✓ R2 preflight catches an ACTIVE idle lapse and stops scheduled work 8ms
+   ✓ R2 hourly probe budget survives reopening the ledger and renewal of the owner token 7ms
+   ✓ Flux contract: tool error refreshes inventory and EXPIRED identifies only its account 8ms
+   ✓ Flux contract: generic error with ACTIVE status is not a reconnect incident 7ms
+   ✓ Flux contract: project-key HTTP 401 is an outage, never a user reconnect 5ms
+   ✓ Flux contract: project-key HTTP 403 is an outage, never a user reconnect 4ms
+   ✓ Flux contract: an in-band project-key error is not mistaken for upstream account auth 4ms
+   ✓ Flux contract: preflight upstream 401 with ACTIVE status raises reconnect 7ms
+   ✓ Flux contract: preflight upstream 403 with ACTIVE status raises reconnect 7ms
+   × Flux contract: a JSON error inside MCP content is still an upstream preflight failure 18ms
+   × Flux contract: an unattributed multi-app tool error still refreshes account statuses 5ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > Flux contract: a JSON error inside MCP content is still an upstream preflight failure
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ server/connector-reconnect-r2.test.ts:144:64
+    142|   failure = { result: { isError: true, content: [{ type: "text", text:…
+    143|   await call(undefined, undefined, { scheduled: true });
+    144|   expect(calls.every(c => String(c.id).startsWith("health-"))).toBe(tr…
+       |                                                                ^
+    145|   expect(appsNeedingReconnect(cfg)[0]?.accounts).toHaveLength(2);
+    146| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > Flux contract: an unattributed multi-app tool error still refreshes account statuses
+AssertionError: expected 1 to be greater than 1
+ ❯ server/connector-reconnect-r2.test.ts:155:26
+    153|     { tool_slug: "GMAIL_FETCH_EMAILS", account: "work", arguments: {} …
+    154|   ] } } }, undefined, undefined, { botId: "fixture" });
+    155|   expect(inventoryReads).toBeGreaterThan(before);
+       |                          ^
+    156|   expect(appsNeedingReconnect(cfg).map(a => a.accounts)).toEqual([[{ i…
+    157| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 23 passed (25)
+   Start at  04:07:05
+   Duration  4.97s (transform 3.69s, setup 4.17s, import 445ms, tests 237ms, environment 0ms)
+

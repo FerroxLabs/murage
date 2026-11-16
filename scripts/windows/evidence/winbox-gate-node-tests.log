@@ -1,0 +1,26 @@
+24.08 21.30 21.09 26/9637 11
+✔ all three console/Terminal classes fail globally, without Murage ancestry (1.784173ms)
+✔ baseline allows only already visible windows, not initially hidden windows (0.594006ms)
+✔ hidden console windows are recorded but never offending (0.210978ms)
+✔ visible descendants include arbitrary classes at any tree depth; main app and unrelated GUI allowed (0.279171ms)
+✔ ancestry is resolved independent of snapshot order and executable path case/slashes (0.220543ms)
+✔ ancestry survives exited parents and PID reuse never invents new ancestry (0.858135ms)
+✔ reused HWND/PID with new process birth is not baseline-exempt (0.167303ms)
+✔ short one-sample flash remains evidence; repeated observations deduplicate (0.144969ms)
+✔ positive run requires complete workflow, cleanup, screenshot, prerequisites, and sample coverage (1.231689ms)
+✔ unresolvable offending owner metadata fails with actionable null fields (0.371681ms)
+✔ self-test must FAIL and separately prove detector health; blind sampler cannot pass self-test (0.300894ms)
+✔ invalid sample ordering/identity cannot produce PASS (0.234264ms)
+✔ driver executes five real transports in order and waits for its exact routine completion (0.687798ms)
+✔ failed or hung routine prevents browser/Sentinel phases and cannot be recorded successful (0.791805ms)
+✔ missing routine run identity is fatal (0.264809ms)
+✔ wait timeout is bounded and callback errors are not swallowed (0.200132ms)
+✔ CLI emits JSON verdict and separate offending-owner list with failure exit status (30.304244ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 102.00007
