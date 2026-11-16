@@ -53,51 +53,27 @@ test("no link-derived console argument in cloud-door-link, cloud-link-queue, clo
   assert.doesNotMatch(code(preload), /connect-paste", *[a-z]/i, "Use copied link sends no argument");
 });
 
-// A crash dump holds process memory, which can include a door link ticket. Dumps
-// are kept on this computer only: the reporter may start solely with uploads off
-// and an empty server address, and nothing may turn uploading on later.
-const LOCAL_ONLY_START = /^crashReporter\.start\(\{ uploadToServer: false, submitURL: "", compress: true \}\)$/;
+// Crashpad cannot be stopped once started. Upload-disabled dumps still persist
+// process memory, including link tickets and desktop-only user passwords.
 function crashReporterProblems(file, text) {
-  const problems = [];
   const body = code(text);
-  // Every upload setting anywhere must be the local-only one.
-  for (const match of body.matchAll(/\buploadToServer\b\s*[:=(]?\s*([^,}\s)]*)/g)) if (match[1] !== "false") problems.push(`${file}: uploadToServer ${match[0]}`);
-  for (const match of body.matchAll(/\bsubmitURL\b\s*[:=]?\s*([^,}\s)]*)/g)) if (match[1] !== '""') problems.push(`${file}: submitURL ${match[0]}`);
-  for (const word of [/\bsetUploadToServer\b/, /\bgetUploadToServer\b/]) if (word.test(body)) problems.push(`${file}: ${word}`);
-  // crashReporter is only imported, handed on, or started local-only.
-  for (const match of body.matchAll(/\bcrashReporter\b(\s*\.\s*\w+\s*\([^)]*\))?/g)) {
-    const member = match[1];
-    if (!member) continue;
-    if (!LOCAL_ONLY_START.test(match[0].replace(/\s+/g, " ").replace(/^crashReporter ?\. ?/, "crashReporter."))) problems.push(`${file}: ${match[0]}`);
-  }
-  const starts = body.match(/\bcrashReporter\s*\.\s*start\b/g) ?? [];
-  const localStarts = body.match(/\bcrashReporter\.start\(\{ uploadToServer: false, submitURL: "", compress: true \}\)/g) ?? [];
-  if (starts.length !== localStarts.length) problems.push(`${file}: crashReporter.start without the local-only options`);
-  return problems;
+  return /\bcrashReporter\b|\bstartLocalCrashReporter\b/.test(body) ? [`${file}: crash reporting is forbidden`] : [];
 }
 
-test("crash dumps stay local: crashReporter starts only with uploads off and no submitURL", () => {
+test("no production desktop module imports or starts Crashpad", () => {
   const sources = filesUnder("electron", /\.(mjs|cjs|js)$/).filter((file) => !/\.(node-)?test\.mjs$|electron-smoke/.test(file));
-  const problems = sources.flatMap((file) => crashReporterProblems(file, read(file)));
-  assert.deepEqual(problems, []);
-  const users = sources.filter((file) => /\bcrashReporter\b/.test(code(read(file)))).sort();
-  assert.deepEqual(users, ["electron/crash-dumps.mjs", "electron/main.mjs"].map((file) => path.normalize(file)), "only these files touch crashReporter");
-  const starts = users.flatMap((file) => code(read(file)).match(/\bcrashReporter\.start\(/g) ?? []);
-  assert.equal(starts.length, 1, "one local-only start");
+  assert.ok(sources.length > 50);
+  assert.deepEqual(sources.flatMap((file) => crashReporterProblems(file, read(file))), []);
 });
 
-test("the crash reporter guard fails on any upload or submitURL", () => {
-  const good = 'crashReporter.start({ uploadToServer: false, submitURL: "", compress: true });';
-  assert.deepEqual(crashReporterProblems("x.mjs", good), []);
+test("the crash reporter guard rejects local-only starts too", () => {
+  assert.deepEqual(crashReporterProblems("x.mjs", "const enabled = false;"), []);
   for (const bad of [
-    'crashReporter.start({ uploadToServer: true, submitURL: "", compress: true });',
-    'crashReporter.start({ uploadToServer: false, submitURL: "https://crash.example/upload", compress: true });',
-    'crashReporter.start({ submitURL: "https://crash.example", compress: true });',
-    'crashReporter.start({ compress: true });',
-    'crashReporter.start(options);',
-    'const options = { uploadToServer: enabled, submitURL: url };',
-    'crashReporter.setUploadToServer(true);',
-    'crashReporter.addExtraParameter("k", "v");',
+    'crashReporter.start({ uploadToServer: false, submitURL: "", compress: true });',
+    'crashReporter.start({ uploadToServer: true, submitURL: "https://crash.example" });',
+    'const { crashReporter: reporter } = require("electron"); reporter.start(options);',
+    'import { crashReporter } from "electron";',
+    'startLocalCrashReporter(reporter);',
   ]) assert.notDeepEqual(crashReporterProblems("x.mjs", bad), [], bad);
 });
 

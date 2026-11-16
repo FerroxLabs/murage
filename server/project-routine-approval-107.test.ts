@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { initializeProjectTables, prepareProjectTablesForRestore, deleteProjectRows } from "./project-tables.ts";
 import { initializeMessageTables } from "./message-tables.ts";
 import { channelToProjectRows } from "./project-settings.ts";
-import { roomRequest, markRequestDispatched } from "./room-requests.ts";
+import { roomRequest, markRequestDispatched, enterOwnerWait, leaveOwnerWait } from "./room-requests.ts";
 import { inspectInstallationDatabase, snapshotInstallationDatabase } from "./installation-database-snapshot.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 import { persistedProjectRoutineOptions, recordProjectRoutine, projectRoutineCeiling, type ProjectRoutineRunFacts, type ProjectRoutineAuthorityCurrent } from "./project-routines.ts";
@@ -27,7 +27,7 @@ describe("the ceiling taken when the run is delivered to the room", () => {
   it("a scheduled or manual run: the lower of the routine's level and its bot's level then", () => {
     expect(projectRoutineCeiling(run(), { permissionMode: "unlimited" }, bot("unlimited"))).toEqual({ permissionMode: "unlimited", triggerSource: "schedule" });
     expect(projectRoutineCeiling(run({ manual: true, triggerSource: "manual" }), { permissionMode: "unlimited" }, bot("auto"))).toEqual({ permissionMode: "auto", triggerSource: "manual" });
-    expect(projectRoutineCeiling(run({ triggerSource: undefined, manual: true }), { permissionMode: "full" }, bot("unlimited"))).toEqual({ permissionMode: "full", triggerSource: "manual" });
+    expect(projectRoutineCeiling(run({ triggerSource: undefined, manual: true }), { permissionMode: "full" }, bot("full"))).toEqual({ permissionMode: "full", triggerSource: "manual" });
   });
 
   it("a webhook or channel run, another audience, or no routine or bot: none, so it keeps asking", () => {
@@ -40,10 +40,19 @@ describe("the ceiling taken when the run is delivered to the room", () => {
   });
 });
 
+it("No limits project delivery ignores saved ceilings for manual and scheduled routines", () => {
+  for (const permissionMode of ["ask","auto","full"] as const) for (const triggerSource of ["manual","schedule"] as const) {
+    expect(projectRoutineCeiling(run({manual:triggerSource === "manual",triggerSource}),{permissionMode},bot("unlimited")))
+      .toEqual({permissionMode:"unlimited",triggerSource});
+  }
+});
+
 describe("the server wiring", () => {
   const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
   it("records a ceiling only for a request it just created, and the judge reads it only for an unattended turn", () => {
-    expect(source).toContain("persistedProjectRoutineOptions(database(), request, projectRoutineCurrent)");
+    // MAIN RULING: G-NL e0135c57f5 authenticates each live turn; a native
+    // approval wait retains its exact ceiling without readmitting waiting work.
+    expect(source).toContain('persistedProjectRoutineOptions(database(), request, projectRoutineCurrent, "turn")');
     expect(source).toMatch(/const routineWake = unattended \? routineWakeCeiling\(event\.threadId\) \?\? \(asker \? projectRoomRoutineCeiling\(event\.threadId, asker\) : undefined\) : undefined;/);
     // The room request keeps its unattended mark; only the validated tool-approval lookup supplies a routine ceiling.
     expect(readFileSync(new URL("./project-routines.ts", import.meta.url), "utf8")).toMatch(/targetThreadId: input\.threadId, unattended: true/);
@@ -78,10 +87,33 @@ describe("108 durable project routine authority", () => {
     for (const level of ["ask", "auto", "full", "unlimited"] as const) {
       const authority = options(id, () => ({ ...current(), permissionMode: level })).routineAuthority!;
       expect(authority.permissionMode).toBe(level);
-      const verdict = routineTurnApproval({ bot: bot("unlimited"), run: authority, tool: "Bash", summary: "echo fixture", context: { stopLine: null } }).verdict;
+      const verdict = routineTurnApproval({ bot: bot("full"), run: authority, tool: "Bash", summary: "echo fixture", context: { stopLine: null } }).verdict;
       if (level === "ask") expect(verdict.approve).toBeNull(); else expect(verdict.approve).not.toBeNull();
     }
     expect(effectiveRoutinePermissionMode(options(id).routineAuthority!, bot("ask"))).toBe("ask");
+  });
+  it("H2 No limits preserves a durable Ask ceiling and the saved delivery metadata", () => {
+    const id=deliver();
+    const authority=options(id,()=>({...current(),permissionMode:"ask"})).routineAuthority!;
+    expect(authority.permissionMode).toBe("ask");
+    const result=routineTurnApproval({bot:bot("unlimited"),run:authority,tool:"Bash",summary:"echo fixture",context:{stopLine:null}});
+    expect(result.mode).toBe("ask");expect(result.verdict.approve).toBeNull();
+  });
+  it("keeps the exact routine ceiling while its native approval is waiting, and rejects ended requests", () => {
+    const id=deliver();
+    expect(markRequestDispatched(db,id,{now:5,targetThreadId:"room"})).toBe(true);
+    enterOwnerWait(db,id,6);
+    expect(roomRequest(db,id)?.state).toBe("waiting_owner");
+    expect(options(id)).toEqual({});
+    const turnOptions=(read=current)=>persistedProjectRoutineOptions(db,roomRequest(db,id)!,read,"turn");
+    expect(turnOptions().routineAuthority?.permissionMode).toBe("unlimited");
+    expect(turnOptions(()=>({...current(),permissionMode:"ask"})).routineAuthority?.permissionMode).toBe("ask");
+    expect(turnOptions(()=>({...current(),audienceBinding:"different"}))).toEqual({});
+    leaveOwnerWait(db,id,7);
+    expect(options(id).routineAuthority?.permissionMode).toBe("unlimited");
+    const request=roomRequest(db,id)!;
+    for(const state of ["waiting_bot","done","failed","cancelled","expired","unknown"] as const)
+      expect(persistedProjectRoutineOptions(db,{...request,state},current,"turn")).toEqual({});
   });
   it("keeps authenticated manual delivery distinct from scheduled delivery", () => {
     const manual = { ...input(), authority: { ...input().authority, ceiling: { permissionMode: "full" as const, triggerSource: "manual" as const } } };

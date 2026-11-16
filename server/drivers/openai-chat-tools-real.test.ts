@@ -1,3 +1,4 @@
+// control: legacy cases retain their original assertions unless individually labelled red-at-4df086541 below.
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -16,6 +17,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents } from "../testing/events.ts";
+import { bindOpenAIFixture } from "../testing/bound-openai-fixture.ts";
+import { fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
 import { OpenAICompatDriver } from "./openai-compat.ts";
 
 const URL_ = process.env.MURAGE_REAL_CHAT_TOOLS_URL;
@@ -51,6 +54,7 @@ const turn = async (decide: "deny" | "allow") => {
     instanceId: `real-tools-${decide}`, displayName: "Real tools", environment: {}, enabled: true,
     config: OpenAICompatDriver.decodeConfig({ url: URL_, key: process.env.MURAGE_REAL_CHAT_TOOLS_KEY || "keyless-local", model: MODEL }),
   });
+  bindOpenAIFixture(instance); // control: isolated generation, original transport clocks
   instances.push(instance);
   const log = join(dir, `${decide}.ndjson`);
   const opened: Array<{ ranBefore: number; summary: unknown }> = [];
@@ -64,11 +68,12 @@ const turn = async (decide: "deny" | "allow") => {
   });
   const recorder = recordEvents(instance.adapter);
   const threadId = `real-tools-${decide}-${Date.now()}`;
-  const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
+  // control: the opt-in tool transport also needs server-owned bound admission.
+  const { turnId } = await instance.adapter.sendTurn(fixtureMountTurn({ cwd: fixtureBotFolder(),
     threadId, model: MODEL,
     text: "What is the code word for Alice? Use the real_lookup_code tool to find out, then answer in one short sentence.",
     integrations: { custom: { real: { command: process.execPath, args: [script], env: { FAKE_LOG: log } } } },
-  } as never);
+  } as never));
   const completed = await recorder.until((event) => event.type === "turn.completed" && event.turnId === turnId, 240_000) as unknown as { ok: boolean };
   const events = recorder.events as unknown as Array<{ type: string; itemType?: string; text?: string }>;
   recorder.stop();
@@ -90,7 +95,7 @@ describe.skipIf(!URL_ || !MODEL)("real model, real MCP tool (opt-in)", () => {
 
   it("Ask: the call raises a card, and a declined card means the tool never runs", async () => {
     const result = await turn("deny");
-    console.log(`[real-tools] ask: cards=${result.opened.length} ran=${result.ran} ok=${result.completed.ok} reply=${JSON.stringify(result.reply.slice(0, 200))}`);
+    console.log(`[real-tools] cards=${result.opened.length} ran=${result.ran}`);
     expect(result.opened.length).toBeGreaterThan(0);
     expect(result.opened.every((card) => card.ranBefore === 0)).toBe(true);
     expect(result.ran).toBe(0);
@@ -98,7 +103,7 @@ describe.skipIf(!URL_ || !MODEL)("real model, real MCP tool (opt-in)", () => {
 
   it("Full: the allowed call runs once the card is answered, and its result reaches the reply", async () => {
     const result = await turn("allow");
-    console.log(`[real-tools] full: cards=${result.opened.length} ran=${result.ran} ok=${result.completed.ok} reply=${JSON.stringify(result.reply.slice(0, 200))}`);
+    console.log(`[real-tools] cards=${result.opened.length} ran=${result.ran}`);
     expect(result.opened.length).toBeGreaterThan(0);
     expect(result.opened[0]!.ranBefore).toBe(0);
     expect(result.ran).toBeGreaterThan(0);

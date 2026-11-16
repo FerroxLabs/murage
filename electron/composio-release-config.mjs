@@ -16,3 +16,7 @@ export const FLUX_COMPOSIO_BROKER_URL = "https://api.fluxrouter.ai/composio";
  * (0.1.52 release + 60 days). "" means no cut-off. Must match the Worker's own
  * LEGACY_BROKER_UNTIL. */
 export const COMPOSIO_LEGACY_BROKER_UNTIL = "2026-11-10T00:00:00Z";
+
+/** Stable wire/storage identifiers; neither is owner-facing copy. */
+export const COMPOSIO_ADMISSION_FILE = "composio-admission.json";
+export const COMPOSIO_ADMISSION_NAMESPACE = "composio-admission-v1";

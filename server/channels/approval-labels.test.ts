@@ -1,3 +1,4 @@
+import { channelApprovalFixture as channelApproval } from "../testing/channel-approval-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -25,8 +26,9 @@ describe("channel approval labels", () => {
     channelReplyPacks.de = { ...savedDe, ...(swapped as object) };
     setChannelReplyLanguage(() => "de");
     const sendMessage = vi.fn(async () => ({ messageId: 7 }));
+    const approval = channelApproval({ id: "a1", fingerprint: "f1", summary: "Run a command" });
     const approvals = new TelegramApprovals(
-      { pending: () => [{ id: "a1", fingerprint: "f1", summary: "Run a command" }], resolve: async () => true },
+      { pending: () => [approval], resolve: async () => true },
       { sendMessage, answerCallbackQuery: vi.fn(async () => undefined) } as never,
     );
     await approvals.publish({ senderId: "1", chatId: "1" }, () => true, new AbortController().signal);

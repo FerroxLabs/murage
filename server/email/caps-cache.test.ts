@@ -1,3 +1,4 @@
+import { createMemoryEmailRuntime } from "../testing/email-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -20,6 +21,7 @@ import { FakeFlux, fluxError, type FakeReply } from "../testing/fake-flux-email.
 import { EMAIL_STATUS_COPY } from "../../shared/email-copy.ts";
 import type { BotRecord } from "../store.ts";
 
+import { provenInsert } from "../testing/email-proven.ts";
 const KEY_A = "sk-flux-account-a-fixture";
 const KEY_B = "sk-flux-account-b-fixture";
 const REF_A = credentialFingerprint(KEY_A);
@@ -56,11 +58,13 @@ const flush = async (rounds = 30) => { for (let i = 0; i < rounds; i++) await ne
 const advance = async (ms: number) => { clock += ms; await vi.advanceTimersByTimeAsync(ms); await flush(); };
 
 function make(): EmailRuntime {
-  const runtime = new EmailRuntime({
+  const runtime = createMemoryEmailRuntime({
     accountKey: () => accountKey, database: () => db, transaction: fn => fn(), fetch: fetchFn, apiBase: "https://api.flux.test", appBase: "https://app.flux.test",
     now: () => clock, workspaceRoot: () => undefined, bot: id => (LOCAL_BOTS.has(id) ? { id, name: "Juniper", threadId: `t-${id}` } as unknown as BotRecord : undefined),
     log: line => logs.push(line), capsFile: file, onStatus: () => { statusEvents++; },
   });
+  // These cached-capability scenarios model a connected inbox, including its sealed key.
+  runtime.secrets.setBotKey("b1", { token: "bot-fixture", keyId: "key_b1" });
   runtimes.push(runtime);
   return runtime;
 }
@@ -70,7 +74,7 @@ const deps = (runtime: EmailRuntime): OwnerRouteDeps => ({
 const route = (runtime: EmailRuntime, method: string, path: string, body?: unknown) =>
   emailOwnerRoute(deps(runtime), { method, path: new URL(`http://x${path}`).pathname, query: new URL(`http://x${path}`).searchParams, body, surface: "desktop", botCredential: false });
 const tables = () => (db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'email_%'").all() as Array<{ name: string }>).map(row => row.name);
-const binding = (runtime: EmailRuntime, botId = "b1") => runtime.services()!.store.insertBinding({
+const binding = (runtime: EmailRuntime, botId = "b1") => provenInsert(runtime.services()!.store, {
   botId, inboxId: `ibx_${botId}`, address: `${botId}@x.mybot`, username: botId, displayName: "Juniper", emailKeyRef: `key_${botId}`, fluxAccountId: null, state: "active",
   step: null, opId: null, opStartedAt: null, policy: "ask", failure: null, updatedAt: clock,
 } as never);

@@ -15,7 +15,7 @@
 // and gives up after a short busy wait instead of holding the thread.
 import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { DatabaseSync, type StatementSync } from "node:sqlite";
+import { DatabaseSync, type StatementSync } from "../sqlite-open.ts";
 import { DATA_DIR } from "../config.ts";
 import { instrumentDatabase } from "../io-budget.ts";
 import { walBytes, WAL_DRAIN_BYTES, type IndexHit } from "./index.ts";
@@ -44,6 +44,11 @@ let open: Open | null = null;
 /** Moves on every close: a scan that started under an older epoch stops (its file may be gone or replaced). */
 let epoch = 0;
 let blocked = false;
+/** r3.2.8d D3: every connection the main-process reader opens on the index is made here: handle()'s shared connection (the design's R:257)
+ * and borrowScan's (the design's R:420). node:sqlite opens are native, so no fs spy sees them; tests wrap this to count them. Production passes straight through to `new DatabaseSync`. */
+export const readerTestHooks: { openIndexConnection: (path: string, options: { readOnly: true }) => DatabaseSync } = {
+  openIndexConnection: (path, options) => new DatabaseSync(path, options),
+};
 let lastState: IndexReaderState = "missing";
 
 export const RECALL_SEARCH_SQL = `SELECT l.id AS id,l.version AS version,l.rank AS rank FROM lexical l JOIN entries e ON e.id=l.id AND e.version=CAST(l.version AS INTEGER)
@@ -230,6 +235,7 @@ export function memoryIndexReaderOpens(): number { return readerOpens; }
  * cannot be read or the main database is not attached (the caller then matches the records' text). Owner search takes it again for
  * every slice, so a handle closed or replaced between slices (the helper restarting) is never used. */
 export function ownerIndexHandle(): DatabaseSync | null {
+  if (writerDrain) return null;
   const current = handle();
   return current && current.eligible ? current.db : null;
 }
@@ -253,7 +259,7 @@ function handle(): Open | null {
   try {
     // A link (or anything but a regular file) as the index or its log is never opened, not even read-only (MEMINDEX-BUSY-109).
     if (!indexFilesRegular(path)) throw new Error("UNSAFE_MEMORY_INDEX");
-    db = new DatabaseSync(path, { readOnly: true });
+    db = readerTestHooks.openIndexConnection(path, { readOnly: true });
     db.exec(`PRAGMA busy_timeout=${BUSY_MS}; PRAGMA cache_size=-${READER_CACHE_KIB}`);
     // A file the helper has not finished creating has no word table yet.
     db.prepare("SELECT 1 FROM entries LIMIT 1").get();
@@ -300,6 +306,7 @@ function rankedRows(current: Open, expression: string, scopes: string, start: nu
  * unscored records of a search are exactly these among the eligible ones (the helper's own definition: no vector row). */
 export function vectorlessAmong(refs: ReadonlyArray<{ id: string; version: number }>, model: string): Array<{ id: string; version: number }> | null {
   if (!refs.length) return [];
+  if (writerDrain) return null;
   const current = handle();
   if (!current) return null;
   try {
@@ -314,6 +321,7 @@ export function vectorlessAmong(refs: ReadonlyArray<{ id: string; version: numbe
 export function lexicalPage(query: string, scopeIds: readonly string[], limit: number, offset = 0): LexicalPage | null {
   const terms = memoryIndexTerms(query);
   if (!terms.length) return { hits: [], more: false };
+  if (writerDrain) return null;
   const current = handle();
   if (!current) return null;
   const expression = terms.map(term => `"${term.replaceAll('"', '""')}"`).join(" OR ");
@@ -407,6 +415,7 @@ interface Scan { db: DatabaseSync; ino: number; dev: number; authIno: number; el
 const scanPool: Scan[] = [];
 const SCAN_POOL_MAX = 2;
 function borrowScan(current: Open): Scan | null {
+  if (blocked) return null;
   const fits = (scan: Scan) => scan.ino === current.ino && scan.dev === current.dev && scan.authIno === current.authIno && scan.eligible === current.eligible && scan.epoch === epoch;
   for (const stale of scanPool.filter(scan => !fits(scan))) { scanPool.splice(scanPool.indexOf(stale), 1); try { stale.db.close(); } catch { /* idempotent */ } }
   const idle = scanPool.pop();
@@ -414,7 +423,7 @@ function borrowScan(current: Open): Scan | null {
   let db: DatabaseSync | null = null;
   try {
     if (!indexFilesRegular(current.path)) throw new Error("UNSAFE_MEMORY_INDEX");
-    db = new DatabaseSync(current.path, { readOnly: true });
+    db = readerTestHooks.openIndexConnection(current.path, { readOnly: true });
     db.exec(`PRAGMA busy_timeout=${BUSY_MS}; PRAGMA cache_size=-${READER_CACHE_KIB}`);
     return { db, ino: current.ino, dev: current.dev, authIno: current.authIno, eligible: current.eligible && attachAuthority(db), statements: new Map(), epoch };
   } catch (error) { try { db?.close(); } catch { /* already closed */ } logSwallowed("recall", error); return null; }
@@ -448,6 +457,17 @@ let loggedGateTimeout = false;
 // 1.0.2: lazy. index.ts -> relevance -> ... -> drivers/engine-input -> dispatch -> bundle -> search -> this file is an import cycle, so WAL_DRAIN_BYTES
 // is not yet initialised when this module body runs in the memory worker (TDZ ReferenceError killed the worker, no job ever completed).
 let walThreshold: number | undefined;
+/** MEMW 1.11: the helper's drain. While it is on no scan is admitted and no read touches the index (owner search, vectorless, word pages
+ * answer null), so every snapshot ends and the helper's TRUNCATE can restart the log. Only the helper lifts it (or its exit); DRAIN_MAX_MS never does. */
+let writerDrain = false;
+export function setIndexWriterDrain(on: boolean): void { writerDrain = on; if (!on) wakeAll(); }
+export function indexWriterDrainOn(): boolean { return writerDrain; }
+/** Scans admitted and not yet released (their snapshots may still be open). Tests read it. */
+export function memoryIndexScansActive(): number { return activeScans; }
+/** Tests only: called by lexicalPageSliced just before its final sort (the snapshot must be over by then, 1.11). */
+export const readerTestProbe: { beforeSort?: () => void } = {};
+/** A scan with no deadline of its own stops here (1.11). */
+export const SCAN_DEFAULT_DEADLINE_MS = 2500;
 let requestCheckpoint: (() => boolean | Promise<boolean>) | null = null;
 const admitQueue: Array<() => void> = [];
 /** Asks the writer to truncate the log; resolves true when it did (the acknowledgement). In production this is a message to the
@@ -461,10 +481,28 @@ export function resetScanAdmission(): void {
   if (gateTimer) clearTimeout(gateTimer);
   gateTimer = null;
   wakeAll();
+  wakeDrains();
+}
+/** MEMW r3.2.8 point 4: the most a reset waits for the main process's scans to end after it cancelled them. A policy value: it is reached
+ * only by a scan that ignores cancellation, which is a defect ("stuck"); the measured unwind (D-CAP(a)) must stay under 1 s. */
+export const RESET_DRAIN_MAX_MS = 10_000;
+const drainWaiters: Array<() => void> = [];
+function wakeDrains(): void { for (const wake of drainWaiters.splice(0)) wake(); }
+/** MEMW r3.2.8 point 4: blocks every new open, closes the shared handle and the idle pool and moves the epoch. The epoch move IS the
+ * cancellation: every sliced scan stops at its next check and gives back its connection and admission. "drained" once no scan is
+ * active, "stuck" at capMs (a timed-out drain is never "drained"). The reader stays blocked either way; the caller unblocks it. */
+export function drainMemoryIndexReaders(capMs: number = RESET_DRAIN_MAX_MS): Promise<"drained" | "stuck"> {
+  blockMemoryIndexReader();
+  if (activeScans === 0) return Promise.resolve("drained");
+  return new Promise(resolve => {
+    const wake = () => { clearTimeout(timer); resolve("drained"); };
+    const timer = setTimeout(() => { const at = drainWaiters.indexOf(wake); if (at >= 0) drainWaiters.splice(at, 1); resolve(activeScans === 0 ? "drained" : "stuck"); }, capMs);
+    drainWaiters.push(wake);
+  });
 }
 const sleep = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
 function wakeAll(): void { for (const wake of admitQueue.splice(0)) wake(); }
-const gated = () => admissionClosed;
+const gated = () => admissionClosed || writerDrain;
 function liftGate(): void {
   admissionClosed = false;
   if (gateTimer) { clearTimeout(gateTimer); gateTimer = null; }
@@ -484,7 +522,7 @@ function gateIfWalLarge(path: string): void {
   try { large = walBytes(path) > (walThreshold ?? WAL_DRAIN_BYTES); } catch { /* no log to measure */ }
   if (!large) return;
   admissionClosed = true;
-  gateTimer = setTimeout(missedCheckpoint, DRAIN_MAX_MS);
+  gateTimer = setTimeout(() => { logSwallowed("recall", "MEMORY_INDEX_SCAN_STUCK"); missedCheckpoint(); }, DRAIN_MAX_MS);
   gateTimer.unref?.();
   sendCheckpointWhenIdle();
 }
@@ -519,6 +557,7 @@ async function admitScan(path: string, signal?: AbortSignal, deadlineAt?: number
 }
 function releaseScan(path: string): void {
   activeScans = Math.max(0, activeScans - 1);
+  if (activeScans === 0) wakeDrains();
   gateIfWalLarge(path);
   if (activeScans === 0) sendCheckpointWhenIdle();
 }
@@ -533,6 +572,8 @@ export interface ScanOptions {
   signal?: AbortSignal;
 }
 
+/** Thrown from planRecall's yield when the scan was cancelled (the epoch moved or the signal fired): the scan answers null. */
+const SCAN_CANCELLED = new Error("SCAN_CANCELLED");
 /** lexicalPage with the exact same answer (positions [offset, offset + limit) of the order (rank, id, version)), read in short
  * chunks with `yieldTurn` between them, so no match count can hold the event loop. The whole scan reads ONE snapshot (a read
  * transaction on its own connection, held by the open statement and ended in `finally`): a write that lands while the loop is
@@ -543,8 +584,12 @@ export interface ScanOptions {
 export async function lexicalPageSliced(query: string, scopeIds: readonly string[], limit: number, offset = 0, yieldTurn: () => Promise<void> = () => new Promise<void>(resolve => setImmediate(resolve)), options: ScanOptions = {}): Promise<LexicalPage | null> {
   const tokens = recallTokens(query);
   if (!tokens.length) return { hits: [], more: false };
+  if (writerDrain) return null;
+  const deadlineAt = options.deadlineAt ?? Date.now() + SCAN_DEFAULT_DEADLINE_MS;
   const current = handle();
   if (!current) return null;
+  // MEMW r3.2.8 4.2: the epoch this scan belongs to is the one its handle came from, taken before it can wait for admission.
+  const born = epoch;
   const eligible = options.eligible === true && current.eligible, historical = options.historical === true;
   const scopes = JSON.stringify(scopeIds);
   const form = eligible ? (historical ? "h" : "c") : "-", key = `${tokens.join("\u0001")}\u0000${scopes}\u0000${form}`, wanted = offset + limit + 1;
@@ -558,16 +603,32 @@ export async function lexicalPageSliced(query: string, scopeIds: readonly string
   const dataVersion = () => `${Number(current.db.prepare("PRAGMA data_version").get()?.data_version ?? -1)}:${eligible ? Number(current.db.prepare("PRAGMA authority.data_version").get()?.data_version ?? -1) : 0}`;
   let scan: Scan | null = null, healthy = false, inTransaction = false, admitted = false;
   let matches: Iterator<Record<string, unknown>> | null = null;
+  /** Ends the snapshot and gives back the connection and the admission, once: at the end of the walk (MEMW 1.11: the final sort runs
+   * outside the snapshot, so no sort holds a frame a TRUNCATE needs), or in `finally` for every other exit. */
+  const endScan = (ok: boolean) => {
+    try { matches?.return?.(); } catch { /* the statement is finished */ }
+    matches = null;
+    if (scan) {
+      let fine = ok;
+      if (inTransaction) try { scan.db.exec("ROLLBACK"); } catch { /* the connection is closed */ fine = false; }
+      inTransaction = false;
+      returnScan(scan, fine);
+      scan = null;
+    }
+    if (admitted) { admitted = false; releaseScan(current.path); }
+  };
   try {
     const version = dataVersion();
     const w = slicedWindow;
     if (w && w.key === key && w.ino === current.ino && w.version === version && performance.now() - w.at < WINDOW_TTL_MS && (w.end || wanted <= w.rows.length)) return toPage(w.rows, w.bounded);
-    if (!await admitScan(current.path, options.signal, options.deadlineAt)) return options.signal?.aborted ? null : { hits: [], more: false, partial: true };
+    // gated out (its deadline spent at a closed gate): null, never an empty partial page
+    if (!await admitScan(current.path, options.signal, deadlineAt)) return null;
     admitted = true;
+    // MEMW r3.2.8b (f): a block (and maybe an unblock) while this scan waited for admission: it opens nothing under the new epoch.
+    if (options.signal?.aborted || epoch !== born) { healthy = true; return null; }
     scan = borrowScan(current);
     if (!scan) return null;
     const prepared = (name: string, sql: string) => { const known = scan!.statements.get(name); if (known) return known; const made = scan!.db.prepare(sql); scan!.statements.set(name, made); return made; };
-    const born = epoch;
     // One snapshot of the index and of the record tables for the whole scan (the choice of words included): both are read once here,
     // inside the transaction.
     scan.db.exec("BEGIN");
@@ -588,8 +649,10 @@ export async function lexicalPageSliced(query: string, scopeIds: readonly string
     const keys = scopeRows.map(row => Number(row.n));
     // Postings still owed to the scopes this recall reads (the kept ones): nothing another scope holds is part of the answer.
     const filling = enumerating || scopeRows.some(row => Number(row.owed) === 1);
+    const stopped = () => options.signal?.aborted || epoch !== born;
     let probeClock = performance.now();
-    const plan = await planRecall(prepared("probe", PROBE_SQL), tokens, keys, async () => { if (performance.now() - probeClock >= SLICE_BUDGET_MS) { await yieldTurn(); probeClock = performance.now(); } });
+    // MEMW r3.2.8a Mc: a cancellation stops the choice of words too, at its next yield (SCAN_CANCELLED, caught below).
+    const plan = await planRecall(prepared("probe", PROBE_SQL), tokens, keys, async () => { if (performance.now() - probeClock >= SLICE_BUDGET_MS) { await yieldTurn(); probeClock = performance.now(); if (stopped()) throw SCAN_CANCELLED; } });
     if (options.signal?.aborted || epoch !== born) { healthy = epoch === born; return null; }
     if (!plan) { healthy = true; return { hits: [], more: false, ...filling || capped ? { bounded: true as const } : {} }; }
     const resolve = prepared("resolve", RESOLVE_SQL);
@@ -608,14 +671,16 @@ export async function lexicalPageSliced(query: string, scopeIds: readonly string
     const best: Array<Record<string, unknown>> = [];
     const batchSize = ranked ? Math.max(1, planRows) : RECALL_COMMON_WALK;
     let size = CHUNK_MIN, since = performance.now(), partial = false, exhausted = false, batchLeft = false, stepped = 0, spent = false;
-    const stopped = () => options.signal?.aborted || epoch !== born;
-    const pastDeadline = () => options.deadlineAt !== undefined && Date.now() >= options.deadlineAt;
+    const pastDeadline = () => Date.now() >= deadlineAt;
     while (!partial && !exhausted && !spent && best.length < keep) {
       const batch: Array<Record<string, unknown>> = [];
       while (batch.length < batchSize) {
         if (stopped()) { healthy = epoch === born; return null; }
         if (pastDeadline()) { partial = true; break; }
-        while (batch.length < batchSize && performance.now() - since < SLICE_BUDGET_MS) {
+        // Check the clock once per bounded chunk, as in the eligibility
+        // phase below. Per-row clock reads dominated short index seeks and
+        // admitted needless writer/checkpoint work between every few matches.
+        while (batch.length < batchSize && (batch.length % CHUNK_MIN !== 0 || performance.now() - since < SLICE_BUDGET_MS)) {
           if (stepped >= planRows) { spent = true; break; }
           const next = matches.next();
           if (next.done) { exhausted = true; break; }
@@ -649,6 +714,9 @@ export async function lexicalPageSliced(query: string, scopeIds: readonly string
     // chunk ended inside the run is an accident of chunk sizes, and the answer must not depend on it.
     const trimmed = best.length > keep;
     if (trimmed) best.length = keep;
+    // MEMW 1.11: everything is read; the snapshot ends here, before the sort (which may take several slices at SLICED_WINDOW_MAX rows).
+    endScan(epoch === born);
+    readerTestProbe.beforeSort?.();
     // Up to SLICED_WINDOW_MAX rows: one sort of 50,000 held the loop for ~40 ms, so a long list is sorted in runs and merged in slices.
     const sorted = await sortSliced(best, before, async () => { if (performance.now() - since >= SLICE_BUDGET_MS) { await yieldTurn(); since = performance.now(); } });
     if (stopped()) { healthy = epoch === born; return null; }
@@ -662,16 +730,12 @@ export async function lexicalPageSliced(query: string, scopeIds: readonly string
     slicedWindow = { key, ino: current.ino, version, at: performance.now(), rows: best, end: done, bounded };
     return toPage(best);
   } catch (error) {
+    if (error === SCAN_CANCELLED) { healthy = epoch === born; return null; }
     closeMemoryIndexReader();
     lastState = "unreadable";
     logSwallowed("recall", error);
     return null;
   } finally {
-    try { matches?.return?.(); } catch { /* the statement is finished */ }
-    if (scan) {
-      if (inTransaction) try { scan.db.exec("ROLLBACK"); } catch { /* the connection is closed */ healthy = false; }
-      returnScan(scan, healthy);
-    }
-    if (admitted) releaseScan(current.path);
+    endScan(healthy);
   }
 }

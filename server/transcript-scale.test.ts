@@ -1,3 +1,4 @@
+import { appendFixtureMessage, answerFixtureStoreMessage } from './testing/approval-card.ts';
 // Lane E (1.0.2 scale): bounded transcript work. The loaded-thread cache is an
 // LRU, turn prep and terminal capture stop early instead of materialising the
 // whole thread, and quote targets resolve one id at a time.
@@ -119,7 +120,7 @@ describe("Store transcript scale", () => {
   it("an old unanswered card does not widen the page: it rides beside it, cached or not", () => {
     const store = new Store(selection);
     const bot = store.createBot();
-    const card = store.appendMessage(bot.threadId, { role: "bot", kind: "options", text: "May I?", card: { title: "May I?", options: [], requestId: "req-old", tool: "Bash" } } as never);
+    const card = appendFixtureMessage(store, bot.threadId, { role: "bot", kind: "options", text: "May I?", card: { title: "May I?", options: [], requestId: "req-old", tool: "Bash" } } as never);
     for (let i = 0; i < 300; i++) store.appendMessage(bot.threadId, { role: i % 2 ? "bot" : "user", kind: "text", text: `line ${i}` });
     // the old head-span rule would have stretched the page back to the card
     expect(store.newestPageSpan(bot.threadId)).toBeGreaterThan(300);
@@ -139,7 +140,7 @@ describe("Store transcript scale", () => {
     const bot = store.createBot();
     store.appendMessage(bot.threadId, { role: "bot", kind: "options", text: "old", card: { title: "old", options: [], requestId: "req-a", tool: "Bash", answered: "allow" } } as never);
     for (let i = 0; i < 150; i++) store.appendMessage(bot.threadId, { role: "user", kind: "text", text: `line ${i}` });
-    store.appendMessage(bot.threadId, { role: "bot", kind: "options", text: "new", card: { title: "new", options: [], requestId: "req-b", tool: "Bash" } } as never);
+    appendFixtureMessage(store, bot.threadId, { role: "bot", kind: "options", text: "new", card: { title: "new", options: [], requestId: "req-b", tool: "Bash" } } as never);
     const page = new Store(selection).messagePage(bot.threadId, 100)!;
     expect(new Store(selection).openCardsOutside(bot.threadId, page.messages)).toEqual([]);
   });
@@ -256,9 +257,9 @@ describe("lane E review findings (ui-review/REPORT.md)", () => {
     const store = new Store(selection);
     const { threadId } = store.createBot();
     const [root] = lines(store, threadId, 1, "start");
-    const kept = store.appendMessage(threadId, ask("req-kept"));
+    const kept = appendFixtureMessage(store, threadId, ask("req-kept"));
     const [edited] = lines(store, threadId, 1, "question");
-    const abandoned = store.appendMessage(threadId, ask("req-abandoned"));
+    const abandoned = appendFixtureMessage(store, threadId, ask("req-abandoned"));
     // the owner edits the question: the abandoned card is on the old fork
     store.branchMessage(threadId, edited!, "question, edited");
     lines(store, threadId, 150, "after");
@@ -398,7 +399,7 @@ describe("lane E round 2 findings (ui-review-r2/REPORT.md)", () => {
     const store = new Store(selection);
     const { threadId } = store.createBot();
     const [root] = lines(store, threadId, 1, "start");
-    const card = store.appendMessage(threadId, ask("req-old"));
+    const card = appendFixtureMessage(store, threadId, ask("req-old"));
     const [x] = lines(store, threadId, 1, "after the card");
     // 3,000 rows of an abandoned fork are stored after the card, then the owner returns to x
     store.branchMessage(threadId, x!, "fork");
@@ -422,7 +423,7 @@ describe("lane E round 2 findings (ui-review-r2/REPORT.md)", () => {
     const store = new Store(selection);
     const { threadId } = store.createBot();
     lines(store, threadId, 3, "start");
-    const card = store.appendMessage(threadId, ask("req-old"));
+    const card = appendFixtureMessage(store, threadId, ask("req-old"));
     const ids = lines(store, threadId, 400, "after");
     const reader = new Store(selection);
     const page = reader.messagePage(threadId, 100)!;
@@ -457,13 +458,13 @@ describe("lane E round 2 findings (ui-review-r2/REPORT.md)", () => {
     const store = new Store(selection);
     const { threadId } = store.createBot();
     lines(store, threadId, 3, "start");
-    const open = store.appendMessage(threadId, ask("req-x"));
+    const open = appendFixtureMessage(store, threadId, ask("req-x"));
     const reply = store.appendMessage(threadId, { role: "bot", kind: "text", text: "a", turnId: "turn-x" } as never);
     const rows = (sql: string, ...args: string[]) => database().prepare(sql).all(...args) as Array<Record<string, unknown>>;
     expect(rows("SELECT id FROM open_card WHERE thread_id = ?", threadId).map((r) => r.id)).toEqual([open.id]);
     expect(rows("SELECT first_rowid FROM turn_first WHERE thread_id = ? AND turn_id = ?", threadId, "turn-x")).toHaveLength(1);
     // answering closes it
-    store.patchMessage(threadId, open.id, { card: { title: "May I?", options: [], requestId: "req-x", tool: "Bash", answered: "allow" } as never });
+    answerFixtureStoreMessage(store, threadId, open.id, { answered: "allow" });
     expect(rows("SELECT id FROM open_card WHERE thread_id = ?", threadId)).toEqual([]);
     expect(reply.id).toBeDefined();
   });

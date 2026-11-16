@@ -5,7 +5,8 @@ import { DATA_DIR } from "../config.ts";
 import { database,closeDatabase } from "../database.ts";
 import { appendMessage } from "../message-db.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
-import { memoryAccess,reconcileMemoryRoster } from "./policy.ts";
+import { reconcileMemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { claimMemoryJob,publishMemoryWork } from "./jobs.ts";
 import { captureWork } from "./chunks.ts";
@@ -17,6 +18,9 @@ import { setMemoryCaptureRoster } from "./capture-scope.ts";
 import { readMemoryLearning,updateMemoryLearning } from "./learning-policy.ts";
 import { memoryAgentRoute } from "./routes.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { openTurnLineage, closeTurnLineage, checkedOpenTurns } from "./lineage-write.ts";
+import { bindFixtureTurn, fixtureHttp } from "../testing/consuming-fixture.ts";
+import { stageResultProvenance } from "../consuming-turn-response.ts";
 
 afterEach(()=>setMemoryCaptureRoster(null));
 beforeEach(()=>{closeDatabase();removeTempDirSync(DATA_DIR);mkdirSync(DATA_DIR,{recursive:true});});
@@ -406,6 +410,38 @@ it.each(["webhook","tool","other-bot","other-thread","later-invitation"])("reche
  const extractor:TextOnlyExtractor=Object.assign(async()=>"[]",{ground});
  expect(await memoryAgentRoute("/api/internal/memory/save",{text,evidence:[{sourceId:"r7-race",revision:1,startByte:0,endByte:Buffer.byteLength(text)}],ownerInvitation:f.evidence[0],claimType:"character-canon",idempotencyKey:"r7-race"},f.context,f.bridge,undefined,extractor)).toMatchObject({state:"candidate"});
  expect(ground).toHaveBeenCalledOnce();
+});
+
+// Hydration producer owner: c3-memory. Final response fence owner: sfx-fixture.
+// Memory HTTP composition regression consumer owner: new3-g2d.
+it.each(["accepted", "record-revoked", "source-revoked", "retired"] as const)("a hydrated get is fenced at response acceptance: %s", async scenario => {
+  const f=fixture(),db=database();
+  const turn=openTurnLineage(db,{threadId:"thread",turnId:`read-response-${scenario}`});
+  try {
+    const bound=bindFixtureTurn(db,turn,"bot");
+    const sink=fixtureHttp(bound.binding,"POST /api/internal/memory/get");
+    const result=await memoryAgentRoute("/api/internal/memory/get",{handles:[{id:f.recordId,version:1}]},f.context,f.bridge);
+    const serialized=JSON.stringify(result);
+    expect(serialized).toContain("Verified source note");
+    expect(serialized).not.toContain('"refs"');
+    stageResultProvenance(sink.writer,result);
+    if(scenario==="record-revoked")db.prepare("INSERT INTO memory_deny_memory(kind,id,version,revoke_id) VALUES('record',?,1,1)").run(f.recordId);
+    if(scenario==="source-revoked")db.prepare("INSERT INTO memory_deny_memory(kind,id,version,revoke_id) VALUES('source',?,1,1)").run(f.evidence[0].sourceId);
+    if(scenario==="retired")bound.replace();
+    const release=()=>{sink.writer.writeHead(200,{"content-type":"application/json"});sink.writer.end(serialized);};
+    if(scenario==="accepted") {
+      release();
+      expect(sink.output).toEqual([{status:200},{status:200,body:serialized}]);
+      expect(checkedOpenTurns(turn)[0].parents).toEqual(expect.arrayContaining([
+        {kind:"memory",ref:{kind:"record",id:f.recordId,version:1}},
+        {kind:"memory",ref:{kind:"source",id:f.evidence[0].sourceId,version:1}},
+      ]));
+    } else {
+      expect(release).toThrow("MEMORY_CONTEXT_REVOKED");
+      expect(sink.output).toEqual([{status:409},{status:409,body:"I stopped this turn because some of its context is no longer available."}]);
+      expect(JSON.stringify(sink.output)).not.toContain("Verified source note");
+    }
+  } finally { closeTurnLineage(turn); }
 });
 
 useOutsideStoreFixture();

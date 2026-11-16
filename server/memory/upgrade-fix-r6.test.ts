@@ -1,3 +1,4 @@
+import { insertLegacyFixtureMessage } from '../testing/approval-card.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -13,7 +14,7 @@ import { closeDatabase, database, finishBackgroundUpgradeWorkNow } from "../data
 import { Store } from "../store.ts";
 import { dismissStalePeerCards, type ApprovalBus } from "../peer-approval.ts";
 import { dismissStaleHostConsentCards } from "../host-computer-consent.ts";
-import { insertMessage, messagesHighWater, openToolCardPlans, readMessage } from "../message-db.ts";
+import { messagesHighWater, openToolCardPlans, readMessage } from "../message-db.ts";
 import { ensureOpenCardIndex } from "../transcript-backfill.ts";
 import { advanceMemoryShapeMarks } from "./schema.ts";
 import { readExact } from "./bounded-read.ts";
@@ -193,7 +194,7 @@ function history(db: DatabaseSync, thread: string, rows: number, cards: Array<[s
   // the cards go through the writer, so the open-card list is kept the way the app keeps it
   cards.forEach(([tool, requestId], index) => {
     const at = rows + 1 + index;
-    insertMessage(thread, { id: `${thread}-card-${index}`, at, role: "bot", kind: "options", text: "ask", parentId: `${thread}-${rows}`, card: { title: "c", subtitle: "s", options: ["Allow", "Deny"], requestId, tool } } as never);
+    insertLegacyFixtureMessage(thread, { id: `${thread}-card-${index}`, at, role: "bot", kind: "options", text: "ask", parentId: `${thread}-${rows}`, card: { title: "c", subtitle: "s", options: ["Allow", "Deny"], requestId, tool } } as never);
   });
   db.prepare("INSERT OR REPLACE INTO thread_state(thread_id,active_leaf_id) VALUES(?,?)").run(thread, `${thread}-${rows}`);
 }
@@ -208,7 +209,7 @@ it("r6-3: a point patch of a card in an unloaded 20,000-row thread reads one row
   expect(loaded(store, thread)).toBe(false);
   const counter = rowsReadBy(db);
   let patched;
-  try { patched = store.patchMessagePoint(thread, `${thread}-card-0`, { card: { title: "c", subtitle: "s", options: [], requestId: "dead-1", tool: "ask_bot", answered: "deny", dismissed: true } as never }); } finally { counter.stop(); }
+  try { patched = store.patchMessagePoint(thread, `${thread}-card-0`, { card: { title: "c", subtitle: "s", options: ["Allow", "Deny"], requestId: "dead-1", tool: "ask_bot", answered: "deny", dismissed: true } as never }); } finally { counter.stop(); }
   expect(patched?.card?.dismissed).toBe(true);
   expect(counter.rows()).toBeLessThanOrEqual(10); // the card's row, its index rows, the write's own bookkeeping: never the 20,000
   expect(loaded(store, thread)).toBe(false);

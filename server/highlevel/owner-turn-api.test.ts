@@ -7,13 +7,15 @@
 // turn could mount HighLevel and every negative row would pass for nothing: the positive row proves the mount on head and base.
 // The queued-drain, ask-answer, card-continuation, held-continuation and edit-and-rerun rows fail on 4de80ecbf, whose deny-list
 // gate mounted HighLevel on each; the manual routine row fails on bdb32ec95 (pre-gate).
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { HIGHLEVEL_READ_TOOL_NAMES } from "../../shared/highlevel.ts";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { defaultHighLevelFamilies, HIGHLEVEL_READ_TOOL_NAMES } from "../../shared/highlevel.ts";
 import { launchVerificationServer, type VerificationServer } from "../../scripts/control-murage.ts";
 import { HIGHLEVEL_CLOSED_LINE } from "./owner-turn.ts";
+import { raiseLevel } from "../testing/raise-level.ts";
 
 const SERVER_DIR = join(dirname(fileURLToPath(import.meta.url)), "..");
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -21,12 +23,16 @@ const CONNECTION = "hl_fixture1";
 let fixture: VerificationServer;
 let headers: Record<string, string> = {};
 let counter = 0;
+const routeEvidence: unknown[] = [];
+const testBots: Array<{ id: string; threadId: string }> = [];
 
 const askDir = () => join(fixture.info.dataDir, "ask");
 const api = async (method: string, path: string, body?: unknown) => {
   const response = await fetch(`${fixture.info.url}${path}`, { method, headers: { "content-type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
   const text = await response.text();
-  return { status: response.status, body: (text ? JSON.parse(text) : {}) as any };
+  const result = { status: response.status, body: (text ? JSON.parse(text) : {}) as any };
+  if (path.includes('/respond') || path.includes('/browser-setup/')) routeEvidence.push({method,path,body,result});
+  return result;
 };
 const botState = async (id: string) => (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === id);
 const idle = async (id: string) => { await expect.poll(async () => (await botState(id))?.busy, { timeout: 30000 }).toBe(false); };
@@ -54,14 +60,13 @@ const internal = async (token: string, path: string, body: unknown) => {
   return { status: response.status, body: await response.json() as any };
 };
 /** A fresh owner line whose held turn files a browser-setup card; the turn then ends. Returns the card's message id. */
-const browserCard = async (bot: { id: string; threadId: string }, words: string) => {
+const browserCard = async (bot: { id: string; threadId: string }, words: string, busy = false) => {
   reset(); arm("hold");
   expect((await send(bot, words)).status).toBe(202);
   const env = await liveEnv();
   const card = await internal(env.MURAGE_COMMS_TOKEN!, "/api/internal/request-browser-connection", { reason: "Use the signed-in page" });
   expect(card.status).toBe(201);
-  release();
-  await idle(bot.id);
+  if (!busy) { release(); await idle(bot.id); }
   await settleTurns(bot.threadId, 1);
   expect(turns(bot.threadId)[0].highlevel).toBe(true);
   return card.body.messageId as string;
@@ -73,6 +78,7 @@ const grantedBot = async (name: string, instanceId = "queues") => {
   const created = await api("POST", "/api/bots", { name, modelSelection: { instanceId, model: "ask-1" } });
   expect(created.status).toBe(201);
   const bot = created.body.bot as { id: string; threadId: string };
+  testBots.push(bot);
   expect((await grant(bot.id)).status).toBe(200);
   return bot;
 };
@@ -83,6 +89,8 @@ posixOnly("HL-RO: HighLevel mounts only on the owner's own fresh line, through t
       const fs=await import('node:fs');const path=await import('node:path');
       const dataDir=process.env.MURAGE_DATA_DIR;
       const askDir=path.join(dataDir,'ask');fs.mkdirSync(askDir,{recursive:true});
+      process.env.FAKE_TELEGRAM_DIR=path.join(askDir,'telegram');fs.mkdirSync(process.env.FAKE_TELEGRAM_DIR,{recursive:true});
+      await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "telegram-fetch-preload.mjs")).href)});
       const { BUILT_IN_DRIVERS } = await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "drivers", "builtIn.ts")).href)});
       const { makeAskDriver } = await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-ask-driver.ts")).href)});
       BUILT_IN_DRIVERS.push(makeAskDriver());
@@ -102,7 +110,27 @@ posixOnly("HL-RO: HighLevel mounts only on the owner's own fresh line, through t
     const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string };
     headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
   }, 90000);
-  afterAll(async () => { await fixture?.close(); });
+  afterEach(async () => {
+    // A failed positive witness must not leave a held owner turn that blocks
+    // the later webhook/routine cases at owner-first admission.
+    for (const bot of testBots.splice(0)) {
+      if ((await botState(bot.id))?.busy) {
+        expect((await api("POST", `/api/bots/${bot.id}/interrupt`, { threadId: bot.threadId })).status).toBe(200);
+        await idle(bot.id);
+      }
+    }
+    reset();
+  });
+  afterAll(async () => {
+    if (fixture) {
+      const evidenceDir = process.env.HIGHLEVEL_EVIDENCE_DIR ?? join(tmpdir(), 'highlevel-verification');
+      mkdirSync(evidenceDir, { recursive: true });
+      copyFileSync(fixture.info.logPath, join(evidenceDir, 'server.log'));
+      writeFileSync(join(evidenceDir, 'mount-workflow.json'), JSON.stringify({ fixture: fixture.info,
+        routes: routeEvidence, turns: allRows().map(row => ({ threadId: row.threadId, text: row.text, highlevel: row.highlevel === true, closedLine: String(row.system).includes(HIGHLEVEL_CLOSED_LINE) })) }, null, 2));
+    }
+    await fixture?.close();
+  });
 
   it("a fresh desktop send at idle mounts HighLevel, and its primer has no closed line", async () => {
     const bot = await grantedBot("HL RO fresh");
@@ -158,12 +186,13 @@ posixOnly("HL-RO: HighLevel mounts only on the owner's own fresh line, through t
     const asked = await internal(env.MURAGE_COMMS_TOKEN!, "/api/internal/ask-user", { questions: [{ question: "Which channel?", options: [{ label: "Email" }, { label: "Slack" }], multiSelect: true }] });
     expect(asked.status).toBe(201);
     const card = (await messages(bot.threadId)).find((m) => m.id === asked.body.messageId);
+    expect(card.card.answerAsSend).toBe(true);
     release();
     await idle(bot.id);
     await settleTurns(bot.threadId, 1);
     expect(turns(bot.threadId)[0].highlevel).toBe(true);
-    const answered = await api("POST", `/api/threads/${bot.threadId}/respond`, { requestId: card.card.requestId, behavior: "answer", answers: [{ id: "q1", selected: ["Email"] }] });
-    expect(answered.status).toBe(200);
+    const answered = await api("POST", `/api/threads/${bot.threadId}/respond`, { requestHandle: card.card.requestHandle, action: "answer", answers: [{ questionHandle: card.card.questions[0].handle, optionHandles: [card.card.questions[0].options.find((option: any) => option.label === "Email").handle] }] });
+    expect(answered.status, JSON.stringify(answered.body)).toBe(200);
     await settleTurns(bot.threadId, 2);
     expect(turns(bot.threadId)[1].highlevel).toBeUndefined();
     await idle(bot.id);
@@ -172,7 +201,8 @@ posixOnly("HL-RO: HighLevel mounts only on the owner's own fresh line, through t
   it("a direct-thread card continuation (browser setup declined) gets no HighLevel", async () => {
     const bot = await grantedBot("HL RO card");
     const messageId = await browserCard(bot, "card owner line");
-    expect((await api("POST", `/api/threads/${bot.threadId}/browser-setup/${messageId}`, { action: "decline" })).status).toBe(200);
+    const declined = await api("POST", `/api/threads/${bot.threadId}/browser-setup/${messageId}`, { action: "decline" });
+    expect(declined.status, JSON.stringify(declined.body)).toBe(200);
     await settleTurns(bot.threadId, 2);
     const rows = turns(bot.threadId);
     expect(rows[1].text).toContain("declined optional browser connection");
@@ -187,7 +217,8 @@ posixOnly("HL-RO: HighLevel mounts only on the owner's own fresh line, through t
     const messageId = await browserCard(bot, "held owner line");
     arm("no-tools");
     // on a route with no tools the continuation is held, never dispatched (startTurnAdmitting copies its opts as JSON)
-    expect((await api("POST", `/api/threads/${bot.threadId}/browser-setup/${messageId}`, { action: "decline" })).status).toBe(200);
+    const declined = await api("POST", `/api/threads/${bot.threadId}/browser-setup/${messageId}`, { action: "decline" });
+    expect(declined.status, JSON.stringify(declined.body)).toBe(200);
     await expect.poll(async () => (await api("GET", `/api/threads/${bot.threadId}/browser-setup/${messageId}`)).body.setup?.resumed, { timeout: 20000 }).toBe(true);
     await idle(bot.id);
     await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -197,6 +228,71 @@ posixOnly("HL-RO: HighLevel mounts only on the owner's own fresh line, through t
     rmSync(join(askDir(), "no-tools"), { force: true });
     expect((await grant(bot.id)).status).toBe(200);
     await settleTurns(bot.threadId, 2);
+    expect((await api("GET", `/api/threads/${bot.threadId}/browser-setup/${messageId}`)).body.setup.resumed).toBe(true);
+    const rows = turns(bot.threadId);
+    expect(rows[1].text).toContain("declined optional browser connection");
+    expect(rows[1].highlevel).toBeUndefined();
+    await idle(bot.id);
+    // the grant still mounts: a fresh owner line on this bot gets HighLevel, so the row above was not vacuous
+    expect((await send(bot, "fresh after the held one")).status).toBe(202);
+    await settleTurns(bot.threadId, 3);
+    expect(turns(bot.threadId)[2].highlevel).toBe(true);
+    await idle(bot.id);
+  }, 120000);
+
+  it("a busy ask-card answer gets no HighLevel", async () => {
+    const bot = await grantedBot("HL RO answer");
+    reset(); arm("hold");
+    expect((await send(bot, "ask me first")).status).toBe(202);
+    const env = await liveEnv();
+    const asked = await internal(env.MURAGE_COMMS_TOKEN!, "/api/internal/ask-user", { questions: [{ question: "Which channel?", options: [{ label: "Email" }, { label: "Slack" }], multiSelect: true }] });
+    expect(asked.status).toBe(201);
+    const card = (await messages(bot.threadId)).find((m) => m.id === asked.body.messageId);
+    expect(card.card.answerAsSend).toBe(true);
+    await settleTurns(bot.threadId, 1);
+    expect(turns(bot.threadId)[0].highlevel).toBe(true);
+    const answered = await api("POST", `/api/threads/${bot.threadId}/respond`, { requestHandle: card.card.requestHandle, action: "answer", answers: [{ questionHandle: card.card.questions[0].handle, optionHandles: [card.card.questions[0].options.find((option: any) => option.label === "Email").handle] }] });
+    expect(answered.status, JSON.stringify(answered.body)).toBe(200);
+    release();
+    await idle(bot.id);
+    await settleTurns(bot.threadId, 2);
+    expect(turns(bot.threadId)[1].highlevel).toBeUndefined();
+    await idle(bot.id);
+  }, 90000);
+
+  it("a busy direct-thread card continuation gets no HighLevel", async () => {
+    const bot = await grantedBot("HL RO card");
+    const messageId = await browserCard(bot, "busy card owner line", true);
+    const declined = await api("POST", `/api/threads/${bot.threadId}/browser-setup/${messageId}`, { action: "decline" });
+    expect(declined.status, JSON.stringify(declined.body)).toBe(200);
+    release(); await idle(bot.id);
+    await settleTurns(bot.threadId, 2);
+    const rows = turns(bot.threadId);
+    expect(rows[1].text).toContain("declined optional browser connection");
+    expect(rows[1].highlevel).toBeUndefined();
+    await idle(bot.id);
+  }, 90000);
+
+  it("a busy held card continuation gets no HighLevel once tools return", async () => {
+    // the engine reports no tools for a while instead of the bot changing engines: an engine change ends the HighLevel grant
+    // (its role binding), and the row would then pass for nothing
+    const bot = await grantedBot("HL RO held", "switchable");
+    const messageId = await browserCard(bot, "busy held owner line", true);
+    arm("no-tools");
+    // on a route with no tools the continuation is held, never dispatched (startTurnAdmitting copies its opts as JSON)
+    const declined = await api("POST", `/api/threads/${bot.threadId}/browser-setup/${messageId}`, { action: "decline" });
+    expect(declined.status, JSON.stringify(declined.body)).toBe(200);
+    release();
+    await expect.poll(async () => (await api("GET", `/api/threads/${bot.threadId}/browser-setup/${messageId}`)).body.setup?.resumed, { timeout: 20000 }).toBe(true);
+    await idle(bot.id);
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(turns(bot.threadId)).toHaveLength(1);
+    // tools again; saving the same grant changes the bot, which walks its held items: the held drain starts it with
+    // cardContinuation and heldContinuationId
+    rmSync(join(askDir(), "no-tools"), { force: true });
+    expect((await grant(bot.id)).status).toBe(200);
+    await settleTurns(bot.threadId, 2);
+    expect((await api("GET", `/api/threads/${bot.threadId}/browser-setup/${messageId}`)).body.setup.resumed).toBe(true);
     const rows = turns(bot.threadId);
     expect(rows[1].text).toContain("declined optional browser connection");
     expect(rows[1].highlevel).toBeUndefined();
@@ -219,4 +315,91 @@ posixOnly("HL-RO: HighLevel mounts only on the owner's own fresh line, through t
     expect(ran()[0].highlevel).toBeUndefined();
     await idle(bot.id);
   }, 90000);
+  it.each(['explicit', 'inherited', 'ask'] as const)('GNL-HL F1 %s webhook mounts according to authenticated No limits policy', async state => {
+    if (state === 'inherited') expect((await api('PATCH', '/api/config', { newBots: { permissionLevel: 'no-limits' } })).status).toBe(200);
+    const bot = await grantedBot(`GNL-HL ${state}`);
+    if (state === 'explicit') expect((await raiseLevel(api, bot.id, { noLimits: true, acknowledgeNoLimits: true, acknowledgeLocalAuto: true })).status).toBe(200);
+    reset();
+    const prompt = `GNL-HL F1 ${state} webhook witness`;
+    const hook = await api('POST', '/api/webhooks', { name: prompt, prompt, botId: bot.id, runOn: 'ember' });
+    expect(hook.status).toBe(201);
+    const response = await fetch(hook.body.credential.url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ fixture: true }) });
+    expect(response.status).toBe(202);
+    const rows = () => allRows().filter(row => String(row.text ?? '').includes(prompt));
+    await expect.poll(() => rows().length, { timeout: 30000 }).toBe(1);
+    if (state === 'inherited') expect((await api('PATCH', '/api/config', { newBots: { permissionLevel: 'ask' } })).status).toBe(200);
+    expect(rows()[0].highlevel === true).toBe(state !== 'ask');
+    if (state !== 'ask') expect(rows()[0].system).not.toContain(HIGHLEVEL_CLOSED_LINE);
+    await idle(bot.id);
+  }, 90000);
+
+  it('GNL-HL F1 No limits routine mounts without a fresh owner message', async () => {
+    const bot = await grantedBot('GNL-HL routine');
+    expect((await raiseLevel(api, bot.id, { noLimits: true, acknowledgeNoLimits: true, acknowledgeLocalAuto: true })).status).toBe(200);
+    reset();
+    const prompt = 'GNL-HL F1 routine witness';
+    const created = await api('POST', '/api/routines', { name: prompt, prompt, botId: bot.id, enabled: false, schedule: { type: 'interval', everyMinutes: 30, anchorAt: Date.now() }, timeoutMinutes: 20, permissionMode: 'unlimited' });
+    expect(created.status, JSON.stringify(created.body)).toBe(201);
+    expect((await api('POST', `/api/routines/${created.body.routine.id}/run`)).status).toBe(201);
+    const rows = () => allRows().filter(row => String(row.text ?? '').includes(prompt));
+    await expect.poll(() => rows().length, { timeout: 30000 }).toBe(1);
+    expect(rows()[0].highlevel).toBe(true);
+    expect(rows()[0].system).not.toContain(HIGHLEVEL_CLOSED_LINE);
+    await idle(bot.id);
+  }, 90000);
+
+  it('AFIX H1 explicitly No limits task on an Ask bot mounts its only family despite an empty operation allowlist', async () => {
+    const bot = await grantedBot('AFIX task policy');
+    expect((await api('PUT', `/api/highlevel/bots/${bot.id}/access`, { grants: [{ connectionId: CONNECTION, families: { ...defaultHighLevelFamilies(), contacts: 'read' }, operations: [] }] })).status).toBe(200);
+    const raised = await api('PATCH', `/api/bots/${bot.id}/tasks/${bot.threadId}`, { noLimits: true, acknowledgeNoLimits: true, acknowledgeLocalAuto: true });
+    expect(raised.status, JSON.stringify(raised.body)).toBe(200);
+    expect((await botState(bot.id)).noLimits).not.toBe(true);
+    expect(raised.body.task.noLimits).toBe(true);
+    reset();
+    expect((await send(bot, 'AFIX explicit task policy witness')).status).toBe(202);
+    await settleTurns(bot.threadId, 1);
+    expect(turns(bot.threadId)[0].highlevel).toBe(true);
+    expect(turns(bot.threadId)[0].system).not.toContain(HIGHLEVEL_CLOSED_LINE);
+    await idle(bot.id);
+  }, 90000);
+
+  it('GNL-HL F1 queued No limits owner work keeps HighLevel without a fresh ticket', async () => {
+    const bot = await grantedBot('GNL-HL queued owner');
+    expect((await raiseLevel(api, bot.id, { noLimits: true, acknowledgeNoLimits: true, acknowledgeLocalAuto: true })).status).toBe(200);
+    reset(); arm('hold');
+    expect((await send(bot, 'GNL-HL F1 held owner work')).status).toBe(202);
+    await live();
+    expect((await send(bot, 'GNL-HL F1 queued owner work')).status).toBe(202);
+    release(); await idle(bot.id); await settleTurns(bot.threadId, 2);
+    expect(turns(bot.threadId).map(row => row.highlevel)).toEqual([true, true]);
+  }, 90000);
+
+  it('GNL-HL F1 the paired owner Telegram DM mounts HighLevel at No limits', async () => {
+    const bot = await grantedBot('GNL-HL channel owner');
+    expect((await api('PATCH', `/api/bots/${bot.id}`, { chiefOfStaff: true, chiefScope: 'workspace' })).status).toBe(200);
+    expect((await grant(bot.id)).status).toBe(200);
+    expect((await raiseLevel(api, bot.id, { noLimits: true, acknowledgeNoLimits: true, acknowledgeLocalAuto: true, fullAccessChannelMessages: true })).status).toBe(200);
+    const dir = join(askDir(), 'telegram');
+    let sequence = 0; const updates: unknown[] = [];
+    const update = (text: string) => {
+      const id = ++sequence;
+      updates.push({ update_id: id, message: { message_id: id, date: Math.floor(Date.now()/1000), from: { id: 777, is_bot: false, first_name: 'Fixture owner' }, chat: { id: 777, type: 'private' }, text } });
+      const staged = join(dir, 'updates.tmp.json'); writeFileSync(staged, JSON.stringify(updates)); renameSync(staged, join(dir, 'updates.json'));
+    };
+    expect((await api('PATCH', '/api/config', { telegram: { botToken: '123:abcdefghijklmnopqrstuvwxyz123456' } })).status).toBe(200);
+    const pair = await api('POST', '/api/telegram/pair', { targetBotId: bot.id }); expect(pair.status).toBe(200);
+    update('/pair '+pair.body.code);
+    await expect.poll(async () => (await api('GET', '/api/telegram/status')).body.paired, { timeout: 15000 }).toBe(true);
+    const bindings = (await api('POST', '/api/memory/action', { action: 'humans' })).body.bindings;
+    const binding = bindings.find((b: any) => b.platform === 'telegram' || b.channel === 'telegram') ?? bindings[0];
+    expect(binding).toBeTruthy();
+    expect((await api('POST', '/api/memory/action', { action: 'human-link', bindingId: binding.id, expectedRevision: binding.revision, as: 'owner' })).status).toBe(200);
+    reset();
+    const prompt = 'GNL-HL F1 paired channel witness'; update(prompt);
+    const rows = () => allRows().filter(row => String(row.text ?? '').includes(prompt));
+    await expect.poll(() => rows().length, { timeout: 30000 }).toBe(1);
+    expect(rows()[0].highlevel).toBe(true); expect(rows()[0].system).not.toContain(HIGHLEVEL_CLOSED_LINE);
+    await idle(bot.id);
+  }, 90000);
+
 });

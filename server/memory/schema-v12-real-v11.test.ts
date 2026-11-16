@@ -105,7 +105,7 @@ function olderReaderResumes(thread: string, instance: string, session: string): 
 }
 
 for (const to of [10, 11] as const) {
-  it(`12 -> ${to}: a raw cursor whose later incarnation was revoked is cleared, so the older reader never judges it by the earlier clean session`, () => {
+  it(`12 -> ${to}: a raw cursor whose later incarnation was revoked is cleared, so the older reader never judges it by the earlier clean session`, async () => {
     setMemoryMode("capture"); // the real current-version file: every application and memory table
     database().exec(`INSERT INTO memory_session_lineage(thread_id,driver_instance,native_session,first_lsn,last_lsn,door_epoch) VALUES('th','drv','sess-1',1,2,1),('th','drv','sess-1#2',3,4,1),('th2','drv','sess-9',1,2,1);
       INSERT INTO memory_session_incarnation VALUES('th','drv','sess-1',1),('th','drv','sess-1',2),('th2','drv','sess-9',1);
@@ -116,7 +116,7 @@ for (const to of [10, 11] as const) {
     // the engine session behind "sess-1" is incarnation 2 (revoked), but the raw key is incarnation 1's clean row
     expect(olderReaderResumes("th", "drv", "sess-1")).toBe(true);
 
-    downgradeInstallationMemorySchema(DATA_DIR, to);
+    await downgradeInstallationMemorySchema(DATA_DIR, to);
 
     expect(olderReaderResumes("th", "drv", "sess-1")).toBe(false);
     const bots = JSON.parse(readFileSync(join(DATA_DIR, "bots.json"), "utf8"));

@@ -10,6 +10,7 @@ import {
   buildSnapshot,
   digestProviders,
   recheckSnapshot,
+  retainSnapshotData,
   renderSnapshot,
   snapshotStats,
   trimCatalog,
@@ -165,7 +166,48 @@ describe("--check, offline", () => {
   });
 });
 
+describe("metadata refresh retention", () => {
+  it("keeps missing providers, rows and fields while applying published values", () => {
+    const previous = buildSnapshot(API, { fetchedAt: "2026-09-18" });
+    const before = structuredClone(previous);
+    const fetched = buildSnapshot({ anthropic: { name: "Anthropic", models: {
+      "claude-opus-5": { name: "Updated label", cost: { output: 30 } },
+      "new-model": { name: "New model", cost: { output: 0 }, limit: { context: 1000000 } },
+    } } }, { fetchedAt: "2026-11-14" });
+    const freshBefore = structuredClone(fetched);
+    const merged = retainSnapshotData(fetched, previous);
+    expect(merged.providers.anthropic.models["claude-opus-5"]).toEqual({
+      ...previous.providers.anthropic.models["claude-opus-5"], name: "Updated label", outputPerMillion: 30,
+    });
+    expect(merged.providers.anthropic.models["claude-text-only"]).toEqual(previous.providers.anthropic.models["claude-text-only"]);
+    expect(merged.providers["not-allow-listed"]).toEqual(previous.providers["not-allow-listed"]);
+    expect(merged.providers.anthropic.models["new-model"]).toEqual(fetched.providers.anthropic.models["new-model"]);
+    expect(merged.source).toEqual(fetched.source);
+    expect(recheckSnapshot(merged).digestMatches).toBe(true);
+    expect(recheckSnapshot(merged).rendered).toBe(renderSnapshot(merged));
+    expect(retainSnapshotData(fetched, merged)).toEqual(merged);
+    expect(previous).toEqual(before);
+    expect(fetched).toEqual(freshBefore);
+  });
+
+  it("refuses corrupted inputs rather than legitimizing a hand-edited price", () => {
+    const snapshot = buildSnapshot(API, { fetchedAt: "2026-11-14" });
+    const corrupted = structuredClone(snapshot);
+    corrupted.providers.anthropic.models["claude-opus-5"].outputPerMillion = 1;
+    expect(() => retainSnapshotData(snapshot, corrupted)).toThrow(/invalid digest/);
+    expect(() => retainSnapshotData(corrupted, snapshot)).toThrow(/invalid digest/);
+  });
+});
+
 describe("the committed snapshot", () => {
+  it("bundles the published Fable 5.2 price and 1M context", () => {
+    const snapshot = JSON.parse(committed);
+    expect(snapshot.providers.anthropic.models["claude-fable-5-2"]).toEqual({
+      name: "Claude Fable 5.2", inputPerMillion: 8, outputPerMillion: 40,
+      contextWindow: 1000000, vision: true, tools: true, reasoning: true,
+    });
+  });
+
   it("is the size the bundle decision was made on", () => {
     const stats = snapshotStats(JSON.parse(committed));
     expect(stats.providers).toBeGreaterThan(200);

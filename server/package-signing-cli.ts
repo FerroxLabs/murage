@@ -4,7 +4,8 @@
 // Signs a package for the Official mark. Used by scripts/sign-package.mjs on
 // the machine that holds the offline signing key. The key is read from a file
 // path, used in memory and never printed, logged or written anywhere.
-import { lstatSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { lstatSync, readFileSync } from "node:fs";
 import { readBotPackageArchive, writeBotPackageArchive } from "./bot-package-archive.ts";
 import { packageDigest, publicKeyOf, signPackage, verifyOfficialPackage } from "./package-signature.ts";
 

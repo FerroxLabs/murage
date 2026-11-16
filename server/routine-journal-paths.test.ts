@@ -46,4 +46,10 @@ it.each([false, true])("S5 site 17 reads current-generation snapshots in memory,
   // A later ordinary save folds the in-memory routine into routines.json.
   loaded.update(snapshot.id, { name: "Saved after move" });
   expect(JSON.parse(readFileSync(file, "utf8")).routines[0]).toMatchObject({ attachments: expected });
+  // A real edit after normalization must still append and survive restart.
+  const state = loaded as unknown as { runs: Array<{ output?: string }>; save(): void };
+  state.runs[0]!.output = "fixture edited report";
+  state.save();
+  expect(readRoutineRuns(DATA_DIR, JSON.parse(readFileSync(file, "utf8")).runsCommit)[0]).toMatchObject({ output: "fixture edited report", attachments: expected });
+  expect(readFileSync(journalFile)).not.toEqual(before);
 });

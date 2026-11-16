@@ -12,6 +12,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { openSse } from "./testing/sse.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
 
 const FAKE_PI = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-pi-cli.ts");
 const FAKE_ACP = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-acp-cli.ts");
@@ -29,13 +30,13 @@ const idle = async (roomId: string) => { const state = await groupState(roomId);
 posixOnly("the turn engine: queue, durable sends, wakes, caps", () => {
   beforeAll(async () => {
     chmodSync(FAKE_ACP, 0o755);
-    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
       const fs=await import('node:fs');const path=await import('node:path');
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
       cfg.instances.piGate={driver:'piAgent',displayName:'Gated pi fixture',config:{cli:${JSON.stringify(FAKE_PI)},fullAuto:true},
         environment:{FAKE_PI_SESSION_GATE:path.join(process.env.MURAGE_DATA_DIR,'pi-session-gate')}};
-      cfg.instances.lead={driver:'grokAgent',displayName:'Lead fixture',environment:{FAKE_ACP_MODE:'lead-delegate'},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
-      cfg.instances.looper={driver:'grokAgent',displayName:'Looping lead fixture',environment:{FAKE_ACP_MODE:'lead-loop'},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
+      cfg.instances.lead={driver:'grokAgent',displayName:'Lead fixture',environment:{FAKE_ACP_MODE:'lead-delegate',FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',FAKE_ACP_MCP_LIST:'all:ready'},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
+      cfg.instances.looper={driver:'grokAgent',displayName:'Looping lead fixture',environment:{FAKE_ACP_MODE:'lead-loop',FAKE_ACP_MCP_READY:'1',FAKE_ACP_MCP_READY_METHOD:'_x.ai/mcp_initialized',FAKE_ACP_MCP_LIST:'all:ready'},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:true}};
       fs.writeFileSync(file,JSON.stringify(cfg));
     ` });
     gate = join(fixture.info.dataDir, "pi-session-gate");

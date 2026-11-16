@@ -52,6 +52,7 @@ const repo = (name: string) => {
  * release lanes are laid out. */
 const git = (cwd: string, ...args: string[]) =>
   execFileSync("git", args, {
+    windowsHide: true,
     cwd,
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t", GIT_CONFIG_NOSYSTEM: "1", HOME: root },

@@ -79,7 +79,7 @@ const SUPPORT: AcpSupport = {
   models: { default: "fixture", options: [{ id: "fixture", label: "Fixture" }] },
   nativeSource: "approval-fixture.acp", loginNote: "Fixture only",
   spawnArgs: () => ["--experimental-strip-types", FAKE_CLI],
-  pickAuthMethod: () => null, authFailure: "continue", isAuthenticated: () => true,
+  pickAuthMethod: () => null, authFailure: "continue", isAuthenticated: () => true, fluxReach: () => "elsewhere" as const
 };
 
 describe("1.0.8 ACP approval delivery", () => {
@@ -113,37 +113,31 @@ describe("1.0.8 ACP approval delivery", () => {
   const repeat = () => peer.child!.stdout.emit("data", Buffer.from(peer.request + "\n"));
   const resolved = () => recorder.events.filter(e => e.type === "request.resolved");
 
-  it("synchronous write failures preserve the card and resolver, without duplicate native cards", async () => {
+  it("R1 synchronous write throws are terminal and never duplicate the card or grant", async () => {
     const requestId = await open();
     peer.mode = "throw"; peer.failures = 3;
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     const failure = answer(requestId).catch(error => error);
     repeat();
-    expect(await failure).toMatchObject({ status: 503, reason: "EPIPE", terminal: false });
-    expect(peer.attempts).toBe(3);
-    expect(peer.delivered).toBe(0);
+    expect(await failure).toMatchObject({ status: 503, reason: "EPIPE", terminal: true });
+    await recorder.until(e => e.type === "turn.completed" && !e.ok);
+    expect(peer.attempts).toBe(1); expect(peer.delivered).toBe(0);
     expect(resolved()).toEqual([]);
-    expect(instance.adapter.hasSession(threadId)).toBe(true);
-    repeat();
+    expect(await answer(requestId)).toBe("unavailable");
     expect(recorder.events.filter(e => e.type === "request.opened")).toHaveLength(1);
-    const logs = warning.mock.calls.filter(([line]) => String(line).startsWith("acp approval delivery"));
-    expect(logs).toEqual([[`acp approval delivery thread=${threadId} request=${requestId} error=EPIPE`]]);
-    // Retrying the SAME card proves its resolver survived all three errors.
-    expect(await answer(requestId)).toBe("allowed-once");
-    expect(peer.delivered).toBe(1);
-    expect(resolved()).toHaveLength(1);
+    expect(warning.mock.calls.filter(([line]) => String(line).startsWith("acp approval delivery")))
+      .toEqual([[`acp approval delivery thread=${threadId} request=${requestId} error=EPIPE`]]);
   });
 
-  it("retries a pre-acceptance failure and coalesces concurrent answers into one delivery", async () => {
+  it("R1 concurrent answers share an uncertain write failure without retry", async () => {
     const requestId = await open();
     peer.mode = "throw"; peer.failures = 1;
-    const first = answer(requestId);
-    const second = answer(requestId);
+    const first = answer(requestId).catch(error => error);
+    const second = answer(requestId).catch(error => error);
     repeat();
-    expect(await Promise.all([first, second])).toEqual(["allowed-once", "allowed-once"]);
-    expect(peer.attempts).toBe(2);
-    expect(peer.delivered).toBe(1);
-    expect(resolved()).toHaveLength(1);
+    for (const failure of await Promise.all([first, second])) expect(failure).toMatchObject({ reason: "EPIPE", terminal: true });
+    expect(peer.attempts).toBe(1); expect(peer.delivered).toBe(0);
+    expect(resolved()).toEqual([]);
     expect(recorder.events.filter(e => e.type === "request.opened")).toHaveLength(1);
   });
 
@@ -233,19 +227,16 @@ describe("1.0.8 ACP approval delivery", () => {
     expect(recorder.events.some(e => e.type === "item.started" && e.itemId?.startsWith("approval-undelivered-"))).toBe(false);
   });
 
-  it("Deny cancels Allow retries during backoff", async () => {
+  it("R1 Deny cannot contradict an Allow whose synchronous write threw", async () => {
     const requestId = await open();
     peer.mode = "throw"; peer.failures = 1;
     const allowed = answer(requestId).catch(error => error);
-    // The write threw before acceptance, leaving only the retry timer outstanding.
     await Promise.resolve();
-    expect(await instance.adapter.respondToRequest(threadId, requestId, { behavior: "deny" })).toBe("rejected");
+    const denied = await instance.adapter.respondToRequest(threadId, requestId, { behavior: "deny" }).catch(error => error);
+    expect(denied).toMatchObject({ terminal: true });
     expect(await allowed).toBeInstanceOf(ApprovalDeliveryError);
-    expect(peer.responses).toHaveLength(2);
-    expect(peer.responses[1]).toMatchObject({ result: { outcome: { optionId: "reject" } } });
-    expect(peer.delivered).toBe(1);
-    expect(resolved()).toHaveLength(1);
-    expect(resolved()[0]).toMatchObject({ behavior: "deny", source: "user" });
+    expect(peer.responses).toHaveLength(1); expect(peer.delivered).toBe(0);
+    expect(resolved()).toEqual([]);
   });
 
   it("Deny stops the turn when an Allow write is uncertain", async () => {
@@ -309,8 +300,11 @@ describe("1.0.8 ACP approval delivery", () => {
       () => instance.adapter.respondToRequest(threadId, requestId, { behavior: "deny" }),
       stop, () => instance.adapter.hasSession(threadId), notice,
     )).resolves.toBeUndefined();
-    expect(notice).toHaveBeenCalledWith("The denial could not be delivered. This turn is being stopped.");
-    expect(stop).toHaveBeenCalledOnce();
+    // The terminal write failure already ended this turn; the helper must
+    // neither send a second denial nor stop a later turn.
+    expect(notice).not.toHaveBeenCalled(); expect(stop).not.toHaveBeenCalled();
+    expect(peer.attempts).toBe(1);
+    expect(recorder.events.some(e => e.type === "item.started" && e.title === "The engine stopped before approval delivery could be confirmed.")).toBe(true);
     await recorder.until(e => e.type === "turn.completed");
     expect(instance.adapter.hasSession(threadId)).toBe(false);
   });
@@ -371,16 +365,14 @@ describe("1.0.8 ACP approval delivery", () => {
     expect(resolved()).toEqual([]);
   });
 
-  it("a definite delivery miss on Deny leaves the card open, and the owner's next Deny lands", async () => {
+  it("R1 a synchronous Deny write throw ends the card without resending", async () => {
     const requestId = await open();
     peer.mode = "throw"; peer.failures = 3;
-    const denied = await instance.adapter.respondToRequest(threadId, requestId, { behavior: "deny" }).catch(error => error);
-    expect(denied).toMatchObject({ terminal: false });
-    expect(resolved()).toEqual([]);
-    peer.failures = 0;
-    expect(await instance.adapter.respondToRequest(threadId, requestId, { behavior: "deny" })).toBe("rejected");
-    await recorder.until(e => e.type === "request.resolved");
-    expect(resolved()[0]).toMatchObject({ behavior: "deny", source: "user" });
+    await expect(instance.adapter.respondToRequest(threadId, requestId, { behavior: "deny" }))
+      .rejects.toMatchObject({ reason: "EPIPE", terminal: true });
+    await recorder.until(e => e.type === "turn.completed" && !e.ok);
+    expect(resolved()).toEqual([]); expect(peer.attempts).toBe(1);
+    expect(await instance.adapter.respondToRequest(threadId, requestId, { behavior: "deny" })).toBe("unavailable");
   });
 
   it("Stop with a still uncertain Allow ends the turn without another response", async () => {
@@ -442,13 +434,14 @@ describe("automatic approval request lifetime", () => {
   });
 });
 
-it("the real approval API returns 503 and preserves the card until the fake ACP peer accepts a retry", async () => {
+it("the real approval API returns 503 and records terminal failed delivery without a retry or grant", async () => {
   // Patch only this isolated server child's fake-engine transport and config.
   const instrumentationSource = `
     // The server child does not inherit the Vitest worker's in-memory hook.
     // Use the same test-only seam so this transport fixture needs no shipped bwrap.
     process.env.NODE_ENV = 'test';
     globalThis[Symbol.for('murage.hostPower.testUnwrapped')] = true;
+    const awaitFs = await import('node:fs');
     const cp = (await import('node:child_process')).default;
     const spawn = cp.spawn;
     cp.spawn = function(command, args, options) {
@@ -456,14 +449,17 @@ it("the real approval API returns 503 and preserves the card until the fake ACP 
       if (!args?.includes(${JSON.stringify(FAKE_CLI)})) return child;
       const write = child.stdin.write.bind(child.stdin);
       let failures = 3;
+      const fs = awaitFs;
       child.stdin.write = function(chunk, done) {
         // Only JSON-RPC lines are the peer's; on Windows the job launcher's own
         // start frame goes down the same stdin first and must pass untouched.
         let message;
         try { message = JSON.parse(String(chunk)); } catch { return write(chunk, done); }
+        if (message.result?.outcome) fs.appendFileSync(process.env.MURAGE_DATA_DIR+'/outcome-writes.jsonl',JSON.stringify({phase:'attempt'})+'\\n');
         if (message.result?.outcome && failures-- > 0) {
           throw Object.assign(new Error('fixture write failure'), { code: 'EPIPE' });
         }
+        if(message.result?.outcome?.outcome==='selected')fs.appendFileSync(process.env.MURAGE_DATA_DIR+'/outcome-writes.jsonl',JSON.stringify({phase:'grant'})+'\\n');
         return write(chunk, done);
       };
       return child;
@@ -476,7 +472,8 @@ it("the real approval API returns 503 and preserves the card until the fake ACP 
       models: { default: 'fixture', options: [{ id: 'fixture', label: 'Fixture' }] },
       nativeSource: 'approval-fixture.acp', loginNote: 'Fixture only',
       spawnArgs: () => ['--experimental-strip-types', ${JSON.stringify(FAKE_CLI)}],
-      pickAuthMethod: () => null, authFailure: 'continue', isAuthenticated: () => true
+      pickAuthMethod: () => null, authFailure: 'continue', isAuthenticated: () => true,
+      fluxReach: () => 'elsewhere'
     }));
     const fs = await import('node:fs');
     const path = await import('node:path');
@@ -500,27 +497,40 @@ it("the real approval API returns 503 and preserves the card until the fake ACP 
     // A file edit, not a command: a command's card waits for the shell environment
     // check, and PowerShell in this fixture's bare environment outlasts both Windows
     // budgets (10 s + 30 s, against 0.5 s on a real one). Delivery is the same for both.
-    const opened = await stream.until(frame => frame.kind === "message" && frame.threadId === bot.threadId && frame.message?.card?.requestId, 30_000).catch((error: unknown) => {
+    // MAIN RULING INT-CONFLICT-DEFAULT a2a2ea007c 9537dc8215: the reviewed display card exposes a host requestHandle; retain every native R1 delivery assertion.
+    const opened = await stream.until(frame => frame.kind === "message" && frame.threadId === bot.threadId && frame.message?.card?.requestHandle, 30_000).catch((error: unknown) => {
       // A runner failure must be readable from the job log alone: every frame
       // the stream carried, and the end of the fixture server's own log.
       console.error(`[approval fixture frames]\n${stream.frames.map(frame => JSON.stringify(frame).slice(0, 1500)).join("\n")}`);
       try { console.error(`[fixture server log, last 12000 bytes]\n${readFileSync(fixture.info.logPath, "utf8").slice(-12000)}`); } catch { /* no log yet */ }
       throw error;
     });
-    const requestId = opened.message.card.requestId;
-    const respond = () => post(`/api/threads/${bot.threadId}/respond`, { requestId, behavior: "allow" });
+    const requestHandle = opened.message.card.requestHandle;
+    const messageId = opened.message.id;
+    expect(requestHandle).toBe(`p.${messageId}`);
+    expect(opened.message.card.requestId).toBeUndefined();
+    const respond = () => post(`/api/threads/${bot.threadId}/respond`, { requestHandle, action: "allow" });
     const failed = await respond();
     expect(failed.status).toBe(503);
-    expect(await failed.json()).toMatchObject({ error: "Your approval could not be delivered. The request is still waiting; please try again." });
+    // MAIN RULING 2026-11-14 R1: synchronous write throw is terminal; retry premise (1d0085e067) superseded
+    expect(await failed.json()).toMatchObject({ error: expect.stringMatching(/could not be delivered|delivery/i) });
     const messages = await (await fetch(fixture.info.url + `/api/threads/${bot.threadId}/messages`, { headers })).json() as { messages: Message[] };
-    const pending = messages.messages.find(message => message.card?.requestId === requestId)?.card;
+    const pending = messages.messages.find(message => message.id === messageId)?.card;
     expect(pending).toBeDefined();
     if (!pending) throw new Error("Missing pending approval card");
-    expect(pending.answered).toBeUndefined();
-    expect(pending.dismissed).not.toBe(true);
-    expect((await respond()).ok).toBe(true);
+    // MAIN RULING 2026-11-14 R1: synchronous write throw is terminal; retry premise (1d0085e067) superseded
+    expect(pending.answered).toMatch(/could not be delivered/);
+    // MAIN RULING 2026-11-14 R1: synchronous write throw is terminal; retry premise (1d0085e067) superseded
+    expect(pending.dismissed).toBe(true);
+    // MAIN RULING 2026-11-14 R1: synchronous write throw is terminal; retry premise (1d0085e067) superseded
+    expect((await respond()).ok).toBe(false);
     const delivered = await (await fetch(fixture.info.url + `/api/threads/${bot.threadId}/messages`, { headers })).json() as { messages: Message[] };
-    expect(delivered.messages.find(message => message.card?.requestId === requestId)?.card?.answered).toBe("allow");
+    // MAIN RULING INT-CONFLICT-DEFAULT a2a2ea007c 9537dc8215: find the same durable card by host message id, preserving the terminal failed-delivery assertion.
+    // MAIN RULING 2026-11-14 R1: synchronous write throw is terminal; retry premise (1d0085e067) superseded
+    expect(delivered.messages.find(message => message.id === messageId)?.card?.answered).toMatch(/could not be delivered/);
+    const outcomes = readFileSync(join(fixture.info.dataDir, "outcome-writes.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
+    expect(outcomes.filter(row => row.phase === "attempt")).toHaveLength(1);
+    expect(outcomes.filter(row => row.phase === "grant")).toHaveLength(0);
   } finally {
     stream.close();
     await fixture.close();
@@ -529,3 +539,19 @@ it("the real approval API returns 503 and preserves the card until the fake ACP 
 
 // Adapter turns in this suite use an isolated durable store.
 useOutsideStoreFixture();
+
+
+it("R1 a proven pre-entry miss may retry before one concrete approval write", async () => {
+  const { Writable } = await import("node:stream");
+  const { deliverApproval, writeAcpResponse } = await import("./approval-delivery.ts");
+  const chunks: string[] = [];
+  const stream = new Writable({ write(chunk, _encoding, done) { chunks.push(String(chunk)); done(); } });
+  let preparations = 0;
+  const result = await deliverApproval(done => {
+    if (++preparations === 1) done(Object.assign(new Error("preparation failed"), { code: "EPIPE" }), false);
+    else writeAcpResponse(stream, { jsonrpc: "2.0", id: 1, result: { outcome: { outcome: "selected", optionId: "allow-once" } } }, done);
+  }, () => true, new AbortController().signal);
+  expect(result).toEqual({ ok: true });
+  expect(preparations).toBe(2); expect(chunks).toHaveLength(1);
+  stream.destroy();
+});

@@ -26,6 +26,7 @@ describe("box frame size limit", () => {
   let screenshotBox: typeof import("./box.ts").screenshotBox;
   let scenario: Scenario = "small";
   let flooded = 0;
+  let floodClosed: Promise<void>;
 
   const cfg = { box: { token: "box_test" } } as any;
 
@@ -54,16 +55,24 @@ describe("box frame size limit", () => {
           // Chunked: NO content-length, so the header check cannot help.
           res.writeHead(200, { "content-type": "image/jpeg" });
           let cut = false;
-          res.on("close", () => (cut = true));
+          floodClosed = new Promise<void>((resolve) => res.on("close", () => {
+            cut = true;
+            resolve();
+          }));
           const pump = () => {
-            while (!cut && flooded < FLOOD_BYTES) {
+            if (cut) return;
+            if (flooded < FLOOD_BYTES) {
               flooded += CHUNK.length;
-              if (!res.write(CHUNK)) {
-                res.once("drain", pump);
-                return;
-              }
+              // Give the receiving side an event-loop turn between chunks.
+              // Synchronous drain bursts measure the kernel's send-buffer
+              // capacity, which can exceed the allowance before cancellation
+              // is delivered, even though the reader enforces its 8 MB cap.
+              const next = () => setImmediate(pump);
+              if (!res.write(CHUNK)) res.once("drain", next);
+              else next();
+              return;
             }
-            if (!cut) res.end();
+            res.end();
           };
           pump();
           return;
@@ -110,6 +119,7 @@ describe("box frame size limit", () => {
     scenario = "flood";
     flooded = 0;
     await expect(screenshotBox(cfg, "bot-1", "box-1")).rejects.toThrow(/8 MB limit/);
+    await floodClosed;
     // The refusal must arrive while the box is still sending. If the whole
     // response had been bought first, `flooded` would have reached FLOOD_BYTES.
     expect(flooded).toBeGreaterThan(0);

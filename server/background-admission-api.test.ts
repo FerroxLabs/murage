@@ -8,7 +8,7 @@ const api=async(method:string,path:string,body?:unknown,owner=true)=>{
   const response=await fetch(`${fixture.info.url}${path}`,{method,headers:{"content-type":"application/json",...(owner?headers:{})},body:body===undefined?undefined:JSON.stringify(body)});
   return {status:response.status,body:await response.json() as any};
 };
-beforeAll(async()=>{fixture=await launchVerificationServer(process.env,undefined,{instrumentationSource:`const path=await import('node:path');process.env.FAKE_CLAUDE_MODE='slow';process.env.FAKE_CLAUDE_REPLY_GATE=path.join(process.env.MURAGE_DATA_DIR,'release-reply');`});const proof=await api("GET","/api/desktop-secret",undefined,false);headers={"x-murage-surface":"desktop","x-murage-surface-secret":proof.body.secret};},30000);
+beforeAll(async()=>{fixture=await launchVerificationServer(process.env,undefined,{instrumentationSource:`await import(${JSON.stringify(new URL("./testing/idle-load-preload.mjs",import.meta.url).href)});const path=await import('node:path');process.env.FAKE_CLAUDE_MODE='slow';process.env.FAKE_CLAUDE_REPLY_GATE=path.join(process.env.MURAGE_DATA_DIR,'release-reply');`});const proof=await api("GET","/api/desktop-secret",undefined,false);headers={"x-murage-surface":"desktop","x-murage-surface-secret":proof.body.secret};},30000);
 afterAll(async()=>{await fixture?.close();});
 it("pauses automatic admission through the real owner API while manual work remains available",async()=>{
   expect((await api("GET","/api/automation-admission",undefined,false)).status).toBe(404);

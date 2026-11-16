@@ -8,6 +8,7 @@
 // two visible tails) running at once.
 //
 // Same POSIX gating as comms.test.ts (the fake CLI is a shebang script).
+import { fixtureDisplayApi } from "./testing/display-fixture.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -15,6 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
 
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -57,16 +59,17 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
   let stderr = "";
   let stdout = "";
 
-  const api = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
+  const api = fixtureDisplayApi(() => join(home, ".murage", "messages.db"), async (method: string, path: string, body?: unknown, headers: Record<string, string> = method === "GET" ? {} : DESKTOP_HEADERS): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
       method,
       headers: { ...(body ? { "content-type": "application/json" } : {}), ...headers },
       body: body ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, body: await res.json() };
-  };
-  // Authority setup is explicit; branching, sends, reads and interrupts
-  // continue to exercise the uncredentialed remote surface.
+  });
+  // MAIN RULING INT-CONFLICT-DEFAULT 37e41d7c350 3ad2b8f4288:
+  // owner edits/sends carry this fixture's real desktop proof, so their rows
+  // have proved owner provenance; remote reads keep the companion door.
   const desktopApi = (method: string, path: string, body?: unknown) => api(method, path, body, DESKTOP_HEADERS);
 
   const getBot = async (id: string) =>
@@ -117,9 +120,10 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       MURAGE_DEV_DESKTOP_SECRET: DESKTOP_SECRET,
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env,
+      env: { ...env, ...powerBlockTestEnv() },
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.stderr!.on("data", (c) => (stderr += c));

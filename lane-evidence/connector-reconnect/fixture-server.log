@@ -1,0 +1,5 @@
+[sqlite] storage file=2 wal=0 freelist=0
+[own-write] legacy wildcard keys at boot: 0
+murage webhook receiver on http://127.0.0.1:21192
+murage server on http://127.0.0.1:21191
+[startup] writes before first health=0

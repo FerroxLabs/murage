@@ -34,7 +34,7 @@ it("a cleared HighLevel token stays gone over HTTP, in config.json and across re
       MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: secret, PATH: process.env.PATH,
       ...(shellEnv ? { MURAGE_HIGHLEVEL_PRIVATE_TOKEN: shellEnv } : {}) };
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
-    child = spawn(process.execPath, [join(root, "server/index.ts")], { cwd: root, env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
+    child = spawn(process.execPath, [join(root, "server/index.ts")], { windowsHide: true, cwd: root, env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
     child.stderr!.on("data", chunk => { stderr += chunk; });
     await expect.poll(async () => { if (child!.exitCode !== null) throw new Error("Fixture exited: " + stderr); try { return (await request("GET", "/api/health")).status; } catch { return 0; } }, { timeout: 20000 }).toBe(200);
   };

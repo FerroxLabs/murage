@@ -163,3 +163,16 @@ it("sends the run's voice notes as audio after its text reply, in order", async 
   expect(sendAudio).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ chatId: "7", fileName: "Voice note from Sable.mp3", title: "Voice note from Sable", performer: "Sable" }));
   expect(f.transport.sendMessage.mock.invocationCallOrder.at(-1)!).toBeLessThan(sendAudio.mock.invocationCallOrder[0]!);
 });
+
+it("Cloud refuses raw sign-in codes before Telegram persistence or enqueue", async () => {
+  vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+  try {
+    const f = fixture(), channel = new TelegramChannel(f.options), pairing = channel.beginPairing();
+    f.updates([message(1, `/pair ${pairing.code}`)]); await channel.pollOnce();
+    const code = "4/fixtureCodeSecret0123456789";
+    f.updates([message(2, code)]); await channel.pollOnce();
+    expect(f.enqueue).not.toHaveBeenCalled();
+    expect(readFileSync(f.options.file, "utf8")).not.toContain(code);
+    expect(f.transport.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ text: "That looks like a sign-in code. Paste it in the sign-in dialog, not here." }));
+  } finally { vi.unstubAllEnvs(); }
+});
