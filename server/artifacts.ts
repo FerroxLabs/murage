@@ -1,12 +1,15 @@
+import { readTurnPolicy } from "./decision/index.ts";
 import { executionStore } from "./execution-audience.ts";
 import { partitionFileRefusal } from "./partition-files.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, unlinkSync, type Stats } from "node:fs";
 import { basename, dirname, extname, isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { homedir } from "node:os";
 import type { DatabaseSync } from "node:sqlite";
 import type { Artifact, ArtifactKind, ArtifactPage, ArtifactPreview, ArtifactQuery, ArtifactRegistration } from "../shared/artifacts.ts";
 import { isOutputProducer, type OutputProducer } from "../shared/output-publication.ts";
+import { sanitizeDisplayTextUnit } from "./transcript-page.ts";
 import { redactSecretsInText } from "./redact.ts";
 import { availableForNewBytes, isNoSpaceError, type DiskSpaceError } from "./disk-space.ts";
 import { DISK_FULL_MESSAGE, isDiskSpaceCode, type DiskSpaceCode } from "../shared/attachment-storage.ts";
@@ -69,21 +72,30 @@ export function workspacePathWithin(path: string, base: string): boolean {
 export function isPrivateWorkspaceName(name: string, last: boolean): boolean {
   return /^(memory|skills|credentials)$/i.test(name) || (last && /^(MEMORY|SOUL|AGENTS|CLAUDE)\.md$/i.test(name));
 }
-function relativePath(path: string) {
+function relativePath(path: string, noLimits = false) {
   if (typeof path !== "string" || path.length > 2048 || /[\\\u0000-\u001f:]/.test(path) || isAbsolute(path)) fail(400, "Use a relative file path inside this task's workspace.");
   const parts = path.split("/");
-  if (parts.some(part => !part || part === "." || part === ".." || part.startsWith(".") || part.length > 255)) fail(400, "Use a relative file path inside this task's workspace.");
-  if (parts.some((part, index) => isPrivateWorkspaceName(part, index === parts.length - 1))) fail(403, "Private setup and memory files are not deliverables.");
+  if (parts.some(part => !part || part === "." || part === ".." || (!noLimits && part.startsWith(".")) || part.length > 255)) fail(400, "Use a relative file path inside this task's workspace.");
+  if (!noLimits && parts.some((part, index) => isPrivateWorkspaceName(part, index === parts.length - 1))) fail(403, "Private setup and memory files are not deliverables.");
   return parts;
 }
-function sourceFile(root: string, relative: string) {
+function sourceFile(root: string, relative: string, noLimits = false) {
   const observed: Array<[string, Stats]> = [[root, directory(root)]];
-  let path = root; const parts = relativePath(relative);
+  let path = root; const parts = relativePath(relative, noLimits);
   for (const [index, part] of parts.entries()) {
     path = join(path, part); const stat = lstatSync(path);
-    if (stat.isSymbolicLink()) fail(409, "Linked files are not supported.");
+    if (stat.isSymbolicLink()) {
+      if (!noLimits || index < parts.length - 1) fail(409, "Linked files are not supported.");
+      observed.push([path, stat]);
+      path = realpathSync.native(path);
+      if (!workspacePathWithin(path, root)) fail(409, "Linked files are not supported.");
+      const target = lstatSync(path);
+      if (!target.isFile()) fail(409, "Only ordinary files are supported.");
+      observed.push([path, target]);
+      continue;
+    }
     if (index < parts.length - 1) { if (!stat.isDirectory()) fail(409, "The file location is not a plain folder or it changed."); }
-    else if (!stat.isFile() || stat.nlink !== 1) fail(409, "Only ordinary files are supported.");
+    else if (!stat.isFile() || (!noLimits && stat.nlink !== 1)) fail(409, "Only ordinary files are supported.");
     observed.push([path, stat]);
   }
   return { path, stat: observed.at(-1)![1], observed };
@@ -100,9 +112,9 @@ export {
   readVerified as readVerifiedArtifactFile,
   same as sameArtifactStat,
 };
-function readVerified(path: string, limit: number, expected?: Stats) {
+function readVerified(path: string, limit: number, expected?: Stats, noLimits = false) {
   const before = expected ?? lstatSync(path);
-  if (!before.isFile() || before.isSymbolicLink() || before.nlink !== 1) fail(409, "Only ordinary files are supported.");
+  if (!before.isFile() || before.isSymbolicLink() || (!noLimits && before.nlink !== 1)) fail(409, "Only ordinary files are supported.");
   if (before.size > limit) fail(413, "This file exceeds the supported size limit.");
   const fd = openSync(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0));
   try {
@@ -212,12 +224,14 @@ function matching(row: Row, access: ArtifactAccess) {
 }
 function publicRow(row: Row, scope: ArtifactScope, storageRoot: string): Artifact {
   let sourceState: Artifact["sourceState"] = "unavailable", savedState: Artifact["savedState"] = "unavailable";
-  try { sourceState = fingerprint(sourceFile(row.source_root, row.relative_path).stat) === row.source_fingerprint ? "current" : "changed"; }
+  try { sourceState = fingerprint(sourceFile(row.source_root, row.relative_path, true).stat) === row.source_fingerprint ? "current" : "changed"; }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") sourceState = "missing"; }
   try { directory(storageRoot); const stat = lstatSync(join(storageRoot, blobName(row))); savedState = stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1 && stat.size === row.bytes ? "available" : "unavailable"; }
   catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") savedState = "missing"; }
-  return { id: row.id, name: row.name, filename: row.name.toLowerCase().endsWith(row.extension) ? row.name : row.name + row.extension, kind: row.kind, mime: row.mime, bytes: row.bytes, sha256: row.sha256, createdAt: row.created_at,
-    botId: row.bot_id, botName: clean(scope.botName, 100), threadId: row.thread_id, ...(row.run_id ? { runId: row.run_id } : {}), ...(isOutputProducer(row.producer) ? { producer: row.producer } : {}), relativePath: row.relative_path,
+  const [safeName, safeBotName, safePath] = sanitizeDisplayTextUnit([row.name, scope.botName, row.relative_path]);
+  const name = clean(safeName, 200);
+  return { id: row.id, name, filename: name.toLowerCase().endsWith(row.extension) ? name : name + row.extension, kind: row.kind, mime: row.mime, bytes: row.bytes, sha256: row.sha256, createdAt: row.created_at,
+    botId: row.bot_id, botName: clean(safeBotName, 100), threadId: row.thread_id, ...(row.run_id ? { runId: row.run_id } : {}), ...(isOutputProducer(row.producer) ? { producer: row.producer } : {}), relativePath: safePath,
     sourceState, savedState, sourceConversationAvailable: scope.threadAvailable !== false && scope.threadId !== undefined };
 }
 
@@ -231,11 +245,13 @@ export function registerArtifact(db: DatabaseSync, storageRoot: string, input: A
   if (provenance.publicationId !== undefined && (typeof provenance.publicationId !== "string" || !/^[a-f0-9-]{36}$/.test(provenance.publicationId))) fail(400, "Invalid file publication.");
   if (input.name !== undefined && (typeof input.name !== "string" || !input.name.trim() || input.name.length > 200)) fail(400, "Use a short file title.");
   try {
+    const noLimits = !!scope.runId && readTurnPolicy({ threadId: input.threadId, generation: scope.runId })?.permission.noLimits === true;
     const bot = executionStore()?.bot(input.botId);
-    const denied = bot ? partitionFileRefusal(bot, input.threadId, [input.relativePath], scope.workspaceRoot) : null;
+    const denied = bot && !noLimits ? partitionFileRefusal(bot, input.threadId, [input.relativePath], scope.workspaceRoot) : null;
     if (denied) fail(403, denied);
-    const root = rootPath(scope.workspaceRoot), source = sourceFile(root, input.relativePath);
-    const bytes = readVerified(source.path, ARTIFACT_MAX_BYTES, source.stat);
+    const root = rootPath(scope.workspaceRoot), source = sourceFile(root, input.relativePath, noLimits);
+    const limit = noLimits ? Number.POSITIVE_INFINITY : ARTIFACT_MAX_BYTES;
+    const bytes = readVerified(source.path, limit, source.stat, noLimits);
     if (source.observed.some(([path, stat]) => !same(stat, lstatSync(path)))) fail(409, "The file location changed during verification.");
     const sha256 = hash(bytes);
     // Before the blob and the row: a save-version or keep-previous copy is
@@ -243,7 +259,7 @@ export function registerArtifact(db: DatabaseSync, storageRoot: string, input: A
     if (provenance.expectedSha256 !== undefined && sha256 !== provenance.expectedSha256) throw new ArtifactError(409, "The file changed before it could be saved.", "content-changed");
     const fileFormat = format(input.relativePath), directoryPath = storage(storageRoot), blob = join(directoryPath, sha256 + fileFormat.extension);
     let exists = false;
-    try { exists = hash(readVerified(blob, ARTIFACT_MAX_BYTES)) === sha256; if (!exists) fail(409, "The saved copy failed verification."); }
+    try { exists = hash(readVerified(blob, limit)) === sha256; if (!exists) fail(409, "The saved copy failed verification."); }
     catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
     if (!exists) {
       // Room follows the disk (disk-space.ts): no fixed total, no count, and no
@@ -258,7 +274,7 @@ export function registerArtifact(db: DatabaseSync, storageRoot: string, input: A
         writeFileSync(fd, bytes); fsyncSync(fd); closeSync(fd); fd = undefined;
         linkSync(candidate, blob);
       } finally { if (fd !== undefined) closeSync(fd); if (created) unlinkSync(candidate); }
-      if (hash(readVerified(blob, ARTIFACT_MAX_BYTES)) !== sha256) fail(409, "The saved copy failed verification.");
+      if (hash(readVerified(blob, limit)) !== sha256) fail(409, "The saved copy failed verification.");
     }
     const id = randomUUID(), name = clean(input.name?.trim() || basename(input.relativePath), 200), run = scope.runId ?? "";
     db.prepare("INSERT OR IGNORE INTO artifacts(id,name,kind,mime,bytes,sha256,extension,created_at,bot_id,thread_id,run_id,source_root,relative_path,source_fingerprint,producer,publication_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
@@ -332,7 +348,7 @@ export function readArtifact(db: DatabaseSync, storageRoot: string, id: string, 
   accessScopes(access); const row = db.prepare("SELECT * FROM artifacts WHERE id=?").get(id) as unknown as Row | undefined;
   const scope = row && matching(row, access); if (!row || !scope) fail(404, "This saved file is unavailable.");
   try {
-    directory(storageRoot); const path = join(storageRoot, blobName(row)), bytes = readVerified(path, ARTIFACT_MAX_BYTES);
+    directory(storageRoot); const path = join(storageRoot, blobName(row)), bytes = readVerified(path, Math.max(ARTIFACT_MAX_BYTES, row.bytes));
     if (bytes.length !== row.bytes || hash(bytes) !== row.sha256) fail(409, "The saved copy changed and cannot be opened. Register the original again if it is still available.");
     return { artifact: publicRow(row, scope, storageRoot), bytes, verifiedNativePath: path };
   } catch (error) { if (error instanceof ArtifactError) throw error; fail(410, "The saved copy is missing or unreadable. Register the original again if it is still available."); }

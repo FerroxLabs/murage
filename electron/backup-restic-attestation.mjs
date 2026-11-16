@@ -4,7 +4,7 @@ import {spawnSync} from "node:child_process";
 import path from "node:path";
 import {normalizedAgePayloadHash,backupToolIdentity,asyncBackupCodesign,readBackupToolBytes} from "./backup-age-attestation.mjs";
 import {resticPinForTarget} from "../shared/backup-restic-pin.mjs";
-const runCodesign=args=>spawnSync("/usr/bin/codesign",args,{stdio:["ignore","pipe","pipe"],encoding:"utf8",timeout:10000,maxBuffer:65536});
+const runCodesign=args=>spawnSync("/usr/bin/codesign",[...args],{stdio:["ignore","pipe","pipe"],encoding:"utf8",timeout:10000,maxBuffer:65536});
 const windows=()=>process.platform==="win32";
 /** The pin for the platform and arch this app is running on, or null. */
 const currentPin=()=>resticPinForTarget(process.platform,process.arch);

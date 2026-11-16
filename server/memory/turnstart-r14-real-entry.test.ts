@@ -25,8 +25,10 @@ import { removeTempDirSync } from "../testing/cleanup.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { continuationMemoryRevoked, filterDirectReplay, resetSessionHolds } from "./disclosures.ts";
 import * as LW from "./lineage-warm.ts";
+import { lineageWarmTestSurface } from "./lineage-warm-surface.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { forgetKeptLineageForTest, lineageCacheCounts, outputRootsFor, recordSessionRoots, thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { setMemoryMode } from "./repository.ts";
 import { rootSetWork } from "./root-set-handles.ts";
@@ -73,7 +75,7 @@ beforeEach(() => {
 });
 afterEach(() => { sources()?.useSources(null); LW.onLineageThreadWarmed(null); thawRootSetWritesForTest(false); });
 function sources(): { useSources(s: { mint?: (botId: string, threadId: string) => unknown } | null): void } | null {
-  const make = lw.lineageWarmTestSurface;
+  const make = lineageWarmTestSurface;
   return typeof make === "function" ? (make as () => { useSources(s: { mint?: (botId: string, threadId: string) => unknown } | null): void })() : null;
 }
 

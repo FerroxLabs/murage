@@ -7,7 +7,7 @@
 // Timings only. A line carries a short random turn id, the phase name, elapsed
 // ms since the turn was received, ms since the previous line, and a few
 // numeric / boolean / enum-shaped details. Never text, paths, ids of user data.
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 type Detail = Record<string, number | boolean | string | undefined>;
 
@@ -50,14 +50,14 @@ function formatDetail(detail: Detail | undefined): string {
   return out;
 }
 
-function create(sink: (line: string) => void, now: () => number): TurnTrace {
+function create(sink: (line: string) => void, now: () => number, threadKey: string): TurnTrace {
   const id = randomBytes(4).toString("hex");
   const start = now();
   let last = start;
   const seen = new Set<string>();
   const log = (phase: string, detail?: Detail): void => {
     const t = now();
-    sink(`[turn-trace] id=${id} phase=${phase} at=${Math.round(t - start)}ms since=${Math.round(t - last)}ms${formatDetail(detail)}`);
+    sink(`[turn-trace] id=${id} phase=${phase} at=${Math.round(t - start)}ms since=${Math.round(t - last)}ms${formatDetail(phase === "received" ? { ...detail, threadKey } : detail)}`);
     last = t;
   };
   const span: TurnTrace["span"] = (phase, detail) => {
@@ -94,7 +94,8 @@ export function beginTurnTrace(
   now: () => number = () => performance.now(),
 ): TurnTrace {
   if (!turnTraceEnabled()) return NOOP;
-  const trace = create(sink, now);
+  // An opaque correlation key lets concurrent rig waits follow retries without logging a user data id.
+  const trace = create(sink, now, createHash("sha256").update(threadId).digest("hex").slice(0, 16));
   active.delete(threadId);
   active.set(threadId, trace);
   while (active.size > MAX_ACTIVE) active.delete(active.keys().next().value!);

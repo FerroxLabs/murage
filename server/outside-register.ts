@@ -8,7 +8,7 @@
 // filesystem root for the turn. Strip-only TypeScript.
 
 import { decodeAnsiC, listB, installPrograms } from "./outside-scan.ts";
-import { installDestinations, installerFolders, resolveWord, type RegistryEntry, type RegistryKind, type TextBudget } from "./download-registry.ts";
+import { installDestinations, installerFolders, resolveWord, registryKey, type RegistryEntry, type RegistryKind, type TextBudget } from "./download-registry.ts";
 
 export interface RegisterContext {
   cwd: string;
@@ -87,6 +87,26 @@ export function runsInBackground(text: string): boolean {
   return listB(text.toLowerCase()).some((seg) => seg.some((w) => BACKGROUND.has(prog(w))));
 }
 
+
+/** CLONED-CWD r9/A1: only a literal no-op cd with a code-free remainder
+ * can omit the parent window contributed by that operand. No shell execution
+ * tracking or unescaping is used; every uncertain form retains BASE marking. */
+function noOpCdOperand(raw: string, text: string, segments: readonly (readonly string[])[], ctx: RegisterContext): string | null {
+  const first = segments[0];
+  if (!/^cd(?:\s|$)/i.test(text.trimStart()) || first?.length !== 2 || first[0]?.toLowerCase() !== "cd") return null;
+  const operand = first[1]!;
+  if (operand.startsWith("-") || registryKey(resolveWord(ctx.cwd, operand, ctx.home)) !== registryKey(ctx.cwd)) return null;
+  const forbidden = (value: string): boolean => {
+    if (/[$`%~]|\.\./.test(value)) return true;
+    if (/pushd|popd|chdir|location|pwd|cwd|dirname|parent|pardir|currentdirectory/i.test(value)) return true;
+    if ((value.match(/(?:^|[^\w])(?:cd|sl)(?=$|[^\w])/gi)?.length ?? 0) > 1) return true;
+    if (/(?:^|[^\w])(?:sh|bash|zsh|dash|ksh|fish|pwsh|powershell|cmd|python\w*|node|deno|bun|perl|ruby|php|lua|osascript|awk|sed|make|npx|eval|exec|source|xargs)(?=$|[^\w])/i.test(value)) return true;
+    if (/(?:^|\s)(?:pnpm|npm|yarn)\s+run\b|(?:^|\s)(?:-c|-e|--eval|-command|\/c|-r)(?=\s|$)|<<|(?:^|[;&|\s])\.(?=\s)/i.test(value)) return true;
+    return false;
+  };
+  return forbidden(raw) || forbidden(text) ? null : operand;
+}
+
 /** R1-R4, R6-R8 for one shell text (R5 is registerToolWrite). The caller adds the result to the registry. */
 export function registerText(raw: string, ctx: RegisterContext): RegistryEntry[] {
   const text = decodeAnsiC(raw).normalize("NFKC");
@@ -117,6 +137,27 @@ export function registerText(raw: string, ctx: RegisterContext): RegistryEntry[]
   const segments = listB(text);
   const textHasNet = segments.some((seg) => seg.some((w) => NET.has(prog(w))));
   const parents = new Set<string>();
+  const skip = noOpCdOperand(raw, text, segments, ctx);
+  // T3 only adds registrations on unmarked turns; it does not add a cwd window.
+  const generatedWrite = segments.some(seg => seg.some(word => word.includes("://")))
+    && (redirectTargets(text).length > 0 || text.includes("<<") || segments.some(seg => seg.some(word => prog(word) === "tee")));
+  const addParents = (seg: readonly string[], first: boolean) => {
+    for (let index = 0; index < seg.length; index++) {
+      const word = seg[index]!;
+      if (first && index === 1 && skip !== null) continue;
+      const urlParts = word.includes("://") && /\s/.test(word) ? word.split(/\s+/) : null;
+      for (const token of urlParts ?? [word]) {
+        const w = token.startsWith("-") && token.includes("=") ? token.slice(token.indexOf("=") + 1) : token;
+        if (!/[\\/]/.test(w) || w.includes("://") || DEV.test(w)) continue;
+        const windows = /^[a-z]:[\\/]|^\\\\/i.test(ctx.cwd) || /^[a-z]:[\\/]|^\\\\/i.test(w);
+        const cut = urlParts ? w.search(windows ? /[$`%*?[{]/ : /[$`%*?[{\\]/) : -1;
+        const prefix = cut >= 0 ? w.slice(0, cut) : w;
+        if (!/[\\/]/.test(prefix)) continue;
+        const path = resolveWord(ctx.cwd, prefix, ctx.home);
+        parents.add(path.replace(/\/[^/]*$/, "") || "/");
+      }
+    }
+  };
 
   for (const seg of segments) {
     const at = seg.findIndex((w) => NET.has(prog(w)) || EXTRACT.has(prog(w)) || prog(w) === "git" || prog(w) === "gh" || COPIERS.has(prog(w)) || prog(w) === "tee" || prog(w) === "dd");
@@ -193,21 +234,16 @@ export function registerText(raw: string, ctx: RegisterContext): RegistryEntry[]
         if (ops.length > 1 && !ops[ops.length - 1]!.includes(":")) targets.push(ops[ops.length - 1]!);
         for (const t of targets) both(t, "file");
       }
-      for (const word of seg) {
-        const w = word.startsWith("-") && word.includes("=") ? word.slice(word.indexOf("=") + 1) : word;
-        if (!/[\\/]/.test(w) || w.includes("://") || DEV.test(w)) continue;
-        const p = resolveWord(ctx.cwd, w, ctx.home);
-        parents.add(p.replace(/\/[^/]*$/, "") || "/");
-      }
-    }
+      addParents(seg, seg === segments[0]);
+    } else if (generatedWrite && !ctx.readOnly) addParents(seg, seg === segments[0]);
   }
   // R1 / R6 redirect targets
   if (textHasNet || (ctx.marked && !ctx.readOnly)) for (const target of redirectTargets(text)) both(target, "file");
   // R6 windows: the working folder and the parents of every path word, collected once and sorted
   if (ctx.marked && !ctx.readOnly) {
     both(".", "window");
-    for (const parent of [...parents].sort()) both(parent, "window");
   }
+  if ((ctx.marked || generatedWrite) && !ctx.readOnly) for (const parent of [...parents].sort()) both(parent, "window");
   // R7 installs: a span on every root; named destinations; the installer's own folder and prefix root
   for (const seg of segments) {
     const programs = installPrograms(seg.join(" "));

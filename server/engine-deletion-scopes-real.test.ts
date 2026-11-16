@@ -68,7 +68,7 @@ describe.skipIf(!runs)("F16 phase 2 with real processes (Linux, real addon)", ()
   async function liveCodex(file: string, userHome?: string): Promise<ChildProcess> {
     const env: NodeJS.ProcessEnv = { ...process.env };
     if (userHome !== undefined) { env.HOME = userHome; delete env.CODEX_HOME; delete env.CODEX_SQLITE_HOME; }
-    const child = spawn(codex, ["-f", file], { stdio: "ignore", env });
+    const child = spawn(codex, ["-f", file], { windowsHide: true, stdio: "ignore", env });
     children.push(child);
     for (let tries = 0; tries < 100; tries++) {
       if (exclOps.processes().some((item) => item.pid === child.pid && (item.argv ?? []).includes(file))) return child;

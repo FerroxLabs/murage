@@ -156,7 +156,7 @@ describe("direct Murage calls to Flux", () => {
       credentials: { account: () => null, owner: () => ({ token: "owner-stub", keyId: "k0" }), bot: () => ({ token: "bot-stub", keyId: "k1" }) },
     } as unknown as ConstructorParameters<typeof FluxEmailClient>[0]);
     await client.send("bot-7f3a", "inbox-1", { to: ["someone@example.com"], subject: "s", text: "t" } as never, "idem-1");
-    await client.restoreInbox("inbox-1", "bot-7f3a");
+    await client.restoreInbox("inbox-1", "bot-7f3a", "k0");
     expect(seen).toHaveLength(2);
     for (const request of seen) {
       expect(request.headers[FEATURE]).toBe("email");

@@ -1,3 +1,4 @@
+import { fixtureMemoryAccess } from "./testing/recall-access-fixture.ts";
 import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -21,7 +22,7 @@ import { bringInToProject } from "./memory/bring-in.ts";
 import { captureSource } from "./memory/capture.ts";
 import { setMemoryCaptureRoster } from "./memory/capture-scope.ts";
 import { forgetMemory } from "./memory/forget.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
 import { setMemoryMode } from "./memory/repository.ts";
 import { projectSummaryLayer } from "./project-layers.ts";
 import { deliveredProjectSuggestions, pendingProjectSuggestions, projectThreads, OWNER_PAGE, readProjectMessages, readProjectPage, registerProjectMemoryTools, suggestionLines, suggestToLead, updateProjectSummary } from "./project-memory-tools.ts";
@@ -67,7 +68,7 @@ function say(threadId: string, text: string, extra: Partial<Message> = {}) {
 function access(botId: string, thread: string) {
   const registry = new InternalCapabilities(); registry.begin(botId, thread, "g");
   const token = registry.mint({ botId, threadId: thread, generation: "g", depth: 0, kind: "memory", skillAuthoring: false });
-  return memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
+  return fixtureMemoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
 }
 
 it("T30 project pages retain the exact legacy JSON, message-id cursor, marks and shown order", () => {

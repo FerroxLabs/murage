@@ -1,5 +1,7 @@
 // STOP-FENCE test harness (scaffolding only; no product code). Fake ACP engine that logs every method it receives and holds chosen replies on gate files.
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { safeWipeSync } from "../../testing/safe-wipe.mjs";
+import { writeFileSync } from "../../counted-fs.ts";
+import { chmodSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { vi } from "vitest";
@@ -58,7 +60,7 @@ setInterval(() => {}, 1000);
 }
 
 export function fixtureSupport(engine: FakeEngine, extra: Partial<AcpSupport> = {}): AcpSupport {
-  return { driverKind: "opencodeGo", displayName: "Fixture", defaultCli: engine.cli, nativeSource: "fixture", loginNote: "fixture",
+  return { driverKind: "opencodeGo", fluxReach: () => "elsewhere", displayName: "Fixture", defaultCli: engine.cli, nativeSource: "fixture", loginNote: "fixture",
     models: { default: "p/m", options: [{ id: "p/m", label: "Fixture" }] }, spawnArgs: () => ["acp"], pickAuthMethod: () => null, isAuthenticated: () => true, authFailure: "continue", ...extra };
 }
 
@@ -74,4 +76,4 @@ export async function applyStop(instance: ProviderInstance, action: StopAction, 
 }
 
 export const waitFor = (fn: () => void) => vi.waitFor(fn, { timeout: 10_000 });
-export const cleanupEngine = (e: FakeEngine) => rmSync(e.root, { recursive: true, force: true });
+export const cleanupEngine = (e: FakeEngine) => safeWipeSync(e.root);

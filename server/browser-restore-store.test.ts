@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { decryptEngineData, encryptEngineData, prepareBrowserRestore, restoreScript } from "./browser-restore-store.ts";
+import { ownedCloseCli } from "./browser-owned-close.ts";
 import { createNativeBrowser } from "./browser-native-relay.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -233,6 +234,10 @@ process.stdin.on("data", (chunk) => {
 });
 `;
 function fakeEngine(origins: number) {
+  // This MCP fixture has no daemon. Its maintenance CLI reports that fact.
+  vi.spyOn(ownedCloseCli, "run").mockResolvedValue({ code: 0, stdout: JSON.stringify({
+    launchId: null, closed: true, path: "not_running", groupExhausted: true, treeExhausted: false, outsideSeen: 0, unconfirmed: null,
+  }) });
   const home = temp();
   writeEngineState(home, many(origins));
   const script = join(home, "fake-mcp.cjs");

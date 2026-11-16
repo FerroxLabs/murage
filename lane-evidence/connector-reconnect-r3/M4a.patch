@@ -1,0 +1,11 @@
+--- server/index.ts
++++ server/index.ts
+@@ -8771,7 +8771,7 @@
+     try {
+       await composio.connectedServices(cfg, { fresh: true });
+       const toolkits = scheduledToolkits(Date.now());
+-      if (toolkits.length) await composio.checkIdleConnectorHealth(cfg, toolkits);
++      await composio.checkIdleConnectorHealth(cfg);
+     }
+     catch { /* A broker outage never changes an account's sign-in state. */ }
+   }

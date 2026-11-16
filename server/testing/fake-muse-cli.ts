@@ -39,7 +39,7 @@ const log = (entry: unknown) => { if (env.FAKE_MUSE_LOG) appendFileSync(env.FAKE
 if (argv[0] === "--version") {
   log({ launch: argv, env: watchedEnv() });
   if (env.FAKE_MUSE_VERSION_HANG || env.FAKE_MUSE_VERSION_EXIT_WITH_PIPES) {
-    const held = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", "inherit", "inherit"] });
+    const held = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: ["ignore", "inherit", "inherit"] });
     log({ descendant: held.pid });
     if (env.FAKE_MUSE_VERSION_EXIT_WITH_PIPES) process.exit(0);
     setInterval(() => {}, 1000);
@@ -61,7 +61,7 @@ if (env.FAKE_MUSE_REFUSE_FLAG && argv.includes(env.FAKE_MUSE_REFUSE_FLAG) && !(e
   process.exit(2);
 }
 if (env.FAKE_MUSE_DESCENDANT && argv[0] === "serve") {
-  const held = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: ["ignore", "inherit", "inherit"] });
+  const held = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: ["ignore", "inherit", "inherit"] });
   log({ descendant: held.pid });
 }
 

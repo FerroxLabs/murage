@@ -8,11 +8,13 @@
 // environment file are sensitive rows: an engine that could rewrite either
 // would rewrite what every command runs under.
 
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../counted-fs.ts";
+import { chmodSync, copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync } from "node:fs";
 import { createHash, randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { wipeGuardShimDirectory } from "../env-path.ts";
 
 /** Names the wrapper reads from the file itself; never part of the command's environment. */
 export const EXEC_CWD = "MURAGE_EXEC_CWD";
@@ -36,6 +38,27 @@ function privateDir(): string {
     process.once("exit", () => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best effort */ } });
   }
   return installDir;
+}
+
+/** Existing private process directory; the callback creates its own turn subdir. */
+export function wipeGuardPrivateDirectory(): string { return privateDir(); }
+
+/** Private executable copy: packaged resources may be read-only. Additional
+ * mkfs variants get aliases without modifying the installed application. */
+export function installWipeGuardShim(realTools: Readonly<Record<string, string>>, source = wipeGuardShimDirectory()): string {
+  const target = join(privateDir(), "wipe-guard", "shim");
+  if (!existsSync(target)) {
+    mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+    cpSync(source, target, { recursive: true, dereference: true });
+    chmodSync(target, 0o700);
+    for (const name of readdirSync(target)) chmodSync(join(target, name), 0o755);
+  }
+  for (const tool of Object.keys(realTools)) {
+    if (!/^mkfs\.[a-zA-Z0-9_-]+$/.test(tool) || existsSync(join(target, tool))) continue;
+    copyFileSync(join(target, "guard.sh"), join(target, tool));
+    chmodSync(join(target, tool), 0o755);
+  }
+  return target;
 }
 
 /** Install the wrapper (0755) and return its path. Named by content hash, written once. */

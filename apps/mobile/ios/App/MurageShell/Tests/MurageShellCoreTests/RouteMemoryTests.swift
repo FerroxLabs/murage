@@ -8,8 +8,8 @@ final class MemoryStore: KeyValueStore {
 }
 
 final class RouteMemoryTests: XCTestCase {
-    let mac = WorkspaceOrigin(string: "https://mac.tailnet123.ts.net")!
-    let server = WorkspaceOrigin(string: "https://server.tailnet123.ts.net")!
+    let mac = WorkspaceOrigin(string: "https://mac.tail000000.ts.net")!
+    let server = WorkspaceOrigin(string: "https://server.tail000000.ts.net")!
 
     func testStartsAtTheRootWithNothingRemembered() {
         XCTAssertEqual(RouteMemory(store: MemoryStore()).startPath(for: mac), "/")
@@ -63,10 +63,10 @@ final class RouteMemoryTests: XCTestCase {
     func testNeverStoresTheCredential() {
         let store = MemoryStore()
         let memory = RouteMemory(store: store)
-        let paired = WorkspaceOrigin(string: "https://mac.tailnet123.ts.net/enter#murage_pair_secret&installId=abcdefghijklmnop")!
+        let paired = WorkspaceOrigin(string: "https://mac.tail000000.ts.net/enter#murage_pair_secret&installId=abcdefghijklmnop")!
         memory.remember(threadId: "t1", for: paired)
         memory.setPending(PendingOpen(origin: paired, threadId: "p1", messageId: "m1"))
-        XCTAssertEqual(Set(store.values.keys), [RouteMemory.pendingKey, "murage.route.https://mac.tailnet123.ts.net"])
+        XCTAssertEqual(Set(store.values.keys), [RouteMemory.pendingKey, "murage.route.https://mac.tail000000.ts.net"])
         for (key, value) in store.values {
             XCTAssertFalse((key + value).contains("murage_pair"), value)
             XCTAssertFalse((key + value).contains("enter"), value)
@@ -79,17 +79,17 @@ final class RouteMemoryTests: XCTestCase {
         let memory = RouteMemory(store: store)
         memory.remember(threadId: "t1", for: mac)
         let tooLong = String(repeating: "p", count: OpenHash.maxIdLength + 1)
-        for bad in ["garbage", "{}", #"{"origin":5,"threadId":"p1"}"#, #"{"origin":"https://mac.tailnet123.ts.net","threadId":7}"#,
-                    #"{"origin":"https://mac.tailnet123.ts.net","threadId":""}"#, #"{"origin":"https://mac.tailnet123.ts.net"}"#,
-                    #"{"origin":"https://mac.tailnet123.ts.net","threadId":"\#(tooLong)"}"#] {
+        for bad in ["garbage", "{}", #"{"origin":5,"threadId":"p1"}"#, #"{"origin":"https://mac.tail000000.ts.net","threadId":7}"#,
+                    #"{"origin":"https://mac.tail000000.ts.net","threadId":""}"#, #"{"origin":"https://mac.tail000000.ts.net"}"#,
+                    #"{"origin":"https://mac.tail000000.ts.net","threadId":"\#(tooLong)"}"#] {
             store.values[RouteMemory.pendingKey] = bad
             XCTAssertNil(memory.pending, bad)
             XCTAssertEqual(memory.startPath(for: mac), "/#open=t1", bad)
         }
         // A wrongly typed messageId voids the record; a null one is just absent.
-        store.values[RouteMemory.pendingKey] = #"{"origin":"https://mac.tailnet123.ts.net","threadId":"p1","messageId":5}"#
+        store.values[RouteMemory.pendingKey] = #"{"origin":"https://mac.tail000000.ts.net","threadId":"p1","messageId":5}"#
         XCTAssertEqual(memory.startPath(for: mac), "/#open=t1")
-        store.values[RouteMemory.pendingKey] = #"{"origin":"https://mac.tailnet123.ts.net","threadId":"p1","messageId":null}"#
+        store.values[RouteMemory.pendingKey] = #"{"origin":"https://mac.tail000000.ts.net","threadId":"p1","messageId":null}"#
         XCTAssertEqual(memory.startPath(for: mac), "/#open=p1")
     }
 
@@ -98,6 +98,6 @@ final class RouteMemoryTests: XCTestCase {
         RouteMemory(store: store).setPending(PendingOpen(origin: mac, threadId: "p1", messageId: nil))
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(try XCTUnwrap(store.values[RouteMemory.pendingKey]).utf8)) as? [String: Any])
         XCTAssertEqual(Set(json.keys), ["origin", "threadId"])
-        XCTAssertEqual(json["origin"] as? String, "https://mac.tailnet123.ts.net")
+        XCTAssertEqual(json["origin"] as? String, "https://mac.tail000000.ts.net")
     }
 }

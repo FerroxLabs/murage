@@ -29,7 +29,6 @@ import type { WorkerMessage } from "./worker-message.ts";
 import type { DatabaseSync } from "node:sqlite";
 import type { HumanPrincipal } from "./human-principals.ts";
 import { denyLookup, lineageLive } from "./memory/deny-read.ts";
-import { addTurnParents, currentTurnLineage } from "./memory/lineage-write.ts";
 
 export type { EgressOrigin };
 /** What a line check answers: shown, withheld (a real mark) or checking (an unknown). A boolean answer keeps its old meaning. */
@@ -320,11 +319,10 @@ export function releaseStoredResult(
   // write-time (DESIGN-WRITETIME 2.4: hand-off, ask and delegate results): the released words rest on every line of the walk. A turn running
   // on the destination thread is handed them now, so they join its parents (its replies, notes and session carry them). Outside a turn
   // nothing is recorded here: a copy written into the thread carries its originals itself (message-db.ts).
-  if (origin && walk?.ok) {
-    const turn = currentTurnLineage(destinationThreadId);
-    if (turn) addTurnParents(turn, walk.nodes.map(({ threadId, message }) => ({ kind: "line" as const, threadId, messageId: message.id })));
-  }
-  return { kind: "text", text: mint(body, origin && ids.length ? { threadId: origin.threadId, messageIds: [...ids] } : undefined), ...(origin && ids.length ? { copyOf: origin } : {}) };
+  const origins = origin && walk?.ok ? walk.nodes.map(({ threadId, message }) => ({ threadId, messageIds: [message.id] })) : [];
+  // Carry the complete dependency walk with the released words. The final
+  // response's exact binding, not a thread lookup here, owns attribution.
+  return { kind: "text", text: mint(body, origin && ids.length ? { threadId: origin.threadId, messageIds: [...ids] } : undefined, { origins }), ...(origin && ids.length ? { copyOf: origin } : {}) };
 }
 
 /** What an ask hands back to the bot that asked (and what is mirrored beside it): the gate's answer in the shape the ask needs. A result that is

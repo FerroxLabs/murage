@@ -124,7 +124,7 @@ describe("Fuigo starts on Windows from every install shape (1.0.5)", () => {
       // the real platform: the resolved spawn runs, no shell, argv intact
       const args = ["agent", "a b", "%PATH%", "x&y|z"];
       const run = resolveCli("fuigo", args);
-      const stdout = await new Promise<string>((resolve, reject) => execFile(run.command, run.args, (err, out) => (err ? reject(err) : resolve(out))));
+      const stdout = await new Promise<string>((resolve, reject) => execFile(run.command, run.args, { windowsHide: true }, (err, out) => (err ? reject(err) : resolve(out))));
       expect(JSON.parse(stdout)).toEqual(args);
     }
   });

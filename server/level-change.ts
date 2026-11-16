@@ -69,14 +69,16 @@ export function levelChange({ bot, patch, previewId, ifRev, mirrorsSoleTask, rou
     if (ifRev === undefined) return { action: "refuse", status: 400, body: { error: LEVEL_REVIEW_FIRST } };
     if (previewId === undefined && (bot.permissionPrev?.level !== to || bot.permissionPrev.routinesId !== routinesHash)) return stale;
   }
+  // setPermissionLevel commits this marker with the flags, in the same write.
+  delete rest.permissionExplicit;
   return { action: "write", flags, acknowledgements, rest, routinesId: routinesHash, routines: routineEffects(bot, list, to) };
 }
 
 /** The other settings first, then the level in its own staged write. "failed" when the level did not reach the disk: nothing of it is live. */
-export function commitLevelChange(store: Pick<Store, "patchBot" | "setPermissionLevel">, botId: string, change: Extract<LevelChange, { action: "write" }>, options: { preserveTaskSettings: boolean; ifRev?: number }): BotRecord | null | "failed" {
+export function commitLevelChange(store: Pick<Store, "patchBot" | "setPermissionLevel">, botId: string, change: Extract<LevelChange, { action: "write" }>, options: { preserveTaskSettings: boolean; ifRev?: number; keepTaskPermissionThreads?: readonly string[] }): BotRecord | null | "failed" {
   if (Object.keys(change.rest).length && !store.patchBot(botId, change.rest, { preserveTaskSettings: options.preserveTaskSettings })) return null;
   try {
-    return store.setPermissionLevel(botId, { flags: change.flags, acknowledgements: change.acknowledgements, ifRev: options.ifRev, routinesId: change.routinesId, mirrorSoleTask: !options.preserveTaskSettings });
+    return store.setPermissionLevel(botId, { flags: change.flags, acknowledgements: change.acknowledgements, ifRev: options.ifRev, routinesId: change.routinesId, mirrorSoleTask: !options.preserveTaskSettings, ...(options.keepTaskPermissionThreads?.length ? { keepTaskPermissionThreads: options.keepTaskPermissionThreads } : {}) });
   } catch (error) {
     console.error("level change: could not save", error);
     return "failed";

@@ -5,7 +5,7 @@
 import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
-import { closeDatabase, database } from "../database.ts";
+import { closeDatabase, database, transaction } from "../database.ts";
 import { setMemoryMode } from "./repository.ts";
 import * as jobs from "./jobs.ts";
 import { CLAIM_INDEX_CHECK_LIMIT, CLAIM_INDEX_SQL, memoryClaimIndex, SCAN_CHUNK, SYNC_CHUNKS_PER_CALL } from "./claim-index.ts";
@@ -81,8 +81,13 @@ describe("T1: working turns never sit in the open statuses, and a claim costs th
     for (const b of BOUNDS) {
       closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
       setMemoryMode("capture"); jobs.resetMemoryClaimCursor(); database().exec("PRAGMA synchronous=OFF");
-      for (let i = 0; i < b; i++) recordMemorySettlement("thread", `turn-${i}`, "working");
-      for (let i = 0; i < 3000; i++) captureSource(database(), { id: `text-${i}`, threadId: "thread", kind: "text", speaker: "owner", outcome: "recorded", text: `a note ${i}` });
+      // 5d5a791f19 limits retained WAL during synchronous commit bursts.
+      // Bulk setup is outside the measured claim; retain every source/job.
+      transaction(() => {
+        for (let i = 0; i < b; i++) recordMemorySettlement("thread", `turn-${i}`, "working");
+        for (let i = 0; i < 3000; i++) captureSource(database(), { id: `text-${i}`, threadId: "thread", kind: "text", speaker: "owner", outcome: "recorded", text: `a note ${i}` });
+      });
+      database().exec("PRAGMA wal_checkpoint(TRUNCATE)");
       expect(Number(database().prepare(`SELECT count(*) AS n FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id AND s.revision=j.source_revision WHERE j.status IN ${OPEN} AND s.outcome='working'`).get()!.n)).toBe(0);
       expect(Number(database().prepare("SELECT count(*) AS n FROM memory_jobs WHERE status='cancelled' AND error='settled:working'").get()!.n)).toBe(b);
       let first = jobs.claimMemoryJob("w", Date.now());

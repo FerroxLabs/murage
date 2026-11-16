@@ -41,8 +41,8 @@ function canonical(value: unknown, depth = 0): string {
   if (value && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) return "{" + Object.keys(value).sort().map(key => JSON.stringify(key) + ":" + canonical((value as Record<string, unknown>)[key], depth + 1)).join(",") + "}";
   return deny("invalid_action");
 }
-export function browserActionDigest(action: BrowserAction): string {
-  const text = canonical(action); if (Buffer.byteLength(text) > 65536) deny("invalid_action");
+export function browserActionDigest(action: BrowserAction, maxBytes = 65536): string {
+  const text = canonical(action); if (Buffer.byteLength(text) > maxBytes) deny("invalid_action");
   return createHash("sha256").update(text).digest("hex");
 }
 export class BrowserExtensionPolicy {
@@ -52,8 +52,10 @@ export class BrowserExtensionPolicy {
   private mutations = new Map<string, symbol>();
   private readonly now: () => number;
   private readonly protectedOrigins: Set<string>;
-  constructor(options: { now?: () => number; protectedOrigins?: string[] } = {}) {
+  private readonly noLimits: (context: BindingContext) => boolean;
+  constructor(options: { now?: () => number; protectedOrigins?: string[]; noLimits?: (context: BindingContext) => boolean } = {}) {
     this.now = options.now ?? Date.now;
+    this.noLimits = options.noLimits ?? (() => false);
     this.protectedOrigins = new Set((options.protectedOrigins ?? []).map(value => new URL(value).origin));
   }
   /** Used only by the authenticated broker after profile reconciliation. */
@@ -71,18 +73,18 @@ export class BrowserExtensionPolicy {
     if (active && binding.state !== "active") deny(binding.state);
     return binding;
   }
-  private url(value: string): URL {
+  private url(value: string, context?: BindingContext): URL {
     let url: URL; try { url = new URL(value); } catch { return deny("invalid_url"); }
     if (!["http:", "https:"].includes(url.protocol) || url.username || url.password) deny("handover_required");
     const host = url.hostname.toLowerCase().replace(/\.$/, "");
     // T21: only the handover-only category is closed here (password managers, browser and extension stores). Banks, health and
     // government sites are ask-every-step and adult/piracy sites are Never by default; those are decided per action in the service.
-    if (categoryFor(host) === "handover" || this.protectedOrigins.has(url.origin)) deny("handover_required");
+    if (!(context && this.noLimits(context)) && (categoryFor(host) === "handover" || this.protectedOrigins.has(url.origin))) deny("handover_required");
     return url;
   }
   /** Owner choice only; callers must never map tool input to this API. */
   setSiteAccess(context: BindingContext, origin: string, access: SiteAccess): void {
-    const binding = this.binding(context, false); const url = this.url(origin);
+    const binding = this.binding(context, false); const url = this.url(origin, context);
     if (url.origin !== origin || !["allow", "ask", "never"].includes(access)) deny("invalid_site_grant");
     binding.sites.set(origin, access); if (access !== "allow") binding.l2.delete(origin); this.invalidate(context.bindingId);
   }
@@ -91,7 +93,7 @@ export class BrowserExtensionPolicy {
    * a Stop, a retire or an explicit revoke. It exempts Level 2 mutations only; Level 3, disclosure and the floor are never exempted. */
   grantL2(context: BindingContext, origin: string): void {
     const binding = this.binding(context);
-    if (this.url(origin).origin !== origin || binding.sites.get(origin) !== "allow") deny("invalid_site_grant");
+    if (this.url(origin, context).origin !== origin || binding.sites.get(origin) !== "allow") deny("invalid_site_grant");
     binding.l2.add(origin);
   }
   revokeL2(context: BindingContext, origin?: string): void {
@@ -104,7 +106,7 @@ export class BrowserExtensionPolicy {
     const binding = this.binding(context);
     this.validateDocument(document, context.profileId);
     if (url === "about:blank") { if (document.origin !== "null") deny("invalid_document"); }
-    else if (this.url(url).origin !== document.origin) deny("invalid_document");
+    else if (this.url(url, context).origin !== document.origin) deny("invalid_document");
     const key = context.profileId + ":" + document.tabId;
     if (this.owners.has(key)) deny("tab_already_shared");
     if (binding.tabs.size >= 64) deny("tab_capacity");
@@ -145,7 +147,7 @@ export class BrowserExtensionPolicy {
   resume(context: BindingContext, documents: BrowserDocument[]): BindingContext {
     const binding = this.binding(context, false);
     if (documents.length !== binding.tabs.size || new Set(documents.map(document => document.tabId)).size !== documents.length) deny("document_reconciliation_required");
-    for (const document of documents) { const tab = binding.tabs.get(document.tabId); if (!tab || canonical(tab.document) !== canonical(document)) deny("stale_document"); this.url(tab.url); }
+    for (const document of documents) { const tab = binding.tabs.get(document.tabId); if (!tab || canonical(tab.document) !== canonical(document)) deny("stale_document"); this.url(tab.url, context); }
     binding.state = "active"; binding.pausedReason = undefined; return this.fence(binding);
   }
   /** Authenticated runtime state only. Observation cannot undo a local Stop or Pause. */
@@ -164,10 +166,10 @@ export class BrowserExtensionPolicy {
       const prior = binding.tabs.get(document.tabId);
       if (!prior || this.owners.get(context.profileId + ":" + document.tabId) !== context.bindingId) deny("tab_not_shared");
       if (document.navigationEpoch < prior.document.navigationEpoch) deny("stale_document");
-      if (document.navigationEpoch === prior.document.navigationEpoch && (canonical(document) !== canonical(prior.document) || entry.url !== prior.url)) deny("stale_document");
+      if (document.navigationEpoch === prior.document.navigationEpoch && (canonical(document) !== canonical(prior.document) || (entry.url !== prior.url && !this.noLimits(context)))) deny("stale_document");
       let origin: string; try { origin = new URL(entry.url).origin; } catch { return deny("invalid_url"); }
       if (origin !== document.origin) deny("invalid_document");
-      if (update.state === "active" && entry.url !== "about:blank") this.url(entry.url);
+      if (update.state === "active" && entry.url !== "about:blank") this.url(entry.url, context);
       if (update.reason === "owner-resume" && entry.url === "about:blank") deny("bootstrap_only");
       tabs.set(document.tabId, { document: { ...document }, url: entry.url });
     }
@@ -184,12 +186,14 @@ export class BrowserExtensionPolicy {
     const tab = binding.tabs.get(document.tabId);
     if (!tab || this.owners.get(context.profileId + ":" + document.tabId) !== context.bindingId) deny("tab_not_shared");
     if (canonical(tab.document) !== canonical(document)) deny("stale_document");
-    if (action.protectedDocument) deny("handover_required");
+    if (!this.noLimits(context) && action.protectedDocument) deny("handover_required");
     if (typeof action.targetDigest !== "string" || !/^[a-f0-9]{64}$/.test(action.targetDigest) || !validId(action.operation)) deny("invalid_action");
-    const destination = action.destination === undefined ? undefined : this.url(action.destination);
+    // Owner-origin authority is resolved by the service, never supplied by a browser action.
+    if (this.noLimits(context)) return { digest: browserActionDigest(action, Infinity), requiresApproval: false, mutation: !["snapshot", "read", "screenshot", "status", "tab_list", "scroll", "focus", "hover", "navigate"].includes(action.operation) };
+    const destination = action.destination === undefined ? undefined : this.url(action.destination, context);
     // A bootstrap document allows only navigation, never reads or scripts.
     if (tab.url === "about:blank") { if (action.operation !== "navigate" || !destination) deny("bootstrap_only"); }
-    else { this.url(tab.url); this.site(binding, document.origin); }
+    else { this.url(tab.url, context); this.site(binding, document.origin); }
     if (destination) this.site(binding, destination.origin);
     // Looking around changes nothing: scrolling, focusing and hovering are free on an allowed site.
     const read = ["snapshot", "read", "screenshot", "status", "tab_list", "scroll", "focus", "hover"].includes(action.operation);

@@ -20,8 +20,9 @@
 // temporary child inside health/ and a rename. Cleanup removes only publisher-owned names, never recursively, and never
 // the root. Nothing here throws into the caller: failures defer publication and are counted.
 import { randomBytes } from "node:crypto";
-import { chmodSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, unlinkSync, writeSync, type Stats } from "node:fs";
-import { open } from "node:fs/promises";
+import { writeSync } from "../counted-fs.ts";
+import { chmodSync, closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, unlinkSync, type Stats } from "node:fs";
+import { open } from "../counted-fs-promises.ts";
 import { join } from "node:path";
 import { HEALTH_DIR, HEALTH_FILES, HEALTH_LIMITS, encodeWindowLine, parseWindowLine, type OperationalWindow, type DetectorName, type CoverageValue } from "../../shared/health-protocol.mjs";
 import { renameWithRetry } from "../atomic.ts";

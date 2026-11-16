@@ -26,6 +26,11 @@ const server = dirname(fileURLToPath(import.meta.url));
 const ALLOWED: Record<string, { count: number; why: string; guarded?: true }> = {
   "write-tx.ts": { count: 1, why: "the helper: SAVEPOINT only when a transaction is open (nested), after BEGIN IMMEDIATE otherwise" },
   "database.ts": { count: 1, why: "transaction(): SAVEPOINT only when nested, BEGIN IMMEDIATE otherwise", guarded: true },
+  // MAIN RULING INT-CONFLICT-DEFAULT c1c5424cbd / 2d78c65338 / fe9f38944b: reviewed approval and Flux frames already claim BEGIN IMMEDIATE outside a transaction; keep the receiver-specific guard proof mandatory.
+  // MAIN RULING INT-CONFLICT-DEFAULT 2d78c65338 / 90e7a436e5: approval migration now uses beginWrite; its removed raw opener keeps no exemption.
+  "flux-memory-spaces.ts": { count: 1, why: "atomically: SAVEPOINT only when nested, BEGIN IMMEDIATE otherwise", guarded: true },
+  // MAIN RULING INT-CONFLICT-DEFAULT c1c5424cbd / 1cda27c601: the replay proof takes a read-only snapshot; it never writes inside this deferred frame.
+  "memory/replay-lineage.ts": { count: 1, why: "captureSendReplayProof: one read-only replay snapshot" },
   "installation-app-schema-downgrade.ts": { count: 3, why: "SAVEPOINT only inside the caller's transaction (outer), BEGIN IMMEDIATE otherwise (the phone downgrade, downgradeCardTablesTo117 and downgradeSpeechTablesTo117)", guarded: true },
   "app-trigger-store.ts": { count: 1, why: "inTx: SAVEPOINT only when db.isTransaction, BEGIN IMMEDIATE otherwise", guarded: true },
   "memory/learning-ledger.ts": { count: 1, why: "SAVEPOINT only when outer, beginForSource (BEGIN IMMEDIATE) otherwise", guarded: true },
@@ -36,13 +41,17 @@ const ALLOWED: Record<string, { count: number; why: string; guarded?: true }> = 
   "pending-delegations-schema.ts": { count: 2, why: "pd_rebuild and pd_migrate: SAVEPOINT only when nested, BEGIN IMMEDIATE otherwise", guarded: true },
   "mobile-push-store.ts": { count: 1, why: "SAVEPOINT only when nested, BEGIN IMMEDIATE otherwise", guarded: true },
   "bot-calls-schema.ts": { count: 2, why: "SAVEPOINT only when nested, BEGIN IMMEDIATE otherwise", guarded: true },
-  "tts/reply-state.ts": { count: 1, why: "speechTransaction(): SAVEPOINT only when nested (db.isTransaction), BEGIN IMMEDIATE otherwise", guarded: true },
+  // MAIN RULING INT-CONFLICT-DEFAULT c1c5424cbd / 0f613739fb: reply-state uses the shared transaction writer, so its removed raw opener keeps no exemption.
   "memory/index-reader.ts": { count: 1, why: "read-only snapshot of the memory index scan (never writes, so never 517; must not wait for writers)" },
   "setup-thread-facts.ts": { count: 1, why: "read-only snapshot of the setup facts (never writes; only when no transaction is open)" },
   "memory/upgrade-counts.ts": { count: 1, why: "worker source: one read-only snapshot for the upgrade counts" },
   "memory/provenance-stamp.ts": { count: 1, why: "worker source: one read-only snapshot for the provenance recompute" },
   "health/stats-publisher.ts": { count: 1, why: "worker source: a new private snapshot file no other connection opens" },
   "skill-search.ts": { count: 2, why: "the skill index temp file and an in-memory team index: private to this process, no other writer" },
+  // Reviewed 5d5a791f19: the serving connection retires legacy names inside
+  // its existing/immediate transaction; search candidates use a read-only DB.
+  "message-search-index.ts": { count: 2, why: "one nested legacy-retirement SAVEPOINT and one read-only search.db snapshot; separately pinned below" },
+  "search-index-worker.ts": { count: 3, why: "three snapshots on read-only connection B; every FTS write uses BEGIN IMMEDIATE on A" },
 };
 
 const DEFERRED_START = /^\s*(?:SAVEPOINT\b|BEGIN\b(?!\s+(?:IMMEDIATE|EXCLUSIVE)\b))/i;
@@ -190,7 +199,7 @@ describe("write transactions claim the write lock up front (DBBUSY-1018)", () =>
 
   it("no top-level SAVEPOINT or deferred BEGIN outside the allowlist: write frames use beginWrite (write-tx.ts)", () => {
     const offenders = [...found].filter(([file]) => !ALLOWED[file]).map(([file, lines]) => `${file}:${lines.join(",")} use beginWrite/endWrite/undoWrite (write-tx.ts)`);
-    expect(offenders).toEqual([]);
+    expect(offenders, offenders.join("\n")).toEqual([]);
   });
 
   it("each allowlisted file has exactly its listed count (a new opener needs its reason; a removed one comes off the list)", () => {
@@ -202,6 +211,36 @@ describe("write transactions claim the write lock up front (DBBUSY-1018)", () =>
   it("every nested-only file keeps its SAVEPOINT on the nested branch of an isTransaction guard (a removed or inverted guard fails here)", () => {
     const bare = Object.entries(ALLOWED).filter(([, entry]) => entry.guarded).flatMap(([file]) => (unguarded.get(file) ?? []).map(line => `${file}:${line}`));
     expect(bare).toEqual([]);
+  });
+
+  it("reviewed search exceptions retain read-only snapshots and an immediate outer retirement transaction", () => {
+    const main = readFileSync(join(server, "message-search-index.ts"), "utf8");
+    const worker = readFileSync(join(server, "search-index-worker.ts"), "utf8");
+    const retirementLocked = (text: string) => {
+      const file = ts.createSourceFile("search.ts", text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+      const retirement = file.statements.find((node): node is ts.FunctionDeclaration => ts.isFunctionDeclaration(node) && node.name?.text === "settleInheritedSearchMerge");
+      if (!retirement?.body) return false;
+      const statements = retirement.body.statements;
+      const acquire = statements.findIndex(node => {
+        if (!ts.isIfStatement(node) || nestingPolarity(node.expression, "db") !== false || node.elseStatement) return false;
+        const branch = node.thenStatement;
+        if (!ts.isExpressionStatement(branch) || !ts.isCallExpression(branch.expression)) return false;
+        const call = branch.expression;
+        return ts.isPropertyAccessExpression(call.expression) && receiverText(call.expression.expression) === "db"
+          && call.expression.name.text === "exec" && call.arguments.length === 1
+          && ts.isStringLiteral(call.arguments[0]!) && call.arguments[0]!.text === "BEGIN IMMEDIATE";
+      });
+      const work = statements.findIndex(ts.isTryStatement);
+      return acquire >= 0 && work > acquire && statements[work]!.getText().includes('db.exec("SAVEPOINT search_retire_name")');
+    };
+    expect(retirementLocked(main)).toBe(true);
+    expect(retirementLocked(main.replace("const own = !db.isTransaction", "const own = db.isTransaction"))).toBe(false);
+    expect(retirementLocked(main.replace('if (own) db.exec("BEGIN IMMEDIATE")', 'if (!own) db.exec("BEGIN IMMEDIATE")'))).toBe(false);
+    expect(retirementLocked(main.replace('if (own) db.exec("BEGIN IMMEDIATE")', 'db.exec("BEGIN")'))).toBe(false);
+    expect(main).toContain('run.reader = new DatabaseSync(join(dirname(run.file), SEARCH_FILES[0]), { readOnly: true })');
+    expect(worker).toContain('b = new DatabaseSync(file, { readOnly: true })');
+    expect(worker).toContain("b.exec('PRAGMA busy_timeout=0; PRAGMA query_only=ON')");
+    expect(worker).toContain("a.exec('BEGIN IMMEDIATE')");
   });
 
   it("the scan sees what it must: a deferred SAVEPOINT, a bare BEGIN in a worker source, and not BEGIN IMMEDIATE or comments", () => {

@@ -1,0 +1,205 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/connector-reconnect-r2.test.ts (16 tests | 15 failed) 143ms
+   × R2 status INITIATED marks only the non-ACTIVE account 35ms
+   × R2 status INITIALIZING marks only the non-ACTIVE account 9ms
+   × R2 status FAILED marks only the non-ACTIVE account 6ms
+   × R2 status INACTIVE marks only the non-ACTIVE account 8ms
+   × R2 status EXPIRED marks only the non-ACTIVE account 6ms
+   × R2 status UNKNOWN marks only the non-ACTIVE account 5ms
+   × R2 broker JSON-RPC error message invalid_credentials becomes an attributed visible failure with no retry 14ms
+   × R2 broker JSON-RPC error message Token has expired becomes an attributed visible failure with no retry 7ms
+   × R2 broker JSON-RPC error message authentication failed becomes an attributed visible failure with no retry 6ms
+   × R2 broker JSON-RPC error message invalid_auth becomes an attributed visible failure with no retry 6ms
+   × R2 broker JSON-RPC error message token_revoked becomes an attributed visible failure with no retry 6ms
+   × R2 broker JSON-RPC error message account is not active becomes an attributed visible failure with no retry 6ms
+   ✓ R2 successful content and permission refusals never impersonate an auth failure 4ms
+   × R2 scheduled preflight uses one safe read per account, hourly, before work; never probes unknown toolkits 10ms
+   × R2 preflight catches an ACTIVE idle lapse and stops scheduled work 5ms
+   × R2 hourly probe budget survives reopening the ledger and renewal of the owner token 4ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 15 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status INITIATED marks only the non-ACTIVE account
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status INITIALIZING marks only the non-ACTIVE account
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status FAILED marks only the non-ACTIVE account
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status UNKNOWN marks only the non-ACTIVE account
+AssertionError: expected [] to deeply equal [ [ { id: 'a', alias: 'work' } ] ]
+
+- Expected
++ Received
+
+- [
+-   [
+-     {
+-       "alias": "work",
+-       "id": "a",
+-     },
+-   ],
+- ]
++ []
+
+ ❯ server/connector-reconnect-r2.test.ts:39:62
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/15]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status INACTIVE marks only the non-ACTIVE account
+AssertionError: expected [ …(2) ] to deeply equal ArrayContaining{…}
+
+- Expected
++ Received
+
+- ArrayContaining [
+-   ObjectContaining {
++ [
++   {
++     "alias": "work",
+      "id": "a",
+-     "needsReconnect": true,
++     "status": "INACTIVE",
+    },
+-   ObjectContaining {
++   {
++     "alias": "home",
+      "id": "b",
+-     "needsReconnect": false,
++     "status": "ACTIVE",
+    },
+  ]
+
+ ❯ server/connector-reconnect-r2.test.ts:40:58
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/15]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status EXPIRED marks only the non-ACTIVE account
+AssertionError: expected [ …(2) ] to deeply equal ArrayContaining{…}
+
+- Expected
++ Received
+
+- ArrayContaining [
+-   ObjectContaining {
++ [
++   {
++     "alias": "work",
+      "id": "a",
+-     "needsReconnect": true,
++     "status": "EXPIRED",
+    },
+-   ObjectContaining {
++   {
++     "alias": "home",
+      "id": "b",
+-     "needsReconnect": false,
++     "status": "ACTIVE",
+    },
+  ]
+
+ ❯ server/connector-reconnect-r2.test.ts:40:58
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/15]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message invalid_credentials becomes an attributed visible failure with no retry
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message Token has expired becomes an attributed visible failure with no retry
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message authentication failed becomes an attributed visible failure with no retry
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message invalid_auth becomes an attributed visible failure with no retry
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message token_revoked becomes an attributed visible failure with no retry
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message account is not active becomes an attributed visible failure with no retry
+AssertionError: expected undefined to deeply equal [ { id: 'a', alias: 'work' } ]
+
+- Expected:
+[
+  {
+    "alias": "work",
+    "id": "a",
+  },
+]
+
++ Received:
+undefined
+
+ ❯ server/connector-reconnect-r2.test.ts:46:50
+     44|   const onReconnect = vi.fn();
+     45|   const reply = await call(undefined, undefined, { onReconnect });
+     46|   expect(appsNeedingReconnect(cfg)[0]?.accounts).toEqual([{ id: "a", a…
+       |                                                  ^
+     47|   expect(new TextDecoder().decode(reply.bytes)).toMatch(/Gmail.*Reconn…
+     48|   expect(onReconnect).toHaveBeenCalledOnce();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/15]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 scheduled preflight uses one safe read per account, hourly, before work; never probes unknown toolkits
+AssertionError: expected [] to deeply equal ArrayContaining{…}
+
+- Expected
++ Received
+
+- ArrayContaining [
+-   {
+-     "account": "a",
+-     "arguments": {
+-       "user_id": "me",
+-     },
+-     "tool_slug": "GMAIL_GET_PROFILE",
+-   },
+-   {
+-     "account": "b",
+-     "arguments": {
+-       "user_id": "me",
+-     },
+-     "tool_slug": "GMAIL_GET_PROFILE",
+-   },
+- ]
++ []
+
+ ❯ server/connector-reconnect-r2.test.ts:65:58
+     63|   await Promise.all([call(undefined, undefined, { scheduled: true }), …
+     64|   const probes = () => calls.filter(c => String(c.id).startsWith("heal…
+     65|   expect(probes().map(c => c.params.arguments.tools[0])).toEqual(expec…
+       |                                                          ^
+     66|     { tool_slug: "GMAIL_GET_PROFILE", account: "a", arguments: { user_…
+     67|     { tool_slug: "GMAIL_GET_PROFILE", account: "b", arguments: { user_…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/15]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 preflight catches an ACTIVE idle lapse and stops scheduled work
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ server/connector-reconnect-r2.test.ts:81:64
+     79|   failure = { error: { code: -32000, message: "invalid_grant" } };
+     80|   const reply = await call(undefined, undefined, { scheduled: true });
+     81|   expect(calls.every(c => String(c.id).startsWith("health-"))).toBe(tr…
+       |                                                                ^
+     82|   expect(calls).toHaveLength(2);
+     83|   expect(new TextDecoder().decode(reply.bytes)).toMatch(/Gmail.*Reconn…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/15]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 hourly probe budget survives reopening the ledger and renewal of the owner token
+TypeError: first.claimProbe is not a function
+ ❯ server/connector-reconnect-r2.test.ts:94:16
+     92|   const file = join(mkdtempSync(join(tmpdir(), "probe-budget-")), "hea…
+     93|   const first = new ConnectorHealthStore(file);
+     94|   expect(first.claimProbe("owner", "gmail", "a", 1000)).toBe(true);
+       |                ^
+     95|   const reopened = new ConnectorHealthStore(file);
+     96|   expect(reopened.claimProbe("owner", "gmail", "a", 1001)).toBe(false);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[7/15]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  15 failed | 1 passed (16)
+   Start at  04:03:07
+   Duration  4.51s (transform 3.36s, setup 4.08s, import 163ms, tests 143ms, environment 0ms)
+

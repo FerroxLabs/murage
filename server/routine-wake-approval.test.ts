@@ -14,7 +14,7 @@ const READ = "ls -la ~/.example-bot/ops/ | head -40; tail -15 ~/.example-bot/ops
 const bot = (mode: RoutinePermissionMode) => applyRoutinePermissionMode({}, mode);
 /** The permission site for a routine wake: the routine's ceiling as the run, the unattended mark lifted for tool approvals only. */
 const wake = (mode: RoutinePermissionMode, ceiling: RoutinePermissionMode, context: AutoContext = {}) =>
-  routineTurnApproval({ bot: bot(mode), run: { permissionMode: ceiling }, tool: "Bash", summary: READ, context: { stopLine: null, ...context } }).verdict;
+  routineTurnApproval({ bot: bot(mode), run: { permissionMode: ceiling, permissionExplicit: true }, tool: "Bash", summary: READ, context: { stopLine: null, ...context } }).verdict;
 /** The same turn as base judged it: unattended, no run. */
 const unattended = (mode: RoutinePermissionMode) =>
   routineTurnApproval({ bot: bot(mode), run: null, tool: "Bash", summary: READ, context: { stopLine: null, unattended: true, automated: true } }).verdict;
@@ -33,18 +33,26 @@ describe("the follow-through turn of the owner's own routine", () => {
   });
 
   it("never above the ceiling: a routine at Ask, or a bot lowered to Ask, still asks", () => {
-    expect(wake("unlimited", "ask").approve).toBeNull();
+    expect(wake("full", "ask").approve).toBeNull();
     expect(wake("ask", "unlimited").approve).toBeNull();
   });
 
-  it("the stop line and the key guard still hold at No limits on a routine turn", () => {
+  // MAIN RULING 2026-11-13 wipe-only: ordinary stop lines and key reads run at No limits.
+  it("ordinary stop lines and a key read run at No limits on a routine turn", () => {
     const stop: StopHit = { kind: "delete", place: "/Users/x/Documents", what: "Deletes files outside its folder" };
-    expect(wake("unlimited", "unlimited", { stopLine: stop })).toMatchObject({ approve: null, source: "stop-line" });
+    expect(wake("unlimited", "unlimited", { stopLine: stop })).toMatchObject({ approve: expect.any(String), source: "no-limits" });
     const key = routineTurnApproval({ bot: bot("unlimited"), run: { permissionMode: "unlimited" }, tool: "Bash", summary: "cat ~/.ssh/id_ed25519", context: { stopLine: null } }).verdict;
-    expect(key.approve).toBeNull();
+    expect(key.approve).toBeTruthy();
   });
 
-  it("an outside event's turn keeps the unattended judge even with a routine run attached", () => {
-    expect(wake("unlimited", "unlimited", { unattended: true })).toMatchObject({ approve: null, source: "unattended-block" });
+  // MAIN RULING 2026-11-13 wipe-only: an outside trigger keeps effective No limits.
+  it("an outside event follows the routine's No limits ceiling", () => {
+    expect(wake("unlimited", "unlimited", { unattended: true })).toMatchObject({ approve: expect.any(String), source: "no-limits" });
   });
+});
+
+
+// MAIN RULING 2026-11-13 wipe-only: an explicit Ask ceiling survives follow-through.
+it("No limits follow-through preserves a saved explicit Ask ceiling", () => {
+  expect(wake("unlimited", "ask").approve).toBeNull();
 });

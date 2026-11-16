@@ -32,6 +32,10 @@ import {
 import { denyGeneration } from "./deny-read.ts";
 import { inheritMarks, type CarryRange, type InheritChild } from "./revoke-commit.ts";
 import { ensureThreadNo, threadNo } from "./thread-no.ts";
+import type { LineageReader, LineageVerdict } from "./lineage-types.ts";
+import { normalizeRetainedRefs, retainedRefCounts, RETAINED_LINES_MAX, RETAINED_OBJECTS_MAX } from "./retained-refs.ts";
+import { ReleaseBudget, withReleaseBudgets, chargeReleaseWork, reserveRelease } from "./release-budget.ts";
+import { onRollback } from "../tx-scope.ts";
 
 /** The parent position of a carry whose real position is not known yet: every range of the parent thread reaches it (fail closed). */
 export const UNKNOWN_PARENT_LSN = UNKNOWN_LSN;
@@ -212,9 +216,7 @@ export function lineageRefKey(ref: LineageRef): string {
   }
 }
 function dedupe(refs: readonly LineageRef[]): LineageRef[] {
-  const seen = new Set<string>(), out: LineageRef[] = [];
-  for (const ref of refs) { const key = lineageRefKey(ref); if (!seen.has(key)) { seen.add(key); out.push(ref); } }
-  return out;
+  return normalizeRetainedRefs(refs);
 }
 
 // ---- refs resolved into ranges ----
@@ -414,7 +416,14 @@ export function readyImportedThreads(tx: DatabaseSync): number {
 }
 
 // ---- the running turns ----
-interface OpenTurn extends TurnLineage { parents: LineageRef[]; ownKey: string; keys: Set<string>; resolved?: { count: number; value: Resolved }; sessions?: SessionKey[]; providers?: Set<string> }
+export interface OpenTurn extends TurnLineage {
+  parents: LineageRef[]; ownKey: string; keys: Set<string>; resolved?: { count: number; value: Resolved }; sessions?: SessionKey[]; providers?: Set<string>;
+  reader?: LineageReader; over: boolean; revision: number; sealed: boolean;
+  budget?: ReleaseBudget;
+  preparedWindow?: import("./lineage-types.ts").PreparedWindow;
+  onLedgerRefused?: (verdict: LineageVerdict) => void;
+  validateParents?: (refs: readonly LineageRef[]) => void;
+}
 /** The deny_generation values the running turns' own writes produced (ownCarry), one row per value, in a TEMP table on the writing
  * connection. Written in the same transaction as the bump, so a rollback (an atomically() savepoint, or the caller's transaction) takes the
  * row with it: a value a rolled-back write held and a later revoke reuses is never the turn's own (Astra 1.0.3 rollback High). Values are
@@ -453,6 +462,9 @@ function pruneOwnGenerations(db: DatabaseSync): void {
 }
 /** Open turns by thread, then by turn id. A room thread can hold one per member. */
 const openTurns = new Map<string, Map<string, OpenTurn>>();
+// Authority is the exact connection captured at generation creation. Keep it
+// outside the public lineage object so preparation cannot replace it.
+const turnDatabases = new WeakMap<OpenTurn, DatabaseSync>();
 const isOpenTurn = (turn: TurnLineage): turn is OpenTurn => Array.isArray(turn.parents) && (turn as OpenTurn).keys instanceof Set;
 /** The turn positions (turnLsn) of every open turn of this process, distinct and sorted. Turns run concurrently (one entry per turn per
  * thread above), so the revoke fold (revoke-fold.ts) tests each of them against a cohort's interval, never only the least
@@ -468,6 +480,62 @@ const mergedTurns = new WeakMap<TurnLineage, readonly OpenTurn[]>();
 function openTurnsOf(turn: TurnLineage): readonly OpenTurn[] {
   const open = openTurns.get(turn.threadId)?.get(turn.turnId) ?? (isOpenTurn(turn) ? turn : undefined);
   return open ? [open] : mergedTurns.get(turn) ?? [];
+}
+
+/** Authorization resolves original object identities, never a detached or newest-thread fallback. */
+export function checkedOpenTurns(turn: TurnLineage, requireReader = true): readonly OpenTurn[] {
+  const members = mergedTurns.get(turn) ?? (isOpenTurn(turn) ? [turn] : []);
+  const failing = members.filter(member => openTurns.get(member.threadId)?.get(member.turnId) !== member || member.sealed || requireReader && (!member.reader || !member.onLedgerRefused || !member.budget));
+  if (!members.length || failing.length) {
+    const verdict: LineageVerdict = { state: "checking", reason: "not-built" };
+    for (const member of failing) {
+      try { refuseRetainedTurn(member, verdict); } catch { /* every failing member must seal */ }
+    }
+    throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED", fence: verdict });
+  }
+  return members;
+}
+
+export function retainedTurnDatabase(turn: TurnLineage): DatabaseSync {
+  const members = checkedOpenTurns(turn, false);
+  const db = turnDatabases.get(members[0]!);
+  if (!db || members.some(member => turnDatabases.get(member) !== db)) {
+    const verdict: LineageVerdict = { state: "checking", reason: "not-built" };
+    for (const member of members) refuseRetainedTurn(member, verdict);
+    throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED", fence: verdict });
+  }
+  return db;
+}
+
+export function refuseRetainedTurn(open: OpenTurn, verdict: LineageVerdict): void {
+  if (open.sealed) return;
+  open.sealed = true;
+  open.onLedgerRefused?.(verdict);
+}
+
+export function freezeLineageReader(reader: LineageReader): LineageReader {
+  return Object.freeze({ ...reader, audience: reader.audience === null ? null : Object.freeze({ ...reader.audience, ...(reader.audience.view ? {view:Object.freeze({...reader.audience.view}),scopeIds:Object.freeze([])} : {scopeIds: Object.freeze([...reader.audience.scopeIds])}) }) });
+}
+
+/** Finalize once, before authoritative preparation and receipt joins. */
+export function bindRetainedTurn(turn: TurnLineage, reader: LineageReader, onRefused: (verdict: LineageVerdict) => void,
+  validate: (refs: readonly LineageRef[]) => void): LineageReader {
+  const members = checkedOpenTurns(turn, false);
+  if (members.length !== 1 || members[0]!.reader) throw new Error("RETAINED_READER_ALREADY_BOUND");
+  const open = members[0]!;
+  if (typeof onRefused !== "function" || typeof validate !== "function") {
+    refuseRetainedTurn(open, { state: "checking", reason: "not-built" });
+    throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
+  }
+  const frozen = Object.isFrozen(reader) && (reader.audience === null || Object.isFrozen(reader.audience) && Object.isFrozen(reader.audience.scopeIds)) ? reader : freezeLineageReader(reader);
+  open.reader = frozen;
+  open.onLedgerRefused = onRefused;
+  open.validateParents = validate;
+  Object.defineProperty(open, "budget", { value: new ReleaseBudget(verdict => refuseRetainedTurn(open, verdict)), enumerable: true, writable: false, configurable: false });
+  // Preparation may have staged parents before receipt access was final.
+  // They acquire authority only under this exact frozen reader.
+  if (open.parents.length) validate(open.parents);
+  return frozen;
 }
 /** The engine sessions the turn ran in (writeSessionLineage records them): every line it generates advances their last_lsn. A merged turn
  * advances every member's (an over-attribution only ever resets more). */
@@ -492,7 +560,8 @@ const memberOf = (turnId: string): string => turnId.split("\u0000", 1)[0]!;
  * or below it), denyGeneration = deny-read.ts denyGeneration. The turn is registered for its thread until closeTurnLineage. */
 export function openTurnLineage(db: DatabaseSync, turn: { threadId: string; turnId: string }): TurnLineage {
   const next = currentLsn(db);
-  const open: OpenTurn = { threadId: turn.threadId, turnId: turn.turnId, turnLsn: Math.max(0, next - 1), parents: [], ownKey: randomUUID(), keys: new Set(), denyGeneration: denyGeneration(db) };
+  const open: OpenTurn = { threadId: turn.threadId, turnId: turn.turnId, turnLsn: Math.max(0, next - 1), parents: [], ownKey: randomUUID(), keys: new Set(), denyGeneration: denyGeneration(db), over: false, revision: 0, sealed: false };
+  turnDatabases.set(open, db);
   let byTurn = openTurns.get(turn.threadId);
   if (!byTurn) openTurns.set(turn.threadId, byTurn = new Map());
   byTurn.set(turn.turnId, open);
@@ -581,7 +650,7 @@ export function writerTurnFor(threadId: string, memberBotId?: string, providerTu
 /** Ends the running turn (its replies and session are written). */
 export function closeTurnLineage(turn: TurnLineage): void {
   const byTurn = openTurns.get(turn.threadId);
-  if (!byTurn) return;
+  if (!byTurn || byTurn.get(turn.turnId) !== turn) return;
   byTurn.delete(turn.turnId);
   if (!byTurn.size) openTurns.delete(turn.threadId);
 }
@@ -600,13 +669,84 @@ export function closeThreadTurns(threadId: string): void { openTurns.delete(thre
 /** Adds what the engine was shown during the turn: prompt parts (buildPrompt calls it), tool results, steer quotes (a steer adds parents,
  * never moves turnLsn), receipts. Any role, owner lines included. */
 export function addTurnParents(turn: TurnLineage, refs: readonly LineageRef[]): void {
-  const open = openTurns.get(turn.threadId)?.get(turn.turnId) ?? (isOpenTurn(turn) ? turn : undefined);
-  if (!open) return;
-  for (const ref of refs) {
-    const key = lineageRefKey(ref);
-    if (open.keys.has(key)) continue;
-    open.keys.add(key);
-    open.parents.push(ref);
+  if (parentStaging) {
+    try {
+      const targets = checkedOpenTurns(turn);
+      if (targets.some(target => !parentStaging!.members.includes(target))) throw new Error("MEMORY_CONTEXT_REVOKED");
+      if (parentStaging.refs.length + refs.length > 4 * (RETAINED_LINES_MAX + RETAINED_OBJECTS_MAX)) throw new Error("MEMORY_CONTEXT_REVOKED");
+      parentStaging.refs.push(...refs);
+    } catch (error) { parentStaging.failed = true; throw error; }
+    return;
+  }
+  commitTurnParents(proposeTurnParents(turn, refs));
+}
+
+/** Receipt writers may need an uncommitted row for their prospective lookup.
+ * While the emitter owns a rollbackable transaction, collect their parent
+ * additions without changing live ledgers. A swallowed producer failure latches
+ * failure here too. This scope is synchronous and cannot cross an await. */
+let parentStaging: { members: readonly OpenTurn[]; refs: LineageRef[]; failed: boolean } | undefined;
+export function captureTurnParentAdditions(turn: TurnLineage, work: () => void): readonly LineageRef[] {
+  if (parentStaging) throw new Error("NESTED_RESPONSE_PARENT_STAGING");
+  const stage = { members: checkedOpenTurns(turn), refs: [] as LineageRef[], failed: false };
+  parentStaging = stage;
+  try {
+    const result: unknown = work();
+    if (stage.failed || result && typeof (result as { then?: unknown }).then === "function") throw new Error("MEMORY_CONTEXT_REVOKED");
+    return stage.refs;
+  } finally { parentStaging = undefined; }
+}
+
+export interface TurnParentsProposal { readonly turn: TurnLineage; readonly entries: readonly { open: OpenTurn; revision: number; parents: LineageRef[] }[] }
+export function proposeTurnParents(turn: TurnLineage, refs: readonly LineageRef[]): TurnParentsProposal {
+  const members = checkedOpenTurns(turn, false);
+  reserveRelease(members.flatMap(open => open.budget ? [open.budget] : []), { work: 1 });
+  const entries = members.map(open => withReleaseBudgets(open.budget ? [open.budget] : [], () => {
+    const overflow = (): never => {
+      open.over = true;
+      const verdict: LineageVerdict = { state: "checking", reason: "retained-over" };
+      refuseRetainedTurn(open, verdict);
+      throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED", fence: verdict });
+    };
+    // Bound staging itself, including repeated duplicate input and prefix-only carries.
+    // Do not allocate the prospective concatenation before bounding its input count.
+    if (open.parents.length + refs.length > 4 * (RETAINED_LINES_MAX + RETAINED_OBJECTS_MAX)) overflow();
+    chargeReleaseWork(open.parents.length + refs.length);
+    let visited = 0;
+    const parents = normalizeRetainedRefs([...open.parents, ...refs], units => {
+      chargeReleaseWork(units);
+      if ((visited += units) > 16 * (RETAINED_LINES_MAX + RETAINED_OBJECTS_MAX)) overflow();
+    });
+    const counts = retainedRefCounts(parents);
+    if (open.over || counts.lines > RETAINED_LINES_MAX || counts.objects > RETAINED_OBJECTS_MAX) {
+      overflow();
+    }
+    open.validateParents?.(parents);
+    return { open, revision: open.revision, parents };
+  }));
+  return { turn, entries };
+}
+export function commitTurnParents(proposal: TurnParentsProposal): void {
+  const members = checkedOpenTurns(proposal.turn, false);
+  if (members.length !== proposal.entries.length || proposal.entries.some(({ open, revision }, i) => members[i] !== open || open.revision !== revision)) {
+    const verdict: LineageVerdict = { state: "checking", reason: "not-built" };
+    for (const { open } of proposal.entries) refuseRetainedTurn(open, verdict);
+    throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED", fence: verdict });
+  }
+  // Pay for key construction for every member before mutating the first one.
+  const keys = proposal.entries.map(({ open, parents }) => withReleaseBudgets(open.budget ? [open.budget] : [], () =>
+    new Set(parents.map(ref => { chargeReleaseWork(); return lineageRefKey(ref); }))));
+  for (const [index, { open, parents }] of proposal.entries.entries()) {
+    const prior = { parents: open.parents, keys: open.keys, revision: open.revision, resolved: open.resolved };
+    open.parents = parents;
+    open.keys = keys[index]!;
+    open.revision++;
+    open.resolved = undefined;
+    const committedRevision = open.revision;
+    onRollback(() => {
+      // Rollback never retargets a replacement turn or reverses a later commit.
+      if (open.revision === committedRevision) Object.assign(open, prior);
+    });
   }
 }
 

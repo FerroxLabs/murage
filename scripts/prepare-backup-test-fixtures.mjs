@@ -9,6 +9,7 @@
 // linux-x64), that host's age and age-keygen for MURAGE_BACKUP_TEST_AGE_DIR.
 // The environment assignment is printed on stdout so CI can append it to
 // $GITHUB_ENV.
+// --cache-directory stages only the host age tools for offline test runners.
 //
 // Every archive and every extracted byte is checked against shared pins before
 // it is written, so the decompressor's provenance does not matter: tar.gz is
@@ -22,6 +23,8 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { BACKUP_AGE_PINS, backupAgePinForTarget } from "../shared/backup-age-pins.mjs";
 import { RESTIC_ARCHIVE_SHA256, RESTIC_ARCHIVE_URL, RESTIC_ORIGINAL_SHA256 } from "../shared/backup-restic-pin.mjs";
+import { fetchBuildInput } from "./fetch-build-input.mjs";
+import { backupTestToolPin, verifyBackupTestFixtureTools } from "./verify-backup-test-fixtures.mjs";
 
 const repository = fileURLToPath(new URL("../", import.meta.url));
 const LIMIT = 64 * 1024 ** 2;
@@ -29,7 +32,8 @@ const sha256 = bytes => createHash("sha256").update(bytes).digest("hex");
 const refuse = code => { throw Error(code); };
 
 async function download(url, expectedSha256) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(120_000) });
+  if (!/^[a-f0-9]{64}$/.test(expectedSha256 ?? "")) refuse("BACKUP_TEST_FIXTURE_PIN_MISSING");
+  const response = await fetchBuildInput(url, { sha256: expectedSha256, maxBytes: LIMIT, timeoutMs: 120_000 });
   if (!response.ok || !response.body) refuse("BACKUP_TEST_FIXTURE_DOWNLOAD_FAILED");
   const chunks = []; let size = 0;
   for await (const chunk of response.body) { size += chunk.length; if (size > LIMIT) refuse("BACKUP_TEST_FIXTURE_DOWNLOAD_LIMIT"); chunks.push(Buffer.from(chunk)); }
@@ -69,6 +73,7 @@ function bzip2Executable() {
 }
 
 function place(file, bytes, expectedSha256) {
+  if (!/^[a-f0-9]{64}$/.test(expectedSha256 ?? "")) refuse("BACKUP_TEST_FIXTURE_PIN_MISSING");
   if (sha256(bytes) !== expectedSha256) refuse("BACKUP_TEST_FIXTURE_PAYLOAD_MISMATCH");
   if (existsSync(file)) {
     if (sha256(readFileSync(file)) !== expectedSha256) refuse("BACKUP_TEST_FIXTURE_EXISTING_MISMATCH");
@@ -87,6 +92,15 @@ async function ageMembers(pin, names) {
   return tarMembers(gunzipSync(archive, { maxOutputLength: 4 * LIMIT }), names.map(name => `age/${name}`));
 }
 
+export async function stageBackupTestFixtureTools(toolDirectory) {
+  if (!toolDirectory || !path.isAbsolute(toolDirectory)) refuse("BACKUP_TEST_FIXTURE_TOOL_DIRECTORY_INVALID");
+  const host = backupTestToolPin();
+  const members = await ageMembers(host, ["age", "age-keygen"]);
+  place(path.join(toolDirectory, "age"), members.get("age/age"), host.executableSha256);
+  place(path.join(toolDirectory, "age-keygen"), members.get("age/age-keygen"), host.keygenSha256);
+  return verifyBackupTestFixtureTools(toolDirectory);
+}
+
 export async function stageBackupTestFixtures({ root = repository, toolDirectory } = {}) {
   const darwin = BACKUP_AGE_PINS["darwin-arm64"];
   const darwinMembers = await ageMembers(darwin, ["age"]);
@@ -100,15 +114,14 @@ export async function stageBackupTestFixtures({ root = repository, toolDirectory
   if (!path.isAbsolute(toolDirectory)) refuse("BACKUP_TEST_FIXTURE_TOOL_DIRECTORY_INVALID");
   const host = backupAgePinForTarget(process.platform, process.arch);
   if (!host) return null;
-  const members = await ageMembers(host, ["age", "age-keygen"]);
-  place(path.join(toolDirectory, "age"), members.get("age/age"), host.executableSha256);
-  place(path.join(toolDirectory, "age-keygen"), members.get("age/age-keygen"), host.keygenSha256);
-  return toolDirectory;
+  return stageBackupTestFixtureTools(toolDirectory);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
-  if (!(args.length === 0 || (args.length === 2 && args[0] === "--tool-directory"))) refuse("BACKUP_TEST_FIXTURE_ARGUMENTS_INVALID");
-  const staged = await stageBackupTestFixtures({ toolDirectory: args[1] });
+  if (!(args.length === 0 || (args.length === 2 && ["--tool-directory", "--cache-directory"].includes(args[0])))) refuse("BACKUP_TEST_FIXTURE_ARGUMENTS_INVALID");
+  const staged = args[0] === "--cache-directory"
+    ? await stageBackupTestFixtureTools(args[1])
+    : await stageBackupTestFixtures({ toolDirectory: args[1] });
   if (staged) process.stdout.write(`MURAGE_BACKUP_TEST_AGE_DIR=${staged}\n`);
 }

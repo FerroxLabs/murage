@@ -1,0 +1,64 @@
+{
+  "targets": [
+    "GFW-BIN",
+    "GFW-USR",
+    "murage-exec-win"
+  ],
+  "cases": [
+    {
+      "argv": [
+        "bash.exe",
+        "-c",
+        "printf '%s\\n' \"$HOME\"",
+        "--",
+        ""
+      ],
+      "expectedArgv": [
+        "bash.exe",
+        "-c",
+        "printf '%s\\n' \"$HOME\"",
+        "--",
+        ""
+      ],
+      "nativeRoundtripEvidence": null
+    },
+    {
+      "argv": [
+        "bash.exe",
+        "-c",
+        "echo ok",
+        "--",
+        "a\"b",
+        "C:\\space dir\\",
+        "日本語"
+      ],
+      "expectedArgv": [
+        "bash.exe",
+        "-c",
+        "echo ok",
+        "--",
+        "a\"b",
+        "C:\\space dir\\",
+        "日本語"
+      ],
+      "nativeRoundtripEvidence": null
+    },
+    {
+      "argv": [
+        "murage-exec-win.exe",
+        "",
+        "a\"b",
+        "C:\\space dir\\",
+        "日本語"
+      ],
+      "expectedArgv": [
+        "murage-exec-win.exe",
+        "",
+        "a\"b",
+        "C:\\space dir\\",
+        "日本語"
+      ],
+      "nativeRoundtripEvidence": null
+    }
+  ]
+}

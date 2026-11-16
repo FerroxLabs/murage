@@ -1,0 +1,294 @@
+{
+ "guardDiesOnFreshRemove#1": {
+  "verdict": "KILLED",
+  "witness": "cm-guardDiesOnFreshRemove-1-valid-keep-keeps-guard"
+ },
+ "ownerAuthorityForEveryDestructiveSend#1": {
+  "verdict": "KILLED",
+  "witness": "cm-ownerAuthorityForEveryDestructiveSend-1-apply-unsent"
+ },
+ "ownerAuthorityForEveryDestructiveSend#2": {
+  "verdict": "KILLED",
+  "witness": "cm-ownerAuthorityForEveryDestructiveSend-1-apply-unsent"
+ },
+ "ownerAuthorityForEveryDestructiveSend#4": {
+  "verdict": "KILLED",
+  "witness": "cm-ownerAuthorityForEveryDestructiveSend-4-revoke-no-authority"
+ },
+ "ownerAuthorityForEveryDestructiveSend#5": {
+  "verdict": "KILLED",
+  "witness": "cm-ownerAuthorityForEveryDestructiveSend-5-delete-no-authority"
+ },
+ "ownerAuthorityForEveryDestructiveSend#7": {
+  "verdict": "KILLED",
+  "witness": "cm-ownerAuthorityForEveryDestructiveSend-7-earlier-epoch"
+ },
+ "ownerAuthorityForEveryDestructiveSend#10": {
+  "verdict": "KILLED",
+  "witness": "cm-ownerAuthorityForEveryDestructiveSend-10-delete-outside-scope"
+ },
+ "ownerAuthorityForEveryDestructiveSend#11": {
+  "verdict": "KILLED",
+  "witness": "cm-ownerAuthorityForEveryDestructiveSend-11-revoke-outside-scope"
+ },
+ "ownerAuthorityForEveryDestructiveSend#12": {
+  "verdict": "KILLED",
+  "witness": "cm-ownerAuthorityForEveryDestructiveSend-12-revoke-key-in-use"
+ },
+ "ownerAuthorityForEveryDestructiveSend#15": {
+  "verdict": "KILLED",
+  "witness": "cm-ownerAuthorityForEveryDestructiveSend-15-rotation-revokes-other-key"
+ },
+ "ownerAuthorityForEveryDestructiveSend#16": {
+  "verdict": "KILLED",
+  "witness": "cm-ownerAuthorityForEveryDestructiveSend-16-rotation-revokes-saved-key"
+ },
+ "ownerAuthorityForEveryDestructiveSend#17": {
+  "verdict": "KILLED",
+  "witness": "cm-ownerAuthorityForEveryDestructiveSend-17-keep-after-nonremove-authority"
+ },
+ "ownerAuthorityForEveryDestructiveSend#19": {
+  "verdict": "KILLED",
+  "witness": "cm-ownerAuthorityForEveryDestructiveSend-19-keep-on-other-target"
+ },
+ "ownerAuthorityForEveryDestructiveSend#20": {
+  "verdict": "KILLED",
+  "witness": "cm-ownerAuthorityForEveryDestructiveSend-20-keep-older-than-remove"
+ },
+ "outgoingCapturedBeforeSwap#2": {
+  "verdict": "KILLED",
+  "witness": "cm-outgoingCapturedBeforeSwap-2-tables-absent-blind-swap"
+ },
+ "outgoingCapturedBeforeSwap#3": {
+  "verdict": "KILLED",
+  "witness": "cm-outgoingCapturedBeforeSwap-3-live-db-declared-blind"
+ },
+ "outgoingCapturedBeforeSwap#5": {
+  "verdict": "KILLED",
+  "witness": "cm-outgoingCapturedBeforeSwap-5-carry-captured-at-swap-step"
+ },
+ "outgoingCapturedBeforeSwap#6": {
+  "verdict": "KILLED",
+  "witness": "cm-outgoingCapturedBeforeSwap-6-carry-for-other-epoch"
+ },
+ "outgoingCapturedBeforeSwap#11": {
+  "verdict": "KILLED",
+  "witness": "cm-outgoingCapturedBeforeSwap-11-carry-drops-blind-fence"
+ },
+ "outgoingCapturedBeforeSwap#12": {
+  "verdict": "KILLED",
+  "witness": "cm-outgoingCapturedBeforeSwap-12-no-db-swap-not-blind"
+ },
+ "outgoingCapturedBeforeSwap#14": {
+  "verdict": "KILLED",
+  "witness": "cm-outgoingCapturedBeforeSwap-14-carry-deleted-by-tick-in-aborted-job"
+ },
+ "outgoingCapturedBeforeSwap#15": {
+  "verdict": "KILLED",
+  "witness": "cm-outgoingCapturedBeforeSwap-15-carry-deleted-by-clear-of-armed-job"
+ },
+ "guardDiesOnFreshRemove#2": {
+  "verdict": "EQUIVALENT",
+  "kind": "NULL",
+  "argument": "Line 1237: with the a.scope.inboxId === null operand removed, a Remove authority with a null inboxId (remove_key_only, key-only scope) reaches next.local.keepGuards[a.scope.inboxId], which JS reads as keepGuards[\"null\"]. keepGuards is keyed by real inbox ids (\"i1\"...), never the string \"null\" (environmentWellFormed ties every guard key to a binding inbox), so the lookup is always undefined and the clause never changes a verdict."
+ },
+ "guardDiesOnFreshRemove#3": {
+  "verdict": "EQUIVALENT",
+  "kind": "COMBINED",
+  "separating": "sep-guardDiesOnFreshRemove-3-refused-remove-keeps-guard",
+  "by": "authorityCreatedByValidOwnerAction",
+  "byLine": 1281,
+  "argument": "Line 1237: removing the authorityCreationVerdict(...) !== null operand only adds fresh-Remove checks for authorities born by an INVALID creation (wrong action, refused action, bad token, wrong stamps). Every such history is already rejected at line 1281 by authorityCreatedByValidOwnerAction in the same step, so no accepted (reachable) history can contain one, and a must-accept witness for it would be an impossible state (the combined gate rejected the attempt: combined:...invalid-creation-keeps-guard/authorityCreatedByValidOwnerAction)."
+ },
+ "ownerAuthorityForEveryDestructiveSend#14": {
+  "verdict": "EQUIVALENT",
+  "kind": "NULL",
+  "argument": "Line 1303: with a.botId !== null removed, a rotate_reconnect authority with botId null evaluates prev.local.savedKeys[null], i.e. savedKeys[\"null\"]. savedKeys is keyed by bot ids (\"b1\"...); no bot is named \"null\", and a rotate_reconnect authority is created by owner.reconnect which always names a bot (authorityCreationVerdict line 866: a.botId equals the action botId), so the lookup is undefined and never equals the revoked key id."
+ },
+ "ownerAuthorityForEveryDestructiveSend#18": {
+  "verdict": "EQUIVALENT",
+  "kind": "NULL",
+  "argument": "Line 1305-1306: with a.scope.target !== null removed, a Remove authority with scope.target null runs keeps.find(k => k.target === a.scope.target && ...), i.e. k.target === null. KeepRecord.target is a string (a Keep names an inbox or op target, authorityCreationVerdict line 868 binds it to the action target), never null, so the find never matches and the clause never changes a verdict."
+ },
+ "keptKeysProtected#6": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-6-window-answer-taken"
+ },
+ "keptKeysProtected#21": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-27-kept-under-unknown-authority"
+ },
+ "keptKeysProtected#23": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-29-kept-under-keep-of-other-key"
+ },
+ "keptKeysProtected#27": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-33-swap-older-keep-key-not-carried"
+ },
+ "keptKeysProtected#38": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-44-tick-older-keep-in-boot-prep-phase"
+ },
+ "keptKeysProtected#52": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-60-unconfirmed-dropped-old-remove"
+ },
+ "keptKeysProtected#43": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-60-unconfirmed-dropped-old-remove"
+ },
+ "keptKeysProtected#44": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-60-unconfirmed-dropped-old-remove"
+ },
+ "keptKeysProtected#45": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-60-unconfirmed-dropped-old-remove"
+ },
+ "keptKeysProtected#56": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-64-unconfirmed-reattributed-stale-keep"
+ },
+ "keptKeysProtected#76": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-84-unconfirmed-revoke-unknown-authority"
+ },
+ "keptKeysProtected#77": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-85-unconfirmed-revoke-under-keep"
+ },
+ "keptKeysProtected#82": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-90-swap-carry-lacks-mark"
+ },
+ "keptKeysProtected#98": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-107-highwater-lost-on-drop"
+ },
+ "keptKeysProtected#104": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-113-swap-no-carry"
+ },
+ "keptKeysProtected#111": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-122-prep-uncarried-below-highwater"
+ },
+ "keptKeysProtected#127": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-138-kept-revoke-unknown-authority"
+ },
+ "keptKeysProtected#128": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-139-kept-revoke-under-nonremove"
+ },
+ "keptKeysProtected#129": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-140-kept-revoke-no-keep-record"
+ },
+ "keptKeysProtected#118": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-129-drop-lookalike-removals"
+ },
+ "keptKeysProtected#119": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-129-drop-lookalike-removals"
+ },
+ "keptKeysProtected#120": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-129-drop-lookalike-removals"
+ },
+ "keptKeysProtected#17": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-22-foreign-carry-prep-older-keep"
+ },
+ "keptKeysProtected#31": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-37-boot-clamp-with-later-remove-on-record"
+ },
+ "keptKeysProtected#33": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-39-boot-prep-recreates-k9-lookalike-removals"
+ },
+ "keptKeysProtected#35": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-39-boot-prep-recreates-k9-lookalike-removals"
+ },
+ "keptKeysProtected#36": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-39-boot-prep-recreates-k9-lookalike-removals"
+ },
+ "keptKeysProtected#37": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-39-boot-prep-recreates-k9-lookalike-removals"
+ },
+ "keptKeysProtected#48": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-56-dangling-mark-no-entry"
+ },
+ "keptKeysProtected#50": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-58-unconfirmed-dropped-revoked-no-remove"
+ },
+ "keptKeysProtected#51": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-59-unconfirmed-dropped-fresh-remove-no-revoke"
+ },
+ "keptKeysProtected#74": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-82-nonrevoke-send-targets-kept-key"
+ },
+ "keptKeysProtected#125": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-82-nonrevoke-send-targets-kept-key"
+ },
+ "keptKeysProtected#70": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-78-capture-mark-without-entry"
+ },
+ "keptKeysProtected#87": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-96-prep-carried-mark-without-entry"
+ },
+ "keptKeysProtected#89": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-98-prep-fresh-keep-ends-carried-mark"
+ },
+ "keptKeysProtected#66": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-74-tick-creates-past-mark"
+ },
+ "keptKeysProtected#67": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-75-swap-creates-mark-at-own-step"
+ },
+ "keptKeysProtected#81": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-89-blind-swap-kept-key-no-carry"
+ },
+ "keptKeysProtected#103": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-89-blind-swap-kept-key-no-carry"
+ },
+ "keptKeysProtected#112": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-123-boot-prep-no-highwater-recorded"
+ },
+ "keptKeysProtected#92": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-101-reconfirm-row-invisible"
+ },
+ "keptKeysProtected#93": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-102-reconfirm-row-wrong-section"
+ },
+ "keptKeysProtected#95": {
+  "verdict": "KILLED",
+  "witness": "cm-keptKeysProtected-104-reconfirm-row-other-bot"
+ },
+ "keptKeysProtected#96": {
+  "verdict": "EQUIVALENT",
+  "kind": "NULL",
+  "argument": "line 1529: p = keptHighWater(prev,k) is undefined only when the entry or high-water names an authority nobody recorded; the authority is recorded at creation (line 1434), so the lookup of an unrecorded authority is already false."
+ }
+}

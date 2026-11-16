@@ -1,0 +1,6 @@
+/tmp/winscen-safety-960ab32c99554ac7a845f4b89bb9a7bf/runs/junction/new-file
+[31;1mException: [0m/work/scripts/windows/safety-check.ps1:8[0m
+[31;1m[0m[36;1mLine |[0m
+[31;1m[0m[36;1m[36;1m   8 | [0m   if(-not $failed){[36;1mthrow "Expected rejection: $Label"[0m}[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m     | [31;1m                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~[0m
+[31;1m[0m[36;1m[36;1m[0m[36;1m[0m[36;1m[31;1m[31;1m[36;1m     | [31;1mExpected rejection: reparse ancestor under runs[0m
