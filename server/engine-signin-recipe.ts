@@ -71,6 +71,7 @@ export const ENGINE_SIGNIN_TABLE: Readonly<Record<string, EngineSigninRow>> = Ob
   minimax: none("an API key in argv; the key path takes it"),
   grok: none("API key"),
   "openai-compat": none("API key or local server"),
+  deepseekAgent: none("API key in dsh or DEEPSEEK_API_KEY"),
   piAgent: none("no account of its own"),
   geminiAgent: none("no sign-in command"),
   qwenAgent: none("no sign-in command"),

@@ -47,6 +47,8 @@ import { FLUX_SURFACE } from "./flux-routing.ts";
 
 const OFF = { [FLUX_MEMORY_APP_HEADER]: "murage", [FLUX_MEMORY_CAPTURE_HEADER]: "off", [FLUX_MEMORY_INJECT_HEADER]: "off" };
 const APP_ONLY = { [FLUX_MEMORY_APP_HEADER]: "murage" };
+/** An owner memory-on decision on the wire: capture is explicit-only, so capture off is always sent; inject is unchanged. */
+const OWNER_ON = { ...APP_ONLY, [FLUX_MEMORY_CAPTURE_HEADER]: "off" };
 const BASE: FluxMemorySettings = { killSwitch: false, inject: "on", ownerMemory: "on", spaces: false };
 
 afterEach(() => {
@@ -60,7 +62,7 @@ describe("who gets which headers", () => {
 
   it("an owner turn sends only the app header (interim: capture and recall on)", () => {
     const d = fluxMemoryDecision(fluxMemoryContextForTurn({ warmIdentity: owner }), { settings: BASE });
-    expect(d.headers).toEqual(APP_ONLY);
+    expect(d.headers).toEqual(OWNER_ON);
     expect([d.capture, d.inject, d.reason]).toEqual(["on", "on", "owner"]);
   });
 
@@ -81,7 +83,8 @@ describe("who gets which headers", () => {
     const held = fluxMemoryDecision(fluxMemoryContextForTurn({ warmIdentity: owner, fluxCaptureHold: true }), { settings: BASE });
     expect([held.capture, held.inject, held.reason]).toEqual(["off", "on", "number-hold"]);
     expect(held.headers).toEqual({ [FLUX_MEMORY_APP_HEADER]: "murage", [FLUX_MEMORY_CAPTURE_HEADER]: "off" });
-    expect(held.signature).not.toBe(plain.signature);
+    // explicit-only capture: the wire says capture off either way; the hold is what stops Murage's own explicit capture
+    expect([plain.capture, plain.headers]).toEqual(["on", held.headers]);
     // inject off by the owner's setting still applies under the hold
     expect(fluxMemoryDecision(fluxMemoryContextForTurn({ warmIdentity: owner, fluxCaptureHold: true }), { settings: { ...BASE, inject: "off" } }).headers).toEqual(OFF);
     // a non-owner turn is off/off as before, hold or not
@@ -104,7 +107,7 @@ describe("who gets which headers", () => {
 
   it("the inject kill switch turns recall off and leaves capture on", () => {
     const d = fluxMemoryDecision(fluxMemoryContextForTurn({ warmIdentity: owner }), { settings: { ...BASE, inject: "off" } });
-    expect(d.headers).toEqual({ ...APP_ONLY, [FLUX_MEMORY_INJECT_HEADER]: "off" });
+    expect(d.headers).toEqual({ ...OWNER_ON, [FLUX_MEMORY_INJECT_HEADER]: "off" });
     expect([d.capture, d.inject]).toEqual(["on", "off"]);
   });
 
@@ -190,7 +193,7 @@ describe("spaces, behind a flag that defaults off", () => {
   const ownerCtx = { audience: "owner" as const, spaces: plan };
 
   it("sends no space header while the flag is off", () => {
-    expect(fluxMemoryDecision(ownerCtx, { settings: BASE }).headers).toEqual(APP_ONLY);
+    expect(fluxMemoryDecision(ownerCtx, { settings: BASE }).headers).toEqual(OWNER_ON);
   });
 
   it("sends the write target and the read list when the flag is on and memory is on", () => {
@@ -258,13 +261,13 @@ describe("circuit breaker", () => {
     expect(breaker.isOpen()).toBe(true);
     const ctx = { audience: "owner" as const };
     const open = fluxMemoryDecision(ctx, { settings: BASE, breaker });
-    expect(open.headers).toEqual({ ...APP_ONLY, [FLUX_MEMORY_INJECT_HEADER]: "off" });
+    expect(open.headers).toEqual({ ...OWNER_ON, [FLUX_MEMORY_INJECT_HEADER]: "off" });
     expect(open.reason).toBe("breaker");
     now += 15 * 60_000 - 1;
     expect(breaker.isOpen()).toBe(true);
     now += 2;
     expect(breaker.isOpen()).toBe(false);
-    expect(fluxMemoryDecision(ctx, { settings: BASE, breaker }).headers).toEqual(APP_ONLY);
+    expect(fluxMemoryDecision(ctx, { settings: BASE, breaker }).headers).toEqual(OWNER_ON);
   });
 
   it("stays closed within a second of the baseline, and without a baseline", () => {
@@ -291,9 +294,9 @@ describe("what each engine is given", () => {
   });
 
   it("codex: three fixed tables, picked by what the decision turns off", () => {
-    expect(FLUX_CODEX_TABLE_HEADERS.flux).toEqual(APP_ONLY);
+    expect(FLUX_CODEX_TABLE_HEADERS.flux).toEqual(OWNER_ON);
     expect(FLUX_CODEX_TABLE_HEADERS["flux-off"]).toEqual(OFF);
-    expect(FLUX_CODEX_TABLE_HEADERS["flux-noinject"]).toEqual({ ...APP_ONLY, [FLUX_MEMORY_INJECT_HEADER]: "off" });
+    expect(FLUX_CODEX_TABLE_HEADERS["flux-noinject"]).toEqual({ ...OWNER_ON, [FLUX_MEMORY_INJECT_HEADER]: "off" });
     expect(codexFluxProviderFor(fluxMemoryDecision({ audience: "owner" }, { settings: BASE }))).toBe("flux");
     expect(codexFluxProviderFor(fluxMemoryDecision({ audience: "owner" }, { settings: { ...BASE, inject: "off" } }))).toBe("flux-noinject");
     expect(codexFluxProviderFor(fluxMemoryDecision({ audience: "background" }, { settings: BASE }))).toBe("flux-off");
@@ -323,12 +326,15 @@ describe("engine coverage", () => {
     for (const engine of Object.keys(FLUX_SURFACE)) expect(FLUX_ENGINE_HEADERS[engine], engine).toBeDefined();
   });
 
-  it("an unsupported engine is refused on off headers and left alone on an owner turn", () => {
+  it("an unsupported engine is refused on every Flux turn, the owner's included (explicit-only: the owner's headers say capture off too)", () => {
     const off = fluxMemoryDecision({ audience: "non-owner" }, { settings: BASE });
     const on = fluxMemoryDecision({ audience: "owner" }, { settings: BASE });
+    expect(on.capture).toBe("on");
+    expect(on.headers["x-flux-memory-capture"]).toBe("off");
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     expect(fluxHeaderRefusal("someNewEngine", off)).toMatch(/cannot carry Flux Memory choices/);
-    expect(fluxHeaderRefusal("someNewEngine", on)).toBeNull();
+    expect(fluxHeaderRefusal("someNewEngine", on)).toMatch(/cannot carry Flux Memory choices/);
     expect(fluxHeaderRefusal("claudeAgent", off)).toBeNull();
+    expect(fluxHeaderRefusal("claudeAgent", on)).toBeNull();
   });
 });

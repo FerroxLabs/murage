@@ -3,7 +3,7 @@
 import { createServer, type Server } from "node:http";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { connectedServices, connectionStatus, connectionStatusFailureSentence, setManagedBrokerAccess } from "./composio.ts";
+import { connectedServices, connectionStatus, resetManagedBrokerState, connectionStatusFailureSentence, setManagedBrokerAccess } from "./composio.ts";
 
 let server: Server;
 let answer = { status: 503, body: "upstream connect error or disconnect/reset before headers. reset reason: connection failure, transport failure reason: /srv/broker/pool" };
@@ -20,6 +20,9 @@ afterAll(async () => {
 
 describe("Connected apps status failures in plain words", () => {
   it.each([[503, /aren't answering right now/], [502, /aren't answering right now/], [429, /too many requests/], [401, /didn't accept this computer's sign-in/], [400, /couldn't be checked/]] as const)("a managed %i", async (status, sentence) => {
+    // MAIN RULING 1115-COMPOSIO-429-REVIEW: each independent HTTP status uses a fresh broker admission gate too.
+    resetManagedBrokerState();
+    setManagedBrokerAccess({ url: `http://127.0.0.1:${(server.address() as { port: number }).port}/`, token: "a".repeat(64) });
     answer = { status, body: status === 429 ? JSON.stringify({ error: { message: "rate_limit_exceeded: bucket conn-7" } }) : answer.body };
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {

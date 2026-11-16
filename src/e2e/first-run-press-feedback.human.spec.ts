@@ -114,7 +114,7 @@ test.use({
   app: async ({ page }, use) => {
     page.on("pageerror", (error) => console.error(`PAGE ERROR: ${error.message}`));
     await page.addInitScript(() => {
-      try { window.localStorage.setItem("murage-email-gate", "skipped"); } catch { /* the gate just renders */ }
+      try { window.localStorage.setItem("murage-email-gate", "skipped"); window.localStorage.setItem("help.seen.chat.level-chip", "1"); } catch { /* the gate just renders */ }
     });
     await page.goto("/");
     await use(page);

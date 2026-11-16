@@ -1,3 +1,4 @@
+import { appendFixtureMessage } from './testing/approval-card.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -93,7 +94,7 @@ describe("engine payload parity with the base (lane E golden)", () => {
     store.markTerminalAssistantMessage(t, "turn-1");
     // a card, answered, and one still open
     store.appendMessage(t, { role: "bot", kind: "options", text: "May I run it?", card: { title: "May I run it?", options: [], requestId: "req-1", tool: "Bash", answered: "allow" } } as never);
-    store.appendMessage(t, { role: "bot", kind: "options", text: "May I deploy?", card: { title: "May I deploy?", options: [], requestId: "req-2", tool: "Bash" } } as never);
+    appendFixtureMessage(store, t, { role: "bot", kind: "options", text: "May I deploy?", card: { title: "May I deploy?", options: [], requestId: "req-2", tool: "Bash" } } as never);
     // a quote into the older page, and an action-only row hidden from tool-less engines
     const quoting = say("What date did I say?", { replyToId: early.id });
     reply("You said the 14th.", "turn-2");

@@ -5,7 +5,8 @@
 // email at once and a network failure never hides it or turns it off. One entry only, keyed by a fingerprint of the saved Flux key
 // (credentialFingerprint, a sha256 prefix; the key itself is never written). A file for another key is dropped at boot and never read.
 // Not in the database and not restored: it describes the saved key, not the data.
-import { readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../counted-fs.ts";
+import { readFileSync, renameSync, rmSync } from "node:fs";
 import type { Capabilities } from "./flux-email-client.ts";
 
 export interface CapsFileEntry { v: 1; accountRef: string; caps: Capabilities; readAt: number }

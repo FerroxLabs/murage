@@ -1,11 +1,36 @@
 import { classifyFluxRefusal } from "./flux-refusal.ts";
 import { FLUX_BILLING_PAGE } from "./flux-links.ts";
+/** The approved Cloud line for a Flux turn refused with a 402, 401 or 403. Word for word; the server and the chat card share it. */
+export const FLUX_NOT_READY_COPY = "Your Flux credit is still getting ready. Try again in a minute; if it keeps happening, we've been told and are on it.";
+
+/** The held-service line a Cloud home shows when Flux refuses a turn because the service itself is on hold. Shared by the server and the chat card. */
+export const FLUX_SERVICE_HOLD_COPY = "This one is on our side, not something you did. Please try again soon.";
+
+/** The Cloud home's own plain lines for a Flux refusal (the server words them; the chat shows them as a copy-only card):
+ *  the not-ready line, the held-service line and the used-up-month line (with or without its reset date and carry-on sentence). */
+const CREDITS_USED_LINE = /^You've used this month's credits\. (?:They come back on [A-Z][a-z]+ \d{1,2}\.|They come back when your month resets\.)(?: To carry on now, switch to Claude Code or Codex and sign in to your own account\.)?$/;
+export function isCloudFluxLine(message: string): boolean {
+  return message === FLUX_NOT_READY_COPY || message === FLUX_SERVICE_HOLD_COPY || CREDITS_USED_LINE.test(message);
+}
+
+/** A Cloud home, a customer's own Claude, ChatGPT or Grok sign-in refused a turn (401 or 403): one plain line naming the engine. No key advice. */
+export function cloudEngineSignInCopy(engineName?: string): string {
+  return `Your ${engineName?.trim() || "engine"} sign-in needs a refresh. Sign in again to carry on.`;
+}
+/** The same for a 402 from the customer's own engine account. */
+export function cloudEngineAccountCopy(engineName?: string): string {
+  const name = engineName?.trim() || "engine";
+  return `Your ${name} plan needs attention before it can answer. Check it with ${name}, then try again.`;
+}
+
 /** Structured facts about a provider rejection. The only provider text is `providerSaid`, cleaned on the server. */
 export interface ProviderErrorInfo {
   kind: "credits" | "spend-cap" | "payment" | "authentication" | "permission" | "rate-limit" | "unavailable";
   provider?: "flux-router";
   httpStatus: number;
   fluxBudget?: true;
+  fluxDecision?: import("./flux-busyloop.ts").Decision;
+  fluxResetsAt?: number;
   /** The driver kind of the engine that ran the turn, stamped by the server (ERRORS-NAME-THE-SERVICE). */
   engine?: string;
   /** The saved AI service the turn went through, stamped by the server: its preset, and whether it is a plan sign-in. */
@@ -95,6 +120,15 @@ export function classifyProviderError(error: unknown, flux = false): ProviderErr
   return { kind, httpStatus: status, ...(kind !== "payment" && fluxRouterSource(message) ? { provider: "flux-router" as const } : {}) };
 }
 
+/** True when a rejection's own text names the Flux Router as its source, whatever its kind. `classifyProviderError` leaves `provider` off a
+ *  plain 402 on purpose (its card must not claim the router), so a caller that only needs to know "did this come from Flux" asks here. */
+export function isFluxRouterRejection(error: unknown): boolean {
+  const data = error && typeof error === "object" ? (error as { data?: unknown }).data : undefined;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return false;
+  const detail = (data as { message?: unknown }).message;
+  return typeof detail === "string" && fluxRouterSource(detail.slice(0, 4096));
+}
+
 /** Which local lease another thread holds. Contention between this device's own
  * threads is not a provider rejection and never needs account or model setup. */
 export type LocalResource = "working-folder" | "computer" | "browser" | "shared";
@@ -136,7 +170,7 @@ export const LOCAL_SETUP_FAILURES = [
   // The bot's engine folder shares the owner's sign-in through a link: not allowed here (no symlink rights), or no longer one file.
   "engine-symlink-required", "engine-login-link-lost",
   // The owner's engine settings file that a bot's copy is made from cannot be read: the copy is removed and the turn does not start.
-  "engine-config-invalid",
+  "engine-config-invalid", "engine-hook-repair-failed",
   // Windows: Murage's native helper (murage-browser-host.exe) that makes Claude's owner-only folders is missing or could not run
   // (antivirus quarantine is the usual cause). Fail-closed: the turn does not start. Worded from the code (runtimeError.local.windows-helper.*).
   "windows-helper",
@@ -146,9 +180,11 @@ export const LOCAL_SETUP_FAILURES = [
   "skill-link-foreign", "skill-link-staging", "pinned-procedures",
 ] as const;
 export type LocalSetupFailure = (typeof LOCAL_SETUP_FAILURES)[number];
+/** The fixed fallback for a safety-file repair refusal; the card localizes this code. */
+export const engineHookRepairFailureLine = (engine: string): string => `Murage couldn't put its tool check for ${engine} back in place, so this turn didn't start. Restart Murage, then send again.`;
 /** The failures worded from their code in the owner's language with the engine named (runtimeError.local.<code>.*). */
 export const ENGINE_FOLDER_FAILURES = [
-  "engine-folder-busy", "engine-folder-unavailable", "engine-update-required", "engine-symlink-required", "engine-login-link-lost", "engine-config-invalid",
+  "engine-folder-busy", "engine-folder-unavailable", "engine-update-required", "engine-symlink-required", "engine-login-link-lost", "engine-config-invalid", "engine-hook-repair-failed",
 ] as const satisfies readonly LocalSetupFailure[];
 export type EngineFolderFailure = (typeof ENGINE_FOLDER_FAILURES)[number];
 export const isEngineFolderFailure = (value: unknown): value is EngineFolderFailure => (ENGINE_FOLDER_FAILURES as readonly unknown[]).includes(value);

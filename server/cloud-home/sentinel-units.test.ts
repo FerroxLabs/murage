@@ -58,7 +58,9 @@ describe("murage-sentinel.service", () => {
     expect(one("ProtectHome")).toBe("yes");
     expect(one("TemporaryFileSystem")).toBe("/data:ro");
     expect(unit.get("BindReadOnlyPaths")).toEqual([`-${CLOUD_DATA_DIR}/health:${CLOUD_INSTALLATION_ROOT}/health`]);
-    for (const key of ["BindPaths", "ReadWritePaths"]) expect(unit.has(key), key).toBe(false);
+    // MAIN RULING 1114-SCPERF-RECEIPT: only the exact receipt directory is writable; all other data remains fenced.
+    expect(unit.get("BindPaths")).toEqual([`-${CLOUD_DATA_DIR}/sentinel-io:${CLOUD_INSTALLATION_ROOT}/sentinel-io`]);
+    expect(unit.has("ReadWritePaths")).toBe(false);
     expect(one("StateDirectory")).toBe(`murage-sentinel murage-sentinel/MurageSentinel murage-sentinel/MurageSentinel/${ID}`);
     expect(one("StateDirectoryMode")).toBe("0700");
     expect(one("RuntimeDirectory")).toBe("murage-sentinel murage-sentinel/home");

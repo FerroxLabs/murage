@@ -16,7 +16,8 @@ import { createServer, type Server } from "node:http";
 import { once } from "node:events";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawnBoundProxy } from "./testing/bound-proxy-fixture.ts";
 import { mkdirSync } from "node:fs";
 import readline from "node:readline";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -126,7 +127,9 @@ describe("an engine searching, then connecting a long-tail app (scripted engine 
       for (const item of body.items) cards.push({ slug: item.slug, ...connectorCardText(await catalogApp(backend, item.slug)) });
       response.end(JSON.stringify({ messageIds: cards.map((_card, index) => `m${index}`) }));
     });
-    child = spawn(process.execPath, ["--experimental-strip-types", ENTRY], {
+    // Carry the fake-engine test override into this child process (the native cage has its own suite).
+    child = await spawnBoundProxy("connectors", process.execPath, ["--import", "data:text/javascript," + encodeURIComponent("process.env.NODE_ENV='test';globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;"), "--experimental-strip-types", ENTRY], {
+      windowsHide: true,
       env: { ...process.env, MURAGE_CONNECTOR_UPSTREAM_URL: `${base}/mcp`, MURAGE_HARNESS_URL: base, MURAGE_CONNECTORS_TOKEN: "fixture", MURAGE_BOT_ID: "bot", MURAGE_THREAD_ID: "thread" },
       stdio: ["pipe", "pipe", "pipe"],
     });

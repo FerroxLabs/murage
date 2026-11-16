@@ -1,3 +1,6 @@
+import { BotReviewSheet } from './BotReviewSheet';
+import { EngineLimitRow } from "./EngineLimitRow";
+import { engineLimitText } from "../../shared/web-read-routing";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -17,6 +20,9 @@ import { useEmailStatus } from "@/lib/bot-email";
 import { BoxBody, BoxFoot } from "./ui/BoxShell";
 import { useLayerOwner } from "./LayerSlot";
 import { passThrough } from "@/lib/settings-leave";
+import { canHandleLayerEscape } from "@/lib/focus-trap";
+import { clearBotSettingsReturn, hasBotSettingsReturn, registerBotSettingsLocation, restoreBotSettingsReturn } from "@/lib/open-settings-address";
+import { t } from "@/lib/i18n";
 
 /** Runs `operation` once the bot's page may be left: asks first when there are unsaved edits, waits while one saves. */
 export type BotSettingsLeave = (operation: () => void) => void;
@@ -30,9 +36,14 @@ export const BOT_HEADER_CHIPS: readonly { id: string; label: string; section: Bo
   { id: "email", label: "Email", section: "email", anchor: "bot-setting-email" },
 ];
 
-export function BotSettingsPane({ bot, onClose, leaveRef }: { bot: Bot; onClose: () => void; leaveRef?: MutableRefObject<BotSettingsLeave | null> }) {
-  const { state } = useStore(), content = useRef<HTMLDivElement>(null);
+export function BotSettingsPane(props: Parameters<typeof ActiveBotSettingsPane>[0]) {
+  return props.bot.staged || props.bot.pendingRevision ? <BotReviewSheet botIds={[props.bot.id]} onDone={props.onClose} /> : <ActiveBotSettingsPane {...props} />;
+}
+
+function ActiveBotSettingsPane({ bot, onClose, leaveRef }: { bot: Bot; onClose: () => void; leaveRef?: MutableRefObject<BotSettingsLeave | null> }) {
+  const { state, dispatch } = useStore(), content = useRef<HTMLDivElement>(null);
   const desktop = useDesktopSurface();
+  const engineLimit = engineLimitText(state.instances?.find(instance => instance.instanceId === bot.modelSelection?.instanceId)?.driverKind ?? "unknown", "settings");
   const owner = useLayerOwner(), searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => { if (owner?.handle?.active) searchRef.current?.focus(); }, [owner]);
   // bot email (1.0.9): the Email row is always listed (SETTINGS-UX-1011 S1); while the server does not say email is on,
@@ -45,6 +56,8 @@ export function BotSettingsPane({ bot, onClose, leaveRef }: { bot: Bot; onClose:
     state.botSettingsIntent?.section
     ?? lastBotSection(BOT_SETTINGS_SECTIONS.map(item => item.id).filter(id => desktop === true || !DESKTOP_ONLY_BOT_SETTINGS.has(id)), [LEARNING_BADGE_SECTION])
     ?? "overview");
+  useEffect(() => registerBotSettingsLocation(bot.id, section), [bot.id, section]);
+  useEffect(() => { if (!state.settingsOpen && !state.appSettingsOpen) clearBotSettingsReturn(); }, [state.settingsOpen, state.appSettingsOpen]);
   const [query, setQuery] = useState("");
   const chooseSection = (id: BotSettingsSection) => { setSection(id); rememberBotSection(id); };
   const [drafts, setDrafts] = useState<Record<string, BotSettingsDraft>>({}), [notice, setNotice] = useState<string | null>(null);
@@ -70,7 +83,8 @@ export function BotSettingsPane({ bot, onClose, leaveRef }: { bot: Bot; onClose:
   // The window asks this page before it closes or shows another page.
   if (leaveRef) leaveRef.current = navigate;
   useEffect(() => () => { if (leaveRef) leaveRef.current = null; }, [leaveRef]);
-  const close = () => navigate(onClose);
+  const close = () => navigate(() => { clearBotSettingsReturn(); onClose(); });
+  const back = () => navigate(() => { restoreBotSettingsReturn(dispatch); });
   useEffect(() => { content.current?.querySelector<HTMLElement>("[data-settings-scroll]")?.scrollTo({ top: 0 }); }, [section]);
   // "Add a skill" from anywhere, even with this window already open, lands
   // on Skills (BotSkillsPanel opens its picker and clears the intent). The
@@ -84,7 +98,7 @@ export function BotSettingsPane({ bot, onClose, leaveRef }: { bot: Bot; onClose:
     if (!pendingAnchor) return;
     return waitForAnchor({
       find: () => content.current?.querySelector<HTMLElement>(`#${CSS.escape(pendingAnchor)}`) ?? null,
-      onFound: (element) => { setPendingAnchor(null); revealAnchor(element); },
+      onFound: (element) => { setPendingAnchor(null); revealAnchor(element); dispatch({ type: "clearBotSettingsIntent" }); },
       onGiveUp: () => setPendingAnchor(null),
     });
   }, [pendingAnchor, section]);
@@ -100,7 +114,12 @@ export function BotSettingsPane({ bot, onClose, leaveRef }: { bot: Bot; onClose:
     return () => window.removeEventListener("murage:open-memory", opened);
   }, []);
   useEffect(() => { if (query && matches.length && !matches.some(item => item.id === section)) setSection(matches[0].id); }, [query, matches, section]);
-  return <div data-bot-settings-pane={bot.id} className="flex min-h-0 min-w-0 flex-1 flex-col">
+  return <div data-bot-settings-pane={bot.id} onKeyDown={event => {
+    if (hasBotSettingsReturn() && canHandleLayerEscape(owner?.handle, event.nativeEvent)) {
+      event.preventDefault(); event.stopPropagation(); back();
+    }
+  }} className="flex min-h-0 min-w-0 flex-1 flex-col">
+    {hasBotSettingsReturn() && <div className="px-4 pt-2"><button type="button" onClick={back} className="min-h-10 rounded-lg px-3 text-[13px] text-ink-secondary hover:bg-inset focus-visible:outline focus-visible:outline-2 focus-visible:outline-focus">{t("freshStart.back")}</button></div>}
     <div className="flex min-h-0 flex-1 flex-col sm:flex-row">
       <nav aria-label="Bot settings sections" className="shrink-0 border-b border-hairline/40 p-3 sm:w-[220px] sm:overflow-y-auto sm:border-b-0 sm:border-r">
         {/* On a phone the search and the section choice share one row, so
@@ -126,6 +145,7 @@ export function BotSettingsPane({ bot, onClose, leaveRef }: { bot: Bot; onClose:
         {/* The section menu above already shows this name on a phone. */}
         <h2 className="shrink-0 px-5 pt-3 text-[17px] font-medium max-sm:sr-only">{label(selected)}</h2>
         <BotSettingsDraftContext.Provider value={updateDraft}><BotSettingsNavigationContext.Provider value={navigate}><SettingsPanel bot={bot} section={section} embedded /></BotSettingsNavigationContext.Provider></BotSettingsDraftContext.Provider>
+        {section === "model" && engineLimit && <EngineLimitRow settings text={engineLimit} />}
       </BoxBody>
     </div>
     {/* The standing note gives way on a short screen or with the keyboard up; a

@@ -57,9 +57,10 @@ export function openCodeDestinationAnswer(config: Config, ctx: Pick<DestinationC
   }
   return { ...destination, model, forModel: judge };
 }
-export async function probeOpenCodeDestination(ctx: DestinationContext): Promise<Config> {
+/** Bounded, cancellable config probes share the same owned process-tree stop. */
+export async function probeCliDestination<T>(ctx: DestinationContext, driver: "opencodeGo" | "deepseekAgent", args: string[], decode: (text: string) => T): Promise<T> {
   if (ctx.signal.aborted) throw new Error("stopped");
-  const child = spawnCli(ctx.cli, ["debug", "config"], { cwd: ctx.cwd, env: ctx.env, stdio: ["pipe", "pipe", "pipe"] }, engineJob({ posixHostPower: true }));
+  const child = spawnCli(ctx.cli, args, { cwd: ctx.cwd, env: ctx.env, stdio: ["pipe", "pipe", "pipe"] }, engineJob({ posixHostPower: true }));
   child.stdin.end();
   let output = "", bytes = 0, timer: ReturnType<typeof setTimeout>;
   let stop: Promise<void> | undefined;
@@ -67,7 +68,7 @@ export async function probeOpenCodeDestination(ctx: DestinationContext): Promise
     let confirmed = await awaitCliTreeStopped(child);
     if (!confirmed) confirmed = await forceCliTreeStopped(child);
     if (confirmed) confirmed = await awaitCliRootClose(child);
-    if (!confirmed) throw new ProviderStopUnconfirmedError("opencodeGo", { closeConfirmed: false, reason: "timeout" });
+    if (!confirmed) throw new ProviderStopUnconfirmedError(driver, { closeConfirmed: false, reason: "timeout" });
   })();
   try {
     await new Promise<void>((resolve, reject) => {
@@ -83,10 +84,15 @@ export async function probeOpenCodeDestination(ctx: DestinationContext): Promise
         else if (code === 0) resolve(); else reject(new Error("probe"));
       });
     });
+    return decode(output);
+  } finally { clearTimeout(timer!); if (stop) await stop; }
+}
+export function probeOpenCodeDestination(ctx: DestinationContext): Promise<Config> {
+  return probeCliDestination(ctx, "opencodeGo", ["debug", "config"], output => {
     const parsed = JSON.parse(output);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("config");
     return parsed;
-  } finally { clearTimeout(timer!); if (stop) await stop; }
+  });
 }
 export class OpenCodeDestinationResolver {
   private keys = new OpenCodeDestinationKey();

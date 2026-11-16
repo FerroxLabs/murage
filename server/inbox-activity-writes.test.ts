@@ -1,3 +1,4 @@
+import { insertFixtureMessage } from './testing/approval-card.ts';
 // A running server writes a line for every tool call that worked, and each
 // one used to empty the Inbox memo, so the polls that follow rescanned every
 // bot message of every thread (196 ms per scan on the real store, 76 a
@@ -53,7 +54,7 @@ it("a line the Inbox can read still moves the version at once", () => {
   insertMessage("t", msg("prov", { kind: "activity", tool: { name: "P", ok: false, providerError: { code: "x" } } }));
   insertMessage("t", msg("dig", { kind: "activity", actorKind: "murage", murage: { kind: "status", digestDay: "2026-10-05" } }));
   expect(messagesVersion()).toBe(before + 3);
-  insertMessage("t", msg("c", { kind: "options", card: { requestId: "r", options: ["Allow"], tool: "Bash" } }));
+  insertFixtureMessage("t", msg("c", { kind: "options", card: { requestId: "r", options: ["Allow"], tool: "Bash" } }));
   expect(listInboxCached(db, { view: "decisions" }, access).decisions).toBeGreaterThan(0);
   expect([...owedThreadsCached(db, access)]).toEqual(["t"]);
 });

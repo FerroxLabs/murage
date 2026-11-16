@@ -1,3 +1,5 @@
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
+import { startLiveSession } from './testing/live-session-fixture.ts';
 // A warm engine (and its signed-in MCP browser) was dropped on almost every
 // message with `memory continuation reset … reason=memory-changed`. Cause: the
 // settle-time screenshot of a browser turn lands after the owner's follow-up
@@ -20,7 +22,8 @@ import { Store } from "../store.ts";
 import { captureWork } from "./chunks.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { refreshMemoryCheckpoint } from "./consolidate.ts";
-import { memoryAccess, type MemoryRoster } from "./policy.ts";
+import { type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { buildMemoryBundle } from "./bundle.ts";
 import { MemoryDispatchReceipt } from "./dispatch.ts";
@@ -30,7 +33,6 @@ import { ownerMemoryTicket, correctMemory, pinMemory } from "./authority.ts";
 import { forgetMemory } from "./forget.ts";
 import type { MemoryBundle } from "../../shared/memory.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
-import { markSessionKnown } from "./testing/legacy-file-model.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
@@ -81,10 +83,11 @@ function world() {
     const a = access();
     const bundle = await buildMemoryBundle(`item ${n}`, a, bridge, {allowance: LineageAllowance.tool()});
     const receipt = new MemoryDispatchReceipt(bundle, a, "claude");
-    receipt.sessionStarted(session); receipt.accepted();
+    const confirmation = startLiveSession(a, "claude", session);
+    receipt.sessionStarted(session, Boolean(confirmation), confirmation); receipt.accepted();
     // index.ts writes the session's lineage row when the session starts or resumes (write-time privacy, DESIGN-WRITETIME 2.7); without one the
     // session reads "checking" and is reset
-    markSessionKnown(threadId, "claude", session, bot.id);
+
     const turnId = `t${n}`;
     const tool = store.appendMessage(threadId, { role: "bot", kind: "activity", turnId, tool: { name: "mcp__browser__browser_click", summary: "click" } } as never);
     store.patchMessage(threadId, tool.id, { tool: { name: "mcp__browser__browser_click", ok: true } } as never);

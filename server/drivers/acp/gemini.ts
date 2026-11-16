@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 // Gemini CLI harness support — Google's `gemini` CLI over ACP stdio
 // (`gemini --acp`). Rides the generic runtime in acp/core.ts.
 //
@@ -31,6 +32,7 @@ import { join } from "node:path";
 
 import { createAcpDriver, type AcpSupport } from "./core.ts";
 import { isolateGeminiFromPersonalSetup } from "./gemini-isolation.ts";
+import { engineReach } from "../../flux-engine-reach.ts";
 
 // Prefer an explicit key method, then personal OAuth, then Vertex — but fall
 // back to whatever the CLI advertises so a new method id still works.
@@ -43,7 +45,7 @@ const AUTH_PREFERENCE = ["gemini-api-key", "oauth-personal", "vertex-ai"];
  * truthful answer for an engine that would fail its first turn anyway. */
 function liveOauthCredential(): boolean {
   try {
-    const creds = JSON.parse(readFileSync(join(homedir(), ".gemini", "oauth_creds.json"), "utf8")) as {
+    const creds = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(join(homedir(), ".gemini", "oauth_creds.json"), "utf8"))) as {
       access_token?: unknown;
       refresh_token?: unknown;
       expiry_date?: unknown;
@@ -76,6 +78,8 @@ export function geminiIsAuthenticated(env: Record<string, string | undefined>): 
 
 const support: AcpSupport = {
   driverKind: "geminiAgent",
+  // U05: Gemini CLI talks to Google unless GOOGLE_GEMINI_BASE_URL says otherwise (the personal setup is isolated).
+  fluxReach: (env) => engineReach(env, { hostEnv: ["GOOGLE_GEMINI_BASE_URL"], compiledDefault: "https://generativelanguage.googleapis.com" }),
   // Gemini merges the servers handed at session/new into its own mcpServers and
   // starts them (gemini-isolation.ts, rig 0.47.0), with no readiness signal.
   mcpListedWait: true,
@@ -94,9 +98,17 @@ const support: AcpSupport = {
       { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
       { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
       { id: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
+      { id: "gemini-3.1-pro-preview-customtools", label: "Gemini 3.1 Pro Custom Tools" },
+      { id: "gemini-3-pro-preview", label: "Gemini 3 Pro Preview" },
+      { id: "gemini-3-flash-preview", label: "Gemini 3 Flash Preview" },
+      { id: "gemini-3-flash", label: "Gemini 3 Flash" },
+      // Published in google-gemini/gemini-cli packages/core/src/config/models.ts.
+      { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash Lite" },
       { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash Lite" },
       { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" },
       { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash" },
+      { id: "gemma-4-31b-it", label: "Gemma 4 31B IT" },
+      { id: "gemma-4-26b-a4b-it", label: "Gemma 4 26B A4B IT" },
     ],
   },
   defaultCli: "gemini",
@@ -106,14 +118,14 @@ const support: AcpSupport = {
 
   // --acp is the stable Gemini CLI surface. --experimental-acp remains an
   // alias for older releases, but using it now emits a deprecation warning.
-  spawnArgs: (_config, turn) => ["--acp", ...(turn.model ? ["-m", turn.model] : [])],
+  spawnArgs: (_config, turn) => ["--acp", ...(turn.noLimits ? ["--approval-mode", "default"] : []), ...(turn.model ? ["-m", turn.model] : [])],
   credentialEnv: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
   // The owner's personal MCP servers, hooks, skills, agents, policies, extensions
   // and instruction files stay out of bot turns (see gemini-isolation.ts).
   transformEnv: (env) => isolateGeminiFromPersonalSetup(env),
   // A turn's own bot gets its own scope (the shared one above serves probes with no bot).
   scopeKind: "gemini",
-  applyMountEnv: (env, { botId }) => isolateGeminiFromPersonalSetup(env, botId, true),
+  applyMountEnv: (env, { botId, noLimits }) => isolateGeminiFromPersonalSetup(env, botId, true, noLimits),
   scopeRoot: (env) => env.GEMINI_CLI_HOME,
 
   pickAuthMethod: (methods) => {
@@ -128,4 +140,6 @@ const support: AcpSupport = {
   buildPromptText: (turn) => (turn.system ? `${turn.system}\n\n${turn.text}` : turn.text),
 };
 
+/** The support table, for the per-engine Flux reach tests (U05). */
+export const geminiAcpSupport = support;
 export const GeminiAgentDriver = createAcpDriver(support);

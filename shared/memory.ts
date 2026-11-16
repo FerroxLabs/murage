@@ -6,7 +6,18 @@ export interface MemoryRecord {
   /** Owner review explanation, never a new prompt surface. */
   reviewReason?: string;
   state: MemoryRecordState; ownerPinned: boolean; validFrom: number; validTo: number | null;
+  /** When the record was made (epoch ms): the memory screen's time and its Today / This week / Older filters. */
+  createdAt?: number;
 }
+/** What the owner's memory list adds to each row (MEMORY-UI-BUILD-SPEC r3 1.4): the chat it came from (null for a row with no chat evidence and
+ * for every continuity row), the bot whose memory it is, and the audience kind of its scope. */
+export interface MemoryListRow extends MemoryRecord {
+  chat: { threadId: string; name: string | null } | null;
+  bot: { id: string; name: string | null } | null;
+  scopeKind: MemoryScopeKind | null;
+}
+/** Who said the words a memory rests on, as the inspect view returns it: the raw speaker id is never sent. */
+export type MemoryEvidenceSpeaker = "you" | "bot" | "person";
 export interface MemoryEvidenceHandle { sourceId: string; revision: number; startByte: number; endByte: number }
 export interface MemoryBundle {
   bundleId: string; text: string; policyRevision: number; deletionEpoch: number;

@@ -7,9 +7,9 @@ import { bumpOpenTurnsBoot, openTurnsStep } from "./open-turns.ts";
 /** The turns still working in one thread (bound: the thread). Served by the open-turns table's thread index; it never reads the sources. */
 export const OPEN_TURNS_OF_THREAD_SQL = "SELECT source_id AS id,turn_id FROM memory_open_turns WHERE thread_id=?";
 export type MemoryTurnOutcome = "working" | "completed" | "failed" | "cancelled" | "interrupted" | "setup-failed";
-export function recordMemorySettlement(threadId: string, turnId: string, outcome: MemoryTurnOutcome) {
+export function recordMemorySettlement(threadId: string, turnId: string, outcome: MemoryTurnOutcome, options: { onlyTurn?: boolean } = {}) {
   transaction(db => {
-    if (outcome !== "working") {
+    if (outcome !== "working" && !options.onlyTurn) {
       // The turns still working in this thread are read from the open-turns table (memory schema v9), which holds only the turns in
       // flight: a settlement never reads the thread's history of sources (memory_open_turns is kept by triggers on memory_sources).
       for (const row of db.prepare(OPEN_TURNS_OF_THREAD_SQL).all(threadId)) {

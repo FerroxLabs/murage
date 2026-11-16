@@ -237,7 +237,7 @@ it.each([403, 400, 404])("a %i on the pin, refused before routing: flux-fast ans
 });
 
 // FLUX-FREE-MODEL 1.0.18. A Masterclass customer's never-paid key asked Flux for flux-pinned-gpt-5-nano on its first learning call and got
-// this 403 (recorded from Flux, flux-router src/model_access_message.py). A free key may call flux-fast and flux-auto only.
+// this 403 (recorded from Flux, the Flux router's model access refusal handler). A free key may call flux-fast and flux-auto only.
 const RECORDED_403 = () => new Response(JSON.stringify({ error: { message: "key not allowed to access model. This key can only access models=['flux-auto', 'flux-fast']. Tried to access flux-pinned-gpt-5-nano", type: "auth_error", param: "model", code: "403" } }), { status: 403 });
 const RECORDED_403_SHAPED = () => new Response(JSON.stringify({ error: { message: "flux-pinned-gpt-5-nano is not on the Flux free plan. Upgrade at https://fluxrouter.ai/home/billing to unlock it. Your key can use: flux-auto, flux-fast.", type: "auth_error", param: "model", code: "403" } }), { status: 403 });
 

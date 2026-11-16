@@ -1,3 +1,4 @@
+import {settleFixtureIndexGrant} from "./testing/helper-permits.ts";
 // The mobile lane's pacing, restored on the combined head: a cycle's claim and its deferred idle prefix
 // are one measurement (costs add, they do not overlap), and idle consolidation is eligible at most once a
 // second on its own deadline while capture wakes stay prompt.
@@ -29,7 +30,7 @@ const build = (options: ConstructorParameters<typeof MemoryWorkerController>[0] 
   controller = new MemoryWorkerController(options);
   internals = controller as unknown as Internals;
   internals.child = { kill() {}, on() {}, send: (message: any) => {
-    if (message.type === "index") internals.onWorkerMessage(internals.child, { type: "index-result", requestId: message.requestId, records: message.records, embeddingStatus: "indexed" });
+    if (message.type === "index") { settleFixtureIndexGrant(message,event=>internals.onWorkerMessage(internals.child,event)); internals.onWorkerMessage(internals.child, { type: "index-result", requestId: message.requestId, records: message.records, embeddingStatus: "indexed" }); }
     else sent.push(message);
   } };
   internals.ready = true;
@@ -38,6 +39,7 @@ beforeEach(() => {
   closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("capture"); resetParkSweep();
   state.claimCost = 0; state.cost = 0; sent = [];
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "setImmediate", "clearImmediate", "Date"] });
+  vi.setSystemTime(new Date("2026-10-10T00:00:00Z"));
   vi.spyOn(performance, "now").mockImplementation(() => Date.now() + state.cost);
 });
 afterEach(async () => { await controller.stop().catch(() => {}); vi.useRealTimers(); vi.restoreAllMocks(); });

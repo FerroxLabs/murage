@@ -3,7 +3,8 @@
 // only the app user can write. The root browser launcher re-reads it after taking a browser id's lock and
 // refuses a launch requested by an older server process. See CANARY-DESIGN.md.
 import { randomBytes } from "node:crypto";
-import { closeSync, constants, fsyncSync, openSync, renameSync, unlinkSync, writeSync } from "node:fs";
+import { writeSync } from "../counted-fs.ts";
+import { closeSync, constants, fsyncSync, openSync, renameSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { cloudHomeInternal } from "./copy.ts";
 

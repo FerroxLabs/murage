@@ -6,6 +6,7 @@
 // operation settles so the current responder cannot appear to answer words it
 // never saw.
 
+import type { BindingKey } from "./send-attempt-state.ts";
 import { sendFingerprint } from "./send-idempotency.ts";
 import { sendStore, type SendRow } from "./send-store.ts";
 import type { MessageOrigin } from "./store.ts";
@@ -23,6 +24,8 @@ interface ChannelQueueItem {
   origin?: MessageOrigin;
   /** The one member this send is pinned to (a room-call hand-down). */
   responderBotId?: string;
+  /** Captured receipt ownership for the shared provider terminalizer. */
+  binding?: BindingKey;
 }
 
 /** Told which thread's waiting list changed, so every client's chips follow. */
@@ -30,6 +33,7 @@ export function setChannelQueueObserver(fn: ((threadId: string) => void) | null)
 
 export interface QueuedChannelMessage {
   id: string;
+  sendId?: string;
   /** The row's state: "cancelled" means an earlier attempt of this send id was cancelled. */
   status: string;
 }
@@ -78,7 +82,7 @@ export function queueChannelMessage(
     ...(options.resend ? { resend: true, ...(options.restoreGen ? { restoreGen: options.restoreGen } : {}), ...(options.stopGen ? { stopGen: options.stopGen } : {}), ...(options.actionId ? { actionId: options.actionId } : {}) } : {}),
   });
   if (accepted.kind === "conflict") throw new Error("sendId already belongs to another message");
-  return { id: accepted.row.queueId, status: accepted.row.status };
+  return { id: accepted.row.queueId, status: accepted.row.status, ...(accepted.row.sendId ? { sendId: accepted.row.sendId } : {}) };
 }
 
 /** Find the stable receipt for an HTTP retry that is still waiting. */
@@ -121,6 +125,7 @@ export type ChannelRunOutcome = { messageId: string } | { refused: true };
 export function drainChannelMessages(
   isWorking: (groupId: string) => boolean,
   run: (input: ChannelQueueItem & { groupId: string; threadId: string }) => ChannelRunOutcome,
+  providerBoundPinnedSend = false,
 ): void {
   for (const threadId of sendStore.queuedThreads("group")) {
     const rows = sendStore.drainable(threadId, "group");
@@ -129,6 +134,19 @@ export function drainChannelMessages(
     if (isWorking(row.ownerId)) continue;
     try { sendStore.markDispatchedMany([row.seq]); } catch { continue; }
     const item = itemOf(row);
+    const attempts = sendStore.attempts();
+    if (attempts) {
+      try {
+        const receipt = sendStore.attemptFor(row)!;
+        item.binding = sendStore.bindBatch([row.seq], `channel-${receipt.attemptId}`, "channel")[0]!;
+        // The legacy room callback does not declare complete adapter fencing.
+        // A pinned provider callback carries this exact binding through its
+        // submission fence and actual write receipt. Other callbacks remain legacy.
+        if (!providerBoundPinnedSend || !row.responderId || row.mode !== "chat") {
+          attempts.recordInvocation(item.binding, attempts.byId(receipt.attemptId)!.revision, false);
+        }
+      } catch { continue; }
+    }
     let outcome: ChannelRunOutcome;
     try { outcome = run({ ...item, groupId: row.ownerId, threadId }); } catch { outcome = { refused: true }; }
     try {

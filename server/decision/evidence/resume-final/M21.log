@@ -1,0 +1,67 @@
+COMMAND node_modules/.bin/vitest run server/decision/faults.test.ts -t M21
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/faults.test.ts > R16 M21 deny revision is rechecked immediately before RUN delivery
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/faults.test.ts (17 tests | 1 failed | 16 skipped) 344ms
+   ↓ A5 M38 protected match wins before stored-source failure; reads run (M28)
+   ↓ A5 stored browser fault refuses without inventing a card
+   ↓ A5 M51 non-owner ask faults use frozen BASE callback
+   ↓ A5 M51 non-owner auto faults use frozen BASE callback
+   ↓ A5 M51 non-owner full faults use frozen BASE callback
+   ↓ A5 M51 non-owner unlimited faults use frozen BASE callback
+   ↓ R9 M23 M24 unproven owner does not mint BASE card; missing command runs
+   × R16 M21 deny revision is rechecked immediately before RUN delivery 340ms
+   ↓ M23 reader throws: owner clean runs, guest retains BASE fault behavior
+   ↓ R9 record creation failure denies the engine without a second card
+   ↓ R9 provenance/level reader failures produce bounded refusal, never a waiting engine
+   ↓ R9 answer row failure delivers deny and bounded text without another card
+   ↓ A5 X10 non-owner ask faults retain BASE fault CARD even when normal BASE would RUN
+   ↓ A5 X10 non-owner auto faults retain BASE fault CARD even when normal BASE would RUN
+   ↓ A5 X10 non-owner full faults retain BASE fault CARD even when normal BASE would RUN
+   ↓ A5 X10 non-owner unlimited faults retain BASE fault CARD even when normal BASE would RUN
+   ↓ R9 missing live authority is not weakened by a simultaneous action-reader fault
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 16 skipped (17)
+   Start at  08:17:24
+   Duration  4.88s (transform 3.55s, setup 4.14s, import 280ms, tests 344ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/faults.test.ts > R16 M21 deny revision is rechecked immediately before RUN delivery
+AssertionError: expected "vi.fn()" to not be called at all, but actually been called 1 times
+
+Received:
+
+  1st vi.fn() call:
+
+    Array [
+      Object {
+        "generation": "g",
+        "providerInstanceId": "p",
+        "requestId": "r",
+        "threadId": "t",
+        "turnId": "turn",
+      },
+      Object {
+        "behavior": "allow",
+      },
+      Object {
+        "answerId": "92b8d7c4-215e-452d-9893-41412367d447",
+      },
+    ]
+
+
+Number of calls: 1
+
+ ❯ server/decision/faults.test.ts:20:201
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

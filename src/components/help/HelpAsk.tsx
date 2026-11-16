@@ -1,0 +1,707 @@
+import type { TurnStateEnvelope, TurnStateCapabilities, SendActionTarget, ScopedTurnStop } from "../../../shared/help-turn-state";
+// Copyright 2026 Ferrox Labs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// "Ask about this screen" (UX-L4B-FULL, designs/UX-L4B-FULL-1018.md sections 3, 7 to 9). A lazy chunk inside the help
+// panel. The owner's question goes to the Chief's chat as an ordinary owner message, sent `noSteer`, so the server runs
+// it as its own turn and nothing else joins it. The panel only SHOWS that turn: our row is found by its sendId, the
+// answer is the bot rows stamped with the turn our row was released to (`dispatchedIn`), never "the latest reply". The
+// panel writes nothing to the transcript, so a late answer is only ever a chat row. Each Ask bumps a generation, and an
+// older generation's callbacks never repaint the panel. The question outlives closing help (section 3.3): only Done or a
+// new Ask drops it within the same signed-in scope. Closing ends every request and timer of that opening; reopening follows it.
+import { useCallback, useEffect, useId, useRef, useState } from "react";
+import { api, useStore, useStreaming, type AppState, type Bot, type Message } from "@/state/store";
+import { persistedHelpAction, isDefinitiveFailure } from "@/state/send-delivery";
+import { useTurnLive, type TurnLive } from "@/state/turn-status";
+import { newSendId } from "@/lib/send-id";
+import { botRole } from "@/lib/bot-role";
+import { onSignedOut, sessionSignedOut } from "@/lib/session-check";
+import { askSetTimeout, askClearTimeout, askAddAbort, askRemoveAbort, askOnSignedOut, askScope, askApi, askLive, askStream, askSubscribe, askObserve } from "./help-ask-port";
+import { t } from "@/lib/i18n";
+import { en, type LocaleKey } from "@/locales";
+
+import { fixtureAskCopy } from "./help-ask-fixture-copy";
+import { BOX_FRAME, BoxHead, BoxBody, BoxFoot } from "../ui/BoxShell";
+// The historical fixture uses its pinned copy; current Help copy and sender
+// contracts remain owned by A3. Production does not mount this component.
+const hx = (key: string, params?: Record<string, string | number>): string => {
+  if (import.meta.env.MODE === "help-fixture") {
+    return (fixtureAskCopy[key] ?? key).replace(/\{(\w+)\}/g, (match, name: string) => String(params?.[name] ?? match));
+  }
+  return Object.hasOwn(en, key) ? t(key as LocaleKey, params) : key;
+};
+
+/** The visible Chief, never "the first bot". */
+export const chiefOf = (bots: readonly Bot[]): Bot | undefined => bots.find((b) => !b.hidden && botRole(b) === "chief");
+
+/** The exact outgoing words: the owner's question and the screen's fixed catalogue title (never a name, H3). */
+export const askText = (question: string, screenTitle: string): string =>
+  `${question.trim()}\n\n${hx("ux.l4b.sentFrom", { screen: screenTitle })}`;
+
+/** One Ask, as the panel holds it. Everything else is read from the store. */
+export interface AskRecord {
+  gen: number;
+  sendId: string;
+  botId: string;
+  threadId: string;
+  question: string;
+  /** The exact words posted, so Try again resends the same words under the same sendId (the server dedupes on it). */
+  text: string;
+  /** "uncertain": delivery failed in a way that does not say the server lacks it (the outbox gave up, a timeout).
+   *  Only our own row in the transcript says it arrived; nothing is sent again from here. */
+  phase: "sending" | "accepted" | "uncertain" | "refused";
+  queueId?: string;
+  receipt?: TurnStateEnvelope;
+  failure?: string;
+  indexing?: boolean;
+  removeAction?: SendActionTarget;
+  stopAction?: ScopedTurnStop;
+  /** Remove from line: on the wire, or what the 404's `state` said. "started" means follow the turn. */
+  cancel?: "removing" | "removed" | "missing" | "retry" | "started";
+  /** "missed": the route answered `stopped: false` (the live run is not this turn, e.g. a rebuild has not stamped it yet). */
+  stop?: "stopping" | "unconfirmed" | "failed" | "missed";
+  stopLine?: string;
+  /** The turn the SERVER (or a frame naming it) says has ended. Done only while it is still our row's turn, so a turn
+   *  restamped after a rebuild is followed afresh (designs/UX-L4B-CLIENT-TURNSTATE-1019.md). */
+  endedTurn?: string;
+  /** The server said the SEND ended (its last turn ended, nothing of it live or waiting): Done even before our row's
+   *  turn id reaches the store. Slice 1 keys "ended" on the send and only for a send that ran. */
+  endedSend?: true;
+  /** Handed to the chat: the follow limit passed (reads failed, a 403, or the server never said "ended"). */
+  lost?: true;
+}
+
+export type AskView =
+  | { s: "sending" | "refused" | "removed" | "missing" | "removeRetry" | "inChat" | "starting" | "failed" | "submitted_but_failed" | "stopped" | "unknown" | "indexing" }
+  | { s: "queued"; removing: boolean }
+  | { s: "running" | "approval" | "done"; turnId: string; answer: Message[]; streaming?: string };
+
+const unloaded = (bot: Bot) => Boolean(bot.messagesUnloaded || bot.firstPageEvents);
+
+/** An open card of our turn: a live ask with no answer yet. */
+const openCard = (m: Message, turnId: string) =>
+  m.kind === "options" && m.turnId === turnId && Boolean(m.card) && !m.card!.answered && !m.card!.dismissed && !m.card!.expired && !m.card!.answers?.length;
+
+/** What the panel shows for an Ask, from the record, the Chief's rows in the store and the thread's live turn. */
+export function askView(record: AskRecord, bot: Bot | undefined, live: TurnLive = { ended: false }, streaming?: string, pending?: import("@/state/store").AppState["pendingQueued"][string]): AskView {
+  record = reconcileDelivery(record, bot, pending);
+  if (record.cancel === "removed" || record.failure === "removed") return { s: "removed" };
+  if (record.cancel === "missing") return { s: "missing" };
+  if (record.indexing || record.receipt?.state === "indexing") return { s: "indexing" };
+  if (record.cancel === "retry") return { s: "removeRetry" };
+  const state = record.receipt?.state ?? record.failure;
+  if (state === "cancelled") return { s: "removed" };
+  if (state === "failed" || state === "submitted_but_failed" || state === "stopped" || state === "unknown") return { s: state };
+  if (state === "refused" || record.phase === "refused") return { s: "refused" };
+  if (record.lost || record.phase === "uncertain") return { s: "unknown" };
+  if (record.phase === "sending") return { s: "sending" };
+  if (state === "queued") return { s: "queued", removing: record.cancel === "removing" };
+  // Rows not in the store (never loaded, a newer task on screen, the Chief gone): the answer is in the chat.
+  if (!bot || bot.id !== record.botId || bot.threadId !== record.threadId || unloaded(bot)) return { s: "inChat" };
+  const own = bot.messages.find((m) => m.role === "user" && m.sendId === record.sendId);
+  // PROVISIONAL INTERFACE: the recovered transcript stamp is not yet in the
+  // base Message type. Read only a real string; never infer it from bot state.
+  const turnId = record.receipt?.turnId ?? (own && "dispatchedIn" in own && typeof own.dispatchedIn === "string" ? own.dispatchedIn : undefined);
+  if (record.lost) return { s: "unknown" };
+  if (!turnId) {
+    if (record.endedSend) return { s: "done", turnId: "", answer: [] };
+    if (record.queueId && !own && record.cancel !== "started") {
+      return { s: "queued", removing: record.cancel === "removing" };
+    }
+    return { s: "starting" };
+  }
+  const answer = bot.messages.filter((m) => m.role === "bot" && m.turnId === turnId && m.kind === "text" && Boolean(m.text?.trim()));
+  // Ended only when the SERVER says so for our send (TURNSTATE-1019). Rows (other turns' late rows, our own terminal row
+  // before a rebuild restamps us) and live frames (an unnamed turn.completed takes the thread's current id) are hints to
+  // ask it. A word given for an older turn id of ours (restamped since) is not Done: the panel asks again.
+  if (record.receipt?.state === "ended" || record.endedTurn === turnId || (record.endedSend && record.endedTurn === undefined)) return { s: "done", turnId, answer };
+  if (record.receipt?.state === "approval" || bot.messages.some((m) => openCard(m, turnId))) return { s: "approval", turnId, answer };
+  // The live words are ours only while the thread's live turn is ours.
+  const words = live.turnId === turnId && !live.ended && streaming?.trim() ? streaming : undefined;
+  return { s: "running", turnId, answer, ...(words ? { streaming: words } : {}) };
+}
+
+/** A send error the server meant (a 4xx refusal), or words that never left (the outbox is full): Try again is honest.
+ *  Anything else (the outbox gave up, a timeout) may have reached the server, so it is never called refused. */
+export function deliveryRefused(error: unknown): boolean {
+  return isDefinitiveFailure(error) || (error as { status?: unknown } | null)?.status === 507;
+}
+
+/** What a failed Remove from line means, from the 404's `state` (section 9.4, G-L1). "again": the row is still being
+ *  sent, so the panel asks once more. No answer is ever Done from a 404 alone: "started" follows the turn. */
+export function cancelOutcome(error: unknown): Partial<AskRecord> | "again" {
+  if ((error as { status?: number })?.status !== 404) return { cancel: "retry" };
+  const said = (error as { body?: { state?: unknown; messageId?: unknown } } | null)?.body;
+  switch (said?.state) {
+    case "started": return { cancel: "started", receipt: undefined };
+    case "cancelled": return { cancel: "removed" };
+    case "missing": return { cancel: "missing" };
+    case "sending": return "again";
+    case "failed": return { receipt: undefined, cancel: undefined, failure: "failed" };
+    case "refused": return { receipt: undefined, cancel: undefined, failure: "refused" };
+    default: return { cancel: "retry" };
+  }
+}
+
+/** How long Stop and Remove from line may take before the panel says they did not go through. */
+export const ASK_REQUEST_MS = 15_000;
+
+/** One request with a deadline, which the panel's close (`outer`) also ends. Rejects on either. */
+export async function bounded<T>(run: (signal: AbortSignal) => Promise<T>, deadlineMs = ASK_REQUEST_MS, outer?: AbortSignal): Promise<T> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  let timerActive = true;
+  if (import.meta.env.MODE === "help-fixture") askObserve("requestTimer", () => ({ active: timerActive }));
+  const late = new Promise<never>((_, reject) => {
+    const end = (why: string) => { controller.abort(); reject(Object.assign(new Error(why), { status: 408 })); };
+    timer = askSetTimeout(() => end("timed out"), deadlineMs);
+    onAbort = () => end("closed");
+    if (outer?.aborted) onAbort(); else askAddAbort(outer, onAbort);
+  });
+  late.catch(() => {});
+  try {
+    return await Promise.race([run(controller.signal), late]);
+  } finally {
+    timerActive = false;
+    askClearTimeout(timer);
+    if (onAbort) askRemoveAbort(outer, onAbort);
+  }
+}
+
+/** Stop, aimed at our turn only: the route stops the thread's run only when it is still this turn (`{ok, stopped}`).
+ *  `stopped: false` stopped nothing, so it is never shown as stopped: the panel says so, keeps Open in chat (the chat's
+ *  own Stop) and asks the server where its question is. Bounded, and ended by close. */
+export async function stopTurn(botId: string, threadId: string, turnId: string, post: typeof api = api, deadlineMs = ASK_REQUEST_MS, outer?: AbortSignal, target?: ScopedTurnStop): Promise<Partial<AskRecord>> {
+  if (!target || target.threadId !== threadId || target.turnId !== turnId) return { stop: "failed" };
+  try {
+    const said = await bounded((signal) => post(`/api/bots/${botId}/interrupt`, { method: "POST", body: JSON.stringify(target), signal }), deadlineMs, outer);
+    return said?.matched === true && said?.stopped === true && said?.unconfirmed === false && said?.receipt?.state === "stopped" ? { stop: undefined, receipt: said.receipt, failure: "stopped" } : { stop: "unconfirmed" };
+  } catch (error) {
+    const e = error as { body?: { code?: unknown }; message?: string } | null;
+    return e?.body?.code === "provider_stop_unconfirmed" ? { stop: "unconfirmed", stopLine: e.message } : { stop: "failed" };
+  }
+}
+
+/** What the server says of our question: slice 1's owner-only turn-state read (feat/1019-ux-l4b-server). `unknown`
+ *  never means ended. */
+export type AskTurnWord = Partial<TurnStateEnvelope> & { state: string; endedAt?: number };
+
+/** Slice 1's owner-only route (feat/1019-ux-l4b-server 37abf2204): GET ?threadId&sendId[&turnId] -> {state, endedAt?}.
+ *  A paired phone reads it through the door's owner proof (L4B-PHONE-TURNSTATE 1.0.20). A 403 (no proof), like any
+ *  failed read, is still "unknown", never Done, and the 10 min limit hands the question to the chat. */
+export const ASK_STATE_PATH = (botId: string) => `/api/bots/${botId}/turn-state`;
+
+export function askState(botId: string, threadId: string, sendId: string, turnId: string | undefined, signal: AbortSignal, get: typeof api = api): Promise<AskTurnWord> {
+  const query = new URLSearchParams({ threadId, sendId, ...(turnId ? { turnId } : {}) });
+  return get(`${ASK_STATE_PATH(botId)}?${query}`, { signal }).then((word: AskTurnWord) => {
+    if (word.contract === 1 && word.botId === botId && word.threadId === threadId && word.sendId === sendId) return word;
+    return { state: "unknown" };
+  });
+}
+
+export interface FollowOptions {
+  read: (signal: AbortSignal) => Promise<AskTurnWord>;
+  /** The turn the reads ask about (our row's dispatchedIn), if released yet. */
+  turnId?: string;
+  apply: (change: Partial<AskRecord>) => void;
+  /** The absolute time (Date.now()) the follow hands the question to the chat. */
+  until: number;
+  everyMs?: number;
+  /** Closing help. */
+  outer?: AbortSignal;
+}
+
+/** Follows one question from the server: a read at once, every `everyMs`, and on `nudge`; one read in flight, each
+ *  bounded; `stop` (or `outer`) aborts the read in flight. At `until` it hands over to the chat (`lost`), whatever the
+ *  reads did (TURNSTATE-1019). */
+export function startFollow({ read, turnId, apply, until, everyMs = ASK_FOLLOW_EVERY_MS, outer }: FollowOptions): { nudge: () => void; stop: () => void } {
+  const local = new AbortController();
+  const over = () => local.signal.aborted;
+  let inFlight = false;
+  let tick: ReturnType<typeof setTimeout> | undefined;
+  if (import.meta.env.MODE === "help-fixture") askObserve("followResources", () => ({ timers: over() ? 0 : 1 + Number(tick !== undefined), listener: !over() && !!outer }));
+  const stop = () => { local.abort(); askClearTimeout(tick); askClearTimeout(limit); askRemoveAbort(outer, stop); };
+  const limit = askSetTimeout(() => { if (!over()) { stop(); apply({ lost: true }); } }, Math.max(0, until - Date.now()));
+  if (outer?.aborted) stop(); else askAddAbort(outer, stop);
+  const check = () => {
+    if (over() || inFlight) return;
+    inFlight = true;
+    askClearTimeout(tick); tick = undefined;
+    void bounded(read, ASK_REQUEST_MS, local.signal)
+      .then((word) => { const change = followChange(word, turnId); if (change && !over()) apply(change); })
+      .catch(() => {})
+      .finally(() => { inFlight = false; if (!over()) tick = askSetTimeout(check, everyMs); });
+  };
+  check();
+  return { nudge: check, stop };
+}
+
+/** The change a server word makes to the record. "ended" is keyed on the SEND and given only for a send that ran (its
+ *  last turn holds rows, nothing of it live or queued), so it is Done even if our row's turn id never reached the store.
+ *  queued, running, unknown and any failed read (403 on a paired phone included) change nothing. */
+export function followChange(word: AskTurnWord | undefined, turnId: string | undefined): Partial<AskRecord> | undefined {
+  if (word?.contract !== 1) return { lost: true };
+  const known = ["queued", "sending", "running", "approval", "ended", "cancelled", "refused", "failed", "submitted_but_failed", "stopped", "unknown", "indexing"].includes(word.state);
+  if (!known) return { lost: true };
+  const receipt = word as TurnStateEnvelope;
+  return { receipt, phase: "accepted", queueId: receipt.queueId ?? undefined, indexing: receipt.state === "indexing",
+    failure: undefined, lost: undefined,
+    ...(receipt.state === "cancelled" ? { cancel: "removed" as const } : {}),
+    endedSend: receipt.state === "ended" ? true : undefined,
+    endedTurn: receipt.state === "ended" ? receipt.turnId ?? turnId : undefined };
+
+}
+
+const primary = "min-h-11 shrink-0 rounded-lg bg-accent px-4 text-[14px] font-medium text-white disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border";
+const secondary = "min-h-11 shrink-0 rounded-lg border border-hairline/60 px-3 text-[13px] font-medium text-ink hover:bg-app disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border";
+const line = "text-[13px] leading-5 text-ink";
+
+export interface AskBodyProps {
+  name: string;
+  view: AskView;
+  record: Pick<AskRecord, "question" | "stop" | "stopLine">;
+  onStop: () => void;
+  onRemove: () => void;
+  onRetry: () => void;
+  onOpenChat: () => void;
+  onDone: () => void;
+  canRemove?: boolean; canStop?: boolean; canResend?: boolean;
+  onCheck?: () => void;
+}
+
+/** The states after Ask, drawn from a view alone (tests render it from fixtures). */
+export function AskBody({ name, view, record, onStop, onRemove, onRetry, onOpenChat, onDone, canRemove = false, canStop = false, canResend = false, onCheck }: AskBodyProps) {
+  const status: Record<string, string> = { sending: "sending", starting: "sending", queued: "queued", running: "working", approval: "approval", done: "saved", removed: "removed", refused: "refused", failed: "failed", submitted_but_failed: "submittedFailed", stopped: "stopped", unknown: "unknown", indexing: "indexing", missing: "missing", inChat: "missing", removeRetry: "removeFailed" };
+  const terminal = ["done", "removed", "refused", "failed", "submitted_but_failed", "stopped"].includes(view.s);
+  const resend = canResend && ["refused", "failed", "submitted_but_failed", "stopped", "unknown"].includes(view.s);
+  const primaryAction = view.s === "queued" && canRemove ? "remove" : view.s === "running" && canStop ? "stop" : view.s === "failed" && resend ? "resend" : view.s === "indexing" || view.s === "removeRetry" || record.stop ? "retry" : ["done", "removed", "stopped"].includes(view.s) ? "done" : "open";
+  const button = (id: string, label: string, click: () => void, disabled = false) => <button key={id} type="button" className={primaryAction === id ? primary : secondary} onClick={click} disabled={disabled}>{hx(`ux.l4b.${label}`)}</button>;
+  return <div data-help-ask-state={view.s} className="flex min-w-0 flex-col gap-3">
+    <p className="whitespace-pre-wrap break-words rounded-lg bg-app px-3 py-2 text-[13px] text-ink-secondary">{record.question}</p>
+    <div aria-live="polite"><h4 tabIndex={-1} data-help-status className={line}>{hx(`ux.l4b.${record.stop === "stopping" ? "stopping" : view.s === "queued" && view.removing ? "removing" : status[view.s]}`, { name })}</h4>
+      {view.s === "indexing" && <p className={line}>{hx("ux.l4b.indexSaved")}</p>}
+      {record.stop && record.stop !== "stopping" && <p className={line}>{hx("ux.l4b.stopFailed")}</p>}
+    </div>
+    {"answer" in view && <div className="max-h-72 overflow-y-auto break-words" data-help-answers>{view.answer.map(m => <p key={m.id} data-help-answer className="whitespace-pre-wrap text-ink">{m.text}</p>)}{"streaming" in view && view.streaming && <p data-help-streaming className="whitespace-pre-wrap text-ink">{view.streaming}</p>}</div>}
+    <div className="flex flex-wrap gap-2 max-[400px]:flex-col">
+      {view.s === "queued" && canRemove && button("remove", view.removing ? "removing" : "removeFromLine", onRemove, view.removing)}
+      {canStop && button(record.stop ? "retry" : "stop", record.stop === "stopping" ? "stopping" : record.stop ? "tryAgain" : "stop", onStop, record.stop === "stopping")}
+      {view.s === "removeRetry" && button("retry", "tryAgain", onRemove)}
+      {view.s === "indexing" && button("retry", "tryAgain", onRetry)}
+      {resend && button("resend", "sendAgain", onRetry)}
+      {button("open", "openInChat", onOpenChat)}
+      {["unknown", "missing", "inChat"].includes(view.s) && button("check", "checkAgain", onCheck ?? (() => {}))}
+      {terminal && button("done", "done", onDone)}
+    </div>
+  </div>;
+}
+
+/** The panel follows an accepted question by asking the server this often, and hands it to the chat after the limit
+ *  (approval cards wait for the owner, so a turn may rightly outlast any panel). Nothing waits forever (A-M2). */
+export const ASK_FOLLOW_EVERY_MS = 5_000;
+export const ASK_FOLLOW_MS = 60_000;
+/** A transcript page that failed to load is asked for again, a bounded number of times, this far apart. */
+export const ASK_LOAD_TRIES = 3;
+export const ASK_LOAD_RETRY_MS = 2_000;
+
+/** Kept in the lazy chunk across openings, but never across sign-out, account, Chief or task changes. */
+const lifetime = createAskLifetime();
+// This subscription intentionally survives panel close, as does the kept question.
+askOnSignedOut(onSignedOut, () => lifetime.clear());
+const keep = lifetime.keep;
+export function forgetKeptAsk() { lifetime.clear(); }
+
+export interface HelpAskProps {
+  /** The screen's fixed catalogue title (feedbackEnvelopeForScreen().title), never a name. */
+  screenTitle: string;
+  onOpenChat: (botId: string, threadId?: string, messageId?: string) => void;
+}
+
+type Ref<T> = { current: T };
+type AskLifetime = ReturnType<typeof createAskLifetime>;
+type Opening = ReturnType<AskLifetime["open"]>;
+
+/** Effect bodies share the same cleanup path in React and controller tests. */
+export function startAskOpening({ life, show, opening, closing, timers }: {
+  life: AskLifetime; show: (r: AskRecord | null) => void; opening: Ref<Opening | null>;
+  closing: Ref<{ signal: AbortSignal }>; timers: Ref<Set<ReturnType<typeof setTimeout>>>;
+}) {
+  const current = life.open(show);
+  if (import.meta.env.MODE === "help-fixture") askObserve("opening", () => ({ aborted: current.signal.aborted, timers: current.signal.aborted ? 0 : timers.current.size }));
+  opening.current = current;
+  closing.current = current;
+  return () => {
+    current.close();
+    for (const handle of timers.current) askClearTimeout(handle);
+    timers.current.clear();
+  };
+}
+
+export function startAskPage({ record, needsPage, loads, dispatch }: {
+  record: AskRecord | null; needsPage: boolean; loads: Ref<{ key: string; tries: number }>;
+  dispatch: (action: { type: "loadFirstPage"; threadId: string }) => void;
+}) {
+  let active = true;
+  let handle: ReturnType<typeof setTimeout> | undefined;
+  if (import.meta.env.MODE === "help-fixture") askObserve("pageTimer", () => ({ active: active && handle !== undefined }));
+  const cleanup = () => { active = false; askClearTimeout(handle); handle = undefined; };
+  if (!needsPage) { loads.current = { key: "", tries: 0 }; return cleanup; }
+  if (!record) return cleanup;
+  const key = `${record.gen}:${record.threadId}`;
+  if (loads.current.key !== key) loads.current = { key, tries: 0 };
+  const tries = loads.current.tries;
+  if (tries > ASK_LOAD_TRIES) return cleanup;
+  const load = () => { handle = undefined; if (active) { loads.current.tries++; dispatch({ type: "loadFirstPage", threadId: record.threadId }); } };
+  if (tries === 0) load();
+  else handle = askSetTimeout(load, ASK_LOAD_RETRY_MS * tries);
+  return cleanup;
+}
+
+/** Shared by HelpAsk and the fixture's retained-mount dependency probe. */
+export function useAskPage({ record, needsPage, loads, dispatch }: Parameters<typeof startAskPage>[0]) {
+  useEffect(() => startAskPage({ record, needsPage, loads, dispatch }), [record, needsPage, dispatch]);
+}
+
+export function askFollowKey(record: AskRecord | null, view: AskView | null, turnId?: string) {
+  const following = (record && !record.receipt && !record.cancel && !record.lost) || view?.s === "sending" || view?.s === "indexing" || view?.s === "unknown" || view?.s === "queued" || view?.s === "starting" || view?.s === "running" || view?.s === "approval";
+  return record && following ? `${record.gen}:${record.sendId}:${record.receipt?.bindingEpoch ?? ""}:${turnId ?? ""}` : "";
+}
+
+export function startAskFollow({ life, record, view, turnId, closing, nudge, get = askApi(api) }: {
+  life: AskLifetime; record: AskRecord | null; view: AskView | null; turnId?: string;
+  closing: Ref<{ signal: AbortSignal }>; nudge: Ref<(() => void) | undefined>; get?: typeof api;
+}) {
+  if (!record || !askFollowKey(record, view, turnId)) return () => {};
+  const { gen: g, botId, threadId, sendId } = record;
+  const until = life.deadline(g, ASK_FOLLOW_MS);
+  const follow = startFollow({
+    read: (signal) => askState(botId, threadId, sendId, turnId, signal, get),
+    turnId, apply: (change) => { if (!closing.current.signal.aborted) life.patch(g, change); },
+    until, outer: closing.current.signal,
+  });
+  if (import.meta.env.MODE === "help-fixture") askObserve("follow", { key: askFollowKey(record, view, turnId), until });
+  nudge.current = follow.nudge;
+  return () => { follow.stop(); if (nudge.current === follow.nudge) nudge.current = undefined; };
+}
+
+export function startAskNudge(nudge: Ref<(() => void) | undefined>) {
+  nudge.current?.();
+  return () => {};
+}
+
+export default function HelpAsk({ screenTitle, onOpenChat }: HelpAskProps) {
+  const ids = useId();
+  const input = useRef<HTMLTextAreaElement>(null);
+  const enterHeld = useRef(false);
+  const [confirm, setConfirm] = useState(false);
+  const [followRetry, retryFollow] = useState(0);
+  const cancelFocus = useRef<HTMLButtonElement>(null);
+  const store = useStore();
+  const [, fixtureRender] = useState(0);
+  useEffect(() => {
+    if (import.meta.env.MODE === "help-fixture") return askSubscribe(() => fixtureRender((n) => n + 1));
+  }, []);
+  const { state, dispatch } = askScope(store, api) as typeof store;
+  const capabilities = state.config as TurnStateCapabilities | null;
+  useEffect(() => {
+    if (import.meta.env.MODE === "help-fixture") {
+      askObserve("mount", ids); return () => askObserve("unmount", ids);
+    }
+  }, [ids]);
+  const chief = chiefOf(state.bots);
+  const account = state.config?.profile?.email;
+  const [draft, setDraft] = useState({ text: readHelpDraft(account), owner: dispatch, account, botId: chief?.id, threadId: chief?.threadId });
+  const question = draft.owner === dispatch && draft.account === account && draft.botId === chief?.id && draft.threadId === chief?.threadId ? draft.text : "";
+  const setQuestion = (text: string) => { writeHelpDraft(account, text); setDraft({ text, owner: dispatch, account, botId: chief?.id, threadId: chief?.threadId }); };
+  const [, setRecord] = useState<AskRecord | null>(null);
+  const signedOut = state.signedOut || sessionSignedOut();
+  // A sign-out ends this opening at once. A sign-out and return with no render between them still gets a fresh opening.
+  const [signOuts, countSignOut] = useState(0);
+  useEffect(() => askOnSignedOut(onSignedOut, () => { writeHelpDraft(account, ""); countSignOut((n) => n + 1); }), [account]);
+  // Signing out ends the question too: coming back shows an empty box, not the words left behind.
+  useEffect(() => { if (signedOut) { writeHelpDraft(account, ""); setDraft((kept) => (kept.text ? { ...kept, text: "" } : kept)); } }, [signedOut, account]);
+  lifetime.authorize({ owner: dispatch, account: state.config?.profile?.email, botId: chief?.id, threadId: chief?.threadId, signedOut });
+  const saved = lifetime.record;
+  const record = saved ? reconcileDelivery(saved, state.bots.find((b) => b.id === saved.botId), state.pendingQueued[saved.threadId]) : null;
+  const loads = useRef<{ key: string; tries: number }>({ key: "", tries: 0 });
+  const opening = useRef<ReturnType<typeof lifetime.open> | null>(null);
+  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
+  /** Every request in flight (Stop, the follow reads): closing help ends them all. */
+  const closing = useRef<{ signal: AbortSignal }>({ signal: new AbortController().signal });
+  /** Asks the server now rather than at the next tick; set while an Ask is followed. */
+  const nudge = useRef<(() => void) | undefined>(undefined);
+  /** Applies a change only while its Ask is still the kept one (and, with `when`, still in that state). A delivery
+   *  receipt after help closed still lands, so a reopened panel shows where the question really is. */
+  const patch = lifetime.patch;
+  /** A timer closing help clears; its callback runs only for the Ask that set it. */
+  const later = useCallback((g: number, fn: () => void, ms: number) => {
+    // A callback after this opening closed (a Remove's late answer) sets no timer nobody would clear.
+    if (closing.current.signal.aborted) return;
+    const handle = askSetTimeout(() => { timers.current.delete(handle); if (lifetime.generation === g) fn(); }, ms);
+    timers.current.add(handle);
+  }, []);
+  // This opening shows the kept question. Closing help ends every request and timer of this opening; the question stays.
+  useEffect(() => startAskOpening({ life: lifetime, show: setRecord, opening, closing, timers }), [signedOut, signOuts, chief?.id, chief?.threadId, dispatch, account]);
+
+  const bot = record ? state.bots.find((b) => b.id === record.botId) : undefined;
+  const live = askLive(useTurnLive(record?.threadId));
+  const { streaming } = useStreaming();
+  const view = record ? askView(record, bot, live, askStream(streaming)[record.threadId], state.pendingQueued[record.threadId]) : null;
+  const turnId = record?.receipt?.turnId ?? (view && "turnId" in view ? view.turnId : undefined);
+  const target = record?.receipt;
+  const validTarget = !!target?.attemptId && typeof target.receiptRevision === "number" && typeof target.bindingEpoch === "number";
+  const canRemove = capabilities?.turnStateContract === 1 && capabilities.queueRemovable === true && validTarget && target?.actions?.remove === true;
+  const canStop = capabilities?.scopedTurnStop === 1 && validTarget && !!turnId && target?.actions?.stop === true;
+  const canResend = capabilities?.sendActionContract === 1 && validTarget && target?.actions?.resend === true;
+  useEffect(() => { if (record) document.querySelector<HTMLElement>("[data-help-status]")?.focus(); else input.current?.focus(); }, [!!record]);
+  useEffect(() => { if (confirm) cancelFocus.current?.focus(); }, [confirm]);
+  useEffect(() => { const release = (event: KeyboardEvent) => { if (event.key === "Enter") enterHeld.current = false; }; window.addEventListener("keyup", release); return () => window.removeEventListener("keyup", release); }, []);
+
+  // The transcript: the existing first-page loader for the Chief's thread, without selecting its chat (H2). A failed
+  // page (firstPageFailed clears firstPageEvents) is asked for again, bounded, for this Ask only.
+  const needsPage = Boolean(record && bot && bot.threadId === record.threadId && bot.messagesUnloaded && !bot.firstPageEvents);
+  useAskPage({ record, needsPage, loads, dispatch });
+
+  // The key changes only for activation, a new Ask or a restamped turn; the deadline stays absolute.
+  const followKey = askFollowKey(record, view, turnId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => startAskFollow({ life: lifetime, record, view, turnId, closing, nudge }), [followKey, followRetry]);
+  useEffect(() => startAskNudge(nudge), [live.turnId, live.ended, bot?.busy, turnId]);
+
+  /** A first Ask mints its sendId; Try again resends the same words under the same one, as the chat's Send again does. */
+  const send = (botId: string, threadId: string, words: string, text: string, again?: string) => {
+    if (signedOut || closing.current.signal.aborted || (!again && lifetime.record)) return;
+    const sendId = again ?? newSendId();
+    lifetime.submit({ sendId, botId, threadId, question: words, text, phase: "sending" }, ({ gen: g }) => dispatch({
+      type: "send", botId, threadId, text, sendId, noSteer: true,
+      onIndexing: () => patch(g, { indexing: true }),
+      onReceipt: (receipt) => patch(g, receiptChange(receipt)),
+      onError: (error) => { patch(g, { phase: deliveryRefused(error) ? "refused" : "uncertain" }); return true; },
+    }));
+  };
+
+  const removeFrom = (g: number, botId: string, queueId: string, tries: number) => {
+    // Only the newest attempt may speak; a timeout retires its attempt, so its late answer never overwrites a newer one.
+    const attempt = opening.current?.begin();
+    if (!attempt || !attempt.live()) return;
+    const mine = () => attempt.live() && lifetime.generation === g && lifetime.record?.receipt?.bindingEpoch === record?.receipt?.bindingEpoch;
+    if (import.meta.env.MODE === "help-fixture") askObserve("attempt", () => ({ generation: g, live: mine() }));
+    patch(g, { cancel: "removing" });
+    // A DELETE that never answers is a failed Remove, with Try again and Open in chat.
+    later(g, () => { if (mine()) { attempt.retire(); patch(g, { cancel: "retry" }, (r) => r.cancel === "removing"); } }, ASK_REQUEST_MS);
+    dispatch({
+      type: "cancelQueued", botId, queueId, target: removeAction.current,
+      onDone: () => { if (mine()) patch(g, { cancel: "removed" }); },
+      onError: (error) => {
+        if (!mine()) return false;
+        const outcome = cancelOutcome(error);
+        if (outcome === "again" && tries < 4) later(g, () => { if (mine()) removeFrom(g, botId, queueId, tries + 1); }, 1_000);
+        else patch(g, outcome === "again" ? { cancel: "retry" } : outcome);
+        return true;
+      },
+    });
+  };
+  const removeAction = useRef<SendActionTarget | undefined>(undefined);
+  const actionTarget = () => ({ contract: 1 as const, threadId: record!.threadId, sendId: record!.sendId, attemptId: target!.attemptId!, receiptRevision: target!.receiptRevision!, bindingEpoch: target!.bindingEpoch! });
+  const remove = () => {
+    if (!canRemove || !record?.queueId) return;
+    try { removeAction.current = record.removeAction ?? persistedHelpAction(`${account}:${record.sendId}:remove`, actionTarget()); patch(record.gen, { removeAction: removeAction.current }); removeFrom(record.gen, record.botId, record.queueId, 0); }
+    catch { patch(record.gen, { cancel: "retry" }); }
+  };
+
+  const stop = () => {
+    if (!record || !turnId || !canStop) return;
+    const g = record.gen;
+    const ends = closing.current.signal;
+    patch(g, { stop: "stopping" });
+    // A Stop the close ended says nothing: the reopened panel shows Stop again and asks the server.
+    let action: ScopedTurnStop;
+    try { action = record.stopAction ?? persistedHelpAction(`${account}:${record.sendId}:stop`, { ...actionTarget(), turnId }) as ScopedTurnStop; patch(g, { stopAction: action }); }
+    catch { patch(g, { stop: "failed" }); return; }
+    void stopTurn(record.botId, record.threadId, turnId, askApi(api), ASK_REQUEST_MS, undefined, action).then(change => {
+      if (ends.aborted || lifetime.generation !== g || lifetime.record?.receipt?.bindingEpoch !== action.bindingEpoch) {
+        if (change.stop) dispatch({ type: "error", message: hx("ux.l4b.stopFailed") });
+        return;
+      }
+      patch(g, change); startAskNudge(nudge);
+    });
+  };
+
+  const resend = (confirmed = false) => {
+    if (!record) return;
+    if (view?.s === "indexing") { send(record.botId, record.threadId, record.question, record.text, record.sendId); return; }
+    if (!canResend) return;
+    if (target?.delivery !== "not_submitted" && !confirmed) { setConfirm(true); return; }
+    setConfirm(false);
+    const g = record.gen;
+    dispatch({ type: "resendSend", kind: "bot", subjectId: record.botId, text: record.text,
+      action: { ...actionTarget(), actionId: crypto.randomUUID(), kind: "resend", replacementSendId: crypto.randomUUID(), confirmDuplicate: confirmed,
+        ...(target?.stopGen ? { stopGen: target.stopGen } : {}), ...(target?.restoreGen ? { restoreGen: target.restoreGen } : {}) },
+      onReceipt: result => { if (lifetime.generation !== g) return; lifetime.submit({ ...record, sendId: result.replacementSendId, phase: "accepted", receipt: result.receipt, queueId: result.receipt.queueId ?? undefined, failure: undefined, cancel: undefined, endedSend: undefined, endedTurn: undefined }, () => {}); },
+      onError: () => false,
+    });
+  };
+  const finish = () => { lifetime.next(); keep(null); setQuestion(""); };
+
+  if (signedOut) return null;
+
+  if (!chief) {
+    return (
+      <section data-help-ask className="border-b border-hairline/40 px-5 py-4">
+        <p className="text-[14px] leading-5 text-ink">{hx("ux.l4b.noChief")}</p>
+        <button className={primary} onClick={() => dispatch({ type: "newBot" })}>{hx("ux.l4b.addChief")}</button>
+      </section>
+    );
+  }
+  const name = (bot ?? chief).name;
+  const words = question.trim();
+  const valid = Array.from(words).length > 0 && Array.from(words).length <= 400;
+  return (
+    <section data-help-ask aria-labelledby={`${ids}-h`} className="border-b border-hairline/40 px-5 py-4">
+      <h3 id={`${ids}-h`} className="mb-2.5 text-[12px] font-semibold uppercase tracking-[0.05em] text-ink-secondary">{hx("ux.l4b.heading")}</h3>
+      {confirm && <div role="dialog" aria-modal="true" aria-label={hx("ux.l4b.duplicate")} className={`${BOX_FRAME} max-h-[min(24rem,80dvh)] rounded-xl border border-hairline bg-panel`} onKeyDown={event => {
+        if (event.key === "Escape") { event.preventDefault(); setConfirm(false); }
+        if (event.key === "Tab") { const buttons = event.currentTarget.querySelectorAll<HTMLButtonElement>("button"); event.preventDefault(); (document.activeElement === buttons[0] ? buttons[1] : buttons[0])?.focus(); }
+      }}>
+        <BoxHead className="px-4 pt-4"><h4 className="text-[14px] font-medium">{hx("ux.l4b.sendAgain")}</h4></BoxHead>
+        <BoxBody className="px-4 py-3"><p>{hx("ux.l4b.duplicate")}</p></BoxBody>
+        <BoxFoot className="px-4 pb-4"><button ref={cancelFocus} className={secondary} onClick={() => { setConfirm(false); requestAnimationFrame(() => [...document.querySelectorAll<HTMLButtonElement>("button")].find(b => b.textContent === hx("ux.l4b.sendAgain"))?.focus()); }}>{hx("ux.l4b.cancel")}</button><button className={primary} onKeyDown={e => { if (e.key === "Enter" && (e.repeat || enterHeld.current)) e.preventDefault(); }} onClick={() => resend(true)}>{hx("ux.l4b.sendAgain")}</button></BoxFoot>
+      </div>}
+      <div hidden={confirm} aria-hidden={confirm ? true : undefined}>
+      {record && view ? (
+        <AskBody name={name} view={view} record={record} onStop={stop} onRemove={remove}
+          canRemove={canRemove} canStop={canStop} canResend={canResend} onCheck={() => { lifetime.resetFollow(); patch(record.gen, { lost: undefined }); retryFollow(n => n + 1); }} onRetry={() => resend()}
+          onOpenChat={() => { const messageId = record.receipt?.messageId ?? bot?.messages.find(m => m.sendId === record.sendId)?.id; if (messageId) onOpenChat(record.botId, record.threadId, messageId); else onOpenChat(record.botId, record.threadId); }} onDone={finish} />
+      ) : (
+        <form className="flex flex-col gap-2.5" onSubmit={(event) => { event.preventDefault(); if (valid) send(chief.id, chief.threadId, words, askText(words, screenTitle)); }}>
+          <p className={line}>{hx("ux.l4b.answers", { name })}</p>
+          <textarea autoFocus ref={input} onKeyDown={event => { if (event.key !== "Enter" || event.shiftKey || event.ctrlKey || event.altKey || event.metaKey) return; if (event.nativeEvent.isComposing) return; event.preventDefault(); if (event.repeat || enterHeld.current || !valid) return; enterHeld.current = true; send(chief.id, chief.threadId, words, askText(words, screenTitle)); }} aria-label={hx("ux.l4b.label")} placeholder={hx("ux.l4b.placeholder")} value={question} rows={3}
+            onChange={(event) => setQuestion(event.target.value)}
+            className="w-full resize-y rounded-lg border border-hairline/60 bg-app px-3 py-2 text-[14px] text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-border" />
+          <p className="text-[12px] text-ink-secondary">{Array.from(words).length}/400</p>
+          <p className="text-[12px] leading-5 text-ink-secondary">{hx("ux.l4b.before", { name })}</p>
+          {words && (
+            <div data-help-ask-preview>
+              <p className="text-[12px] font-semibold text-ink-secondary">{hx("ux.l4b.preview")}</p>
+              <p className="whitespace-pre-wrap rounded-lg bg-app px-3 py-2 text-[13px] text-ink">{askText(words, screenTitle)}</p>
+            </div>
+          )}
+          <button type="submit" className={`${primary} self-end`} disabled={!valid}>{hx("ux.l4b.ask")}</button>
+        </form>
+      )}
+      </div>
+    </section>
+  );
+}
+
+// Recovered unchanged lifetime helpers from 19ef45264; colocated for Slice 0 ownership.
+// Provider identity fences a replacement store; profile changes also discard the view.
+// Browser re-pairing is a new page load; session revocation separately clears this lifetime.
+export interface AskScope { owner: unknown; account?: string; botId?: string; threadId?: string; signedOut?: boolean }
+
+export function reopened(record: AskRecord | null): AskRecord | null {
+  if (!record) return null;
+  const { stop, cancel, ...rest } = record;
+  return { ...rest, ...(stop && stop !== "stopping" ? { stop } : {}), ...(cancel && cancel !== "removing" ? { cancel } : {}) };
+}
+
+export function attempts() {
+  let current = 0;
+  return {
+    retire() { current++; },
+    begin() {
+      const mine = ++current;
+      return { live: () => current === mine, retire: () => { if (current === mine) current++; } };
+    },
+  };
+}
+
+/** Lazy, memory-only lifetime. Delivery belongs to the Ask; requests belong to one opening. */
+export function createAskLifetime() {
+  let record: AskRecord | null = null;
+  let gen = 0;
+  let scope: AskScope | undefined;
+  let following = { gen: -1, until: 0 };
+  const openings = new Set<() => void>();
+  let show: ((r: AskRecord | null) => void) | undefined;
+  const keep = (r: AskRecord | null) => {
+    record = r;
+    if (scope) try { if (r) localStorage.setItem(`murage.help.record:${scope.account ?? ""}`, JSON.stringify(r)); else localStorage.removeItem(`murage.help.record:${scope.account ?? ""}`); } catch { /* outbox remains authoritative */ }
+    show?.(r);
+  };
+  const clear = () => { gen++; for (const close of openings) close(); keep(null); following = { gen: -1, until: 0 }; };
+  return {
+    get record() { return record; },
+    get generation() { return gen; },
+    clear,
+    authorize(next: AskScope) {
+      if ((next.signedOut && !scope?.signedOut) || (scope && (scope.owner !== next.owner || scope.account !== next.account || scope.botId !== next.botId || scope.threadId !== next.threadId))) clear();
+      const first = !scope;
+      scope = next;
+      if (first && !next.signedOut) try {
+        const saved = JSON.parse(localStorage.getItem(`murage.help.record:${next.account ?? ""}`) ?? "null");
+        if (saved && saved.botId === next.botId && typeof saved.sendId === "string" && typeof saved.threadId === "string" && typeof saved.text === "string" && typeof saved.question === "string") {
+          record = { ...reopened(saved)!, gen: ++gen }; show?.(record);
+        }
+      } catch { /* no recoverable panel record */ }
+    },
+    next() { return ++gen; },
+    keep,
+    submit(input: Omit<AskRecord, "gen">, deliver: (r: AskRecord) => void) {
+      if (scope?.signedOut) return undefined;
+      const next = { ...input, gen: ++gen };
+      keep(next); deliver(next);
+      return next;
+    },
+    patch(g: number, change: Partial<AskRecord>, when?: (r: AskRecord) => boolean) {
+      const next = change.receipt, current = record?.receipt;
+      if (next && record && (next.sendId !== record.sendId || next.botId !== record.botId || next.threadId !== record.threadId)) return;
+      if (next && current && ((next.bindingEpoch ?? -1) < (current.bindingEpoch ?? -1) || (next.receiptRevision ?? -1) < (current.receiptRevision ?? -1))) return;
+      if (record && record.gen === g && gen === g && !scope?.signedOut && (!when || when(record))) keep({ ...record, ...(change.receipt && change.receipt.bindingEpoch !== record.receipt?.bindingEpoch ? { stop: undefined, cancel: undefined, stopAction: undefined, removeAction: undefined } : {}), ...change });
+    },
+    resetFollow() { following = { gen: -1, until: 0 }; },
+    deadline(g: number, ms: number) {
+      if (following.gen !== g) following = { gen: g, until: Date.now() + ms };
+      return following.until;
+    },
+    open(listener?: (r: AskRecord | null) => void) {
+      const controller = new AbortController();
+      const removes = attempts();
+      record = reopened(record);
+      show = listener; show?.(record);
+      const close = () => { controller.abort(); removes.retire(); openings.delete(close); if (show === listener) show = undefined; };
+      openings.add(close);
+      return { signal: controller.signal, close, begin: () => {
+        const attempt = removes.begin();
+        return { ...attempt, live: () => !controller.signal.aborted && attempt.live() };
+      } };
+    },
+  };
+}
+
+/** Current shared delivery wins over the cached callback of an earlier attempt of the same send. */
+export function reconcileDelivery(record: AskRecord, bot: Bot | undefined, pending: AppState["pendingQueued"][string] = []): AskRecord {
+  if (!bot || bot.id !== record.botId || bot.threadId !== record.threadId) return record;
+  const current = [...pending].reverse().find((p) => p.sendId === record.sendId);
+  if (record.receipt || record.failure || record.cancel === "removed") return record;
+  if (current) return { ...record, phase: current.refused ? "refused" : current.sending ? "sending" : "accepted", queueId: current.queueId };
+  if (!bot.messagesUnloaded && !bot.firstPageEvents && bot.messages.some((m) => m.role === "user" && m.sendId === record.sendId)) return { ...record, phase: "accepted" };
+  return record;
+}
+
+export async function settleStop(pending: Promise<Partial<AskRecord>>, signal: AbortSignal, apply: (p: Partial<AskRecord>) => void, nudge: () => void) {
+  const change = await pending;
+  if (!signal.aborted) { apply(change); nudge(); }
+}
+
+/** Receipt callbacks and polling agree: confirmed cancellation never means missing. */
+export function receiptChange(receipt: { queued?: boolean; queueId?: string; cancelled?: boolean; failure?: string; receipt?: Partial<TurnStateEnvelope> }): Partial<AskRecord> {
+  return { phase: "accepted", indexing: false, failure: receipt.failure,
+    ...(receipt.receipt?.contract === 1 ? { receipt: receipt.receipt as TurnStateEnvelope } : {}),
+    ...(receipt.queued && receipt.queueId ? { queueId: receipt.queueId } : {}),
+    ...(receipt.cancelled || receipt.failure === "removed" ? { cancel: "removed" } : {}),
+  };
+}
+function readHelpDraft(account?: string): string { try { return localStorage.getItem(`murage.help.draft:${account ?? ""}`) ?? ""; } catch { return ""; } }
+function writeHelpDraft(account: string | undefined, text: string) { try { localStorage.setItem(`murage.help.draft:${account ?? ""}`, text); } catch { /* draft remains in the mounted input */ } }

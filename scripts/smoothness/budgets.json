@@ -63,19 +63,61 @@
     { "id": "S8.errors", "scenario": "stop", "what": "error rows", "path": "scenarios.stop.errorRows", "op": "==", "value": 0 },
     { "id": "S8.next", "scenario": "stop", "what": "turns after a stop that completed of 3", "path": "scenarios.stop.nextCompleted", "op": ">=", "value": 3 },
 
-    { "id": "S9.io", "scenario": "idle", "what": "io-budget lines in 3 idle minutes", "path": "scenarios.idle.ioBudget", "op": "<=", "value": 0, "oldWayPath": "scenarios.idle.ioBudgetOldWay", "reportOnly": true, "gatesIn": "gates in 1.0.19 (IO-AMP, Sean 11-08)", "osBytesSensitive": true },
+    { "id": "S9.io", "scenario": "idle", "what": "io-budget lines in 3 idle minutes", "path": "scenarios.idle.ioBudget", "op": "<=", "value": 0, "oldWayPath": "scenarios.idle.ioBudgetOldWay", "reportOnly": false, "osBytesSensitive": true },
     { "id": "S9.cpu", "scenario": "idle", "what": "server CPU p90 (Linux cgroup, Windows)", "macWhat": "whole machine, info only (macOS)", "macReportOnly": true, "path": "scenarios.idle.cpu.p90", "op": "<=", "value": 0.25, "unit": "cores", "boxLoadSensitive": true },
     { "id": "S9.cpuTree", "scenario": "idle", "what": "Murage process tree CPU p90 (server, workers, Electron, engine children)", "path": "scenarios.idle.cpuTree.p90", "op": "<=", "value": 0.25, "unit": "cores", "macOnly": true, "note": "the JUDGED CPU row on macOS (Sean 11-08): S9.cpu there is the whole machine and is info only; Linux and Windows keep S9.cpu judged. The bound does not move. A leg whose tree was not measured (loud box, untrusted sample) is not measured and not green. The row reads the Murage process tree from per-process top; the attribution block beside it splits the box into murage, apple and other. A child born and gone inside one 1 s sample is seen only by S9.cpu. An orphaned Murage descendant (its parent already exited, so no lineage can be proven) on an Apple path falls back to apple." },
     { "id": "S9.rss", "scenario": "idle", "what": "server RSS max", "path": "scenarios.idle.rssMb.max", "op": "<=", "value": 2500, "unit": "MB" },
 
-    { "id": "ALL.io", "scenario": "all", "what": "real writing io-budget lines (cpu and traffic lines not counted)", "path": "all.ioWrite.lines", "op": "<=", "value": 8, "reportOnly": true, "gatesIn": "gates in 1.0.19 (IO-AMP, Sean 11-08)", "osBytesSensitive": true },
-    { "id": "ALL.ioMB", "scenario": "all", "what": "MB written in the minutes the io budget judged busy", "path": "all.ioWrite.mb", "op": "<=", "value": 80, "reportOnly": true, "gatesIn": "gates in 1.0.19 (IO-AMP, Sean 11-08)", "osBytesSensitive": true },
-    { "id": "ALL.ioPeak", "scenario": "all", "what": "largest single io-budget writing line, MB/min", "path": "all.ioWrite.peak", "op": "<=", "value": 60, "reportOnly": true, "gatesIn": "gates in 1.0.19 (IO-AMP, Sean 11-08)", "osBytesSensitive": true },
+    { "id": "ALL.io", "scenario": "all", "what": "real writing io-budget lines (cpu and traffic lines not counted)", "path": "all.ioWrite.lines", "op": "<=", "value": 8, "reportOnly": false, "osBytesSensitive": true },
+    { "id": "ALL.ioMB", "scenario": "all", "what": "MB written in the minutes the io budget judged busy", "path": "all.ioWrite.mb", "op": "<=", "value": 80, "reportOnly": false, "osBytesSensitive": true },
+    { "id": "ALL.ioPeak", "scenario": "all", "what": "largest single io-budget writing line, MB/min", "path": "all.ioWrite.peak", "op": "<=", "value": 60, "reportOnly": false, "osBytesSensitive": true },
     { "id": "ALL.eld", "scenario": "all", "what": "event-loop stall max", "path": "all.eld.max", "op": "<=", "value": 1000, "unit": "ms", "latency": true },
     { "id": "ALL.eld250", "scenario": "all", "what": "seconds with a stall over 250 ms", "path": "all.eld.secondsOver250", "op": "<=", "value": 5 },
     { "id": "ALL.home", "scenario": "all", "what": "engine home not read", "path": "all.homeNotRead", "op": "<=", "value": 2 },
     { "id": "ALL.stale", "scenario": "all", "what": "stale memory leases", "path": "all.staleLease", "op": "<=", "value": 5 },
     { "id": "ALL.context", "scenario": "all", "what": "Context changed cards anywhere", "path": "all.contextCard", "op": "==", "value": 0 },
     { "id": "ALL.rss", "scenario": "all", "what": "server RSS max", "path": "all.rssMb.max", "op": "<=", "value": 4000, "unit": "MB" }
-  ]
+  ],
+  "realEngineRows": [
+  {
+    "id": "REAL.cards",
+    "scenario": "realEngine",
+    "what": "approval card answered",
+    "path": "scenarios.realEngine.cards",
+    "op": ">=",
+    "value": 1
+  },
+  {
+    "id": "REAL.steers",
+    "scenario": "realEngine",
+    "what": "live steer acknowledged and recorded",
+    "path": "scenarios.realEngine.steers",
+    "op": ">=",
+    "value": 1
+  },
+  {
+    "id": "REAL.stopped",
+    "scenario": "realEngine",
+    "what": "active turn stopped",
+    "path": "scenarios.realEngine.stopped",
+    "op": "==",
+    "value": 1
+  },
+  {
+    "id": "REAL.stopMs",
+    "scenario": "realEngine",
+    "what": "Stop to settled (same S8 limit)",
+    "path": "scenarios.realEngine.stopMs",
+    "op": "<=",
+    "value": 10000
+  },
+  {
+    "id": "REAL.completed",
+    "scenario": "realEngine",
+    "what": "real reply after Stop",
+    "path": "scenarios.realEngine.completed",
+    "op": ">=",
+    "value": 1
+  }
+]
 }

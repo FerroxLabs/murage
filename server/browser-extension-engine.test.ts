@@ -100,7 +100,7 @@ describe("Chrome proof: retain the first relay refusal for the tool call", () =>
   });
 });
 
-// Windows (Windows test machine; Chrome 155, Edge 154, Brave 154): the pinned engine never answers an alert. agent-browser 0.36.0 answers
+// Windows (Chrome 155, Edge 154, Brave 154): the pinned engine never answers an alert. agent-browser 0.36.0 answers
 // alert and beforeunload from a background task that first writes a line to stderr; its daemon's stderr is a pipe from the
 // short-lived CLI that started it, and only on Unix is it pointed at /dev/null. On Windows the write fails (the reader is gone),
 // eprintln! panics, and the task ends before Page.handleJavaScriptDialog is sent. The click's input then waits until the

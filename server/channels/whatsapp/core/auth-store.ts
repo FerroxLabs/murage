@@ -10,7 +10,8 @@
 // initialiser and any record revival are injected.
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { constants as fsConstants, closeSync, fstatSync, mkdirSync, lstatSync, openSync, readSync } from "node:fs";
-import { lstat, open, readdir, readFile, rename, rm } from "node:fs/promises";
+import { open } from "../../../counted-fs-promises.ts";
+import { lstat, readdir, readFile, rename, rm } from "node:fs/promises";
 import path from "node:path";
 
 export const AUTH_KEY_BYTES = 32;

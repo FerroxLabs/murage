@@ -18,8 +18,12 @@ vi.mock("./embeddings.ts",()=>({MemoryEmbeddings:class {
   }
 }}));
 vi.mock("./index.ts",()=>({MemoryIndex:class {
+  static async create() { return new this(); }
+  resetDone() { return null; }
+  stopInfo() { return null; }
   rebuilt=false;
   prepareModel(){}
+  async applyBatch(records: Array<{text:string}>) { this.upsert(records); return { status: "done" as const }; }
   upsert(records:Array<{text:string}>){state.indexed.push(...records.map(record=>record.text));}
   vector(){}
   search(){return {hits:[],vectorRows:0};}
@@ -29,6 +33,8 @@ vi.mock("./index.ts",()=>({MemoryIndex:class {
 }}));
 vi.mock("./eligibility.ts",()=>({MemoryEligibility:class {
   read(){return {allowed:[],capacity:false};}
+  validate(){}
+  lexical(){return {hits:[]};}
   warm(){}
   close(){}
 }}));
@@ -39,22 +45,22 @@ async function withWorker(run: (ctx: { emit: (m: unknown) => void; sent: Array<{
   const realProcess = process, listeners = new Map<string, (message: unknown) => void>(), sent: Array<{ type: string; requestId?: string }> = [];
   const workerProcess = Object.create(realProcess) as NodeJS.Process;
   Object.defineProperties(workerProcess, {
-    on: { value: (event: string, listener: (message: unknown) => void) => { if (event === "message" || event === "disconnect") { listeners.set(event, listener); return workerProcess; } return realProcess.on(event, listener); } },
-    send: { value: (message: { type: string; requestId?: string }) => { sent.push(message); return true; } },
+    on: { value: (event: string, listener: (message: unknown) => void) => { if (event === "message" || event === "disconnect") { listeners.set(event, listener); return workerProcess; } return workerProcess; } },
+    send: { value: (message: { type: string; requestId?: string }, cb?: (e: Error | null) => void) => { if (typeof cb === "function") cb(null); sent.push(message); return true; } },
     resourceUsage: { value: () => realProcess.resourceUsage() },
   });
   vi.stubGlobal("process", workerProcess);
   try {
     await import("./worker.ts");
     const emit = listeners.get("message")!;
-    emit({ type: "init", indexPath: "/unused/index", authorityPath: "/unused/authority", modelDirectory: "/unused/model", manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] } });
+    await emit({ type: "init", indexPath: "/unused/index", authorityPath: "/unused/authority", modelDirectory: "/unused/model", manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] } });
     await run({ emit, sent });
   } finally {
     for (let i = 0; i < 12; i++) { while (state.release.length) state.release.shift()!(); await Promise.resolve(); }
     vi.unstubAllGlobals(); vi.resetModules();
   }
 }
-const input = (q: string, extra: object = {}) => ({ query: q, scopeIds: ["scope"], policyRevision: 0, deletionEpoch: 0, historical: false, cursor: "", limit: 10, semantic: true, ...extra });
+const input = (q: string, extra: object = {}) => ({ query: q, scopeIds: [], view:{viewId:"00000000-0000-4000-8000-000000000001",generation:"00000000-0000-4000-8000-000000000002",digest:"0".repeat(64)},reader:{botId:"reader",threadId:"thread",humanPrincipal:{personId:"owner",bindingId:"local",revision:1},notOwnerAudience:false}, policyRevision: 0, deletionEpoch: 0, historical: false, cursor: "", limit: 10, semantic: true, ...extra });
 
 it("on WebAssembly a turn's recall waits behind one indexed record at most, and is answered before the batch ends", async () => {
   await withWorker(async ({ emit, sent }) => {

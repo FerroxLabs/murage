@@ -40,10 +40,10 @@ export function setMemoryCaptureRoster(provider: (() => MemoryRoster) | null): v
  * a member's project desk thread. Null for direct chats and pair rooms. */
 export function threadMemoryRoom(threadId: string, roster: MemoryRoster | null = captureRoster?.() ?? null): string | null {
   if (!roster) return null;
-  const room = roster.groups.find(group => group.threadId === threadId || group.tasks?.some(task => task.threadId === threadId));
+  const room = roster.groupByThread ? roster.groupByThread(threadId) : roster.groups.find(group => group.threadId === threadId || group.tasks?.some(task => task.threadId === threadId));
   if (room) return room.dm ? null : room.id;
   for (const bot of roster.bots) {
-    const desk = bot.tasks?.find(task => task.threadId === threadId)?.channelProjectDesk;
+    const desk = (roster.taskByThread ? roster.taskByThread(bot.id,threadId) : bot.tasks?.find(task => task.threadId === threadId))?.channelProjectDesk;
     if (!desk) continue;
     const project = roster.groups.find(group => group.id === desk.groupId);
     return project && !project.dm && project.channelProject && project.memberIds.includes(bot.id) ? project.id : null;
@@ -53,7 +53,8 @@ export function threadMemoryRoom(threadId: string, roster: MemoryRoster | null =
 
 export function threadCaptureScope(threadId: string, roster?: MemoryRoster | null, db?: DatabaseSync): ThreadCaptureScope {
   const current = roster === undefined ? captureRoster?.() ?? null : roster;
-  const work = current?.bots.flatMap(bot => bot.tasks ?? []).find(task => task.threadId === threadId)?.sharedWork;
+  const work = current?.taskByThread ? current.bots.map(bot => current.taskByThread!(bot.id, threadId)).find(task => task !== undefined)?.sharedWork
+    : current?.bots.flatMap(bot => bot.tasks ?? []).find(task => task.threadId === threadId)?.sharedWork;
   if (work && !work.quarantined && isWorkspaceOwner(threadHumanPrincipal(threadId, db))) {
     const key = teamMemoryKey(work.teamId);
     if (key) return { kind: "team", owner: key };

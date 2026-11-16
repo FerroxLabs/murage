@@ -183,14 +183,20 @@ export function engineToolFields(engine: "claude" | "codex" | "pi", name: string
   return row ? row(input) : generic(name, input);
 }
 
-/**
- * Rule 55's shared reader: whether the resolved call carries every field its
- * contract needs. Applied only for an ask a driver filed (`call.engine`).
- * A proven identity with no visible arguments is unread (Rule 7); a field the
- * driver reported missing (F5) is unread.
- */
+/** Legacy policy callers predate driver envelopes and omit the engine key
+ * altogether, including summary-only calls. Preserve that contract without
+ * treating an explicitly supplied but lost driver identity as a legacy call.
+ * Request capture separately rejects projection overflow before BASE runs. */
 export function requiredFields(engine: EngineKind | undefined, resolved: ResolvedCall, call: GrantCall | undefined): ContractRead {
-  if (!engine) return OK;
+  if (!engine && (!call || !Object.hasOwn(call, "engine"))) return OK;
+  return requiredDriverFields(engine, resolved, call);
+}
+
+/** Rule 55 for a driver envelope. Missing driver metadata or required fields
+ * cannot validate a native request. Call this directly when the caller knows
+ * it is reading a driver envelope rather than a legacy policy input. */
+export function requiredDriverFields(engine: EngineKind | undefined, resolved: ResolvedCall, call: GrantCall | undefined): ContractRead {
+  if (!engine) return bad("engine");
   if (call?.inputMissing) return bad(call.inputMissing);
   if (resolved.kind === "unproven") return OK; // unproven already holds
   const input = resolved.kind === "unstamped" ? call?.toolCall?.input : resolved.input;

@@ -1,0 +1,27 @@
+{
+  "implementationOwner": "win-sac-sign",
+  "buildAndEnrollmentOwner": "MAIN",
+  "schema": 1,
+  "repository": "https://github.com/actions/runner",
+  "revision": "39f6c643d3032f8795fa71f1482731ca90c8e038",
+  "version": "2.331.0",
+  "sourceFiles": [
+    {
+      "path": "src/Runner.Worker/Handlers/ScriptHandler.cs",
+      "sha256": "c0e077799529bcac4ad5f8865a5b68bf1b04aca825865d274efc40abc22b094b"
+    },
+    {
+      "path": "src/Runner.Sdk/ProcessInvoker.cs",
+      "sha256": "6a5a410a03bafef09ba7ac9af9514d7f74bc6501410fa2a60b059e1f1ac7c062"
+    },
+    {
+      "path": "src/Runner.Sdk/Runner.Sdk.csproj",
+      "sha256": "fe59eebe893db31b9bd30fdfde4c75fb7adb061a1305a808c072e5cb959ab70e"
+    }
+  ],
+  "patchSha256": "a35f3dde1458e95917051821e9884b461b7cd9e78721be11a46d92d7f0077937",
+  "gateSource": "boundary/RunnerSigningGate.cs",
+  "gateSourceSha256": "e649c0bc593c271679bb822313cf32c81a08fe4640e96a509b942afb3ced1531",
+  "msbuildProperty": "MurageSigningGateSource",
+  "enrolled": false
+}

@@ -1,0 +1,11 @@
+--- server/connector-health-store.ts
++++ server/connector-health-store.ts
+@@ -159,7 +159,7 @@
+         if (!routine || routine.updatedAt !== learning.revision) {
+           const change = { routine: key, learning: null }; this.apply(change); this.queue(`routine:${key}`, change); continue;
+         }
+-        if (routine.enabled && routine.nextRunAt !== null && routine.nextRunAt - now <= PREFLIGHT_LOOKAHEAD_MS) for (const slug of learning.slugs) slugs.add(slug);
++        if (routine.enabled && routine.nextRunAt !== null && true) for (const slug of learning.slugs) slugs.add(slug);
+       }
+     });
+     return [...slugs].sort();

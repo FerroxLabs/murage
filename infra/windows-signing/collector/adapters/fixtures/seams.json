@@ -1,0 +1,88 @@
+{
+  "preflight": {
+    "sacAdapter": "WINDOWS_WITNESS_SAC_ADAPTER_UNACCEPTED_R_COL_8",
+    "signingPath": "WINDOWS_WITNESS_SIGNING_PATH_UNENROLLED_R_COL_1",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "presecret-both-workflows": {
+    "signingPath": "WINDOWS_WITNESS_SIGNING_PATH_UNENROLLED_R_COL_1_2",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "acquisition": {
+    "signingPath": "WINDOWS_WITNESS_SIGNING_PATH_UNENROLLED_R_COL_1_2",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "service-admission": {
+    "signingPath": "WINDOWS_WITNESS_SIGNING_PATH_UNENROLLED_R_COL_1",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "sealed-tree-races": {
+    "signingPath": "WINDOWS_WITNESS_SIGNING_PATH_UNENROLLED_R_COL_1",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "native-launch-network": {
+    "signingPath": "WINDOWS_WITNESS_SIGNING_PATH_UNENROLLED_R_COL_1",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "locked-build": {
+    "signingPath": "WINDOWS_WITNESS_SIGNING_PATH_UNENROLLED_R_COL_1",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "crash-receipt-write": {
+    "signingPath": "WINDOWS_WITNESS_SIGNING_PATH_UNENROLLED_R_COL_1",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "crash-assignment": {
+    "signingPath": "WINDOWS_WITNESS_SIGNING_PATH_UNENROLLED_R_COL_1",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "crash-pipe-disconnect": {
+    "signingPath": "WINDOWS_WITNESS_SIGNING_PATH_UNENROLLED_R_COL_1",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "crash-bootstrap-death": {
+    "signingPath": "WINDOWS_WITNESS_SIGNING_PATH_UNENROLLED_R_COL_1",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "crash-driver-death": {
+    "signingPath": "WINDOWS_WITNESS_SIGNING_PATH_UNENROLLED_R_COL_1",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "crash-service-death": {
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "crash-controller-death": {
+    "cloudReaper": "WINDOWS_WITNESS_CLOUD_REAPER_UNENROLLED_R_COL_11",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "authenticode": {
+    "signingPath": "WINDOWS_WITNESS_SIGNING_PATH_UNENROLLED_R_COL_2",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "installed-coverage": {
+    "signingPath": "WINDOWS_WITNESS_SIGNING_PATH_UNENROLLED_R_COL_1",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "extraction-contract": {
+    "cloudReaper": "WINDOWS_WITNESS_CLOUD_REAPER_UNENROLLED_R_COL_11",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "vm-cleanup": {
+    "cloudReaper": "WINDOWS_WITNESS_CLOUD_REAPER_UNENROLLED_R_COL_11",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "sac-real-turn-s4": {
+    "sacAdapter": "WINDOWS_WITNESS_SAC_ADAPTER_UNACCEPTED_R_COL_8",
+    "s4Mechanism": "WINDOWS_WITNESS_S4_MECHANISM_UNACCEPTED_R_COL_9",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "promotion-both-entries": {
+    "promotionTarget": "WINDOWS_WITNESS_PROMOTION_TARGET_UNENROLLED_R_COL_13",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  },
+  "cleanup": {
+    "signingPath": "WINDOWS_WITNESS_SIGNING_PATH_UNENROLLED_R_COL_1",
+    "cloudReaper": "WINDOWS_WITNESS_CLOUD_REAPER_UNENROLLED_R_COL_11",
+    "observationAuth": "WINDOWS_WITNESS_OBSERVATION_AUTH_UNENROLLED"
+  }
+}
