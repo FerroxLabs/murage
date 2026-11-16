@@ -69,26 +69,7 @@ describe("a refused browser choice", () => {
     expect(renderToStaticMarkup(createElement(BrowserPanelAlerts, { refusal: "", problem: "" }))).toBe("");
   });
 
-  it("closes the Use my Chrome confirmation when the choice is refused", () => {
-    // The consent box stayed open over the refusal, still offering the button
-    // that had just been refused.
-    const source = readFileSync(fileURLToPath(new URL("./UnifiedBrowserPanel.tsx", import.meta.url)), "utf8");
-    const choose = source.slice(source.indexOf("const chooseBrowser = "), source.indexOf("const action = "));
-    const refused = choose.slice(choose.indexOf("catch"));
-    expect(refused).toContain("setConfirmMyChrome(false)");
-    expect(refused).toContain("setRefusal(");
-  });
-  it("never locks the picker while the owner holds control: it returns control, then switches", () => {
-    // 1.0.6: the Profile picker was disabled while held, and Return to bot could
-    // be refused as a stale generation, so the owner could not leave their Chrome.
-    const source = readFileSync(fileURLToPath(new URL("./UnifiedBrowserPanel.tsx", import.meta.url)), "utf8");
-    const select = source.slice(source.indexOf('aria-label="Browser profile"'));
-    expect(select.slice(0, select.indexOf("className"))).not.toContain("status?.held");
-    const choose = source.slice(source.indexOf("const chooseBrowser = "), source.indexOf("const action = "));
-    expect(choose.indexOf('action: "release"')).toBeGreaterThan(-1);
-    expect(choose.indexOf('action: "release"')).toBeLessThan(choose.indexOf('method: "PATCH"'));
-    expect(source).not.toContain("Use my Chrome (remote debugging)");
-  });
+  // Browser-choice confirmation and held refusals are exercised in browser-choice-flow.test.ts.
   it("says what the owner's Chrome is waiting for, and offers one Try again", () => {
     expect(WAITING_FOR_CHROME).toBe("Waiting for Chrome: click Allow in its remote debugging prompt.");
     const html = renderToStaticMarkup(createElement(UserChromeRetryNotice, { botName: "Sable", pending: false, onRetry: () => {} }));
@@ -152,9 +133,9 @@ describe("a browser that is not running, told to the owner", () => {
   });
   it("shows it on the not-running state, and the page-lock note only on a real lock", () => {
     const source = readFileSync(fileURLToPath(new URL("./UnifiedBrowserPanel.tsx", import.meta.url)), "utf8");
-    expect(source).toContain("{status?.notRunning && !bot.useMyChrome && status.owned !== false && <BrowserNotRunningNotice");
+    expect(source).toContain("{!status?.closing && status?.notRunning && !bot.useMyChrome && status.owned !== false && <BrowserNotRunningNotice");
     expect(source).toContain('onRestart={() => void action("restart")}');
-    expect(source).toContain("{status?.protectedDocument && <ProtectedBrowserNotice");
+    expect(source).toContain("{!status?.closing && status?.protectedDocument && <ProtectedBrowserNotice");
   });
 });
 
@@ -210,18 +191,5 @@ describe("Use my Chrome reaches Set up my browser and says why a choice did not 
     expect(idle).not.toContain("Stop Sable");
     expect(BrowserChoiceRefusal({ botName: "Sable", refusal: "", busy: true, onStop: () => {} })).toBeNull();
   });
-  it("puts the refusal under the picker, with Stop when the server says the bot is working", () => {
-    const source = readFileSync(fileURLToPath(new URL("./UnifiedBrowserPanel.tsx", import.meta.url)), "utf8");
-    // The server can know the bot is working before this panel does (Sean's 1.0.13 snap-back): its code turns Stop on.
-    expect(source).toContain('setRefusalBusy(cause instanceof Error && routeErrorFrom(cause).code === "bot_busy")');
-    expect(source).toContain("busy={!!bot.busy || refusalBusy}");
-    // The refusal sits right after the picker, not at the foot of the panel.
-    expect(source.indexOf("<BrowserChoiceRefusal")).toBeGreaterThan(source.indexOf('aria-label="Browser profile"'));
-    expect(source.indexOf("<BrowserChoiceRefusal")).toBeLessThan(source.indexOf("<MyChromeConsent botName"));
-    expect(source).toContain('<BrowserPanelAlerts refusal=""');
-    // Moving to Murage for Chrome sends the extension transport, whose panel offers Set up my browser.
-    expect(source).toContain('chooseBrowser({ useMyChrome: true, browserTransport: "extension" })');
-    // Only in a copy that has Murage for Chrome, and never while the bot works (the server would refuse it).
-    expect(source).toContain('{remoteDebugging && extensionBuild !== undefined && extensionBuild !== "none" && <RemoteDebuggingUpgrade botName={bot.name} pending={pending || switching || busy}');
-  });
+
 });

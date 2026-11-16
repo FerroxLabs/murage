@@ -27,6 +27,19 @@ function setup(world: Partial<OutboxWorld> = {}, send: PushSender["publish"] = a
 }
 const approval = { kind: "approval" as const, botId: "scout", threadId: "t1", requestId: "req-1", messageId: "m1" };
 
+describe("connector sign-in alerts", () => {
+  it("queues once for each paired phone even at the desk, and deduplicates incident replay", async () => {
+    const t = setup({ present: () => true });
+    const incident = { kind: "connector-reconnect" as const, botId: "scout", threadId: "t1", requestId: "incident-1" };
+    expect(t.outbox.enqueue(incident)).toBe(2);
+    expect(t.outbox.enqueue(incident)).toBe(0);
+    await t.outbox.flush();
+    expect(t.sender.publish).toHaveBeenCalledTimes(2);
+    expect(t.store.latestForRequest(B1, "incident-1")?.state).toBe("sent");
+    expect(t.store.latestForRequest(B2, "incident-1")?.state).toBe("sent");
+  });
+});
+
 describe("PushOutbox device-job", () => {
   const job = { bindingId: B2, botId: "scout", threadId: "t1", operationId: "00000000-0000-4000-8000-000000000001", expiresAt: 1_000_000 + 120_000 };
   it("inserts exactly one row, for that binding only, with no hold even at the desk", () => {

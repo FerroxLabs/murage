@@ -9,9 +9,15 @@
 // at or under the budget plus the most recent slice's excess over its allowance (S4); the index is read through a descriptor that is never
 // closed (S6). Nothing is inferred from SQL or the WAL for a transaction the drain does not own, and there are no records.
 import fs, { statSync } from "node:fs";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { DatabaseSync } from "node:sqlite";
+import { SETTLE_ACTIVE_FLOW, SETTLE_SEEDING_FOLD } from "./schema.ts";
+import * as budget from "./revoke-budget.ts";
+import * as marker from "./revoke-marker.ts";
+import { commitRevoke, drainFlipsIntoBulk, receiptCommitCost } from "./revoke-commit.ts";
+import type { WritetimeFixture } from "./testing/writetime-fixture.ts";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { memoryRevocationIdle, memoryRevocationStats, resetMemoryRevocationStats, drainRevokeMarkerBounded, stopMemoryRevocation, wakeMemoryRevocation } from "./memory-revocation.ts";
-import { beginRevokeMeasure, budgetedMarkerSlice, bytesPerChange, endRevokeMeasure, frameBytes, noteRevokeBytes, noteRevokeCost, REVOKE_COMMIT_REBALANCE_FRAMES, REVOKE_COST_MEMORY_ROWS, REVOKE_WRITE_BUDGET, REVOKE_WRITE_WINDOW_MS, resetRevokeWriteBudget, revokeBytesWritten, revokeChangeCeiling, revokeCostPerChange, revokeMinuteChanges, revokeSliceNeed, revokeWriteMeter, revokeWriteWaitMs, setRevokeBudgetClock } from "./revoke-budget.ts";
+import { beginRevokeMeasure, budgetedMarkerSlice, bytesPerChange, endRevokeMeasure, frameBytes, noteRevokeBytes, noteRevokeCost, REVOKE_COMMIT_REBALANCE_FRAMES, REVOKE_COST_MEMORY_ROWS, REVOKE_PACE, REVOKE_PACE_COMMIT, REVOKE_WRITE_BUDGET, REVOKE_WRITE_WINDOW_MS, resetRevokeWriteBudget, revokeBytesWritten, revokeChangeCeiling, revokeCostPerChange, revokeMinuteChanges, revokeSliceNeed, revokeWriteMeter, revokeWriteWaitMs, setRevokeBudgetClock } from "./revoke-budget.ts";
 import { instrumentDatabase } from "../io-budget.ts";
 import { headFlipCost, MARKER_STEP_RESERVE } from "./revoke-marker.ts";
 import { changes, flipAll, num, storm } from "./testing/revoke-storm-fixture.ts";
@@ -25,6 +31,10 @@ function cite(fx: Fx, bundle: string, n: number): void {
 }
 
 const MB20 = 20 * 1024 * 1024;
+const paceLimit = REVOKE_PACE.bytesPerMinute, commitLimit = REVOKE_PACE_COMMIT.rows;
+// These cases isolate the charged write budget. The measured pace and commit cap have their own bounds tests.
+beforeEach(() => { REVOKE_PACE.bytesPerMinute = Number.POSITIVE_INFINITY; REVOKE_PACE_COMMIT.rows = 1_000_000; });
+afterEach(() => { REVOKE_PACE.bytesPerMinute = paceLimit; REVOKE_PACE_COMMIT.rows = commitLimit; vi.restoreAllMocks(); });
 afterEach(() => { setRevokeBudgetClock(); resetRevokeWriteBudget(); REVOKE_WRITE_BUDGET.bytesPerMinute = MB20; stopMemoryRevocation(); resetMemoryRevocationStats(); });
 
 describe("M3: the marker stays inside its write budget and yields to foreground turns", () => {
@@ -101,9 +111,16 @@ describe("S2: C is measured only on the runner's own commits, seeded at the ceil
       expect(W).toBe(2 * frameBytes(fx.db));
       expect(revokeCostPerChange(fx.db)).toBe(W);
       // one slice, as the send fence runs it: BEGIN, the slice, COMMIT, then the drain's own measurement of what its commit wrote
+      let committedWal = 0;
+      const exec = fx.db.exec.bind(fx.db);
+      vi.spyOn(fx.db, "exec").mockImplementation(sql => {
+        exec(sql);
+        // The drain may checkpoint and reset immediately after COMMIT; capture the bytes before that copy.
+        if (sql.trim().toUpperCase() === "COMMIT") committedWal = walSize(fx);
+      });
       let c0 = changes(fx), w0 = walSize(fx);
       drainRevokeMarkerBounded(fx.db, { rows: 64, ms: 1_000_000 });
-      const rows1 = changes(fx) - c0, bytes1 = walSize(fx) - w0;
+      const rows1 = changes(fx) - c0, bytes1 = committedWal - w0;
       expect(rows1).toBeGreaterThan(0);
       expect(bytes1).toBeGreaterThan(0);
       // charged at the C it was admitted with (the seed), whole, at the call
@@ -119,7 +136,7 @@ describe("S2: C is measured only on the runner's own commits, seeded at the ceil
       c0 = changes(fx); w0 = walSize(fx);
       const charged0 = revokeBytesWritten();
       drainRevokeMarkerBounded(fx.db, { rows: 64, ms: 1_000_000 });
-      const rows2 = changes(fx) - c0, bytes2 = walSize(fx) - w0;
+      const rows2 = changes(fx) - c0, bytes2 = committedWal - w0;
       expect(rows2).toBeGreaterThan(0);
       expect(revokeBytesWritten() - charged0).toBe(Math.ceil(rows2 * C1));
       expect(revokeCostPerChange(fx.db)).toBeCloseTo(next(C1, bytes2, rows2, W), 6);
@@ -210,18 +227,27 @@ describe("S2: C is measured only on the runner's own commits, seeded at the ceil
 
   it("a file with no index (no WAL) measures nothing and keeps the seed: the drain is charged the ceiling a row", () => {
     const fx = storm(8);
-    setRevokeBudgetClock(() => 1_000_000);
+    // With no index nothing proves the drain's copy, so the pace (r3.6c) keeps its copy debt until the 60 s bound: on a frozen clock the drain
+    // answers "pending" for ever. Each pass is therefore a minute on, and the loop is bounded and FAILS when the drain does not finish (an
+    // unbounded synchronous spin here held every full vitest run for hours: VTHANG-1019).
+    let now = 1_000_000;
+    setRevokeBudgetClock(() => now);
     resetRevokeWriteBudget();
     try {
       flipAll(fx);
-      const c0 = changes(fx);
-      while (drainRevokeMarkerBounded(fx.db, { rows: 1_000_000, ms: 1_000_000 })) { /* drains */ }
+      const c0 = changes(fx), charged0 = revokeWriteMeter.charged;
+      let passes = 0;
+      while (drainRevokeMarkerBounded(fx.db, { rows: 1_000_000, ms: 1_000_000 })) {
+        expect(++passes).toBeLessThan(20);
+        now += REVOKE_WRITE_WINDOW_MS + 1_000;
+      }
       const changed = changes(fx) - c0;
       expect(changed).toBeGreaterThan(0);
       expect(revokeWriteMeter.measured).toBe(0);
       expect(revokeWriteMeter.slices).toBeGreaterThan(0);
       expect(revokeCostPerChange(fx.db)).toBe(revokeChangeCeiling(fx.db));
-      expect(revokeBytesWritten()).toBe(changed * revokeChangeCeiling(fx.db));
+      // each pass's charge ages out a minute later, so the whole drain is read off the meter's running total
+      expect(revokeWriteMeter.charged - charged0).toBe(changed * revokeChangeCeiling(fx.db));
     } finally { fx.close(); }
   });
 
@@ -240,8 +266,9 @@ describe("S2: C is measured only on the runner's own commits, seeded at the ceil
       const insert = fx.db.prepare("INSERT INTO budget_probe VALUES(?,?)");
       for (let i = 0; i < 300; i++) insert.run(i, "x".repeat(200));
       fx.db.exec("COMMIT");
+      const committedBytes = walSize(fx);
       const bytes = endRevokeMeasure(fx.db, m);
-      expect(bytes).toBe(walSize(fx));
+      expect(bytes).toBe(committedBytes);
       expect(revokeWriteMeter.measuredChanges).toBe(300);
       const W = revokeChangeCeiling(fx.db);
       expect(revokeCostPerChange(fx.db)).toBeCloseTo(next(W, bytes!, 300, W), 6);
@@ -252,7 +279,8 @@ describe("S2: C is measured only on the runner's own commits, seeded at the ceil
       m = beginRevokeMeasure(fx.db);
       budgetedMarkerSlice(fx.db, 4096, 1_000_000);
       fx.db.exec("COMMIT");
-      expect(endRevokeMeasure(fx.db, m)).toBe(walSize(fx));
+      const restartedBytes = walSize(fx);
+      expect(endRevokeMeasure(fx.db, m)).toBe(restartedBytes);
       expect(revokeWriteMeter.measured).toBe(2);
       // a transaction that changed nothing measures nothing; a measure begun outside any transaction measures nothing
       fx.db.exec("BEGIN IMMEDIATE"); m = beginRevokeMeasure(fx.db); fx.db.exec("COMMIT");
@@ -546,5 +574,346 @@ describe("S1: every charge is dated at its marker call and ages out in 60 s; not
       expect(revokeWriteMeter.measured).toBe(measured);
       expect(revokeCostPerChange(fx.db)).toBe(C);
     } finally { fx.close(); }
+  });
+});
+
+// Targeted settlement is not wired into the runner or owner paths. Exercise its contract on isolated files.
+
+describe("targeted settlement admission", () => {
+  type Target = { kind: "global" | "flips" | "flows" } | { kind: "only"; revokeId: number };
+  const targets: Target[] = [{ kind: "global" }, { kind: "flips" }, { kind: "flows" }, { kind: "only", revokeId: 1 }];
+  const saved = { ledger: budget.REVOKE_WRITE_BUDGET.bytesPerMinute, pace: budget.REVOKE_PACE.bytesPerMinute, rows: budget.REVOKE_PACE_COMMIT.rows };
+  const fixtures: WritetimeFixture[] = [];
+  let now = 1_000_000;
+  const fresh = (receipts = 0) => { const fx = storm(receipts); fx.db.exec(SETTLE_ACTIVE_FLOW.sql); fx.db.exec(SETTLE_SEEDING_FOLD.sql); fixtures.push(fx); return fx; };
+  const noFold = () => marker.setFoldHooks({ need: () => 0, pending: () => false, slice: () => null });
+  function measured<T>(db: DatabaseSync, run: () => T, rollback = false): T {
+    db.exec("BEGIN IMMEDIATE");
+    const m = budget.beginRevokeMeasure(db);
+    try {
+      const result = run();
+      db.exec(rollback ? "ROLLBACK" : "COMMIT");
+      budget.endRevokeMeasure(db, m, !rollback, !rollback);
+      return result;
+    } catch (error) {
+      if (db.isTransaction) { db.exec("ROLLBACK"); budget.endRevokeMeasure(db, m, false, false); }
+      throw error;
+    }
+  }
+  function admit(db: DatabaseSync, target: Target, rows = 64) {
+    return budget.admitMarkerSlice(db, rows, 1000, null, target, "drain");
+  }
+  function content(fx: WritetimeFixture): number {
+    fx.owner("own", "u", 2000).reply("own", "r", 2001);
+    return commitRevoke(fx.db, { kind: "line", threadId: "own", messageIds: ["u"], cause: "forget" }, { inline: false });
+  }
+  beforeEach(() => {
+    now = 1_000_000;
+    // The legacy tests above lift the pace globally; targeted admission must exercise the real caps.
+    budget.REVOKE_WRITE_BUDGET.bytesPerMinute = saved.ledger;
+    budget.REVOKE_PACE.bytesPerMinute = saved.pace;
+    budget.REVOKE_PACE_COMMIT.rows = saved.rows;
+    budget.resetRevokeWriteBudget(); budget.setRevokeBudgetClock(() => now);
+    budget.revokePaceTestHooks.osUnknown = true;
+    noFold();
+    marker.setFlipDrain(drainFlipsIntoBulk, db => {
+      const row = db.prepare("SELECT bundle_id FROM memory_receipt_flips LIMIT 1").get();
+      return row ? receiptCommitCost(db, String(row.bundle_id)) + 8 : 0;
+    });
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    for (const fx of fixtures.splice(0)) fx.close();
+    budget.REVOKE_WRITE_BUDGET.bytesPerMinute = saved.ledger;
+    budget.REVOKE_PACE.bytesPerMinute = saved.pace;
+    budget.REVOKE_PACE_COMMIT.rows = saved.rows;
+    budget.revokePaceTestHooks.osUnknown = false;
+    budget.revokePaceTestHooks.unmeasurable = false;
+    budget.resetRevokeWriteBudget(); budget.setRevokeBudgetClock();
+  });
+
+  describe("T4a: target wait and admission agree", () => {
+    for (const target of targets) for (const state of ["too-small", "exact", "short", "expired", "pace"] as const) {
+      it(`${target.kind}: ${state}`, () => {
+        const { db } = fresh();
+        const need = budget.revokeCostPerChange(db) * (marker.MARKER_STEP_RESERVE + 64);
+        budget.REVOKE_WRITE_BUDGET.bytesPerMinute = state === "too-small" ? need - 1 : need;
+        if (state === "short" || state === "expired") budget.noteRevokeBytes(1);
+        if (state === "expired") now += 60_001;
+        if (state === "pace") {
+          budget.REVOKE_PACE.bytesPerMinute = 1;
+          measured(db, () => db.exec("UPDATE memory_lsn SET next=next+1"));
+          budget.REVOKE_WRITE_BUDGET.bytesPerMinute = saved.ledger;
+        }
+        const wait = budget.revokeSettleWaitMs(db, target);
+        const result = measured(db, () => admit(db, target));
+        expect(result.admitted).toBe(wait === 0);
+        if (state === "too-small") expect(wait).toBe(Infinity);
+        else if (state === "short" || state === "pace") {
+          expect(wait).toBeGreaterThan(0);
+          expect(result).toEqual({ admitted: false, refused: state === "pace" ? "pace" : "ledger" });
+        } else expect(wait).toBe(0);
+      });
+    }
+    it.each(["global", "flips"] as const)("%s escapes only a dominating oversized cost in an empty ledger", kind => {
+      const { db } = fresh();
+      marker.setFlipDrain(drainFlipsIntoBulk, () => 900);
+      budget.REVOKE_WRITE_BUDGET.bytesPerMinute = budget.revokeCostPerChange(db) * 100;
+      const target = { kind };
+      expect(budget.revokeSettleWaitMs(db, target)).toBe(0);
+      expect(measured(db, () => admit(db, target)).admitted).toBe(true);
+      budget.noteRevokeBytes(1);
+      expect(budget.revokeSettleWaitMs(db, target)).toBe(60_000);
+      expect(measured(db, () => admit(db, target))).toEqual({ admitted: false, refused: "ledger" });
+      now += 60_001;
+      expect(budget.revokeSettleWaitMs(db, target)).toBe(0);
+    });
+    it("only global sizes admission and its escape with the fold cost", () => {
+      const { db } = fresh();
+      marker.setFoldHooks({ need: () => 900, pending: () => true, slice: () => "blocked" });
+      expect(marker.headFlipCost(db)).toBe(900);
+      expect(marker.receiptFlipCost(db)).toBe(0);
+      budget.REVOKE_WRITE_BUDGET.bytesPerMinute = budget.revokeCostPerChange(db) * 100;
+      for (const target of targets) {
+        expect(budget.revokeSettleWaitMs(db, target)).toBe(target.kind === "global" ? 0 : Infinity);
+        const result = measured(db, () => admit(db, target));
+        expect(result.admitted).toBe(target.kind === "global");
+        if (target.kind === "global") expect(result).toEqual({ admitted: true, outcome: "blocked", cause: "fold-room", changed: 0 });
+      }
+    });
+    it("recomputes the wait clock after copy accounting", () => {
+      const { db } = fresh();
+      const need = budget.revokeCostPerChange(db) * 576;
+      budget.REVOKE_WRITE_BUDGET.bytesPerMinute = need;
+      budget.noteRevokeBytes(1);
+      const prepare = db.prepare.bind(db);
+      vi.spyOn(db, "prepare").mockImplementation((...args) => { now = 1_060_001; return prepare(...args); });
+      expect(budget.revokeSettleWaitMs(db, { kind: "only", revokeId: 1 })).toBe(0);
+    });
+  });
+
+  describe("T4a: assertions, detailed branches and wrapper compatibility", () => {
+    it("requires the measured transaction on the same handle, and enforces every policy pair", () => {
+      const a = fresh().db, b = fresh().db;
+      for (const target of targets) expect(() => admit(a, target)).toThrow();
+      a.exec("BEGIN");
+      for (const target of targets) expect(() => admit(a, target)).toThrow();
+      for (const target of targets.filter(t => t.kind !== "only")) {
+        expect(() => budget.admitMarkerSlice(a, 64, 1000, null, target, "inline")).toThrow();
+      }
+      expect(budget.admitMarkerSlice(a, 64, 1000, null, { kind: "only", revokeId: 1 }, "inline").admitted).toBe(true);
+      const m = budget.beginRevokeMeasure(a);
+      expect(() => budget.admitMarkerSlice(a, 64, 1000, null, { kind: "unknown" } as never, "drain")).toThrow();
+      expect(() => budget.admitMarkerSlice(a, 64, 1000, null, { kind: "flows" }, "unknown" as never)).toThrow();
+      expect(() => budget.admitMarkerSlice(a, 64, 1000, null, { kind: "only", revokeId: 1 }, "inline")).toThrow();
+      b.exec("BEGIN");
+      expect(() => admit(b, { kind: "flows" })).toThrow();
+      expect(budget.admitMarkerSlice(b, 64, 1000, null, { kind: "only", revokeId: 1 }, "inline").admitted).toBe(true);
+      b.exec("ROLLBACK"); a.exec("COMMIT"); budget.endRevokeMeasure(a, m);
+      a.exec("BEGIN");
+      expect(() => admit(a, { kind: "flows" })).toThrow();
+      expect(budget.admitMarkerSlice(a, 64, 1000, null, { kind: "only", revokeId: 1 }, "inline").admitted).toBe(true);
+      a.exec("ROLLBACK");
+    });
+    it("measurement initialization failure publishes no ownership, and a throwing finalizer clears it", () => {
+      const { db } = fresh();
+      db.exec("BEGIN");
+      const changes = vi.spyOn(marker, "totalChanges").mockImplementationOnce(() => { throw new Error("measurement input"); });
+      expect(() => budget.beginRevokeMeasure(db)).toThrow("measurement input");
+      expect(budget.admitMarkerSlice(db, 64, 1000, null, { kind: "only", revokeId: 1 }, "inline").admitted).toBe(true);
+      const m = budget.beginRevokeMeasure(db);
+      db.exec("COMMIT");
+      changes.mockImplementationOnce(() => { throw new Error("finalizer input"); });
+      expect(() => budget.endRevokeMeasure(db, m)).toThrow("finalizer input");
+      db.exec("BEGIN");
+      expect(() => admit(db, { kind: "flows" })).toThrow();
+      expect(budget.admitMarkerSlice(db, 64, 1000, null, { kind: "only", revokeId: 1 }, "inline").admitted).toBe(true);
+      db.exec("ROLLBACK");
+    });
+    it("admission accounting consumes the slice allowance before marker execution", () => {
+      const { db } = fresh();
+      let tick = 0;
+      vi.spyOn(performance, "now").mockImplementation(() => tick);
+      const pending = vi.fn(() => { tick = 100; return 0; });
+      marker.setFlipDrain(drainFlipsIntoBulk, pending);
+      const run = vi.spyOn(marker, "markerSliceDetailed");
+      const result = measured(db, () => budget.admitMarkerSlice(db, 64, 50, null, { kind: "flips" }, "drain"));
+      expect(pending).toHaveBeenCalled();
+      expect(result).toEqual({ admitted: true, outcome: "idle", changed: 0 });
+      expect(run).not.toHaveBeenCalled();
+    });
+    it("legacy only with a queued flip remains false and uncharged", () => {
+      const fx = fresh(1); flipAll(fx);
+      fx.db.exec("BEGIN");
+      expect(budget.budgetedMarkerSlice(fx.db, 64, 1000, null, { only: 1 })).toBe(false);
+      fx.db.exec("ROLLBACK");
+      expect(budget.revokeBytesWritten()).toBe(0);
+      expect(budget.revokeWriteMeter.slices).toBe(0);
+    });
+    it("rejects mutually exclusive marker options before writes", () => {
+      const { db } = fresh();
+      for (const opts of [{ only: 1, flipsOnly: true as const }, { only: 1, flowsOnly: true as const }, { flipsOnly: true as const, flowsOnly: true as const }]) {
+        const before = marker.totalChanges(db);
+        expect(() => marker.markerSliceDetailed(db, 64, 1000, null, 1000, opts)).toThrow();
+        expect(() => marker.markerSlice(db, 64, 1000, null, 1000, opts)).toThrow();
+        expect(marker.totalChanges(db)).toBe(before);
+      }
+    });
+    it("flips only never folds or walks; only and flows name the queued-flip block", () => {
+      const fx = fresh(2); const id = content(fx); flipAll(fx);
+      const fold = vi.fn(() => { throw new Error("must not fold"); });
+      marker.setFoldHooks({ need: () => 1_000_000, pending: () => true, slice: fold });
+      for (const target of [{ kind: "only", revokeId: id }, { kind: "flows" }] as Target[]) {
+        expect(measured(fx.db, () => admit(fx.db, target))).toEqual({ admitted: true, outcome: "blocked", cause: "flip-queued", changed: 0 });
+      }
+      expect(marker.markerSlice(fx.db, 64, 1000, null, 1000, { only: id })).toBe(false);
+      expect(marker.markerSliceDetailed(fx.db, 64, 1000, null, -512, { flipsOnly: true })).toEqual({ outcome: "blocked", cause: "flip-room" });
+      const result = measured(fx.db, () => admit(fx.db, { kind: "flips" }));
+      expect(result).toMatchObject({ admitted: true, outcome: "progress" });
+      expect(fx.db.prepare("SELECT phase FROM memory_revoke_jobs WHERE revoke_id=?").get(id)?.phase).toBe("flow");
+      expect(marker.markerSliceDetailed(fx.db, 64, 1000, null, 1000, { flipsOnly: true })).toEqual({ outcome: "idle" });
+      // The targeted path reads the indexed database state, independently of the legacy fold hook.
+      fx.job(id + 1, 3000, "seeding");
+      fx.db.prepare("UPDATE memory_revoke_jobs SET kind='bulk',root=? WHERE revoke_id=?").run('{"kind":"bulk","cause":"fold"}', id + 1);
+      expect(marker.markerSliceDetailed(fx.db, 64, 1000, null, 1000, { flowsOnly: true })).toEqual({ outcome: "blocked", cause: "fold-seeding" });
+      expect(fold).not.toHaveBeenCalled();
+    });
+    it("flows only narrows without marking, and never calls the fold slice", () => {
+      const fx = fresh(); const id = content(fx);
+      const fold = vi.fn(() => null);
+      marker.setFoldHooks({ need: () => 0, pending: () => false, slice: fold });
+      expect(marker.markerSliceDetailed(fx.db, 4096, 1000, null, 10_000, { flowsOnly: true })).toEqual({ outcome: "progress" });
+      expect(fx.db.prepare("SELECT phase FROM memory_revoke_jobs WHERE revoke_id=?").get(id)?.phase).toBe("mark");
+      expect(marker.markerSliceDetailed(fx.db, 4096, 1000, null, 10_000, { flowsOnly: true })).toEqual({ outcome: "idle" });
+      expect(fold).not.toHaveBeenCalled();
+    });
+    it("an idle saved cursor is charged but is not progress", () => {
+      const fx = fresh(); const id = content(fx);
+      fx.db.prepare("UPDATE memory_revoke_jobs SET phase='hold' WHERE revoke_id=?").run(id);
+      fx.db.prepare("INSERT INTO memory_revoke_reached VALUES(?, 'hold:waiting', 0)").run(id);
+      fx.db.exec("INSERT INTO memory_scope_bindings(id,scope_id,subject_type,subject_id,revision,state,intent) VALUES('memory-revocation:waiting','s-room','system','memory-revocation',0,'granted','{}')");
+      const result = measured(fx.db, () => admit(fx.db, { kind: "only", revokeId: id }));
+      expect(result).toMatchObject({ admitted: true, outcome: "idle" });
+      expect(result.admitted && result.changed).toBeGreaterThan(0);
+      expect(budget.revokeBytesWritten()).toBeGreaterThan(0);
+    });
+    it("drain row caps exclude unrelated fold costs and count prior transaction rows", () => {
+      const { db } = fresh();
+      marker.setFoldHooks({ need: () => 100_000, pending: () => false, slice: () => null });
+      const run = vi.spyOn(marker, "markerSliceDetailed");
+      measured(db, () => {
+        db.exec("UPDATE memory_lsn SET next=next+1");
+        admit(db, { kind: "only", revokeId: 1 });
+        expect(run.mock.calls.at(-1)?.[4]).toBe(budget.REVOKE_PACE_COMMIT.rows - 1);
+      });
+    });
+    it.each(["idle", "progress", "blocked", "throw"] as const)("legacy wrapper preserves %s and finally charges", mode => {
+      const { db } = fresh(); const error = new Error("fold failure");
+      marker.setFoldHooks({ need: () => 0, pending: () => false, slice: handle => {
+        if (mode !== "idle") handle.exec("UPDATE memory_lsn SET next=next+1");
+        if (mode === "throw") throw error;
+        return mode === "blocked" ? "blocked" : mode === "progress";
+      } });
+      const c = budget.revokeCostPerChange(db);
+      db.exec("BEGIN");
+      if (mode === "throw") expect(() => budget.budgetedMarkerSlice(db, 64, 1000)).toThrow(error);
+      else expect(budget.budgetedMarkerSlice(db, 64, 1000)).toBe(mode === "blocked" ? "budget" : mode === "progress");
+      db.exec("ROLLBACK");
+      expect(budget.revokeBytesWritten()).toBe(mode === "idle" ? 0 : c);
+    });
+  });
+
+  describe("T9a: settle and runner accounting share ledger, pace and copies", () => {
+    it("interleaves runner and settle commits; ledger admission and measured pace refuse independently", () => {
+      const fx = fresh(3); flipAll(fx);
+      const c = budget.revokeCostPerChange(fx.db);
+      let changed = 0;
+      measured(fx.db, () => {
+        const before = marker.totalChanges(fx.db);
+        expect(budget.budgetedMarkerSlice(fx.db, 64, 1000)).toBe(true);
+        changed = marker.totalChanges(fx.db) - before;
+      });
+      expect(budget.revokeBytesWritten()).toBe(changed * c);
+      expect(budget.revokePacedBytes()).toBe(changed * budget.revokeChangeCeiling(fx.db) * 2);
+      budget.REVOKE_PACE.bytesPerMinute = 1;
+      expect(measured(fx.db, () => admit(fx.db, { kind: "flows" }))).toEqual({ admitted: false, refused: "pace" });
+      budget.REVOKE_PACE.bytesPerMinute = 1e9;
+      budget.noteRevokeBytes(saved.ledger);
+      expect(measured(fx.db, () => admit(fx.db, { kind: "flows" }))).toEqual({ admitted: false, refused: "ledger" });
+      now += 60_001;
+      expect(budget.revokeSettleWaitMs(fx.db, { kind: "flows" })).toBe(0);
+      expect(measured(fx.db, () => admit(fx.db, { kind: "flows" }))).toMatchObject({ admitted: true, outcome: "progress" });
+      expect(budget.revokePacedBytes()).toBeGreaterThan(0);
+      expect(budget.revokeBytesWritten()).toBeGreaterThan(0);
+      now += 60_001;
+      expect(measured(fx.db, () => budget.budgetedMarkerSlice(fx.db, 64, 1000))).toBe(true);
+    });
+    it("a throwing admitted marker charges every changed row through rollback", () => {
+      const { db } = fresh(); const error = new Error("marker failure");
+      marker.setFoldHooks({ need: () => 0, pending: () => false, slice: handle => {
+        handle.exec("UPDATE memory_lsn SET next=next+1");
+        throw error;
+      } });
+      const c = budget.revokeCostPerChange(db);
+      expect(() => measured(db, () => admit(db, { kind: "global" }))).toThrow(error);
+      expect(db.isTransaction).toBe(false);
+      expect(budget.revokeBytesWritten()).toBe(c);
+      expect(budget.revokePacedBytes()).toBe(c * 2);
+      expect(budget.revokeWriteMeter.slices).toBe(1);
+    });
+    it("rollback keeps the settle slice's charge, dated at finalization", () => {
+      const fx = fresh(); const id = content(fx); const c = budget.revokeCostPerChange(fx.db);
+      const before = marker.totalChanges(fx.db);
+      measured(fx.db, () => {
+        expect(admit(fx.db, { kind: "only", revokeId: id })).toMatchObject({ admitted: true, outcome: "progress" });
+        now += 61_000;
+        expect(budget.revokeBytesWritten()).toBeGreaterThan(0);
+      }, true);
+      const changed = marker.totalChanges(fx.db) - before;
+      expect(changed).toBeGreaterThan(0);
+      expect(budget.revokeBytesWritten()).toBe(changed * c);
+      expect(budget.revokePacedBytes()).toBe(changed * c * 2);
+      expect(fx.db.prepare("SELECT phase FROM memory_revoke_jobs WHERE revoke_id=?").get(id)?.phase).toBe("flow");
+      now += 60_001;
+      expect(budget.revokeBytesWritten()).toBe(0);
+    });
+    it("a refused admission charges no marker rows; finalization still charges measured transaction bytes", () => {
+      const { db } = fresh();
+      db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE probe(x BLOB)");
+      budget.revokePaceTestHooks.osUnknown = false;
+      budget.REVOKE_WRITE_BUDGET.bytesPerMinute = 1;
+      measured(db, () => {
+        db.exec("INSERT INTO probe VALUES(zeroblob(100000))");
+        expect(admit(db, { kind: "only", revokeId: 1 })).toEqual({ admitted: false, refused: "ledger" });
+        expect(budget.revokeWriteMeter.slices).toBe(0);
+        expect(budget.revokeBytesWritten()).toBe(0);
+      });
+      expect(budget.revokeWriteMeter.slices).toBe(0);
+      expect(budget.revokeBytesWritten()).toBe(budget.revokeWriteMeter.osBeyond);
+      expect(budget.revokeWriteMeter.osBeyond).toBeGreaterThan(0);
+      expect(budget.revokePacedBytes()).toBeGreaterThan(0);
+    });
+    it("a pinned copy blocks all drain targets; release is measured by the next wait", () => {
+      const fx = fresh(10); flipAll(fx);
+      fx.db.exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA wal_autocheckpoint=0");
+      const file = String(fx.db.prepare("PRAGMA database_list").get()!.file);
+      const reader = new DatabaseSync(file);
+      try {
+        reader.exec("BEGIN"); reader.prepare("SELECT count(*) FROM memory_revoke_jobs").get();
+        measured(fx.db, () => expect(admit(fx.db, { kind: "flips" })).toMatchObject({ admitted: true, outcome: "progress" }));
+        const held = budget.revokeOutstandingCopyBytes();
+        expect(held).toBeGreaterThan(0);
+        budget.REVOKE_PACE.bytesPerMinute = 1;
+        for (const target of targets) {
+          expect(budget.revokeSettleWaitMs(fx.db, target)).toBeGreaterThan(0);
+          expect(measured(fx.db, () => admit(fx.db, target))).toEqual({ admitted: false, refused: "pace" });
+        }
+        reader.exec("COMMIT");
+        budget.revokeSettleWaitMs(fx.db, { kind: "flows" });
+        expect(budget.revokeOutstandingCopyBytes()).toBe(0);
+        expect(budget.revokeWriteMeter.copiesSettled).toBeGreaterThanOrEqual(held);
+        expect(budget.revokePacedBytes()).toBeGreaterThanOrEqual(held);
+      } finally { reader.close(); }
+    });
   });
 });

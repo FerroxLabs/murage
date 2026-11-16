@@ -13,6 +13,7 @@ it.each(["release", "timeout"])("runs the real ACP load-proof stdio fixture with
   const pixels = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
   writeFileSync(image, pixels);
   const child = spawn(process.execPath, [fileURLToPath(new URL("./fake-acp-cli.ts", import.meta.url))], {
+    windowsHide: true,
     env: { PATH: process.env.PATH, HOME: root, USERPROFILE: root, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), FAKE_ACP_MODE: "load-proof", FAKE_LOAD_GATE: gate, FAKE_LOAD_IMAGE: image, FAKE_LOAD_TIMEOUT_MS: scenario === "timeout" ? "150" : "3000" },
     stdio: ["pipe", "pipe", "pipe"],
   });

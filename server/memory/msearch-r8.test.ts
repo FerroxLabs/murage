@@ -4,6 +4,7 @@
 // Msearch review round 8 (lanes/msearch-review/r8/REPORT.md). Both fail on 349eff48b.
 //  P2  scans were serialized even with a small log: a second search lost lexical recall after 200 ms despite remaining budget;
 //  P2  the reader had no production checkpoint requester: admission resumed after a fixed wait with the log unchanged.
+import { openTestIndex, put } from "./testing/open-index.ts";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -21,12 +22,12 @@ const entry = (id: string): IndexedMemory => ({ id, version: 1, scopeId: "s", te
 const ids = Array.from({ length: 6000 }, (_, n) => `d-${String(n).padStart(4, "0")}`);
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
 
-function world(rows = ids) {
+async function world(rows = ids) {
   closeMemoryIndexReader();
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
-  const index = new MemoryIndex(INDEX_PATH());
+  const index = await openTestIndex(INDEX_PATH());
   index.prepareModel("model");
-  index.upsert(rows.map(entry));
+  await seedRows(index, rows.map(entry));
   return index;
 }
 beforeEach(() => { resetScanAdmission(); closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
@@ -34,7 +35,7 @@ afterEach(() => { resetScanAdmission(); closeMemoryIndexReader(); setWalCheckpoi
 
 describe("P2: overlapping scans run side by side while the log is small", () => {
   it("a second scan started while the first is open (and held 400 ms) answers in full, not partial", async () => {
-    const index = world();
+    const index = await world();
     let second: ReturnType<typeof lexicalPageSliced> | null = null, secondYields = 0;
     const first = await lexicalPageSliced(QUERY, ["s"], 50, 0, async () => {
       if (!second) {
@@ -53,7 +54,7 @@ describe("P2: overlapping scans run side by side while the log is small", () => 
 
 describe("P2: a log over the threshold is checkpointed through the writer, and admission waits for the acknowledgement", () => {
   it("one request after the open scans finish; a new scan waits within its own budget and is admitted after the ack; the log is truncated", async () => {
-    const index = world(Array.from({ length: 40_000 }, (_, n) => `e-${String(n).padStart(5, "0")}`));
+    const index = await world(Array.from({ length: 40_000 }, (_, n) => `e-${String(n).padStart(5, "0")}`));
     expect(walBytes(INDEX_PATH())).toBeGreaterThan(1);
     // the log grows past the threshold while the first scan is open
     const requests: number[] = [];
@@ -62,7 +63,7 @@ describe("P2: a log over the threshold is checkpointed through the writer, and a
     setWalCheckpointRequester(async () => {
       requests.push(Date.now());
       await acknowledged;
-      return index.checkpointNow();
+      return (await index.sealAndTruncate()).truncated;
     });
     const events: string[] = [];
     let secondLogAtRead = -1, second: ReturnType<typeof lexicalPageSliced> | null = null;
@@ -89,17 +90,20 @@ describe("P2: a log over the threshold is checkpointed through the writer, and a
     expect(secondLogAtRead).toBe(0);
   }, 60_000);
 
+  // MEMW 1.11: a scan gated out (its own budget spent at a closed gate) answers null, never an empty partial page
   it("a gated scan answers partial only when its own budget is spent", async () => {
-    const index = world();
+    const index = await world();
     setWalDrainThreshold(1);
     setWalCheckpointRequester(() => new Promise<boolean>(() => { /* never acknowledged */ }));
+    const started = Date.now();
     const page = await lexicalPageSliced(QUERY, ["s"], 50, 0, tick, { deadlineAt: Date.now() + 150 });
     index.close();
-    expect(page?.partial).toBe(true);
+    expect(page).toBeNull();
+    expect(Date.now() - started).toBeGreaterThanOrEqual(140);
   }, 30_000);
 
   it("a checkpoint never acknowledged lifts the gate after the bounded time, and is not asked again at once", async () => {
-    const index = world();
+    const index = await world();
     setWalDrainThreshold(1);
     let requests = 0;
     setWalCheckpointRequester(() => { requests++; return new Promise<boolean>(() => { /* never acknowledged */ }); });
@@ -124,9 +128,9 @@ describe("worker IPC: the controller forwards the request to the helper and reso
   }
 
   it("the helper truncates the log of the real index and acknowledges; the request resolves true", async () => {
-    const index = world();
+    const index = await world();
     setWalDrainThreshold(1);
-    const { controller, sent } = controllerWith((message, answer) => { if (message.type === "checkpoint") answer(index.checkpointNow()); });
+    const { controller, sent } = controllerWith(async (message, answer) => { if (message.type === "checkpoint") answer((await index.sealAndTruncate()).truncated); });
     setWalCheckpointRequester(() => controller.requestCheckpoint());
     expect(walBytes(INDEX_PATH())).toBeGreaterThan(1);
     const page = await lexicalPageSliced(QUERY, ["s"], 50, 0, tick, { deadlineAt: Date.now() + 10_000 });
@@ -144,3 +148,19 @@ describe("worker IPC: the controller forwards the request to the helper and reso
     expect(await new MemoryWorkerController().requestCheckpoint()).toBe(false);
   });
 });
+
+/** Seed in small groups, servicing the checked writer before the next group. */
+async function seedRows(index: MemoryIndex, rows: Parameters<MemoryIndex["applyBatch"]>[0]) {
+  for (let at = 0; at < rows.length;) {
+    await index.sealAndTruncate();
+    for (let steps = 0; index.segmentCount() > 48; steps++) {
+      if (steps === 5000 || index.stopInfo()) throw new Error("fixture segment gate did not clear");
+      const step = await index.maintenanceStep();
+      if (step.drain) await index.sealAndTruncate();
+    }
+    // Each inserted row can flush a segment. Leave the next gate check between batches.
+    const count = Math.min(16, 49 - index.segmentCount());
+    await put(index, rows.slice(at, at + count));
+    at += count;
+  }
+}

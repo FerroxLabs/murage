@@ -37,6 +37,7 @@ const ENGINE_SERVICE: Readonly<Record<string, Entry>> = {
   kimiAgent: { name: "Kimi", account: "own-sign-in" },
   cursorAgent: { name: "Cursor", account: "own-sign-in", billingUrl: "https://cursor.com/dashboard" },
   droidAgent: { name: "Droid", account: "own-sign-in" },
+  deepseekAgent: { name: "DeepSeek Harness", account: "own-key", billingUrl: "https://platform.deepseek.com/top_up" },
   copilotAgent: { name: "Copilot", account: "own-sign-in", billingUrl: "https://github.com/settings/copilot" },
   openclawAgent: { name: "OpenClaw" },
   opencodeGo: { name: "OpenCode" },

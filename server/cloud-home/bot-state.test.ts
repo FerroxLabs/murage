@@ -9,7 +9,7 @@ import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CLAUDE_RENEW_WINDOW_MS, assertCloudBotIdNotTombstoned, cloudBotStateRefusalCopy, cloudClaudeRenewalDue, installCloudBotGuards,
-  queryCloudBotState, releaseCloudBotState, resetCloudBotStateForTests, type CloudLauncherSpawn,
+  markCloudSigninRefused, queryCloudBotState, releaseCloudBotState, resetCloudBotStateForTests, type CloudLauncherSpawn,
 } from "./bot-state.ts";
 import { cloudHomeCopy } from "./copy.ts";
 import { TURN_BOT, TURN_MARKER, cloudTurnBot, cloudTurnEnvironment, cloudTurnLaunch } from "./turn-process.ts";
@@ -42,15 +42,15 @@ describe("queryCloudBotState", () => {
   it("parses names and timestamps; unknown modes read as null and non-object engine entries are left out", async () => {
     const fake = query({ tombstoned: false, engines: {
       codex: { mode: "apikey", signedIn: true, expiresAt: null },
-      claudeAgent: { mode: "oauth-token", signedIn: true, expiresAt: 1_900_000_000 },
+      claudeAgent: { mode: "oauth-token", signedIn: true, expiresAt: 1_900_000_000, source: "bot" },
       grokAgent: { mode: "password", signedIn: "yes", expiresAt: "soon" },
       kimiAgent: "signed-in", opencodeGo: null, qwenAgent: [1, 2],
     } });
     const state = await queryCloudBotState("bot-atlas", fake.launch);
     expect(state).toEqual({ tombstoned: false, engines: {
-      codex: { mode: "apikey", signedIn: true, expiresAt: null },
-      claudeAgent: { mode: "oauth-token", signedIn: true, expiresAt: 1_900_000_000 },
-      grokAgent: { mode: null, signedIn: false, expiresAt: null },
+      codex: { mode: "apikey", signedIn: true, expiresAt: null, source: null },
+      claudeAgent: { mode: "oauth-token", signedIn: true, expiresAt: 1_900_000_000, source: "bot" },
+      grokAgent: { mode: null, signedIn: false, expiresAt: null, source: null },
     } });
   });
   it("sends only mode and bot, and no bot at all for the engine-wide stores", async () => {
@@ -176,4 +176,41 @@ describe("every Cloud spawn site names its bot", () => {
     expect(probe).toContain('["--version"]');
     expect(probe).not.toContain("cloudTurnBot");
   });
+});
+
+describe("the Antigravity refusal record (client)", () => {
+  it("passes the launcher's needsSignin and epoch through, and asks it to mark only the login epoch the turn ran with", async () => {
+    const answer = query({ tombstoned: false, engines: { antigravity: { mode: "oauth", signedIn: false, expiresAt: null, source: "bot", needsSignin: true, generation: 9, epoch: 4 } } });
+    expect((await queryCloudBotState("alpha", answer.launch)).engines.antigravity).toMatchObject({ signedIn: false, needsSignin: true, generation: 9, epoch: 4 });
+    const mark = fakeLauncher({ code: 0 });
+    expect(await markCloudSigninRefused("alpha", 4, mark.launch)).toBe(true);
+    expect(mark.requests).toEqual([{ mode: "signin-refused", engine: "antigravity", bot: "alpha", epoch: 4 }]);
+    expect(await markCloudSigninRefused("alpha", 0, mark.launch)).toBe(false);
+    expect(await markCloudSigninRefused("../x", 1, mark.launch)).toBe(false);
+    expect(await markCloudSigninRefused("alpha", 4, fakeLauncher({ code: 1 }).launch)).toBe(false);
+    expect(mark.requests).toHaveLength(1);
+  });
+});
+
+it("a failed refusal write blocks that login epoch and reports the failure without blocking a newer login", async () => {
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    expect(await markCloudSigninRefused("alpha", 4, fakeLauncher({ code: 1, stderr: "private launcher detail" }).launch)).toBe(false);
+    const state = (epoch: number) => query({ tombstoned: false, engines: { antigravity: { mode: "oauth", signedIn: true, expiresAt: null, epoch } } });
+    expect((await queryCloudBotState("alpha", state(4).launch)).engines.antigravity).toMatchObject({ signedIn: false, needsSignin: true, epoch: 4 });
+    expect(warning).toHaveBeenCalledExactlyOnceWith("[cloud-signin] Antigravity refusal could not be saved; this sign-in remains blocked.");
+    expect((await queryCloudBotState("alpha", state(5).launch)).engines.antigravity).toMatchObject({ signedIn: true, epoch: 5 });
+  } finally { warning.mockRestore(); }
+});
+
+it("a late older refusal and an older status reply cannot clear a newer refused login", async () => {
+  const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+  try {
+    await markCloudSigninRefused("alpha", 4, fakeLauncher({ code: 1 }).launch);
+    await markCloudSigninRefused("alpha", 3, fakeLauncher({ code: 1 }).launch);
+    const read = (epoch: number) => queryCloudBotState("alpha", query({ tombstoned: false, engines: { antigravity: { mode: "oauth", signedIn: true, expiresAt: null, epoch } } }).launch);
+    expect((await read(3)).engines.antigravity.signedIn).toBe(false);
+    expect((await read(4)).engines.antigravity.signedIn).toBe(false);
+    expect((await read(5)).engines.antigravity.signedIn).toBe(true);
+  } finally { warning.mockRestore(); }
 });

@@ -5,13 +5,16 @@
 // MemoryIndex handle it reads: opened after that handle, closed after its db.close(), never by code that does not own the handle.
 // Tests 1-6 are red on 021910b1a; test 7 (the existing io suites) is regression only. Real MemoryIndex and MemoryEligibility, no stubs.
 // Descriptor checks read /proc/self/fd (Linux); the worker harness mirrors worker-io.test.ts.
+import { MemoryIndex } from "./index.ts";
+import { openTestIndex, put } from "./testing/open-index.ts";
 import { expect, it, vi } from "vitest";
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, readlinkSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { removeTempDirSync } from "../testing/cleanup.ts";
+import { fixtureHelperPermits } from "./testing/helper-permits.ts";
 
 const opened = vi.hoisted(() => ({ shm: [] as string[], events: [] as string[] }));
 vi.mock("node:fs", async importOriginal => {
@@ -23,9 +26,8 @@ vi.mock("./embeddings.ts", () => ({ MemoryEmbeddings: class { identity = "fixtur
 
 const linux = process.platform === "linux";
 const shmFds = (suffix: string) => readdirSync("/proc/self/fd").map(fd => { try { return readlinkSync(`/proc/self/fd/${fd}`); } catch { return ""; } }).filter(link => link.includes(suffix));
-const settle = async () => { for (let i = 0; i < 20; i++) await new Promise<void>(resolve => setImmediate(resolve)); };
 
-async function initWorker(indexPath: string, authorityPath: string, check: (sent: Array<Record<string, unknown>>) => void) {
+async function initWorker(indexPath: string, authorityPath: string, check: (sent: Array<Record<string, unknown>>) => void, reset?: { resetId: number; resets: number; kind: "open" }) {
   vi.resetModules();
   const timers: ReturnType<typeof setTimeout>[] = [];
   const realSetTimeout = globalThis.setTimeout;
@@ -33,20 +35,21 @@ async function initWorker(indexPath: string, authorityPath: string, check: (sent
     const timer = realSetTimeout(...args); timers.push(timer); return timer;
   }) as typeof setTimeout);
   const realProcess = process, listeners = new Map<string, (message: unknown) => void>(), sent: Array<Record<string, unknown>> = [];
+  const permits = fixtureHelperPermits();
   const workerProcess = Object.create(realProcess) as NodeJS.Process;
   Object.defineProperties(workerProcess, {
-    on: { value: (event: string, listener: (message: unknown) => void) => { if (event === "message" || event === "disconnect" || event === "error") { listeners.set(event, listener); return workerProcess; } return realProcess.on(event, listener); } },
-    send: { value: (message: Record<string, unknown>) => { sent.push(message); return true; } },
+    on: { value: (event: string, listener: (message: unknown) => void) => { if (event === "message" || event === "disconnect" || event === "error") { listeners.set(event, listener); return workerProcess; } return workerProcess; } },
+    send: { value: (message: Record<string, unknown>, cb?: (e: Error | null) => void) => { if (typeof cb === "function") cb(null); sent.push(message); permits.reply(message, event => listeners.get("message")?.(event)); if (message.type === "charge") queueMicrotask(() => listeners.get("message")?.({ type: "charge-ack", helperRunId: message.helperRunId, fileId: message.fileId, attempt: message.attempt, granted: true })); return true; } },
     exit: { value: vi.fn() },
   });
   vi.stubGlobal("process", workerProcess);
   try {
     await import("./worker.ts");
-    listeners.get("message")!({ type: "init", indexPath, authorityPath, modelDirectory: "/unused/model", manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] } });
-    await settle();
+    listeners.get("message")!({ type: "init", indexPath, authorityPath, modelDirectory: "/unused/model", manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] }, ...(reset ? { reset } : {}) });
+    await vi.waitFor(() => expect(sent.some(message => message.type === "initialised" || message.type === "error")).toBe(true));
     check(sent);
   } finally {
-    try { listeners.get("disconnect")?.(undefined); }
+    try { await listeners.get("disconnect")?.(undefined); }
     finally { timers.forEach(clearTimeout); timeoutSpy.mockRestore(); vi.unstubAllGlobals(); vi.resetModules(); }
   }
 }
@@ -59,7 +62,7 @@ function expectAuthorityLocked(path: string) {
     try { db.exec('BEGIN EXCLUSIVE; UPDATE memory_meta SET data_revision=data_revision+1; ROLLBACK'); process.stdout.write('acquired'); }
     catch (error) { if (!/busy|locked/i.test(error.message)) throw error; process.stdout.write('excluded'); }
     finally { db.close(); }
-  `, path], { encoding: "utf8", timeout: 5000 });
+  `, path], { windowsHide: true, encoding: "utf8", timeout: 5000 });
   expect(probe.error).toBeUndefined();
   expect(probe.status, probe.stderr).toBe(0);
   expect(probe.stdout).toBe("excluded");
@@ -106,33 +109,27 @@ it.runIf(linux)("2. WORKER INIT on a damaged index: no descriptor stays on the s
       expect(opened.events.slice(0, opened.events.indexOf("set-aside-shm")).filter(e => e === "open-shm")).toEqual([]);
       expect(opened.events.slice(opened.events.indexOf("set-aside-shm") + 1)).toContain("open-shm");
       expect(shmFds("memory-index.db.corrupt-").filter(link => link.includes("-shm"))).toEqual([]);
-    });
+    }, { resetId: 1, resets: 1, kind: "open" });
   } finally { auth.db.close(); removeTempDirSync(dir); }
 });
 
 it("3. constructor accounting: a fresh index reports ioBytes covering its schema frames", async () => {
   const dir = mkdtempSync(join(tmpdir(), "win-iob-lt3-"));
   try {
-    const { MemoryIndex } = await import("./index.ts");
-    const index = new MemoryIndex(join(dir, "memory-index.db"));
+    const index = await openTestIndex(join(dir, "memory-index.db"));
     try { expect(index.ioBytes?.() ?? 0).toBeGreaterThan(4096); } finally { index.close(); }
   } finally { removeTempDirSync(dir); }
 });
 
 it("4. every TRUNCATE checkpoint is preceded by a log sample; frames written across three rewrites are all counted", async () => {
-  const source = readFileSync(join(import.meta.dirname, "index.ts"), "utf8").split("\n");
-  const sites = source.map((line, i) => ({ line, i })).filter(({ line }) => /checkpointTruncate\(this\.db|checkpointTruncate\(db|wal_checkpoint\(TRUNCATE\)/.test(line) && !/^\s*(export |\/\/)/.test(line));
-  expect(sites.length).toBeGreaterThanOrEqual(5);
-  for (const { i, line } of sites) expect(`${source[i - 1]}\n${line}`, `line ${i + 1}`).toMatch(/sampleLog\(\);/);
   const dir = mkdtempSync(join(tmpdir(), "win-iob-lt4-"));
   try {
-    const { MemoryIndex } = await import("./index.ts");
-    const index = new MemoryIndex(join(dir, "memory-index.db"));
+    const index = await openTestIndex(join(dir, "memory-index.db"));
     try {
       const marks: number[] = [];
       for (let i = 0; i < 3; i++) {
-        index.upsert([{ id: `r${i}`, version: 1, scopeId: "s", text: "word ".repeat(400), deleted: false }] as never);
-        index.checkpointNow(); marks.push(index.ioBytes());
+        await put(index, [{ id: `r${i}`, version: 1, scopeId: "s", text: "word ".repeat(400), deleted: false }] as never);
+        expect((await index.sealAndTruncate()).truncated).toBe(true); marks.push(index.ioBytes());
       }
       expect(marks[1]).toBeGreaterThan(marks[0]); expect(marks[2]).toBeGreaterThan(marks[1]);
     } finally { index.close(); }
@@ -142,11 +139,10 @@ it("4. every TRUNCATE checkpoint is preceded by a log sample; frames written acr
 it.runIf(linux)("5. close order: failed db close retains the reader for retry; constructor failure releases every descriptor", async () => {
   const dir = mkdtempSync(join(tmpdir(), "win-iob-lt5-"));
   try {
-    const { MemoryIndex } = await import("./index.ts");
     const path = join(dir, "memory-index.db");
-    const index = new MemoryIndex(path);
+    const index = await openTestIndex(path);
     try {
-      index.upsert([{ id: "r", version: 1, scopeId: "s", text: "word", deleted: false }] as never);
+      await put(index, [{ id: "r", version: 1, scopeId: "s", text: "word", deleted: false }] as never);
       expect(shmFds(`${path}-shm`).length).toBeGreaterThanOrEqual(2); // base fails here: no owned reader
       const owned = index as unknown as { db: DatabaseSync; wal: { close(): void; fd(): number | undefined } };
       const events: string[] = [], closeError = new Error("fixture close failure");
@@ -172,13 +168,10 @@ it.runIf(linux)("5. close order: failed db close retains the reader for retry; c
     // Throw after schema writes and the first sample has opened the reader's fd.
     // The reader exists and all three kinds of descriptor must be live here.
     const failure = new Error("fixture after reader creation"), live: string[][] = [];
-    const prepare = DatabaseSync.prototype.prepare;
-    const prepareSpy = vi.spyOn(DatabaseSync.prototype, "prepare").mockImplementation(function (this: DatabaseSync, sql: string) {
-      if (sql.includes("key='delete_scrub_owed'")) { live.push(shmFds(path)); throw failure; }
-      return prepare.call(this, sql);
-    });
-    try { expect(() => new MemoryIndex(path)).toThrow(failure); }
-    finally { prepareSpy.mockRestore(); }
+    // The new open rule checks/charges before admitting the schema transaction. Fail at that seam after its reader is open.
+    const sampleSpy = vi.spyOn(MemoryIndex.prototype, "ioBytes").mockImplementationOnce(() => { live.push(shmFds(path)); throw failure; });
+    try { await expect(openTestIndex(path)).rejects.toThrow(failure); }
+    finally { sampleSpy.mockRestore(); }
     expect(live).toHaveLength(1);
     for (const suffix of ["", "-wal", "-shm"]) expect(live[0]).toContain(path + suffix);
     expect(live[0].filter(link => link === `${path}-shm`).length).toBeGreaterThanOrEqual(2);

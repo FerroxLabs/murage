@@ -9,6 +9,8 @@
 // the root nodes in memory_revoke_frontier, the pending window (deny_pending('*', root_lsn), deny_pending_scope('*', since)) with the flow
 // seeds, and deny_generation += 1. The marker (revoke-marker.ts) starts in a microtask after the caller commits.
 import type { DatabaseSync } from "node:sqlite";
+import { LINEAGE_TURN } from "./schema.ts";
+import { optionalIndexReady } from "./optional-index.ts";
 import { currentLsn, takeCommitLsn } from "./lineage-write.ts";
 import { CONSUMED_REF_KINDS, FIRST_LSN, lineChildRef, OBJECT_EDGE_LSN, objectCarryThread, objectFlowNode, PENDING_ALL_THREADS, scopeFlowNode, UNKNOWN_LSN, type FrontierNode, type LineageRef, type MemoryRef, type RevokeRoot, type SessionKey } from "./lineage-types.ts";
 import { ensureThreadNo, threadNo } from "./thread-no.ts";
@@ -190,7 +192,7 @@ export function commitRevoke(tx: DatabaseSync, root: RevokeRoot, options: Revoke
       break;
     }
     case "bot": {
-      setMeta(tx, "epoch_bump_lsn", now); setMeta(tx, "policy_bump_lsn", now);
+      // Scope roots and their dependency closure carry this deletion; global policy watermarks belong to global changes.
       const scopes = st(tx, "SELECT id FROM memory_scopes WHERE kind='bot' AND (owner_key=? OR substr(owner_key,1,?)=?)").all(root.botId, root.botId.length + 1, `${root.botId}#`).map(row => String(row.id));
       for (const threadId of root.threadIds) {
         writeRange(tx, R, threadId, FIRST_LSN, now, reason);
@@ -394,8 +396,22 @@ function rangeRevokes(tx: DatabaseSync, range: CarryRange, out: Found): void {
   // began before the range's end. A clean reply written after the forget lies outside it (Astra audit P1 6); the carried run is checked for
   // such a line in one seek per range row. A thread with no number has no lines to look at: any range of it counts (fail closed).
   const no = unknown ? null : threadNo(tx, T);
+  const indexed = no !== null && optionalIndexReady(tx, LINEAGE_TURN.name);
   const ranged = (unknown || no === null ? st(tx, "SELECT revoke_id FROM memory_deny_range WHERE thread_id=? LIMIT 256").all(T)
-    : st(tx, `SELECT d.revoke_id FROM memory_deny_range d WHERE d.thread_id=?1 AND d.from_lsn<?3 AND EXISTS (SELECT 1 FROM memory_line_lineage l WHERE l.thread_no=?2 AND l.lsn>d.from_lsn AND l.lsn>=?4 AND l.lsn<=?3 AND l.turn_lsn IS NOT NULL AND l.turn_lsn<d.until_turn_lsn) LIMIT 256`).all(T, no, to, range.from)) as Array<Record<string, unknown>>;
+    : st(tx, "SELECT revoke_id,from_lsn,until_turn_lsn FROM memory_deny_range WHERE thread_id=? AND from_lsn<? LIMIT 256").all(T, to).filter(denial => {
+      // Bound examined lineage rows BEFORE residual position/turn predicates.
+      // An outer denial-row LIMIT does not bound a correlated EXISTS scan.
+      // Overflow conservatively denies; failed pre-listen index builds use the
+      // same bounded position fallback as pending-window inheritance below.
+      if (indexed) {
+        const candidates = st(tx, `SELECT l.lsn FROM memory_line_lineage l INDEXED BY memory_line_lineage_turn
+          WHERE l.thread_no=? AND l.turn_lsn IS NOT NULL AND l.turn_lsn<? LIMIT 257`).all(no, Number(denial.until_turn_lsn));
+        return candidates.length > 256 || candidates.some(line => Number(line.lsn) > Number(denial.from_lsn) && Number(line.lsn) >= range.from && Number(line.lsn) <= to);
+      }
+      const candidates = st(tx, `SELECT l.lsn,l.turn_lsn FROM memory_line_lineage l
+        WHERE l.thread_no=? AND l.lsn>? AND l.lsn>=? AND l.lsn<=? LIMIT 257`).all(no, Number(denial.from_lsn), range.from, to);
+      return candidates.length > 256 || candidates.some(line => line.turn_lsn !== null && Number(line.turn_lsn) < Number(denial.until_turn_lsn));
+    })) as Array<Record<string, unknown>>;
   addRows(out, ranged, true);
   // the deletion's receipt (commitRevoke's thread case: a line row at FIRST_LSN) denies a carried prefix only where no range row does: next
   // to a matching range (the deletion's own, or the coalesced -1) it re-opened the pruned deletion beside that range's fresh walk (Astra r4:
@@ -403,14 +419,54 @@ function rangeRevokes(tx: DatabaseSync, range: CarryRange, out: Found): void {
   // its own lsn) it is the denial (Astra r5, Grok r2). The receipt exists only for a deleted conversation, every line of which is denied,
   // so any carried span of the thread takes it, wherever it starts
   if (!ranged.length) addRows(out, st(tx, "SELECT revoke_id FROM memory_deny_line WHERE thread_id=? AND lsn=? LIMIT 64").all(T, FIRST_LSN) as Array<Record<string, unknown>>, true);
+  // A human line has no inherited ancestry. A global window of a known line root in another
+  // thread cannot reach it. Targeted windows, unknown roots, seeding jobs and missing lineage
+  // still hold it; direct deny marks above always bind. Generated parents keep the turn cap.
   // a pending window holds the carried range as the read rule does (deny-read.ts pendingWindows): a line of it at or after the window's
   // since whose turn began before the revoke's commit (started_lsn). A window with no cap (a bulk still seeding, no job row, a hold written
   // after the commit), a range whose lines are not known, or a window over no stored line of the range holds it whole, as before. Every
   // matching window is read, with no row limit: a window left out here would leave the child unheld (Astra delta High 2)
-  addRows(out, (unknown || no === null ? st(tx, "SELECT revoke_id FROM memory_deny_pending WHERE thread_id IN (?,?) AND since_lsn<=?").all(T, PENDING_ALL_THREADS, unknown ? Number.MAX_SAFE_INTEGER : to)
-    : st(tx, `SELECT p.revoke_id FROM memory_deny_pending p LEFT JOIN memory_revoke_jobs j ON j.revoke_id=p.revoke_id WHERE p.thread_id IN (?1,?2) AND p.since_lsn<=?3 AND (j.revoke_id IS NULL OR j.state='seeding' OR p.since_lsn>j.started_lsn
-      OR EXISTS (SELECT 1 FROM memory_line_lineage l WHERE l.thread_no=?4 AND l.lsn>=max(p.since_lsn,?5) AND l.lsn<=?3 AND coalesce(l.turn_lsn,0)<j.started_lsn)
-      OR NOT EXISTS (SELECT 1 FROM memory_line_lineage l WHERE l.thread_no=?4 AND l.lsn>=max(p.since_lsn,?5) AND l.lsn<=?3))`).all(T, PENDING_ALL_THREADS, to, no, range.from)) as Array<Record<string, unknown>>, false);
+  if (unknown || no === null) {
+    addRows(out, st(tx, "SELECT revoke_id FROM memory_deny_pending WHERE thread_id IN (?,?) AND since_lsn<=?").all(T, PENDING_ALL_THREADS, unknown ? Number.MAX_SAFE_INTEGER : to) as Array<Record<string, unknown>>, false);
+    return;
+  }
+  const pending = st(tx, `SELECT p.revoke_id,p.thread_id,p.since_lsn,j.kind,j.root,j.state,j.started_lsn
+    FROM memory_deny_pending p LEFT JOIN memory_revoke_jobs j ON j.revoke_id=p.revoke_id
+    WHERE p.thread_id IN (?,?) AND p.since_lsn<=?`).all(T, PENDING_ALL_THREADS, to) as Array<Record<string, unknown>>;
+  if (!pending.length) return;
+  for (const window of pending) {
+    const cap = Number(window.started_lsn), from = Math.max(Number(window.since_lsn), range.from);
+    let held = window.started_lsn === null || !Number.isFinite(cap) || window.state === "seeding" || Number(window.since_lsn) > cap;
+    if (!held) {
+      let owners = window.thread_id === T || window.kind !== "line";
+      if (!owners) {
+        // Only a proven line root in another thread can exclude owner ancestry.
+        try {
+          const root: unknown = JSON.parse(String(window.root));
+          const thread = root && typeof root === "object" ? (root as { threadId?: unknown }).threadId : undefined;
+          owners = typeof thread !== "string" || !thread || thread === T;
+        } catch { owners = true; }
+      }
+      // Seek by turn before reading positions. Returning at most 257 candidates
+      // keeps actual writer work bounded without temporary SQL rowset scans.
+      // Overflow holds conservatively; no position predicate may precede LIMIT
+      // on the turn index, because it could skip arbitrarily many old turns.
+      if (indexed) {
+        const candidates = st(tx, `SELECT l.lsn FROM memory_line_lineage l INDEXED BY memory_line_lineage_turn
+          WHERE l.thread_no=? AND l.turn_lsn IS NOT NULL AND l.turn_lsn<? LIMIT 257`).all(no, cap);
+        held = candidates.length > 256 || candidates.some(line => Number(line.lsn) >= from && Number(line.lsn) <= to);
+        if (!held && owners) held = Boolean(st(tx, `SELECT 1 FROM memory_line_lineage l INDEXED BY memory_line_lineage_turn
+          WHERE l.thread_no=? AND l.turn_lsn IS NULL AND l.lsn BETWEEN ? AND ? LIMIT 1`).get(no, from, to));
+        if (!held) held = !st(tx, "SELECT 1 FROM memory_line_lineage l WHERE l.thread_no=? AND l.lsn BETWEEN ? AND ? LIMIT 1").get(no, from, to);
+      } else {
+        // A failed pre-listen build never forces a history scan in a turn.
+        const candidates = st(tx, `SELECT l.lsn,l.turn_lsn FROM memory_line_lineage l
+          WHERE l.thread_no=? AND l.lsn BETWEEN ? AND ? LIMIT 257`).all(no, from, to);
+        held = !candidates.length || candidates.length > 256 || candidates.some(line => line.turn_lsn === null ? owners : Number(line.turn_lsn) < cap);
+      }
+    }
+    if (held) addRows(out, [window], false);
+  }
 }
 /** The revokes that deny or hold one memory or receipt ref. */
 function refRevokes(tx: DatabaseSync, ref: LineageRef, out: Found, edge = false): void {

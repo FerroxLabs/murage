@@ -1,3 +1,4 @@
+import { fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
@@ -8,6 +9,10 @@ import { MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBL
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent, SendTurnInput } from "../contracts.ts";
 import { BUILT_IN_DRIVERS } from "../drivers/builtIn.ts";
+import { acpFluxReach, createAcpDriver } from "../drivers/acp/core.ts";
+import { createOpenclawPrePromptGuard, openclawSupport } from "../drivers/acp/openclaw.ts";
+import { customAcpSupport } from "../drivers/acp/custom.ts";
+import { deepseekSupport } from "../drivers/acp/deepseek.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
 import { recordEvents } from "../testing/events.ts";
 import { makeFakeDriver } from "../testing/fake-driver.ts";
@@ -238,8 +243,10 @@ const DISPATCH: Record<string, Dispatch> = {
     },
   },
   claudeAgent: {
-    entry: () => ({ driver: "claudeAgent", config: { cli: FAKE_CLAUDE, permissionMode: "acceptEdits" } }),
-    processEnv: scratch => ({ FAKE_CLAUDE_MODE: "happy", FAKE_CLAUDE_DUMP: join(scratch, "dump.json") }),
+    // Explicit instance values survive the captured-shell handoff; ambient
+    // FAKE_* variables deliberately do not become owner shell configuration.
+    entry: scratch => ({ driver: "claudeAgent", config: { cli: FAKE_CLAUDE, permissionMode: "acceptEdits" },
+      environment: { HOME: scratch, USERPROFILE: scratch, CLAUDE_CONFIG_DIR: scratch, FAKE_CLAUDE_MODE: "happy", FAKE_CLAUDE_DUMP: join(scratch, "dump.json") } }),
     observe: scratch => { const seen = json(join(scratch, "dump.json")); return { payload: seen.prompt.message.content, system: seen.systemPrompt }; },
   },
   codex: {
@@ -266,7 +273,13 @@ const DISPATCH: Record<string, Dispatch> = {
   droidAgent: acp("droidAgent", { fullAuto: true }),
   cursorAgent: acp("cursorAgent", {}, scratch => ({ HOME: scratch, CURSOR_API_KEY: "cursor-fixture-key" })),
   qwenAgent: acp("qwenAgent"),
-  hermesAgent: acp("hermesAgent", {}, scratch => ({ HOME: scratch, MURAGE_DATA_DIR: join(scratch, "state") })),
+  hermesAgent: acp("hermesAgent", {}, scratch => {
+    const dataDir = join(scratch, "state");
+    // Match normal startup before registering canonical files under this
+    // fixture's explicit data-directory override.
+    mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+    return { HOME: scratch, MURAGE_DATA_DIR: dataDir };
+  }),
   customAcp: acp("customAcp"),
   // Runs on OpenClaw's own tools and approvals (no Murage mounts), but the framed
   // turn text still reaches the bridge as the ACP prompt, so it is observed here.
@@ -274,6 +287,13 @@ const DISPATCH: Record<string, Dispatch> = {
   // Signed in by a key in the environment (the settings file is never opened then).
   clineAgent: acp("clineAgent", {}, scratch => ({ HOME: scratch, CLINE_API_KEY: "cline-fixture-key" })),
   // U22 F9: the person's own Copilot CLI over ACP; its login is never checked offline, so the fake answers.
+  deepseekAgent: acp("deepseekAgent", {}, scratch => ({ HOME: scratch, USERPROFILE: scratch, DSH_HOME: scratch,
+    DEEPSEEK_API_KEY: "deepseek-fixture-key",
+    FAKE_ACP_MODELS_JSON: JSON.stringify([JSON.stringify(["deepseek-official", "deepseek-v4-flash"])]),
+    FAKE_DSH_CONFIG: JSON.stringify([
+      { name: "@deepseek-ai/dsh-llm-deepseek-api-key", config: { baseURL: "https://model.fixture.invalid/v1" } },
+      { name: "@deepseek-ai/dsh-acp", config: { provider: "deepseek-official", model: "deepseek-v4-flash" } },
+    ]) })),
   copilotAgent: acp("copilotAgent"),
   opencodeGo: { ...acp("opencodeGo", {}, scratch => ({ HOME: scratch, XDG_DATA_HOME: scratch, OPENCODE_API_KEY: "opencode-fixture-key", FAKE_ACP_MODELS: "opencode/fixture-model" })),
     turn: { model: "opencode/fixture-model" } },
@@ -328,6 +348,10 @@ describe("actual registered drivers receive the memory frame (offline fakes, not
     vi.unstubAllGlobals();
   });
 
+  it("does not grant a known model host to the production DeepSeek driver", () => {
+    expect(acpFluxReach(deepseekSupport, {}, { cli: FAKE_ACP, fullAuto: false })).toBe("unknown");
+  });
+
   it("classifies every registered kind as observed here or as an explicit offline gap", () => {
     expect(Object.keys(DISPATCH).filter(kind => kind in GAPS)).toEqual([]);
     expect([...Object.keys(DISPATCH), ...Object.keys(GAPS)].sort()).toEqual(BUILT_IN_DRIVERS.map(driver => driver.driverKind).sort());
@@ -344,7 +368,22 @@ describe("actual registered drivers receive the memory frame (offline fakes, not
       process.env[key] = value;
     }
     if (spec.http) vi.stubGlobal("fetch", spec.http(calls));
-    const registry = new ProviderRegistry(BUILT_IN_DRIVERS);
+    // cddf1c168e refuses OpenClaw without independent boundary witnesses.
+    // Use its reviewed internal fixture seam, as openclaw.test.ts does; the
+    // real default refusal remains covered by openclaw-deny.test.ts.
+    // DeepSeek uses its registered driver and actual config probe; the inert
+    // peer above supplies an owned fixture tree, with no reach override.
+    const drivers = kind === "customAcp" ? BUILT_IN_DRIVERS.map(driver => driver.driverKind !== kind ? driver : createAcpDriver({
+      ...customAcpSupport, fluxReach: () => "elsewhere",
+    })) : kind === "openclawAgent" ? BUILT_IN_DRIVERS.map(driver => driver.driverKind !== kind ? driver : createAcpDriver({
+      ...openclawSupport,
+      prePrompt: createOpenclawPrePromptGuard({
+        probeVersion: async () => "2026.10.5",
+        call: async (_cli, _method, params) => ({ ok: true, key: params.key, entry: { permissionMode: "read-only" } }),
+        verifyCoverage: async () => ({ refusedReads: true, skillRoots: true, extraTools: true, nativeHarnesses: true, delegation: true, readBoundary: true }),
+      }), fluxReach: () => "elsewhere" as const
+    })) : BUILT_IN_DRIVERS;
+    const registry = new ProviderRegistry(drivers);
     const id = `memory-${kind}`;
     try {
       await registry.load({ [id]: spec.entry(scratch) } as Parameters<ProviderRegistry["load"]>[0]);
@@ -354,7 +393,8 @@ describe("actual registered drivers receive the memory frame (offline fakes, not
       expect(live!.adapter.capabilities.memoryDelivery).toBe("prefixed-reference");
       const events = recordEvents(live!.adapter);
       try {
-        await live!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: id, text: REQUEST, system: SYSTEM, memoryContext: framed, ...spec.turn });
+        const turn = { cwd: fixtureBotFolder(), threadId: id, text: REQUEST, system: SYSTEM, memoryContext: framed, ...spec.turn };
+        await live!.adapter.sendTurn(kind === "claudeAgent" ? fixtureMountTurn(turn) : turn);
         await events.until(event => event.type === "turn.completed", 20_000);
         const seen = spec.observe(scratch, events.events, calls);
         expect(seen.payload.endsWith(memoryRequestPrefix(FRAME) + REQUEST)).toBe(true);

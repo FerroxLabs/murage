@@ -163,6 +163,9 @@ describe("Flux memory overlays", () => {
   });
 });
 
+// A bot turn runs with the launcher's own serialization, which is the driver's applyOpenCodeTurnPermission output byte for byte.
+const driverTurnConfig = (base: string): string => { const env: Record<string, string | undefined> = { OPENCODE_CONFIG_CONTENT: base }; applyOpenCodeTurnPermission(env); return env.OPENCODE_CONFIG_CONTENT!; };
+
 // Fable follow-up 3: the OpenCode isolation writer (opencode-go.ts isolateOpenCodeFromPersonalSetup) rewrites OPENCODE_CONFIG_CONTENT
 // after the memory overlay, adding `mcp:{<owner server>:{enabled:false}}`. Its real output, alone and on top of the overlay,
 // must pass the launcher's opencode_config_value, or a Cloud turn with an owner MCP server loses the memory headers (now: is refused).
@@ -189,7 +192,7 @@ describe("OpenCode isolation writer (real isolateOpenCodeFromPersonalSetup)", ()
     isolateOpenCodeFromPersonalSetup(env);
     expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT).mcp).toEqual({ composio: { enabled: false } });
     expect(valid(env.OPENCODE_CONFIG_CONTENT)).toBe(true);
-    expect(rig.plan(rig.request("opencodeGo", { env: { OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT } })).ok?.env).toMatchObject({ OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT });
+    expect(rig.plan(rig.request("opencodeGo", { env: { OPENCODE_CONFIG_CONTENT: env.OPENCODE_CONFIG_CONTENT } })).ok?.env).toMatchObject({ OPENCODE_CONFIG_CONTENT: driverTurnConfig(env.OPENCODE_CONFIG_CONTENT) });
   });
 });
 
@@ -229,7 +232,7 @@ describe("Flux memory headers per audience (real fluxMemoryDecision)", () => {
     applyGrokFluxMemory(grok, headers);
     expect(rig.plan(rig.request("grokAgent", { env: { GROK_CONFIG: grok.GROK_CONFIG } })).ok?.env.GROK_CONFIG).toBe(grok.GROK_CONFIG);
     expect(rig.plan(rig.request("fuigoAgent", { env: { FUIGO_CONFIG: fuigoConfigOverlay(headers) } })).ok?.env.FUIGO_CONFIG).toBe(fuigoConfigOverlay(headers));
-    expect(rig.plan(rig.request("opencodeGo", { env: { OPENCODE_CONFIG_CONTENT: opencodeConfigOverlay("flux", headers) } })).ok?.env.OPENCODE_CONFIG_CONTENT).toBe(opencodeConfigOverlay("flux", headers));
+    expect(rig.plan(rig.request("opencodeGo", { env: { OPENCODE_CONFIG_CONTENT: opencodeConfigOverlay("flux", headers) } })).ok?.env.OPENCODE_CONFIG_CONTENT).toBe(driverTurnConfig(opencodeConfigOverlay("flux", headers)));
   });
 });
 
@@ -261,12 +264,10 @@ describe("OpenCode turn permission document (real applyOpenCodeTurnPermission)",
 describe("Codex route headers", () => {
   const route = (extra: Record<string, unknown>) => ({ provider: "flux-off", baseUrl: "https://api.fluxrouter.ai/v1", model: "flux-auto", apiKey: "fixture-key", label: "Flux Router", ...extra });
   const headers = { "x-flux-memory-app": "murage", "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" };
-  it("renders http_headers inside the provider table", () => {
+  it("refuses a Flux route for Codex: it runs only on the customer's own sign-in, so no provider table is rendered (B4 hole 6)", () => {
     const planned = rig.plan(rig.request("codex", { render: { route: route({ headers }) } }));
-    expect(planned.error).toBeUndefined();
-    const config = Object.entries(planned.ok!.files).find(([path]) => path.endsWith("config.toml"))![1] as string;
-    expect(config).toContain("[model_providers.flux-off]");
-    expect(config).toContain('http_headers = { "x-flux-memory-app" = "murage", "x-flux-memory-capture" = "off", "x-flux-memory-inject" = "off" }');
+    expect(planned.ok).toBeUndefined();
+    expect(planned.error).toMatch(/sign-in/);
   });
   it("refuses a header that is not a Murage memory header, and headers on another engine", () => {
     expect(rig.plan(rig.request("codex", { render: { route: route({ headers: { "x-flux-memory-app": "murage", "x-evil": "1" } }) } })).error).toBe("Cloud turn render route headers are not allowed");
@@ -274,10 +275,11 @@ describe("Codex route headers", () => {
   });
 });
 
-// USAGE-TAGS (1.0.10): the launcher on today's homes (version 4) accepts only the memory headers in an engine overlay and REFUSES the
-// turn on anything else. Engine usage tags stay off on every Cloud home until homes run launcher version 5 (murage-launchers-5,
-// MurageCloud, after the 1.0.10 tag): a home turn carries no tag and still launches; the tagged overlay is what this launcher refuses.
-describe("usage tags on a Cloud home (launcher version 4)", () => {
+// USAGE-TAGS (1.0.10): the launcher accepts only the memory headers in an engine overlay and REFUSES the turn on anything else.
+// Engine usage tags stay off on every Cloud home: a home turn carries no tag and still launches; the tagged overlay is what this
+// launcher refuses. The ABI is murage-launchers-5 (1.0.16: Fuigo folder-trust seeds and Cloud hook support); version 5 did not change
+// the overlay rule, so tags wait for a later launcher version.
+describe("usage tags on a Cloud home (launcher version 5)", () => {
   const turn = { threadId: "t-home-1", warmIdentity: { botId: "b1", audience: "owner", decidedOwner: true } } as never;
   const ok = (value: string, fn: string) => rig.py(`print(json.dumps(m.${fn}(sys.argv[2])))`, value).trim() === "true";
   it("a home's engine turn carries no usage tag, and the launcher plans it", () => {
@@ -287,17 +289,40 @@ describe("usage tags on a Cloud home (launcher version 4)", () => {
       const headers = fluxTurnDecision(turn, {}, { MURAGE_CLOUD_ROLE: "home" }).headers;
       for (const name of FLUX_USAGE_HEADERS) expect(headers).not.toHaveProperty(name);
       expect(rig.plan(rig.request("fuigoAgent", { env: { FUIGO_CONFIG: fuigoConfigOverlay(headers) } })).ok?.env.FUIGO_CONFIG).toBe(fuigoConfigOverlay(headers));
-      expect(rig.plan(rig.request("opencodeGo", { env: { OPENCODE_CONFIG_CONTENT: opencodeConfigOverlay("flux", headers) } })).ok?.env.OPENCODE_CONFIG_CONTENT).toBe(opencodeConfigOverlay("flux", headers));
+      // this launcher also writes OpenCode's own permission sections into a bot turn (engine-env-allowlist.test.ts); the provider headers pass through untouched
+      const planned = rig.plan(rig.request("opencodeGo", { env: { OPENCODE_CONFIG_CONTENT: opencodeConfigOverlay("flux", headers) } })).ok?.env.OPENCODE_CONFIG_CONTENT;
+      expect(JSON.parse(planned!).provider).toEqual(JSON.parse(opencodeConfigOverlay("flux", headers)).provider);
       const grok: Record<string, string | undefined> = {};
       applyGrokFluxMemory(grok, headers);
       expect(rig.plan(rig.request("grokAgent", { env: { GROK_CONFIG: grok.GROK_CONFIG } })).ok?.env.GROK_CONFIG).toBe(grok.GROK_CONFIG);
     } finally { vi.unstubAllEnvs(); }
   });
-  it("the same turn off a home is tagged, and this launcher would refuse that overlay (why homes wait for version 5)", () => {
+  it("the same turn off a home is tagged, and this launcher would refuse that overlay (why homes keep tags off)", () => {
     const tagged = fluxTurnDecision(turn, {}, {}).headers;
     expect(tagged).toHaveProperty("x-flux-feature", "chat");
     expect(tagged).toHaveProperty("x-flux-bot-id", "b1");
     expect(ok(fuigoConfigOverlay(tagged), "fuigo_config_value")).toBe(false);
     expect(ok(opencodeConfigOverlay("flux", tagged), "opencode_config_value")).toBe(false);
   });
+});
+
+it("c11-cloud-validator accepts actual five-copy denies and rejects native globs and excessive keys", async () => {
+  const { applyToolCatalogDenies } = await import("../drivers/acp/opencode-go.ts");
+  const env: Record<string, string | undefined> = {};
+  applyOpenCodeTurnPermission(env);
+  const base = JSON.parse(env.OPENCODE_CONFIG_CONTENT!);
+  for (const size of [65, 128]) {
+    applyToolCatalogDenies(env, [["x".repeat(size), "deny"]], base);
+    expect(rig.py(`print(m.opencode_config_value(${JSON.stringify(env.OPENCODE_CONFIG_CONTENT)}))`).trim()).toBe("True");
+  }
+  for (const name of ["x".repeat(129), "codesearch", "code*", "bash", "plan_*", "*", "list_mcp_resources", "list_mcp_resource*", "read_mcp_resource"]) {
+    const permission = { ...base.permission, [name]: "deny" };
+    expect(rig.py(`print(m._opencode_permission(json.loads(${JSON.stringify(JSON.stringify(permission))})))`).trim()).toBe("False");
+  }
+  // The launcher keeps Cloud's exact base document, so the 1024-key bound is checked on top of it (the base itself is the first keys).
+  const permission: Record<string, unknown> = { ...base.permission };
+  for (let i = 0; Object.keys(permission).length < 1024; i++) permission[`optional_${i}`] = "deny";
+  expect(rig.py(`print(m._opencode_permission(json.loads(${JSON.stringify(JSON.stringify(permission))})))`).trim()).toBe("True");
+  permission.optional_overflow = "deny";
+  expect(rig.py(`print(m._opencode_permission(json.loads(${JSON.stringify(JSON.stringify(permission))})))`).trim()).toBe("False");
 });

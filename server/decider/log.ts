@@ -7,7 +7,8 @@
 // text, descriptions or a key. Separate from decision-log.ts (approvals).
 // The folder is runtime state: excluded from backups (data-dir-inventory.ts).
 import { createHash } from "node:crypto";
-import { appendFile, chmod, mkdir, readdir, rm } from "node:fs/promises";
+import { appendFile } from "../counted-fs-promises.ts";
+import { chmod, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { DATA_DIR } from "../config.ts";

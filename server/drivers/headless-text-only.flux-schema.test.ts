@@ -50,19 +50,21 @@ const input = (over: Partial<TextOnlyTurnInput> = {}, gate: OpenLearningGate = o
 type Rec = { argv: string[]; env: Record<string, string>; prompt: string | null; pid: number; stdin?: string };
 const records = (): Rec[] => existsSync(out) ? readFileSync(out, "utf8").trim().split("\n").map((l) => JSON.parse(l)).filter((r) => r.argv && r.stdin === undefined) : [];
 const openaiRoute: ProviderTurnRoute = { connectionId: "conn-a", preset: "openai", protocol: "openai", baseUrl: "http://127.0.0.1:49999/v1", apiKey: "route-key-1", model: "route-model", revision: "r1" };
-const fluxRoute: ProviderTurnRoute = { ...openaiRoute, connectionId: "conn-f", preset: "flux", model: "flux-auto" };
+const fluxRoute: ProviderTurnRoute = { ...openaiRoute, connectionId: "conn-f", preset: "flux", baseUrl: "https://api.fluxrouter.ai/v1", model: "flux-auto" };
 const grokParent = () => { const parent = join(base, "grok-parent"); mkdirSync(parent, { recursive: true }); writeFileSync(join(parent, "auth.json"), "{}"); return parent; };
 const argvTail = (T: string) => ["--prompt-file", `${T}/prompt.txt`, "--debug-file", `${T}/debug.log`];
 const FLUX_PROMPT = `SYS\n\nUSER\n\n${schemaPromptInstruction(SCHEMA)}`;
 
 describe("which reflections go to Flux (the same test as the Flux Memory overlay)", () => {
-  it("a flux preset on any engine, or native Fuigo with a Flux key; nothing else", () => {
+  it("a Flux request URL on any engine, or the bound native Fuigo URL; nothing else", () => {
     expect(reflectionRoutesToFlux({ providerRoute: fluxRoute }, { engine: "grok" })).toBe(true);
     expect(reflectionRoutesToFlux({ providerRoute: fluxRoute }, { engine: "fuigo" })).toBe(true);
     expect(reflectionRoutesToFlux({}, { engine: "fuigo", fluxKey: "k" })).toBe(true);
     expect(reflectionRoutesToFlux({ providerRoute: openaiRoute }, { engine: "fuigo", fluxKey: "k" })).toBe(false);
     expect(reflectionRoutesToFlux({}, { engine: "grok", fluxKey: "k" })).toBe(false);
     expect(reflectionRoutesToFlux({}, { engine: "fuigo" })).toBe(false);
+    expect(reflectionRoutesToFlux({providerRoute:{...fluxRoute,preset:"openai"}}, {engine:"grok"})).toBe(true);
+    expect(reflectionRoutesToFlux({providerRoute:{...openaiRoute,preset:"flux"}}, {engine:"fuigo",fluxKey:"k"})).toBe(false);
   });
   it("the argv drops only the --json-schema pair; the default argv is the A.1 one", () => {
     const temp: TempRoot = { root: "/T", work: "/T/work", home: "/T/home", promptFile: "/T/prompt.txt", debugFile: "/T/debug.log" };

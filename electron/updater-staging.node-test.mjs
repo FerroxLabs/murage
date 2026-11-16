@@ -1,3 +1,4 @@
+import { updateNotificationsEnabled } from "./update-notifications.mjs";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { readFileSync } from "node:fs";
@@ -10,14 +11,16 @@ const source=readFileSync(new URL("./updater.mjs",import.meta.url),"utf8");
 const file=ts.createSourceFile("updater.mjs",source,ts.ScriptTarget.Latest,true,ts.ScriptKind.JS);
 const start=file.statements.find(node=>ts.isFunctionDeclaration(node)&&node.name?.text==="startUpdater");
 assert.ok(start,"actual updater initializer must exist");
-function initialize(platform,env={},startOptions){
+function initialize(platform,env={},startOptions,profile={}){
   const native=new EventEmitter();let nativeChecks=0,installs=0;
   native.checkForUpdates=()=>nativeChecks++;
   const updater=new EventEmitter();updater.nativeUpdater=native;updater.autoInstallOnAppQuit=true;
   updater.quitAndInstall=()=>installs++;
   let state={},options,timeouts=0,intervals=0;
   const context=vm.createContext({
-    queueMicrotask,updaterCoordinator:null,checksScheduled:false,autoUpdater:null,app:{isPackaged:true},process:{platform,env},
+    queueMicrotask,
+    updateNotificationsEnabled,
+    updaterCoordinator:null,checksScheduled:false,autoUpdater:null,app:{isPackaged:profile.packaged ?? true},process:{platform,env,mas:profile.mas,windowsStore:profile.windowsStore},
     require:()=>({autoUpdater:updater}),updaterLogger:()=>({}),
     linuxPackageType:()=>null,HAND_OFF_TYPES:new Set(),createUpdateDownloadVerifier:()=>async()=>({recheck:async()=>{}}),createGithubFallbackFeed:()=>({activate:async()=>false,reset(){}}),installWindowsUpdateVerifier:()=>false,runningVersion:()=>"1.0.0",
     setState:patch=>{state={...state,...patch};},
@@ -90,4 +93,14 @@ test("T14 failed publication retains the exact offer",()=>{
 test("T11 native quit classification expires before a later explicit Quit",async()=>{
  const authority={generation:0,userQuitRequested:false};const h=initialize("darwin",{},{scheduleChecks:false,returnAuthority:authority});
  h.updater.nativeUpdater.emit("before-quit-for-update");assert.equal(authority.nativeQuit,true);await Promise.resolve();assert.equal(authority.nativeQuit,false);
+});
+
+test("actual startup stays idle with notifications disabled by distribution", () => {
+  for (const profile of [{ packaged: false }, { mas: true }, { windowsStore: true }]) {
+    const h = initialize("darwin", {}, undefined, profile);
+    assert.equal(h.coordinator, null);
+    assert.equal(h.state().status, "idle");
+    assert.deepEqual(h.timers(), { timeouts: 0, intervals: 0 });
+    assert.equal(h.options, undefined);
+  }
 });

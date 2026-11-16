@@ -16,7 +16,8 @@ thawAfterEach(() => thawRootSetWritesForTest(false));
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
-import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "./testing/recall-access-fixture.ts";
 import { setMemoryMode } from "./memory/repository.ts";
 import { captureSource } from "./memory/capture.ts";
 import { claimMemoryJob, publishMemoryWork } from "./memory/jobs.ts";
@@ -54,7 +55,8 @@ const roster: MemoryRoster = {
     { id: "pair", threadId: "pair-chat", memberIds: ["finch", "dax"] },
   ],
 };
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+// These cases require active memory regardless of whether the fixture file already exists.
+beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); setMemoryMode("active"); });
 
 function access(botId: string, thread: string, notOwnerAudience = false) {
   reconcileMemoryRoster(roster);

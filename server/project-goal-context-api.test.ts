@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, onTestFailed, vi } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
 
 const TESTING = join(dirname(fileURLToPath(import.meta.url)), "testing");
 const FAKE_ACP = join(TESTING, "fake-acp-cli.ts");
@@ -45,7 +46,7 @@ beforeAll(async () => {
   leadDump = join(fixtureRoot, "lead-prompt.json");
   vi.stubEnv("TMPDIR", fixtureRoot);
   chmodSync(FAKE_ACP, 0o755);
-  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
     const fs=await import('node:fs');const path=await import('node:path');
     const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
     const acp=${JSON.stringify(FAKE_ACP)};

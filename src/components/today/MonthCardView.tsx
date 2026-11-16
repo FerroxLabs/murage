@@ -7,6 +7,7 @@
 // as of Flux's time, for Flux's month. Not reported yet reads "Spending will
 // show here once Flux reports it", never $0. The heads-up at 80% and at the
 // limit is a notice only: nothing here holds or refuses work.
+import { SpendPauseCard } from "../SpendPauseCard";
 import { api } from "@/state/store";
 import { t } from "@/lib/i18n";
 import { cn } from "@/lib/cn";
@@ -38,8 +39,9 @@ export function asOfLine(reading: { asOf: string; resetsAt: string }): string {
 
 /** The same heads-up on the Needs you page, with its two buttons. */
 export function MonthNeedsRow({ onOpenUsage }: MonthCardProps) {
-  const { show, state } = useMonthReading();
+  const { show, state, pause, refresh } = useMonthReading();
   const leave = useLeave(state);
+  if (show && (pause?.held.length || pause?.headsUpOnlyNotice)) return <SpendPauseCard status={pause} onOpenUsage={onOpenUsage} onRefresh={refresh} />;
   if (!show || !state.headsUp || state.limitUsd === null) return null;
   return <HeadsUp state={state} limit={state.limitUsd} leave={leave} onOpenUsage={onOpenUsage} />;
 }
@@ -58,19 +60,20 @@ function HeadsUp({ state, limit, leave, onOpenUsage }: { state: SpendState; limi
 }
 
 export function MonthCardView({ onOpenUsage }: MonthCardProps) {
-  const { show, total, state } = useMonthReading();
+  const { show, total, state, pause, refresh } = useMonthReading();
   const leave = useLeave(state);
   if (!show) return null;
   const limit = state.limitUsd;
-  const line = monthLine(total, state);
+  const line = monthLine(total, state, pause?.capability === "on");
   const meta = [total.state === "ok" ? asOfLine(total) : "",
     limit === null ? t("ux.l2c.month.noLimit", { suggested: formatDollars(SUGGESTED_MONTHLY_LIMIT_USD) }) : "",
-    total.state === "ok" ? t("ux.l2c.month.chatOnly") : ""].filter(Boolean).join(" ");
+    total.state === "ok" && pause?.capability !== "on" ? t("ux.l2c.month.chatOnly") : ""].filter(Boolean).join(" ");
   // No bar without a Flux figure: an empty bar would read as $0.
   const bar = limit !== null && state.percent !== null;
   const fill = bar ? Math.min(100, state.percent ?? 0) : 0;
   return (
     <div data-testid="month-card" className="mb-2 flex flex-col gap-2 px-2 py-2">
+      <SpendPauseCard status={pause} onOpenUsage={onOpenUsage} onRefresh={refresh} />
       <button type="button" onClick={onOpenUsage} className="flex min-h-11 flex-col items-start rounded-lg text-left hover:bg-raised focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus" aria-label={`${line}. ${t("ux.l2c.month.open")}`}>
         <span data-testid="month-line" className={cn("text-[14px] tabular-nums", state.level === "limit" ? "text-danger" : state.level === "warn" ? "text-warning" : "text-ink")}>{line}</span>
         {meta && <span className="text-[13px] text-ink-secondary">{meta}</span>}
@@ -80,7 +83,7 @@ export function MonthCardView({ onOpenUsage }: MonthCardProps) {
           <div className={cn("h-full", state.level === "limit" ? "bg-danger" : state.level === "warn" ? "bg-warning" : "bg-accent")} style={{ width: `${fill}%` }} />
         </div>
       )}
-      {state.headsUp && limit !== null && <HeadsUp state={state} limit={limit} leave={leave} onOpenUsage={onOpenUsage} />}
+      {!pause?.held.length && state.headsUp && limit !== null && <HeadsUp state={state} limit={limit} leave={leave} onOpenUsage={onOpenUsage} />}
     </div>
   );
 }

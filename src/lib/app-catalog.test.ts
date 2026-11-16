@@ -1,7 +1,9 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it } from "vitest";
-import { appCountLabel, appsClaimFor, catalogNotice, catalogSections, connectedCards, inCategory, rankCategories, type AppCard, type CatalogFallbackReason } from "./app-catalog";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { appCountLabel, appCountParts, appsClaimFor, catalogNotice, catalogSections, collapseDuplicateCards, connectedCards, inCategory, rankCategories, type AppCard, type CatalogFallbackReason } from "./app-catalog";
 
 describe("the live app count", () => {
   it("rounds down so the claim stays true", () => {
@@ -13,7 +15,8 @@ describe("the live app count", () => {
     expect(appCountLabel(0)).toBeNull();
   });
   it("uses the standing claim until the service reports a count", () => {
-    expect(appsClaimFor(null, "500+ apps, including Gmail")).toBe("500+ apps, including Gmail");
+    // MAIN RULING 2026-11-14 copy-consist: exercise a count-free fallback with the same equality check.
+    expect(appsClaimFor(null, "apps, including Gmail")).toBe("apps, including Gmail");
     expect(appsClaimFor(1_523, "x")).toBe("1,500+ apps, including Gmail, Slack, Notion and GitHub");
   });
 });
@@ -61,6 +64,28 @@ describe("audit round 1: the Browse all count keeps its thousands", () => {
   });
 });
 
+describe("the app count takes the right plural in every language", () => {
+  it("one app is not '1 apps'", () => {
+    expect(appCountLabel(1)).toBe("1 app");
+    expect(appCountLabel(2)).toBe("2 apps");
+    expect(appCountParts(1)).toEqual({ form: "one", count: "1" });
+    expect(appCountParts(1_634)).toEqual({ form: "plus", count: "1,600" });
+    expect(appCountParts(0)).toBeNull();
+  });
+  it("every pack has the plural and Browse all keys", () => {
+    const root = join(__dirname, "..", "locales");
+    for (const code of ["en", "de", "es", "fr", "hi", "ja", "pt-br", "zh"]) {
+      const pack = JSON.parse(readFileSync(join(root, `${code}.json`), "utf8")) as Record<string, string>;
+      for (const form of ["one", "other", "plus"]) {
+        expect(pack[`plugins.appCount.${form}`], `${code} appCount.${form}`).toContain("{count}");
+        expect(pack[`plugins.browseAll.${form}`], `${code} browseAll.${form}`).toContain("{count}");
+      }
+      expect(pack["plugins.browseAll.fallback"], code).toBeTruthy();
+      expect(pack["settings.pageSelectAria"], code).toBeTruthy();
+    }
+  });
+});
+
 describe("connected apps grouped by category (item 152)", () => {
   const app = (slug: string, categories?: string[]): AppCard => ({ slug, label: slug, blurb: "", logo: null, domain: null, ...(categories ? { categories } : {}) });
   const apps = [
@@ -94,5 +119,24 @@ describe("connected apps grouped by category (item 152)", () => {
     const plain = [app("a"), app("b")];
     expect(catalogSections(plain, new Set(["a"])).map((section) => section.id)).toEqual(["connected", "all"]);
     expect(catalogSections(plain, new Set()).map((section) => section.id)).toEqual(["all"]);
+  });
+});
+
+describe("one card per real app", () => {
+  const card = (slug: string, label = "Market Twin US", blurb = "Trade on prediction markets"): AppCard => ({ slug, label, blurb, logo: null, domain: null });
+
+  it("collapses identical name and description to the slug matching the name", () => {
+    expect(collapseDuplicateCards([card("market_twin"), card("market_twin_us"), card("gmail", "Gmail", "Mail")]).map((c) => c.slug)).toEqual(["market_twin_us", "gmail"]);
+  });
+
+  it("keeps a connected slug, or both when both are connected", () => {
+    const pair = [card("market_twin"), card("market_twin_us")];
+    expect(collapseDuplicateCards(pair, new Set(["market_twin"])).map((c) => c.slug)).toEqual(["market_twin"]);
+    expect(collapseDuplicateCards(pair, new Set(["market_twin", "market_twin_us"]))).toHaveLength(2);
+  });
+
+  it("leaves different descriptions, and empty ones, alone", () => {
+    expect(collapseDuplicateCards([card("market_twin"), card("market_twin_us", "Market Twin US", "Other")])).toHaveLength(2);
+    expect(collapseDuplicateCards([card("a", "Same", ""), card("b", "Same", "")])).toHaveLength(2);
   });
 });

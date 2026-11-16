@@ -1,0 +1,30 @@
+✖ P1-1 an idle MCP grant with no expiry is probed on a bounded schedule (3.70745ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 271.622067
+
+✖ failing tests:
+
+test at electron/mcp-signin.node-test.mjs:911:1
+✖ P1-1 an idle MCP grant with no expiry is probed on a bounded schedule (3.70745ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  + actual - expected
+  
+  + undefined
+  - 300000
+  
+      at TestContext.<anonymous> (file:///work/electron/mcp-signin.node-test.mjs:920:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: 300000,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

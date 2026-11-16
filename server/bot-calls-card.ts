@@ -17,13 +17,12 @@ export const callCardId = (intentId: string): string => `botcall-${intentId}`;
 const SOURCE_LABELS: Readonly<Record<OutsideSource, true>> = {
   "web page": true, "web search": true, email: true, "another person": true, "another bot": true, "browser page": true, "outside tool": true,
   "downloaded file": true, "network command": true, "package install": true, git: true, archive: true, interpreter: true, helper: true,
-  "earlier turn": true, "earlier session": true, memory: true, "cloned folder": true,
+  "earlier turn": true, "earlier session": true, memory: true, "cloned folder": true, "folder not checked": true,
 };
 
 /** needs_owner_now on a marked turn: the owner is told what is behind it. Anything but one of our labels is never printed: the
  *  owner still hears the turn read outside content, without the name. */
-function outsideNote(intent: CallIntent): string | null {
-  const source = intent.factFields?.outside;
+export function outsideContentNote(source: unknown): string | null {
   if (source === undefined || source === null) return null;
   return typeof source === "string" && Object.hasOwn(SOURCE_LABELS, source) ? `Earlier, this chat read outside content (${source}).` : "Earlier, this chat read outside content.";
 }
@@ -31,7 +30,7 @@ function outsideNote(intent: CallIntent): string | null {
 /** The card's words for the intent as it is now; null when the state owes no card (ringing, live, seen, dropped). */
 export function callCardText(intent: CallIntent, botName: string, clock: (ms: number) => string): string | null {
   const when = clock(intent.rangAt ?? intent.createdAt);
-  const needsYou = [`${botName} needs you`, outsideNote(intent)].filter(Boolean).join("\n");
+  const needsYou = [`${botName} needs you`, outsideContentNote(intent.factFields?.outside)].filter(Boolean).join("\n");
   if (intent.state === "waiting") return needsYou;
   if (intent.state !== "done") return null;
   switch (intent.outcome) {
@@ -95,7 +94,7 @@ export function callOpener(intent: CallIntent, o: { firstName: string | null; bo
     case "turn.ended": fact = `${o.taskName ?? "Your task"} has finished.`; break;
     case "routine.failed": case "routine.needs_you": fact = `Your routine ${o.routineName ?? ""} reported a problem ${ago}.`.replace("routine  ", "routine "); break;
     default: {
-      const note = outsideNote(intent);
+      const note = outsideContentNote(intent.factFields?.outside);
       fact = `${intent.line ? `${o.botName} thinks you're needed now. ${o.botName} says: ${intent.line}.` : `${o.botName} thinks you're needed now.`}${note ? ` ${note}` : ""}`;
     }
   }

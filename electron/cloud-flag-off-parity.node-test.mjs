@@ -21,6 +21,10 @@ import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 const electronDir = path.dirname(fileURLToPath(import.meta.url));
 const read = (name) => fs.readFileSync(path.join(electronDir, name), "utf8");
 const snapshot = JSON.parse(read("ipc-channels.flag-off.snapshot.json"));
+// MAIN RULING fd2e454356 (S1 browser pop-outs) and 5f4b635020 (main-only HighLevel
+// capability bank) deliberately extend the local desktop independently of Cloud.
+const localHandles = ["browser-popout:close", "browser-popout:open", "browser-popout:state-now", "highlevel:commit"];
+const localBridgeMembers = ["browserPopout", "browserPopout.close()", "browserPopout.currentState()", "browserPopout.onState()", "browserPopout.open()", "highlevel", "highlevel.commit()"];
 const MAIN_ORIGIN = "http://127.0.0.1:8799";
 
 function bridgeMembers({ cloud }) {
@@ -47,7 +51,7 @@ function bridgeMembers({ cloud }) {
 
 test("flag off: the shared preload exposes exactly the train's window.muragebox members", () => {
   assert.ok(Array.isArray(snapshot.bridgeMembers) && snapshot.bridgeMembers.length > 100);
-  assert.deepEqual(bridgeMembers({ cloud: false }), snapshot.bridgeMembers);
+  assert.deepEqual(bridgeMembers({ cloud: false }), [...snapshot.bridgeMembers, ...localBridgeMembers].sort());
 });
 
 test("flag on adds only the Cloud pairing and engine sign-in members to the bridge, and removes nothing", () => {
@@ -57,7 +61,8 @@ test("flag on adds only the Cloud pairing and engine sign-in members to the brid
   assert.deepEqual(on.filter((member) => !off.includes(member)), [
     "cloudEngineLogin", "cloudEngineLogin.input()", "cloudEngineLogin.onClosed()", "cloudEngineLogin.onData()", "cloudEngineLogin.openLink()", "cloudEngineLogin.start()", "cloudEngineLogin.stop()",
     "cloudHome", "cloudHome.connectCancel()", "cloudHome.connectPaste()", "cloudHome.connectStart()", "cloudHome.connectStatus()", "cloudHome.disconnect()",
-    "cloudHome.listBots()", "cloudHome.listHomes()", "cloudHome.onLinkEvent()", "cloudHome.onLive()", "cloudHome.onShowConnect()", "cloudHome.open()", "cloudHome.state()",
+    // MAIN RULING 5e20ce2770: Cloud sign-in offers now reach the existing Connect flow.
+    "cloudHome.listBots()", "cloudHome.listHomes()", "cloudHome.onLinkEvent()", "cloudHome.onLive()", "cloudHome.onShowConnect()", "cloudHome.onSignInRequested()", "cloudHome.open()", "cloudHome.state()",
   ]);
 });
 
@@ -96,6 +101,6 @@ test("flag off: nothing turns the Cloud on by itself", () => {
 
 test("flag off: the registered channels are the snapshot's, none of them cloud-home:*", () => {
   const inventory = loadIpcInventory({ electronDir, env: { MURAGE_DESKTOP_CLOUD: "0" } });
-  assert.deepEqual({ handles: inventory.handles, ons: inventory.ons }, { handles: snapshot.handles, ons: snapshot.ons });
+  assert.deepEqual({ handles: inventory.handles, ons: inventory.ons }, { handles: [...snapshot.handles, ...localHandles].sort(), ons: snapshot.ons });
   assert.deepEqual([...inventory.handles, ...inventory.ons].filter((channel) => channel.startsWith("cloud-home:")), []);
 });

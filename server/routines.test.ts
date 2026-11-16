@@ -1,6 +1,6 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { ASK_STOP_NOTE } from "./drivers/ask-stop.ts";
-import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
+import { foldRoutineStateForDowngrade, readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -114,6 +114,17 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
 afterEach(() => {
   vi.restoreAllMocks();
   for (const dir of dirs.splice(0)) removeTempDirSync(dir);
+});
+
+it('looks up an approval routine name without inspecting retained runs or computing health', () => {
+  const h = harness();
+  const routine = h.manager.create({
+    name: 'Approval routine', prompt: 'Synthetic work', botId: 'bot-a', enabled: false,
+    schedule: { type: 'interval', everyMinutes: 30, anchorAt: h.nowValue() },
+  });
+  Object.defineProperty(h.manager, 'runs', { get() { throw new Error('retained run history read'); } });
+  expect(h.manager.routineName(routine.id)).toBe('Approval routine');
+  expect(h.manager.routineName('missing-routine')).toBeUndefined();
 });
 
 describe("versioned routine instructions", () => {
@@ -316,8 +327,7 @@ describe("RoutineManager", () => {
     });
     h.setNow(h.nowValue() + 2_000);
     const stuck = h.manager.tick();
-    await Promise.resolve();
-    expect(release).toBeTypeOf("function");   // genuinely stuck inside startTurn
+    await vi.waitFor(() => expect(release).toBeTypeOf("function")); // genuinely stuck inside startTurn
 
     // 3. The limited run passes its deadline while that tick is still wedged.
     h.setNow(h.nowValue() + 6 * 60_000);
@@ -659,6 +669,7 @@ describe("RoutineManager", () => {
     }, request);
     const file = h.options.file;
     if (!file) throw new Error("test harness did not configure routine persistence");
+    foldRoutineStateForDowngrade(file);
     const stored = readFileSync(file, "utf8");
     const malformed = stored.replace(`"sourceThreadId": "${request.threadId}"`, '"sourceThreadId": 42');
     expect(malformed).not.toBe(stored);
@@ -730,7 +741,8 @@ describe("RoutineManager", () => {
     const h = harness();
     const file = h.options.file!;
     // A directory at the destination makes the final atomic rename fail
-    // after the temporary file has been written.
+    // after the temporary file has been written. Fresh managers now pin a baseline file.
+    rmSync(file, { force: true });
     mkdirSync(file);
     const request = {
       requestId: "request-create-write-failure",
@@ -755,6 +767,9 @@ describe("RoutineManager", () => {
 
     removeTempDirSync(file);
     rmSync(`${file}.tmp`, { force: true });
+    h.manager.recoverPersistence();
+    expect(h.manager.listRoutines()).toEqual([]);
+    expect(h.manager.routineRequestReceipt(request.requestId)).toBeNull();
     const routine = h.manager.create(input, request);
     expect(h.manager.listRoutines()).toHaveLength(1);
     expect(h.manager.routineRequestReceipt(request.requestId)).toMatchObject({
@@ -1203,15 +1218,13 @@ describe("RoutineManager", () => {
     // the real manager save/retention path that used to evict index zero.
     const internal = h.manager as unknown as { runs: RoutineRun[] };
     const base = internal.runs.find((run) => run.id === waiting.id)!;
-    for (let index = 0; index < 1_999; index += 1) {
-      internal.runs.push({
-        ...base,
-        id: `terminal-${index}`,
-        status: "completed",
-        attention: undefined,
-        finishedAt: index + 1,
-      });
-    }
+    internal.runs = [base, ...Array.from({ length: 1_999 }, (_, index) => ({
+      ...base,
+      id: `terminal-${index}`,
+      status: "completed" as const,
+      attention: undefined,
+      finishedAt: index + 1,
+    }))];
     h.setBot("busy");
     const queued = h.manager.enqueueWebhook({
       webhookId: "hook-capacity",
@@ -1223,6 +1236,8 @@ describe("RoutineManager", () => {
       receivedAt: 2_001,
     });
 
+    expect(h.manager.listRuns()).toHaveLength(2_001); // A scoped append never retires unrelated history.
+    await h.manager.tick(); // The next ordinary maintenance tick services the one eligible victim.
     const retained = h.manager.listRuns();
     expect(retained).toHaveLength(2_000);
     expect(retained.some((run) => run.id === waiting.id && run.status === "waiting")).toBe(true);
@@ -2757,4 +2772,32 @@ describe("a daily routine due through a change of the owner's time zone", () => 
     expect(h.manager.listRoutines().find((item) => item.id === current.id)?.nextRunAt).toBe(currentAt);
     expect(h.manager.rescheduleForZoneChange({ offWallClockOnly: true })).toEqual([]);
   });
+});
+
+it("PAUSE100 retains scheduled and manual work beyond twelve hours, then starts it once when the hold clears", async () => {
+  const h = harness();
+  let held = true;
+  h.options.spendHold = () => held ? "Flux work waits" : null;
+  const routine = h.manager.create({ name: "Spending fixture", prompt: "Synthetic work", botId: "bot-a", enabled: true, schedule: { type: "once", at: h.nowValue() + 1000 } });
+  h.setNow(h.nowValue() + 1000);
+  await h.manager.tick();
+  const scheduled = h.manager.listRuns().find(run => run.routineId === routine.id)!;
+  expect(scheduled.status).toBe("queued");
+  expect(h.started).toEqual([]);
+  h.setNow(h.nowValue() + 13 * 3600_000);
+  await h.manager.tick();
+  expect(h.manager.listRuns().find(run => run.id === scheduled.id)?.status).toBe("queued");
+  held = false;
+  await h.manager.tick();
+  expect(h.started).toHaveLength(1);
+  expect(h.manager.listRuns().find(run => run.id === scheduled.id)?.status).toBe("running");
+});
+
+it("PAUSE100 a hold arriving during a routine start returns it to the durable queue", async () => {
+  const h = harness();
+  h.options.startTurn = async () => { throw Object.assign(new Error("Flux work waits"), { code: "spend_limit" }); };
+  const routine = h.manager.create({ name: "Spending race", prompt: "Synthetic work", botId: "bot-a", enabled: true, schedule: { type: "once", at: h.nowValue() + 1000 } });
+  h.setNow(h.nowValue() + 1000);
+  await h.manager.tick();
+  expect(h.manager.listRuns().find(run => run.routineId === routine.id)).toMatchObject({ status: "queued", spendWait: "Flux work waits" });
 });

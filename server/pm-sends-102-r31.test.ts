@@ -75,33 +75,45 @@ describe("1. an automatic retry of an earlier Send again never runs a stopped me
       q.send("s1");
       const [refused] = sendStore.pending(q.thread);
       sendStore.refuse(refused!.seq);                                              // the bot or room could not start it: a chip
+      const original = sendStore.bySendId(q.thread, "s1")!;
       const first: Press = { resend: true, actionId: "press-1" };                  // Send again on the chip (no Stop yet: no stop token)
       q.send("s1", first);                                                         // accepted and waiting; its acknowledgement is lost
-      expect(sendStore.pending(q.thread).map((row) => row.status)).toEqual(["queued"]);
+      // MAIN RULING 1115-PMSENDS-R2 item 1: retain the refused receipt and follow the replacement.
+      expect(sendStore.pending(q.thread).map((row) => [row.sendId, row.status])).toEqual([["s1", "refused"], ["r-press-1", "queued"]]);
+      expect(sendStore.bySendId(q.thread, "s1")).toEqual(original);
       expect(sendStore.markStopped(q.thread)).toBe(1);                             // the owner pressed Stop
       start();                                                                     // Murage restarts
       sendStore.recover();
       q.drain();
+      expect(q.runs).toEqual([]);
       q.send("s1", first);                                                         // the delivery client's automatic retry of the first press
       q.drain();
+      expect(q.runs).toEqual([]);
       q.send("s1", first);                                                         // and again
       q.drain();
       expect(q.runs).toEqual([]);
       const held = sendStore.pending(q.thread);
-      expect(held.map((row) => row.status)).toEqual(["refused"]);
-      const chip = pendingItem(held[0]!);
+      // MAIN RULING 1115-PMSENDS-R2 item 1: Stop holds the replacement; the original stays unchanged.
+      expect(held.map((row) => [row.sendId, row.status])).toEqual([["s1", "refused"], ["r-press-1", "refused"]]);
+      expect(sendStore.bySendId(q.thread, "s1")).toEqual(original);
+      const chip = pendingItem(held.find(row => row.sendId === "r-press-1")!);
       expect(chip.stopGen).toBeTruthy();                                           // the held chip shows the Stop's token
-      q.send("s1", { resend: true, actionId: "press-2", stopGen: "a-guess" });     // a token that is not this Stop's runs nothing
+      q.send("r-press-1", { resend: true, actionId: "press-2", stopGen: "a-guess" });     // a token that is not this Stop's runs nothing
       q.drain();
       expect(q.runs).toEqual([]);
       const second: Press = { resend: true, actionId: "press-2", stopGen: chip.stopGen! };
-      q.send("s1", second);                                                        // a fresh Send again, pressed after the Stop
+      q.send("r-press-1", second);                                                        // a fresh Send again, pressed after the Stop
       q.drain();
       q.drain();
       q.send("s1", first);                                                         // late retries of either press change nothing
-      q.send("s1", second);
       q.drain();
       expect(q.runs).toEqual([TEXT]);
+      q.send("r-press-1", second);
+      q.drain();
+      expect(q.runs).toEqual([TEXT]);
+      expect(sendStore.bySendId(q.thread, "s1")).toEqual(original);
+      expect(sendStore.bySendId(q.thread, "r-press-1")!.stopGen).toBe(chip.stopGen);
+      expect(sendStore.bySendId(q.thread, "r-press-2")).toBeDefined();
     });
   }
 });

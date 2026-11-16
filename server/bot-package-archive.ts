@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { closeSync, constants, createWriteStream, fstatSync, fsyncSync, linkSync, lstatSync, mkdtempSync, openSync, readSync, realpathSync, rmSync } from "node:fs";
+import { createWriteStream } from "./counted-fs.ts";
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, mkdtempSync, openSync, readSync, realpathSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { PassThrough, Transform, type Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";

@@ -14,6 +14,9 @@ import { afterAll, describe, expect, it } from "vitest";
 import { parse, stringify } from "yaml";
 import { CAPABILITY_DB_REV, CAPABILITY_ENTRIES } from "./capability-db.ts";
 import { removeTempDirSync } from "../server/testing/cleanup.ts";
+import { SECTION_PAGES } from "../src/lib/settings-pages";
+import { SETTINGS_CARDS, cardLabel } from "../src/lib/settings-card-registry";
+import en from "../src/locales/en.json";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const script = join(root, "scripts", "build-capability-db.mjs");
@@ -59,6 +62,36 @@ const SLICE = [
 ];
 
 describe("capability database", () => {
+  it("reads localized, shared and literal card names from the rendered registry", async () => {
+    const { buildNavigation } = await import("../scripts/build-capability-db.mjs");
+    const { cards } = buildNavigation();
+    expect(cards.get("memory/browser")?.label).toBe("Open memory");
+    expect(cards.get("general/send-key")?.label).toBe("Sending messages");
+    expect(cards.get("connections/bot-email")?.label).toBe("Bot email");
+    expect(cards.get("connections/phone-calls")?.label).toBe("Phone calls");
+    expect(cards.get("about/health")?.label).toBe("Health");
+    expect(cards.get("usage/spend-limit")?.label).toBe("Monthly spending notice");
+  });
+
+  it("reads every current Settings page and preserves each card's stable identity and actual page", async () => {
+    const { buildNavigation } = await import("../scripts/build-capability-db.mjs");
+    const navigation = buildNavigation();
+    expect([...navigation.pages.values()]).toEqual(SECTION_PAGES.map((page) => ({
+      id: page.id, label: en[`settings.page.${page.id}`], desktopOnly: Boolean(page.desktopOnly),
+    })));
+    expect([...navigation.cards.keys()].sort()).toEqual(SETTINGS_CARDS.map((card) => card.id.replace(".", "/")).sort());
+    for (const card of SETTINGS_CARDS) {
+      expect(navigation.cards.get(card.id.replace(".", "/")), card.id).toEqual({
+        id: card.id, page: card.section, anchor: card.anchor, advanced: card.advanced, surface: card.surface,
+        label: cardLabel(card),
+      });
+    }
+    expect(navigation.paths.get("Settings → Computer & browser → Built-in browser")).toEqual({
+      owner: "card:companion/browser", page: "computer", desktopOnly: true,
+    });
+    expect(navigation.paths.has("Settings → Phone and other devices → Built-in browser")).toBe(false);
+  });
+
   it("is valid and the generated file is fresh (recomputed from the sources, never the committed inventory)", () => {
     const result = run(["--check"]);
     expect(result.out).toContain("capability db up to date");
@@ -94,6 +127,30 @@ describe("capability database", () => {
     });
     expect(result.ok).toBe(false);
     expect(result.out).toContain("belongs to card:botDefaults/channel-turns");
+  });
+
+  it("accepts a moved card's current page with its stable anchor", () => {
+    const result = checkFixture((files) => {
+      entry(files, "apps.own-browser").settings_path = "Settings → Computer & browser";
+    });
+    expect(result.out).toContain("capability db up to date");
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a moved card's former page even though the page and stable anchor still exist", () => {
+    const result = checkFixture((files) => {
+      entry(files, "apps.own-browser").settings_path = "Settings → Phone and other devices";
+    });
+    expect(result.ok).toBe(false);
+    expect(result.out).toContain("is on page companion, but the card anchor is on computer");
+  });
+
+  it("keeps a moved desktop card unavailable to phone platforms", () => {
+    const result = checkFixture((files) => {
+      entry(files, "apps.own-browser").platforms = ["all"];
+    });
+    expect(result.ok).toBe(false);
+    expect(result.out).toContain("is desktop only");
   });
 
   it("rejects a reused id", () => {
@@ -169,7 +226,7 @@ describe("export and diff", () => {
     expect(JSON.stringify(exported)).not.toContain("\"internal\"");
     for (const record of exported.entries) expect(record.applies).toMatch(/^Applies to /);
     expect(exported.valid_paths).toEqual(expect.arrayContaining([
-      "Settings → Bots → Advanced → Time limit for bot activity in channels", "Settings → Memory → Learn about me", "Team map", "Routines", "Connected apps", "Tools",
+      "Settings → How every bot behaves → Advanced → Time limit for bot activity in channels", "Settings → Memory → Learn about me", "Team map", "Routines", "Connected apps", "Tools",
     ]));
     const diff = run(["--diff", join(scratch, "no-previous.json"), "--current", file]);
     expect(diff.ok).toBe(true);

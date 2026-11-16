@@ -5,12 +5,14 @@
 // the owner tap's compare and set, and the commit boundary (live, a held task reference, bots.json and a reload agree after a failure).
 import { mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import ts from "typescript";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { flushCoalesced } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { RosterPostCommitError, Store, type BotRecord } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { moveBotOntoSignedInEngine } from "./cloud-home/engine-signins.ts";
 import { acpToolKey } from "../shared/mount-identity.ts";
 
 beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); database(); });
@@ -183,22 +185,46 @@ describe("writer inventory (section 4)", () => {
 
   it("every modelSelection and engineAutoPicked writer in server/ is in the inventory", () => {
     const sources = serverSources();
-    const where = (pattern: RegExp) => sources.filter(([, text]) => pattern.test(text)).map(([path]) => path).sort();
+    const catalogPath = "server/restore-path-inventory.ts";
+    const catalog = sources.find(([path]) => path === catalogPath);
+    if (catalog) {
+      // This catalog names functions as data. Prove it contains no executable writer before excluding its strings.
+      const tree = ts.createSourceFile(catalogPath, catalog[1], ts.ScriptTarget.Latest, true);
+      expect(tree.statements).toHaveLength(2);
+      const typeImport = tree.statements[0]!;
+      const declaration = tree.statements[1]!;
+      expect(ts.isImportDeclaration(typeImport!) && typeImport.importClause?.isTypeOnly).toBe(true);
+      expect(ts.isVariableStatement(declaration!)).toBe(true);
+      if (!ts.isVariableStatement(declaration!)) throw new Error("Expected the move catalog declaration");
+      expect(declaration.declarationList.flags & ts.NodeFlags.Const).toBe(ts.NodeFlags.Const);
+      expect(declaration.declarationList.declarations).toHaveLength(1);
+      const entry = declaration.declarationList.declarations[0]!;
+      expect(entry.name.getText(tree)).toBe("RESTORE_PATH_INVENTORY");
+      const onlyData = (node: ts.Node): boolean => ts.isStringLiteral(node) ||
+        (ts.isObjectLiteralExpression(node) && node.properties.every(property => ts.isPropertyAssignment(property) && ts.isStringLiteral(property.name) && onlyData(property.initializer)));
+      expect(entry.initializer && onlyData(entry.initializer)).toBe(true);
+    }
+    const where = (pattern: RegExp) => sources.filter(([path, text]) => path !== catalogPath && pattern.test(text)).map(([path]) => path).sort();
     // The mark is set only in the Store (1.0.15 BIRTH-FUIGO): createBot's one write for a born bot (or the trusted option), the seed, and
     // preparePackageAddition's born records. No caller marks by hand any more: every birth caller passes no selection.
-    expect(where(/engineAutoPicked\s*(=|:)\s*true\b/)).toEqual(["server/store.ts"]);
+    // The Cloud home's own movers (server/cloud-home/engine-repick.ts, 0c845256b, behind MURAGE_CLOUD_ROLE=home) hand the Store a trusted
+    // `engineAutoPicked: true` with their selection patch; the Store keeps it only on a home (cloudMurageMove in patchBot) and the Chief mover
+    // re-checks the mark and the selection synchronously before its write, and the bot pass re-checks the mark (not the selection) synchronously before its write.
+    expect(where(/engineAutoPicked\s*(=|:)\s*true\b/)).toEqual(["server/cloud-home/engine-repick.ts", "server/store.ts"]);
     const store = sources.find(([path]) => path === "server/store.ts")![1];
-    expect(store.match(/engineAutoPicked\s*(=|:)\s*true\b/g)?.length).toBe(3);
+    // birth in createBot, the package-import born stamp, the seed, and (merge 9a634f99c) the Cloud home's trusted mark kept on a Murage move (cloudMurageMove).
+    expect(store.match(/engineAutoPicked\s*(=|:)\s*true\b/g)?.length).toBe(4);
     expect(store).toContain("if (born || opts.engineAutoPicked === true) bot.engineAutoPicked = true;");
     expect(store).toMatch(/if \(options\.born\?\.has\(bot\.id\)\) \{ bot\.modelSelection = structuredClone\(birth\); bot\.engineAutoPicked = true; \}/);
     // A package import's born record is written empty and named in bornBotIds; the Store gives it its selection and mark in the commit.
     const pkg = sources.find(([path]) => path === "server/bot-package-import.ts")![1];
     expect(pkg).toContain('modelSelection: options.modelSelection === "birth" ? { instanceId: "", model: "" } : structuredClone(options.modelSelection)');
     expect(pkg).not.toMatch(/engineAutoPicked/);
-    // The compare and set is called only by the engine pass and the owner tap.
-    expect(where(/\.casEngineMove\(/)).toEqual(["server/engine-repick.ts", "server/index.ts"]);
-    // The old movers are gone, and the pass reads no sign-in.
-    expect(where(/moveChiefToShippedEngine|repickAutoPicked|useEngineAfterSignIn|engineSeeded/)).toEqual([]);
+    // The compare and set is called only by the engine pass, the owner tap and the move onto an engine a bot just signed in to (12cdbeb6b).
+    expect(where(/\.casEngineMove\(/)).toEqual(["server/cloud-home/engine-signins.ts", "server/engine-repick.ts", "server/index.ts"]);
+    // The desktop's old movers are gone, and the pass reads no sign-in. What remains is the Cloud home's launcher-aware pair
+    // (cloud-home/engine-repick.ts, engine-signins.ts and the index.ts wrappers; 0c845256b), which index.ts runs only on a home.
+    expect(where(/moveChiefToShippedEngine|repickAutoPicked|useEngineAfterSignIn|engineSeeded/)).toEqual(["server/cloud-home/engine-repick.ts", "server/cloud-home/engine-signins.ts", "server/index.ts"]);
     const pass = sources.find(([path]) => path === "server/engine-repick.ts")![1];
     expect(pass).not.toMatch(/\.authenticated\b|pickDefaultEngine|probeAuth|botEngineSignIn/);
     // An automatic patchBot of a selection would bypass the compare and set; the stale-model repair is the store's own CAS now.
@@ -357,12 +383,43 @@ describe("1.0.15 Astra M8: every selection writer in server/ is inventoried", ()
     // publish (store), and the one-time boot cleanup that drops a chat pin equal to its bot's (thread-follow-model: no engine changes).
     // 1.0.15 BIRTH-FUIGO: store.ts also has preparePackageAddition's born stamp (a package bot with no owner pick, in the staged commit).
     expect(count(/\.modelSelection\s*=[^=]|delete [\w.!]+\.modelSelection\b/g)).toEqual({
-      "server/bot-management.ts": 1, "server/index.ts": 2, "server/store.ts": 2, "server/thread-follow-model.ts": 1,
+      "server/bot-management.ts": 1, "server/bot-outside-writes.ts": 2, "server/index.ts": 2, "server/store.ts": 3, "server/thread-follow-model.ts": 1,
     });
+    // Staged-bot creation saves the intended pick; activation publishes it only after revision and authority validation.
+    // Cloud home only (0c845256b): the two movers in cloud-home/engine-repick.ts. The move onto an engine a bot just signed in to (12cdbeb6b) is a casEngineMove now, not a patchBot.
     // Store writes that carry a selection literal: the limit failover apply, its boot re-apply and its restore (index.ts), and (U22 G20 #9)
     // a recovered failover the backup gate refuses, which puts the chat back on the pick it had before the failover.
-    expect(count(/\.(patchTask|patchBot)\([^;]{0,160}modelSelection/g)).toEqual({ "server/index.ts": 4 });
-    // The engine-only writers: the pass (casEngineMove), the owner tap (casEngineMove), the stale-model repair and Use the bot's model.
-    expect(count(/\.(followBotModel|repairStaleModel|casEngineMove)\(/g)).toEqual({ "server/engine-repick.ts": 1, "server/index.ts": 3 });
+    expect(count(/\.(patchTask|patchBot)\([^;]{0,160}modelSelection/g)).toEqual({ "server/cloud-home/engine-repick.ts": 2, "server/index.ts": 4 });
+    // The engine-only writers: the pass (casEngineMove), the owner tap (casEngineMove), the signed-in move (casEngineMove), the stale-model repair and Use the bot's model.
+    expect(count(/\.(followBotModel|repairStaleModel|casEngineMove)\(/g)).toEqual({ "server/cloud-home/engine-signins.ts": 1, "server/engine-repick.ts": 1, "server/index.ts": 3 });
+  });
+});
+
+describe("a bot that signs in to an engine while on Fuigo", () => {
+  const CODEX = { instanceId: "codex", model: "gpt" };
+  it("moves onto the engine when nothing changed during the sign-in and catalogue reads", async () => {
+    const store = new Store(() => EMPTY);
+    const bot = store.createBot({ name: "Atlas", modelSelection: FUIGO }, { seedMessages: false });
+    const started = { modelSelection: structuredClone(store.bot(bot.id)!.modelSelection), engineRev: store.bot(bot.id)!.engineRev };
+    expect(await moveBotOntoSignedInEngine({ store, target: async () => CODEX }, bot.id, "codex", started)).toBe("moved");
+    expect(store.bot(bot.id)!.modelSelection).toEqual(CODEX);
+  });
+  it("an owner pick made during the catalogue wait survives: the move is stale and writes nothing", async () => {
+    const store = new Store(() => EMPTY);
+    const bot = store.createBot({ name: "Atlas", modelSelection: FUIGO }, { seedMessages: false });
+    const started = { modelSelection: structuredClone(store.bot(bot.id)!.modelSelection), engineRev: store.bot(bot.id)!.engineRev };
+    const OWNER = { instanceId: "claude", model: "opus" };
+    const target = async () => { store.patchBot(bot.id, { modelSelection: OWNER }); return CODEX; }; // the owner picks while the read runs
+    expect(await moveBotOntoSignedInEngine({ store, target }, bot.id, "codex", started)).toBe("stale");
+    expect(store.bot(bot.id)!.modelSelection).toEqual(OWNER);
+    expect(onDisk(bot.id).modelSelection).toEqual(OWNER);
+  });
+  it("an owner pick back to the very same Fuigo selection (a new revision) is also kept", async () => {
+    const store = new Store(() => EMPTY);
+    const bot = store.createBot({ name: "Atlas", modelSelection: FUIGO }, { seedMessages: false });
+    const started = { modelSelection: structuredClone(store.bot(bot.id)!.modelSelection), engineRev: store.bot(bot.id)!.engineRev };
+    const target = async () => { store.patchBot(bot.id, { modelSelection: { instanceId: "claude", model: "opus" } }); store.patchBot(bot.id, { modelSelection: { ...FUIGO } }); return CODEX; };
+    expect(await moveBotOntoSignedInEngine({ store, target }, bot.id, "codex", started)).toBe("stale");
+    expect(store.bot(bot.id)!.modelSelection).toEqual(FUIGO);
   });
 });

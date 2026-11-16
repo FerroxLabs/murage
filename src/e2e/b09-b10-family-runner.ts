@@ -16,7 +16,7 @@
 import { chromium, test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -501,7 +501,7 @@ export function defineFamilyRunner<C extends FamilyCase>(options: FamilyRunnerOp
       const context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1440, height: 1000 } });
       const page = await context.newPage();
       page.setDefaultTimeout(60_000);
-      await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); });
+      await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
       await page.goto(state.origin, { waitUntil: "domcontentloaded" });
       const row = (await openSidebar(page)).getByRole("button", { name: new RegExp(`^${escapeRegExp(owner.name)}`) }).first();
       // A bot row's select button is an overlay whose centre sits under the sibling Rename button (see the B08 runner); a room row is a plain button.

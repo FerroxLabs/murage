@@ -1,3 +1,4 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 // Child processes of a warm engine process. The engine starts its MCP servers
 // once; anything that appears under it after the turn began (a dev server a
 // Bash call left running) is background work that must not outlive the turn
@@ -163,7 +164,7 @@ export async function descendantBaseline(root: number, initAtMs: number): Promis
   }
   return new Promise((resolve) => {
     // SIGKILL on timeout: a ps that ignores SIGTERM must not outlive the wait.
-    execFile("ps", PS_ETIME_ARGS, { timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_LOOKUP_ENV }, (error, stdout) => {
+    execFile("ps", [...PS_ETIME_ARGS], withHideInherit({ timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_LOOKUP_ENV }), (error, stdout) => {
       if (error) return resolve(null);
       // The listing's ages were read while ps ran; "now" is after that, so
       // start = now - age can only be late. Late is the right direction: a
@@ -240,7 +241,7 @@ function hookStartedBefore(platform: ReadonlySet<number>, initAtMs: number): Pro
   return new Promise((resolve) => {
     const linux = process.platform === "linux";
     (linux ? procStarts(pids) : Promise.resolve(new Map<number, string>())).then((first) => {
-      execFile("ps", ["-o", "pid=,etime=,lstart=", "-p", pids.join(",")], { timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }, (error, stdout) => {
+      execFile("ps", ["-o", "pid=,etime=,lstart=", "-p", pids.join(",")], withHideInherit({ timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }), (error, stdout) => {
         if (psOutcome(error) === "failed") return resolve(null);
         const probeAtMs = Date.now();
         (linux ? procStarts(pids) : Promise.resolve(new Map<number, string>())).then((second) => {
@@ -299,7 +300,7 @@ async function identityListing(): Promise<ReturnType<typeof parseIdentityListing
     return rows ? rows.map((row) => ({ pid: row.pid, ppid: row.ppid, start: row.start, rest: "" })) : null;
   }
   return new Promise((resolve) => {
-    execFile("ps", PS_ID_ARGS, { timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }, (error, stdout) => {
+    execFile("ps", [...PS_ID_ARGS], withHideInherit({ timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }), (error, stdout) => {
       if (error) return resolve(null);
       resolve(parseIdentityListing(String(stdout)));
     });
@@ -542,7 +543,7 @@ async function processTreeWalk(root: number, stopAt: ReadonlySet<number> | null,
     return walk(winWalkLines(rows), root, exact, layout)?.found ?? null;
   }
   return new Promise((resolve) => {
-    execFile("ps", stopAt ? PS_SETTLE_ARGS : PS_ARGS, { timeout: 5_000, maxBuffer: 4 * 1024 * 1024, env: PS_LOOKUP_ENV }, (error, stdout) => {
+    execFile("ps", [...(stopAt ? PS_SETTLE_ARGS : PS_ARGS)], withHideInherit({ timeout: 5_000, maxBuffer: 4 * 1024 * 1024, env: PS_LOOKUP_ENV }), (error, stdout) => {
       if (error) return resolve(null);
       if (!stopAt) return resolve(walk(stdout, root, stopAt, layout)?.found ?? null);
       resolve(settleWalk(stdout, root, stopAt, layout));
@@ -623,7 +624,7 @@ export function processParentsAndArgs(pids: Iterable<number>): Promise<Map<numbe
   if (!list.length) return Promise.resolve(new Map());
   if (process.platform === "win32") return Promise.resolve(null);
   return new Promise((resolve) => {
-    execFile("ps", ["-ww", "-o", "pid=,ppid=,lstart=,args=", "-p", list.join(",")], { timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }, (error, stdout) => {
+    execFile("ps", ["-ww", "-o", "pid=,ppid=,lstart=,args=", "-p", list.join(",")], withHideInherit({ timeout: 5_000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024, env: PS_ENV }), (error, stdout) => {
       const settled = settleArgsProbe(error, String(stdout ?? ""), list);
       // Under a platform listTree hook the tree's identities are the hook
       // path's (processStarts), so start must come from the same source or a
@@ -669,7 +670,7 @@ export function processNames(pids: Iterable<number>): Promise<string[]> {
   const list = [...pids].filter((pid) => Number.isInteger(pid) && pid > 0).slice(0, 8);
   if (!list.length || process.platform === "win32") return Promise.resolve([]);
   return new Promise((resolve) => {
-    execFile("ps", ["-o", "comm=", "-p", list.join(",")], { timeout: 2_000, killSignal: "SIGKILL", env: PS_LOOKUP_ENV }, (error, stdout) => {
+    execFile("ps", ["-o", "comm=", "-p", list.join(",")], withHideInherit({ timeout: 2_000, killSignal: "SIGKILL", env: PS_LOOKUP_ENV }), (error, stdout) => {
       if (error && !stdout) return resolve([]);
       resolve(String(stdout).split("\n").map((line) => line.trim().split("/").pop() ?? "").filter(Boolean));
     });

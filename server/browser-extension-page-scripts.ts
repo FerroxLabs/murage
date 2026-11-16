@@ -10,11 +10,11 @@ import { SECRET_CLASSIFIER_SOURCE } from "../shared/browser-secret-classifier-so
  * bound is everything that decides what a submit does (the submitter's formaction/formmethod/name/value,
  * the form's action and method, hidden fields, every field's value); the executor hashes it into the digest
  * and never shows it. Throws MURAGE_FRAME or MURAGE_CLOSED_SHADOW when the target is not in the page itself. */
-export const DESCRIBE_TARGET_SOURCE = String.raw`function(){
+export const DESCRIBE_TARGET_SOURCE = String.raw`function(allowProtected=false){
     const dom=(${NATIVE_DOM_SOURCE})();
-    if(this.ownerDocument!==document)throw new Error('MURAGE_FRAME');
+    if(!allowProtected&&this.ownerDocument!==document)throw new Error('MURAGE_FRAME');
     const root=dom.root(this);
-    if(typeof ShadowRoot!=='undefined'&&root instanceof ShadowRoot&&root.mode==='closed')throw new Error('MURAGE_CLOSED_SHADOW');
+    if(!allowProtected&&typeof ShadowRoot!=='undefined'&&root instanceof ShadowRoot&&root.mode==='closed')throw new Error('MURAGE_CLOSED_SHADOW');
     const clip=(v,n)=>String(v==null?'':v).slice(0,n);
     const fnv=v=>{let a=0x811c9dc5,b=7;for(let i=0;i<v.length;i++){a^=v.charCodeAt(i);a=Math.imul(a,16777619)>>>0;b=(Math.imul(b,31)+v.charCodeAt(i))>>>0;}return a.toString(16)+'.'+b.toString(16)+'.'+v.length;};
     const val=v=>{v=String(v==null?'':v);return v.length>256?'h:'+fnv(v):v;};
@@ -86,5 +86,6 @@ export const COMPOSED_ACTIVE_SOURCE = String.raw`function(){const dom=(${NATIVE_
 /** An expression: is `url` the destination of a link the current page presents? */
 export const presentedLinkExpression = (url: string) => `(() => {const dom=(${NATIVE_DOM_SOURCE})();return dom.query(document,'a[href],area[href]').some(a=>a.href===${JSON.stringify(url)});})()`;
 /** An expression returning one slice of the page's HTML, so a large page crosses the wire in pieces. */
-export const htmlSliceExpression = (from: number, to: number) => `document.documentElement.outerHTML.slice(${from},${to})`;
-export const HTML_LENGTH_EXPRESSION = "document.documentElement.outerHTML.length";
+export const htmlSliceExpression = (from: number, to: number) => `globalThis.__murageSavedReadHtml.slice(${from},${to})`;
+export const HTML_LENGTH_EXPRESSION = "(() => { globalThis.__murageSavedReadHtml = document.documentElement.outerHTML; return globalThis.__murageSavedReadHtml.length; })()";
+export const HTML_RELEASE_EXPRESSION = "delete globalThis.__murageSavedReadHtml";

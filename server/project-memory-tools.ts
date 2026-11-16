@@ -35,7 +35,8 @@ import { projectTableExists } from "./project-turn-engine.ts";
 import { projectToolHandlers, type ProjectToolCallContext } from "./project-tool-routing.ts";
 import { ROOM_REPLY_CHECKING, ROOM_REPLY_FORGOTTEN, ROOM_REPLY_WITHHELD } from "./room-context.ts";
 import { currentTurnLineage } from "./memory/lineage-write.ts";
-import type { LineageRef, PromptPart, ToolText } from "./memory/lineage-types.ts";
+import type { LineageRef, PromptPart, ToolText, TurnLineage } from "./memory/lineage-types.ts";
+import { attachResultProvenance } from "./consuming-turn-response.ts";
 import { lineRefs, murageObjectRef, promptPart, recordTurnObject, turnRefs, turnToolText, memoryRefs, noneRef } from "./memory/prompt-parts.ts";
 
 export const READ_MESSAGES_MAX = 50;
@@ -46,13 +47,14 @@ export const SUMMARY_SOURCES_MAX = 500;
 const SUMMARY_VERSIONS_KEPT = 20;
 const SUGGESTIONS_KEPT = 20;
 
-type Result = { status: number; body: unknown };
+type Result = { status: number; body: unknown; toolText?: ToolText };
 const bad = (error: string): Result => ({ status: 400, body: { error } });
 
 /** The memory roster with bot names (store.bots, store.groups). */
 export type NamedRoster = { bots: Array<MemoryRoster["bots"][number] & { name?: string }>; groups: MemoryRoster["groups"] };
 
 export interface ProjectMemoryToolDeps {
+  captureAttribution?(threadId: string, botId: string, turn: TurnLineage | undefined): Pick<ProjectMemoryToolDeps, "shown" | "read">;
   /** The live roster (store.bots, store.groups). */
   roster(): NamedRoster;
   /** A Murage line in the project's room (mirrorMurageLine). */
@@ -338,7 +340,7 @@ export function readVenuePage(db: DatabaseSync, roster: NamedRoster, venueId: st
 }
 
 /** A venue tool call, authorised by server/venue-read.ts: `charge` adds the page's lines to the turn's budget (false: over it). */
-export type VenueToolCall = { db: DatabaseSync; venueId: string; botId: string; consumingThreadId: string; input: VenuePageInput; options: VenuePageOptions; charge(lines: number): boolean };
+export type VenueToolCall = { db: DatabaseSync; venueId: string; botId: string; consumingThreadId: string; consumingTurn?: TurnLineage; input: VenuePageInput; options: VenuePageOptions; charge(lines: number): boolean };
 /** The venue tools' effects by name (server/venue-read.ts routes to them after authorising). A 409 means the turn's read budget is spent. */
 export const venueToolHandlers = new Map<string, (call: VenueToolCall) => Result>();
 
@@ -440,31 +442,29 @@ export function registerProjectMemoryTools(dependencies: ProjectMemoryToolDeps):
   deps = dependencies;
   projectToolHandlers.set("read-messages", (call, body) => {
     const consuming = call.request.targetThreadId ?? call.request.rootThreadId;
+    const attribution = deps!.captureAttribution?.(consuming, call.botId, call.consumingTurn) ?? deps!;
     const read = readProjectPage(call.db, deps!.roster(), call.groupId, body, { botId: call.botId, threadId: consuming });
     const { result } = read;
     const page = result.body as { threadId?: string; messages?: Array<{ id: string }> };
     // a reply built from what the tool returned rests on it (Astra r2 #16)
-    if (result.status === 200 && page.threadId && page.messages?.length) deps!.shown?.(consuming, page.messages.map(message => ({ threadId: page.threadId!, messageId: message.id })));
+    const prepare = () => { if (result.status === 200 && page.threadId && page.messages?.length) attribution.shown?.(consuming, page.messages.map(message => ({ threadId: page.threadId!, messageId: message.id }))); };
     // and the turn's sources: a note it writes next rests on every line whose words it read
     const lines = (result.body as { messages?: Array<{ id: string; speaker: string; text: string }> }).messages?.filter(message => message.text !== ROOM_REPLY_WITHHELD && message.text !== ROOM_REPLY_FORGOTTEN) ?? [];
-    if (result.status === 200 && page.threadId && lines.length) deps!.read?.(consuming, call.botId, lines.map(message => ({ threadId: page.threadId!, id: message.id, role: message.speaker === "Owner" ? "user" as const : "bot" as const })));
+    const commit = () => { if (result.status === 200 && page.threadId && lines.length) attribution.read?.(consuming, call.botId, lines.map(message => ({ threadId: page.threadId!, id: message.id, role: message.speaker === "Owner" ? "user" as const : "bot" as const }))); };
     // write-time hole 1: the lines whose words the page shows join the running turn as point carries (a withheld line shows no words)
-    return toolResult(result, readMessagesToolText(consuming, read));
+    return toolResult(result, readMessagesToolText(call.consumingTurn ?? consuming, read), { prepare, commit });
   });
   venueToolHandlers.set("read-messages", call => {
+    const attribution = deps!.captureAttribution?.(call.consumingThreadId, call.botId, call.consumingTurn) ?? deps!;
     const read = readVenuePage(call.db, deps!.roster(), call.venueId, call.input, { botId: call.botId, threadId: call.consumingThreadId }, call.options);
     if (read.result.status !== 200) return read.result;
     const page = read.result.body as { threadId: string; messages: VenueLine[] };
     // R10: every line the page hands the turn counts, stand-ins included; past the budget no line is returned
     if (!call.charge(page.messages.length)) return { status: 409, body: { error: "budget" } };
     // only substantive lines are what a reply rests on (the receipt) and join the turn's sources; a full receipt returns no lines
-    try { if (read.substantive.length) deps!.shown?.(call.consumingThreadId, read.substantive.map(line => ({ threadId: page.threadId, messageId: line.id }))); }
-    catch (error) {
-      if ((error as { status?: number })?.status === 409) return { status: 409, body: { error: "receipt" } };
-      throw error;
-    }
-    if (read.substantive.length) deps!.read?.(call.consumingThreadId, call.botId, read.substantive.map(line => ({ threadId: page.threadId, id: line.id, role: line.role })));
-    return toolResult(read.result, readMessagesToolText(call.consumingThreadId, read));
+    const prepare = () => { if (read.substantive.length) attribution.shown?.(call.consumingThreadId, read.substantive.map(line => ({ threadId: page.threadId, messageId: line.id }))); };
+    const commit = () => { if (read.substantive.length) attribution.read?.(call.consumingThreadId, call.botId, read.substantive.map(line => ({ threadId: page.threadId, id: line.id, role: line.role }))); };
+    return toolResult(read.result, readMessagesToolText(call.consumingTurn ?? call.consumingThreadId, read), { prepare, commit });
   });
   projectToolHandlers.set("summary-update", (call, body) => updateProjectSummary(call.db, deps!.roster(), call, body));
   projectToolHandlers.set("suggest", (call, body) => suggestToLead(call.db, { ...call, consumingThreadId: call.request.targetThreadId ?? call.request.rootThreadId }, body));
@@ -479,27 +479,29 @@ export function registerProjectMemoryTools(dependencies: ProjectMemoryToolDeps):
     const evidence = typeof body.recordId === "string" ? call.db.prepare("SELECT s.message_id FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=?").all(body.recordId).map(row => String(row.message_id)) : typeof body.sourceMessageId === "string" ? [body.sourceMessageId] : [];
     if (caller?.partitionedAt !== undefined && (typeof body.threadId === "string" && !sameThreadPartition(caller, consuming, body.threadId) || !evidence.length || !partitionSourcesAllowed(call.db, call.botId, consuming, evidence))) return { status: 403, body: { error: "Those sources belong to another team." } };
     // write-time hole 2: what is brought in joins the running turn, and the copy rests on that turn (memory/bring-in.ts)
-    const result = bringInToProject(call.db, { groupId: call.groupId, roomThreadId: group.threadId, botId: call.botId, roster, now: call.now, botInitiated: true, turn: currentTurnLineage(consuming),
+    const result = bringInToProject(call.db, { groupId: call.groupId, roomThreadId: group.threadId, botId: call.botId, roster, now: call.now, botInitiated: true, turn: call.consumingTurn, staged: true,
       recordId: body.recordId as string | undefined, sourceMessageId: body.sourceMessageId as string | undefined, threadId: body.threadId as string | undefined, text: body.text as string | undefined });
     if (!result.ok) return { status: result.status, body: { error: result.error } };
     const name = roster.bots.find(bot => bot.id === call.botId)?.name ?? "A member";
-    deps!.note(call.groupId, `${name} brought a note into this project's memory.`);
-    return { status: 200, body: { ok: true, recordId: result.recordId } };
+    const bodyResult = { ok: true, recordId: result.recordId };
+    attachResultProvenance(bodyResult, { ...result.provenance!, commit: () => {
+      result.provenance?.commit?.();
+      deps!.note(call.groupId, `${name} brought a note into this project's memory.`);
+    } });
+    return { status: 200, body: bodyResult };
   });
 }
 
 // ── write-time lineage of the tools' results (DESIGN-WRITETIME 2.2) ──────────
 
-/** ProjectToolHandler (project-tool-routing.ts) still returns {status, body}: the result is made as a ToolText first, so what it rests on
- * joins the running turn, and its body goes back as before. API CHANGE NEEDED (project-tool-routing.ts): the handler type should return
- * the ToolText itself. */
-function toolResult(result: Result, text: ToolText): Result {
-  void text;
-  return result;
+/** Preserve provenance beside the wire body through the project handler contract. */
+function toolResult(result: Result, text: ToolText, attribution: { prepare?: () => void; commit?: () => void } = {}): Result {
+  if (result.body && typeof result.body === "object") attachResultProvenance(result.body, { refs: text.lineageOf, consumingTurn: text.consumingTurn, ...attribution });
+  return { ...result, toolText: text };
 }
 
 /** The read-messages result as a tool text: point carries for every line whose words it shows. */
-export function readMessagesToolText(consumingThreadId: string, read: { result: Result; threadId?: string; shown: readonly string[] }): ToolText {
+export function readMessagesToolText(consumingThreadId: string | TurnLineage, read: { result: Result; threadId?: string; shown: readonly string[] }): ToolText {
   const refs: LineageRef[] = read.threadId && read.shown.length ? lineRefs(read.threadId, read.shown) : [noneRef("murage")];
   return turnToolText(consumingThreadId, JSON.stringify(read.result.body), refs);
 }

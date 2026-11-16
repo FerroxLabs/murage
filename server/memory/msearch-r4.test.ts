@@ -13,10 +13,10 @@
 // by the shared FTS index over every document in it, denied documents included, so denied documents can move the ORDER of
 // readable results that tie or nearly tie by words. Closing it needs a per-scope index (the retention lane). One test below
 // pins that behaviour as known, so a change to it is noticed rather than assumed.
+import { openTestIndex, put } from "./testing/open-index.ts";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
@@ -26,7 +26,8 @@ import { MemoryIndex, type IndexedMemory } from "./index.ts";
 import { closeMemoryIndexReader, lexicalPage } from "./index-reader.ts";
 import { MEMORY_CURSOR_MAX_CHARS } from "./cursor-limits.ts";
 import { MAINTENANCE_MAX_DEFER_MS, MAINTENANCE_POLL_MS, maintenanceMayRun, type MaintenanceClock } from "./maintenance-schedule.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { recentMemoryHits } from "./recent.ts";
 import { pageByRank } from "./rank-ties.ts";
 import { setMemoryMode } from "./repository.ts";
@@ -70,13 +71,13 @@ function add(id: string, scope: string, text: string, readable: boolean, status 
   database().prepare("INSERT INTO memory_derivations VALUES('p-middle',1,?,1)").run(id);
 }
 const entry = (id: string, scopeId: string, text: string): IndexedMemory => ({ id, version: 1, scopeId, text, deleted: false });
-function world(records: IndexedMemory[], vectors: Record<string, number[]> = {}) {
+async function world(records: IndexedMemory[], vectors: Record<string, number[]> = {}) {
   closeMemoryIndexReader(); clearMemorySearchCache();
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
-  const index = new MemoryIndex(INDEX_PATH());
+  const index = await openTestIndex(INDEX_PATH());
   index.prepareModel("model");
-  index.upsert(records);
-  for (const record of records) if (vectors[record.id]) index.vector(record, "model", 0, vectors[record.id]);
+  await seedRows(index, records);
+  for (const record of records) if (vectors[record.id]) await index.vector(record, "model", 0, vectors[record.id]);
   return index;
 }
 /** The helper's real answer (answerQuery: eligibility, scan, lists) over a real index, as the worker gives it. */
@@ -90,45 +91,45 @@ function helper(index: MemoryIndex, vector: number[] | null): MemorySearchBridge
 const shown = (answer: Awaited<ReturnType<typeof searchMemory>>) => JSON.parse(JSON.stringify(answer));
 
 describe("P1: equal scores order by (score, record id, version), never by cache or write order", () => {
-  it("equal similarities order by record id whatever order the vectors were written in", () => {
+  it("equal similarities order by record id whatever order the vectors were written in", async () => {
     const records = ["m", "c", "x", "a"].map(id => entry(id, "s", "unrelated words"));
-    const index = world(records, Object.fromEntries(records.map(record => [record.id, [1, 0]])));
+    const index = await world(records, Object.fromEntries(records.map(record => [record.id, [1, 0]])));
     const found = index.search("nothing", records.map(record => ({ id: record.id, version: 1 })), [1, 0], "model", 20);
     expect(found.hits.map(hit => hit.id)).toEqual(["a", "c", "m", "x"]);
     expect(found.vectorRanked.map(ref => ref[0])).toEqual(["a", "c", "m", "x"]);
     index.close();
   });
 
-  it("crossing the vector cache's capacity does not reorder equal-score results", { tags: ["nightly"], timeout: 60_000 }, () => {
+  it("crossing the vector cache's capacity does not reorder equal-score results", { tags: ["nightly"], timeout: 60_000 }, async () => {
     // 12,001 vectors written one after another overflow the resident cache (it is dropped and reloaded in table order);
     // before, results that tie came out in whichever order the cache happened to hold them.
     const ids = ["tie-z", "tie-b", "tie-m"];
-    const small = world(ids.map(id => entry(id, "s", "alpha")), Object.fromEntries(ids.map(id => [id, [1, 0]])));
+    const small = await world(ids.map(id => entry(id, "s", "alpha")), Object.fromEntries(ids.map(id => [id, [1, 0]])));
     const resident = small.search("alpha", ids.map(id => ({ id, version: 1 })), [1, 0], "model", 20).hits.map(hit => hit.id);
     small.close();
     const filler = Array.from({ length: 12_000 }, (_, n) => entry(`zz-filler-${String(n).padStart(5, "0")}`, "s", "filler"));
     const records = [...ids.map(id => entry(id, "s", "alpha")), ...filler];
     closeMemoryIndexReader();
     for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
-    const big = new MemoryIndex(INDEX_PATH());
+    const big = await openTestIndex(INDEX_PATH());
     big.prepareModel("model");
-    big.upsert(records);
-    // one commit for the 12,003 writes: the cache sees them one after another all the same, and the run does not
-    // measure the disk's flush (each autocommit was a full fsync: past the 60 s limit on a hosted Windows runner, 4 s on macOS)
-    const file = (big as unknown as { db: DatabaseSync }).db;
-    file.exec("BEGIN");
-    for (const record of records) big.vector(record, "model", 0, ids.includes(record.id) ? [1, 0] : [0, 1]);
-    file.exec("COMMIT");
+    await seedRows(big, records);
+    // Checked vector writes own their transactions and update the cache in order.
+    for (let at = 0; at < records.length; at++) {
+      if (at % 32 === 0) await big.sealAndTruncate();
+      const record = records[at]!;
+      await big.vector(record, "model", 0, ids.includes(record.id) ? [1, 0] : [0, 1]);
+    }
     const crossed = big.search("alpha", ids.map(id => ({ id, version: 1 })), [1, 0], "model", 20).hits.map(hit => hit.id);
     big.close();
     expect(resident).toEqual(["tie-b", "tie-m", "tie-z"]);
     expect(crossed).toEqual(resident);
   });
 
-  it("equal word ranks order by record id however the rows were written, through the helper's list and the main process's page", () => {
+  it("equal word ranks order by record id however the rows were written, through the helper's list and the main process's page", async () => {
     const text = "harbour lantern notes for the Friday review";
     const ids = ["r-30", "r-10", "r-20"];
-    const index = world(ids.map(id => entry(id, "s", text)));
+    const index = await world(ids.map(id => entry(id, "s", text)));
     const helperList = index.search(QUERY, ids.map(id => ({ id, version: 1 })), null, "model", 20).lexicalRanked.map(ref => ref[0]);
     index.close();
     expect(helperList).toEqual(["r-10", "r-20", "r-30"]);
@@ -167,10 +168,10 @@ describe("P1: equal scores order by (score, record id, version), never by cache 
   it("a whole response is the same however the equal-score records were written", async () => {
     const scope = ensureScope("bot", "a");
     for (const id of ["t-b", "t-a", "t-c"]) add(id, scope, "harbour lantern notes", true);
-    const forward = world(["t-a", "t-b", "t-c"].map(id => entry(id, scope, "harbour lantern notes")), { "t-a": [1, 0], "t-b": [1, 0], "t-c": [1, 0] });
+    const forward = await world(["t-a", "t-b", "t-c"].map(id => entry(id, scope, "harbour lantern notes")), { "t-a": [1, 0], "t-b": [1, 0], "t-c": [1, 0] });
     const first = shown(await searchMemory(QUERY, accessOf(), helper(forward, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
     forward.close();
-    const backward = world(["t-c", "t-b", "t-a"].map(id => entry(id, scope, "harbour lantern notes")), { "t-c": [1, 0], "t-b": [1, 0], "t-a": [1, 0] });
+    const backward = await world(["t-c", "t-b", "t-a"].map(id => entry(id, scope, "harbour lantern notes")), { "t-c": [1, 0], "t-b": [1, 0], "t-a": [1, 0] });
     const second = shown(await searchMemory(QUERY, accessOf(), helper(backward, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
     backward.close();
     expect(first.hits.map((hit: { id: string }) => hit.id)).toEqual(["t-a", "t-b", "t-c"]);
@@ -190,12 +191,12 @@ describe("accepted residual: BM25 statistics are shared with denied documents", 
     const fillers = Array.from({ length: 6 }, (_, n) => ({ id: `filler-${n}`, text: `lantern light number ${n} over the quay` }));
     const readable = [{ id: "A", text: "alpha notes about the quay" }, { id: "B", text: "beta notes about the quay" }, ...fillers];
     for (const row of readable) add(row.id, scope, row.text, true);
-    const without = world(readable.map(row => entry(row.id, scope, row.text)));
+    const without = await world(readable.map(row => entry(row.id, scope, row.text)));
     const quiet = await searchMemory("alpha beta", accessOf(), helper(without, null), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
     without.close();
     const denied = Array.from({ length: 8 }, (_, n) => ({ id: `denied-${n}`, text: `alpha alpha alpha secret ${n}` }));
     for (const row of denied) add(row.id, scope, row.text, false);
-    const withDenied = world([...readable, ...denied].map(row => entry(row.id, scope, row.text)));
+    const withDenied = await world([...readable, ...denied].map(row => entry(row.id, scope, row.text)));
     const noisy = await searchMemory("alpha beta", accessOf(), helper(withDenied, null), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
     withDenied.close();
     expect(quiet.hits.map(hit => hit.id).slice(0, 2)).toEqual(["A", "B"]);
@@ -218,7 +219,7 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
       database().exec("BEGIN");
       for (let n = 0; n < count; n++) { const id = `denied-${String(n).padStart(5, "0")}`; add(id, scope, "x", false); records.push(entry(id, scope, "x")); }
       database().exec("COMMIT");
-      const index = world(records, vectors);
+      const index = await world(records, vectors);
       const answer = await searchMemory(QUERY, accessOf(), helper(index, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
       index.close();
       expect(answer.hits.map(hit => hit.id)).toEqual(["kept"]);
@@ -235,7 +236,7 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
     for (let n = 0; n < 300; n++) { const id = `a-denied-${String(n).padStart(4, "0")}`; add(id, scope, "x", false); records.push(entry(id, scope, "x")); }
     add("zz-waiting", scope, "harbour lantern waiting for its vector", true);
     records.push(entry("zz-waiting", scope, "harbour lantern waiting for its vector"));
-    const index = world(records, vectors);
+    const index = await world(records, vectors);
     const answer = await searchMemory(QUERY, accessOf(), helper(index, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
     index.close();
     expect(answer.coverageComplete).toBe(false);
@@ -248,7 +249,7 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
     database().exec("BEGIN");
     for (let n = 0; n < 1100; n++) { const id = `denied-${String(n).padStart(5, "0")}`; add(id, scope, "x", false); records.push(entry(id, scope, "x")); }
     database().exec("COMMIT");
-    const index = world(records, vectors);
+    const index = await world(records, vectors);
     const answer = await searchMemory(QUERY, accessOf(), helper(index, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
     index.close();
     expect(answer.hits.map(hit => hit.id)).toEqual(["kept"]);
@@ -258,7 +259,7 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
   /** Found by meaning only (its words do not match the query), so the scan over the chunks is what finds it. */
   const quiet = "quiet quay notes about the boats";
   /** Records past the first scan chunk: `denied` refused ones ahead of the readable one in id order. Chunks of 40 stand in for 12,000. */
-  function overChunk(denied: number, options: { keptLast?: boolean } = {}) {
+  async function overChunk(denied: number, options: { keptLast?: boolean } = {}) {
     eligibleLimits.chunk = 40;
     const scope = ensureScope("bot", "a");
     const records: IndexedMemory[] = [];
@@ -269,20 +270,20 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
     add(keptId, scope, quiet, true);
     records.push(entry(keptId, scope, quiet)); vector[keptId] = [0.6, 0.8];
     database().exec("COMMIT");
-    return { index: world(records, vector), keptId };
+    return { index: await world(records, vector), keptId };
   }
   /** The same reader and the same readable record with the refused ones gone (archived, so no longer eligible). */
   const alone = async () => {
     database().prepare("UPDATE memory_records SET state='archived' WHERE id LIKE 'a-denied-%'").run();
     const scope = ensureScope("bot", "a");
-    const index = world([entry("z-kept", scope, quiet)], { "z-kept": [0.6, 0.8] });
+    const index = await world([entry("z-kept", scope, quiet)], { "z-kept": [0.6, 0.8] });
     const answer = shown(await searchMemory(QUERY, accessOf(), helper(index, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
     index.close();
     return answer;
   };
 
   it("eligible records the reader may not read, past the resident chunk, change nothing it sees (before: semantic-capacity-paged, a cursor, a lost hit)", async () => {
-    const { index } = overChunk(130); // 130 refused records ahead of the readable one: four chunks of 40
+    const { index } = await overChunk(130); // 130 refused records ahead of the readable one: four chunks of 40
     const crowded = shown(await searchMemory(QUERY, accessOf(), helper(index, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
     index.close();
     const without = await alone();
@@ -294,7 +295,7 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
 
   it("a scan that stops before the end pages on only when a record the reader may read is past the stop", async () => {
     scanLimits.chunks = 2; // two chunks of 40 scanned; the readable record is in the fourth
-    const { index } = overChunk(130);
+    const { index } = await overChunk(130);
     const stopped = await searchMemory(QUERY, accessOf(), helper(index, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
     expect(stopped.degradedReason).toBe("semantic-capacity-paged");
     expect(stopped.coverageComplete).toBe(false);
@@ -311,7 +312,7 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
 
   it("a scan that stops before the end while only refused records remain issues no cursor and does not change coverage", async () => {
     scanLimits.chunks = 1;
-    const { index } = overChunk(130, { keptLast: false }); // the readable record sorts first; everything past the first chunk is refused
+    const { index } = await overChunk(130, { keptLast: false }); // the readable record sorts first; everything past the first chunk is refused
     const stopped = shown(await searchMemory(QUERY, accessOf(), helper(index, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
     index.close();
     expect(stopped.hits.map((hit: { id: string }) => hit.id)).toEqual(["0-kept"]);
@@ -320,13 +321,13 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
     expect(stopped.coverageComplete).toBe(true);
   }, 60_000);
 
-  it("the helper reports where its scan stopped and nothing else about the size of the eligible set", () => {
+  it("the helper reports where its scan stopped and nothing else about the size of the eligible set", async () => {
     scanLimits.chunks = 2;
     const scope = ensureScope("bot", "a");
     const records: IndexedMemory[] = [];
     for (let n = 0; n < 130; n++) { const id = `r-${String(n).padStart(4, "0")}`; add(id, scope, "x", true); records.push(entry(id, scope, "x")); }
     eligibleLimits.chunk = 40;
-    const index = world(records, Object.fromEntries(records.map(record => [record.id, [1, 0]])));
+    const index = await world(records, Object.fromEntries(records.map(record => [record.id, [1, 0]])));
     const eligibility = new MemoryEligibility(join(DATA_DIR, "messages.db"));
     const access = accessOf();
     const input: MemorySearchInput = { query: QUERY, scopeIds: [...access.scopeIds], policyRevision: access.policyRevision, deletionEpoch: access.deletionEpoch, historical: false, cursor: "", limit: 10, semantic: true };
@@ -342,7 +343,7 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
     const scope = ensureScope("bot", "a"), other = ensureScope("bot", "b");
     add("kept", scope, kept, true);
     const failing: MemorySearchBridge = { search: async () => { throw new Error("MEMORY_WORKER_EXITED"); } };
-    const index = world([entry("kept", scope, kept)]);
+    const index = await world([entry("kept", scope, kept)]);
     const quiet = shown(await searchMemory(QUERY, accessOf(), failing, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 }));
     expect(quiet.coverageComplete).toBe(true);
     // somebody else's record is still owed its projection, and so is a record of this reader's that it may not read
@@ -359,7 +360,7 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
     expect(behind.coverageComplete).toBe(false);
   });
 
-  it("what other readers write cannot push this reader's unindexed records out of the recent fallback's window", () => {
+  it("what other readers write cannot push this reader's unindexed records out of the recent fallback's window", async () => {
     const scope = ensureScope("bot", "a"), other = ensureScope("bot", "b");
     add("mine", scope, "harbour lantern notes", true, "pending");
     database().exec("BEGIN");
@@ -371,7 +372,7 @@ describe("P1: coverage, paging and cursors are decided over records the reader m
   it("profile timings are private telemetry, not part of the answer", async () => {
     const scope = ensureScope("bot", "a");
     add("kept", scope, kept, true);
-    const index = world([entry("kept", scope, kept)]);
+    const index = await world([entry("kept", scope, kept)]);
     let service: unknown;
     const answer = await searchMemory(QUERY, accessOf(), helper(index, null), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", profile: true, telemetry: facts => { service = (facts as { service?: unknown }).service; } });
     index.close();
@@ -407,23 +408,23 @@ describe("P2: cursors are stateless, so no reader's tokens can evict another's",
 
 describe("P2: a merge a deletion owes is durable and cannot be starved", () => {
   const rolled = (version: number) => ({ id: "checkpoint:t", version, scopeId: "s", text: "", deleted: true, rolled: true });
-  const seed = (index: MemoryIndex) => index.upsert([1, 2, 3, 4].map(version => ({ id: "checkpoint:t", version, scopeId: "s", text: `Working evidence: version ${version}`, deleted: false })));
+  const seed = async (index: MemoryIndex) => await put(index, [1, 2, 3, 4].map(version => ({ id: "checkpoint:t", version, scopeId: "s", text: `Working evidence: version ${version}`, deleted: false })));
 
-  it("the obligation survives a restart and is cleared only when the merge has run", () => {
+  it("the obligation survives a restart and is cleared only when the merge has run", async () => {
     const root = mkdtempSync(join(tmpdir(), "memory-merge-owed-")), path = join(root, "index.db");
     try {
-      const first = new MemoryIndex(path);
-      seed(first);
-      first.upsert([rolled(1), rolled(2)]);
+      const first = await openTestIndex(path);
+      await seed(first);
+      await put(first, [rolled(1), rolled(2)]);
       expect(first.maintenanceOwed()).toBe(true);
       first.close(); // the app stops before the stepped maintenance ran
-      const second = new MemoryIndex(path);
+      const second = await openTestIndex(path);
       expect(second.maintenanceOwed()).toBe(true);
       let steps = 0;
-      while (!second.purgeRolledCheckpoints().done) if (++steps > 10_000) throw new Error("the stepped maintenance did not finish");
+      while (!(await second.purgeRolledCheckpoints()).done) if (++steps > 10_000) throw new Error("the stepped maintenance did not finish");
       expect(second.maintenanceOwed()).toBe(false);
       second.close();
-      const third = new MemoryIndex(path);
+      const third = await openTestIndex(path);
       expect(third.maintenanceOwed()).toBe(false);
       third.close();
     } finally { removeTempDirSync(root); }
@@ -454,3 +455,19 @@ describe("P2: the helper-memory gate fails when nothing was measured", () => {
     expect(workerMemoryGate({ workerPeakRssBytes: 400_000_000, workerRssSamples: 12 }, limit).ok).toBe(true);
   });
 });
+
+/** Seed in small groups, servicing the checked writer before the next group. */
+async function seedRows(index: MemoryIndex, rows: Parameters<MemoryIndex["applyBatch"]>[0]) {
+  for (let at = 0; at < rows.length;) {
+    await index.sealAndTruncate();
+    for (let steps = 0; index.segmentCount() > 48; steps++) {
+      if (steps === 5000 || index.stopInfo()) throw new Error("fixture segment gate did not clear");
+      const step = await index.maintenanceStep();
+      if (step.drain) await index.sealAndTruncate();
+    }
+    // Each inserted row can flush a segment. Leave the next gate check between batches.
+    const count = Math.min(16, 49 - index.segmentCount());
+    await put(index, rows.slice(at, at + count));
+    at += count;
+  }
+}

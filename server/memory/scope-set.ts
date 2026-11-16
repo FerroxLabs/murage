@@ -44,6 +44,7 @@ export function fitsInline(ids: readonly string[], maxIds = SCOPE_PART_IDS): boo
 
 /** Sends one search: inline when the scopes fit one message, else bounded `scopes` messages and then the query by count. */
 export function sendSearch(send: (message: Serializable) => void, requestId: string, input: MemorySearchInput, maxIds = SCOPE_PART_IDS): void {
+  if (input.view) { send({type:'query',requestId,input});return; }
   if (fitsInline(input.scopeIds, maxIds)) { send({ type: "query", requestId, input }); return; }
   if (input.scopeIds.length > SCOPE_SET_MAX) throw new Error("MEMORY_SCOPE_SET_TOO_LARGE");
   for (const [part, ids] of splitScopeIds(input.scopeIds, maxIds).entries()) send({ type: "scopes", requestId, part, ids });
@@ -66,6 +67,7 @@ export class ScopeAssembler {
   }
   /** The query's full scope list, and the parts forgotten. A query that names no count has its scopes inline. */
   resolve(requestId: string, input: MemorySearchInput): MemorySearchInput {
+    if(input.view) { if(this.held.has(requestId)) {this.held.delete(requestId);throw new Error('view with scope parts');} if(!input.reader || input.scopeCount!==undefined || input.scopeIds.length)throw new Error('invalid view binding');return input; }
     const count = input.scopeCount, entry = this.held.get(requestId);
     this.held.delete(requestId);
     if (count === undefined) { if (entry) throw new Error("scope parts without a count"); return input; }

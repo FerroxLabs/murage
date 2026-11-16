@@ -79,9 +79,16 @@ export function roomTranscriptWithoutMemory(allowance: LineageAllowance, threadI
   // A last resort for a non-owner audience (`reader`): the lines that reader would be refused at the send fence are dropped here too, before
   // the early return below, so a thread with nothing memory-made still gets an explicit floor. Only ever withholds more.
   const audDrop = options.reader?.audience ? audienceDrops(threadId, candidates, options.reader) : undefined;
+  // During the write-time migration, the row can already prove memory use
+  // before the legacy reader is retired. Keep that proof at this floor too.
+  const unprovenDrop = new Set(unprovenInOwnerRoom ? candidates.filter(m => m.role !== "user" && (
+    messageMadeWithMemory(threadId, m.id) || Boolean(database().prepare(`SELECT 1 FROM memory_line_lineage l
+      JOIN memory_thread_no t ON t.no=l.thread_no WHERE t.thread_id=? AND l.message_id=?
+      AND (l.mem_lsn IS NOT NULL OR l.footprint IS NOT NULL) LIMIT 1`).get(threadId, m.id))
+  )).map(m => m.id) : []);
   if (!database().prepare("SELECT 1 FROM memory_disclosures WHERE thread_id=? LIMIT 1").get(threadId) && !candidates.some(m => m.copyOf)
     && !threadHoldsMemoryLines(threadId)
-    && !threadHasForgottenSource(threadId)) {
+    && !threadHasForgottenSource(threadId) && !unprovenDrop.size) {
     if (!audDrop) return undefined;
     return { messages: candidates.filter(m => !audDrop.has(m.id)), withheld: new Set(), forgotten: new Set(), checking: new Set(), checked: new Set(candidates.map(m => m.id)) };
   }
@@ -91,7 +98,7 @@ export function roomTranscriptWithoutMemory(allowance: LineageAllowance, threadI
   for (const m of candidates) if (m.role !== "user" && !withheld.has(m.id) && messageSourceForgotten(threadId, m.id)) { withheld.add(m.id); checking.delete(m.id); }
   // Words nobody proved are the owner's, in the owner's room, with no memory
   // access to check a reply against: no reply made with memory is shown.
-  if (unprovenInOwnerRoom) for (const m of candidates) if (m.role !== "user" && messageMadeWithMemory(threadId, m.id)) { withheld.add(m.id); checking.delete(m.id); }
+  for (const id of unprovenDrop) { withheld.add(id); checking.delete(id); }
   if (audDrop) for (const id of audDrop) { withheld.add(id); checking.delete(id); }
   const checked = new Set(candidates.map(m => m.id));
   if (!ownerAudience) return { messages: candidates.filter(m => !withheld.has(m.id)), withheld: new Set(), forgotten: new Set(), checking: new Set(), checked };

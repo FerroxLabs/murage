@@ -11,6 +11,7 @@
 //     later carries the turn on.
 //
 // HEADLESS ONLY: a throwaway temp HOME and a probed port, clear of 8799.
+import { fixturePlatformEnv, stopFixtureServer } from "./testing/platform-fixtures.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -32,6 +33,10 @@ let home: string;
 let stderr = "";
 
 const request = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
+  if (path.endsWith('/respond') && body && typeof body === 'object') {
+    const answer = body as { requestId?: unknown; behavior?: unknown };
+    if (typeof answer.requestId === 'string' && /^[pq]\./.test(answer.requestId) && (answer.behavior === 'allow' || answer.behavior === 'deny')) body = { requestHandle: answer.requestId, action: answer.behavior };
+  }
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { ...desktopHeaders, ...(body ? { "content-type": "application/json" } : {}) },
@@ -39,7 +44,7 @@ const request = async (method: string, path: string, body?: unknown): Promise<{ 
   });
   return { status: res.status, body: await res.json().catch(() => null) };
 };
-const threadMessages = async (threadId: string) => ((await request("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []) as any[];
+const threadMessages = async (threadId: string) => (((await request("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []) as any[]).map(message => message.card?.requestHandle ? { ...message, card: { ...message.card, requestId: message.card.requestHandle } } : message);
 const cardFor = async (threadId: string) =>
   (await threadMessages(threadId)).find((m) => m.kind === "options" && m.card?.requestId) ?? null;
 const runState = async (id: string) => (await request("GET", "/api/routines")).body.runs.find((run: any) => run.id === id);
@@ -65,8 +70,9 @@ async function makeBot(name: string) {
 let serverPort = 0;
 async function startServer() {
   child = spawn(process.execPath, ["--import", pathToFileURL(join(home, "fake-engine-setup.mjs")).href, join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
-    env: {
+    env: { ...fixturePlatformEnv(),
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
       HOME: home,
       USERPROFILE: home,
@@ -75,7 +81,7 @@ async function startServer() {
       MURAGE_WEBHOOK_PORT: String(serverPort + 1),
       MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
     },
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
   child.stderr!.on("data", (c) => (stderr += c));
   const deadline = Date.now() + 20_000;
@@ -92,7 +98,7 @@ async function startServer() {
 
 const errorRows = (messages: any[]) => messages.filter((m) => m.kind === "activity" && String(m.tool?.name ?? "").startsWith("error:"));
 
-describe.skipIf(process.platform === "win32")("an unanswered approval in a routine run", () => {
+describe("an unanswered approval in a routine run", () => {
   beforeAll(async () => {
     const port = await freePortBlock([0, 1], 18_899, 200);
     base = `http://127.0.0.1:${port}`;
@@ -117,7 +123,7 @@ describe.skipIf(process.platform === "win32")("an unanswered approval in a routi
   }, 40_000);
 
   afterAll(async () => {
-    await waitForExit(child, { signal: "SIGTERM" });
+    await stopFixtureServer(child);
     await removeTempDir(home);
   });
 

@@ -6,9 +6,12 @@
 // the proxy returned an allow with no answers, and the model was told "The
 // user did not answer the questions" while nobody had been asked. So every
 // bot here runs with autoApprove on and autoReview enforce.
+import { fixtureDisplayApi, fixtureExecutionMessage } from "./testing/display-fixture.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
+
+import { redactSecrets } from "./redact.ts";
 
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 
@@ -16,7 +19,7 @@ let fixture: VerificationServer;
 let model: string;
 let headers: Record<string, string> = {};
 
-const api = async (method: string, path: string, body?: unknown) => {
+const api = fixtureDisplayApi(() => join(fixture.info.dataDir, "messages.db"), async (method: string, path: string, body?: unknown) => {
   const response = await fetch(fixture.info.url + path, {
     method,
     headers: { ...headers, "content-type": "application/json" },
@@ -24,13 +27,15 @@ const api = async (method: string, path: string, body?: unknown) => {
   });
   const text = await response.text();
   return { status: response.status, body: (text ? JSON.parse(text) : {}) as any };
-};
+});
 const messages = async (threadId: string) =>
   (await api("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages as any[];
 const transcript = async (threadId: string) => JSON.stringify(await messages(threadId));
 /** The open (or last) question card on a thread. */
 const questionCard = async (threadId: string) =>
   (await messages(threadId)).filter((message) => message.card?.questions?.length).at(-1);
+// The decision sink redacts every string (REDACT-SINKS, 5fdb0c9a0c),
+// including UUIDs whose digit groups happen to match a financial identifier.
 const decisions = (): any[] => {
   const path = join(fixture.info.dataDir, "decisions.ndjson");
   if (!existsSync(path)) return [];
@@ -137,8 +142,8 @@ it("shows a question card in auto mode instead of auto-approving it", async () =
   // the audit keeps that the card was SHOWN, and nothing that says anyone or
   // anything approved it
   // the audit line is appended in the background; wait for it, never race it
-  await expect.poll(() => decisions().filter((row) => row.requestId === card.card.requestId).map((row) => row.decision), { timeout: 15_000 }).toEqual(["card-shown"]);
-  const rows = decisions().filter((row) => row.requestId === card.card.requestId);
+  await expect.poll(() => decisions().filter((row) => row.requestId === redactSecrets(card.card.requestId)).map((row) => row.decision), { timeout: 15_000 }).toEqual(["card-shown"]);
+  const rows = decisions().filter((row) => row.requestId === redactSecrets(card.card.requestId));
   expect(rows[0]).toMatchObject({ source: "question", tool: "AskUserQuestion" });
   expect(decisions().some((row) => row.decision === "auto-approved")).toBe(false);
   // autoReview is "enforce", and it still never asked a model to answer this
@@ -174,11 +179,13 @@ it("delivers the owner's answers to the engine exactly as they were chosen", asy
   // the card keeps what was chosen, so the transcript shows it read-only
   const settled = (await messages(bot.threadId)).find((message) => message.card?.requestId === card.card.requestId);
   expect(settled.card.answered).toBe("answer");
-  expect(settled.card.answers).toEqual(ANSWERS);
+  // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428:
+  // Native answer values are storage evidence; the public view omits them.
+  expect(fixtureExecutionMessage(settled).card.answers).toEqual(ANSWERS);
   expect(settled.card.expired).toBeFalsy();
   // An answer is conversation, not authorization. The audit keeps only that
   // the card was shown — never an approval, and never the answer itself.
-  await expect.poll(() => decisions().filter((row) => row.requestId === card.card.requestId).map((row) => row.decision), { timeout: 15_000 }).toEqual(["card-shown"]);
+  await expect.poll(() => decisions().filter((row) => row.requestId === redactSecrets(card.card.requestId)).map((row) => row.decision), { timeout: 15_000 }).toEqual(["card-shown"]);
   expect(JSON.stringify(decisions())).not.toContain("Intro");
 }, 40000);
 
@@ -234,7 +241,7 @@ it("skips a question as soon as the card is closed, instead of leaving the bot w
   expect(said).not.toContain("Couldn't deliver that answer");
   expect(said).not.toContain("best judgment");
   // the audit line is appended in the background; wait for it, never race it
-  await expect.poll(() => decisions().some((row) => row.requestId === card.card.requestId && row.decision === "question-skipped"), { timeout: 15_000 }).toBe(true);
+  await expect.poll(() => decisions().some((row) => row.requestId === redactSecrets(card.card.requestId) && row.decision === "question-skipped"), { timeout: 15_000 }).toBe(true);
 }, 40000);
 
 it("Stop expires an open question, and it still gets a late answer to the bot", async () => {
@@ -249,7 +256,7 @@ it("Stop expires an open question, and it still gets a late answer to the bot", 
   expect(expired.card.answered).toBe("expired");
   expect(expired.card.questions).toHaveLength(2);
   expect(expired.card.dismissed).toBeFalsy();
-  await expect.poll(() => decisions().some((row) => row.requestId === requestId && row.decision === "question-expired"), { timeout: 15_000 }).toBe(true);
+  await expect.poll(() => decisions().some((row) => row.requestId === redactSecrets(requestId) && row.decision === "question-expired"), { timeout: 15_000 }).toBe(true);
 
   // an expired question takes no engine answer — it says so, in a way the
   // card can act on rather than a flat failure
@@ -275,7 +282,8 @@ it("Stop expires an open question, and it still gets a late answer to the bot", 
 
   const after = (await messages(bot.threadId)).find((message) => message.card?.requestId === requestId);
   expect(after.card.sentAsMessage).toBe(true);
-  expect(after.card.answers).toEqual(ANSWERS);
+  // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: exact values remain a durable storage assertion.
+  expect(fixtureExecutionMessage(after).card.answers).toEqual(ANSWERS);
   // recording it twice would post the answer twice
   expect((await api("POST", `/api/threads/${bot.threadId}/respond`, { requestId, behavior: "answer", answers: ANSWERS, sentAsMessage: true })).status).toBe(409);
   expect(await transcript(bot.threadId)).toContain("A: Intro, Findings");
@@ -303,5 +311,5 @@ it("marks a question left open by a previous run as expired, never silently drop
   // it kept its questions, so the card can still be filled in and sent
   expect(swept.card.questions).toHaveLength(2);
   expect(swept.card.dismissed).toBeFalsy();
-  await expect.poll(() => decisions().some((row) => row.requestId === requestId && row.decision === "question-expired"), { timeout: 15_000 }).toBe(true);
+  await expect.poll(() => decisions().some((row) => row.requestId === redactSecrets(requestId) && row.decision === "question-expired"), { timeout: 15_000 }).toBe(true);
 }, 60000);

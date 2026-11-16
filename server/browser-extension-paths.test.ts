@@ -11,7 +11,7 @@ describe("Fable L4 and L5: registration and socket files live in the data folder
     expect(browserExtensionRuntimeDir({ dataDir: "/home/ann/.murage", platform: "linux", env: {} })).toBe("/home/ann/.murage/bx-run");
   });
   it("fits a real Mac data folder, so the socket stays out of /tmp there too", () => {
-    expect(browserExtensionRuntimeDir({ dataDir: "/Users/alex/Library/Application Support/murage", platform: "darwin", env: {} })).toBe("/Users/alex/Library/Application Support/murage/bx-run");
+    expect(browserExtensionRuntimeDir({ dataDir: "/Users/fixture/Library/Application Support/murage", platform: "darwin", env: {} })).toBe("/Users/fixture/Library/Application Support/murage/bx-run");
   });
   it("never names a predictable /tmp or %TEMP% folder for the default case", () => {
     for (const platform of ["linux", "darwin", "win32"] as const) expect(browserExtensionRuntimeDir({ dataDir: platform === "win32" ? "C:\\Users\\ann\\AppData\\Roaming\\murage" : "/home/ann/.murage", platform, env: {} })).not.toMatch(/^\/tmp|Temp|TEMP/);
@@ -83,3 +83,5 @@ describe.skipIf(process.platform === "win32")("L5: the fallback folder is the us
     } finally { cleanup(); }
   });
 });
+
+// secret-scan: fixture (generic /Volumes/Fixture and /Users/fixture paths only; no host data)
