@@ -49,9 +49,10 @@ const judge = (bot: AutoApprover, call: Call, turn: AutoContext): LevelCell => {
 };
 // 1.0.20 (NOLIMITS-MEANS-IT slice 2): today's No limits, the 1.0.20 lane off (its rows: nolimits-means-it-1020.test.ts)
 const OWNER_TURN: AutoContext = { fullAccessOrigin: "owner", ownerStarted: true, noPreRunSeamAtNoLimits: true };
-const WEBHOOK_TURN: AutoContext = { fullAccessOrigin: "other", unattended: true, automated: true };
-const CHANNEL_TURN: AutoContext = { unattended: true, automated: true, channelOwner: true };
-const ROUTINE_TURN: AutoContext = { routineLevel: true, automated: true };
+const WEBHOOK_TURN: AutoContext = { noLimitsOrigin: "webhook", fullAccessOrigin: "other", unattended: true, automated: true };
+const CHANNEL_TURN: AutoContext = { fullAccessOrigin: "owner-channel", unattended: true, automated: true, channelOwner: true };
+// MAIN RULING 2026-11-13 wipe-only: the routine is authenticated and each matrix ceiling is an explicit owner choice.
+const ROUTINE_TURN: AutoContext = { fullAccessOrigin: "routine", routineLevel: true, automated: true };
 const ordinary = bash("ls -la");
 const stopCalls = [...OWNER_CALLS["someone-new-or-public"], ...OWNER_CALLS["delete-outside"], ...OWNER_CALLS.pay];
 
@@ -80,15 +81,16 @@ describe("a routine run", () => {
   for (const level of LEVEL_IDS) for (const ceiling of ROUTINE_PERMISSION_MODES) {
     it(`ceiling ${ceiling} at ${level}: runs at the lower of the two`, () => {
       expect(routine.ordinary[level]).toBe("lower-of-ceiling");
-      const bot = atLevel(level), mode = effectiveRoutinePermissionMode({ permissionMode: ceiling }, bot);
+      const bot = atLevel(level), mode = effectiveRoutinePermissionMode({ permissionMode: ceiling, permissionExplicit: true }, bot);
       expect(ROUTINE_PERMISSION_MODES.indexOf(mode)).toBe(Math.min(ROUTINE_PERMISSION_MODES.indexOf(ceiling), LEVEL_IDS.indexOf(level)));
       expect(judge(applyRoutinePermissionMode(bot, mode), ordinary, ROUTINE_TURN)).toBe(mode === "ask" ? "asks" : "goes-ahead");
     });
     it(`ceiling ${ceiling} at ${level}: the stop line asks unless allowed for the routine, never for a payment`, () => {
-      expect(routine.stopLine[level]).toBe("asks-unless-routine-grant");
-      const bot = atLevel(level), judged = applyRoutinePermissionMode(bot, effectiveRoutinePermissionMode({ permissionMode: ceiling }, bot));
+      // MAIN RULING 2026-11-13 wipe-only: a routine's non-wipe stop line is lifted only at an effective No limits level.
+      expect(routine.stopLine[level]).toBe(level === "unlimited" ? "lower-of-ceiling" : "asks-unless-routine-grant");
+      const bot = atLevel(level), judged = applyRoutinePermissionMode(bot, effectiveRoutinePermissionMode({ permissionMode: ceiling, permissionExplicit: true }, bot));
       for (const call of stopCalls) {
-        expect(judge(judged, call, ROUTINE_TURN), call.summary).toBe("asks");
+        expect(judge(judged, call, ROUTINE_TURN), call.summary).toBe(judged.noLimits ? "goes-ahead" : "asks");
         const hit = classifyStopLine(call.tool, call.input, call.summary, place)!, key = stopLineKey(hit);
         if (hit.kind === "pay") { expect(key === undefined || !durableGrantAllowed(key), key).toBe(true); continue; }
         expect(key && isStopLineKey(key)).toBeTruthy();
@@ -108,14 +110,28 @@ describe("the owner's message from a channel", () => {
   });
 });
 
-describe("anyone else's channel message, or a webhook", () => {
+describe("a webhook from another app", () => {
   const other = OTHER_ROWS.find(row => row.id === "other-channel-or-webhook")!;
   for (const level of LEVEL_IDS) it(`${level}`, () => {
-    expect([other.ordinary[level], other.stopLine[level]]).toEqual(["asks", "asks"]);
+    // MAIN RULING SEAN 11-12 / 11-14 inherited No limits: webhooks use the bot level; guest messages stay Ask.
+    const expected = level === "unlimited" ? "goes-ahead" : "asks";
+    expect([other.ordinary[level], other.stopLine[level]]).toEqual([expected, expected]);
     const bot = atLevel(level, { fullAccessChannelMessages: true });
-    expect(judge(bot, ordinary, WEBHOOK_TURN)).toBe("asks");
-    for (const call of stopCalls) expect(judge(bot, call, WEBHOOK_TURN), call.summary).toBe("asks");
+    expect(judge(bot, ordinary, WEBHOOK_TURN)).toBe(expected); // MAIN RULING SEAN 11-12 / 11-14 inherited No limits
+    for (const call of stopCalls) expect(judge(bot, call, WEBHOOK_TURN), call.summary).toBe(expected); // MAIN RULING SEAN 11-12 / 11-14 inherited No limits
     // the row's note: its own folder still goes
     expect(judge(bot, OWNER_CALLS["write-own-folder"][0]!, WEBHOOK_TURN)).toBe("goes-ahead");
+  });
+});
+
+// The old combined row included a different audience. Preserve its Ask checks.
+describe("other people's channel messages", () => {
+  const other = OTHER_ROWS.find(row => row.id === "guest-channel")!;
+  for (const level of LEVEL_IDS) it(level, () => {
+    expect([other.ordinary[level], other.stopLine[level]]).toEqual(["asks", "asks"]);
+    const bot = atLevel(level, { fullAccessChannelMessages: true });
+    const guest: AutoContext = { fullAccessOrigin: "other", noLimitsOrigin: "other-human", unattended: true };
+    expect(judge(bot, ordinary, guest)).toBe("asks");
+    for (const call of stopCalls) expect(judge(bot, call, guest), call.summary).toBe("asks");
   });
 });

@@ -1,0 +1,4 @@
+RED skip-launcher-cleanup: tests rejected mutant (exit 1)
+RED accept-junction: tests rejected mutant (exit 1)
+RED compare-only-exe: tests rejected mutant (exit 1)
+RED accept-reparse-powershell: actual PowerShell ancestor guard rejected mutant

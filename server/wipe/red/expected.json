@@ -1,0 +1,3566 @@
+{
+  "T1": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T2": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T3": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T4": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T5": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T6": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T7": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T8": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T9": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T10": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T11": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T12": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T13": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T14": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T15": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T16": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T17": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T18": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T19": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T20": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T21": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T22": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T23": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T24": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T25": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T26": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T27": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T28": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T29": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T30": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T31": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T32": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T33": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T34": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W1": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W2": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W3": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W4": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W5": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W6": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W7": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W8": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W9": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W10": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W11": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W12": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W13": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W14": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W15": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W16": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W17": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W18": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W19": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W20": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W21": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W22": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W23": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N1": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N2": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N3": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N4": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N5": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N6": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N7": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N10": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M1": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M2": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M3": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M4": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M5": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M6": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M7": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M8": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M9": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M10": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M11": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M12": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M13": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M14": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "Y1": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "Y2": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "Y3": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "Y4": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "Y5": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "Y6": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "Y7": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "Y8": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P1": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P2": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P3": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P4": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P5": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P6": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P7": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P8": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P9": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P10": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P11": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P12": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P13": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P15": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "C1": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "C2": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "C3": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "C4": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "C5": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "C6": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "C7": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "C8": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "C9": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "D1": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "D2": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "D3": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "D4": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "D5": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "D6": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "D7": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "D8": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "D9": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "D10": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "D11": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "D12": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N8": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N9": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P14": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N11": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R1-H1a": {
+    "df48": "FAIL-assert",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R1-H1b": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R1-H1c": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R1-H1d": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R1-H3a": {
+    "df48": "FAIL-assert",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R1-H3b": {
+    "df48": "FAIL-assert",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R2-H1a": {
+    "df48": "observed",
+    "b8e1": "FAIL-assert",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R2-H1b": {
+    "df48": "observed",
+    "b8e1": "FAIL-assert",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R2-H1c": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R2-H1d": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R1-H2a": {
+    "df48": "FAIL-assert",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R1-H2b": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R1-H4": {
+    "df48": "FAIL-assert",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R1-H5": {
+    "df48": "FAIL-assert",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R2-H2a": {
+    "df48": "observed",
+    "b8e1": "FAIL-assert",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R2-H2b": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R2-H2c": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R2-H2d": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X1": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X2": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X3": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X4": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X5": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X6": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X7": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X8": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X9": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X10": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R2-H2a-fixture": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R2-H2b-effects": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X11": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X12": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X13": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F1": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F2": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F3": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F4": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "G1": {
+    "df48": "PASS",
+    "b8e1": "PASS",
+    "c1": "PASS",
+    "head": "PASS",
+    "rd1": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "G2": {
+    "df48": "PASS",
+    "b8e1": "PASS",
+    "c1": "PASS",
+    "head": "PASS",
+    "rd1": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "G3": {
+    "df48": "PASS",
+    "b8e1": "PASS",
+    "c1": "PASS",
+    "head": "PASS",
+    "rd1": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "G4": {
+    "df48": "PASS",
+    "b8e1": "PASS",
+    "c1": "PASS",
+    "head": "PASS",
+    "rd1": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "G5": {
+    "df48": "PASS",
+    "b8e1": "PASS",
+    "c1": "PASS",
+    "head": "PASS",
+    "rd1": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "G6": {
+    "df48": "PASS",
+    "b8e1": "PASS",
+    "c1": "PASS",
+    "head": "PASS",
+    "rd1": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "R2-H3": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "FAIL-assert",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F5-context": {
+    "df48": "observed",
+    "b8e1": "observed",
+    "c1": "observed",
+    "head": "PASS",
+    "rd1": "observed",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "E1 E2 E3 E4 patchBot publishes only changed task roots: add": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "E1 E2 E3 E4 patchBot publishes only changed task roots: remove": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "E1 E2 E3 E4 patchBot publishes only changed task roots: change": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "E1 E2 E3 E4 patchBot publishes only changed task roots: cosmetic": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "E5 bot cwd publishes independently": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "E7 E8 postcommit errors publish the live normalized roots: true": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "E7 E8 postcommit errors publish the live normalized roots: false": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "E9 deleteTask postcommit error removes the live root": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F5 F6 H1 parser fault retains executable semantics: echo hi": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F5 F6 H1 parser fault retains executable semantics: echo \"rm -rf /\"": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F5 F6 H1 parser fault retains executable semantics: rm /": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F5 F6 H1 parser fault retains executable semantics: mv ./a /work/project": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F5 F6 H1 parser fault retains executable semantics: rm -rf /work/project": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F7 double checker fault remains distinct from a wipe": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "K1 actual mount inventory, including bind and virtual filesystems": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "K2 actual mount inventory, including bind and virtual filesystems": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "K3 actual mount inventory, including bind and virtual filesystems": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "K4 actual mount inventory, including bind and virtual filesystems": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H3-tmpfs actual mount inventory, including bind and virtual filesystems": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H3-bind actual mount inventory, including bind and virtual filesystems": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H3-removed actual mount inventory, including bind and virtual filesystems": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "K6 mount pathname fallback is reserved for filesystem errors": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "DELTA11 expected matrix names assertion failures and every commit cell": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "DELTA12 removes the equivalent mutant and names the v2 killers": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "DELTA14 English card inventory accompanies the isolated verification recipe": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M15 rm -Q /work/project": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M16 mv -t /work/project ./a": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M17 mv -Q -t /work/project ./a": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M18 mv -Q ./a /work/project": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M19 mv -Q /work/project ./a": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "Y9 rsync -a --delete ./e/ ~/ -e ssh": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "Y10 rsync -Q -a --delete /work/project /tmp/out": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W24 find /work/project -name '*' -delete": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W25 find . -name cache -exec rm -rf /work/other \\;": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W26 find ~ ! -name keep -delete": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W27 find ~ -name '*.tmp' -o -name '*.bak' -delete": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "PASS",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W28 find /work/project -regex '.*' -delete": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "W29 find /work/project -name '*.o' -exec rm -f {} +": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H2-root find /work/project -name project -exec rm -rf {} +": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "S1 (cd /tmp); rm -rf *": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "S2 (cd /tmp && rm -rf *)": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "S4 cd /tmp | true; rm -rf *": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "S8 cat <<EOF\n$(rm -rf ~)\nEOF": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "S9 cat <<'EOF'\n$(rm -rf ~)\nEOF": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "S10 cd /tmp/nonexist; rm -rf *": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "S11 cd /tmp/x && rm -rf *": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "S12 cd /tmp/x || exit 1; rm -rf *": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H4-candidates cd /tmp/a; cd /tmp/b; cd /tmp/c; cd /tmp/d; cd /tmp/e; rm -rf .": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H4-background cd /tmp & rm -rf .": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5-rsync-short rsync -an --delete ./empty/ /work/project/": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5-rsync-long rsync -a --dry-run --delete ./empty/ /work/project/": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "D13 Initialize-Disk -Number 1": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "D14 diskutil partitionDisk disk2 GPT APFS X 0": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "T35 rm -f /etc": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L9 rm -rf \u2215home\u2215u": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P16 Rename-Item C:\\Users\\u old-u": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P17 Rename-Item .\\a.txt b.txt": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P18 Remove-Item -Recurse -Path C:\\tmp\\x,C:\\Users": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P19 Remove-Item -Recurse -Path 'C:\\tmp\\x,C:\\Users'": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P20 Remove-Item -Recurse -LiteralPath C:\\Users\\u\\*": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P21 Remove-Item -Recurse -Path C:\\Users\\u\\*": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P22 Get-Item C:\\Users\\u | Remove-Item -Recurse -Force": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P23 Get-Item .\\build | Remove-Item -Recurse": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P24 Move-Item -Path C:\\a,C:\\Users\\u -Destination D:\\x": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5-whatif Remove-Item C:\\Users\\u -Recurse -WhatIf": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5-whatif-false Remove-Item C:\\Users\\u -Recurse -WhatIf:$false": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "C10 cmd rename moves the source root": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N11 depth 17 echo hi": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N11 depth 17 echo \"rm -rf /\"": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N11 depth 17 rm /": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N11 depth 17 mv ./a /work/project": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N11 depth 17 rm -rf ~": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F2 target filesystem faults use lexical evidence": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F3 readable 65 MiB command runs without a size gate": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F3b a wipe after 65 MiB remains visible": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L1 symlink operation follows only when required": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L2 symlink operation follows only when required": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L3 symlink operation follows only when required": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L4 symlink operation follows only when required": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L5 native unlink does not follow its final symlink": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X14 native admission preserves semantics": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X16 native admission preserves semantics": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X18 native admission preserves semantics": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X20 native admission preserves semantics": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X21 native admission preserves semantics": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X15 native release preserves semantics": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X17 native release preserves semantics": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X19 native release preserves semantics": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X14-extract explicit false survives directory extraction": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 robocopy list-only does not mutate its destination": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H4 caller glob expansion precedes a wrapper chdir": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L6 nonexistent differently cased targets run": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L8 nonexistent differently cased targets run": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L7 case aliases use filesystem identity, never spelling alone": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L10 macOS static link spelling remains protected": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "K7 H3 new same-device bind mounts are detected before inventory refresh": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "K8 P-6 ordinary admissions never refresh the mount inventory": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H3 removed exact mounts leave the index on a fresh equality check": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "S1b (cd /tmp && true); rm -rf *": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "S6b env -C /tmp rm -rf .": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P18-array PowerShell preserves array and nonexecuting modes": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P18-spaced PowerShell preserves array and nonexecuting modes": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P20-inline PowerShell preserves array and nonexecuting modes": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "P21-quoted PowerShell preserves array and nonexecuting modes": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5-disk-whatif PowerShell preserves array and nonexecuting modes": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5-disk-whatif-false PowerShell preserves array and nonexecuting modes": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H4 a caller glob cannot wipe its old cwd after the child changes cwd": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X14 nested explicit false reaches every extracted delete": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE T1 admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE T7 admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE M16 admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE W24 admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE S1 admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE P16 admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE P22 admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE X14 admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE X18 admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE L1 admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE K1 admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE K3 admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE N-1a admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE N-1b admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE N-1c admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE N-1d admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE N-1e admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE N-1f admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE N-1g admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE N-1h admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "FIXTURE N-1i admission and fresh release": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "K9 a realpath-only failure does not invent a pathname mount": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "K7-count registry exposes mount refresh work with resettable counters": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 nonexecuting mode runs: rm --help -rf /": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 nonexecuting mode runs: mv --help /work/project /tmp/away": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 nonexecuting mode runs: rsync --version --delete ./src /work/project": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 nonexecuting mode runs: sudo -V rm -rf /": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 nonexecuting mode runs: sudo -l rm -rf /": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 nonexecuting mode runs: env --help rm -rf /": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 nonexecuting mode runs: command -v rm -rf /": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 nonexecuting mode runs: bash --help -c \"rm -rf /\"": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 nonexecuting mode runs: bash -n -c \"rm -rf /\"": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 nonexecuting programs retain shell redirect writes: rm --help -rf / >/dev/sda": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 nonexecuting programs retain shell redirect writes: sudo -V >/dev/sda": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 nonexecuting programs retain shell redirect writes: bash -n -c \"rm -rf /\" >/dev/sda": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X22 readable native depth is not an approval policy: /tmp/safe": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "X22 readable native depth is not an approval policy: /home/u": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 data operands do not select help mode: rm -rf -- --help /": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 data operands do not select help mode: bash -c \"rm -rf /\" --help": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "H5 a login-shell option still executes its command": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L11 normalization requires an existing alias with matching identity": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L12 registered root aliases compare identity and disappear with their owner": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N-1 fork bomb remains after an ordinary No limits command: rm -f /etc": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N-1 fork bomb remains after an ordinary No limits command: cat ~/.ssh/id_ed25519": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "N-1 fork bomb remains after an ordinary No limits command: touch /etc/fixture": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "E6 import publishes every live root even if later bookkeeping throws: false": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "E6 import publishes every live root even if later bookkeeping throws: true": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "E6 restore boot rebuilds all task roots from the persisted roster": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "observed",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M17b known option words retain their nondestructive role: mv -Q --suffix=../../.. ./a ./b": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M17b known option words retain their nondestructive role: mv -Q --target-directory=../../.. ./a": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "M17b known option words retain their nondestructive role: mv -Q -S../../.. ./a ./b": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L13 uncertain operands retain final-link semantics: rm -rf -Q /work/project/link-home": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L13 uncertain operands retain final-link semantics: mv -Q /work/project/link-home /tmp/away": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L14 an indexed link is not its project when the operation removes only the link": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "L15 a missing indexed project target runs": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F2-registry a failed physical lookup retains the new lexical root": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "F6-boot physical lookup faults do not rebuild task history on admission": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "D13a harmless Initialize-Disk keeps PowerShell parsing for the following command": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "FAIL-assert",
+    "head": "PASS",
+    "v3-base": "n/a",
+    "w0-base": "n/a"
+  },
+  "V3-FAULT-1 hung keys retain healthy protection and respect quarantine ceiling": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-FAULT-2 mount query throw and timeout preserve independent realpath": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-FAULT-3 fresh mount confirmation distinguishes data mount, firmlink and timeout": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-FAULT-4 registry isolates owners and never retries failed boot per query": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-FAULT-5 statement recovery preserves later effects and bounds nesting": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-FAULT-6 tolerant seeded fuzz, linear megabyte scan and evidence-only double fault": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-FAULT-7 throwing context reader remains inside autoVerdict containment": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-FAULT-8 execution drive and UNC share roots": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-P1 exact 50-vs-5000 work for 20 corpus admissions and real completions": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "PASS",
+    "head": "PASS",
+    "w0-base": "PASS"
+  },
+  "V3-F1 25 relative cd lines remain RUN within 50 ms": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-F2 one bad registry owner and failed initializer cannot poison subsequent queries": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-F3 Windows Git Bash and root-relative home spellings resolve before classification": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "PASS",
+    "head": "PASS",
+    "w0-base": "PASS"
+  },
+  "V3-F4 statement-local recovery never re-enters a throwing parser": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-F5 throwing execution-context reader cannot escape retry or erase request cwd": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-F6 filesystem deadlines and mount refresh leave the event loop bounded": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "PASS",
+    "head": "PASS",
+    "w0-base": "PASS"
+  },
+  "V3-F7 changed device alone does not classify firmlinks, subvolumes or moved symlinks as drives": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A1 ANSI-C Unicode escapes resolve protected paths": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A2 unquoted expansions split into argv while quoted expansions remain one field": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A3 shell command mode binds positional zero, one and quoted at": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A4 cd option grammar keeps the real directory operand": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A5 find action order keeps later filters from guarding earlier deletes": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A6 embedded find argv use the same executable peeling as top-level argv": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A7 KNOWN-DISGUISED observes same-command symlink overlays": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "observed",
+    "head": "PASS",
+    "w0-base": "observed"
+  },
+  "V3-A8 executable PowerShell blocks are visited": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A9 PowerShell spaced assignment preserves its literal value": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A10 pass-through PowerShell pipeline stages retain entry provenance": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A11 CMD delayed expansion resolves the destructive target": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A12 literal stdin reaches shell source and xargs argv": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A13 interpreter literal root calls and find-entry truncation produce wipe effects": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A14 git external work-tree home clean cards and ordinary project clean runs": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A15 unused cleanup function is data until called": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A16 dotfile-only project cleanup is ordinary work": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-A17 project-root link removal runs but traversal of its children cards": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-R1 unrelated healthy roots survive the stalled-filesystem ceiling": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-R2 initially absent native mounts receive bounded device-change confirmation": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-R3 root-relative paths use the execution drive after location changes": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-R4 mount-query failure cannot suppress healthy realpath": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-R5 timeout RED witness reaches the blocking operation through an existing public export": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "PASS",
+    "head": "PASS",
+    "w0-base": "PASS"
+  },
+  "V3-R6 Unicode alias needs matching physical identity before it cards": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-G1 fault recovery keeps executable position, recursion and move-source roles": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "PASS",
+    "head": "PASS",
+    "w0-base": "PASS"
+  },
+  "V3-G2 find disjunction guards and root self-match obey MAIN RULING R2": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-G3 virtual mounts run while persistent bind mounts card": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "PASS",
+    "head": "PASS",
+    "w0-base": "PASS"
+  },
+  "V3-G4 cwd overflow retains protected start and caller globs precede env chdir": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "PASS",
+    "head": "PASS",
+    "w0-base": "PASS"
+  },
+  "V3-G5 nonexecuting modes remain guards already green at the base": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "PASS",
+    "head": "PASS",
+    "w0-base": "PASS"
+  },
+  "V3-G6 fork bomb cards and readable double faults need wipe evidence": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-X1 bundled shell option values are consumed in cluster order": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-X2 ANSI-C NUL truncation preserves adjacent executable pieces": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-R4-literal-tilde real bash prints a literal quoted tilde prefix": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "PASS",
+    "head": "PASS",
+    "w0-base": "PASS"
+  },
+  "V3-MU-cap retains the protected starting cwd when relative cd states overflow": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "PASS",
+    "head": "PASS",
+    "w0-base": "PASS"
+  },
+  "V3-F3-proof cygdrive paths join the Windows drive family": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-G1-proof parser and walker faults preserve executable positions and operand roles": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-G3-proof mount adapters exclude virtual filesystems and retain persistent mounts": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-S1-proof parser nodes retain normalized statement spans including compounds": {
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "v3-base": "FAIL-assert",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-G4-proof weak variable alternatives retain a protected original past capacity": {
+    "v3-base": "FAIL-assert",
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-PREMISE-proof unresolved options and every recursive positional path retain root protection": {
+    "v3-base": "FAIL-assert",
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "head": "PASS",
+    "w0-base": "FAIL-assert"
+  },
+  "V3-S9-fields-proof recovery retains option uncertainty, glob quoting and executed assignments": {
+    "w0-base": "FAIL-assert",
+    "v3-base": "FAIL-assert",
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "head": "PASS"
+  },
+  "V3-S7-home-glob-proof direct home-child patterns retain the home-root family": {
+    "w0-base": "FAIL-assert",
+    "v3-base": "FAIL-assert",
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "head": "PASS"
+  },
+  "V3-S6-stdin-proof interpreter source follows command mode and script-file boundaries": {
+    "w0-base": "FAIL-assert",
+    "v3-base": "FAIL-assert",
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "head": "PASS"
+  },
+  "V3-G4-functions-proof conditional definition overflow retains the newest executable body": {
+    "w0-base": "FAIL-assert",
+    "v3-base": "FAIL-assert",
+    "df48": "n/a",
+    "b8e1": "n/a",
+    "c1": "n/a",
+    "rd1": "n/a",
+    "head": "PASS"
+  }
+}

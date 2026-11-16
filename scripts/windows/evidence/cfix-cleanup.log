@@ -1,0 +1,6 @@
+Local: .test-tmp/cfix-winscen removed; no local node_modules/dist/dist-server created.
+murage-vt2: worktree node_modules and .test-tmp/cfix-winscen removed; no cfix-winscen containers remain.
+murage-vt3: worktree node_modules and .test-tmp/cfix-winscen removed; no cfix-winscen containers remain.
+murage-vt5: worktree node_modules and .test-tmp/cfix-winscen removed; no cfix-winscen containers remain.
+murage-vt6: worktree node_modules and .test-tmp/cfix-winscen removed; no cfix-winscen containers remain.
+Source and evidence retained. No shared dependency cache or unrelated container removed.

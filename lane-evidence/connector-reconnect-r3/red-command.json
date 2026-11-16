@@ -1,0 +1,6 @@
+{
+  "base": "b11a727b3045ad61495e24c7c9bfc6210494ba0b",
+  "command": "node_modules/.bin/vitest run server/connector-reconnect-r3-preflight.test.ts server/connector-reconnect-r3-attribution.test.ts server/connector-reconnect-r3-schedule.test.ts server/connected-app-health.test.ts -t \"R[1-4]\" --reporter=verbose --reporter=json --outputFile.json=lane-evidence/connector-reconnect-r3/red-final.json > lane-evidence/connector-reconnect-r3/red-final.log 2>&1",
+  "exit": 1,
+  "method": "temporarily replaced only assigned production files with git show base; retained final tests; restored in finally"
+}

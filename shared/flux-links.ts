@@ -3,7 +3,7 @@
 //
 // FLUX-LINKS-SIGNIN: Flux pages that need a session (keys, billing) are opened through Flux's own sign-in page, which sends the
 // owner on to the page once signed in. A Flux account made by Murage Cloud has no password, so a straight link to the page landed a
-// signed-out owner on the password form. Same shape as Flux's own MCP sign-in redirect (src/mcp/oauth/routes.py: return_to, the
+// signed-out owner on the password form. Same shape as Flux's own MCP sign-in redirect (the Flux router's OAuth routes: return_to, the
 // path percent-encoded whole).
 export const FLUX_WEB_ORIGIN = "https://fluxrouter.ai";
 

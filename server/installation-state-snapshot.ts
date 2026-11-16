@@ -1,8 +1,10 @@
 // Private directory-stage builder for the versioned archive/restore workflow.
 // This is not a portable archive or an activated restored installation.
+import { BotTurnState, type CheckpointBot } from "./bot-turn-state.ts";
 import { hermesProfileCarry } from "../shared/hermes-profile-name.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, createReadStream, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, readSync, realpathSync, rmSync, statSync, writeFileSync, writeSync, type ReadStream, type Stats } from "node:fs";
+import { writeFileSync, writeSync } from "./counted-fs.ts";
+import { closeSync, constants, createReadStream, fstatSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readlinkSync, readSync, realpathSync, rmSync, statSync, type ReadStream, type Stats } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep, isAbsolute } from "node:path";
 import { MAX_BACKUP_BYTES, MAX_BACKUP_FILES, MAX_LISTED_SKIPS, MAX_RESTORABLE_PATH_BYTES, type BackupSkipReason } from "../shared/backup-limits.ts";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
@@ -20,7 +22,7 @@ import { classifyDataDirEntryForBackup, DATA_DIR_RECORDS, classifyDataDirEntry }
 // name that list does not know).
 const JSON_COMPONENTS = new Set(DATA_DIR_RECORDS);
 const isProjectedRecord = (path: string) => JSON_COMPONENTS.has(path) || classifyDataDirEntry(path)?.backup === "record";
-const SAFE_CONFIG_FIELDS = ["profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications", "hermesProfilesPinned", "newBots"] as const;
+const SAFE_CONFIG_FIELDS = ["settingsDefaultMode", "profile", "language", "rooms", "localVm", "features", "browserProfiles", "notifications", "hermesProfilesPinned", "newBots"] as const;
 type JsonObject = Record<string, unknown>;
 function object(value: unknown): value is JsonObject { return value !== null && typeof value === "object" && !Array.isArray(value); }
 function fail(code: string, path?: string): never { throw new InstallationSnapshotError(code, path ? { path } : undefined); }
@@ -127,6 +129,10 @@ function projectConfig(value: unknown, omit: (path: string, reason: string) => v
   if (value.hermesProfilesPinned !== undefined) {
     if (typeof value.hermesProfilesPinned !== "boolean") fail("INVALID_CONFIG_COMPONENT");
     projected.hermesProfilesPinned = value.hermesProfilesPinned;
+  }
+  if (value.settingsDefaultMode !== undefined) {
+    if (value.settingsDefaultMode !== "simple" && value.settingsDefaultMode !== "advanced") fail("INVALID_CONFIG_COMPONENT");
+    projected.settingsDefaultMode = value.settingsDefaultMode;
   }
   if (value.language !== undefined) {
     if (typeof value.language !== "string") fail("INVALID_CONFIG_COMPONENT");
@@ -318,6 +324,24 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
           if (before.size > 64 * 1024 ** 2) fail("JSON_COMPONENT_TOO_LARGE", source);
           let value: unknown;
           try { value = JSON.parse(readFileSync(input, "utf8")); } catch { fail("INVALID_JSON_COMPONENT", source); }
+          if(stored === "bots.json") {
+            assertInstallationRecords(stored,value);
+            if(!Array.isArray(value))fail("INVALID_ROSTER_COMPONENT");
+            const taskRoot=join(root,"bot-task-state");
+            try {const info=lstatSync(taskRoot);if(!info.isDirectory()||info.isSymbolicLink())fail("INVALID_ROSTER_COMPONENT");observed.set(taskRoot,info);}
+            catch(error){if((error as NodeJS.ErrnoException).code!=="ENOENT")throw error;}
+            new BotTurnState(root).load(value as CheckpointBot[],path=>{
+              try {const info=lstatSync(path);if(!info.isFile()||info.isSymbolicLink())fail("INVALID_ROSTER_COMPONENT");observed.set(path,info);}
+              catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return undefined;throw error;}
+              const deltaInput=openSync(path,constants.O_RDONLY|(process.platform === "win32"?0:constants.O_NOFOLLOW));
+              try {
+                const opened=fstatSync(deltaInput),expected=observed.get(path)!;
+                if(opened.ino!==expected.ino||opened.dev!==expected.dev||!opened.isFile())fail("SOURCE_CHANGED",relative(root,path));
+                if(opened.size>64*1024**2)fail("JSON_COMPONENT_TOO_LARGE",relative(root,path));
+                try{return JSON.parse(readFileSync(deltaInput,"utf8"));}catch{fail("INVALID_JSON_COMPONENT",relative(root,path));}
+              }finally{closeSync(deltaInput);}
+            });
+          }
           const buffer = Buffer.from(JSON.stringify(projectComponent(stored, value, omission)) + "\n");
           hash.update(buffer); size = buffer.length;
           let offset = 0;
@@ -416,7 +440,7 @@ export async function stageInstallationStateWhileOwned(installation: OfflineInst
       const rootNames = readdirSync(root).sort();
       // SQLite may create/remove these exact auxiliary files while taking its
       // own consistent backup. All other membership and file checks remain.
-      const rootMembership=(entries:string[])=>entries.filter(name=>name!=="messages.db-wal"&&name!=="messages.db-shm"&&name!=="connected-app-ledger.db-wal"&&name!=="connected-app-ledger.db-shm"&&name!=="phone-calls.db-wal"&&name!=="phone-calls.db-shm"&&name!=="phone-calls.db-journal");
+      const rootMembership=(entries:string[])=>entries.filter(name=>name!=="search.db"&&name!=="search.db-wal"&&name!=="search.db-shm"&&name!=="messages.db-wal"&&name!=="messages.db-shm"&&name!=="connected-app-ledger.db-wal"&&name!=="connected-app-ledger.db-shm"&&name!=="phone-calls.db-wal"&&name!=="phone-calls.db-shm"&&name!=="phone-calls.db-journal");
       if (rootNames.length > maxFiles) fail("SNAPSHOT_LIMIT_EXCEEDED");
       // One list decides every top-level name (data-dir-inventory.ts).
       const kinds = new Map<string, NonNullable<ReturnType<typeof classifyDataDirEntry>>>();

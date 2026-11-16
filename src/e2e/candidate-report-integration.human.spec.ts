@@ -1,7 +1,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
@@ -67,7 +67,7 @@ async function choose(page: Page, title: string, id: string) {
 }
 test("selected report survives Inbox historical navigation, download and same-profile restart", async ({ page }, info) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); });
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin, { waitUntil: "domcontentloaded" });
   // The row's name is its own hit target (sidebar hit areas), so a person
   // clicks the name, which selects the row. Was:

@@ -14,7 +14,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -48,12 +48,15 @@ const turns = (): Turn[] => {
 };
 
 posixOnly("a memory-active thread keeps its engine session across ordinary turns", () => {
-  beforeAll(async () => {
+  // Forgetting evidence in one scenario leaves a legitimate pending deny
+  // window. Each independent session scenario owns a fresh server so that
+  // window cannot turn the next scenario into a check of unfinished revocation.
+  beforeEach(async () => {
     fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: "process.env.MURAGE_TURN_TRACE = '1';" });
     const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string };
     headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
   }, 30000);
-  afterAll(async () => { await fixture?.close(); });
+  afterEach(async () => { await fixture?.close(); });
 
   const createBot = async (name: string) => {
     const created = await api("POST", "/api/bots", { name });
@@ -133,12 +136,20 @@ posixOnly("a memory-active thread keeps its engine session across ordinary turns
     expect(givenSources(bot.threadId).filter(source => forgotten.has(source.id))).toEqual([]);
   }, 120000);
 
-  it("ends the session when a bot is removed from the roster", async () => {
+  // Reviewed S6 changes 249523340e and 2fe571bb91 scope deletion to the
+  // removed bot's notebooks and session dependencies; a bystander keeps its session.
+  it("keeps the session when an unrelated bot is removed from the roster", async () => {
     const bot = await createBot("Roster bot");
     const other = await createBot("Departing bot");
     await turn(bot, "first");
     expect((await turn(bot, "second")).resumed).toBe(true);
+    const given = givenSources(bot.threadId);
+    expect(given.length).toBeGreaterThan(0);
+    const handle = db();
+    try {
+      for (const source of given) expect(handle.prepare("SELECT thread_id FROM memory_sources WHERE id=?").get(source.id)?.thread_id).toBe(bot.threadId);
+    } finally { handle.close(); }
     expect((await api("DELETE", `/api/bots/${other.id}`)).status).toBeLessThan(300);
-    expect(await turn(bot, "third")).toMatchObject({ resumed: false, built: 1 });
+    expect(await turn(bot, "third")).toMatchObject({ resumed: true, built: 1 });
   }, 120000);
 });

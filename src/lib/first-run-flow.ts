@@ -371,14 +371,15 @@ export interface FirstRunResearchResult {
   /** Said under the answer when it was written by whatever is on this
    *  computer rather than by a routed model. Null when Flux is in, and null
    *  on a machine with nothing, which never reaches this screen because the
-   *  job asks for the key first. */
+   *  job asks for the key first. Null on a Cloud home: it has no local model
+   *  and the line names Flux Router. */
   onLocal: string | null;
   again: string;
 }
 
 export function researchResult(world: FirstRunJobWorld): FirstRunResearchResult {
   return {
-    onLocal: !world.fluxReady && !world.nothingToThinkWith
+    onLocal: !world.cloud && !world.fluxReady && !world.nothingToThinkWith
       ? FIRST_RUN_COPY.flow["do-it"].research.onLocal
       : null,
     again: FIRST_RUN_COPY.flow["do-it"].again,

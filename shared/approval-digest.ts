@@ -13,6 +13,7 @@ export interface DigestCard {
   /** The displayed email card (BOT-EMAIL-MURAGE-109 4.3): its payload hash, held-id set and row revision are bound, so a phone Send proves
    *  the exact message. Appended only for email cards: every other card hashes exactly as before. */
   emailSend?: unknown;
+  writer?: unknown;
 }
 const text = (value: unknown): string | null => (typeof value === "string" ? value : null);
 
@@ -51,6 +52,7 @@ const emailBinding = (card: DigestCard): [string | null, string[] | null, number
 
 export function approvalDigestInput(threadId: string, requestId: string, card: DigestCard): string {
   const email = emailBinding(card);
+  const writer = card.writer && typeof card.writer === "object" ? card.writer as Record<string, unknown> : undefined;
   return JSON.stringify([
     "murage-approval-digest/2", threadId, requestId,
     text(card.tool), text(card.title), text(card.subtitle), text(card.summary), text(card.held),
@@ -58,6 +60,7 @@ export function approvalDigestInput(threadId: string, requestId: string, card: D
     skillField(card, "source"), skillField(card, "preview"), skillField(card, "sha256"),
     skillField(card, "name"), skillField(card, "action"), skillWarnings(card), routineOperation(card),
     ...(email ? [email] : []),
+    ...(writer ? [[text(writer.holdId), writer.stateRevision, text(writer.bodyHash)]] : []),
   ]);
 }
 

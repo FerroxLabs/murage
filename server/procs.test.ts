@@ -241,8 +241,8 @@ describe("confirmWindowsRootClose", () => {
   // dies with the root, its handles close, and the root's close truthfully confirms. The grandchild that outlives its root (one
   // a CLI started outside that job) is the detached one: it stays in the test's job only, alive and holding the pipe.
   it("does not confirm while a live grandchild holds the root's stdio, and confirms once it is gone", async () => {
-    const script = "const {spawn}=require('child_process');const g=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ignore','inherit','inherit'],detached:process.platform==='win32'});process.stdout.write(String(g.pid)+'\\n');setInterval(()=>{},1000);";
-    const root = spawn(process.execPath, ["-e", script], { stdio: ["pipe", "pipe", "pipe"] });
+    const script = "const {spawn}=require('child_process');const g=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{windowsHide:true,stdio:['ignore','inherit','inherit'],detached:process.platform==='win32'});process.stdout.write(String(g.pid)+'\\n');setInterval(()=>{},1000);";
+    const root = spawn(process.execPath, ["-e", script], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     const grandchild = await new Promise<number>((resolve) => root.stdout.once("data", (chunk) => resolve(Number(String(chunk).trim()))));
     try {
       const owned = { closed: false };

@@ -199,3 +199,8 @@ describe("the chip for a decline passed to Fuigo (S5a, U2)", () => {
     expect(folderTrustLabel(folderTrustPassedName(key))).toBe(U2);
   });
 });
+
+it("does not call an unstamped Murage record effective on generation 2", () => {
+  const legacy = { gated: true, sources: ["AGENTS.md"], trustGeneration: 2, record: { decision: "trust", source: "picker", decidedAt: 1 } } as import("./FolderTrustNote").FolderTrustStatus;
+  expect(folderTrustStatusLabel(legacy)).toBe("Trusted before Fuigo 1.0.35. Fuigo asks once more");
+});

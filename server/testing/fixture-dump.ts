@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 export const fixtureCredentialFingerprint = (value: string) => createHash("sha256").update(value).digest("hex");
 /** Explicit driver assertion fields only. Credentials are fingerprints, never values. */
 export function fixtureDumpEnvironment(): Record<string, string | undefined> {
-  const plain = ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_PLUGIN_DIRS", "CLAUDE_CODE_DISABLE_AUTO_MEMORY", "CLAUDE_CODE_MCP_STARTUP_WAIT_MS", "MCP_TIMEOUT", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_CUSTOM_HEADERS", "OPENAI_BASE_URL", "MURAGE_USER_DATA", "MURAGE_BROWSER_CONNECTION", "MURAGE_CONNECTOR_UPSTREAM_URL", "FAKE_CLAUDE_MODE", "MURAGEBOX_BOX_ID", "CUSTOM_REJECTED_MARKER", "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR", "CLAUDE_ENV_FILE", "CLAUDE_CODE_SHELL_PREFIX", "CLAUDE_CODE_SHELL", "MURAGE_EXEC_ENV_FILE", "MURAGE_EXEC_KEEP", "AI_AGENT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "PAGER", "NODE_OPTIONS", "MURAGE_CODEX_HOOK_ENV", "ENABLE_CLAUDEAI_MCP_SERVERS"];
+  const plain = ["CODEX_HOME", "CLAUDE_CONFIG_DIR", "CLAUDECODE", "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_PLUGIN_DIRS", "CLAUDE_CODE_DISABLE_AUTO_MEMORY", "CLAUDE_CODE_MCP_STARTUP_WAIT_MS", "MCP_TIMEOUT", "MAX_MCP_OUTPUT_TOKENS", "ANTHROPIC_BASE_URL", "ANTHROPIC_MODEL", "ANTHROPIC_CUSTOM_HEADERS", "OPENAI_BASE_URL", "MURAGE_USER_DATA", "MURAGE_BROWSER_CONNECTION", "MURAGE_CONNECTOR_UPSTREAM_URL", "FAKE_CLAUDE_MODE", "MURAGEBOX_BOX_ID", "CUSTOM_REJECTED_MARKER", "CLAUDE_BASH_MAINTAIN_PROJECT_WORKING_DIR", "CLAUDE_ENV_FILE", "CLAUDE_CODE_SHELL_PREFIX", "CLAUDE_CODE_SHELL", "MURAGE_EXEC_ENV_FILE", "MURAGE_EXEC_KEEP", "AI_AGENT", "CLAUDE_CODE_SESSION_ID", "CLAUDE_PID", "PAGER", "NODE_OPTIONS", "MURAGE_CODEX_HOOK_ENV", "MURAGE_CODEX_HOOK_ENV_SHA256", "ENABLE_CLAUDEAI_MCP_SERVERS"];
   const credentials = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "BOX_TOKEN", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "CURSOR_API_KEY", "CURSOR_AUTH_TOKEN", "FLUX_API_KEY", "MURAGEBOX_BOX_TOKEN", "MURAGE_COMMS_TOKEN", "MURAGE_FLUX_API_KEY", "MURAGE_LOCAL_UNSLOTH_API_KEY", "MURAGE_MCP_TOKEN", "MURAGE_MEMORY_TOKEN", "MURAGE_PROVIDER_API_KEY", "MURAGE_TTS_KEY", "MURAGE_VM_TOKEN", "MY_AGENT_TOKEN", "NOTES_TOKEN", "OPENAI_API_KEY", "OPENCODE_API_KEY", "OPENROUTER_API_KEY", "XAI_API_KEY"];
   // private aliases of a colliding custom-server value (drivers/codex.ts): fingerprints too
   const aliases = Object.keys(process.env).filter(key => key.startsWith("MURAGE_MCPV_"));
@@ -18,17 +18,20 @@ type DumpServers = Record<string, { env?: Record<string, string> } & Record<stri
  * those tokens out of the mcp config (drivers/turn-credentials.ts) and the
  * fakes record the credential file's content beside it as `credFile`. */
 export function withTurnSecrets<T>(dump: T): T {
-  const d = dump as { mcpConfig?: { mcpServers?: DumpServers } | null; credFile?: { content?: unknown } | null } | null;
+  const d = dump as { mcpConfig?: { mcpServers?: DumpServers } | null; credFile?: { content?: unknown } | null; fixtureMounts?: DumpServers } | null;
   const servers = d?.mcpConfig?.mcpServers;
   const content = d?.credFile?.content;
   if (!servers || !content || typeof content !== "object") return dump;
   const merged: DumpServers = {};
-  for (const [name, server] of Object.entries(servers)) {
+  // An instrumented fixture also observes the actual admitted mount behind
+  // each shim. Keep the wire config alongside this test-facing hydrated view.
+  for (const [name, wireServer] of Object.entries(servers)) {
+    const server = d?.fixtureMounts?.[name] ?? wireServer;
     const secrets = (content as Record<string, Record<string, string> | undefined>)[name];
     if (!secrets || !server?.env) { merged[name] = server; continue; }
     // the tokens inline, as a launcher without a credential file hands them
     const { MURAGE_CRED_FILE: _file, MURAGE_CRED_SERVER: _server, ...env } = server.env;
     merged[name] = { ...server, env: { ...env, ...secrets } };
   }
-  return { ...d, mcpConfig: { ...d!.mcpConfig, mcpServers: merged } } as T;
+  return { ...d, wireMcpConfig: d?.mcpConfig, mcpConfig: { ...d!.mcpConfig, mcpServers: merged } } as T;
 }

@@ -49,7 +49,9 @@ export const CONTEXT_CHANGED_PREFIX = "Context changed";
 export function cardsIn(messages) {
   return (messages ?? []).filter(m => m && m.kind === "options" && m.card && typeof m.card.requestId === "string");
 }
-export const openCards = messages => cardsIn(messages).filter(m => !m.card.answered);
+export const openCards = (messages, { publicExecution = false } = {}) => publicExecution
+  ? (messages ?? []).filter(m => m?.kind === 'options' && m.card?.tool && /^p\.[A-Za-z0-9-]+$/.test(m.card.requestHandle ?? '') && !m.card.answered && !m.card.dismissed)
+  : cardsIn(messages).filter(m => !m.card.answered);
 
 /** Rows whose text is a withheld, checking or forgotten mirror. */
 export function withheldIn(messages) {
@@ -68,10 +70,9 @@ export function errorRowsIn(messages) {
 
 /** The PATCH body that puts a bot at one approval level (server/full-access.ts contract; desktop surface). */
 export function levelPatch(level, platform = process.platform) {
-  // acknowledgeLocalAuto: the desktop's "Auto mode on this computer" warning (src/lib/level-change.ts needsLocalAck), which the
-  // server requires where Auto mounts the host computer (macOS, Windows). Without it every raise above Ask was a 400 on the Mac
-  // leg and S4/S10 measured Ask (GATE-PREP-1018 relay 3). Linux sends the 1.0.15 body unchanged, as the desktop does there.
-  const ack = platform === "darwin" || platform === "win32" ? { acknowledgeLocalAuto: true } : {};
+  // Explicit local-computer bots require the host warning acknowledgement on Linux too.
+  // The fixture owner acknowledges it for every elevated level, just as on macOS/Windows.
+  const ack = ["linux", "darwin", "win32"].includes(platform) ? { acknowledgeLocalAuto: true } : {};
   switch (level) {
     case "ask": return { autoApprove: false };
     case "auto": return { autoApprove: true, fullAccess: false, ...ack };
@@ -1195,11 +1196,12 @@ const get = (obj, path) => String(path).split(".").reduce((o, k) => (o == null ?
 export function judgeRow(row, results, { oldLoadedFactor = 1.5 } = {}) {
   const scenario = results?.scenarios?.[row.scenario];
   const onMac = String(results?.telemetryMode?.mode ?? "").startsWith("mac-");
+  const onWindows = String(results?.telemetryMode?.mode ?? "").startsWith("win-");
   // A row marked gatesIn is report-only for this release (IO-AMP moved to 1.0.19, Sean 11-08). It is decided here, once, before every other
   // branch: it can never fail the leg, whatever the scenario, the OS-bytes proof or a missing value says. It shows its value (or not measured,
   // with the reason) and the marker. Gating rows never reach this branch and keep every branch below.
   if (row.reportOnly === true && row.gatesIn) {
-    const osBytesUnknown = row.osBytesSensitive === true && onMac && results?.env?.engineExclusion?.verdict !== "ok";
+    const osBytesUnknown = row.osBytesSensitive === true && (onMac && results?.env?.engineExclusion?.verdict !== "ok" || onWindows && (results?.env?.engineExclusion?.verdict !== "ok" || results?.env?.writeMeter?.verdict !== "ok"));
     const rawV = get(results, row.path);
     const num = typeof rawV === "number" && Number.isFinite(rawV) ? rawV : typeof rawV === "boolean" ? (rawV ? 1 : 0) : null;
     const value = osBytesUnknown || scenario?.invalid ? null : num;
@@ -1229,7 +1231,7 @@ export function judgeRow(row, results, { oldLoadedFactor = 1.5 } = {}) {
   if (row.latency === true && results?.boxBusyAtStart === true && onMac)
     return { id: row.id, scenario: row.scenario, what: row.what, op: row.op, limit: row.value, value: null, pass: false, missing: true, busyAtStart: true, unit: row.unit ?? "" };
   // a Mac leg whose engine-exclusion addon is not the verified one has no OS write floor: the io rows rest on application bytes alone (osBytes unknown)
-  if (row.osBytesSensitive === true && onMac && results?.env?.engineExclusion?.verdict !== "ok")
+  if (row.osBytesSensitive === true && (onMac && results?.env?.engineExclusion?.verdict !== "ok" || onWindows && (results?.env?.engineExclusion?.verdict !== "ok" || results?.env?.writeMeter?.verdict !== "ok")))
     return { id: row.id, scenario: row.scenario, what: row.what, op: row.op, limit: row.value, value: null, pass: false, missing: true, osBytesUnknown: true, unit: row.unit ?? "" };
   // Before engineTime exemptions: incomplete S3 replies FAIL on real engines too.
   if (scenario?.incomplete === true && ["S3.cards", "S3.replies", "S3.first", "S3.last"].includes(row.id))

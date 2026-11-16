@@ -1,0 +1,15 @@
+// Test-only bridge for S1's snapshot, which predates e9500850's sync contract.
+// All verdicts, registered calls and final deny rechecks use its real core.
+// This fixture extension is never installed in a delivered product file.
+export const fixturePresentations: Promise<void>[] = [];
+const fixtureExecutions = new WeakMap<T.RequestHandle, T.ServiceExecution<unknown>>();
+export function executeServiceSync<V>(handle:T.RequestHandle,execute:(call:T.ServiceCall)=>V):T.ServiceExecution<V> {
+ const prior=fixtureExecutions.get(handle);if(prior)return prior as T.ServiceExecution<V>;
+ const e=entry(handle);if(e.registration.source.kind!=='service')throw new Error('service-request-required');
+ const outcome=refresh(e);if(outcome.kind!=='run')return outcome;
+ const result={kind:'executed' as const,value:execute(e.executionCall??e.registration.source.call)};
+ fixtureExecutions.set(handle,result);e.terminal=true;return result;
+}
+export function presentApprovalSync(ref:T.ApprovalRef,view:T.ApprovalView):void {
+ fixturePresentations.push(presentApproval(ref,view));
+}

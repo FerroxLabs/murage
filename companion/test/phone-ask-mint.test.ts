@@ -9,6 +9,7 @@ import { approvalKeyId, phoneJobsMessage } from "../src/phone-jobs-shape.ts";
 import { PHONE_ASK_TOKEN, phoneAskMessage } from "../src/phone-ask-shape.ts";
 import { KEYS, NOW, statement } from "./support-statement.ts";
 import { removeTempDirSync } from "../../server/testing/cleanup.ts";
+import { FreshAuthGate, proofMessage } from "../../server/approval-fresh-auth.ts";
 
 const ORIGIN = "https://desk.example.test";
 const PROOF = "d".repeat(64);
@@ -46,7 +47,7 @@ let counter = 0;
 const challenges = () => new PhoneChallenges({ now: () => CLOCK, random: () => createHash("sha256").update(`ask${counter++}`).digest("base64url") });
 const okHarness = async () => ({ status: 200, body: { ok: true } });
 
-async function run(r: DeviceRegistry, c: PhoneChallenges, k: ReturnType<typeof makeKey>, o: { tag: "ask" | "jobs"; scope?: unknown; offeredJobs?: boolean; offeredAsk?: boolean; reuse?: { nonce: string; expiresAt: number } }) {
+async function run(r: DeviceRegistry, c: PhoneChallenges, k: ReturnType<typeof makeKey>, o: { tag: "ask" | "jobs"; scope?: unknown; want?: unknown; offeredJobs?: boolean; offeredAsk?: boolean; reuse?: { nonce: string; expiresAt: number } }) {
   const opts = { devices: door(r), challenges: c, offered: async () => o.offeredJobs ?? true, offeredAsk: async () => o.offeredAsk ?? true, harness: okHarness, doorToken: PROOF };
   let nonce: string, expiresAt: number;
   if (o.reuse) ({ nonce, expiresAt } = o.reuse);
@@ -59,6 +60,7 @@ async function run(r: DeviceRegistry, c: PhoneChallenges, k: ReturnType<typeof m
   const signature = k.signMessage(o.tag === "ask" ? phoneAskMessage(fields) : phoneJobsMessage(fields));
   const body: Record<string, unknown> = { keyId: k.keyId, nonce, expiresAt, signature };
   if (o.scope !== undefined) body.scope = o.scope;
+  if (o.want !== undefined) body.want = o.want;
   const answer = await handlePhoneBootstrap({ method: "POST", path: "/api/phones/self/token", query: q(""), body: Buffer.from(JSON.stringify(body)), source: "s", origin: ORIGIN }, opts);
   return { answer, nonce, expiresAt, signature };
 }
@@ -67,6 +69,67 @@ const raw = () => JSON.parse(readFileSync(file(), "utf8")).devices as Array<Reco
 beforeEach(() => removeTempDirSync(DATA_DIR));
 
 describe("S26 ask mint at the door", () => {
+  it.each([undefined, "jobs", "ask"] as const)("returns exactly token for a legacy %s request", async (scope) => {
+    const r = registry(); const k = makeKey(); const d = pair(r, k.point);
+    const { answer } = await run(r, challenges(), k, { tag: scope ?? "jobs", scope });
+    expect(answer).toStrictEqual({ status: 200, body: { token: expect.any(String) } });
+    const { token } = answer.body as { token: string };
+    const authenticated = scope === "ask" ? r.authenticatePhoneAsk(token) : r.authenticatePhoneJobs(token);
+    expect(authenticated?.deviceId).toBe(d.id);
+  });
+
+  it.each([undefined, "jobs", "ask"] as const)("returns only the caller's stored pairing deviceId with an opted-in %s credential", async (scope) => {
+    const r = registry();
+    const other = pair(r, makeKey().point, "install-other-0123456789abcdef");
+    const k = makeKey(); const d = pair(r, k.point);
+    const { answer } = await run(r, challenges(), k, { tag: scope ?? "jobs", scope, want: ["deviceId"] });
+    expect(answer.status).toBe(200);
+    expect(answer.body).toStrictEqual({ token: expect.any(String), deviceId: d.id });
+    const body = answer.body as { token: string; deviceId: string };
+    expect(body.deviceId).toBeTypeOf("string");
+    expect(body.deviceId).toBe(d.id);
+    expect(body.deviceId).toBe(raw().find((device) => device.id === d.id)?.id);
+    expect(body.deviceId).not.toBe(other.id);
+    const authenticated = scope === "ask" ? r.authenticatePhoneAsk(body.token) : r.authenticatePhoneJobs(body.token);
+    expect(authenticated?.deviceId).toBe(body.deviceId);
+  });
+
+  it.each([null, "deviceId", [], ["token"], ["deviceId", "token"], ["deviceId", "deviceId"], { deviceId: true }])("refuses malformed or unknown want fields: %j", async (want) => {
+    const r = registry(); const k = makeKey(); pair(r, k.point); const c = challenges();
+    const first = await run(r, c, k, { tag: "ask", scope: "ask", want });
+    expect(first.answer).toEqual({ status: 400, body: { error: "bad request" } });
+    expect(raw()[0].ask).toBeUndefined();
+    expect((await run(r, c, k, { tag: "ask", scope: "ask", want: ["deviceId"], reuse: first })).answer.status).toBe(403);
+  });
+
+  it("refuses a signed ask proof bound to another device id despite the same paired signing key", () => {
+    const r = registry(); const k = makeKey(); const d = pair(r, k.point);
+    const device = r.approvalIdentity(d.id)!;
+    const gate = new FreshAuthGate({ now: () => CLOCK });
+    const askId = "ask_0001_abcdefghij";
+    const threadId = "6c1e2f40-5b7d-4a93-8e16-0f2d9a7b3c58";
+    const textHash = createHash("sha256").update("What is on my calendar tomorrow?").digest("hex");
+    const digest = (deviceId: string) => createHash("sha256").update(["murage-ask/1", deviceId, askId, "bot1", threadId, textHash].join("\n")).digest("hex");
+    const input = { device: { ...device, key: device.key ?? null }, threadId, requestId: askId, decision: "allow" as const, digest: digest(d.id) };
+    const first = gate.check({ ...input, proof: undefined });
+    expect(first).toMatchObject({ ok: false, body: { code: "fresh_auth" } });
+    if (first.ok) throw new Error("Expected a fresh-auth challenge before signing");
+    expect(first.body.challenge).toEqual({ v: 1, decision: input.decision, digest: input.digest, nonce: expect.any(String), expiresAt: expect.any(Number) });
+    const challenge = first.body.challenge as { nonce: string; expiresAt: number };
+    const otherId = "11111111-2222-4333-8444-555555555555";
+    const wrongProof = { nonce: challenge.nonce, signature: k.signMessage(proofMessage({ ...input, ...challenge, digest: digest(otherId) })) };
+    expect(gate.check({ ...input, proof: wrongProof })).toMatchObject({ ok: false, status: 403, body: { code: "fresh_auth_failed" } });
+
+    const next = gate.check({ ...input, proof: undefined });
+    expect(next).toMatchObject({ ok: false, body: { code: "fresh_auth" } });
+    if (next.ok) throw new Error("Expected a fresh-auth challenge after the rejected proof");
+    expect(next.body.challenge).toEqual({ v: 1, decision: input.decision, digest: input.digest, nonce: expect.any(String), expiresAt: expect.any(Number) });
+    const nextChallenge = next.body.challenge as { nonce: string; expiresAt: number };
+    const proof = { nonce: nextChallenge.nonce, signature: k.signMessage(proofMessage({ ...input, ...nextChallenge })) };
+    expect(gate.check({ ...input, device: { ...input.device, id: otherId }, proof })).toMatchObject({ ok: false, status: 403, body: { code: "fresh_auth_failed" } });
+    expect(gate.check({ ...input, proof })).toEqual({ ok: true });
+  });
+
   it("mints murage_pa_ for an ask signature, bumps askGeneration and stores only a hash", async () => {
     const r = registry(); const k = makeKey(); const d = pair(r, k.point); const c = challenges();
     const { answer } = await run(r, c, k, { tag: "ask", scope: "ask" });

@@ -22,7 +22,7 @@ export interface CapabilityEntry extends HelpEntry {
 }
 
 /** sha256 over every entry's id and rev. The release asserts the packaged server carries this value. */
-export const CAPABILITY_DB_REV = "615581bc2f8ffd9f22c04dca30a7f8234276f41f3fa4791d21e706485f387d80";
+export const CAPABILITY_DB_REV = "0c78597cb2580376cdd2ff1c06638e68a238ae1120ba58629e1ab65e1fe9736b";
 
 export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
   {
@@ -31,7 +31,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     "description": "Murage can do this.",
     "heading": "Can I approve a bot's request from Telegram? / Approve once from Slack / Do Discord approval buttons work? / Answer approval cards from my phone's chat app",
     "breadcrumb": "Murage capabilities",
-    "where": "Settings → Messaging apps",
+    "where": "Settings → Connected apps",
     "url": "https://murage.ai/docs/features/messaging-apps#what-messaging-apps-do",
     "text": "Yes. Telegram, Slack and Discord send approval cards to your private chat with Approve once and Deny buttons, and only your own presses count. On Telegram a stop-line card also offers Allow for this task. A card about controlling a computer offers Deny only; approve it in Murage. WhatsApp approvals stay in Murage.",
     "capability": "apps.chat-approval-buttons",
@@ -48,7 +48,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
       "all"
     ],
     "applies": "Applies to Mac, Windows, Linux; every engine.",
-    "rev": "83b400798a5b8f4b749b659e483bfa6a53a14cd83d1d6b8a3507b1e12c4e21c7"
+    "rev": "7bd5dc0202e7c2bf38079af925cc3cbaa154f967b46b73eaa67042fc15fd0dbb"
   },
   {
     "id": "cap:apps.bot-email",
@@ -81,12 +81,12 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     "description": "Murage can do this.",
     "heading": "Can my bot browse the web in its own browser? / Give a bot a built-in browser / Watch my bot use a browser and take over",
     "breadcrumb": "Murage capabilities",
-    "where": "Settings → Devices → Built-in browser",
+    "where": "Settings → Computer & browser → Built-in browser",
     "url": "https://murage.ai/docs/features/settings-guide#built-in-browser",
-    "text": "Yes. A bot can open and read pages in its own built-in browser tab, with its own sign-ins, and you can watch it and take over at any time. It is on by default. Switch it off for every bot under Settings, Devices, Built-in browser, or for one bot in its Bot settings. It works on the engines that take Murage's browser: Fuigo, Claude, Codex and the agent engines without tools of their own. OpenClaw, Pi, Antigravity and OpenAI-compatible engines do not get it.",
+    "text": "Yes. A bot can open and read pages in its own built-in browser tab, with its own sign-ins, and you can watch it and take over at any time. It is on by default. Switch it off for every bot under Settings, Computer & browser, Built-in browser, or for one bot in its Bot settings. It works on the engines that take Murage's browser: Fuigo, Claude, Codex and the agent engines without tools of their own. OpenClaw, Pi, Antigravity and OpenAI-compatible engines do not get it.",
     "capability": "apps.own-browser",
     "status": "can",
-    "answer": "Yes. A bot can open and read pages in its own built-in browser tab, with its own sign-ins, and you can watch it and take over at any time. It is on by default. Switch it off for every bot under Settings, Devices, Built-in browser, or for one bot in its Bot settings.",
+    "answer": "Yes. A bot can open and read pages in its own built-in browser tab, with its own sign-ins, and you can watch it and take over at any time. It is on by default. Switch it off for every bot under Settings, Computer & browser, Built-in browser, or for one bot in its Bot settings.",
     "limits": "It works on the engines that take Murage's browser: Fuigo, Claude, Codex and the agent engines without tools of their own. OpenClaw, Pi, Antigravity and OpenAI-compatible engines do not get it.",
     "askYourBot": "",
     "platforms": [
@@ -109,7 +109,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
       "cline"
     ],
     "applies": "Applies to Mac, Windows, Linux; Fuigo, Claude, Codex, Grok, Cursor, Kimi, Droid, OpenCode, Qwen, Hermes, Gemini, Cline.",
-    "rev": "574d08b9bd4744695e9611cca24ddf2bd4b17b2f1f7d17739a395630e7d5fbc8"
+    "rev": "0a9eaaa8a247a40c799e575e248420a4dbb7614a5b47be9ad77bb8b5d50c157f"
   },
   {
     "id": "cap:apps.webhook-routines",
@@ -165,7 +165,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     "description": "Murage can do this.",
     "heading": "How long does a bot keep working in a quiet channel? / Change the channel turn timeout / A bot's reply in a channel stopped after a while / Set the no activity limit for channel replies",
     "breadcrumb": "Murage capabilities",
-    "where": "Settings → Bots → Advanced → Time limit for bot activity in channels",
+    "where": "Settings → How every bot behaves → Advanced → Time limit for bot activity in channels",
     "url": "https://murage.ai/docs/features/chat-and-teams#rooms",
     "text": "A bot's reply in a channel stops after a set number of minutes with no activity. A reply that keeps working runs as long as it needs, and time spent waiting on you does not count. The No activity limit is 20 minutes unless you change it, from 20 to 1,440 minutes.",
     "capability": "bots.channel-turns",
@@ -182,7 +182,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
       "all"
     ],
     "applies": "Applies to Mac, Windows, Linux; every engine.",
-    "rev": "368117e49f1e66f01e7056137b16250c43007a86d1ef25dfb09a567509950c7b"
+    "rev": "656e6471e9064a6517c637c5b36dd114d41e1f48e2231ba805ecf8c2dcc24880"
   },
   {
     "id": "cap:engines.continue-with-chatgpt-grok",
@@ -295,12 +295,12 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     "description": "Murage can do this.",
     "heading": "Can Murage make images with Grok? / Use Grok Imagine for image generation / Generate pictures with my xAI key",
     "breadcrumb": "Murage capabilities",
-    "where": "Settings → Tools → Image generation",
+    "where": "Settings → Search, images and dictation → Image generation",
     "url": "https://murage.ai/docs/providers#grok-images",
-    "text": "Yes. With an xAI key added under Models & engines, open Settings, then Tools, then Image generation, pick the xAI connection and choose Grok Imagine Image 2.0. A bot can then make and edit images with it. Choose the Grok Imagine model yourself, because xAI has no default image model.",
+    "text": "Yes. With an xAI key added under Models & engines, open Settings, then Search, images and dictation, then Image generation, pick the xAI connection and choose Grok Imagine Image 2.0. A bot can then make and edit images with it. Choose the Grok Imagine model yourself, because xAI has no default image model.",
     "capability": "engines.grok-images",
     "status": "can",
-    "answer": "Yes. With an xAI key added under Models & engines, open Settings, then Tools, then Image generation, pick the xAI connection and choose Grok Imagine Image 2.0. A bot can then make and edit images with it.",
+    "answer": "Yes. With an xAI key added under Models & engines, open Settings, then Search, images and dictation, then Image generation, pick the xAI connection and choose Grok Imagine Image 2.0. A bot can then make and edit images with it.",
     "limits": "Choose the Grok Imagine model yourself, because xAI has no default image model.",
     "askYourBot": "",
     "platforms": [
@@ -312,7 +312,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
       "all"
     ],
     "applies": "Applies to Mac, Windows, Linux; every engine.",
-    "rev": "c9ca760d2e94b69577447a56ab1d58be35e40510242435e825a5ae406534ad14"
+    "rev": "3997e44033ba72d2045243de531e5727ffc8cd0b3557766c5f0d0ef05f2c0658"
   },
   {
     "id": "cap:engines.openai-compatible-tools",
@@ -347,11 +347,11 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
     "breadcrumb": "Murage capabilities",
     "where": "Settings → Models & engines → Engines",
     "url": "https://murage.ai/docs/providers#default-models-and-saved-choices",
-    "text": "For new choices, Claude Code recommends Claude Sonnet 5.5. Codex's offline fallback recommends GPT-6.1 Sol, supported by Cloud home’s pinned Codex 0.162.1 and Codex 0.167.0. A live Codex catalog or configured Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol, stay as they are. The picker marks the current catalog recommendation. Desktop Murage bundles Fuigo; install or update Claude Code and Codex separately. Cloud home includes Claude Code and Codex. Describe your model from the turn’s engine facts, not these recommendations.",
+    "text": "For new choices, Claude Code recommends Claude Sonnet 5.5. Codex's offline fallback recommends GPT-6.1 Sol, supported by Cloud home’s pinned Codex 0.162.1 and Codex 0.167.0. A live Codex catalog or configured Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol, stay as they are. The picker marks the current catalog recommendation. Desktop Murage bundles Fuigo 1.0.43; install or update Claude Code and Codex separately. Cloud home includes Claude Code and Codex. Describe your model from the turn’s engine facts, not these recommendations.",
     "capability": "engines.default-models",
     "status": "can",
     "answer": "For new choices, Claude Code recommends Claude Sonnet 5.5. Codex's offline fallback recommends GPT-6.1 Sol, supported by Cloud home’s pinned Codex 0.162.1 and Codex 0.167.0. A live Codex catalog or configured Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol, stay as they are. The picker marks the current catalog recommendation.",
-    "limits": "Desktop Murage bundles Fuigo; install or update Claude Code and Codex separately. Cloud home includes Claude Code and Codex. Describe your model from the turn’s engine facts, not these recommendations.",
+    "limits": "Desktop Murage bundles Fuigo 1.0.43; install or update Claude Code and Codex separately. Cloud home includes Claude Code and Codex. Describe your model from the turn’s engine facts, not these recommendations.",
     "askYourBot": "",
     "platforms": [
       "mac",
@@ -364,7 +364,7 @@ export const CAPABILITY_ENTRIES: readonly CapabilityEntry[] = [
       "codex"
     ],
     "applies": "Applies to Mac, Windows, Linux, Murage Cloud; Claude, Codex.",
-    "rev": "b3ca443fc348176eb42d6e1c3db1b8de7399e0ffa94b852a594a840c64113a4b"
+    "rev": "1abf6add289c7e23ebb00e2b576a40e865046b871b64b9ecc2d153e966cad845"
   },
   {
     "id": "cap:engines.muse-code",

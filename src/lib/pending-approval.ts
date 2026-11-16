@@ -8,6 +8,7 @@
 // first card that waits.
 import type { Message } from "@/state/store";
 import { t } from "@/lib/i18n";
+import { OUTSIDE_SOURCE_KEYS } from "@/lib/outside-note";
 import { plainApproval, plainApprovalReady } from "@/lib/plain-approval";
 import { delegationAction, delegationToolKind } from "../../shared/delegation-tool";
 import { canonicalConnectedAppToolName } from "../../shared/connected-app-names";
@@ -17,6 +18,7 @@ import { requestsWaiting } from "@/lib/approval-queue";
 import { spokenGrantRows } from "@/lib/routine-grant-words";
 import type { LocaleKey } from "@/locales";
 import { cardFoldRows } from "@/lib/fold-words";
+import { isQuestionCard } from "../../shared/questions";
 
 interface ApprovalLabels {
   [tool: string]: string;
@@ -67,7 +69,7 @@ export function needsRoutineReview(pending: Pending): boolean {
 export function isPendingApprovalMessage(m: Message): boolean {
   // a publish card carries its own Publish / Not now buttons and is never answered by voice or from the composer
   // a limit offer card is a choice of engine, never a permission (1.0.4 SL-I I5)
-  return m.kind === "options" && m.card?.kind !== "publish" && m.card?.kind !== "email-send" && m.card?.kind !== "email-trust-offer" && m.card?.tool !== "murage_limit_offer" && Boolean(m.card?.requestId && m.card.tool && !m.card.answered && !m.card.dismissed);
+  return !m.card?.botReviewId && m.kind === "options" && m.card?.kind !== "own-write" && m.card?.kind !== "publish" && m.card?.kind !== "email-send" && m.card?.kind !== "email-trust-offer" && m.card?.tool !== "murage_limit_offer" && !isQuestionCard(m.card) && Boolean(m.card?.requestId && m.card.tool && !m.card.answered && !m.card.dismissed);
 }
 
 /** A waiting card as the panel reads it. */
@@ -91,7 +93,7 @@ export function pendingApprovals(messages: Message[]): Pending[] {
 /** Open questions a provider is waiting on (a request card that is not a
  * permission), oldest first. A call asks these aloud like an approval. */
 export function openQuestions(messages: Message[]): Message[] {
-  return messages.filter((m) => m.kind === "options" && m.card?.requestId && !m.card.tool && !m.card.answered && !m.card.dismissed);
+  return messages.filter((m) => m.kind === "options" && isQuestionCard(m.card) && !m.card!.answered && !m.card!.dismissed);
 }
 
 /** Routine cards can carry every instruction the user asked for (up to
@@ -279,6 +281,7 @@ export function approvalAction(pending: Pending): string {
  * the chat row's Answer button names it. Routine, skill, computer-use and
  * limit cards keep their own titles. */
 export function approvalTitle(pending: Pending, who?: string): string {
+  if (pending.message.card?.routineRequest?.outsideRead && pending.message.card.title) return pending.message.card.title;
   if (isSpecialApproval(pending)) return approvalLabel(pending);
   const card = pending.message.card;
   if (card?.tool === "browser_extension_action" && card.title) return card.title;
@@ -289,6 +292,13 @@ export function approvalTitle(pending: Pending, who?: string): string {
 /** The one reason sentence: the why-line when the card has one, else the
  * held note. Never both (APPROVAL-ONE-CARD 1.2). */
 export function approvalReason(pending: Pending): { why?: string; held?: string } {
+  const request = pending.message.card?.routineRequest;
+  if (request?.outsideRead) {
+    const source = request.outsideSource;
+    const key = source && Object.hasOwn(OUTSIDE_SOURCE_KEYS, source) ? OUTSIDE_SOURCE_KEYS[source] : undefined;
+    const note = key ? t("noLimits.v1.callOutside", { source: t(key) }) : t("noLimits.v1.callOutsideUnnamed");
+    return { held: [note, pending.held].filter(Boolean).join("\n") };
+  }
   const why = isSpecialApproval(pending) ? undefined : whyLine(pending.message.card);
   if (why) return { why };
   return pending.held ? { held: pending.held } : {};

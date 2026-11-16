@@ -45,12 +45,12 @@ async function launch(flags: Record<string, string>) {
     };
     const storeMod=await import(${JSON.stringify(url("store.ts"))});
     const setAct=storeMod.Store.prototype.setTaskActivity;
-    // FAULT_ACTIVITY: while <dir>/fault-activity exists, the next setTaskActivity throws once (the bookkeeping write of a released turn)
-    storeMod.Store.prototype.setTaskActivity=function(...a){const f=path.join(dir,'fault-activity');if(fs.existsSync(f)){fs.rmSync(f,{force:true});fs.writeFileSync(f+'.fired','1');throw new Error('injected setTaskActivity fault');}return setAct.apply(this,a);};
+    // FAULT_ACTIVITY: while <dir>/fault-activity exists, the next idle bookkeeping write of a released turn throws once
+    storeMod.Store.prototype.setTaskActivity=function(...a){const f=path.join(dir,'fault-activity');if(a[2]==='idle'&&fs.existsSync(f)){fs.rmSync(f,{force:true});fs.writeFileSync(f+'.fired','1');throw new Error('injected setTaskActivity fault');}return setAct.apply(this,a);};
     const driver=makeLateTerminalDriver(), create=driver.create.bind(driver);
     driver.create=async input=>{
       const instance=await create(input), env=input.environment;
-      if(env.REDELIVER_REFUSED==='1'){const on=instance.adapter.onEvent.bind(instance.adapter);instance.adapter.onEvent=listener=>on(event=>{listener(event);if(event.type==='turn.completed'&&event.stopReason==='submission_refused'){fs.appendFileSync(path.join(dir,'redelivered'),event.turnId+'\\n');listener(event);}});}
+      if(env.REDELIVER_REFUSED==='1'){const on=instance.adapter.onEvent.bind(instance.adapter);instance.adapter.onEvent=listener=>on((event,source)=>{listener(event,source);if(event.type==='turn.completed'&&event.stopReason==='submission_refused'){fs.appendFileSync(path.join(dir,'redelivered'),event.turnId+'\\n');listener(event,source);}});}
       return instance;
     };
     BUILT_IN_DRIVERS.push(driver);
@@ -63,7 +63,7 @@ async function launch(flags: Record<string, string>) {
   let headers: Record<string, string> = {};
   const start = async () => {
     child = spawn(process.execPath, ["--import", pathToFileURL(join(SERVER_DIR, "testing", "telegram-fetch-preload.mjs")).href, "--import", pathToFileURL(join(SERVER_DIR, "testing", "idle-load-preload.mjs")).href,
-      "--import", pathToFileURL(instr).href, join(SERVER_DIR, "index.ts")], { cwd: join(SERVER_DIR, ".."), stdio: ["ignore", "pipe", "pipe"], env: {
+      "--import", pathToFileURL(instr).href, join(SERVER_DIR, "index.ts")], { windowsHide: true, cwd: join(SERVER_DIR, ".."), stdio: ["ignore", "pipe", "pipe"], env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1),
       MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1", MURAGE_MODEL_PROVIDER_CONNECTIONS: "", MURAGE_MODEL_PROVIDER_COMMIT_TOKEN: "", FAKE_TELEGRAM_DIR: telegramDir } });
     child.stderr!.on("data", (c) => (stderr += c));
@@ -140,6 +140,9 @@ async function launch(flags: Record<string, string>) {
     return { bot, runId: run.id as string, threadId: run.threadId as string };
   };
   const rebuilds = (threadId: string) => count(`at a late submission on thread ${threadId}; re-preparing`);
+  const preparationLines = (threadId: string) => stderr.split("\n").filter(line => line.includes(`on thread ${threadId}`) && line.includes("re-preparing ("));
+  const allRebuilds = (threadId: string) => preparationLines(threadId).length;
+  const rebuildAttempt = (threadId: string) => Math.max(0, ...preparationLines(threadId).map(line => Number(line.match(/re-preparing \((\d+) of 2\)/)?.[1] ?? 0)));
   const dumpSends = (threadId: string) => lines("late-dump").map((l) => JSON.parse(l)).filter((r) => r.threadId === threadId && !r.prompt).length;
   const runStatus = async (botId: string, id: string) => (await channelRuns(botId)).find((r) => r.id === id)?.status as string | undefined;
   /** Let each further (rebuilt) write through until the run is no longer live. */
@@ -152,7 +155,7 @@ async function launch(flags: Record<string, string>) {
     return poll(async () => { const s = await runStatus(botId, runId); return s && !["queued", "running", "waiting"].includes(s) ? s : null; }, 60_000);
   };
   const waitingNow = () => { const id = waiting(); return id !== "" && !seen.has(id) ? id : null; };
-  const ctx = { waitingNow, api, stop, file, lines, sent, count, poll, refuse, rebuilds, dumpSends, runStatus, finish, pass, channelRuns, base, stderr: () => stderr, arrives };
+  const ctx = { waitingNow, api, stop, file, lines, sent, count, poll, refuse, rebuilds, allRebuilds, rebuildAttempt, dumpSends, runStatus, finish, pass, channelRuns, base, stderr: () => stderr, arrives };
   return ctx;
 }
 const replies = (c: Ctx) => c.sent().filter((m) => m.text.includes("Hello from late"));
@@ -165,7 +168,7 @@ describe.skipIf(process.platform === "win32")("FENCE-RACE-1018 r2: a channel run
     expect(await c.finish(bot.id, runId)).toBe("completed");
     await c.poll(() => replies(c).length >= 1, 30_000);
     await sleep(1500);
-    expect(replies(c)).toHaveLength(1);
+    expect(replies(c), JSON.stringify({ run: await c.channelRuns(bot.id), sent: c.sent(), stderr: c.stderr().slice(-5000) })).toHaveLength(1);
     expect(c.sent().filter((m) => m.text.includes(FAILED_TEXT))).toHaveLength(0);
     expect(c.dumpSends(threadId)).toBe(1 + c.rebuilds(threadId));
   }, 240_000);
@@ -178,10 +181,12 @@ describe.skipIf(process.platform === "win32")("FENCE-RACE-1018 r2: a channel run
     expect(["running", "queued"]).toContain(await c.runStatus(bot.id, runId));
     expect(await c.finish(bot.id, runId)).toBe("completed");
     await c.poll(() => replies(c).length >= 1, 30_000); await sleep(1500);
-    expect(replies(c)).toHaveLength(1);
+    expect(replies(c), JSON.stringify({ run: await c.channelRuns(bot.id), sent: c.sent(), stderr: c.stderr().slice(-5000) })).toHaveLength(1);
     expect(c.sent().filter((m) => m.text.includes(FAILED_TEXT))).toHaveLength(0);
     expect(c.dumpSends(threadId)).toBe(1 + c.rebuilds(threadId));
-    expect(c.lines("rebuild-admissions").filter((l) => l === threadId)).toHaveLength(c.rebuilds(threadId));
+    // MAIN RULING INT-CONFLICT-DEFAULT, c4-misc-b2 provider invocation accounting:
+    // preparation also consumes an admission; dumpSends above still counts provider writes only.
+    expect(c.lines("rebuild-admissions").filter((l) => l === threadId)).toHaveLength(c.allRebuilds(threadId));
   }, 240_000);
 
   it("E4 / H2d: with a confirmed teardown (late-close watch) the run still follows the rebuild and completes once", async () => {
@@ -189,7 +194,7 @@ describe.skipIf(process.platform === "win32")("FENCE-RACE-1018 r2: a channel run
     const { bot, runId } = await c.refuse("question with a teardown");
     expect(await c.finish(bot.id, runId)).toBe("completed");
     await c.poll(() => replies(c).length >= 1, 30_000); await sleep(1500);
-    expect(replies(c)).toHaveLength(1);
+    expect(replies(c), JSON.stringify({ run: await c.channelRuns(bot.id), sent: c.sent(), stderr: c.stderr().slice(-5000) })).toHaveLength(1);
     expect(c.sent().filter((m) => m.text.includes(FAILED_TEXT))).toHaveLength(0);
   }, 240_000);
 
@@ -232,6 +237,7 @@ describe.skipIf(process.platform === "win32")("FENCE-RACE-1018 r2: a channel run
     await c.api("POST", `/api/routine-runs/${runId}/cancel`);
     const status = await c.poll(async () => { const s = await c.runStatus(bot.id, runId); return s && !["queued", "running", "waiting"].includes(s) ? s : null; }, 30_000);
     expect(status, "the run hung live after a Stop under a save fault").not.toBeNull();
+    expect(existsSync(c.file("fault-activity.fired"))).toBe(true);
     await sleep(3_000);
     expect(c.sent().filter((m) => m.text.includes(FAILED_TEXT))).toHaveLength(0);
   }, 240_000);
@@ -239,9 +245,12 @@ describe.skipIf(process.platform === "win32")("FENCE-RACE-1018 r2: a channel run
   it("last rebuild: a Stop that wins over the last rebuild's refusal (ticket none) settles by token and writes no card and no desktop notification", async () => {
     live = await launch({}); const c = live;
     const { bot, runId, threadId } = await c.refuse("question refused every time");
-    // refuse the next two rebuilds; the third (last) rebuild's write is then waiting: a Stop lands before it is refused
-    for (let i = 0; i < 2; i += 1) { await c.pass(bot.id, "Revoke before the channel write " + i); await sleep(1_500); }
-    expect(await c.poll(() => c.waitingNow(), 60_000), "the last rebuild's write never waited").not.toBeNull();
+    // refuse the next rebuild; the second (last) rebuild's write is then waiting: a Stop lands before it is refused
+    expect(await c.poll(() => c.waitingNow(), 60_000)).not.toBeNull();
+    // A preparation refusal can already have consumed the first rebuild.
+    if (c.rebuildAttempt(threadId) < 2) { await c.pass(bot.id, "Revoke before the channel write 0"); await sleep(1_500); }
+    expect(await c.poll(() => c.waitingNow(), 60_000), "the last rebuild's write never waited: " + JSON.stringify({ run: await c.channelRuns(bot.id), stderr: c.stderr().slice(-5000) })).not.toBeNull();
+    expect(c.rebuildAttempt(threadId)).toBe(2);
     await c.api("POST", `/api/routine-runs/${runId}/cancel`);
     await c.pass(bot.id, "Revoke before the last write");
     const status = await c.poll(async () => { const s = await c.runStatus(bot.id, runId); return s && !["queued", "running", "waiting"].includes(s) ? s : null; }, 30_000);

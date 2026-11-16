@@ -1,3 +1,5 @@
+import "../../../shared/win-hide-child-process.mjs";
+import {exitWithChildIoReceipt} from "../../io-child-receipts.ts";
 // Copyright 2026 Ferrox Labs
 // Socket handling, reconnect, watchdog and serialized send queue adapted from Hermes Agent
 // scripts/whatsapp-bridge/bridge.js (MIT, Nous Research) and OpenClaw extensions/whatsapp/src
@@ -17,7 +19,8 @@
 // erasable TypeScript syntax (no parameter properties, no enums), because dev runs it with
 // --experimental-strip-types.
 import { createHash } from "node:crypto";
-import { constants as fsConstants, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, writeSync } from "node:fs";
+import { writeSync } from "../../counted-fs.ts";
+import { constants as fsConstants, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -1030,9 +1033,9 @@ export async function runBridgeProcess(proc: ProcessLike = process as unknown as
   const die = (message: string): void => { send({ kind: "fatal", message: message.slice(0, 500) }); setTimeout(() => proc.exit(1), 50); };
   const bridge = new Bridge({ lib, send, onFatal: die });
   proc.on("message", (message: unknown) => {
-    void bridge.handle(message).then(() => { if ((message as { kind?: string } | null)?.kind === "stop") proc.exit(0); });
+    void bridge.handle(message).then(() => { if ((message as { kind?: string } | null)?.kind === "stop") void exitWithChildIoReceipt(0,code=>proc.exit(code)); });
   });
-  proc.on("disconnect", () => { void bridge.stop().finally(() => proc.exit(0)); });
+  proc.on("disconnect", () => { void bridge.stop().finally(() => void exitWithChildIoReceipt(0,code=>proc.exit(code))); });
   proc.on("uncaughtException", (error: unknown) => die(`uncaught exception: ${describeError(error)}`));
   proc.on("unhandledRejection", (error: unknown) => die(`unhandled rejection: ${describeError(error)}`));
   send({ kind: "ready", v: PROTOCOL_VERSION });

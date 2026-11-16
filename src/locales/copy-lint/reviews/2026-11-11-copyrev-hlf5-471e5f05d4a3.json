@@ -1,0 +1,705 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "hlf5",
+  "date": "2026-11-11",
+  "base": "5e951918a4b9dc3ab6d0c37110423848563aec5b",
+  "scope": "Independent Sol copy review of hlf5 F5 rounds through 5e951918a, locale strings and matching server literals",
+  "strings": {
+    "en:highlevel.operation.automations.workflows.list": {
+      "text": "List workflows",
+      "en": "List workflows",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "en:highlevel.operation.automations.campaigns.list": {
+      "text": "List campaigns",
+      "en": "List campaigns",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "en:highlevel.operation.automations.workflow.addContact": {
+      "text": "Add to a workflow",
+      "en": "Add to a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "en:highlevel.operation.automations.workflow.removeContact": {
+      "text": "Remove from a workflow",
+      "en": "Remove from a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "en:highlevel.operation.automations.campaign.addContact": {
+      "text": "Add to a campaign",
+      "en": "Add to a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "en:highlevel.operation.automations.campaign.removeContact": {
+      "text": "Remove from a campaign",
+      "en": "Remove from a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "en:highlevel.operation.automations.campaign.removeAll": {
+      "text": "Remove from every campaign",
+      "en": "Remove from every campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "en:highlevel.operation.forms.list": {
+      "text": "List forms",
+      "en": "List forms",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "en:highlevel.operation.forms.surveys.list": {
+      "text": "List surveys",
+      "en": "List surveys",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "en:highlevel.f5.campaigns": {
+      "text": "Choose the action to remove from every campaign instead.",
+      "en": "Choose the action to remove from every campaign instead.",
+      "verdict": "pass",
+      "note": "Plain next step; the internal operation name is absent."
+    },
+    "en:highlevel.f5.unconfirmed": {
+      "text": "HighLevel did not confirm the automation change.",
+      "en": "HighLevel did not confirm the automation change.",
+      "verdict": "pass",
+      "note": "Honest statement of an unconfirmed change; does not imply success, failure, or a fix."
+    },
+    "en:highlevel.f5.tooLarge": {
+      "text": "This HighLevel result is too large to show in full. Narrow the request or check it in HighLevel.",
+      "en": "This HighLevel result is too large to show in full. Narrow the request or check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Plain, accurate explanation with an action the person can take; no claim about a repaired defect."
+    },
+    "en:highlevel.f5.unsupported": {
+      "text": "This HighLevel answer cannot be shown in full. Check it in HighLevel.",
+      "en": "This HighLevel answer cannot be shown in full. Check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Plain, accurate explanation with an action the person can take; no claim about a repaired defect."
+    },
+    "de:highlevel.operation.automations.workflows.list": {
+      "text": "Workflows auflisten",
+      "en": "List workflows",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "de:highlevel.operation.automations.campaigns.list": {
+      "text": "Kampagnen auflisten",
+      "en": "List campaigns",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "de:highlevel.operation.automations.workflow.addContact": {
+      "text": "Zu einem Workflow hinzufügen",
+      "en": "Add to a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "de:highlevel.operation.automations.workflow.removeContact": {
+      "text": "Aus einem Workflow entfernen",
+      "en": "Remove from a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "de:highlevel.operation.automations.campaign.addContact": {
+      "text": "Zu einer Kampagne hinzufügen",
+      "en": "Add to a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "de:highlevel.operation.automations.campaign.removeContact": {
+      "text": "Aus einer Kampagne entfernen",
+      "en": "Remove from a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "de:highlevel.operation.automations.campaign.removeAll": {
+      "text": "Aus allen Kampagnen entfernen",
+      "en": "Remove from every campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "de:highlevel.operation.forms.list": {
+      "text": "Formulare auflisten",
+      "en": "List forms",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "de:highlevel.operation.forms.surveys.list": {
+      "text": "Umfragen auflisten",
+      "en": "List surveys",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "de:highlevel.operation.forms.submissions": {
+      "text": "Formularantworten lesen",
+      "en": "Read form submissions",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "de:highlevel.operation.forms.surveys.submissions": {
+      "text": "Umfrageantworten lesen",
+      "en": "Read survey submissions",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "de:highlevel.f5.campaigns": {
+      "text": "Wähle stattdessen die Aktion zum Entfernen aus allen Kampagnen.",
+      "en": "Choose the action to remove from every campaign instead.",
+      "verdict": "pass",
+      "note": "Plain next step; the internal operation name is absent."
+    },
+    "de:highlevel.f5.unconfirmed": {
+      "text": "HighLevel hat die Änderung der Automatisierung nicht bestätigt.",
+      "en": "HighLevel did not confirm the automation change.",
+      "verdict": "pass",
+      "note": "Honest statement of an unconfirmed change; does not imply success, failure, or a fix."
+    },
+    "es:highlevel.operation.automations.workflows.list": {
+      "text": "Listar flujos de trabajo",
+      "en": "List workflows",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "es:highlevel.operation.automations.campaigns.list": {
+      "text": "Listar campañas",
+      "en": "List campaigns",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "es:highlevel.operation.automations.workflow.addContact": {
+      "text": "Añadir a un flujo de trabajo",
+      "en": "Add to a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "es:highlevel.operation.automations.workflow.removeContact": {
+      "text": "Quitar de un flujo de trabajo",
+      "en": "Remove from a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "es:highlevel.operation.automations.campaign.addContact": {
+      "text": "Añadir a una campaña",
+      "en": "Add to a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "es:highlevel.operation.automations.campaign.removeContact": {
+      "text": "Quitar de una campaña",
+      "en": "Remove from a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "es:highlevel.operation.automations.campaign.removeAll": {
+      "text": "Quitar de todas las campañas",
+      "en": "Remove from every campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "es:highlevel.operation.forms.list": {
+      "text": "Listar formularios",
+      "en": "List forms",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "es:highlevel.operation.forms.surveys.list": {
+      "text": "Listar encuestas",
+      "en": "List surveys",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "es:highlevel.operation.forms.submissions": {
+      "text": "Leer respuestas de formularios",
+      "en": "Read form submissions",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "es:highlevel.operation.forms.surveys.submissions": {
+      "text": "Leer respuestas de encuestas",
+      "en": "Read survey submissions",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "es:highlevel.f5.campaigns": {
+      "text": "Elige la acción para quitar de todas las campañas.",
+      "en": "Choose the action to remove from every campaign instead.",
+      "verdict": "pass",
+      "note": "Plain next step; the internal operation name is absent."
+    },
+    "es:highlevel.f5.unconfirmed": {
+      "text": "HighLevel no confirmó el cambio de automatización.",
+      "en": "HighLevel did not confirm the automation change.",
+      "verdict": "pass",
+      "note": "Honest statement of an unconfirmed change; does not imply success, failure, or a fix."
+    },
+    "es:highlevel.f5.tooLarge": {
+      "text": "Este resultado de HighLevel es demasiado grande para mostrarlo completo. Acota la consulta o revísalo en HighLevel.",
+      "en": "This HighLevel result is too large to show in full. Narrow the request or check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Plain, accurate explanation with an action the person can take; no claim about a repaired defect."
+    },
+    "es:highlevel.f5.unsupported": {
+      "text": "Esta respuesta de HighLevel no se puede mostrar completa. Revísala en HighLevel.",
+      "en": "This HighLevel answer cannot be shown in full. Check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Plain, accurate explanation with an action the person can take; no claim about a repaired defect."
+    },
+    "fr:highlevel.operation.automations.workflows.list": {
+      "text": "Lister les workflows",
+      "en": "List workflows",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "fr:highlevel.operation.automations.campaigns.list": {
+      "text": "Lister les campagnes",
+      "en": "List campaigns",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "fr:highlevel.operation.automations.workflow.addContact": {
+      "text": "Ajouter à un workflow",
+      "en": "Add to a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "fr:highlevel.operation.automations.workflow.removeContact": {
+      "text": "Retirer d’un workflow",
+      "en": "Remove from a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "fr:highlevel.operation.automations.campaign.addContact": {
+      "text": "Ajouter à une campagne",
+      "en": "Add to a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "fr:highlevel.operation.automations.campaign.removeContact": {
+      "text": "Retirer d’une campagne",
+      "en": "Remove from a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "fr:highlevel.operation.automations.campaign.removeAll": {
+      "text": "Retirer de toutes les campagnes",
+      "en": "Remove from every campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "fr:highlevel.operation.forms.list": {
+      "text": "Lister les formulaires",
+      "en": "List forms",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "fr:highlevel.operation.forms.surveys.list": {
+      "text": "Lister les enquêtes",
+      "en": "List surveys",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "fr:highlevel.operation.forms.submissions": {
+      "text": "Lire les réponses aux formulaires",
+      "en": "Read form submissions",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "fr:highlevel.operation.forms.surveys.submissions": {
+      "text": "Lire les réponses aux enquêtes",
+      "en": "Read survey submissions",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "fr:highlevel.f5.campaigns": {
+      "text": "Choisis plutôt l’action pour retirer de toutes les campagnes.",
+      "en": "Choose the action to remove from every campaign instead.",
+      "verdict": "pass",
+      "note": "Plain next step; the internal operation name is absent."
+    },
+    "fr:highlevel.f5.unconfirmed": {
+      "text": "HighLevel n’a pas confirmé la modification de l’automatisation.",
+      "en": "HighLevel did not confirm the automation change.",
+      "verdict": "pass",
+      "note": "Honest statement of an unconfirmed change; does not imply success, failure, or a fix."
+    },
+    "hi:highlevel.operation.automations.workflows.list": {
+      "text": "वर्कफ़्लो की सूची देखें",
+      "en": "List workflows",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "hi:highlevel.operation.automations.campaigns.list": {
+      "text": "अभियानों की सूची देखें",
+      "en": "List campaigns",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "hi:highlevel.operation.automations.workflow.addContact": {
+      "text": "वर्कफ़्लो में जोड़ें",
+      "en": "Add to a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "hi:highlevel.operation.automations.workflow.removeContact": {
+      "text": "वर्कफ़्लो से हटाएँ",
+      "en": "Remove from a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "hi:highlevel.operation.automations.campaign.addContact": {
+      "text": "अभियान में जोड़ें",
+      "en": "Add to a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "hi:highlevel.operation.automations.campaign.removeContact": {
+      "text": "अभियान से हटाएँ",
+      "en": "Remove from a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "hi:highlevel.operation.automations.campaign.removeAll": {
+      "text": "सभी अभियानों से हटाएँ",
+      "en": "Remove from every campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "hi:highlevel.operation.forms.list": {
+      "text": "फ़ॉर्म की सूची देखें",
+      "en": "List forms",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "hi:highlevel.operation.forms.surveys.list": {
+      "text": "सर्वेक्षणों की सूची देखें",
+      "en": "List surveys",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "hi:highlevel.operation.forms.submissions": {
+      "text": "फ़ॉर्म के जवाब पढ़ें",
+      "en": "Read form submissions",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "hi:highlevel.operation.forms.surveys.submissions": {
+      "text": "सर्वेक्षण के जवाब पढ़ें",
+      "en": "Read survey submissions",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "hi:highlevel.f5.campaigns": {
+      "text": "इसके बजाय सभी अभियानों से हटाने की कार्रवाई चुनें।",
+      "en": "Choose the action to remove from every campaign instead.",
+      "verdict": "pass",
+      "note": "Plain next step; the internal operation name is absent."
+    },
+    "hi:highlevel.f5.unconfirmed": {
+      "text": "HighLevel ने ऑटोमेशन में बदलाव की पुष्टि नहीं की।",
+      "en": "HighLevel did not confirm the automation change.",
+      "verdict": "pass",
+      "note": "Honest statement of an unconfirmed change; does not imply success, failure, or a fix."
+    },
+    "hi:highlevel.f5.tooLarge": {
+      "text": "HighLevel का यह नतीजा पूरा दिखाने के लिए बहुत बड़ा है। अनुरोध सीमित करें या इसे HighLevel में देखें।",
+      "en": "This HighLevel result is too large to show in full. Narrow the request or check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Plain, accurate explanation with an action the person can take; no claim about a repaired defect."
+    },
+    "hi:highlevel.f5.unsupported": {
+      "text": "HighLevel का यह जवाब पूरा नहीं दिखाया जा सकता। इसे HighLevel में देखें।",
+      "en": "This HighLevel answer cannot be shown in full. Check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Plain, accurate explanation with an action the person can take; no claim about a repaired defect."
+    },
+    "ja:highlevel.operation.automations.workflows.list": {
+      "text": "ワークフローを一覧表示",
+      "en": "List workflows",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "ja:highlevel.operation.automations.campaigns.list": {
+      "text": "キャンペーンを一覧表示",
+      "en": "List campaigns",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "ja:highlevel.operation.automations.workflow.addContact": {
+      "text": "ワークフローに追加",
+      "en": "Add to a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "ja:highlevel.operation.automations.workflow.removeContact": {
+      "text": "ワークフローから削除",
+      "en": "Remove from a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "ja:highlevel.operation.automations.campaign.addContact": {
+      "text": "キャンペーンに追加",
+      "en": "Add to a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "ja:highlevel.operation.automations.campaign.removeContact": {
+      "text": "キャンペーンから削除",
+      "en": "Remove from a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "ja:highlevel.operation.automations.campaign.removeAll": {
+      "text": "すべてのキャンペーンから削除",
+      "en": "Remove from every campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "ja:highlevel.operation.forms.list": {
+      "text": "フォームを一覧表示",
+      "en": "List forms",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "ja:highlevel.operation.forms.surveys.list": {
+      "text": "アンケートを一覧表示",
+      "en": "List surveys",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "ja:highlevel.operation.forms.submissions": {
+      "text": "フォームの回答を読む",
+      "en": "Read form submissions",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "ja:highlevel.operation.forms.surveys.submissions": {
+      "text": "アンケートの回答を読む",
+      "en": "Read survey submissions",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "ja:highlevel.f5.campaigns": {
+      "text": "すべてのキャンペーンから削除する操作を選んでください。",
+      "en": "Choose the action to remove from every campaign instead.",
+      "verdict": "pass",
+      "note": "Plain next step; the internal operation name is absent."
+    },
+    "ja:highlevel.f5.unconfirmed": {
+      "text": "HighLevelは自動化の変更を確認しませんでした。",
+      "en": "HighLevel did not confirm the automation change.",
+      "verdict": "pass",
+      "note": "Honest statement of an unconfirmed change; does not imply success, failure, or a fix."
+    },
+    "ja:highlevel.f5.tooLarge": {
+      "text": "このHighLevelの結果は大きすぎるため全体を表示できません。検索条件を絞るかHighLevelで確認してください。",
+      "en": "This HighLevel result is too large to show in full. Narrow the request or check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Plain, accurate explanation with an action the person can take; no claim about a repaired defect."
+    },
+    "ja:highlevel.f5.unsupported": {
+      "text": "このHighLevelの回答は全体を表示できません。HighLevelで確認してください。",
+      "en": "This HighLevel answer cannot be shown in full. Check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Plain, accurate explanation with an action the person can take; no claim about a repaired defect."
+    },
+    "pt-br:highlevel.operation.automations.workflows.list": {
+      "text": "Listar fluxos de trabalho",
+      "en": "List workflows",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "pt-br:highlevel.operation.automations.campaigns.list": {
+      "text": "Listar campanhas",
+      "en": "List campaigns",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "pt-br:highlevel.operation.automations.workflow.addContact": {
+      "text": "Adicionar a um fluxo de trabalho",
+      "en": "Add to a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "pt-br:highlevel.operation.automations.workflow.removeContact": {
+      "text": "Remover de um fluxo de trabalho",
+      "en": "Remove from a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "pt-br:highlevel.operation.automations.campaign.addContact": {
+      "text": "Adicionar a uma campanha",
+      "en": "Add to a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "pt-br:highlevel.operation.automations.campaign.removeContact": {
+      "text": "Remover de uma campanha",
+      "en": "Remove from a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "pt-br:highlevel.operation.automations.campaign.removeAll": {
+      "text": "Remover de todas as campanhas",
+      "en": "Remove from every campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "pt-br:highlevel.operation.forms.list": {
+      "text": "Listar formulários",
+      "en": "List forms",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "pt-br:highlevel.operation.forms.surveys.list": {
+      "text": "Listar pesquisas",
+      "en": "List surveys",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "pt-br:highlevel.operation.forms.submissions": {
+      "text": "Ler respostas de formulários",
+      "en": "Read form submissions",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "pt-br:highlevel.operation.forms.surveys.submissions": {
+      "text": "Ler respostas de pesquisas",
+      "en": "Read survey submissions",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "pt-br:highlevel.f5.campaigns": {
+      "text": "Escolha a ação para remover de todas as campanhas.",
+      "en": "Choose the action to remove from every campaign instead.",
+      "verdict": "pass",
+      "note": "Plain next step; the internal operation name is absent."
+    },
+    "pt-br:highlevel.f5.unconfirmed": {
+      "text": "O HighLevel não confirmou a alteração na automação.",
+      "en": "HighLevel did not confirm the automation change.",
+      "verdict": "pass",
+      "note": "Honest statement of an unconfirmed change; does not imply success, failure, or a fix."
+    },
+    "pt-br:highlevel.f5.tooLarge": {
+      "text": "Este resultado do HighLevel é grande demais para ser exibido por inteiro. Refine a consulta ou confira no HighLevel.",
+      "en": "This HighLevel result is too large to show in full. Narrow the request or check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Plain, accurate explanation with an action the person can take; no claim about a repaired defect."
+    },
+    "pt-br:highlevel.f5.unsupported": {
+      "text": "Esta resposta do HighLevel não pode ser exibida por inteiro. Confira no HighLevel.",
+      "en": "This HighLevel answer cannot be shown in full. Check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Plain, accurate explanation with an action the person can take; no claim about a repaired defect."
+    },
+    "zh:highlevel.operation.automations.workflows.list": {
+      "text": "列出工作流",
+      "en": "List workflows",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "zh:highlevel.operation.automations.campaigns.list": {
+      "text": "列出营销活动",
+      "en": "List campaigns",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "zh:highlevel.operation.automations.workflow.addContact": {
+      "text": "添加到工作流",
+      "en": "Add to a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "zh:highlevel.operation.automations.workflow.removeContact": {
+      "text": "从工作流中移除",
+      "en": "Remove from a workflow",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "zh:highlevel.operation.automations.campaign.addContact": {
+      "text": "添加到营销活动",
+      "en": "Add to a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "zh:highlevel.operation.automations.campaign.removeContact": {
+      "text": "从营销活动中移除",
+      "en": "Remove from a campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "zh:highlevel.operation.automations.campaign.removeAll": {
+      "text": "从所有营销活动中移除",
+      "en": "Remove from every campaign",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "zh:highlevel.operation.forms.list": {
+      "text": "列出表单",
+      "en": "List forms",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "zh:highlevel.operation.forms.surveys.list": {
+      "text": "列出调查",
+      "en": "List surveys",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "zh:highlevel.operation.forms.submissions": {
+      "text": "读取表单提交内容",
+      "en": "Read form submissions",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "zh:highlevel.operation.forms.surveys.submissions": {
+      "text": "读取调查提交内容",
+      "en": "Read survey submissions",
+      "verdict": "pass",
+      "note": "Plain action label in this language; HighLevel workflow and campaign names identify the destination."
+    },
+    "zh:highlevel.f5.urls": {
+      "text": "此处不接受网址",
+      "en": "URLs are not accepted here",
+      "verdict": "pass",
+      "note": "Chinese uses the everyday word for a web address, without the URL acronym."
+    },
+    "zh:highlevel.f5.campaigns": {
+      "text": "请选择从所有营销活动中移除的操作。",
+      "en": "Choose the action to remove from every campaign instead.",
+      "verdict": "pass",
+      "note": "Plain next step; the internal operation name is absent."
+    },
+    "zh:highlevel.f5.unconfirmed": {
+      "text": "HighLevel 未确认自动化更改。",
+      "en": "HighLevel did not confirm the automation change.",
+      "verdict": "pass",
+      "note": "Honest statement of an unconfirmed change; does not imply success, failure, or a fix."
+    },
+    "zh:highlevel.f5.tooLarge": {
+      "text": "此 HighLevel 结果过大，无法完整显示。请缩小查询范围或在 HighLevel 中查看。",
+      "en": "This HighLevel result is too large to show in full. Narrow the request or check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Plain, accurate explanation with an action the person can take; no claim about a repaired defect."
+    },
+    "zh:highlevel.f5.unsupported": {
+      "text": "无法完整显示此 HighLevel 回答。请在 HighLevel 中查看。",
+      "en": "This HighLevel answer cannot be shown in full. Check it in HighLevel.",
+      "verdict": "pass",
+      "note": "Plain, accurate explanation with an action the person can take; no claim about a repaired defect."
+    }
+  },
+  "files": {}
+}

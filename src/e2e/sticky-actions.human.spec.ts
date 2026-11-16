@@ -5,7 +5,7 @@ import { test, expect } from "./page-error-guard";
 import type { Locator, Page } from "@playwright/test";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";

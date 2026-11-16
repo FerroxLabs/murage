@@ -11,3 +11,6 @@ globalThis.fetch = (input, init) => {
   if (!["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)) throw new Error("External network disabled in Slack API fixture");
   return originalFetch(input, init);
 };
+// The fixture server is spawned with an IPC channel. If the test worker dies (a run killed from outside skips every teardown), the channel
+// closes: exit then, so no server outlives its test. A server started without a channel is untouched.
+if (typeof process.send === "function") process.once("disconnect", () => process.exit(0));

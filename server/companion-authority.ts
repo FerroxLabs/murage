@@ -1,3 +1,4 @@
+import { createChatsReaderAuthority } from "../shared/chats-reader-proof.ts";
 import { isDesktopApp } from "./cloud-owner-surface.ts";
 import { cloudIdentity, isOwnerBrowser } from "./cloud-request-identity.ts";
 import { timingSafeEqual } from "node:crypto";
@@ -34,6 +35,14 @@ export const companionAuthorized = (headers: IncomingHttpHeaders): boolean => pr
 export const ownerActs = (headers: IncomingHttpHeaders): boolean => process.env.MURAGE_CLOUD_ROLE === "home"
   ? ["owner-desktop","owner-phone"].includes(cloudIdentity(headers)?.scope ?? "")
   : desktopCompanionAuthorized(headers);
+/** The second layer behind the route policy on POST /api/terms/accept. Whoever acts (mayApprove's own test: the desktop
+ * surface, or ownerActs) may accept. On a Cloud home ONLY, an owner browser also may, remembered-owner included: a
+ * customer with no desktop or phone has no other surface, and the owner already accepted the terms at checkout. This
+ * carve-out is for the terms record alone; accepting grants no authority over bots, tools or money, so it does not widen
+ * ownerActs or mayApprove and H1 stays whole for every approval. It still refuses a chat-only browser (no factor), a
+ * revoked one, and a bot's shell with no identity. Off a home it adds nothing. */
+export const mayAcceptTerms = (headers: IncomingHttpHeaders, surfaceActs: boolean): boolean =>
+  surfaceActs || ownerActs(headers) || (process.env.MURAGE_CLOUD_ROLE === "home" && companionAuthorized(headers));
 /** The same launch secret in a second header: the companion stamps it on every
  * request it forwards (phone and browser door), so the harness can tell a
  * forwarded request from a bare loopback one (audit C5). It claims no owner
@@ -41,5 +50,10 @@ export const ownerActs = (headers: IncomingHttpHeaders): boolean => process.env.
 export const DOOR_FORWARD_HEADER = "x-murage-door-token";
 export const doorAuthorized = createCompanionAuthority(launchToken, DOOR_FORWARD_HEADER);
 
+/** COMPANION-CHATS-1019: this proof feeds only previews, never owner actions or team rows. */
+const readerAuthority = createChatsReaderAuthority(launchToken);
+const chatsReaderProof = (headers: IncomingHttpHeaders): boolean => readerAuthority.verify(headers["x-murage-chats-reader"]);
+
 /** The identical preview audience for answers, hello, live frames and replay. */
-export const chatsReader = (headers: IncomingHttpHeaders, query?: URLSearchParams | null): boolean => isDesktopApp(headers, query) || ownerActs(headers);
+export const chatsReader = (headers: IncomingHttpHeaders, query?: URLSearchParams | null): boolean => isDesktopApp(headers, query) || ownerActs(headers)
+  || (process.env.MURAGE_CLOUD_ROLE === "home" ? isOwnerBrowser(cloudIdentity(headers)) : chatsReaderProof(headers));

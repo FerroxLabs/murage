@@ -1,8 +1,19 @@
+import { appendLegacyFixtureMessage } from './testing/approval-card.ts';
 // The one-time confirmation before a bot on Auto first acts on this computer:
 // who is asked, who is grandfathered, and what is (and is not) remembered.
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { database } from "./database.ts";
+import { randomUUID } from "node:crypto";
+import { serviceQueue } from "./narrow-denials.ts";
+import { serviceQueueFixture } from "./testing/service-queue-fixture.ts";
+import { openFixtureApproval } from "./testing/approval-card.ts";
+import { messagesHighWater, openCardIndexDone } from "./message-db.ts";
+import { indexOpenCardsChunk } from "./transcript-backfill.ts";
+import { settleStaleCardPage } from "./peer-approval.ts";
+import { readApproval } from "./decision/index.ts";
+import { flushApprovalPresentation } from "./testing/channel-approval-fixture.ts";
 import { DATA_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import {
@@ -11,6 +22,7 @@ import {
   dismissStaleHostConsentCards,
   grandfatheredHostComputerConsent,
   hostConsentState,
+  staleHostConsentCardKind,
   HOST_CONSENT_TOOL,
   resolveHostComputerConsent,
 } from "./host-computer-consent.ts";
@@ -19,7 +31,11 @@ import { Store, type BotRecord } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
-const bus = (store: Store): ApprovalBus => ({ store, broadcast: () => {} });
+const bus = (store: Store, extra: Partial<ApprovalBus> = {}): ApprovalBus => {
+  const fixture = serviceQueueFixture(store);
+  fixture.queue(serviceQueue('host-computer'));
+  return { store, broadcast: () => {}, authorityFor: fixture.authorityFor, ...extra };
+};
 const consentCards = (store: Store, threadId: string) => store.messagesFor(threadId).filter((m) => m.card?.tool === HOST_CONSENT_TOOL);
 const allowedHostCard = (answered: string) => ({
   role: "bot" as const, kind: "options" as const,
@@ -60,7 +76,9 @@ describe("the card", () => {
     const store = new Store(selection);
     const bot = store.createBot({}, { seedMessages: false });
     const first = awaitHostComputerConsent(bus(store), bot, bot.threadId, 5_000);
+    await flushApprovalPresentation();
     const second = awaitHostComputerConsent(bus(store), bot, bot.threadId, 5_000);
+    await flushApprovalPresentation();
     const cards = consentCards(store, bot.threadId);
     expect(cards).toHaveLength(1);
     const remembered: Array<[string, string]> = [];
@@ -77,6 +95,7 @@ describe("the card", () => {
     const store = new Store(selection);
     const bot = store.createBot({}, { seedMessages: false });
     const waiting = awaitHostComputerConsent(bus(store), bot, bot.threadId, 5_000);
+    await flushApprovalPresentation();
     const remembered: string[] = [];
     resolveHostComputerConsent(consentCards(store, bot.threadId)[0]!.card!.requestId!, "deny", (_id, consent) => remembered.push(consent));
     expect(await waiting).toBe("declined");
@@ -91,6 +110,7 @@ describe("the card", () => {
     expect(card!.card!.answered).toBeUndefined();
     // a retry joins the same card rather than opening another
     const retry = awaitHostComputerConsent(bus(store), bot, bot.threadId, 5_000);
+    await flushApprovalPresentation();
     expect(consentCards(store, bot.threadId)).toHaveLength(1);
     const remembered: string[] = [];
     expect(resolveHostComputerConsent(card!.card!.requestId!, "allow", (_id, consent) => remembered.push(consent))).toBe(true);
@@ -102,6 +122,7 @@ describe("the card", () => {
     const store = new Store(selection);
     const bot = store.createBot({}, { seedMessages: false });
     const waiting = awaitHostComputerConsent(bus(store), bot, bot.threadId, 5_000);
+    await flushApprovalPresentation();
     const [card] = consentCards(store, bot.threadId);
     cancelHostComputerConsentForThread(bot.threadId);
     expect(await waiting).toBe("waiting");
@@ -109,6 +130,7 @@ describe("the card", () => {
     expect(resolveHostComputerConsent(card!.card!.requestId!, "allow", () => { throw new Error("must not remember"); })).toBe(false);
     // the next action asks again with a fresh card
     void awaitHostComputerConsent(bus(store), bot, bot.threadId, 10);
+    await flushApprovalPresentation();
     expect(consentCards(store, bot.threadId)).toHaveLength(2);
     cancelHostComputerConsentForThread(bot.threadId);
   });
@@ -116,9 +138,35 @@ describe("the card", () => {
   it("settles a card a previous run left open", () => {
     const store = new Store(selection);
     const bot = store.createBot({}, { seedMessages: false });
-    store.appendMessage(bot.threadId, { role: "bot", kind: "options", card: { title: "Let @x use this computer?", subtitle: "", options: ["Allow", "Deny"], requestId: "stale", tool: HOST_CONSENT_TOOL } });
+    const stale = openFixtureApproval(database(), bot.threadId, { id: randomUUID(), role: "bot" as const, kind: "options" as const, card: { title: "Let @x use this computer?", subtitle: "", options: ["Allow", "Deny"], requestId: "stale", tool: HOST_CONSENT_TOOL } });
+    store.appendMessage(bot.threadId, stale, stale.id);
     expect(dismissStaleHostConsentCards(bus(store))).toBe(1);
     expect(consentCards(store, bot.threadId)[0]!.card).toMatchObject({ answered: "unavailable", dismissed: true });
+  });
+  it("settles a legacy card a previous run left open", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({}, { seedMessages: false });
+    appendLegacyFixtureMessage(store, bot.threadId, { role: "bot", kind: "options", card: { title: "Let @x use this computer?", subtitle: "", options: ["Allow", "Deny"], requestId: "stale", tool: HOST_CONSENT_TOOL } });
+    expect(dismissStaleHostConsentCards(bus(store))).toBe(1);
+    expect(consentCards(store, bot.threadId)[0]!.card).toMatchObject({ answered: "unavailable", dismissed: true });
+  });
+  it("startup card pages cancel stale host consent and retain registered engine approvals", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({}, { seedMessages: false });
+    const host = openFixtureApproval(database(), bot.threadId, { id: randomUUID(), role: "bot" as const, kind: "options" as const,
+      card: { title: "Use this computer?", subtitle: "", options: ["Allow", "Deny"], requestId: "stale-host", tool: HOST_CONSENT_TOOL } });
+    const engine = openFixtureApproval(database(), bot.threadId, { id: randomUUID(), role: "bot" as const, kind: "options" as const,
+      card: { title: "Run a command?", subtitle: "", options: ["Allow", "Deny"], requestId: "live-engine", tool: "Bash" } });
+    store.appendMessage(bot.threadId, host, host.id);
+    store.appendMessage(bot.threadId, engine, engine.id);
+    indexOpenCardsChunk(database());
+    expect(openCardIndexDone()).toBe(true);
+    const result = settleStaleCardPage(bus(store), [staleHostConsentCardKind(), { tools: ["Bash"], keep: () => false }], null, 10, messagesHighWater());
+    expect(result?.dismissed).toBe(1);
+    expect(store.messageById(bot.threadId, host.id)?.card).toMatchObject({ answered: "unavailable", dismissed: true });
+    expect(readApproval(store.messageById(bot.threadId, host.id)!.card!.approvalId!)?.state).toBe("cancelled");
+    expect(readApproval(store.messageById(bot.threadId, engine.id)!.card!.approvalId!)?.state).toBe("open");
+    expect(store.messageById(bot.threadId, engine.id)?.card?.answered).toBeUndefined();
   });
 });
 
@@ -177,8 +225,9 @@ describe("the card in a direct chat", () => {
     try {
       const store = new Store(selection);
       const bot = store.createBot({}, { seedMessages: false });
-      const bus: ApprovalBus = { store, broadcast: () => {} };
-      const waiting = awaitHostComputerConsent(bus, bot, bot.threadId, 20);
+      const approvalBus = bus(store);
+      const waiting = awaitHostComputerConsent(approvalBus, bot, bot.threadId, 20);
+      await flushApprovalPresentation();
       vi.advanceTimersByTime(20);
       expect(await waiting).toBe("waiting");
       vi.advanceTimersByTime(15 * 60_000 + 1);
@@ -201,17 +250,19 @@ describe("the card in a routine run", () => {
       const store = new Store(selection);
       const bot = store.createBot({}, { seedMessages: false });
       const events: string[] = [];
-      const held: ApprovalBus = { store, broadcast: () => {}, routineCard: {
+      const held = bus(store, { routineCard: {
         opened: (_threadId, _requestId, summary) => { events.push(`opened:${summary}`); return true; },
         closed: (_threadId, _requestId, answer) => { events.push(`closed:${answer}`); return true; },
-      } };
+      } });
       const waiting = awaitHostComputerConsent(held, bot, bot.threadId, 20);
+      await flushApprovalPresentation();
       vi.advanceTimersByTime(20);
       expect(await waiting).toBe("waiting");
       vi.advanceTimersByTime(60 * 60_000);
       const [card] = consentCards(store, bot.threadId);
       expect(card!.card!.answered).toBeUndefined();
       expect(resolveHostComputerConsent(card!.card!.requestId!, "allow", () => {})).toBe(true);
+      await flushApprovalPresentation();
       expect(events).toEqual([`opened:Let @${bot.name} use this computer?`, "closed:allow"]);
     } finally { vi.useRealTimers(); }
   });

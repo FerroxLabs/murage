@@ -1,0 +1,22 @@
+AGREE
+
+- **High — [DESIGN-r2.md:163](/fixture/jobs/gitbash/DESIGN-r2.md:163):** Add separately prepared launch reservations for the nested `bash hello.sh` and direct-script occurrences required by GB11. Specify parent identity, occurrence mapping, expected image/argv/cwd and consumption order before scanning; outer-shell supervision alone leaves these occurrences untrusted under line 240.
+- **High — [DESIGN-r2.md:293](/fixture/jobs/gitbash/DESIGN-r2.md:293):** Define process roles and separate image policies: protected Bash/runtime, authenticated Murage prefix, and ordinary command children. Add the prefix and its dependencies to a separate authenticated inventory; apply the eight-member restriction only to protected Bash processes. Otherwise the required prefix and ordinary Git/Node children lack an executable admission rule.
+- **High — [DESIGN-r2.md:299](/fixture/jobs/gitbash/DESIGN-r2.md:299):** Explicitly admit Murage’s existing `BASH_ENV=/dev/null` and `ENV=""` neutral values after proving their effective mapping. Preserve the pins in [claude.ts:2110](/work/fuigo-builds/orph/_base/server/drivers/claude.ts:2110); literal absence requirements would reject the required Claude outer-shell positive.
+- **High — [DESIGN-r2.md:301](/fixture/jobs/gitbash/DESIGN-r2.md:301):** Replace watch-only startup-file absence with an enforced consumed-input contract. Freeze present configuration bytes; for absent files, require either enforced absence through their last possible read or runtime mediation that supplies the frozen snapshot. Add creation-after-commit and replacement-during-startup controls; notification followed by revocation is insufficient to prevent consumption.
+- **Medium — [DESIGN-r2.md:220](/fixture/jobs/gitbash/DESIGN-r2.md:220):** Specify a structured occurrence enumerator with original-byte offsets and wrapper operand roles. The current [outside-scan.ts:925](/work/fuigo-builds/orph/_base/server/outside-scan.ts:925) normalizes text and deliberately over-enumerates wrapper operands; it cannot directly supply the promised exact occurrence. Add `env printf bash` and `find … -exec printf bash` non-command controls.
+- **Medium — [DESIGN-r2.md:291](/fixture/jobs/gitbash/DESIGN-r2.md:291):** Define target-specific Windows command-line serialization for the frozen argv, including the bin launcher and native prefix. Require round-trip fixtures for empty arguments, quotes, trailing backslashes and Unicode, preserving the exact Bash `-c` payload.
+- **Medium — [DESIGN-r2.md:325](/fixture/jobs/gitbash/DESIGN-r2.md:325):** Make the separate supervisor process the physical owner of lease handles, jobs and debug events; make addon handles logical proxies. Name its executable/build target and IPC disconnect/drain protocol, reconciling this with line 252’s addon ownership.
+
+- **Q1:** Accept release-qualified installed Git, including per-user installs; retain authenticated bytes and packaged qualification gates.
+- **Q2:** Require the new Fuigo protocol and engine-side dispatch implementation; 1.0.40 remains a negative control.
+- **Q3:** Accept the pinned NL-ST4 behavioral port and full plain/cd, Bash/sh, LF/CRLF matrix, with separate nested-occurrence binding above.
+- **Q4:** Retain handles and pre-continuation image enforcement, amended for process roles and startup-input races.
+- **Q5:** Revoke admission immediately; terminate/drain dependents before releasing protection. Updates require reacquisition.
+- **Q6:** Accept object-scoped ACL evaluation; sibling creation alone is not replacement authority. Unknown cases refuse relief.
+- **Q7:** Accept the stated bounds pending measurement; canceled workers and draining generations retain reservations.
+- **Q8:** Accept exhaustive Windows Bash tightening before early exits, using actual command occurrences.
+- **Q9:** Assert trust, findings and final policy independently; failed qualification need not produce a No limits card.
+- **Q10:** Preserve explicit denies, wipes and `murage-engine-hooks`.
+- **Q11:** Add no preference, enrollment or repair card; preserve Advanced values and existing unsupported-shell choices.
+- **Sean-only:** None. Remaining implementation and evidence obligations belong to engineering.

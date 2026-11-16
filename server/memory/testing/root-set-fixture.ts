@@ -14,7 +14,8 @@ import { closeDatabase, database } from "../../database.ts";
 import { wireOutsideStore } from "../../email/external-marks.ts";
 import { InternalCapabilities } from "../../internal-capabilities.ts";
 import { fileOutsideStore } from "../../outside-store.ts";
-import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "../policy.ts";
+import { reconcileMemoryRoster, type MemoryRoster } from "../policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../../testing/recall-access-fixture.ts";
 import { captureSource } from "../capture.ts";
 import { saveMemoryCandidate } from "../authority.ts";
 import { buildMemoryBundle } from "../bundle.ts";
@@ -27,7 +28,7 @@ import { storeAnchorMessage } from "./anchor-message.ts";
 export const fixtureThread = (index: number) => `t${index}-direct`;
 export const fixtureReply = (index: number, reply: number) => `t${index}-r${reply}`;
 export function fixtureRoster(threads: number): MemoryRoster {
-  return { bots: Array.from({ length: threads }, (_, index) => ({ id: `b${index}`, threadId: fixtureThread(index) })), groups: [] };
+  return { memoryRosterRevision: 1, bots: Array.from({ length: threads }, (_, index) => ({ id: `b${index}`, threadId: fixtureThread(index) })), groups: [] };
 }
 const empty = { async search() { return { hits: [], vectorRows: 0, coverageComplete: false }; } };
 
