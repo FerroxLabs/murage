@@ -12,7 +12,8 @@ final class PhoneAskSetup {
     private let defaults: UserDefaults
     private let signer = PhoneAskSigner.enrolled()
     private let http = PhoneJobsMintHTTP()
-    private lazy var mint = PhoneJobsMintClient(signer: signer, store: PhoneAskTokenStore(), send: http.send)
+    private lazy var mint = PhoneJobsMintClient(signer: signer, store: PhoneAskTokenStore(), send: http.send,
+                                                                    pin: AskDevicePin(defaults: UserDefaults(suiteName: ShareContainer.group)))
     private weak var screen: UIAlertController?
     private var task: Task<Void, Never>?
     private var closed = false

@@ -11,6 +11,35 @@ import { SETTINGS_INDEX, type SettingsIndexEntry } from "./settings-index";
 import type { SettingsAddress } from "./settings-address";
 import type { AppSettingsSection } from "./settings-sections";
 import { leaveBotPage } from "./settings-leave";
+import { resolveSettingsCard } from "./settings-card-registry";
+import { settingsMode, setSettingsMode } from "./settings-mode";
+import { lastBotSection } from "./last-bot-section";
+
+let returnTo: { mode: "simple"; botId: string | null; section: BotSettingsSection } | null = null;
+let botLocation: { botId: string; section: BotSettingsSection } | null = null;
+/** A pane replacement keeps the origin; leaving Settings drops it. No stored last-used bot is guessed. */
+export function registerBotSettingsLocation(botId: string, section: BotSettingsSection): () => void {
+  const location = { botId, section };
+  botLocation = location;
+  return () => {
+    if (botLocation === location) botLocation = null;
+    queueMicrotask(() => { if (!botLocation) clearBotSettingsReturn(); });
+  };
+}
+export function hasBotSettingsReturn(): boolean { return returnTo !== null; }
+export function clearBotSettingsReturn(): void { returnTo = null; }
+/** Called only inside the pane's accepted leave guard. Mode is restored before bot/section dispatch. */
+export function restoreBotSettingsReturn(dispatch: (action: Action) => void): boolean {
+  const previous = returnTo;
+  if (!previous) return false;
+  returnTo = null;
+  setSettingsMode(previous.mode);
+  if (previous.botId) {
+    dispatch({ type: "select", id: previous.botId });
+    dispatch({ type: "toggleSettings", open: true, botId: previous.botId, intent: { section: previous.section } });
+  } else dispatch({ type: "toggleSettings", open: false });
+  return true;
+}
 
 const BOT_SECTION_IDS = new Set<string>(BOT_SETTINGS_SECTIONS.map((section) => section.id));
 
@@ -27,6 +56,9 @@ export function settingsAddressActions(address: SettingsAddress, context: Addres
     const id = address.name ? `${address.section}.${address.name}` : null;
     const entry = id ? index.find((item) => item.scope === "app" && item.id === id) : undefined;
     if (entry && entry.scope === "app") return [{ type: "toggleAppSettings", open: true, section: entry.section, anchor: entry.anchor }];
+    const card = resolveSettingsCard(id ?? address.section)
+      ?? (address.name ? resolveSettingsCard(address.name) : undefined);
+    if (card) return [{ type: "toggleAppSettings", open: true, section: card.section, anchor: card.anchor }];
     // A page, an old id, or a card that has since moved: its page (unknown lands on General, as everywhere else).
     return [{ type: "toggleAppSettings", open: true, section: address.section as AppSettingsSection }];
   }
@@ -46,6 +78,16 @@ export function openSettingsAddress(address: SettingsAddress, context: AddressCo
   const actions = settingsAddressActions(address, context);
   if (!actions) return false;
   // One question for the whole open: a "No" on a bot page's unsaved edits leaves the chat and the window as they were.
-  leaveBotPage(() => { for (const action of actions) dispatch(action); });
+  leaveBotPage(() => {
+    const entry = address.scope === "bot" && address.name
+      ? SETTINGS_INDEX.find(item => item.id === `bot.${address.section}.${address.name}`)
+      : undefined;
+    if (entry?.advanced && settingsMode() === "simple") {
+      returnTo = { mode: "simple", botId: context.selectedBotId,
+        section: botLocation?.section ?? lastBotSection(BOT_SETTINGS_SECTIONS.map(item => item.id)) ?? "overview" };
+      setSettingsMode("advanced");
+    }
+    for (const action of actions) dispatch(action);
+  });
   return true;
 }

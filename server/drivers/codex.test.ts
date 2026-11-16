@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
+import { assertConsumingMountAdmission } from "./mcp-mounts.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
+import { readCloudHomeSignIns } from "../cloud-home/signin-status.ts";
 import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 // Codex driver contract tests, run against the scripted fake app-server
 // in server/testing/fake-codex-app-server.ts — the driver must drive the
@@ -9,14 +12,17 @@ import { fixtureCredentialFingerprint } from "../testing/fixture-dump.ts";
 // The fake is a shebang script — the same constraint codex.cmd itself
 // hits on Windows. resolveCliSpawn covers both, so these run everywhere.
 import { TURN_ASK_RULES } from "../../shared/ask-wording.ts";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from "vitest";
 import * as procs from "../procs.ts";
 
-import type { ProviderInstance } from "../contracts.ts";
+import type { ProviderInstance, SendTurnInput } from "../contracts.ts";
+import { bindFixtureAdapter, fixtureBoundTurn, fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
+import { consumingFixture } from "../testing/consuming-fixture.ts";
+import { codexMountConfiguration } from "../testing/codex-mount-configuration.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { CODEX_MCP_TOOL_TIMEOUT_SEC, CodexDriver, codexCloudBilling, readCodexLogin, readCodexLoginMode } from "./codex.ts";
 import { CodexHookGate, HOOK_ASK_BOUND_MS, HOOK_LIVENESS_WIN32_MS, setCodexFloorsForTests, setHookRuntimeForTests } from "./codex-hook.ts";
@@ -39,16 +45,24 @@ import { NATIVE_DIR } from "../config.ts";
 import { resolveCall } from "../../shared/app-action-grant.ts";
 import { isMountRecord } from "../../shared/mount-identity.ts";
 import { autoVerdict } from "../auto-approve.ts";
-import { execChecks, gate, resetExecChecks } from "../testing/exec-check-spy.ts";
+import { HOOK_DENY_REASONS } from "./hook-control.ts";
+import { execChecks, gate, resetExecChecks as resetProbeChecks, withExecCheckSpy } from "../testing/exec-check-spy.ts";
 import { approveStartupWrite } from "../testing/startup-write.ts";
 import * as codexHookModule from "./codex-hook.ts";
 import * as localInject from "./local-inject.ts";
 import { beginOutsideTurn, forgetOutsideState, markTurnOutside, turnOutsideRead, wireOutsideStore } from "../email/external-marks.ts";
 import { fileOutsideStore } from "../outside-store.ts";
 import { noteEnginePath, noteToolStartOutside } from "../outside-wire.ts";
-import { forgetEngineEnv } from "../outside-scan.ts";
+import { forgetEngineEnv, engineEnvDenied, scanFailClosed } from "../outside-scan.ts";
 
-vi.mock("node:child_process", async (original) => (await import("../testing/exec-check-spy.ts")).withExecCheckSpy(await original()));
+// Setup imports can retain procs before a node:child_process module mock.
+// Observe the actual probe entry, still delegating to its real pinned shell.
+function resetExecChecks(): void {
+  resetProbeChecks();
+  const probe = procs.execCli;
+  const spy = vi.spyOn(procs, "execCli").mockImplementation(withExecCheckSpy({ execFile: probe }).execFile);
+  onTestFinished(() => spy.mockRestore());
+}
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-codex-app-server.ts");
 
@@ -66,11 +80,32 @@ describe("CodexDriver turns (fake app-server)", () => {
   let instance: ProviderInstance;
   let recorder: EventRecorder;
   let scratch: string;
+  let fixtureEnvironment: Record<string, string> = {};
+
+  // red-at-4df086541: external admission fails before any launch (design 397).
+  // control: the old argv/environment assertions below inspect the actual
+  // configuration producer, not a synthetic successful external turn.
+  const inspectRefusedMount = async (turn: SendTurnInput) => {
+    const before = [...recorder.events];
+    const dump = process.env.FAKE_CODEX_DUMP!;
+    expect(existsSync(dump)).toBe(false);
+    expect(() => assertConsumingMountAdmission(fixtureMountTurn(turn), "external", true)).toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(recorder.events).toEqual(before);
+    expect(existsSync(dump)).toBe(false);
+    const configuration = codexMountConfiguration(turn, { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE, ...fixtureEnvironment });
+    const env = Object.fromEntries(Object.entries(configuration.env).map(([key, value]) => [key,
+      value !== undefined && /TOKEN|KEY|SECRET|^MURAGE_MCPV_/i.test(key) ? fixtureCredentialFingerprint(value) : value]));
+    // Explicit configuration-control artifact; the fake CLI was not started.
+    const secrets = Object.fromEntries(Object.entries(configuration.secrets).map(([name, values]) =>
+      [name, Object.fromEntries(Object.entries(values).map(([key, value]) => [key, fixtureCredentialFingerprint(value)]))]));
+    writeFileSync(dump, JSON.stringify({ argv: configuration.argv, env, secrets }));
+  };
 
   const create = async (
     opts: { mode?: string; fullAuto?: boolean; environment?: Record<string, string> } = {},
   ) => {
     if (opts.mode) process.env.FAKE_CODEX_MODE = opts.mode;
+    fixtureEnvironment = opts.environment ?? {};
     instance = await CodexDriver.create({
       instanceId: "codex-test",
       displayName: "Codex Test",
@@ -78,6 +113,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       enabled: true,
       config: { cli: FAKE_CLI, fullAuto: opts.fullAuto ?? false },
     });
+    bindFixtureAdapter(instance.adapter);
     recorder = recordEvents(instance.adapter);
   };
 
@@ -343,17 +379,49 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.calls.filter((c: { method: string }) => c.method === "turn/start")).toHaveLength(1);
   });
 
+  it.each(["flux-revoked-rpc", "flux-revoked-notice"])("a nested Flux refusal stops before retry or dispatch (%s)", async mode => {
+    process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+    const calls = join(scratch,"flux-calls.log");
+    await create({mode,environment:{FAKE_CODEX_CALL_LOG:calls}});
+    await instance.adapter.sendTurn({cwd:fixtureBotFolder(),threadId:"flux-revoked",text:"hi",model:"fixture-model",providerRoute:{connectionId:"fixture",revision:"1",preset:"flux",protocol:"responses",baseUrl:"https://api.fluxrouter.ai/v1",apiKey:"fixture-budget",model:"fixture-model"}});
+    await recorder.until(e=>e.type==="turn.completed");
+    expect(recorder.events.find(e=>e.type==="runtime.error")).toMatchObject({fluxDecision:{reason:"keyRevoked",action:"STOP",wait:"-"}});
+    expect(recorder.events.filter(e=>e.type==="turn.retrying")).toHaveLength(0);
+    expect(readFileSync(calls,"utf8").trim().split("\n").filter(l=>l.endsWith("turn/start"))).toHaveLength(1);
+  });
+
+  it("R1 custom OpenAI responses URL stops the reviewer turn/start refusal", async () => {
+    process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+    const calls = join(scratch, "r1-calls.log");
+    await create({mode:"flux-revoked-rpc",environment:{FAKE_CODEX_CALL_LOG:calls}});
+    await instance.adapter.sendTurn({cwd:fixtureBotFolder(),threadId:"r1-custom",text:"hi",model:"fixture-model",providerRoute:{connectionId:"custom",revision:"1",preset:"openai",protocol:"responses",baseUrl:"https://api.fluxrouter.ai/v1",apiKey:"fixture",model:"fixture-model"}});
+    await recorder.until(e=>e.type==="turn.completed");
+    expect(recorder.events.find(e=>e.type==="runtime.error")).toMatchObject({fluxDecision:{reason:"keyRevoked",action:"STOP",wait:"-"}});
+    expect(recorder.events.filter(e=>e.type==="turn.retrying")).toHaveLength(0);
+    expect(readFileSync(calls,"utf8").trim().split("\n").filter(l=>l.endsWith("turn/start"))).toHaveLength(1);
+  });
+
+  it.each(["openai", "flux"] as const)("R1 non-Flux URL preserves legacy retry even with preset %s", async preset => {
+    process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+    const calls = join(scratch, "r1-nonflux-calls.log");
+    await create({mode:"flux-revoked-rpc",environment:{FAKE_CODEX_CALL_LOG:calls}});
+    await instance.adapter.sendTurn({cwd:fixtureBotFolder(),threadId:"r1-nonflux",text:"hi",model:"fixture-model",providerRoute:{connectionId:"custom",revision:"1",preset,protocol:"responses",baseUrl:"https://api.openai.com/v1",apiKey:"fixture",model:"fixture-model"}});
+    await recorder.until(e=>e.type==="turn.completed");
+    expect((recorder.events.find(e=>e.type==="runtime.error") as any)?.fluxDecision).toBeUndefined();
+    expect(readFileSync(calls,"utf8").trim().split("\n").filter(l=>l.endsWith("turn/start"))).toHaveLength(3);
+  });
+
   it.each(["key_budget_reached", "budget_exceeded", "premium_locked"])("preserves the routed CLI refusal %s and its key", async code => {
     const { isBudgetReached, resetUnavailable } = await import("../voice/voice-routes.ts");
     resetUnavailable();
     await create({ mode: `flux-budget-${code}` });
     await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-cli-budget", text: "hi", model: "fixture-model",
-      providerRoute: { connectionId: "fixture", revision: "1", preset: "flux", protocol: "responses", baseUrl: "https://fixture.invalid/v1", apiKey: "fixture-budget", model: "fixture-model" } });
+      providerRoute: { connectionId: "fixture", revision: "1", preset: "flux", protocol: "responses", baseUrl: "https://api.fluxrouter.ai/v1", apiKey: "fixture-budget", model: "fixture-model" } });
     await recorder.until(e => e.type === "turn.completed");
     const failure = recorder.events.find(e => e.type === "runtime.error" && e.providerError?.fluxBudget);
     expect(Boolean(failure)).toBe(code !== "premium_locked");
-    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://fixture.invalid/v1", key: "fixture-budget", model: "speech" })).toBe(code !== "premium_locked");
-    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://fixture.invalid/v1", key: "different-key", model: "speech" })).toBe(false);
+    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://api.fluxrouter.ai/v1", key: "fixture-budget", model: "speech" })).toBe(code !== "premium_locked");
+    expect(isBudgetReached({ via: "flux", label: "Flux", baseUrl: "https://api.fluxrouter.ai/v1", key: "different-key", model: "speech" })).toBe(false);
     if (code !== "premium_locked") expect(recorder.events.some(e => e.type === "content.delta" && e.streamKind === "assistant_text")).toBe(false);
     resetUnavailable();
   });
@@ -453,7 +521,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       cachedInput: 4,
     });
     expect(recorder.events.filter((event) => event.itemId === "w1")).toMatchObject([
-      { type: "item.started", itemType: "tool", title: "web_search" },
+      { type: "item.started", itemType: "tool", title: "web_search", input: { query: "Murage" } },
       { type: "item.completed", itemType: "tool", ok: true },
     ]);
     // codex reports the THREAD total; the driver turns it into this turn's
@@ -754,26 +822,28 @@ describe("CodexDriver turns (fake app-server)", () => {
   });
 
   // S3b: Ask, Auto and Full bots see their connected-app calls as approval cards.
+  // red-at-4df086541 admission; control configuration (design line 397).
   it("leaves connected apps unquieted when the turn routes asks or has the stop line", async () => {
     await create();
     const composio = { command: process.execPath, args: ["-e", ""], env: {} };
     for (const [name, flags] of [["plain", {}], ["routeAsks", { routeAsks: true as const }], ["stopLine", { stopLine: true as const }]] as const) {
       const dump = join(scratch, `composio-${name}.json`);
       process.env.FAKE_CODEX_DUMP = dump;
-      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-composio-${name}`, text: "hi", ...flags, integrations: { composio } });
-      await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
+      await inspectRefusedMount({ cwd: fixtureBotFolder(), threadId: `t-composio-${name}`, text: "hi", ...flags, integrations: { composio } });
+
       const argv = JSON.parse(readFileSync(dump, "utf8")).argv.join(" ");
       expect(argv.includes("mcp_servers.murage_connectors.default_tools_approval_mode")).toBe(name === "plain");
     }
   });
 
+  // red-at-4df086541 admission; control configuration (design line 397).
   it("mounts connected apps without placing credential values in argv", async () => {
     await create();
     const dump = join(scratch, "composio.json");
     process.env.FAKE_CODEX_DUMP = dump;
     expect(instance.adapter.capabilities.composioMcp).toBe(true);
 
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
+    await inspectRefusedMount({ cwd: fixtureBotFolder(),
       threadId: "t-composio",
       text: "check mail",
       integrations: {
@@ -787,19 +857,21 @@ describe("CodexDriver turns (fake app-server)", () => {
         },
       },
     });
-    await recorder.until((event) => event.type === "turn.completed");
+
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv.join(" ")).toContain("mcp_servers.murage_connectors.command");
-    expect(seen.argv.join(" ")).toContain("MURAGE_COMMS_TOKEN");
+    expect(seen.argv.join(" ")).toContain("MURAGE_CRED_FILE");
     expect(seen.argv.join(" ")).not.toContain("per-boot-token");
-    expect(seen.env.MURAGE_COMMS_TOKEN).toBe(fixtureCredentialFingerprint("per-boot-token"));
+    expect(seen.env.MURAGE_COMMS_TOKEN).toBeUndefined();
+    expect(seen.secrets.murage_connectors.MURAGE_COMMS_TOKEN).toBe(fixtureCredentialFingerprint("per-boot-token"));
   });
 
+  // red-at-4df086541 admission; control configuration (design line 397).
   it("never hands one custom MCP server another server's value for the same variable (03-A1)", async () => {
     await create();
     const dump = join(scratch, "custom-mcp-clash.json");
     process.env.FAKE_CODEX_DUMP = dump;
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
+    await inspectRefusedMount({ cwd: fixtureBotFolder(),
       threadId: "t-custom-mcp-clash",
       text: "go",
       integrations: {
@@ -809,7 +881,7 @@ describe("CodexDriver turns (fake app-server)", () => {
         },
       },
     });
-    await recorder.until((event) => event.type === "turn.completed");
+
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     const argv: string[] = seen.argv;
     const flag = (server: string, key: string) => {
@@ -830,7 +902,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       // run the real launcher with a probe in place of the server's command
       const { spawnSync } = await import("node:child_process");
       const at = args.indexOf("murage-env-launch");
-      const probe = spawnSync(command, ["-e", args[1], "murage-env-launch", args[at + 1], process.execPath, "-e", "process.stdout.write(JSON.stringify([process.env.NOTES_TOKEN, Object.keys(process.env).filter((k) => k.startsWith('MURAGE_MCPV_'))]))"], { env: { ...childEnv, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8" });
+      const probe = spawnSync(command, ["-e", args[1], "murage-env-launch", args[at + 1], process.execPath, "-e", "process.stdout.write(JSON.stringify([process.env.NOTES_TOKEN, Object.keys(process.env).filter((k) => k.startsWith('MURAGE_MCPV_'))]))"], { windowsHide: true, env: { ...childEnv, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8" });
       const [token, leaked] = JSON.parse(probe.stdout);
       expect(leaked).toEqual([]);
       return token;
@@ -839,6 +911,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(await resolve("two")).toBe(fixtureCredentialFingerprint("value-for-two"));
   });
 
+  // red-at-4df086541 admission; control configuration (design line 397).
   it("skips custom MCP entries before copying reserved env or requesting a bearer, preserving built-ins and approval behavior", async () => {
     await create();
     const dump = join(scratch, "custom-mcp.json");
@@ -852,7 +925,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       command: "attacker-mcp", args: [], env: { [key]: "attacker-value", CUSTOM_REJECTED_MARKER: "must-not-copy" },
     }]));
 
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
+    await inspectRefusedMount({ cwd: fixtureBotFolder(),
       threadId: "t-custom-mcp",
       text: "go",
       integrations: {
@@ -871,7 +944,7 @@ describe("CodexDriver turns (fake app-server)", () => {
         },
       },
     });
-    await recorder.until((event) => event.type === "turn.completed");
+
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     const argv = seen.argv.join(" ");
     for (const name of [...Object.keys(blocked), "bearer_request"]) {
@@ -879,7 +952,8 @@ describe("CodexDriver turns (fake app-server)", () => {
     }
     expect(argv).not.toContain("attacker-mcp");
     expect(seen.env.CUSTOM_REJECTED_MARKER).toBeUndefined();
-    expect(seen.env.MURAGE_COMMS_TOKEN).toBe(fixtureCredentialFingerprint("per-boot-token"));
+    expect(seen.env.MURAGE_COMMS_TOKEN).toBeUndefined();
+    expect(seen.secrets.murage_connectors.MURAGE_COMMS_TOKEN).toBe(fixtureCredentialFingerprint("per-boot-token"));
     expect(seen.env.MURAGE_CONNECTOR_UPSTREAM_URL).toBe("http://127.0.0.1:8799/api/internal/connectors/mcp");
     expect(seen.argv.find((arg: string) => arg.startsWith("mcp_servers.notes.env_vars=")))
       .toBe('mcp_servers.notes.env_vars=["NOTES_TOKEN"]');
@@ -907,13 +981,14 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.argv).toContain("mcp_servers.murage_connectors.startup_timeout_sec=20");
   });
 
+  // red-at-4df086541 admission; control configuration (design line 397).
   it("mounts two link servers as the proxy: names in argv, one shared child environment without a collision, no secret anywhere", async () => {
     await create();
     const dump = join(scratch, "remote-mounts.json");
     process.env.FAKE_CODEX_DUMP = dump;
     const token = "b2".repeat(24);
     const context = { execPath: process.execPath, proxyPath: "/fake/remote-mcp-proxy.js", harnessUrl: "http://127.0.0.1:1", token: () => token };
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
+    await inspectRefusedMount({ cwd: fixtureBotFolder(),
       threadId: "t-remote-mounts",
       text: "go",
       integrations: {
@@ -925,21 +1000,23 @@ describe("CodexDriver turns (fake app-server)", () => {
         },
       },
     });
-    await recorder.until((event) => event.type === "turn.completed");
+
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     for (const name of ["svc", "svc2"]) {
       expect(seen.argv).toContain(`mcp_servers.${name}.args=${JSON.stringify(["/fake/remote-mcp-proxy.js", "--server", name])}`);
-      expect(seen.argv).toContain(`mcp_servers.${name}.env_vars=${JSON.stringify(["ELECTRON_RUN_AS_NODE", "MURAGE_HARNESS_URL", "MURAGE_MCP_TOKEN"])}`);
+      expect(seen.argv).toContain(`mcp_servers.${name}.env_vars=${JSON.stringify(["ELECTRON_RUN_AS_NODE", "MURAGE_HARNESS_URL"])}`);
       expect(seen.argv).toContain(`mcp_servers.${name}.startup_timeout_sec=60`);
       expect(seen.argv).not.toContain(`mcp_servers.${name}.default_tools_approval_mode="auto"`);
     }
     // one child environment, one value each: the two servers agree, so nothing collides
-    expect(seen.env.MURAGE_MCP_TOKEN).toBe(fixtureCredentialFingerprint(token));
+    expect(seen.env.MURAGE_MCP_TOKEN).toBeUndefined();
+    for (const name of ["svc", "svc2"]) expect(seen.secrets[name].MURAGE_MCP_TOKEN).toBe(fixtureCredentialFingerprint(token));
     expect(JSON.stringify(seen.argv)).not.toContain(token);
     expect(JSON.stringify(seen.argv)).not.toContain("attacker-mcp");
     expect(seen.argv.find((arg: string) => arg.startsWith("mcp_servers.notes.env_vars="))).toBe('mcp_servers.notes.env_vars=["NOTES_TOKEN"]');
   });
 
+  // red-at-4df086541 admission; control configuration (design line 397).
   it("gives a custom server its own mount name when the owner's config.toml already declares one by that name", async () => {
     const codexHome = join(scratch, "collision-codex-home");
     mkdirSync(codexHome, { recursive: true });
@@ -954,7 +1031,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "collision.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
+    await inspectRefusedMount({ cwd: fixtureBotFolder(),
       threadId: "t-mcp-collision",
       text: "go",
       integrations: {
@@ -965,7 +1042,7 @@ describe("CodexDriver turns (fake app-server)", () => {
         browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} },
       },
     });
-    await recorder.until((event) => event.type === "turn.completed");
+
     const argv: string[] = JSON.parse(readFileSync(dump, "utf8")).argv;
     const joined = argv.join(" ");
 
@@ -986,6 +1063,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(joined).toContain("mcp_servers.browser.command");
   });
 
+  // red-at-4df086541 admission; control configuration (design line 397).
   it("does not move a colliding server on top of one of the bot's own servers", async () => {
     const codexHome = join(scratch, "double-collision-codex-home");
     mkdirSync(codexHome, { recursive: true });
@@ -994,7 +1072,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "double-collision.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
+    await inspectRefusedMount({ cwd: fixtureBotFolder(),
       threadId: "t-mcp-double-collision",
       text: "go",
       integrations: {
@@ -1006,7 +1084,7 @@ describe("CodexDriver turns (fake app-server)", () => {
         },
       },
     });
-    await recorder.until((event) => event.type === "turn.completed");
+
     const argv: string[] = JSON.parse(readFileSync(dump, "utf8")).argv;
 
     // each server's command lands under its own mcp_servers.<mount>. prefix,
@@ -1030,6 +1108,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     return argv.filter((arg) => arg.endsWith(".command=\"uv\"")).map((arg) => arg.slice(0, arg.indexOf(".command=")));
   };
 
+  // red-at-4df086541 admission; control configuration (design line 397).
   it("moves a colliding server aside however the owner's config.toml spells the table", async () => {
     // none of these is a `[mcp_servers.fibery]` header, and every one of them
     // defines the same table that `-c mcp_servers.fibery.command=…` merges into
@@ -1048,12 +1127,12 @@ describe("CodexDriver turns (fake app-server)", () => {
       const dump = join(scratch, `spelling-${label}.json`);
       process.env.FAKE_CODEX_DUMP = dump;
 
-      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
+      await inspectRefusedMount({ cwd: fixtureBotFolder(),
         threadId: `t-spelling-${label}`,
         text: "go",
         integrations: { custom: { fibery: { command: "uv", args: ["tool", "run", "fibery-mcp-server"], env: {} } } },
       });
-      await recorder.until((event) => event.type === "turn.completed");
+
       expect(mountPrefixes(dump), label).toEqual(["mcp_servers.fibery_murage"]);
 
       recorder.stop();
@@ -1061,6 +1140,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     }
   });
 
+  // red-at-4df086541 admission; control configuration (design line 397).
   it("moves every custom server aside when the owner's config.toml cannot be read", async () => {
     // a directory where config.toml should be: the file is there in some form
     // and Murage cannot see inside it. Mounting under the bot's own names would
@@ -1072,7 +1152,7 @@ describe("CodexDriver turns (fake app-server)", () => {
     const dump = join(scratch, "unreadable.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
+    await inspectRefusedMount({ cwd: fixtureBotFolder(),
       threadId: "t-unreadable-config",
       text: "go",
       integrations: {
@@ -1080,7 +1160,7 @@ describe("CodexDriver turns (fake app-server)", () => {
         browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} },
       },
     });
-    await recorder.until((event) => event.type === "turn.completed");
+
     const argv: string[] = JSON.parse(readFileSync(dump, "utf8")).argv;
 
     expect(mountPrefixes(dump).sort()).toEqual(["mcp_servers.fibery_murage", "mcp_servers.notes_murage"]);
@@ -1091,13 +1171,14 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(argv.join(" ")).toContain("mcp_servers.browser.command");
   });
 
+  // red-at-4df086541 admission; control configuration (design line 397).
   it("S13b: mounts phoneJobs with the given command, args and env names, and none without it", async () => {
     await create();
     const phoneJobs = { command: process.execPath, args: ["/fake/phone-jobs-proxy.js", "--x"], env: { MURAGE_PHONE_TOOLS: "calendar_read", MURAGE_PJ_OTHER: "b" } };
     const withDump = join(scratch, "pj-with.json");
     process.env.FAKE_CODEX_DUMP = withDump;
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pj-with", text: "go", integrations: { phoneJobs } });
-    await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-pj-with");
+    await inspectRefusedMount({ cwd: fixtureBotFolder(), threadId: "t-pj-with", text: "go", integrations: { phoneJobs } });
+
     const argv: string[] = JSON.parse(readFileSync(withDump, "utf8")).argv;
     const flag = (key: string) => { const arg = argv.find((item) => item.startsWith(`mcp_servers.phoneJobs.${key}=`)); return arg ? JSON.parse(arg.slice(`mcp_servers.phoneJobs.${key}=`.length)) : undefined; };
     expect(flag("command")).toBe(process.execPath);
@@ -1107,22 +1188,23 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(argv.some((arg) => arg.startsWith("mcp_servers.phoneJobs.default_tools_approval_mode="))).toBe(true);
     const withoutDump = join(scratch, "pj-without.json");
     process.env.FAKE_CODEX_DUMP = withoutDump;
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-pj-without", text: "go", integrations: { browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} } } });
-    await recorder.until((event) => event.type === "turn.completed" && event.threadId === "t-pj-without");
+    await inspectRefusedMount({ cwd: fixtureBotFolder(), threadId: "t-pj-without", text: "go", integrations: { browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} } } });
+
     expect(JSON.parse(readFileSync(withoutDump, "utf8")).argv.some((arg: string) => arg.includes("phoneJobs"))).toBe(false);
   });
 
+  // red-at-4df086541 admission; control configuration (design line 397).
   it("turns off Codex's own desktop browser and computer tools so the bot uses Murage's", async () => {
     await create();
     const dump = join(scratch, "tool-surface.json");
     process.env.FAKE_CODEX_DUMP = dump;
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
+    await inspectRefusedMount({ cwd: fixtureBotFolder(),
       threadId: "t-tool-surface",
       text: "go",
       preloadBrowserTools: true,
       integrations: { browser: { command: process.execPath, args: ["/fake/browser-proxy.js"], env: {} } },
     });
-    await recorder.until((event) => event.type === "turn.completed");
+
     const argv: string[] = JSON.parse(readFileSync(dump, "utf8")).argv;
     expect(argv).toContain("features.browser_use=false");
     expect(argv).toContain("features.browser_use_external=false");
@@ -1135,30 +1217,45 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(argv.join(" ")).not.toContain("preloadBrowserTools");
   });
 
+  it("routes native page reads to Murage when the agents reader is mounted", async () => {
+    await create();
+    const file = join(scratch, "web-reader-surface.json");
+    process.env.FAKE_CODEX_DUMP = file;
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "web-reader", text: "read a page", integrations: {
+      agents: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: {} },
+    } });
+    await recorder.until(event => event.type === "turn.completed");
+    const argv: string[] = JSON.parse(readFileSync(file, "utf8")).argv;
+    expect(argv).toContain('web_search="disabled"');
+    expect(argv.join(" ")).toContain("mcp_servers.agents.command");
+  });
+
   it("mounts dedicated memory without agents and rejects custom replacement without exposing its token in argv", async () => {
     await create();
     const dump=join(scratch,"memory.json");process.env.FAKE_CODEX_DUMP=dump;
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:"memory-only",text:"recall",integrations:{
+    await inspectRefusedMount({ cwd: fixtureBotFolder(), threadId:"memory-only",text:"recall",integrations:{
       memory:{command:process.execPath,args:["/fake/memory-proxy.js"],env:{MURAGE_HARNESS_URL:"http://127.0.0.1:1",MURAGE_MEMORY_TOKEN:"memory-fixture-secret"}},
       custom:{"murage-memory":{command:"attacker-mcp",args:[],env:{}},forged:{command:"attacker-mcp",args:[],env:{MURAGE_MEMORY_TOKEN:"forged"}}},
     }});
-    await recorder.until(event=>event.type==="turn.completed");
+
     const seen=JSON.parse(readFileSync(dump,"utf8")),argv=seen.argv.join(" ");
     expect(instance.adapter.capabilities.memoryMcp).toBe(true);
     expect(argv).toContain("mcp_servers.murage-memory.command");
     expect(argv).toContain("/fake/memory-proxy.js");
     expect(argv).not.toContain("attacker-mcp");
     expect(argv).not.toContain("memory-fixture-secret");
-    expect(seen.env.MURAGE_MEMORY_TOKEN).toBe(fixtureCredentialFingerprint("memory-fixture-secret"));
+    expect(seen.env.MURAGE_MEMORY_TOKEN).toBeUndefined();
+    expect(seen.secrets["murage-memory"].MURAGE_MEMORY_TOKEN).toBe(fixtureCredentialFingerprint("memory-fixture-secret"));
     expect(argv).not.toContain("mcp_servers.agents.command");
   });
 
+  // red-at-4df086541 admission; control configuration (design line 397).
   it("mounts peer-agent comms without placing the comms token in argv", async () => {
     await create();
     const dump = join(scratch, "agents.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
+    await inspectRefusedMount({ cwd: fixtureBotFolder(),
       threadId: "t-agents",
       text: "ask the researcher",
       integrations: {
@@ -1176,24 +1273,26 @@ describe("CodexDriver turns (fake app-server)", () => {
         },
       },
     });
-    await recorder.until((event) => event.type === "turn.completed");
+
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv.join(" ")).toContain("mcp_servers.agents.command");
     expect(seen.argv.join(" ")).toContain("/tmp/agents-proxy.js");
-    expect(seen.argv.join(" ")).toContain("MURAGE_COMMS_TOKEN");
+    expect(seen.argv.join(" ")).toContain("MURAGE_CRED_FILE");
     expect(seen.argv.join(" ")).not.toContain("peer-comms-secret");
-    expect(seen.env.MURAGE_COMMS_TOKEN).toBe(fixtureCredentialFingerprint("peer-comms-secret"));
+    expect(seen.env.MURAGE_COMMS_TOKEN).toBeUndefined();
+    expect(seen.secrets.agents.MURAGE_COMMS_TOKEN).toBe(fixtureCredentialFingerprint("peer-comms-secret"));
     expect(instance.adapter.capabilities.agentsMcp).toBe(true);
   });
 
+  // red-at-4df086541 admission; control configuration (design line 397).
   it("mounts the Local VM computer MCP server without placing credentials in argv", async () => {
     await create();
     const dump = join(scratch, "local-computer.json");
     process.env.FAKE_CODEX_DUMP = dump;
     expect(instance.adapter.capabilities.computerMcp).toBe(true);
 
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
+    await inspectRefusedMount({ cwd: fixtureBotFolder(),
       threadId: "t-local-computer",
       text: "open the browser",
       integrations: {
@@ -1204,7 +1303,7 @@ describe("CodexDriver turns (fake app-server)", () => {
         },
       },
     });
-    await recorder.until((event) => event.type === "turn.completed");
+
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv.join(" ")).toContain("mcp_servers.computer.command");
@@ -1214,27 +1313,29 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.env.MURAGE_VM_TOKEN).toBe(fixtureCredentialFingerprint("vm-secret"));
   });
 
+  // red-at-4df086541 admission; control configuration (design line 397).
   it("mounts the remote computer proxy without placing its token in argv", async () => {
     await create();
     const dump = join(scratch, "remote-computer.json");
     process.env.FAKE_CODEX_DUMP = dump;
 
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
+    await inspectRefusedMount({ cwd: fixtureBotFolder(),
       threadId: "t-remote-computer",
       text: "take a screenshot",
       integrations: {
         computer: { boxId: "box-123", token: "remote-secret" },
       },
     });
-    await recorder.until((event) => event.type === "turn.completed");
+
 
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv.join(" ")).toContain("mcp_servers.computer.command");
     expect(seen.argv.join(" ")).toContain("computer-proxy");
-    expect(seen.argv.join(" ")).toContain("MURAGEBOX_BOX_TOKEN");
+    expect(seen.argv.join(" ")).toContain("MURAGE_CRED_FILE");
     expect(seen.argv.join(" ")).not.toContain("remote-secret");
     expect(seen.env.MURAGEBOX_BOX_ID).toBe("box-123");
-    expect(seen.env.MURAGEBOX_BOX_TOKEN).toBe(fixtureCredentialFingerprint("remote-secret"));
+    expect(seen.env.MURAGEBOX_BOX_TOKEN).toBeUndefined();
+    expect(seen.secrets.computer.MURAGEBOX_BOX_TOKEN).toBe(fixtureCredentialFingerprint("remote-secret"));
   });
 
   it("sends the local provider when the picker id is custom-encoded", async () => {
@@ -1380,50 +1481,104 @@ describe("CodexDriver turns (fake app-server)", () => {
     }
   });
 
+  it("E4 No limits on Cloud homes uses the local full-access policy on start and resume", async () => {
+    await create({ mode: "resume" });
+    const dump = join(scratch, "e4-cloud.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    const realSpawn = procs.spawnCli;
+    const rendered: Record<string, string | undefined>[] = [];
+    const spy = vi.spyOn(procs, "spawnCli").mockImplementation((cli, args, opts, ...rest) => {
+      rendered.push({ ...opts.env });
+      vi.stubEnv("MURAGE_CLOUD_ROLE", "");
+      try { return realSpawn(cli, args, { ...opts, env: { ...process.env } }, ...rest); }
+      finally { vi.stubEnv("MURAGE_CLOUD_ROLE", "home"); }
+    });
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    try {
+      for (const resumeCursor of [undefined, "codex-thread-9"]) {
+        const threadId = resumeCursor ? "e4-resume" : "e4-start";
+        const sent = await instance.adapter.sendTurn({ threadId, text: "fixture", cwd: scratch, resumeCursor,
+          stopLine: true, noLimits: true, warmIdentity: { botId: "owner-bot", audience: "owner" } });
+        const done = await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId);
+        expect(done).toMatchObject({ ok: true });
+        const calls = JSON.parse(readFileSync(dump, "utf8")).calls;
+        const method = resumeCursor ? "thread/resume" : "thread/start";
+        expect(calls.find((c: { method: string }) => c.method === method).params)
+          .toMatchObject({ sandbox: "danger-full-access", approvalPolicy: "on-request" });
+        expect(calls.find((c: { method: string }) => c.method === "turn/start").params.approvalPolicy).toBe("on-request");
+        if (resumeCursor) expect(JSON.parse(rendered.at(-1)![TURN_RENDER]!)).toMatchObject({
+          codexPolicy: { sandbox: "danger-full-access", approval: "on-request" },
+        });
+      }
+    } finally { vi.unstubAllEnvs(); spy.mockRestore(); }
+  });
+
+  it.each(['ask','auto','full'] as const)('M5 Cloud %s preserves the RC approval policy in the launcher render on start and resume',async level=>{
+    await create({mode:'resume',fullAuto:level==='full'});
+    const dump=join(scratch,'m5-cloud.json');process.env.FAKE_CODEX_DUMP=dump;
+    const realSpawn=procs.spawnCli, rendered:Record<string,string|undefined>[]=[];
+    const spy=vi.spyOn(procs,'spawnCli').mockImplementation((cli,args,opts,...rest)=>{
+      rendered.push({...opts.env});vi.stubEnv('MURAGE_CLOUD_ROLE','');
+      try{return realSpawn(cli,args,{...opts,env:{...process.env}},...rest);}finally{vi.stubEnv('MURAGE_CLOUD_ROLE','home');}
+    });vi.stubEnv('MURAGE_CLOUD_ROLE','home');
+    try{for(const resumeCursor of [undefined,'codex-thread-9']){
+      const sent=await instance.adapter.sendTurn({threadId:'m5-'+level+String(!!resumeCursor),text:'fixture',cwd:scratch,resumeCursor,
+        ...(level==='full'?{stopLine:true}:{routeAsks:true,...(level==='ask'?{askLevel:true}:{})}),warmIdentity:{botId:'owner-bot',audience:'owner'}});
+      await recorder.until(e=>e.type==='turn.completed'&&e.turnId===sent.turnId);
+      const calls=JSON.parse(readFileSync(dump,'utf8')).calls;
+      const expected={approvalPolicy:level==='full'?'untrusted':'on-request',sandbox:level==='full'?'danger-full-access':'workspace-write'};
+      expect(calls.find((call:{method:string})=>call.method===(resumeCursor?'thread/resume':'thread/start')).params).toMatchObject(expected);
+      expect(calls.find((call:{method:string})=>call.method==='turn/start').params.approvalPolicy).toBe(level==='full'?expected.approvalPolicy:undefined);
+      if(resumeCursor){
+        const first=rendered.at(-1)!;
+        expect(JSON.parse(first[TURN_RENDER]!).codexPolicy).toEqual({approval:level==='full'?'untrusted':'on-request',sandbox:level==='full'?'danger-full-access':'workspace-write'});
+        const request=JSON.parse(cloudTurnLaunch('codex',['app-server'],first,scratch)!.request);
+        expect(request.render.codexPolicy.approval).toBe(level==='full'?'untrusted':'on-request');
+      }
+    }}finally{vi.unstubAllEnvs();spy.mockRestore();}
+  });
+
   describe("Flux Memory headers on a Cloud home", () => {
     const FLUX_KEY = "sk-flux-Mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm"; // secret-scan: fixture
-    // Capture the spawn as the launcher would get it (argv and render), then run it as a desktop spawn of the fake.
-    const captureHomeSpawn = async (turn: Record<string, unknown>) => {
+    // B4 hole 6: on a Cloud home Codex runs only on the customer's own ChatGPT sign-in, so no Flux route (saved connection or native
+    // flux model) is rendered for it. The turn is refused in plain words and Codex is never started.
+    it.each([
+      ["a saved Flux connection", { threadId: "t-cloud-flux-conn", model: "flux-auto", providerRoute: { connectionId: "c1", revision: "r1", preset: "flux", protocol: "responses", baseUrl: "https://api.fluxrouter.ai/v1", apiKey: FLUX_KEY, model: "flux-auto" } }],
+      ["a native flux model", { threadId: "t-cloud-flux-native", model: "flux::flux-auto", warmIdentity: { botId: "bot-atlas", audience: "owner", decidedOwner: true } }],
+    ])("refuses %s in plain words and starts no Codex", async (_name, turn) => {
       await create();
-      const realSpawnCli = procs.spawnCli;
-      const spawned: Array<{ args: string[]; env: Record<string, string | undefined> }> = [];
-      const spy = vi.spyOn(procs, "spawnCli").mockImplementation((cli, args, opts, ...rest) => {
-        spawned.push({ args: [...args], env: { ...(opts.env as Record<string, string | undefined>) } });
-        vi.stubEnv("MURAGE_CLOUD_ROLE", "");
-        try { return realSpawnCli(cli, args, { ...opts, env: { ...process.env } }, ...rest); }
-        finally { vi.stubEnv("MURAGE_CLOUD_ROLE", "home"); }
-      });
+      const spy = vi.spyOn(procs, "spawnCli");
       vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
       vi.stubEnv("FLUX_API_KEY", FLUX_KEY);
       try {
-        await instance.adapter.sendTurn({ text: "hi", cwd: scratch, ...turn } as never);
-        await recorder.until((e) => e.type === "turn.completed");
-        return spawned.at(-1)!;
+        await expect(instance.adapter.sendTurn({ text: "hi", cwd: scratch, ...turn } as never)).rejects.toThrow(/run only on your own Claude or ChatGPT sign-in/);
+        expect(spy).not.toHaveBeenCalled();
+        expect(JSON.stringify(recorder.events)).not.toContain(FLUX_KEY);
       } finally { vi.unstubAllEnvs(); spy.mockRestore(); }
-    };
-    const memoryOff = { "x-flux-memory-app": "murage", "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" };
-
-    it("a saved Flux connection sends no model_providers argv and carries the headers on the render route", async () => {
-      const providerRoute = { connectionId: "c1", revision: "r1", preset: "flux", protocol: "responses", baseUrl: "https://api.fluxrouter.ai/v1", apiKey: FLUX_KEY, model: "flux-auto" };
-      const seen = await captureHomeSpawn({ threadId: "t-cloud-flux-conn", model: "flux-auto", providerRoute, warmIdentity: { botId: "bot-atlas", audience: "owner", decidedOwner: true } });
-      expect(seen.args.filter((arg) => arg.startsWith("model_providers."))).toEqual([]);
-      expect(JSON.parse(seen.env[TURN_RENDER]!).route.headers).toEqual({ "x-flux-memory-app": "murage" });
     });
+  });
 
-    it("a non-owner native flux turn renders the flux-off table with the capture-off headers", async () => {
-      const seen = await captureHomeSpawn({ threadId: "t-cloud-flux-guest", model: "flux::flux-auto", warmIdentity: { botId: "bot-atlas", audience: "non-owner", decidedOwner: false } });
-      expect(seen.args.filter((arg) => arg.startsWith("model_providers."))).toEqual([]);
-      const route = JSON.parse(seen.env[TURN_RENDER]!).route;
-      expect(route.provider).toBe("flux-off");
-      expect(route.headers).toEqual(memoryOff);
-    });
-
-    it("an owner native flux turn renders the base flux table", async () => {
-      const seen = await captureHomeSpawn({ threadId: "t-cloud-flux-owner", model: "flux::flux-auto", warmIdentity: { botId: "bot-atlas", audience: "owner", decidedOwner: true } });
-      const route = JSON.parse(seen.env[TURN_RENDER]!).route;
-      expect(route.provider).toBe("flux");
-      expect(route.headers).toEqual({ "x-flux-memory-app": "murage" });
-    });
+  // Finding 4: sendTurn has already returned a turn id when the final-boundary check runs (inside the launch). A key or address that reaches
+  // the typed render AFTER the early scrub must end the turn with a message, not leave it hanging with none.
+  it("a Flux key that reaches the launch after the early scrub ends the turn with a message and starts no Codex", async () => {
+    await create();
+    const key = "sk-flux-home-" + "k".repeat(30); // secret-scan: fixture
+    const spy = vi.spyOn(procs, "spawnCli");
+    vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+    try {
+      const { turnId } = await instance.adapter.sendTurn({ threadId: "t-late-flux", text: "hi", cwd: scratch, warmIdentity: { botId: "bot-atlas", audience: "owner" },
+        // an MCP mount that points at a Flux address: not seen by the early scrub, rendered into the launch, caught by the final boundary
+        integrations: { composio: { url: "https://api.fluxrouter.ai/mcp" } } as never });
+      const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      expect(done).toMatchObject({ ok: false });
+      const error = recorder.events.find((e) => e.type === "runtime.error" && e.turnId === turnId);
+      // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d 81d51d8ca1: malformed consuming mounts refuse before the later Cloud render; failed turn and zero launches stay pinned
+      // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: URL-only consuming mounts refuse at server admission before native provider policy; no launch or secret release.
+      expect((error as { message?: string } | undefined)?.message).toBe("MEMORY_CONTEXT_REVOKED");
+      expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId)).toHaveLength(1);
+      expect(spy).not.toHaveBeenCalled();
+      expect(JSON.stringify(recorder.events)).not.toContain(key);
+    } finally { vi.unstubAllEnvs(); spy.mockRestore(); }
   });
 
   it("reports API billing on a Cloud home only when the launcher says Codex runs on an enrolled key", async () => {
@@ -1465,6 +1620,57 @@ describe("CodexDriver turns (fake app-server)", () => {
     await recorder.until((e) => e.type === "turn.completed");
     // legacy method name → legacy decision vocabulary
     expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ decision: "approved" });
+  });
+
+  it("T-R3-CODEX-ABSENT-BINDING-IS-UNBOUND", async () => {
+    process.env.FAKE_CODEX_MODE = "approval";
+    const dump = join(scratch, "absent-binding.json");
+    process.env.FAKE_CODEX_DUMP = dump;
+    // Mirror the native approval control without bindFixtureAdapter, which
+    // would inject a binding before the driver's nativeBinding gate.
+    instance = await CodexDriver.create({ instanceId: "codex-test", displayName: "Codex Test",
+      environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: false } });
+    recorder = recordEvents(instance.adapter);
+    const fixture = consumingFixture(undefined, { threadId: "t-approval-absent" });
+    try {
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-approval-absent", text: "clean up" });
+      const opened = await recorder.until(e => e.type === "request.opened" && e.turnId === sent.turnId);
+      expect(opened).toMatchObject({ requestType: "permission", tool: "shell", summary: "rm -rf scratch" });
+      // The bound sibling refuses after replacement; an absent binding must
+      // stay unbound, even when this thread has a replaced consuming lease.
+      fixture.replace();
+      await instance.adapter.respondToRequest("t-approval-absent", opened.requestId!, { behavior: "allow" });
+      expect(await recorder.until(e => e.type === "request.resolved" && e.turnId === sent.turnId))
+        .toMatchObject({ behavior: "allow", source: "user" });
+      expect(await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId)).toMatchObject({ ok: true });
+      expect(JSON.parse(readFileSync(dump, "utf8")).decision).toEqual({ decision: "approved" });
+      expect(fixture.refusals).toBe(0);
+    } finally {
+      await instance.dispose();
+      fixture.close();
+    }
+  });
+
+  // control: legacy protocol answers have a server-owned final stdin write.
+  // Keep the positive decision above and prove that the captured binding,
+  // rather than the newest thread binding, still governs a pending answer.
+  it("refuses a native approval answer after its consuming binding is replaced", async () => {
+    await create({ mode: "approval" });
+    const fixture = consumingFixture(undefined, { threadId: "t-approval-replaced" });
+    try {
+      await instance.adapter.sendTurn(fixtureBoundTurn({ cwd: fixtureBotFolder(), threadId: "t-approval-replaced", text: "clean up", releaseBinding: fixture.binding }));
+      const opened = await recorder.until((e) => e.type === "request.opened");
+      expect(opened).toMatchObject({ requestType: "permission", tool: "shell", summary: "rm -rf scratch" });
+      fixture.replace();
+      // MAIN RULING INT-CONFLICT-DEFAULT 14c3862601 eb01447e7d: refused native delivery returns unavailable; the captured ledger still refuses and no answer resolves
+      await expect(instance.adapter.respondToRequest("t-approval-replaced", opened.requestId!, { behavior: "allow" }))
+        .resolves.toBe("unavailable");
+      expect(fixture.refusals).toBeGreaterThan(0);
+      expect(recorder.events.filter((e) => e.type === "request.resolved")).toHaveLength(0);
+    } finally {
+      await instance.dispose();
+      fixture.close();
+    }
   });
 
   it("headlines the real command of a legacy shell approval and labels the reason apart", async () => {
@@ -1642,7 +1848,7 @@ describe("CodexDriver turns (fake app-server)", () => {
   // tool is judged like any other ask, so a stop line card (a delete outside
   // the folder) keeps "Allow for this task" and "Always allow". Only the
   // computer's own tools keep the local-computer treatment.
-  const hostComputer = { localComputer: { command: "/cua-driver", args: ["mcp"], env: {}, platform: "darwin" as const, scope: "local-computer" as const } };
+  const hostComputer = { localComputer: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: {}, platform: "darwin" as const, scope: "local-computer" as const } };
   it("does not stamp a shell command as computer control when the host computer is attached", async () => {
     await create({ mode: "approval" });
     await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-host-shell", text: "clean up", integrations: hostComputer });
@@ -1675,7 +1881,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       threadId: "t-host-scope",
       text: "clean up",
       integrations: {
-        localComputer: { command: "/cua-driver", args: ["mcp"], env: {}, platform: "darwin", scope: "local-computer" },
+        localComputer: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: {}, platform: "darwin", scope: "local-computer" },
       },
     });
     const host = await recorder.until((e) => e.type === "request.opened");
@@ -1688,7 +1894,7 @@ describe("CodexDriver turns (fake app-server)", () => {
       threadId: "t-vm-scope",
       text: "clean up",
       integrations: {
-        localComputer: { command: process.execPath, args: ["/tmp/container-mcp.js"], env: {} },
+        localComputer: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: {} },
       },
     });
     const vm = await recorder.until((e) => e.type === "request.opened" && e.threadId === "t-vm-scope");
@@ -1789,7 +1995,7 @@ describe("CodexDriver turns (fake app-server)", () => {
   describe("F4 records and structured MCP names (T3, T11, T63, T64, T74)", () => {
     const agentsMount = {
       command: process.execPath,
-      args: ["/tmp/agents-proxy.js"],
+      args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))],
       env: { ELECTRON_RUN_AS_NODE: "1", MURAGE_HARNESS_URL: "http://127.0.0.1:8799", MURAGE_BOT_ID: "captain", MURAGE_THREAD_ID: "t", MURAGE_COMMS_TOKEN: "peer", MURAGE_TURN_DEPTH: "0" },
     };
     const mcpAsk = (serverName: string, meta: Record<string, unknown>) => {
@@ -1887,8 +2093,8 @@ describe("CodexDriver turns (fake app-server)", () => {
       const opened = await ask("t-records", {
         agents: agentsMount,
         custom: {
-          fibery: { command: "uv", args: ["run", "f"], env: {} },
-          notes: { command: "npx", args: ["-y", "n"], env: {} },
+          fibery: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: {} },
+          notes: { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: {} },
           bad__name: { command: "x", args: [], env: {} },
         },
       });
@@ -1903,16 +2109,16 @@ describe("CodexDriver turns (fake app-server)", () => {
       expect(resolved(opened)).toMatchObject({ kind: "mcp", server: "fibery_murage", mountId: "custom:fibery", provenance: "custom" });
     });
 
+    // red-at-4df086541 admission; control configuration (design line 397).
     it("does not mount a custom server whose name holds a double underscore (Rule 11)", async () => {
       await create();
       const dump = join(scratch, "double-underscore.json");
       process.env.FAKE_CODEX_DUMP = dump;
-      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
+      await inspectRefusedMount({ cwd: fixtureBotFolder(),
         threadId: "t-dunder",
         text: "go",
         integrations: { custom: { bad__name: { command: "x", args: [], env: {} }, ok: { command: "y", args: [], env: {} } } },
       });
-      await recorder.until((event) => event.type === "turn.completed");
       const joined = (JSON.parse(readFileSync(dump, "utf8")).argv as string[]).join(" ");
       expect(joined).not.toContain("bad__name");
       expect(joined).toContain("mcp_servers.ok.command");
@@ -1970,13 +2176,15 @@ describe("CodexDriver turns (fake app-server)", () => {
   });
 
   it("a Stop still settles as cancelled when Codex reports a clean end after it (STOP1 race)", async () => {
-    await create({ mode: "approval" });
-    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-stop-race", text: "go" });
+    const cleanEndGate = join(scratch, "stop-clean-end");
+    await create({ mode: "approval", environment: { FAKE_CODEX_STOP_RESULT_GATE: cleanEndGate } });
+    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-stop-race", text: "go", releaseBinding: null as never });
     await recorder.until((e) => e.type === "request.opened");
-    // Hold the kill: the app-server stays alive, gets the Stop's deny of its open ask and answers with a clean
-    // turn/completed, which therefore always reaches the driver after the Stop (the order that failed 3-4 of 5 runs).
+    // MAIN RULING INT-CONFLICT-DEFAULT 83a3a611ca 870a5fcb77: Stop revokes protocol writes too; the clean native result is emitted independently after the held kill, never by an authorizing reply.
+    // The process stays alive while its real stdout delivers turn/completed
+    // strictly after the driver's stop mark and termination request.
     const held: ChildProcess[] = [];
-    const kill = vi.spyOn(procs, "killCliTree").mockImplementation((child) => { held.push(child); });
+    const kill = vi.spyOn(procs, "killCliTree").mockImplementation((child) => { held.push(child); writeFileSync(cleanEndGate, "stopped"); });
     const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(true);
     try {
       await instance.adapter.interruptTurn("t-codex-stop-race");
@@ -2076,6 +2284,10 @@ describe("CodexDriver turns (fake app-server)", () => {
       return undefined as never;
     });
     try {
+      // the home-wide sign-in reading is cached for a few seconds and is a second launcher question; prime it so the count below is the
+      // billing probe alone whatever ran before this test (the order-dependence the 1.0.19 tests' timing exposed)
+      await readCloudHomeSignIns();
+      launcher.mockClear();
       expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: true, billing });
       expect(launcher).toHaveBeenCalledExactlyOnceWith(undefined, undefined);
       expect(exec.mock.calls.filter(call => call[1].includes("status"))).toHaveLength(1);
@@ -2151,6 +2363,37 @@ describe("CodexDriver turns (fake app-server)", () => {
     // exactly one settled reply across all three app-server launches
     const replies = recorder.events.filter((e) => e.type === "item.completed" && e.itemType === "assistant_text");
     expect(replies).toHaveLength(1);
+  }, 20_000);
+
+  it("a retry that cannot launch (spawn throws after the first attempt installed its entry) ends the turn with one runtime.error and one turn.completed, and frees the thread", async () => {
+    process.env.FAKE_CODEX_TRANSIENTS = "1";
+    process.env.FAKE_CODEX_STATE = join(scratch, "codex-launches-retry-fail");
+    process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+    const real = procs.spawnCli;
+    let spawns = 0;
+    const spy = vi.spyOn(procs, "spawnCli").mockImplementation((...args: Parameters<typeof procs.spawnCli>) => {
+      // Only a turn launch counts: the background model catalog also runs `codex app-server`, with no -c flags, and can land here.
+      if (!recorder.events.some((e) => e.type === "turn.retrying") || !String(args[1]).includes(",-c,")) return real(...args);
+      spawns++;
+      if (spawns === 1) throw Object.assign(new Error("ENOSPC: no space left on device"), { code: "ENOSPC" });
+      return real(...args);
+    });
+    try {
+      await create();
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-retry-launch-fail", text: "hi" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+      await new Promise((r) => setTimeout(r, 50));
+      expect(spawns).toBe(1);
+      expect(recorder.events.filter((e) => e.type === "turn.retrying")).toHaveLength(1);
+      expect(recorder.events.filter((e) => e.type === "runtime.error" && e.turnId === turnId)).toHaveLength(1);
+      // INT1019-CLOUD: the 1.0.19 stop gate ends a startup that throws (gate.handoff), once, as "error" with its own plain line
+      // (Cloud's launchFailed ended it as rpc_error; the plan drops that function, so the gate's ending is the one pinned here).
+      expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject([{ ok: false, stopReason: "error" }]);
+      // the conversation is not left busy: the next turn starts
+      spy.mockRestore();
+      const next = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-codex-retry-launch-fail", text: "again" });
+      await recorder.until((e) => e.type === "turn.completed" && e.turnId === next.turnId);
+    } finally { spy.mockRestore(); }
   }, 20_000);
 
   it("does not relaunch a provider safety rejection wrapped in 429", async () => {
@@ -2765,7 +3008,7 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
   let recorder: EventRecorder;
   let scratch: string;
   let ownerHome: string;
-  const AGENTS = { command: process.execPath, args: ["-e", ""], env: {} };
+  const AGENTS = { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: {} };
 
   const create = async (version = "codex-cli 0.150.0", opts: { fullAuto?: boolean; codexHome?: string } = {}) => {
     resetIsolationCache();
@@ -2774,6 +3017,9 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       instanceId: "codex-gate", displayName: "Codex Test", environment: { CODEX_HOME: opts.codexHome ?? ownerHome }, enabled: true,
       config: { cli: FAKE_CLI, fullAuto: opts.fullAuto ?? false },
     });
+    // Mounted turns need the fixture binding; a turn that states releaseBinding: null runs unbound (no binding, no mounts).
+    { const unboundSend = instance.adapter.sendTurn.bind(instance.adapter); bindFixtureAdapter(instance.adapter); const boundSend = instance.adapter.sendTurn.bind(instance.adapter);
+      instance.adapter.sendTurn = (turn: any) => (turn.releaseBinding === null ? unboundSend(turn) : boundSend(turn)); }
     recorder = recordEvents(instance.adapter);
   };
   const recreate = async (version?: string, opts?: { fullAuto?: boolean }) => {
@@ -2808,7 +3054,7 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     process.env.FAKE_CODEX_TOOLS = JSON.stringify(tools);
     const dumpPath = join(scratch, `dump-${threadId}.json`);
     process.env.FAKE_CODEX_DUMP = dumpPath;
-    const sent = await instance.adapter.sendTurn({ threadId, text: "go", cwd: scratch, integrations: { agents: AGENTS }, ...turn } as never);
+    const sent = await instance.adapter.sendTurn({ threadId, text: "go", cwd: scratch, integrations: {}, ...(turn.integrations ? {} : { releaseBinding: null }), ...turn } as never);
     const answered = new Set<string>();
     const opened: any[] = [];
     for (;;) {
@@ -2878,7 +3124,7 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
   // Real codex 0.163 raised a second card (mcpServer/elicitation/request, codex_approval_kind mcp_tool_call) for Murage's own
   // `computer` mount behind the hook's card. Gated turns mount Murage's own servers with "approve"; legacy keeps "auto"; custom stays unquieted.
   it("mounts Murage's own servers with approve behind the hook gate so codex raises no second card", async () => {
-    const own = { command: process.execPath, args: ["-e", ""], env: {} };
+    const own = { command: process.execPath, args: [fileURLToPath(new URL("../testing/fake-idle-mcp.mjs", import.meta.url))], env: {} };
     for (const [version, gated] of [["codex-cli 0.147.0", false], ["codex-cli 0.163.0", true]] as const) {
       await recreate(version);
       const r = await run(`t-appr-${version}`, [], () => null, { integrations: { agents: AGENTS, localComputer: own } });
@@ -3055,6 +3301,23 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     const methods = readFileSync(log, "utf8").split("\n").filter(Boolean).map((line) => line.split(" ")[1]);
     expect(methods).not.toContain("thread/start");
     expect(methods).not.toContain("turn/start");
+  }, 40_000);
+
+  it("B13: an expired startup cap still permits the first required slow-handshake relaunch", async () => {
+    process.env.MURAGE_CODEX_HOOKS_LIST_MS = "200";
+    process.env.FAKE_CODEX_HOOKS_DELAY_MS = "20000";
+    process.env.FAKE_CODEX_RETRY_SCALE = "0.001";
+    await recreate("codex-cli 0.164.0");
+    const now = Date.now; let started = false;
+    const clock = vi.spyOn(Date, "now").mockImplementation(() => now() + (started ? 60_000 : 0));
+    const unsubscribe = instance.adapter.onEvent(event => { if (event.type === "turn.started") started = true; });
+    try {
+      const r = await run("t-b13-expired-before-first-relaunch", [], () => null);
+      expect(started).toBe(true);
+      expect(r.done).toMatchObject({ ok: false });
+      expect(recorder.events.filter(event => event.type === "turn.retrying")).toHaveLength(1);
+      expect(recorder.events.filter(event => event.type === "runtime.error").at(-1)).toMatchObject({ message: "Codex Test did not get its hooks ready in time, even after a fresh start; try again in a moment." });
+    } finally { unsubscribe(); clock.mockRestore(); }
   }, 40_000);
 
   it("B13: a Codex really below the floor is still told to update, slow handshake or not", async () => {
@@ -3342,6 +3605,13 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
   });
 
   // T86 and T103, Codex half
+  it("an unbound turn that mounts agents is refused before any launch, so a mounted Codex gate turn is always a bound one (this suite binds every turn that does not state releaseBinding: null)", async () => {
+    await create();
+    await expect(instance.adapter.sendTurn({ threadId: "t-unbound-agents", text: "hi", cwd: scratch, releaseBinding: null, integrations: { agents: AGENTS } } as never))
+      .rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(recorder.events.some((e: any) => e.type === "turn.started")).toBe(false);
+  });
+
   it("turns each delivery into the decision Rule 68e gives it, as an ordinary ask through request.opened", async () => {
     await create();
     writeFileSync(join(scratch, ".env"), "KEY=1");
@@ -3357,12 +3627,15 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       { kind: "mcp", id: "c8", server: "agents", tool: "publish_site", input: { site: "x" } },
       { kind: "shell", id: "c9", cwd: scratch },
     ];
-    const r = await run("t-table", tools, (e) => (e.tool === "shell" && e.toolCall?.input ? { behavior: "allow" } : { behavior: "deny", message: "no" }));
+    const r = await run("t-table", tools, (e) => (e.tool === "shell" && e.toolCall?.input ? { behavior: "allow" } : { behavior: "deny", message: "no" }), { integrations: { agents: AGENTS } });
     expect(r.done).toMatchObject({ ok: true });
     const verdicts = Object.fromEntries(r.dump().hookLog.map((h: any) => [h.id, h]));
     // answered by Murage with no card
     expect(verdicts.c1).toMatchObject({ name: "update_plan", verdict: "allow" });
-    expect(verdicts.c3).toMatchObject({ name: "web_fetch", verdict: "deny", reason: "Murage does not know this tool" });
+    // EXPECTATION CHANGE (7C s9): this turn mounts `agents`, so it is a BOUND turn (an unbound one with a mount is refused before
+    // launch: codex.ts:661 -> mcp-mounts.ts:176-179, pinned by the next test). A bound hook may write only the HOOK_CONTROL_FRAMES
+    // bytes (hook-control.ts, LASTRESORT section 2), so an unknown tool's denial reads the fixed policy frame, never Murage's own wording.
+    expect(verdicts.c3).toMatchObject({ name: "web_fetch", verdict: "deny", reason: HOOK_DENY_REASONS["deny.policy"] });
     expect(verdicts.c5).toMatchObject({ name: "apply_patch", verdict: "allow" });
     expect(verdicts.c7).toMatchObject({ name: "mcp__agents__list_bots", verdict: "allow" });
     // asked: view_image of .env, the command, the patch that leaves the project, an own tool outside the unasked rows, a command with no command
@@ -3400,7 +3673,7 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     await create();
     process.env.FAKE_CODEX_TOOLS = JSON.stringify([1, 2, 3].map((n) => ({ kind: "shell", id: `n${n}`, command: "find / -name x", cwd: scratch })));
     process.env.FAKE_CODEX_DUMP = join(scratch, "dump-narrow.json");
-    const sent = await instance.adapter.sendTurn({ threadId: "t-narrow", text: "go", cwd: scratch } as never);
+    const sent = await instance.adapter.sendTurn({ threadId: "t-narrow", text: "go", cwd: scratch, releaseBinding: null } as never);
     const seen = new Set<string>();
     const next = async () => (await recorder.until((e: any) => e.turnId === sent.turnId && e.type === "request.opened" && !seen.has(e.requestId))) as any;
     for (const n of [1, 2]) {
@@ -3474,10 +3747,15 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       expect(started).toMatchObject({ origin: "engine", input: { changes: [{ path: out }] }, callKey: "u8" });
       noteToolStartOutside("t-u8", started, scratch);
       beginOutsideTurn("t-u8-fresh", "codex-gate", undefined, false);
+      // Isolate file provenance from the fake app-server's launch environment, as in the H4 row above.
+      // The environment guard is covered separately; it must not mask the downloaded-file assertion.
+      forgetEngineEnv();
       // a fresh chat's engine is spawned (spawnCli notes its PATH for the thread) before any of its tools is judged
-      noteEnginePath("t-u8-fresh", process.env.PATH);
+      // pnpm's inherited PATH can contain inaccessible host-only directories in an isolated container.
+      // This provenance fixture uses the system reader, not an unresolved or workspace-local executable.
+      noteEnginePath("t-u8-fresh", process.platform === "win32" ? process.env.PATH : "/usr/bin:/bin");
       noteToolStartOutside("t-u8-fresh", { origin: "engine", title: "cat", toolIdentity: { name: "shell" }, input: { command: `cat ${out}` } }, scratch);
-      expect(turnOutsideRead("t-u8-fresh")).toBe("downloaded file");
+      expect(turnOutsideRead("t-u8-fresh"), JSON.stringify({ env: engineEnvDenied(), reason: scanFailClosed.reason, branches: scanFailClosed.interpreterBranches })).toBe("downloaded file");
     } finally {
       forgetOutsideState();
     }
@@ -3508,30 +3786,35 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     expect(denied.opened).toHaveLength(1);
   });
 
-  it("keeps the gate on a retained app-server: one handshake, a fresh token each turn, and every call still asked", async () => {
+  it("keeps the gate on a retained app-server: one handshake, one token per child, and every call still asked", async () => {
     const log = join(scratch, "calls-warm.log");
     process.env.FAKE_CODEX_CALL_LOG = log;
     await create();
     const warm = { warmIdentity: { botId: "b-warm", audience: "owner" as const } };
     const tools = [{ kind: "shell", id: "w1", command: "ls", cwd: scratch }]; // the SAME tools both turns: the warm key's env must not change
     const first = await run("t-warm", tools, () => ({ behavior: "allow" }), warm);
+    expect(first.opened.map((e) => e.tool)).toEqual(["shell"]);
     const firstPid = first.dump().pid;
     const home = first.dump().env.CODEX_HOME as string;
     const envFile = first.dump().env.MURAGE_CODEX_HOOK_ENV as string;
     expect(dirname(envFile)).toBe(join(home, "hook-env"));
     const tokenOne = readFileSync(envFile, "utf8");
     let tokenTwo = "";
-    // read while the second turn's card is open: the live process's file holds this turn's token (03-1: a closed process's file is gone)
+    // Rev 8: a retained child's canonical env bytes and expected hash stay
+    // fixed; generation checks and stale-turn denial bind each delivery.
     const second = await run("t-warm", tools, () => {
-      tokenTwo = readdirSync(dirname(envFile)).map((name) => readFileSync(join(dirname(envFile), name), "utf8")).join("");
+      tokenTwo = readFileSync(envFile, "utf8");
       return { behavior: "deny" };
     }, { ...warm, resumeCursor: "codex-thread-1" });
     expect(second.done).toMatchObject({ ok: true });
     expect(second.opened.map((e) => e.tool)).toEqual(["shell"]);
     expect(second.dump().hookLog.at(-1)).toMatchObject({ id: "w1", verdict: "deny" });
     expect(second.dump().pid).toBe(firstPid); // real reuse, under the real settle probe
+    expect(second.dump().env.MURAGE_CODEX_HOOK_ENV).toBe(envFile);
+    expect(second.dump().env.MURAGE_CODEX_HOOK_ENV_SHA256).toBe(first.dump().env.MURAGE_CODEX_HOOK_ENV_SHA256);
     expect(tokenTwo).toMatch(/TOKEN=/);
-    expect(tokenTwo).not.toBe(tokenOne);
+    expect(tokenTwo).toBe(tokenOne);
+    expect(createHash("sha256").update(tokenTwo).digest("hex")).toBe(second.dump().env.MURAGE_CODEX_HOOK_ENV_SHA256);
     const handshakes = readFileSync(log, "utf8").split("\n").filter((l) => l.startsWith(`${first.dump().pid} `) && l.endsWith(" initialize"));
     expect(handshakes).toHaveLength(1);
   });
@@ -3698,7 +3981,7 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
     process.env.FAKE_CODEX_TOOLS = JSON.stringify([{ kind: "shell", id: "s1", command: "ls", cwd: scratch }, { kind: "shell", id: "s2", command: "pwd", cwd: scratch }]);
     const dumpPath = join(scratch, "dump-f20.json");
     process.env.FAKE_CODEX_DUMP = dumpPath;
-    const sent = await instance.adapter.sendTurn({ threadId: "t-f20", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
+    const sent = await instance.adapter.sendTurn({ threadId: "t-f20", text: "go", cwd: scratch, releaseBinding: null } as never);
     const opened: any = await recorder.until((e: any) => e.type === "request.opened" && e.turnId === sent.turnId);
     const kill = vi.spyOn(procs, "killCliTree").mockImplementation(() => {});
     const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(false);
@@ -3853,7 +4136,7 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       const stops = holdStops();
       try {
         // the reuse: the hooks/list check is the last await before turn/start, and the Stop lands while it is held
-        const sent = await instance.adapter.sendTurn({ threadId: "t-x3", text: "again", cwd: scratch, integrations: { agents: AGENTS }, ...warm, resumeCursor: "codex-thread-1" } as never);
+        const sent = await instance.adapter.sendTurn({ threadId: "t-x3", text: "again", cwd: scratch, releaseBinding: null, integrations: {}, ...warm, resumeCursor: "codex-thread-1" } as never);
         await vi.waitFor(() => expect(trust).toHaveBeenCalled());
         void instance.adapter.interruptTurn("t-x3").catch(() => {});
         held.open();
@@ -3901,7 +4184,8 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       process.env.FAKE_CODEX_TOOLS = JSON.stringify([{ kind: "shell", id: "u2", command: "ls", cwd: scratch }]);
       const sent = await instance.adapter.sendTurn({ threadId: "t-u2", text: "go", cwd: scratch, integrations: { agents: AGENTS } } as never);
       await recorder.until((e: any) => e.type === "request.opened" && e.turnId === sent.turnId);
-      const kill = vi.spyOn(procs, "killCliTree").mockImplementation(() => {});
+      const held: ChildProcess[] = [];
+      const kill = vi.spyOn(procs, "killCliTree").mockImplementation(child => { held.push(child); });
       const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(false);
       try {
         await expect(instance.dispose()).rejects.toThrow("listeners remain attached");
@@ -3912,7 +4196,7 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
         // the listeners are kept: a send after the failed dispose still reaches the recorder (the gate is closed, so it ends closing)
         const later = await instance.adapter.sendTurn({ threadId: "t-u2-later", text: "go", cwd: scratch });
         expect(endings(later.turnId)).toEqual([expect.objectContaining({ ok: false, stopReason: "exit_before_result" })]);
-      } finally { kill.mockRestore(); confirm.mockRestore(); }
+      } finally { kill.mockRestore(); confirm.mockRestore(); for (const child of held) { procs.killCliTree(child); await procs.awaitCliTreeStopped(child); } }
     }, 30_000);
 
     it("STOP-NONACP s6 P1: a spawn that throws synchronously ends the turn once, with an error; a later Stop and Stop All end nothing twice", async () => {
@@ -4034,7 +4318,8 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
       const held = gate();
       const spy = vi.spyOn(localInject, "codexLocalProviderArgs").mockImplementation(async () => { await held.promise; throw new Error("late provider failure"); });
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-      const kill = vi.spyOn(procs, "killCliTree").mockImplementation(() => {});
+      const heldChildren: ChildProcess[] = [];
+      const kill = vi.spyOn(procs, "killCliTree").mockImplementation(child => { heldChildren.push(child); });
       const confirm = vi.spyOn(procs, "awaitCliTreeStopped").mockResolvedValue(false);
       try {
         const sent = await instance.adapter.sendTurn({ threadId: "t-lr1", text: "go", cwd: scratch });
@@ -4047,7 +4332,7 @@ describe("Codex PreToolUse gate (fake app-server)", () => {
         expect(endings(sent.turnId)).toHaveLength(1);
         expect(errorsOf(sent.turnId)).toHaveLength(1);
         expect(instance.adapter.hasSession("t-lr1")).toBe(false);
-      } finally { spy.mockRestore(); warn.mockRestore(); kill.mockRestore(); confirm.mockRestore(); held.open(); }
+      } finally { spy.mockRestore(); warn.mockRestore(); kill.mockRestore(); confirm.mockRestore(); for (const child of heldChildren) { procs.killCliTree(child); await procs.awaitCliTreeStopped(child); } held.open(); }
     }, 30_000);
 
     it.each(["Stop", "dispose"] as const)("USAGE-1 codex %s on a live turn that already reported usage keeps it on the final turn.completed", async (kind) => {

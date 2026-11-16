@@ -1,3 +1,5 @@
+import { fileURLToPath as fixtureFilePath } from "node:url";
+const IDLE_MCP = fixtureFilePath(new URL("../../testing/fake-idle-mcp.mjs", import.meta.url));
 import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
@@ -15,7 +17,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ensureDirs } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
-import { recordEvents, type EventRecorder } from "../../testing/events.ts";
+import { recordAdmittedEvents as recordEvents, type EventRecorder } from "../../testing/admitted-events.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { resolveCall, type GrantCall } from "../../../shared/app-action-grant.ts";
 import { plainApproval } from "../../../shared/approval-plain.ts";
@@ -40,7 +42,7 @@ const useTool = (toolName: string, toolInput: object, meta: object = GROK_USE_TO
   rawInput: { variant: "UseTool", tool_name: toolName, tool_input: toolInput }, _meta: meta,
 });
 
-const proxy = (name: string) => ({ command: process.execPath, args: [`/fake/${name}.js`], env: {} });
+const proxy = (name: string) => ({ command: process.execPath, args: [IDLE_MCP, name], env: {} });
 const OWN = { agents: proxy("agents-proxy"), memory: proxy("memory-proxy"), composio: proxy("composio-mcp") };
 
 const ASK: AutoApprover = { autoApprove: false };
@@ -110,7 +112,7 @@ describe("Murage's own tools through Grok Build's use_tool", () => {
   // `computer__click` resolves on this turn's own computer mount. The gate's grokcli A2 (built before it)
   // carded every host action at Auto as kind "other".
   it("reads the x.ai/tool stamp on a host-computer call: at Auto a screenshot and a click run with no card, at Ask only the click asks", async () => {
-    const host = { ...OWN, localComputer: { command: process.execPath, args: ["/fake/cua-driver.js"], env: {}, platform: "linux", scope: "local-computer" } };
+    const host = { ...OWN, localComputer: { command: process.execPath, args: [IDLE_MCP], env: {}, platform: "linux", scope: "local-computer" } };
     const verdict = (bot: AutoApprover, opened: any) => autoVerdict(bot, opened.tool, opened.summary, { call: callOf(opened), scope: opened.approvalScope });
     const shot = await asked("t-grok-shot", useTool("computer__get_desktop_state", {}), host);
     const click = await asked("t-grok-click", useTool("computer__click", { x: 10, y: 10 }), host);
@@ -250,3 +252,6 @@ describe("Murage's own tools through Grok Build's use_tool", () => {
 
 // Adapter turns in this suite use an isolated durable store.
 useOutsideStoreFixture();
+
+beforeEach(() => { vi.stubEnv("FAKE_ACP_MCP_READY", "1"); vi.stubEnv("FAKE_ACP_MCP_LIST", "all:ready"); });
+afterEach(() => { vi.unstubAllEnvs(); });

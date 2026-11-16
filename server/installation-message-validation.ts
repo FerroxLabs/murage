@@ -9,7 +9,7 @@ import type { WebhookRequestOperation } from "../shared/routine-request.ts";
 export const INSTALLATION_MESSAGE_KINDS = ["text", "options", "activity", "screen", "connector", "mcpSignIn", "secret", "routine.run", "goal.run"] as const satisfies readonly Message["kind"][];
 // Every card kind a shipped feature writes (OptionCardData.kind). A kind missing here refused
 // the whole backup of any installation holding one such card (mcpEnable, 1.0.4 to 1.0.8).
-export const INSTALLATION_CARD_KINDS = ["publish", "mcpEnable", "email-send", "email-trust-offer"] as const satisfies readonly NonNullable<OptionCardData["kind"]>[];
+export const INSTALLATION_CARD_KINDS = ["own-write","publish", "mcpEnable", "email-send", "email-trust-offer"] as const satisfies readonly NonNullable<OptionCardData["kind"]>[];
 // Compile-time completeness (INSTALLATION_KINDS_COMPLETE below): a kind or status added to a stored shape without a recovery schema fails the typecheck.
 type Uncovered<All, Listed> = [Exclude<All, Listed>] extends [never] ? true : { uncovered: Exclude<All, Listed> };
 const text = z.string();

@@ -1,0 +1,11 @@
+--- server/connected-app-health.ts
++++ server/connected-app-health.ts
+@@ -174,7 +174,7 @@
+     reading.errors.add(slug);
+     reading.ok.delete(slug);
+     const status = /(?<![\w.])(401|403)(?![\w.])/.exec(text)?.[1];
+-    if (status) reading.authStatus.set(slug, Number(status));
++    reading.authStatus.set(slug, Number(status ?? 401));
+     if (AUTH_FAILURE.test(text)) reading.failed.set(slug, causeOf(text));
+   };
+   for (const frame of framesOf(bytes, requestId)) {

@@ -24,6 +24,7 @@ import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { isOwnerOrigin, type Message } from "../store.ts";
 import { redactSecretsInText } from "../redact.ts";
+import { sanitizeDisplayTextUnit } from "../transcript-page.ts";
 import { isWorkspaceOwner, threadHumanPrincipal } from "../human-principals.ts";
 import { turnAudienceIsOwner } from "../owner-audience.ts";
 import type { TextOnlyExtractor } from "./extract.ts";
@@ -607,12 +608,16 @@ export async function decideFeedback(input: DecideInput): Promise<DecisionResult
 
   if (polarity === "+" && strength === 1 && state === "detected") return { kind: "dropped", reason: "positive-1" };
   const action = targetKind === "other" ? null : input.turn ? resolveAction(input.text, input.turn.actions, modelTarget) : null;
+  // Classification and source spans use the original owner words. Display
+  // copies inspect those complete words as well as each extracted clause.
+  const safeOriginal = redactSecretsInText(input.text);
+  const [, safeCorrection, safeSuggestion] = sanitizeDisplayTextUnit([safeOriginal, sourceCorrection ?? "", suggestedParaphrase ?? ""]);
   return {
     kind: "feedback",
     decision: {
-      polarity, strength, correction: sourceCorrection ? redactSecretsInText(sourceCorrection).slice(0, FEEDBACK_MAX_CORRECTION_CHARS) : null, confidence,
+      polarity, strength, correction: sourceCorrection ? safeCorrection.slice(0, FEEDBACK_MAX_CORRECTION_CHARS) : null, confidence,
       state, target: { kind: action ? "action" : targetKind, action }, source, phrase: s1.phrase, reasons,
-      ...(suggestedParaphrase ? { suggestion: { paraphrase: redactSecretsInText(suggestedParaphrase).slice(0, FEEDBACK_MAX_CORRECTION_CHARS), ownerWords: redactSecretsInText(normal) } } : {}),
+      ...(suggestedParaphrase ? { suggestion: { paraphrase: safeSuggestion.slice(0, FEEDBACK_MAX_CORRECTION_CHARS), ownerWords: redactSecretsInText(normalizeText(safeOriginal)) } } : {}),
       ...(effect ? { effect } : {}), ...(conversationOnly ? { conversationOnly } : {}), ...(aboutApprovals ? { aboutApprovals } : {}),
     },
   };

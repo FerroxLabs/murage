@@ -1,0 +1,110 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/connector-reconnect-r2.test.ts (15 tests | 14 failed) 141ms
+   × R2 status INITIATED marks only the non-ACTIVE account 31ms
+   × R2 status INITIALIZING marks only the non-ACTIVE account 6ms
+   × R2 status FAILED marks only the non-ACTIVE account 8ms
+   × R2 status INACTIVE marks only the non-ACTIVE account 6ms
+   × R2 status EXPIRED marks only the non-ACTIVE account 7ms
+   × R2 status UNKNOWN marks only the non-ACTIVE account 6ms
+   × R2 broker JSON-RPC error message invalid_credentials becomes an attributed visible failure with no retry 19ms
+   × R2 broker JSON-RPC error message Token has expired becomes an attributed visible failure with no retry 7ms
+   × R2 broker JSON-RPC error message authentication failed becomes an attributed visible failure with no retry 6ms
+   × R2 broker JSON-RPC error message invalid_auth becomes an attributed visible failure with no retry 6ms
+   × R2 broker JSON-RPC error message token_revoked becomes an attributed visible failure with no retry 6ms
+   × R2 broker JSON-RPC error message account is not active becomes an attributed visible failure with no retry 5ms
+   ✓ R2 successful content and permission refusals never impersonate an auth failure 4ms
+   × R2 scheduled preflight uses one safe read per account, hourly, before work; never probes unknown toolkits 12ms
+   × R2 preflight catches an ACTIVE idle lapse and stops scheduled work 7ms
+
+⎯⎯⎯⎯⎯⎯ Failed Tests 14 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status INITIATED marks only the non-ACTIVE account
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status INITIALIZING marks only the non-ACTIVE account
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status FAILED marks only the non-ACTIVE account
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status INACTIVE marks only the non-ACTIVE account
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status EXPIRED marks only the non-ACTIVE account
+ FAIL  server/connector-reconnect-r2.test.ts > R2 status UNKNOWN marks only the non-ACTIVE account
+TypeError: cfg is not a function
+ ❯ server/connector-reconnect-r2.test.ts:39:31
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/14]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message invalid_credentials becomes an attributed visible failure with no retry
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message Token has expired becomes an attributed visible failure with no retry
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message authentication failed becomes an attributed visible failure with no retry
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message invalid_auth becomes an attributed visible failure with no retry
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message token_revoked becomes an attributed visible failure with no retry
+ FAIL  server/connector-reconnect-r2.test.ts > R2 broker JSON-RPC error message account is not active becomes an attributed visible failure with no retry
+TypeError: cfg is not a function
+ ❯ server/connector-reconnect-r2.test.ts:46:31
+     44|   const onReconnect = vi.fn();
+     45|   const reply = await call(undefined, undefined, { onReconnect });
+     46|   expect(appsNeedingReconnect(cfg())[0]?.accounts).toEqual([{ id: "a",…
+       |                               ^
+     47|   expect(new TextDecoder().decode(reply.bytes)).toMatch(/Gmail.*Reconn…
+     48|   expect(onReconnect).toHaveBeenCalledOnce();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/14]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 scheduled preflight uses one safe read per account, hourly, before work; never probes unknown toolkits
+AssertionError: expected [] to deeply equal ArrayContaining{…}
+
+- Expected
++ Received
+
+- ArrayContaining [
+-   {
+-     "account": "a",
+-     "arguments": {
+-       "user_id": "me",
+-     },
+-     "tool_slug": "GMAIL_GET_PROFILE",
+-   },
+-   {
+-     "account": "b",
+-     "arguments": {
+-       "user_id": "me",
+-     },
+-     "tool_slug": "GMAIL_GET_PROFILE",
+-   },
+- ]
++ []
+
+ ❯ server/connector-reconnect-r2.test.ts:65:58
+     63|   await Promise.all([call(undefined, undefined, { scheduled: true }), …
+     64|   const probes = () => calls.filter(c => String(c.id).startsWith("heal…
+     65|   expect(probes().map(c => c.params.arguments.tools[0])).toEqual(expec…
+       |                                                          ^
+     66|     { tool_slug: "GMAIL_GET_PROFILE", account: "a", arguments: { user_…
+     67|     { tool_slug: "GMAIL_GET_PROFILE", account: "b", arguments: { user_…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/14]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 preflight catches an ACTIVE idle lapse and stops scheduled work
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ server/connector-reconnect-r2.test.ts:81:64
+     79|   failure = { error: { code: -32000, message: "invalid_grant" } };
+     80|   const reply = await call(undefined, undefined, { scheduled: true });
+     81|   expect(calls.every(c => String(c.id).startsWith("health-"))).toBe(tr…
+       |                                                                ^
+     82|   expect(calls).toHaveLength(2);
+     83|   expect(new TextDecoder().decode(reply.bytes)).toMatch(/Gmail.*Reconn…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/14]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  14 failed | 1 passed (15)
+   Start at  03:58:31
+   Duration  4.31s (transform 3.17s, setup 3.87s, import 165ms, tests 141ms, environment 0ms)
+

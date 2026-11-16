@@ -5,7 +5,7 @@
 import { test, expect, type Locator, type Page, type TestInfo } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { existsSync, mkdirSync } from "node:fs";
@@ -35,7 +35,7 @@ function evidencePath(info: TestInfo, name: string) {
   return join(base, `${name}.png`);
 }
 async function openTask(page: Page) {
-  await page.addInitScript(() => localStorage.setItem("murage-email-gate", "skipped"));
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin);
   await (await openSidebar(page)).getByText(BOT, { exact: true }).click();
   const invitation = page.getByRole("complementary", { name: "Let your bots pick the right model", exact: true });

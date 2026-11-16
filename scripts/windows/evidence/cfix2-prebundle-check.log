@@ -1,0 +1,66 @@
+node:internal/modules/esm/resolve:272
+    throw new ERR_MODULE_NOT_FOUND(
+          ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/work/dist-server/health/host-boundary.js' imported from /work/electron/sentinel-schedule.node-test.mjs
+    at finalizeResolution (node:internal/modules/esm/resolve:272:11)
+    at moduleResolve (node:internal/modules/esm/resolve:879:10)
+    at defaultResolve (node:internal/modules/esm/resolve:1006:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:705:20)
+    at #resolveAndMaybeBlockOnLoaderThread (node:internal/modules/esm/loader:725:38)
+    at ModuleLoader.resolveSync (node:internal/modules/esm/loader:763:56)
+    at #resolve (node:internal/modules/esm/loader:687:17)
+    at ModuleLoader.getOrCreateModuleJob (node:internal/modules/esm/loader:607:35)
+    at node:internal/modules/esm/loader:636:32
+    at TracingChannel.tracePromise (node:diagnostics_channel:362:14) {
+  code: 'ERR_MODULE_NOT_FOUND',
+  url: 'file:///work/dist-server/health/host-boundary.js'
+}
+
+Node.js v24.21.0
+✖ electron/sentinel-schedule.node-test.mjs (111.969163ms)
+✔ outer desktop cleanup accepted (5.270997ms)
+✔ outer handoff cleanup accepted (0.411651ms)
+✔ refuse cleanup: c=>c.writer='child' (1.901456ms)
+✔ refuse cleanup: c=>c.pid=c.childPid (0.399751ms)
+✔ refuse cleanup: c=>c.finalizedAt=0 (0.4389ms)
+✔ refuse cleanup: c=>c.job.flags|=0x800 (1.353464ms)
+✔ refuse cleanup: c=>c.job.empty=false (0.731763ms)
+✔ refuse cleanup: c=>c.job.ownerClosed=false (0.596642ms)
+✔ refuse cleanup: c=>c.job.remaining=[12] (0.747613ms)
+✔ refuse cleanup: c=>c.tasks.errors=['new unprefixed task'] (0.747183ms)
+✔ refuse cleanup: c=>c.tasks.ok=false (0.33459ms)
+✔ refuse cleanup: c=>c.registrations=emptyDiff() (0.705802ms)
+✔ refuse child assertion object without outer proof (0.442282ms)
+✔ diff rejects unprefixed delete even if cleaner claims success (2.731509ms)
+✔ diff rejects deletion of a prefixed preexisting task (0.531171ms)
+✔ diff accepts only new prefixed cleanup (0.271401ms)
+✔ MAIN 1: suspended job has no breakaway and verifies empty after owner close (2.423559ms)
+✔ MAIN 2: full task snapshots and prefix-only new-task cleanup (2.772139ms)
+✔ MAIN 3: HTTPS dispatch is handoff only; Desktop keeps refusal rows (0.580331ms)
+✔ MAIN 4: registration diff is Handoff-only and guarded by machine (0.482362ms)
+✔ MAIN 5: only operator finalizes after cleanup; receipt needs cleanup proof (12.80094ms)
+✔ P1-1 launcher wires write-ahead task intent and outer cleanup (2.467867ms)
+✔ P1-2 physical containment checks existing ancestors before writes (11.043245ms)
+✔ P1-3 full staged tree and embedded provenance are verified (15.748779ms)
+✔ P2-1 observation needs group controls, a final gap, and full coverage (2.99439ms)
+✔ P2-2 fixture environment is set before either helper compiles (0.575832ms)
+✔ P2-3 every tested scheduler completion requires a fresh publication (0.517711ms)
+✔ P2-4 includes Claude Node cmd and all OS shell rows (0.463571ms)
+✔ Windows entry points require the owned launcher context (0.701312ms)
+✔ Windows package hook stamps provenance exactly once (0.710512ms)
+✔ ZIP extraction validates destination after deriving it and never references copy-loop source (0.700412ms)
+ℹ tests 32
+ℹ suites 0
+ℹ pass 31
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 211.755427
+
+✖ failing tests:
+
+test at electron/sentinel-schedule.node-test.mjs:1:1
+✖ electron/sentinel-schedule.node-test.mjs (111.969163ms)
+  'test failed'

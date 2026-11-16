@@ -1,0 +1,8 @@
+{
+  "R121-exception-empty": "before-walk",
+  "R121-exception-root": "after-twin",
+  "R121-exception-word": "after-twin",
+  "R121-recursion": "recursion",
+  "R121-size": "size",
+  "R121-work": "work"
+}

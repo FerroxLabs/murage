@@ -40,8 +40,8 @@ export class ReadLayer {
   /** Round 10 (R9-02): live values of fields the page holds. A node name or dialog name that carries one is never kept or shown. */
   private secrets: string[] = [];
   private send: CdpSend;
-  private opts: { origin: () => string; url: () => string };
-  constructor(send: CdpSend, opts: { origin: () => string; url: () => string }) { this.send = send; this.opts = opts; }
+  private opts: { origin: () => string; url: () => string; noLimits?: () => boolean };
+  constructor(send: CdpSend, opts: { origin: () => string; url: () => string; noLimits?: () => boolean }) { this.send = send; this.opts = opts; }
 
   private async frames(): Promise<{ main: string; map: Map<string, string> }> {
     const tree = (await this.send("Page.getFrameTree")).frameTree;
@@ -73,7 +73,7 @@ export class ReadLayer {
 
   /** A name the page wrote that is a secret value, or carries a field's live value, is replaced before it is stored (and so before any output or diff). */
   private safeName(role: string, name: string): string {
-    if (!name) return name;
+    if (this.opts.noLimits?.() || !name) return name;
     if (FIELD_ROLES.has(role) && looksLikeSecretValue(name)) return "[hidden]";
     // Round 10 (R10-06): matched after the classifier's normalisation, so an invisible mark, a full-width digit or a separator inside the copy does not hide it.
     const squash = (t: string) => normalizeSecretText(t).toLowerCase().replace(/[\s._\-,']/g, "");
@@ -146,7 +146,7 @@ export class ReadLayer {
       if (above) notes.unshift(`${above} more elements above`);
       text = `Large page: showing interactive elements in view and one screen below.\n${keep.map(line).join("\n")}\n${notes.join("; ")}`;
     }
-    text = maskSensitiveValues(text, sensitive);
+    if (!this.opts.noLimits?.()) text = maskSensitiveValues(text, sensitive);
     const snap: Snapshot = { url: this.opts.url(), frameLoader: main, nodes, dialogs: nodes.filter((n) => n.role === "dialog" || n.role === "alertdialog").map((n) => n.name), text, shown: shown.length, below, above, budgeted };
     this.last = snap;
     return snap;
@@ -195,7 +195,7 @@ export class ReadLayer {
     const prev = this.last;
     if (!prev) return null;
     const before = this.secrets, next = await this.snapshot();
-    return formatDiff(prev, next, this.opts.origin(), [...before, ...this.secrets]);
+    return formatDiff(prev, next, this.opts.origin(), [...before, ...this.secrets], this.opts.noLimits?.()===true);
   }
 
   /** Plain-words reason a click on this node would land on something else. Null when nothing covers it. */
@@ -226,7 +226,7 @@ export function coverSentence(f: CoverFacts, targetRole = "element"): string {
 
 const list = (xs: SnapNode[]) => xs.slice(0, 8).map((n) => `${label(n)} [ref=${n.ref}]`).join("\n") + (xs.length > 8 ? `\n...and ${xs.length - 8} more` : "");
 
-export function formatDiff(prev: Pick<Snapshot, "url" | "nodes" | "dialogs">, next: Pick<Snapshot, "url" | "nodes" | "dialogs">, origin: string, secrets: string[] = []): string | null {
+export function formatDiff(prev: Pick<Snapshot, "url" | "nodes" | "dialogs">, next: Pick<Snapshot, "url" | "nodes" | "dialogs">, origin: string, secrets: string[] = [], noLimits = false): string | null {
   const lead: string[] = [];
   if (prev.url !== next.url) lead.push(`The page address changed to ${next.url}.`);
   const before = new Set(prev.nodes.filter((n) => n.interactive).map((n) => n.key));
@@ -241,8 +241,8 @@ export function formatDiff(prev: Pick<Snapshot, "url" | "nodes" | "dialogs">, ne
   if (!lead.length && !body.length) return null;
   // Round 10 (R9-02): every diff line is redacted against the field values the page held, whatever node it came from.
   let bodyText = body.join("\n");
-  for (const v of secrets) if (v.length >= 3) bodyText = bodyText.split(v).join("[hidden]");
-  bodyText = bodyText.replace(/"([^"\n]*)"/g, (m, inner) => (looksLikeSecretValue(inner) ? '"[hidden]"' : m));
+  for (const v of noLimits ? [] : secrets) if (v.length >= 3) bodyText = bodyText.split(v).join("[hidden]");
+  if (!noLimits) bodyText = bodyText.replace(/"([^"\n]*)"/g, (m, inner) => (looksLikeSecretValue(inner) ? '"[hidden]"' : m));
   const fenced = body.length ? "\n" + fencePageText(bodyText, { origin, kind: "diff" }) : "";
   return `What changed:${lead.length ? "\n" + lead.join("\n") : ""}${fenced}`;
 }

@@ -19,8 +19,10 @@ import { appendMessage } from "../message-db.ts";
 import type { Message } from "../store.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { authorityEpochInstalled } from "./authority-epoch.ts";
-import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
-import { catchUpRecentMemory } from "./recent.ts";
+import { reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
+
+import { fixtureCatchUpRecentMemory as catchUpRecentMemory } from "../testing/recall-access-fixture.ts";
 import { lineageTriggersInstalled } from "./replay-lineage.ts";
 import { setMemoryMode } from "./repository.ts";
 

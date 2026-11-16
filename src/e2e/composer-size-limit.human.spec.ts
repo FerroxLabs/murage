@@ -21,7 +21,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -133,7 +133,7 @@ test.afterAll(async () => { try { await vite?.close(); } finally { await stopHar
 
 async function openApp(page: Page) {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); });
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-skin", "light"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   const engines = page.waitForResponse((response) => /\/api\/instances(\?|$)/.test(response.url()) && response.ok(), { timeout: 60_000 });
   await page.goto(origin);
   await expect(page.getByRole("complementary", { name: "Bots and navigation" }).or(page.getByRole("button", { name: "Open bot list" }))).toBeVisible();

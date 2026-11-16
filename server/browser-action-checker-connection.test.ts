@@ -145,7 +145,7 @@ describe("resolveCheckerConnection", () => {
   it("the default pair is exactly the live catalogue ids", () => {
     expect(DEFAULT_CHECKER_MODELS).toEqual({ stage1: "flux-pinned-claude-haiku", stage2: "flux-pinned-gpt-5-mini" });
   });
-  // Flux's real refusal shapes (flux-router src/model_access_message.py, tests/test_free_tier_model_refusal.py).
+  // Flux's real refusal shapes (the Flux router's model access refusal handler, the Flux router's free tier model refusal tests).
   const PLAN_SENTENCE = (m: string) => `${m} is not on the Flux free plan. Upgrade at https://fluxrouter.ai/home/billing to unlock it. Your key can use: flux-auto, flux-fast.`;
   const NOT_PERMITTED = (m: string) => `This key is not permitted to use ${m}. The key itself is valid, but its allowlist does not include this model. Contact support@fluxrouter.ai`;
   const openaiBody = (message: string) => ({ error: { message, type: "auth_error", param: "model", code: "403" } });
@@ -221,7 +221,7 @@ describe("resolveCheckerConnection", () => {
 // gate. Through the real CLI learning entry (which refuses a call with no gate), the checker still answers, and a Forget that commits while
 // the call waits drops it unsent.
 describe("the browser checker's bot-engine fallback goes through its own learning gate", () => {
-  const cliBot = (runner: MemorySessionRunner) => withCliMemoryLearning(bot({ adapter: { onEvent: () => () => {} }, dispose: async () => {} }), { run: () => runner });
+  const cliBot = (runner: MemorySessionRunner) => withCliMemoryLearning(bot({ adapter: { capabilities: { fencedLearningWrite: true }, onEvent: () => () => {} }, dispose: async () => {} }), { run: () => runner });
   const fresh = () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); database(); };
   afterEach(() => closeDatabase());
   it("answers through the real CLI learning entry: one release, the engine sees the checker prompt", async () => {
@@ -249,7 +249,7 @@ describe("the browser checker's bot-engine fallback goes through its own learnin
 describe("a Flux free-plan key and the browser checker", () => {
   const FREE_CATALOG = ["flux-auto", "flux-fast"];
   const PAID_CATALOG = ["flux-auto", "flux-fast", "flux-standard", "flux-reasoning", DEFAULT_CHECKER_MODELS.stage1, DEFAULT_CHECKER_MODELS.stage2];
-  // Recorded from Flux (flux-router src/model_access_message.py): LiteLLM's allowlist refusal, as FluxMain saw it in the Flux logs.
+  // Recorded from Flux (the Flux router's model access refusal handler): LiteLLM's allowlist refusal, as FluxMain saw it in the Flux logs.
   const RECORDED_403 = (m: string) => ({ error: { message: `key not allowed to access model. This key can only access models=['flux-auto', 'flux-fast']. Tried to access ${m}`, type: "auth_error", param: "model", code: "403" } });
   const engine = () => bot({ reviewPermission: vi.fn(async () => "ALLOW") });
   afterEach(() => resetFluxKeyModelsForTests());

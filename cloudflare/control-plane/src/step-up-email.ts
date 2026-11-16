@@ -52,8 +52,10 @@ import { claimHomeLeaseStatements, homeLeaseFree, releaseHomeLeaseOf } from "./b
 import { NONE_SELLER } from "./checkout-replacement";
 import { admin } from "./b3-control";
 import { boundCustomer, carryBinding, DEVICE_REVOKE_ROUTE, DOOR_ROUTE, markStepUpProof, needsStepUp, stepUpMaxAgeFor, type Identity } from "./customer-identity";
+import { readHomeDevices } from "./devices";
 import { senderOrFail, type TransactionalEmailSender } from "./email";
 import { errorResponse, HTTPError, json, readBoundedJSON, type JSONValue } from "./http";
+import type { PairingDependencies } from "./pairing";
 import { isPurchaseRoute } from "./purchase-bootstrap";
 import { bindStepUpOp, type StepUpOp } from "./step-up-op";
 import type { SupabaseAuthConfig } from "./supabase-jwt";
@@ -63,6 +65,7 @@ export const VERIFY_PATH = "/v1/account/step-up/email/verify";
 export const LOGS_READ_PATH = "/v1/account/home/logs";
 const LOGS_REQUEST_PATH = "/v1/account/home/logs/request";
 const EXPORT_DOWNLOAD_PATH = "/v1/account/export/download";
+const EXPORT_KEY_CONFIRM_PATH = "/v1/account/export/key-confirm";
 
 export const CODE_DIGITS = 6;
 export const CODE_TTL_SECONDS = 600;
@@ -209,11 +212,11 @@ export function targetSpec(method: string, path: string, body: unknown, userId: 
       sql: `COALESCE((SELECT json_array('home', h.id, h.generation, h.resource_generation, h.desired_state, h.payment_version) FROM cloud_homes h
         WHERE h.owner_id=? AND h.desired_state<>'deleted' ORDER BY h.created_at DESC LIMIT 1), 'none')` };
   }
-  if (path === EXPORT_DOWNLOAD_PATH) {
+  if (path === EXPORT_DOWNLOAD_PATH || path === EXPORT_KEY_CONFIRM_PATH) {
     // The export job named in the body, as the handler authorises it (historical ownership), with its state, availability and whether its
     // key is still undisclosed. No lease: the disclosure is its own once-only row (self-service.ts exportDownloadLink).
     const requestId = str(body, "requestId");
-    return { kind: "export", op: "export_link", binds: [requestId, userId, userId], lease: null, explicit: false,
+    return { kind: "export", op: path === EXPORT_KEY_CONFIRM_PATH ? "export_key_confirm" : "export_link", binds: [requestId, userId, userId], lease: null, explicit: false,
       sql: `COALESCE((SELECT json_array('export', j.request_id, j.home_id, j.state, j.available_until, j.archive_id, j.wrapped_key IS NOT NULL)
         FROM cloud_export_jobs j JOIN cloud_homes h ON h.id=j.home_id WHERE j.request_id=?
         AND (h.owner_id=? OR EXISTS (SELECT 1 FROM data_export_requests r WHERE r.id=j.request_id AND r.user_id=?))), 'none')` };
@@ -870,7 +873,11 @@ export async function recordOutcome(env: Env, prepared: Prepared, now: () => num
 
 // ---- send and verify ---------------------------------------------------------------------------------------------------------------
 
-export interface StepUpEmailDependencies { emailSender?: (env: Env) => TransactionalEmailSender }
+export interface StepUpEmailDependencies {
+  emailSender?: (env: Env) => TransactionalEmailSender;
+  /** The home call that names a device being removed (devices.ts listHomeDevices). Default: the global fetch. */
+  pairing?: PairingDependencies;
+}
 
 async function live(request: Request, env: Env, identity: Identity) {
   const s = await identity.customer(request);
@@ -879,11 +886,48 @@ async function live(request: Request, env: Env, identity: Identity) {
   const supa = await identity.supabaseUser(request, env);
   // The address generation binds the code and the approval; without it nothing can be bound: fail closed.
   if (!supa.updatedAt) throw new HTTPError(503, "identity_unavailable");
-  return { userId: s.user.id, sessionId: s.supabase.sessionId, config, email: supa.email, gen: supa.updatedAt, now: identity.now() };
+  return { userId: s.user.id, accountEmail: s.user.email, sessionId: s.supabase.sessionId, config, email: supa.email, gen: supa.updatedAt, now: identity.now() };
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const dayOf = (ms: number) => { const d = new Date(ms); return `${d.getUTCDate()} ${MONTHS[d.getUTCMonth()]} ${d.getUTCFullYear()}`; };
+const SCOPE_WORDS: Record<string, string> = { browser: "a browser", "owner-desktop": "your computer", "owner-phone": "your phone" };
+/** The words naming a device in a removal email, from what the home reports (scope and dates only: the contract has no browser or OS name). */
+export function deviceLabel(d: { scope: string; addedAt: number; lastSeenAt: number | null }): string | null {
+  const what = SCOPE_WORDS[d.scope];
+  if (!what) return null;
+  return `${what} added ${dayOf(d.addedAt)}${d.lastSeenAt ? ` (last used ${dayOf(d.lastSeenAt)})` : ""}`;
+}
+/** The most a device lookup may delay a removal code before the email goes without it. */
+export const DEVICE_LABEL_TIMEOUT_MS = 3_000;
+/** The device a frozen removal intent names, as the home lists it (read-only: no audit row, no hold reconcile), or null: never from the client (the revoke body is {}), only the
+ *  server-frozen target ['device', deviceId, homeId, generation, state] and the home's own list, and only while that home is still this
+ *  account's, at that generation. Any failure (no such home or device, a home that cannot answer in time) is null: the code is sent
+ *  without the label, never refused or delayed past the bound. */
+async function revokedDeviceLabel(env: Env, userId: string, accountEmail: string, target: string, pairing: PairingDependencies): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    if (targetAt<string>(target, 0, "string") !== "device") return null;
+    const deviceId = targetAt<string>(target, 1, "string");
+    const homeId = targetAt<string>(target, 2, "string");
+    const generation = targetAt<number>(target, 3, "number");
+    if (!deviceId || !homeId || generation === null) return null;
+    const home = await env.DB.prepare(`SELECT 1 AS ok FROM cloud_homes WHERE id=? AND owner_id=? AND generation=? AND door_version='v2'
+      AND desired_state NOT IN ('deleting','deleted')`).bind(homeId, userId, generation).first<{ ok: number }>();
+    if (!home) return null;
+    const late = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), DEVICE_LABEL_TIMEOUT_MS); });
+    const answer = await Promise.race([readHomeDevices(env, homeId, { id: userId, email: accountEmail }, pairing), late]);
+    const device = answer?.devices.find((d) => d.id === deviceId);
+    return device ? deviceLabel(device) : null;
+  } catch {
+    return null;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 /** Plain words for the action a code approves (the email says what it is for). */
-function actionWords(method: string, path: string): string {
+function actionWords(method: string, path: string, device: string | null = null): string {
   if (isPurchaseRoute(method, path)) return "a payment for your Murage Cloud plan";
   if (path === "/v1/billing/portal") return "opening your billing settings";
   if (path === "/v1/account/topup") return "a change to your automatic top-up";
@@ -894,7 +938,7 @@ function actionWords(method: string, path: string): string {
   if (path === "/v1/account/home/hold") return "a protected change to your Cloud";
   if (path.endsWith("/desktop-code")) return "connecting a desktop to your Cloud";
   if (DOOR_ROUTE.test(path)) return "opening your Murage home";
-  if (DEVICE_REVOKE_ROUTE.test(path)) return "removing a device from your Murage home";
+  if (DEVICE_REVOKE_ROUTE.test(path)) return `removing ${device ?? "a device"} from your Murage home`;
   if (path.endsWith("/keep")) return "keeping your plan";
   if (path.includes("/flux")) return "a change to your Flux credits";
   return "a protected action on your account";
@@ -904,8 +948,8 @@ async function sendCode(request: Request, env: Env, identity: Identity, deps: St
   const parsed = sendSchema.safeParse(await readBoundedJSON(request));
   if (!parsed.success) throw new HTTPError(400, "invalid_request");
   const l = await live(request, env, identity);
-  const intent = await env.DB.prepare("SELECT method,path FROM cloud_stepup_intents WHERE id=? AND user_id=? AND session_id=? AND state='pending' AND expires_at>?")
-    .bind(parsed.data.intentId, l.userId, l.sessionId, l.now).first<{ method: string; path: string }>();
+  const intent = await env.DB.prepare("SELECT method,path,target FROM cloud_stepup_intents WHERE id=? AND user_id=? AND session_id=? AND state='pending' AND expires_at>?")
+    .bind(parsed.data.intentId, l.userId, l.sessionId, l.now).first<{ method: string; path: string; target: string }>();
   if (!intent) throw new HTTPError(403, "intent_refused");
   const challengeId = randomId("sc_");
   const code = sixDigits();
@@ -933,8 +977,10 @@ async function sendCode(request: Request, env: Env, identity: Identity, deps: St
     const quota = recent.length >= SENDS_PER_DAY ? recent[SENDS_PER_DAY - 1].at + DAY_MS - l.now : 0;
     return rateLimited(Math.max(cooldown, quota));
   }
-  const subject = "Your Murage security code";
-  const text = `${subject}\n\nSomeone signed in to your Murage Cloud account asked to approve ${actionWords(intent.method, intent.path)}.\n\n`
+  const subject = "Your Murage code to confirm it's you";
+  // A removal names the device, looked up server side after the reservation (so the send limits bound the home calls too).
+  const device = DEVICE_REVOKE_ROUTE.test(intent.path) ? await revokedDeviceLabel(env, l.userId, l.accountEmail, intent.target, deps.pairing ?? {}) : null;
+  const text = `${subject}\n\nType this code on the "Confirm it's you" page. It approves ${actionWords(intent.method, intent.path, device)}. It is not the code that confirms your email.\n\n`
     + `Your code is: ${code}\n\nIt works once, for 10 minutes, and only for that one action. Nobody from Murage will ever ask you for this code.\n\n`
     + "If this was not you: do not share the code, sign in at https://murage.ai, change your password and contact support.";
   const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");

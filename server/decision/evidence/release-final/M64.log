@@ -1,0 +1,35 @@
+COMMAND node_modules/.bin/vitest run server/decision/budget.test.ts -t "M64 projection"
+
+ RUN  v4.1.12 /work
+
+ ❯ server/decision/budget.test.ts (7 tests | 1 failed | 6 skipped) 12ms
+   ↓ A12a M64 50MB content hashes stably without an unbounded clone; depth/key bounds
+   ↓ R18 bounded registrations: 33rd same-thread request refuses and prior wipe survives
+   ↓ A12a prune walks settled index in batches of 500
+   × M64 projection never calls structuredClone before enforcing bounds 10ms
+   ↓ M36 one cumulative reader budget covers outer scripts and all nested executables
+   ↓ A12a UTF-8 byte bounds apply to content heads, values and oversized keys
+   ↓ A12a content heads share the same one MB registration budget
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 6 skipped (7)
+   Start at  07:43:11
+   Duration  8.84s (transform 7.01s, setup 8.26s, import 420ms, tests 12ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/budget.test.ts > M64 projection never calls structuredClone before enforcing bounds
+AssertionError: expected [Function] to not throw an error but 'Error: unbounded clone' was thrown
+
+- Expected:
+undefined
+
++ Received:
+"Error: unbounded clone"
+
+ ❯ server/decision/budget.test.ts:17:205
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

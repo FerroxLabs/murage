@@ -2,7 +2,7 @@ import XCTest
 @testable import MurageShellCore
 
 final class ChannelGateTests: XCTestCase {
-    let saved = WorkspaceOrigin(string: "https://mac.tailnet123.ts.net")!
+    let saved = WorkspaceOrigin(string: "https://mac.tail000000.ts.net")!
 
     private func channel() throws -> [String: Any] {
         try XCTUnwrap(Fixtures.json("channel.json") as? [String: Any])

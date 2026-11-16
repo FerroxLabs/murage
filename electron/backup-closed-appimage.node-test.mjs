@@ -38,7 +38,7 @@ const electronBinary = process.platform === "darwin"
 // failing, so skip on exactly that loader error; any other failure still fails.
 const missingSharedLibraries = () => {
   if (process.platform === "win32" || !existsSync(electronBinary)) return false;
-  const probe = spawnSync(electronBinary, ["--version"], { encoding: "utf8", env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
+  const probe = spawnSync(electronBinary, ["--version"], { windowsHide: true, encoding: "utf8", env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
   return probe.status === 127 && /error while loading shared libraries/.test(probe.stderr ?? "");
 };
 const REAL = process.platform === "win32" ? "POSIX AppRun" : !existsSync(electronBinary) ? "electron binary not present" : !builderDir ? "app-builder-lib not present" : missingSharedLibraries() ? "electron cannot start here: desktop shared libraries are missing" : false;
@@ -78,7 +78,7 @@ test("the closed-app trigger runs through the shipped AppRun whether or not unsh
   for (const [name, unshareExit] of [["userns allowed", 0], ["Ubuntu 24.04", 1]]) {
     const dir = path.join(root, `case-${unshareExit}`); mkdirSync(dir);
     const f = appDirFixture(dir, unshareExit);
-    const r = spawnSync("/bin/bash", [path.join(f.appDir, "AppRun"), ...trigger.args], { env: { APPDIR: f.appDir, APPIMAGE: descriptor.executable, PATH: f.PATH, HOME: home, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8" });
+    const r = spawnSync("/bin/bash", [path.join(f.appDir, "AppRun"), ...trigger.args], { windowsHide: true, env: { APPDIR: f.appDir, APPIMAGE: descriptor.executable, PATH: f.PATH, HOME: home, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8" });
     // AppRun added nothing in front: the script is still the first argument.
     assert.equal(readFileSync(path.join(dir, "argv.txt"), "utf8").split("\n")[0], triggerEntry, name);
     assert.equal(r.status, 0, `${name}: trigger died: status ${r.status}, stderr ${r.stderr.trim()}`);
@@ -93,7 +93,7 @@ test("the old trigger argv really dies under AppRun on Ubuntu 24.04 (why the fla
   const triggerEntry = path.join(root, "trigger.mjs");
   writeFileSync(triggerEntry, `process.stdout.write("ran\\n");\n`, { mode: 0o600 });
   const f = appDirFixture(root, 1);
-  const r = spawnSync("/bin/bash", [path.join(f.appDir, "AppRun"), triggerEntry, CLOSED_DESCRIPTOR_FLAG, "/x/descriptor.json"], { env: { APPDIR: f.appDir, APPIMAGE: "/x/Murage.AppImage", PATH: f.PATH, HOME: root, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8" });
+  const r = spawnSync("/bin/bash", [path.join(f.appDir, "AppRun"), triggerEntry, CLOSED_DESCRIPTOR_FLAG, "/x/descriptor.json"], { windowsHide: true, env: { APPDIR: f.appDir, APPIMAGE: "/x/Murage.AppImage", PATH: f.PATH, HOME: root, ELECTRON_RUN_AS_NODE: "1" }, encoding: "utf8" });
   assert.equal(readFileSync(path.join(root, "argv.txt"), "utf8").split("\n")[0], "--no-sandbox");
   assert.notEqual(r.status, 0);
   assert.doesNotMatch(r.stdout, /ran/);

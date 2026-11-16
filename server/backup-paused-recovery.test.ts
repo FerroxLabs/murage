@@ -18,17 +18,16 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { createBackupScheduleHost } from "../electron/backup-schedule-host.mjs";
-import { backupAgePinForTarget } from "../shared/backup-age-pin.ts";
 import { saveAboutMe } from "./about-me.ts";
 import { BackupCoordinator } from "./backup-coordinator.ts";
 import { appendDecision, flushDecisionLog } from "./decision-log.ts";
 import { InstallationSnapshotError } from "./installation-database-snapshot.ts";
 import { inspectEncryptedInstallationBackup, restoreEncryptedInstallationNew } from "./installation-encrypted-backup.ts";
 import { installationRecoveryCommand } from "./installation-recovery-command.ts";
-import { backupFixture, testAgeKeys } from "./testing/backup-fixture.ts";
+import { backupFixture, testAgeKeys, optionalBackupAgeUnavailable } from "./testing/backup-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
-const noPinnedAge = !backupAgePinForTarget(process.platform, process.arch) || !process.env.MURAGE_BACKUP_TEST_AGE_DIR;
+const noPinnedAge = optionalBackupAgeUnavailable();
 const ABOUT = "I run a small candle shop and like short answers.";
 type CaptureRequest = { output: string; recipient: string; readIdentity: () => Promise<string>; maxBytes: number; maxDurationMs: number };
 

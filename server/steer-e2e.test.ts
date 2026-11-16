@@ -7,7 +7,7 @@
 //
 // POSIX-gated like the other CLI e2es (the fakes are shebang scripts).
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +16,9 @@ import { freePortBlock } from "./testing/ports.ts";
 import { MEMORY_REFERENCE_CLOSE, MEMORY_REFERENCE_OPEN, MEMORY_REFERENCE_PREAMBLE } from "../shared/memory.ts";
 import { THREAD_RECALL_LINE } from "./murage-tool-surface.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { fixtureRequested } from "./testing/fixture-request.ts";
+import { messageOnlyPrompt } from "./memory/fence-recovery.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLAUDE = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
@@ -35,7 +38,10 @@ const memoryLine = /^- m[1-9][0-9]{0,2} \([^()\n]+\) "(?:[^"\\\n]|\\.)*"$/;
 /** An owner turn opens with the Where I belong block (1.0.6 venue awareness, eaea5227e, merged 064472f7a): framing, not the request. */
 const VENUE_BLOCK = /^(bot:reply to: )<where-i-belong>\n[\s\S]*?\n<\/where-i-belong>\n\n/;
 function currentRequestEcho(text: string): string {
-  return requestEcho(text.replace(VENUE_BLOCK, "$1")).replace(/^(bot:reply to: )It is now [^\n]*\n\n/, "$1").replace(VENUE_BLOCK, "$1");
+  // Message-only recovery uses an empty frame, the fresh input and a trailing
+  // clock. Strip that exact scaffold while retaining every ordered steer.
+  const recovered = text.replace(/^(bot:reply to: )\n\n([\s\S]*?)\n\n\s*It is now [^\n]* in the owner's time zone, [^\n]*\. Coming days: [^\n]*?\.(?= \+ steered: |$)/, "$1$2");
+  return requestEcho(recovered.replace(VENUE_BLOCK, "$1")).replace(/^(bot:reply to: )It is now [^\n]*\n\n/, "$1").replace(VENUE_BLOCK, "$1");
 }
 function requestEcho(text: string): string {
   const prefix = "bot:reply to: ";
@@ -63,15 +69,22 @@ describe("steering echo memory framing", () => {
     expect(() => currentRequestEcho("bot:reply to: " + memoryPreamble + "first + steered: and also this")).toThrow(/boundary/);
     expect(() => currentRequestEcho("bot:reply to: " + memoryPreamble + "[]" + memoryClose + currentRequestMarker + "first + steered: and also this")).toThrow(/Malformed/);
   });
+  it("reads the fresh request and ordered steers from the real message-only recovery scaffold", () => {
+    const prompt = messageOnlyPrompt(undefined, { rawHumanText: "latest", frame: "", now: " It is now Saturday in the owner's time zone, UTC. Coming days: Sunday." });
+    expect(currentRequestEcho(`bot:reply to: ${prompt.text} + steered: one | two`)).toBe("bot:reply to: latest + steered: one | two");
+    expect(currentRequestEcho("bot:reply to: quoted It is now Saturday in the owner's time zone, UTC. Coming days: Sunday.")).toBe("bot:reply to: quoted It is now Saturday in the owner's time zone, UTC. Coming days: Sunday.");
+  });
 });
 
 posixOnly("mid-turn steering e2e", () => {
   let child: ChildProcess;
   let home: string;
   let stderr = "";
+  let stdout = "";
   let steerGate: string;
   let steerGate2: string;
   let replyGate: string;
+  let acpPromptDump: string;
   let base: string;
   let desktopHeaders: Record<string, string>;
 
@@ -94,7 +107,7 @@ posixOnly("mid-turn steering e2e", () => {
     expect(patched.body.bot.modelSelection).toMatchObject(modelSelection);
     return patched.body.bot;
   };
-  const getBot = async (id: string) => (await api("GET", "/api/bots")).body.bots.find((b: any) => b.id === id);
+  const getBot = async (id: string) => (await desktopApi("GET", "/api/bots")).body.bots.find((b: any) => b.id === id);
   const waitFor = async (predicate: () => Promise<boolean>, what: string, ms = 30_000) => {
     const deadline = Date.now() + ms;
     while (!(await predicate())) {
@@ -113,6 +126,7 @@ posixOnly("mid-turn steering e2e", () => {
     steerGate = join(home, "delayed-steer.gate");
     steerGate2 = join(home, "delayed-steer-2.gate");
     replyGate = join(home, "steer-reply.gate");
+    acpPromptDump = join(home, "acp-prompt.json");
     writeFileSync(
       join(home, ".murage", "config.json"),
       JSON.stringify({
@@ -124,12 +138,12 @@ posixOnly("mid-turn steering e2e", () => {
           claude: { driver: "claudeAgent", environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_REPLY_GATE: replyGate, FAKE_CLAUDE_REPLY_GATE_STEERS: "1" }, config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" } },
           claudeRace: {
             driver: "claudeAgent",
-            environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_STEER_GATE: steerGate },
+            environment: { FAKE_CLAUDE_MODE: "slow", FIXTURE_STEER_ACK_GATE: steerGate, FAKE_CLAUDE_REPLY_GATE: steerGate + ".accepted", FAKE_CLAUDE_REPLY_GATE_STEERS: "1" },
             config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" },
           },
           claudeLate: {
             driver: "claudeAgent",
-            environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_STEER_GATE: steerGate2 },
+            environment: { FAKE_CLAUDE_MODE: "slow", FIXTURE_STEER_ACK_GATE: steerGate2, FAKE_CLAUDE_REPLY_GATE: steerGate2 + ".accepted", FAKE_CLAUDE_REPLY_GATE_STEERS: "1" },
             config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" },
           },
           // init arrives at 6.5 s: a first steer queues at its 4 s bound, a second one typed in between must not overtake it
@@ -145,16 +159,38 @@ posixOnly("mid-turn steering e2e", () => {
             config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" },
           },
           // no live session: a message while busy uses the server-side queue
-          acp: { driver: "customAcp", environment: { FAKE_ACP_MODE: "hang" }, config: { cli: FAKE_ACP, fullAuto: true } },
+          acp: { driver: "customAcp", environment: { FAKE_ACP_MODE: "hang", FAKE_ACP_MODELS: "fake-model", FAKE_ACP_PROMPT_DUMP: acpPromptDump }, config: { cli: FAKE_ACP, fullAuto: true } },
         },
       }),
     );
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    // Carry the fake-engine override and native test dependency into this fixture child.
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), "--import", "data:text/javascript," + encodeURIComponent(`const { customAcpSupport: localFixtureHost } = await import(${JSON.stringify(new URL("./drivers/acp/custom.ts", import.meta.url).href)}); localFixtureHost.fluxReach = () => "elsewhere";
+      // MAIN RULING INT-CONFLICT-DEFAULT: delay the real adapter's acknowledgement after its checked write, independently of native process retirement.
+      const fs = await import('node:fs');
+      const { ClaudeDriver } = await import(${JSON.stringify(new URL("./drivers/claude.ts", import.meta.url).href)});
+      const create = ClaudeDriver.create;
+      ClaudeDriver.create = async function(input) {
+        const instance = await create.call(this, input);
+        const gate = input.environment.FIXTURE_STEER_ACK_GATE;
+        if (!gate) return instance;
+        const steer = instance.adapter.steer.bind(instance.adapter);
+        instance.adapter.steer = async (...args) => {
+          const accepted = await steer(...args);
+          if (!accepted) return accepted;
+          fs.writeFileSync(gate + '.accepted', 'checked steer accepted');
+          while (!fs.existsSync(gate)) await new Promise(resolve => setTimeout(resolve, 10));
+          return accepted;
+        };
+        return instance;
+      };
+    `), join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1" },
+      env: { ...powerBlockTestEnv(), ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.stderr!.on("data", (c) => (stderr += c));
+    child.stdout!.on("data", (c) => (stdout += c));
     const deadline = Date.now() + 20_000;
     for (;;) {
       try {
@@ -231,17 +267,18 @@ posixOnly("mid-turn steering e2e", () => {
     expect((await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "first race turn" })).status).toBe(202);
     await waitFor(async () => (await getBot(created.id))?.busy === true, "the race turn to start");
     await waitFor(
-      async () => (await getBot(created.id))?.messages.some((message: any) => message.kind === "activity"),
+      async () => (await getBot(created.id))?.messages.some((message: any) => message.kind === "activity" && message.tool?.name === "Bash" && message.tool.ok === true),
       "the race turn tool chip",
     );
 
-    // The fake has paused stdin after the first prompt. This exceeds a pipe's
-    // writable buffer, so the steer promise cannot acknowledge until the gate
-    // opens; meanwhile the first turn is free to settle normally.
+    // The real adapter writes the steer and runs its submission fence, then
+    // the fixture holds only its acknowledgement. The first turn can finish
+    // and retire its native process while the HTTP caller still waits.
     const delayed = desktopApi("POST", `/api/bots/${created.id}/messages`, {
       text: `delayed ownership check ${"x".repeat(900_000)}`,
       threadId: created.threadId,
     });
+    await waitFor(async () => existsSync(steerGate + ".accepted"), "the checked steer write");
     const prematurelySettled = await Promise.race([
       delayed.then(() => true),
       new Promise<false>((resolve) => setTimeout(() => resolve(false), 100)),
@@ -261,6 +298,7 @@ posixOnly("mid-turn steering e2e", () => {
     const created = await makeBot("claudeCold", "claude-fake");
     expect((await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "cold first" })).status).toBe(202);
     await waitFor(async () => (await getBot(created.id))?.busy === true, "the cold turn to start");
+    await waitFor(async () => stdout.includes(`claude dispatch thread=${created.threadId} process=spawned`), "the cold engine dispatch");
     // the CLI is spawned and holds the turn, but has not read anything yet
     await new Promise((r) => setTimeout(r, 1_500));
     const startedAt = Date.now();
@@ -285,10 +323,11 @@ posixOnly("mid-turn steering e2e", () => {
     const created = await makeBot("claudeLate", "claude-fake");
     expect((await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "first late turn", threadId: created.threadId })).status).toBe(202);
     await waitFor(async () => (await getBot(created.id))?.busy === true, "the turn to start");
-    await waitFor(async () => (await getBot(created.id))?.messages.some((m: any) => m.kind === "activity"), "the turn tool chip");
+    await waitFor(async () => (await getBot(created.id))?.messages.some((m: any) => m.kind === "activity" && m.tool?.name === "Bash" && m.tool.ok === true), "the turn tool chip");
     const sendId = "send_late_ack_0001";
     const words = `accepted after the turn ended ${"y".repeat(900_000)}`;
     const delayed = desktopApi("POST", `/api/bots/${created.id}/messages`, { text: words, threadId: created.threadId, sendId });
+    await waitFor(async () => existsSync(steerGate2 + ".accepted"), "the checked late steer write");
     expect(await Promise.race([delayed.then(() => true), new Promise<false>((r) => setTimeout(() => r(false), 100))])).toBe(false);
     await waitFor(async () => (await getBot(created.id))?.busy === false, "the original turn to settle");
     writeFileSync(steerGate2, "open");
@@ -307,6 +346,7 @@ posixOnly("mid-turn steering e2e", () => {
   it("a later send never overtakes an earlier one that is still deciding: both wait, in order, and the snapshot lists them for a reload or another device", async () => {
     const created = await makeBot("claudeSlowInit", "claude-fake");
     expect((await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "slow first", threadId: created.threadId })).status).toBe(202);
+    await waitFor(async () => stdout.includes(`claude dispatch thread=${created.threadId} process=spawned`), "the slow engine dispatch");
     await waitFor(async () => (await getBot(created.id))?.busy === true, "the turn to start");
     const a = desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "instruction A", threadId: created.threadId, sendId: "send_order_a_00001" });
     await new Promise((r) => setTimeout(r, 1_000));
@@ -327,7 +367,10 @@ posixOnly("mid-turn steering e2e", () => {
     expect((after.body.pendingSends?.[created.threadId] ?? []).map((p: any) => p.text)).toEqual(["instruction A"]);
     const retry = await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "correction B", threadId: created.threadId, sendId: "send_order_b_00001" });
     expect(retry.status).toBe(202);
-    expect(retry.body.cancelled).toBe(true);
+    // MAIN RULING INT-CONFLICT-DEFAULT f47886d52f -> 5b51448693: durable removal receipts supersede the legacy cancelled flag; no requeue remains required.
+    expect(retry.body).toMatchObject({ ok: false, existing: true, threadId: created.threadId, receipt: { state: "removed" } });
+    expect(retry.body.receipt.attemptId).toEqual(expect.any(String));
+    expect(retry.body.receipt.receiptRevision).toEqual(expect.any(Number));
     await waitFor(async () => (await getBot(created.id)).messages.some((m: any) => m.text === "instruction A"), "A to land", 40_000);
     await waitFor(async () => (await getBot(created.id)).busy === false, "the follow-up turn to settle", 40_000);
     const bot = await getBot(created.id);
@@ -339,6 +382,16 @@ posixOnly("mid-turn steering e2e", () => {
     const created = await makeBot("acp", "fake-model");
     expect((await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "first" })).status).toBe(202);
     await waitFor(async () => (await getBot(created.id)).busy === true, "the hung turn to start");
+    const providerReceived = (text: string): boolean => {
+      if (!existsSync(acpPromptDump)) return false;
+      try {
+        const prompt = JSON.parse(readFileSync(acpPromptDump, "utf8"));
+        return Array.isArray(prompt) && prompt.some(part => typeof part?.text === "string" && fixtureRequested(part.text, text));
+      } catch { return false; } // The fake may be replacing its prompt dump during a poll.
+    };
+    // Busy includes preparation. The fake's own prompt dump proves it has
+    // received the current request and reached its non-cooperative hang.
+    await waitFor(async () => providerReceived("first"), "the first provider prompt to hang");
     const queued = await desktopApi("POST", `/api/bots/${created.id}/messages`, { text: "second" });
     expect(queued.status).toBe(202);
     expect(queued.body.queued).toBe(true);
@@ -352,6 +405,7 @@ posixOnly("mid-turn steering e2e", () => {
       async () => (await getBot(created.id)).messages.some((m: any) => m.text === "second"),
       "the queued message to begin its turn",
     );
+    await waitFor(async () => providerReceived("second"), "the queued provider prompt to hang");
     await api("POST", `/api/bots/${created.id}/interrupt`);
     await waitFor(async () => (await getBot(created.id)).busy === false, "the queued turn to settle");
   }, 30_000);

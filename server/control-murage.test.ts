@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
@@ -25,7 +25,7 @@ describe("control-murage command mapping", () => {
       "--experimental-strip-types",
       join(process.cwd(), "scripts", "control-murage.ts"),
       "help",
-    ], { encoding: "utf8" });
+    ], { windowsHide: true, encoding: "utf8" });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("control-murage");
   });
@@ -155,4 +155,83 @@ describe("control-murage isolated verification loop", () => {
     expect(existsSync(session.info.dataDir)).toBe(false);
     expect(existsSync(session.info.logPath)).toBe(true);
   }, 30_000);
+});
+
+/** The status route is owner-only; use the isolated server's actual desktop credential. */
+async function fixtureMemoryMode(url: string): Promise<string> {
+  const proofResponse = await fetch(url + '/api/desktop-secret');
+  expect(proofResponse.status).toBe(200);
+  const proof = await proofResponse.json() as { secret: string };
+  const response = await fetch(url + '/api/memory/status', { headers: {
+    'x-murage-surface': 'desktop', 'x-murage-surface-secret': proof.secret,
+  } });
+  expect(response.status).toBe(200);
+  return (await response.json() as { mode: string }).mode;
+}
+
+it('the isolated launcher starts checked memory capture with the native meter', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const session = await launchVerificationServer(process.env, undefined, {
+    // Native admission producer: scperf-p1; capture consumer: c4-misc-c3.
+    // Capture mode isolates the checked writer from active-recall readiness;
+    // the separate cold-view regression below retains active mode.
+    instrumentationSource: `globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;
+      const {setMemoryMode}=await import(${JSON.stringify(new URL('./memory/repository.ts', import.meta.url).href)});
+      setMemoryMode('capture');`,
+  });
+  const env = { MURAGE_URL: session.info.url };
+  try {
+    expect(await fixtureMemoryMode(session.info.url)).toBe('capture');
+    const { bot } = await runControlMurage(['new-bot', '--name', 'Capture fixture'], { env }) as any;
+    await runControlMurage(['send', '--bot', bot.id, '--text', 'Remember the fixture gate is blue.'], { env });
+    expect((await runControlMurage(['wait', '--bot', bot.id, '--timeout', '20'], { env }) as any).status).toBe('settled');
+    expect(typeof bot.activeTaskId).toBe('string');
+    await expect.poll(() => {
+      const db = new DatabaseSync(join(session.info.dataDir, 'messages.db'), { readOnly: true });
+      try { return Number(db.prepare("SELECT count(*) AS n FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id WHERE s.thread_id=? AND j.status='complete'").get(bot.activeTaskId)?.n ?? 0); }
+      finally { db.close(); }
+    }, { timeout: 20000 }).toBeGreaterThan(0);
+    expect(readFileSync(session.info.logPath, 'utf8')).not.toContain('BG_ENFORCEMENT_UNAVAILABLE');
+  } finally { await session.close(); }
+});
+
+
+it('the first direct turn waits for a genuinely constructed recall view before engine dispatch', async () => {
+  const session = await launchVerificationServer(process.env, undefined, {
+    turnLog: { replies: ['Fixture cold-view reply.'] },
+    instrumentationSource: `
+      globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;
+      const {registerHooks}=await import('node:module'),path=await import('node:path');
+      const marker=path.join(process.env.MURAGE_DATA_DIR,'cold-view-requested');
+      registerHooks({load(url,context,next){
+        const result=next(url,context);
+        if(!url.endsWith('/server/memory/policy.ts')&&!url.endsWith('/server/memory/recall-view.ts'))return result;
+        let source=String(result.source);
+        if(url.endsWith('/server/memory/policy.ts')) {
+          const anchor='export function memoryAccess(registry: InternalCapabilities, claim: InternalCapability, roster: () => MemoryRoster): MemoryAccess {';
+          if(!source.includes(anchor))throw new Error('Cold-view fixture private-entry anchor missing');
+          source='import {writeFileSync as coldFixtureWrite} from "node:fs";'+source.replace(anchor,anchor+'coldFixtureWrite('+JSON.stringify(marker)+',"");');
+        } else if(url.endsWith('/server/memory/recall-view.ts')) {
+          const anchor='export async function prepareRecallContext(botId: string,threadId: string,roster: MemoryRoster,notOwnerAudience=false): Promise<void> {';
+          if(!source.includes(anchor))throw new Error('Cold-view fixture construction anchor missing');
+          const hold=' const coldFixtureFs=await import("node:fs");const coldUntil=Date.now()+20000;while(!coldFixtureFs.existsSync('+JSON.stringify(marker)+')&&Date.now()<coldUntil)await new Promise(resolve=>setTimeout(resolve,10));await new Promise(resolve=>setTimeout(resolve,100));';
+          const constructionTry='  try {while(!buildRecallViewSlice(build))';
+          const at=source.indexOf(constructionTry,source.indexOf(anchor)+anchor.length);
+          if(at<0)throw new Error('Cold-view fixture active construction anchor missing');
+          source=source.slice(0,at)+source.slice(at).replace(constructionTry,'  try {'+hold+'while(!buildRecallViewSlice(build))');
+        }
+        return {...result,source};
+      }});
+    `,
+  });
+  const env = { MURAGE_URL: session.info.url };
+  try {
+    expect(await fixtureMemoryMode(session.info.url)).toBe('active');
+    const { bot } = await runControlMurage(['new-bot', '--name', 'Cold-view fixture'], { env }) as any;
+    await runControlMurage(['send', '--bot', bot.id, '--text', 'Reply once with the fixture result.'], { env });
+    expect((await runControlMurage(['wait', '--bot', bot.id, '--timeout', '20'], { env }) as any).status).toBe('settled');
+    const result = await runControlMurage(['messages', '--bot', bot.id, '--limit', '10'], { env }) as any;
+    expect(result.messages.filter((message: any) => message.role === 'bot' && message.text === 'Fixture cold-view reply.')).toHaveLength(1);
+    expect(readFileSync(session.info.logPath, 'utf8')).not.toContain('dispatch preparation failed');
+  } finally { writeFileSync(join(session.info.dataDir, 'cold-view-requested'), ''); await session.close(); }
 });

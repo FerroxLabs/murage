@@ -2,9 +2,8 @@
 // for group chats: the checkpoint of a group thread rolls on every captured
 // message in that thread, a member bot's own prompt and reply included. When
 // the memory worker finishes that capture inside the member's dispatch
-// window, the version its bundle selected is archived with a newer active
-// successor — staleness, not revocation (server/memory/bundle.ts
-// supersededThreadCheckpoint): the member turn runs to its reply instead of
+// window, the immutable record its bundle selected stays available while the
+// family head advances. The member turn runs to its reply instead of
 // ending with "error: MEMORY_CONTEXT_REVOKED", and that reply stays
 // replayable for the next member turn.
 //
@@ -16,8 +15,10 @@ import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import type { VerificationServer } from "../scripts/control-murage.ts";
+import { launchMemoryVerificationServer as launchVerificationServer } from "./testing/memory-verification-fixture.ts";
 import { threadCheckpointId } from "./memory/checkpoints.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
 
 const FAKE_PI = join(dirname(fileURLToPath(import.meta.url)), "testing", "fake-pi-cli.ts");
 const posixOnly = describe.skipIf(process.platform === "win32");
@@ -32,7 +33,7 @@ const dumpRows = (): any[] => { const file = join(fixture.info.dataDir, "pi-dump
 
 posixOnly("a group member's turn survives its own capture rolling the group checkpoint", () => {
   beforeAll(async () => {
-    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
       const fs=await import('node:fs');const path=await import('node:path');
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
       cfg.instances.piGate={driver:'piAgent',displayName:'Gated pi fixture',config:{cli:${JSON.stringify(FAKE_PI)},fullAuto:true},
@@ -69,7 +70,8 @@ posixOnly("a group member's turn survives its own capture rolling the group chec
       // in the thread's conversation scope. Either is the thread's own
       // (bundle.ts ownCheckpoints).
       const checkpointIds = (threadId: string, roomId: string) => JSON.stringify((db.prepare("SELECT id FROM memory_scopes WHERE (kind='conversation' AND owner_key=?) OR (kind='room' AND owner_key=?)").all(threadId, roomId) as Array<{ id: string }>).map(scope => threadCheckpointId(scope.id, threadId)));
-      const checkpoint = () => db.prepare("SELECT id,version,state FROM memory_records WHERE kind='checkpoint' AND id IN (SELECT value FROM json_each(?)) ORDER BY created_at DESC, version DESC LIMIT 1").get(checkpointIds(room.threadId, room.id)) as { id: string; version: number; state: string } | undefined;
+      // MAIN RULING 1115-RECALL-R3 (GrokBuild)
+      const checkpoint = () => db.prepare("SELECT r.id,r.version,r.state,h.sequence FROM memory_checkpoint_heads h JOIN memory_records r ON r.id=h.record_id AND r.version=h.record_version WHERE h.family_id IN (SELECT value FROM json_each(?)) AND h.state='active' ORDER BY h.sequence DESC LIMIT 1").get(checkpointIds(room.threadId, room.id)) as { id: string; version: number; state: string; sequence: number } | undefined;
       // Only the group thread's captures move its checkpoint; a bot thread's
       // welcome-message capture can still hold a worker lease and is not waited on.
       const pendingJobs = () => Number((db.prepare("SELECT count(*) AS n FROM memory_jobs j JOIN memory_sources s ON s.id=j.source_id WHERE s.thread_id=? AND j.status NOT IN ('complete','cancelled','failed')").get(room.threadId) as { n: number }).n);
@@ -90,7 +92,7 @@ posixOnly("a group member's turn survives its own capture rolling the group chec
       const selected = checkpoint()!;
       // The checkpoint the bundle selected is the group thread's own
       // (consolidate.ts keys it by the group thread id), not the member's.
-      expect(JSON.parse(checkpointIds(member.threadId, room.id))).not.toContain(selected.id);
+      expect(JSON.parse(checkpointIds(member.threadId, room.id))).not.toContain(db.prepare("SELECT family_id FROM memory_checkpoint_members WHERE record_id=?").get(selected.id)!.family_id);
 
       // The second member turn is held at the provider handshake, after its
       // bundle selected `selected`; its own prompt capture completes
@@ -99,16 +101,17 @@ posixOnly("a group member's turn survives its own capture rolling the group chec
       expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "second turn, whose own capture rolls the group checkpoint" })).status).toBe(202);
       await expect.poll(() => existsSync(`${gate}.waiting`), { timeout: 15000 }).toBe(true);
       expect((await groupState(room.id)).busyBotId).toBe(member.id);
-      await expect.poll(() => checkpoint()?.version, { timeout: 20000 }).toBeGreaterThan(selected.version);
-      expect(db.prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(selected.id, selected.version)).toMatchObject({ state: "archived" });
+      await expect.poll(() => checkpoint()?.sequence, { timeout: 20000 }).toBeGreaterThan(selected.sequence);
+      expect(db.prepare("SELECT state FROM memory_records WHERE id=? AND version=?").get(selected.id, selected.version)).toMatchObject({ state: "active" });
       const disclosed = db.prepare("SELECT record_versions FROM memory_disclosures WHERE thread_id=? ORDER BY created_at DESC LIMIT 1").get(room.threadId) as { record_versions: string };
       // The member got the room checkpoint. When its own prompt's capture
       // lands while recall awaits the worker, that is the version the capture
       // made, not none (0.1.61 final check 2, N1: the receipt was [] and room
       // recall was empty on every OS).
-      const carried = (JSON.parse(disclosed.record_versions) as Array<{ id: string; version: number }>).filter(row => row.id === selected.id);
+      const carried = (JSON.parse(disclosed.record_versions) as Array<{ id: string; version: number }>).filter(row => !!db.prepare("SELECT 1 FROM memory_checkpoint_members WHERE record_id=? AND record_version=? AND family_id IN (SELECT value FROM json_each(?))").get(row.id, row.version, checkpointIds(room.threadId, room.id)));
       expect(carried).toHaveLength(1);
-      expect(carried[0].version).toBeGreaterThanOrEqual(selected.version);
+      expect(db.prepare("SELECT id,version FROM memory_records WHERE id=? AND version=?").get(carried[0].id, carried[0].version)).toEqual(carried[0]);
+      expect(db.prepare("SELECT sequence FROM memory_checkpoint_members WHERE record_id=? AND record_version=?").get(carried[0].id, carried[0].version)!.sequence).toBeGreaterThanOrEqual(selected.sequence);
       writeFileSync(gate, "");
 
       // Accepted and run to a reply; nothing revoked.
@@ -125,7 +128,7 @@ posixOnly("a group member's turn survives its own capture rolling the group chec
       // receipt staying delivered only shows nothing revoked it; the reply's
       // presence in the next prompt is what room-transcript-api.test.ts checks.
       await expect.poll(() => pendingJobs(), { timeout: 20000 }).toBe(0);
-      expect(checkpoint()!.version).toBeGreaterThan(selected.version + 1);
+      expect(checkpoint()!.sequence).toBeGreaterThan(selected.sequence + 1);
       const secondReply = (await replies())[1];
       const secondReceipt = db.prepare("SELECT bundle_id,state,output_message_ids FROM memory_disclosures WHERE thread_id=? ORDER BY created_at DESC LIMIT 1").get(room.threadId) as { bundle_id: string; state: string; output_message_ids: string };
       expect(JSON.parse(secondReceipt.output_message_ids)).toContain(secondReply.id);

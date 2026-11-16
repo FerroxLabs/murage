@@ -1,3 +1,4 @@
+import { appendFixtureMessage } from './testing/approval-card.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -61,7 +62,7 @@ it("every read the indexes serve equals the full read, on random conversations w
     const { threadId } = store.createBot({ name: `Diff ${seed}` });
     const ids: string[] = [];
     let turn = 0;
-    const add = (extra: Partial<Message> & { role: "user" | "bot"; kind: Message["kind"] }) => { const m = store.appendMessage(threadId, extra as never); ids.push(m.id); return m; };
+    const add = (extra: Partial<Message> & { role: "user" | "bot"; kind: Message["kind"] }) => { const m = appendFixtureMessage(store, threadId, extra as never); ids.push(m.id); return m; };
     for (let step = 0; step < 90; step++) {
       const roll = random();
       if (roll < 0.30) add({ role: "user", kind: "text", text: `ask ${step}` });

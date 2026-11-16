@@ -52,7 +52,7 @@ it.skipIf(process.platform === "win32")("keeps About me out of a Slack turn for 
   try {
     const env: NodeJS.ProcessEnv = { HOME: home, USERPROFILE: home, MURAGE_DATA_DIR: data, MURAGE_STATIC_DIR: staticDir, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: secret, PATH: process.env.PATH, FAKE_CLAUDE_DUMP: dump, FAKE_CLAUDE_DUMP_EACH_TURN: "1" };
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
-    child = spawn(process.execPath, ["--import", pathToFileURL(join(root, "server/testing/slack-sdk-preload.mjs")).href, join(root, "server/index.ts")], { cwd: root, env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
+    child = spawn(process.execPath, ["--import", pathToFileURL(join(root, "server/testing/slack-sdk-preload.mjs")).href, join(root, "server/index.ts")], { windowsHide: true, cwd: root, env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
     child.stderr!.on("data", (chunk) => { stderr += chunk; });
     child.on("message", (value) => { if ((value as any)?.kind === "slack-fixture") traces.push(value as any); });
     await expect.poll(async () => { if (child!.exitCode !== null) throw new Error(stderr); try { return (await request("GET", "/api/health")).status; } catch { return 0; } }, { timeout: 20000 }).toBe(200);
@@ -123,7 +123,7 @@ it.skipIf(process.platform === "win32")("keeps About me out of a Discord turn fo
   try {
     const env: NodeJS.ProcessEnv = { HOME: home, USERPROFILE: home, MURAGE_DATA_DIR: data, MURAGE_STATIC_DIR: staticDir, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: secret, PATH: process.env.PATH, FAKE_CLAUDE_DUMP: dump, FAKE_CLAUDE_DUMP_EACH_TURN: "1" };
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
-    child = spawn(process.execPath, ["--import", pathToFileURL(join(root, "server/testing/discord-sdk-preload.mjs")).href, join(root, "server/index.ts")], { cwd: root, env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
+    child = spawn(process.execPath, ["--import", pathToFileURL(join(root, "server/testing/discord-sdk-preload.mjs")).href, join(root, "server/index.ts")], { windowsHide: true, cwd: root, env, stdio: ["ignore", "ignore", "pipe", "ipc"] });
     child.stderr!.on("data", (chunk) => { stderr += chunk; });
     child.on("message", (value) => { if ((value as any)?.kind === "discord-fixture") traces.push(value as any); });
     await expect.poll(async () => { if (child!.exitCode !== null) throw new Error(stderr); try { return (await request("GET", "/api/health")).status; } catch { return 0; } }, { timeout: 20000 }).toBe(200);

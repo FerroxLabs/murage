@@ -14,8 +14,10 @@
 // A temporary download lives in a folder only the owner can read, inside Murage's own data folder, and leaves on every path.
 // Nothing runs until its checksum has passed, and a file gets its execute bit only then.
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream, existsSync } from "node:fs";
-import { chmod, lstat, mkdir, mkdtemp, open, readdir, readFile, realpath, rm, type FileHandle } from "node:fs/promises";
+import { createWriteStream } from "./counted-fs.ts";
+import { createReadStream, existsSync } from "node:fs";
+import { open } from "./counted-fs-promises.ts";
+import { chmod, lstat, mkdir, mkdtemp, readdir, readFile, realpath, rm, type FileHandle } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { Readable } from "node:stream";

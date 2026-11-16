@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Murage Signal runtime pin",
+  "description": "B0 contract. R supplies values and G0 verifies them. A schema-valid pin alone does not authorize activation or rate-limit retries.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "signalCliVersion", "rateLimitNotSentProof", "g0", "signalNetwork", "targets"],
+  "properties": {
+    "contract": { "const": "murage-signal-runtime-pin/1.0" },
+    "signalCliVersion": { "$ref": "#/$defs/version" },
+    "rateLimitNotSentProof": {
+      "description": "Must remain null for 1.0.19. Non-null requires a separate reviewed design change, equality with the pin and live child versions, and the single-owner result gate.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["signalCliVersion", "citation", "reviewedBy"],
+          "properties": {
+            "signalCliVersion": { "$ref": "#/$defs/version" },
+            "citation": { "$ref": "#/$defs/text" },
+            "reviewedBy": { "$ref": "#/$defs/text" }
+          }
+        }
+      ]
+    },
+    "g0": {
+      "description": "Null until live fixtures, full implementation/artifact binding and the exact manifest digest are independently reviewed.",
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["signalCliVersion", "citation", "signalCliCommit", "manifestSha256", "artifactSha256", "reviewedBy", "review"],
+          "properties": {
+            "signalCliVersion": { "$ref": "#/$defs/version" },
+            "citation": { "$ref": "#/$defs/text" },
+            "signalCliCommit": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+            "manifestSha256": { "$ref": "#/$defs/sha256" },
+            "artifactSha256": { "$ref": "#/$defs/sha256" },
+            "reviewedBy": { "$ref": "#/$defs/text" },
+            "review": { "$ref": "#/$defs/text" }
+          }
+        }
+      ]
+    },
+    "signalNetwork": {
+      "type": "object", "additionalProperties": false,
+      "required": ["coordinate", "version", "sha256", "syncProof"],
+      "properties": {
+        "coordinate": { "const": "com.github.turasa:signal-network" },
+        "version": { "$ref": "#/$defs/text" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "syncProof": {
+          "description": "Citations at the pinned dependency source, including MessageEnvelope source selection and JsonMessageEnvelope serialization. Null keeps S1-SYNC closed.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["authenticatedSenderDiscard", "pniEndpointDiscard", "sourceIdentityTrace"],
+              "properties": {
+                "authenticatedSenderDiscard": { "$ref": "#/$defs/text" },
+                "pniEndpointDiscard": { "$ref": "#/$defs/text" },
+                "sourceIdentityTrace": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" } }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "targets": {
+      "type": "object", "additionalProperties": false,
+      "required": ["darwin-arm64", "win32-x64", "linux-x64"],
+      "properties": {
+        "darwin-arm64": { "$ref": "#/$defs/target" },
+        "win32-x64": { "$ref": "#/$defs/target" },
+        "linux-x64": { "$ref": "#/$defs/target" }
+      }
+    }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1, "pattern": "\\S" },
+    "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$" },
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["jars", "jre", "libsignal"],
+      "properties": {
+        "jars": {
+          "type": "array", "minItems": 1,
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["path", "sha256"],
+            "properties": { "path": { "$ref": "#/$defs/text" }, "sha256": { "$ref": "#/$defs/sha256" } }
+          }
+        },
+        "jre": {
+          "type": "object", "additionalProperties": false, "required": ["build", "sha256"],
+          "properties": { "build": { "$ref": "#/$defs/text" }, "sha256": { "$ref": "#/$defs/sha256" } }
+        },
+        "libsignal": {
+          "type": "object", "additionalProperties": false, "required": ["version", "sha256", "provenance"],
+          "properties": {
+            "version": { "$ref": "#/$defs/text" },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "provenance": {
+              "oneOf": [
+                {
+                  "type": "object", "additionalProperties": false, "required": ["kind", "jar", "entry"],
+                  "properties": {
+                    "kind": { "const": "upstream-jar" },
+                    "jar": { "$ref": "#/$defs/text" },
+                    "entry": { "$ref": "#/$defs/text" }
+                  }
+                },
+                {
+                  "type": "object", "additionalProperties": false, "required": ["kind", "tag", "buildLog"],
+                  "properties": {
+                    "kind": { "const": "source-build" },
+                    "tag": { "$ref": "#/$defs/text" },
+                    "buildLog": { "$ref": "#/$defs/text" }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

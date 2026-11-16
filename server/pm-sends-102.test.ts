@@ -174,7 +174,7 @@ describe("S5b restore-held sends are not run by a retry of the same send id", ()
 
   it("the owner's explicit Send again (resend) is admitted as a fresh attempt", () => {
     const { store } = setup();
-    const again = store.accept({ ...input, resend: true, restoreGen: store.bySendId("t1", "s1")!.restoreGen! });
+    const again = store.accept({ ...input, resend: true, actionId: "restore-press", restoreGen: store.bySendId("t1", "s1")!.restoreGen! });
     expect(again.kind).toBe("new");
     expect(again.row.restoreHeld).toBe(false);
     expect(again.row.status).toBe("sending");

@@ -1,0 +1,41 @@
+
+ RUN  v4.1.12 /work
+
+ ↓ server/connector-reconnect-r3-schedule.test.ts > R4a three monitor ticks without routines only refresh inventory
+ ✓ server/connector-reconnect-r3-schedule.test.ts > R4b disabled=false or outside lookahead=30 has no reads 97ms
+ × server/connector-reconnect-r3-schedule.test.ts > R4b disabled=true or outside lookahead=61 has no reads 24ms
+   → expected [ { jsonrpc: '2.0', …(3) } ] to have a length of +0 but got 1
+ ↓ server/connector-reconnect-r3-schedule.test.ts > R4c learned gmail due in 30 minutes reads each gmail account once, never slack
+ ↓ server/connector-reconnect-r3-schedule.test.ts > R4d first scheduled dispatch preflights at runtime and learns toolkit
+ ↓ server/connector-reconnect-r3-schedule.test.ts > R4 retention unions real dispatches, reloads, scopes owner and revision, deletes stale learning
+ ↓ server/connector-reconnect-r3-schedule.test.ts > R4 bounded best effort: tick phase, restart budget, newly enabled and overdue runs
+ ↓ server/connector-reconnect-r3-schedule.test.ts > R4d control: dispatch preflights even without any learned routine
+ ↓ server/connector-reconnect-r3-schedule.test.ts > R4 dispatch uses reactive failure when an earlier successful probe still consumes the budget
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-reconnect-r3-schedule.test.ts > R4b disabled=true or outside lookahead=61 has no reads
+AssertionError: expected [ { jsonrpc: '2.0', …(3) } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ server/connector-reconnect-r3-schedule.test.ts:61:113
+     59| it.each([[false,30],[true,61]])("R4b disabled=%s or outside lookahead=…
+     60|   await dispatch(undefined,undefined,{scheduled:true,routineId:"routin…
+     61|   routinesList=[{id:"routine",updatedAt:1,enabled,nextRunAt:clock+minu…
+       |                                                                                                                 ^
+     62| });
+     63| it("R4c learned gmail due in 30 minutes reads each gmail account once,…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed | 7 skipped (9)
+   Start at  05:11:44
+   Duration  9.57s (transform 7.41s, setup 8.33s, import 968ms, tests 127ms, environment 0ms)
+

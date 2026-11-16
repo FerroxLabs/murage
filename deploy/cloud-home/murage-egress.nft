@@ -69,6 +69,9 @@ table inet murage_home {
         # carry these as SOURCE ports and are unaffected. No root exemption.
         meta skuid != "murage-turn" ip daddr 127.0.0.1 udp dport 5310-5323 counter drop
         meta skuid != "murage-turn" ip daddr 127.0.0.1 tcp dport 5310-5323 counter drop
+        # The same for the engine egress proxy ports (8810 + index): only the redirected turn tcp/443 reaches them.
+        meta skuid != "murage-turn" ip daddr 127.0.0.0/8 tcp dport 8810-8823 counter drop
+        meta skuid != "murage-turn" ip6 daddr ::1 tcp dport 8810-8823 counter drop
         # Caddy's plain-HTTP hop (127.0.0.1:8830) is the Cloudflare Tunnel's origin and
         # must never be spoken to as if it were the internet: only root and
         # murage-tunnel may connect to it (loopback and the host's own addresses).
@@ -135,6 +138,11 @@ table inet murage_home {
         # input policy (sshd, any 0.0.0.0 listener); turns reach the host only
         # through the 127.0.0.0/8:8799 forward above.
         meta skuid "murage-turn" fib daddr type local counter drop
+        # B4: claudeAgent and codex reach Flux through NO path. Their only way out is tcp/443 to
+        # their own proxy port, where murage-egress-proxy.py refuses every Flux host before its
+        # allowlist (egress-allowlist.test.ts: "egress refuses Flux hosts for sign-in engines").
+        # Non-443 ports, tcp 80, QUIC, IPv6 (anything but ::1:8799), direct IP and DoH (a 443
+        # connection, so SNI-checked) all fall to the final turn drop below.
         # Everything else from a turn drops: tcp 80, QUIC/udp 443, other ports, all
         # IPv6, and any socket whose gid matches no engine. Nothing above accepts a
         # turn to a non-loopback address.

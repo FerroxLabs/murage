@@ -8,6 +8,7 @@ import { b3Enabled } from "./b3-config";
 import { homeChangeBump } from "./ops-monitor";
 import { cloudHomeCloudflare, readConfig } from "./config";
 import { allocateMachineEndpoint } from "./endpoints";
+import { auditedKeyUse, finishAccessEvent, recordAccessEvent } from "./access-events";
 
 const homeIdSchema = z.string().regex(/^[\w-]{1,128}$/);
 const originSchema = z.string().max(2048).refine((value) => {
@@ -151,7 +152,10 @@ export async function loadProvisionToken(env: Env, homeId: string, resourceGener
   const row = await env.DB.prepare("SELECT token_hash,token_wrapped FROM cloud_provision_intents WHERE home_id=? AND resource_generation=? AND state='pending'")
     .bind(homeId, resourceGeneration).first<{ token_hash: string; token_wrapped: string | null }>();
   if (!row?.token_wrapped) return null;
-  const token = new TextDecoder().decode(await keyWrapperFor(env).unwrap(homeId, row.token_wrapped));
+  const wrapped = row.token_wrapped;
+  // The audit entry is written before the key service is called: a failed write throws 503 audit_unavailable and nothing is unwrapped.
+  const token = new TextDecoder().decode(await auditedKeyUse(env.DB, { homeId, kind: "provision_token_use", actor: "system",
+    reason: "the setup token of the new server was read" }, () => keyWrapperFor(env).unwrap(homeId, wrapped)));
   return await sha256(token) === row.token_hash ? { token, hash: row.token_hash } : null;
 }
 
@@ -219,9 +223,11 @@ export async function bindB3Enrollment(env: Env, input: B3BindingInput): Promise
       env.DB.prepare("INSERT INTO cloud_fake_dns VALUES (?,?,60) ON CONFLICT(home_id) DO UPDATE SET addresses=excluded.addresses")
         .bind(input.homeId, JSON.stringify(input.ips)),
       env.DB.prepare(`INSERT INTO cloud_outbox (id,home_id,generation,owner_id,kind,payload,created_at)
-        SELECT ?,id,generation,owner_id,'provider_adopted','{}',? FROM cloud_homes WHERE id=?`)
+        SELECT ?,id,generation,owner_id,'provider_adopted','{}',? FROM cloud_homes WHERE id=? ON CONFLICT(id) DO NOTHING`)
         // One per binding: a home set up again at a new resource generation (a new payment after a given-up setup) is bound again at the
-        // same control-plane generation, so that binding is keyed by its resource generation too; the first keeps the original key.
+        // same control-plane generation, so that binding is keyed by its resource generation too; the first keeps the original key. A home put
+        // back on the provisioning path at the SAME resource generation (12.5 H3: its pool server was rejected and destroyed) binds again under
+        // the same key: the record of its adoption exists already and stays as it is.
         .bind(`provider-adopted:${input.homeId}:${input.generation}${input.resourceGeneration > 1 ? `:r${input.resourceGeneration}` : ""}`, input.now, input.homeId),
       // The home enters 'checking': evidence from before never counts (Astra AUTOCANARY-11 P2-1, explicit, no trigger).
       homeChangeBump(env.DB, input.homeId, { desired_state: "provisioning", generation: input.generation }, input.now),
@@ -385,6 +391,8 @@ export async function sweepCloudRetention(env: Env): Promise<void> {
   const now = Date.now();
   await env.DB.batch([
     env.DB.prepare("DELETE FROM cloud_unwrap_log WHERE at<?").bind(now - UNWRAP_LOG_RETENTION_MS),
+    env.DB.prepare("DELETE FROM cloud_access_cursor WHERE home_id NOT IN (SELECT id FROM cloud_homes WHERE desired_state<>'deleted')"),
+    env.DB.prepare("DELETE FROM cloud_access_events WHERE kind='provider_untracked' AND home_id NOT IN (SELECT id FROM cloud_homes WHERE desired_state<>'deleted')"),
     env.DB.prepare("DELETE FROM announcement_rate_limits WHERE updated_at<?").bind(now - RATE_LIMIT_RETENTION_MS),
     // The door's notice rows (door.ts) of a home that is deleted, or gone: account and home ids and an opening time are not kept past it.
     env.DB.prepare("DELETE FROM cloud_door_notices WHERE home_id NOT IN (SELECT id FROM cloud_homes WHERE desired_state<>'deleted')"),
@@ -397,6 +405,7 @@ async function unwrap(request: Request, env: Env, id: string) {
   let homeId = id;
   let outcome = "internal_error";
   let known = false;
+  let auditId: string | null = null;
   try {
     const machine = await env.DB.prepare("SELECT * FROM cloud_machines WHERE id=?").bind(id).first<Machine>();
     if (machine) { homeId = machine.home_id; known = true; }
@@ -446,6 +455,10 @@ async function unwrap(request: Request, env: Env, id: string) {
       : { wrapped_data_key: authenticated.wrapped_data_key, wrapped_bootstrap_secret: authenticated.wrapped_bootstrap_secret,
         wrapped_volume_key: authenticated.wrapped_volume_key, kek_id: authenticated.kek_id };
     if (!keys || !kekReadable(keys.kek_id) || !keys.wrapped_volume_key) throw new Error("cloud_key_unavailable");
+    // G2 (CLOUD-TOKEN-CUSTODY.md): the audit entry is written BEFORE the disk key is unwrapped. If it cannot be written the request ends
+    // here (503 audit_unavailable) and KMS is never called: no audit, no key. The owner is emailed about it by sweepAccessNotices.
+    auditId = await recordAccessEvent(env.DB, { homeId, generation, kind: "disk_key_unlock", actor: "home",
+      reason: "the home's server asked for its disk key", sourceIp: request.headers.get("CF-Connecting-IP") });
     const wrapper = keyWrapperFor(env);
     const [data, bootstrap, volume] = await Promise.all([
       wrapper.unwrap(homeId, keys.wrapped_data_key), wrapper.unwrap(homeId, keys.wrapped_bootstrap_secret),
@@ -457,6 +470,7 @@ async function unwrap(request: Request, env: Env, id: string) {
     if (error instanceof HTTPError) outcome = error.code;
     throw error;
   } finally {
+    if (auditId) await finishAccessEvent(env.DB, auditId, outcome === "ok" ? "ok" : "failed");
     const at = Date.now();
     // Only real machines are audited: an unauthenticated caller must not be
     // able to grow the table with arbitrary ids.
@@ -512,12 +526,16 @@ async function rewrapKeys(request: Request, env: Env) {
   let rewrapped = 0; let failed = 0;
   for (const row of rows.results) {
     try {
+      // G2: audited before the unwrap, fail closed per home (a failed write counts the home as failed and nothing is unwrapped).
+      const auditId = await recordAccessEvent(env.DB, { homeId: row.home_id, kind: "key_reseal", actor: "operator",
+        reason: "keys re-sealed under the key service" });
       const re = async (v: string) => wrapper.wrap(row.home_id, await wrapper.unwrap(row.home_id, v));
       const [data, bootstrap, volume] = await Promise.all([
         re(row.wrapped_data_key), re(row.wrapped_bootstrap_secret), row.wrapped_volume_key ? re(row.wrapped_volume_key) : Promise.resolve(null)]);
       const result = await env.DB.prepare(`UPDATE cloud_home_keys SET wrapped_data_key=?,wrapped_bootstrap_secret=?,wrapped_volume_key=?,kek_id=?
         WHERE home_id=? AND kek_id='v1' AND wrapped_data_key=? AND wrapped_bootstrap_secret=? AND wrapped_volume_key IS ?`)
         .bind(data, bootstrap, volume, KEK_KMS, row.home_id, row.wrapped_data_key, row.wrapped_bootstrap_secret, row.wrapped_volume_key).run();
+      await finishAccessEvent(env.DB, auditId, result.meta.changes === 1 ? "ok" : "failed");
       if (result.meta.changes === 1) rewrapped++; else failed++;
     } catch { failed++; }
   }
@@ -534,17 +552,21 @@ async function backupPassword(request: Request, env: Env, homeId: string) {
   await admin(request, env);
   const keys = await env.DB.prepare("SELECT * FROM cloud_home_keys WHERE home_id=?").bind(homeId).first<HomeKeys>();
   if (!keys || !kekReadable(keys.kek_id)) throw new HTTPError(404, "not_found");
-  const password = await deriveBackupPassword(env, homeId, keys);
+  const password = await deriveBackupPassword(env, homeId, keys, { actor: "operator", reason: "an operator asked for the backup password" });
   await env.DB.prepare("INSERT INTO cloud_unwrap_log (home_id,generation,at,source_ip,outcome) VALUES (?,?,?,?,?)")
     .bind(homeId, 0, Date.now(), request.headers.get("CF-Connecting-IP"), "backup_password").run();
   return json({ password });
 }
 
 /** HKDF restic password for a home (never stored). Shared by the admin endpoint and the live provisioner's backup wiring. */
-export async function deriveBackupPassword(env: Env, homeId: string, keys?: HomeKeys | null): Promise<string> {
+export async function deriveBackupPassword(env: Env, homeId: string, keys?: HomeKeys | null,
+  audit: { actor: "operator" | "system"; reason: string } = { actor: "system", reason: "backups set up for the home" }): Promise<string> {
   const row = keys ?? await env.DB.prepare("SELECT * FROM cloud_home_keys WHERE home_id=?").bind(homeId).first<HomeKeys>();
   if (!row || !kekReadable(row.kek_id)) throw new Error("backup_password_unavailable");
+  // G2: audited before the data key is unwrapped; the write failing ends the call (503 audit_unavailable).
+  const auditId = await recordAccessEvent(env.DB, { homeId, kind: "backup_key_use", actor: audit.actor, reason: audit.reason });
   const data = await keyWrapperFor(env).unwrap(homeId, row.wrapped_data_key);
+  await finishAccessEvent(env.DB, auditId, "ok");
   const base = await crypto.subtle.importKey("raw", data, "HKDF", false, ["deriveBits"]);
   const bits = await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: new TextEncoder().encode(homeId),
     info: new TextEncoder().encode("murage-backup-v1") }, base, 256);

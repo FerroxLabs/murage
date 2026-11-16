@@ -53,7 +53,7 @@ export function telegramHealthLabel(status: TelegramStatus | null, expired: bool
   if (expired) return "Pairing expired · create a new code";
   if (status.connecting) return "Connecting…";
   if (waiting) return "Waiting for pairing";
-  return status.configured ? "Token saved · not paired" : "No token saved";
+  return status.configured ? "Token saved · not paired" : "Not set up";
 }
 
 /** A saved pairing code is expired by its saved flag or by its saved time. Never expired once paired. */

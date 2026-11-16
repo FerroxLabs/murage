@@ -1,18 +1,36 @@
+import { checkpointFamily } from './checkpoints.ts';
 import { database, transaction } from "../database.ts";
 import { isPipKind } from "./pip-kinds.ts";
-import { requireMemoryOwner, readCorrectionTarget, approveCorrection, assertGenericMemoryTarget } from "./authority.ts";
+import { requireMemoryOwner, readCorrectionTarget, approveCorrection, assertGenericMemoryTarget, assertNotForgotten } from "./authority.ts";
 import { revokeRecordDisclosures } from "./revocation.ts";
 import { contentStampOf, PagedScan, storeAtMost } from "./status-scan.ts";
 import { STATUS_SCAN_INTERVAL_MS } from "./health.ts";
 
-function transition(ticket:object,id:string,version:number,from:"active"|"archived",to:"active"|"archived"){
+function transition(ticket:object,id:string,version:number,from:"active"|"archived",to:"active"|"archived",familyMember=false){
   requireMemoryOwner(ticket);
   transaction(db=>{
+    // Memory screen B2 (spec r3 2.5): a forgotten record is never made active again, before or after its job ends.
+    if(to==="active")assertNotForgotten(db,id);
     const row=db.prepare("SELECT * FROM memory_records WHERE id=? AND version=? AND state=?").get(id,version,from);
     if(!row)throw new Error("MEMORY_VERSION_CONFLICT");
     // I-10: a PIP row is never archived or restored here; refused before any receipt rewrite, revision bump or revoke.
     if(isPipKind(row.kind))throw new Error("MEMORY_IDENTITY_WRITE_REQUIRED");
     if(row.owner_pinned===1)throw new Error("MEMORY_PIN_MUST_BE_UNPINNED");
+    const family=!familyMember?checkpointFamily(db,id,version):undefined;
+    if(family&&to==='archived'){
+      // Owner archive, unlike publication, explicitly denies all retained members.
+      for(const member of db.prepare("SELECT r.id,r.version FROM memory_checkpoint_members m JOIN memory_records r ON r.id=m.record_id WHERE m.family_id=? AND r.state='active'").all(family.family_id))transition(ticket,String(member.id),Number(member.version),'active','archived',true);
+      // MAIN RULING recall-k: an owner family archive blanks every retained
+      // member's excerpts, including earlier edited versions of its record ID.
+      db.prepare("UPDATE memory_records SET text='' WHERE id IN (SELECT record_id FROM memory_checkpoint_members WHERE family_id=?) AND text!=''").run(family.family_id);
+      db.prepare("UPDATE memory_checkpoint_heads SET record_id=NULL,record_version=NULL,state='archived' WHERE family_id=?").run(family.family_id);
+      return;
+    }
+    if(family&&to==='active'){
+      // Restoring one exact record never restores denied historical members.
+      db.prepare("UPDATE memory_checkpoint_heads SET record_id=?,record_version=?,state='active' WHERE family_id=?").run(id,version,family.family_id);
+    }
+
     if(to==="active" && db.prepare(`SELECT 1 FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=? AND e.record_version=? AND (s.state!='active' OR s.revision!=e.source_revision) LIMIT 1`).get(id,version))throw new Error("MEMORY_SOURCE_UNAVAILABLE");
     if(to==="active"){
       const latest=db.prepare("SELECT max(version) version FROM memory_records WHERE id=?").get(id);

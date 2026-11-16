@@ -12,6 +12,22 @@
 import { callNative, nativeHas } from "./native-shell";
 import { reportSaveFailure, saveSource, saveUrl } from "./save-file";
 
+/** Opens a page in the system browser from the desktop shell and says whether it was handed off. The desktop shell rejects
+ * (throws) when it refuses the link or the hand-off fails, and resolves once the system browser has the link; an explicit false
+ * is treated as a refusal too, and outside the desktop app the call is missing. True means handed off, not that the page loaded. */
+export async function openedInBrowser(url: string): Promise<boolean> {
+  const open = window.muragebox?.openExternal;
+  if (!open) return false;
+  try { return (await window.muragebox!.openExternal!(url)) !== false; } catch { return false; }
+}
+
+/** The installer download buttons (Settings and the update card): clear the failure line, open the page, and show the line
+ * again only when the page did not open. */
+export function openInstallerPage(url: string, setOpenFailed: (failed: boolean) => void): Promise<void> {
+  setOpenFailed(false);
+  return openedInBrowser(url).then((opened) => { if (!opened) setOpenFailed(true); });
+}
+
 /** `nativeHas` is synchronous on purpose: this runs inside a click, and a
  * browser only lets a tab open during the gesture that asked for it. The
  * feature list is fetched at boot (main.tsx), long before the first tap. */

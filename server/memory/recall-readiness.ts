@@ -1,0 +1,89 @@
+// Copyright 2026 Ferrox Labs
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// Producer owner: recall-s1s2 (bounded readiness and zero-pin proof).
+// Consumer owner: recall-smoke (direct and room dispatch, before-submit fences).
+import { database, databaseGeneration } from '../database.ts';
+import { ownerPinIndexPresent } from './schema.ts';
+import { RecallPreparationPending, MemoryPinProjectionPending, recallPreparationFailure } from './recall-recovery.ts';
+
+export class RecallHeld extends RecallPreparationPending {}
+export class RecallDispatchPending extends Error {
+  constructor() { super('This reply is still being prepared, so this message was not sent. Send it again in a moment.'); }
+}
+/** Reads references only, through the partial index. Missing index means unknown. */
+export function noPins(): boolean {
+  const db = database();
+  if (!ownerPinIndexPresent(db)) return false;
+  try { return !db.prepare("SELECT 1 FROM memory_records INDEXED BY memory_records_pinned WHERE owner_pinned=1 AND state='active' LIMIT 1").get(); }
+  catch { return false; }
+}
+export function hasMemories(): boolean { return !!database().prepare('SELECT 1 FROM memory_records LIMIT 1').get(); }
+function waitUntil(at: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const done = () => { clearTimeout(timer); signal.removeEventListener('abort', abort); resolve(); };
+    const abort = () => { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(signal.reason); };
+    const timer = setTimeout(done, Math.max(0, at - performance.now()));
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
+}
+/** One logical send owns its deadline and finite probes across every redispatch. */
+export class RecallReadiness {
+  readonly hadMemories = hasMemories();
+  private started?: number;
+  private waitMs?: number;
+  private proof?: { generation: number };
+  private probes = 0;
+  private readmitted = false;
+  private heldIssued = false;
+  claimReadmission(): boolean {
+    if (this.readmitted) return false;
+    this.readmitted = true;
+    return true;
+  }
+  async access<T>(read: () => T, signal: AbortSignal): Promise<T> {
+    signal.throwIfAborted();
+    this.started ??= performance.now();
+    const empty = noPins();
+    if (!empty) this.waitMs = 2000;
+    else this.waitMs ??= 300;
+    const schedule = this.waitMs === 300 ? [0, 50, 300] : [0, 50, 300, 2000];
+    while (this.probes < schedule.length) {
+      const offset = schedule[this.probes++];
+      if (offset > 0) await waitUntil(this.started + offset, signal);
+      signal.throwIfAborted();
+      try { return read(); }
+      catch (error) { if (!(recallPreparationFailure(error) instanceof RecallPreparationPending)) throw error; }
+    }
+    signal.throwIfAborted();
+    if (noPins()) {
+      if (this.heldIssued) throw new RecallDispatchPending();
+      this.heldIssued = true;
+      this.proof = { generation: databaseGeneration() };
+      throw new RecallHeld();
+    }
+    throw new MemoryPinProjectionPending();
+  }
+  assertHeld(): void {
+    if (!this.proof || this.proof.generation !== databaseGeneration() || !noPins()) throw new MemoryPinProjectionPending();
+  }
+}
+export type RecallMode = 'full' | 'pins' | 'held' | 'off';
+/** Server facts captured before any recovery branch can clear the prepared request. */
+export interface RecallPrepared {
+  readonly system: string;
+  readonly integrations: readonly string[];
+  readonly historyPrepared: boolean;
+  readonly resumed: boolean;
+  /** Room history travels in these immutable prompt parts, never in a synthetic transcript. */
+  readonly historyParts?: readonly { readonly text: string }[];
+}
+export function assertRecallDispatch(input: { recall?: RecallMode; recallPrepared?: RecallPrepared; system?: string; integrations?: object; transcript?: readonly unknown[]; prompt?: { readonly parts: readonly { readonly text: string }[] } }): void {
+  const prepared = input.recallPrepared;
+  const names = Object.keys(input.integrations ?? {}).sort();
+  if (!prepared || !['full', 'pins', 'held', 'off'].includes(input.recall ?? '') || !prepared.system.trim()
+    || input.system !== prepared.system || JSON.stringify(names) !== JSON.stringify([...prepared.integrations].sort())
+    || prepared.historyPrepared && !prepared.resumed && (prepared.historyParts
+      ? !prepared.historyParts.length || !prepared.historyParts.every(part => input.prompt?.parts.includes(part))
+      : !input.transcript?.length)) throw new RecallDispatchPending();
+}

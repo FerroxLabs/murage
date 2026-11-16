@@ -93,6 +93,7 @@ test.use({
     await page.addInitScript(() => {
       try {
         window.localStorage.setItem("murage-email-gate", "skipped");
+        window.localStorage.setItem("help.seen.chat.level-chip", "1");
       } catch {
         /* storage blocked — the gate just renders */
       }

@@ -1,3 +1,6 @@
+import { prepareSourceNative } from "./native-preflight.mjs";
+import { prepareLongThread } from "./long-thread.mjs";
+import { probeEngine, engineTurn } from "./real-engine.mjs";
 import { firstSendRecorder, allEldWindows } from "./smooth-config.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -95,7 +98,7 @@ const PORT = Number(process.env.SMOOTH_PORT ?? 18977), URL_ = `http://127.0.0.1:
 const TURN_TIMEOUT = Number(process.env.SMOOTH_TURN_TIMEOUT_MS ?? 180_000);
 // Windows: an ssh session has USERPROFILE and often no HOME; the engines' sign-ins live under USERPROFILE
 const HOME = ENGINES === "real" ? (process.env.HOME ?? (WIN ? process.env.USERPROFILE : undefined) ?? "/tmp/smooth-home") : "/tmp/smooth-home";
-const WORKDIR = "/tmp/smooth-work"; // the root of the bots' folders (one per bot, botFolder): never inside a real home
+const WORKDIR = process.env.SMOOTH_FIXTURE_ROOT ? join(process.env.SMOOTH_FIXTURE_ROOT, "work") : "/tmp/smooth-work"; // the root of the bots' folders (one per bot, botFolder): never inside a real home
 const LOG = join(OUT, `server-${LABEL}.log`);
 for (const d of [OUT, HOME, WORKDIR, CTL, join(CTL, "bin"), join(CTL, "prompts"), "/tmp/smooth-tmp"]) mkdirSync(d, { recursive: true });
 writeFileSync(LOG, "");
@@ -119,6 +122,7 @@ if (APP) Object.assign(R, { electronVersion: electronMetadata.version, electronV
 // RIG-SMOOTH-R2 v3 d2: the native files the server will use, by sha256, against the build under test. On Windows with real engines both
 // must be present and match, and the product's own resolver must land on the hashed helper, so a direct run cannot bypass the leg.
 try {
+  if (!APP) R.nativePreflight = await prepareSourceNative({ work: WORK, expectedSha256: process.env.SMOOTH_ENGINE_EXCLUSION_SHA256 });
   const plat = `${process.platform}-${process.arch}`, realWin = WIN && ENGINES === "real";
   const sha = f => existsSync(f) ? createHash("sha256").update(readFileSync(f)).digest("hex") : null;
   const check = (key, file, expected) => {
@@ -223,8 +227,9 @@ const clearPromptDumps = () => { for (const f of readdirSync(join(CTL, "prompts"
 const termsVersion = termsVersionFrom(existsSync(join(WORK, "shared/terms.ts")) ? readFileSync(join(WORK, "shared/terms.ts"), "utf8") : "");
 if (!termsVersion) note("shared/terms.ts has no readable TERMS_VERSION");
 const env = {
+  ...(ENGINES === "real" ? Object.fromEntries(["CLAUDE_CODE_OAUTH_TOKEN", "GEMINI_API_KEY", "GOOGLE_API_KEY", "FUIGO_API_KEY"].filter(key => process.env[key]).map(key => [key, process.env[key]])) : {}),
   PATH: ENGINES === "fake" ? `${join(CTL, "bin")}:${process.env.PATH}` : process.env.PATH, HOME, USERPROFILE: HOME, XDG_CONFIG_HOME: `${HOME}/.config`, XDG_CACHE_HOME: `${HOME}/.cache`, XDG_DATA_HOME: `${HOME}/.local/share`,
-  TMPDIR: "/tmp/smooth-tmp", LANG: "C.UTF-8", MURAGE_DATA_DIR: APP ? realpathSync.native(DATA) : DATA, MURAGE_PORT: String(PORT), MURAGE_WEBHOOK_PORT: String(PORT + 1),
+  TMPDIR: process.env.SMOOTH_FIXTURE_ROOT ?? "/tmp/smooth-tmp", LANG: "C.UTF-8", MURAGE_DATA_DIR: APP ? realpathSync.native(DATA) : DATA, MURAGE_PORT: String(PORT), MURAGE_WEBHOOK_PORT: String(PORT + 1),
   MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1", MURAGE_DEV_DESKTOP_SECRET: SECRET, MURAGE_TURN_TRACE: "1", MURAGE_ANNOUNCEMENTS_URL: "off",
   ...(termsVersion ? { MURAGE_TERMS_ACCEPTED: termsVersion } : {}),
   ...(process.env.FLUX_KEY_FILE && ENGINES === "real" ? { FLUX_KEY_FILE: process.env.FLUX_KEY_FILE } : {}),
@@ -323,17 +328,48 @@ async function roomCall(method, path, body, budget) {
 }
 /** Put a bot at a level the way the desktop app does (src/lib/level-change.ts, 1.0.13 UX-TRUST-L1B): a raise to Full access or
  *  No limits reads the preview first, PATCHes the defaults with previewId and ifRev, then applies it to the open conversations. */
-async function setLevel(botId, level) {
-  const plain = level === "ask" || level === "auto";
-  if (plain) return call("PATCH", `/api/bots/${botId}`, levelPatch(level));
-  const refresh = `/api/bots/${botId}/permissions/refresh`, targetLevel = level === "unlimited" ? "no-limits" : level;
-  const preview = await call("POST", refresh, { scope: "open", targetLevel });
-  if (preview.status !== 200) return preview;
-  const p = preview.json;
-  const set = await call("PATCH", `/api/bots/${botId}`, { ...levelPatch(level), settingsScope: "defaults", previewId: p.previewId, ifRev: p.botRev });
-  if (set.status !== 200 || !(p.eligible?.length > 0)) return set;
-  const applied = await call("POST", refresh, { scope: "open", rosterId: p.rosterId, targetLevel: p.targetLevel, afterRev: set.json.permissionRev });
-  return applied.status === 200 ? set : applied;
+async function setLevel(botId, level, threadId) {
+  // A refused setup invalidates the whole leg, even when a scenario catches its exception.
+  let stage = "identity";
+  const checked = async (what, method, path, body) => {
+    stage = what;
+    const response = await call(method, path, body);
+    if (!(response?.status >= 200 && response.status < 300)) throw Error(`${what} HTTP ${response?.status ?? "missing"}`);
+    if (response.unparsed) throw Error(`${what} response is not JSON`);
+    return response;
+  };
+  try {
+    // Callers pin the conversation they will measure; proof/restoration callers may use the current one.
+    if (!threadId) threadId = (await checked("identity", "GET", `/api/bots/${botId}`)).json?.bot?.threadId;
+    if (typeof threadId !== "string" || !threadId) throw Error("measured conversation missing");
+    const plain = level === "ask" || level === "auto";
+    let set;
+    if (plain) set = await checked("patch", "PATCH", `/api/bots/${botId}`, levelPatch(level));
+    else {
+      const refresh = `/api/bots/${botId}/permissions/refresh`, targetLevel = level === "unlimited" ? "no-limits" : level;
+      const p = (await checked("preview", "POST", refresh, { scope: "open", targetLevel })).json;
+      if (!p || typeof p.previewId !== "string" || typeof p.rosterId !== "string" || !Number.isSafeInteger(p.botRev)
+          || p.targetLevel !== targetLevel || !Array.isArray(p.eligible)) throw Error("permission preview unreadable");
+      set = await checked("patch", "PATCH", `/api/bots/${botId}`, { ...levelPatch(level), settingsScope: "defaults", previewId: p.previewId, ifRev: p.botRev });
+      if (p.eligible.length) {
+        if (!Number.isSafeInteger(set.json?.permissionRev)) throw Error("PATCH permission revision unreadable");
+        await checked("apply", "POST", refresh, { scope: "open", rosterId: p.rosterId, targetLevel: p.targetLevel, afterRev: set.json.permissionRev });
+      }
+    }
+    const task = (await checked("readback", "GET", `/api/bots/${botId}/tasks/${threadId}`)).json?.task;
+    if (!task || task.threadId !== threadId || ["autoApprove", "fullAccess", "noLimits"].some(key => task[key] !== undefined && typeof task[key] !== "boolean")) {
+      throw Error("measured conversation permissions unreadable");
+    }
+    const measured = task.autoApprove !== true ? "ask" : task.fullAccess !== true ? "auto" : task.noLimits === true ? "unlimited" : "full";
+    (R.levelChanges ??= []).push({ scenario: currentScenario, botId, threadId, requested: level, measured, patch: set.status, permissionRev: task.permissionRev ?? null });
+    if (measured !== level) throw Error(`measured conversation is ${measured}, expected ${level}`);
+    return set;
+  } catch (error) {
+    R.levelChangeFailed = true;
+    const why = `level change ${level} ${stage} failed: ${keptText(error?.message ?? error, redact, 300)}`;
+    evidence.fail(why);
+    throw Error(why);
+  }
 }
 async function api(method, path, body, timeout) {
   const r = await call(method, path, body, timeout);
@@ -405,8 +441,8 @@ async function sse() {
           for (const w of waits) {
             if (e.threadId === w.threadId && e.type === "turn.started" && !e.turnId) w.journalTurn = e.turn;
             const m = matchTurnEvent(e, w);
-            if (m === "started" || m === "ended") { w.turnId = e.turnId; w.journalTurn = e.turn; }
-            if (m === "ended") { waits.delete(w); w.resolve({ type: e.type === "turn.completed" && e.ok === false ? "turn.failed" : e.type, at: performance.now(), turnId: e.turnId, ...keptTurnEnd(e, redact) }); }
+            if (m === "started" || m === "ended") { w.turnId = e.turnId; w.journalTurn = e.turn; w.attemptEnded = m === "ended"; if (m === "started") w.end = null; }
+            if (m === "ended") { w.before.add(e.turnId); w.end = { type: e.type === "turn.completed" && e.ok === false ? "turn.failed" : e.type, at: performance.now(), turnId: e.turnId, ...keptTurnEnd(e, redact) }; w.resolve(w.end); }
           }
           if (e.turnId) { if (!seenTurnIds.has(tid)) seenTurnIds.set(tid, new Set()); seenTurnIds.get(tid).add(e.turnId); }
         }
@@ -626,7 +662,7 @@ async function turn(botId, threadId, text, { timeout = TURN_TIMEOUT, wait = true
   const sinceAt = Date.now(), scenario = currentScenario;
   const keepFailure = result => keepFailedTurn(result, { botId, threadId, turnId: w.turnId, turn: w.journalTurn ?? requestId, mark, sinceAt, scenario });
   const requestId = `smooth-${randomBytes(12).toString("hex")}`;
-  const w = { threadId, requestId, before: new Set(seenTurnIds.get(threadId) ?? []), turnId: undefined };
+  const w = { threadId, requestId, logicalSend: true, before: new Set(seenTurnIds.get(threadId) ?? []), turnId: undefined };
   const ended = new Promise(resolve => { w.resolve = resolve; }); waits.add(w);
   activeEvidenceTurns.set(threadId, w);
   try {
@@ -635,25 +671,30 @@ async function turn(botId, threadId, text, { timeout = TURN_TIMEOUT, wait = true
   if (sent.status < 200 || sent.status >= 300) { waits.delete(w); return await keepFailure({ outcome: `send ${sent.status}`, acceptedMs: sent.ms, wall: sent.ms, failed: true, status: sent.status }); }
   const acceptedMs = Math.round(performance.now() - t0);
   let sseEnd = null; void ended.then(r => { sseEnd = r; });
-  let rec, traceDoneAt = null;
+  let rec, traceDoneAt = null, deadlineExpired = false;
   for (;;) {
     await sleep(250);
     rec = turnFromLog(logFrom(mark), threadId, ownedTraces);
+    sseEnd = w.end ?? sseEnd;
+    // A provider terminal can be an unwritten attempt. Keep this logical send's waiter through its retries;
+    // the thread must settle before its result allows scenario cleanup to send Stop.
+    const retryPending = rec.redispatched && (!rec.done || (await getBot(botId)).busy);
+    if (retryPending) { traceDoneAt = null; if (performance.now() - t0 > timeout + extraMs()) { deadlineExpired = true; break; } continue; }
     if (rec.done && traceDoneAt === null) traceDoneAt = performance.now();
     if (traceDoneAt !== null && (sseEnd || rec.redispatched || performance.now() - traceDoneAt > 5000)) break;
     if (sseEnd && performance.now() - sseEnd.at > 5000) break; // the thread's own end event is the authority when traces are shared by concurrent turns (S6) or absent (refused before dispatch)
-    if (performance.now() - t0 > timeout + extraMs()) break; // extraMs: time the owner spent on cards (S7), outside the turn's own clock
+    if (performance.now() - t0 > timeout + extraMs()) { deadlineExpired = true; break; } // extraMs: time the owner spent on cards (S7), outside the turn's own clock
   }
   waits.delete(w);
   // a timed-out turn is stopped and the bot waited idle before anything else goes to it: a message sent to a still-busy
   // engine is queued and starts the moment the old turn ends, so the next turn would measure the leftover one
-  const timeoutStop = traceDoneAt === null && !sseEnd ? await settleBot(botId, threadId) : undefined;
+  const timeoutStop = deadlineExpired || traceDoneAt === null && !sseEnd ? await settleBot(botId, threadId) : undefined;
   if (timeoutStop) { R.timeoutStops = (R.timeoutStops ?? 0) + 1; if (!timeoutStop.settled) note(`turn timeout: bot ${botId.slice(0, 8)} still busy ${timeoutStop.ms} ms after Stop`); }
-  for (const id of [rec.traceId, rec.redispatchTraceId]) if (id) ownedTraces.add(id);
-  const timedOut = traceDoneAt === null && !sseEnd;
+  for (const id of rec.traceIds ?? [rec.traceId, rec.redispatchTraceId]) if (id) ownedTraces.add(id);
+  const timedOut = deadlineExpired || traceDoneAt === null && !sseEnd;
   const sseOwn = Boolean(sseEnd && w.turnId !== undefined && sseEnd.turnId === w.turnId);
   const endAt = !rec.redispatched && sseOwn ? Math.min(sseEnd.at, traceDoneAt ?? Infinity) : (traceDoneAt ?? sseEnd?.at);
-  const outcome = timedOut ? "timeout" : sseEnd?.type === "turn.failed" ? "turn.failed" : ["completed", "ok"].includes(rec.outcome) ? "turn.completed" : rec.outcome ? `turn.${rec.outcome}` : sseEnd?.type ?? "turn.unknown";
+  const outcome = timedOut ? "timeout" : rec.redispatched && rec.done ? (["completed", "ok"].includes(rec.outcome) ? "turn.completed" : `turn.${rec.outcome ?? "unknown"}`) : sseEnd?.type === "turn.failed" ? "turn.failed" : ["completed", "ok"].includes(rec.outcome) ? "turn.completed" : rec.outcome ? `turn.${rec.outcome}` : sseEnd?.type ?? "turn.unknown";
   const result = { ...rec, ...keptTurnEnd(sseEnd, redact), ...(timeoutStop ? { timeoutStop } : {}), requestId, wall: Math.round((endAt ?? performance.now()) - t0), acceptedMs, outcome, failed: outcome !== "turn.completed" };
   return await keepFailure(result);
   } finally { activeEvidenceTurns.delete(threadId); waits.delete(w); }
@@ -717,7 +758,7 @@ async function threadMessages(threadId, limit = 80, budget = null) {
   throw new Error("transcript does not reach the scenario's start in 50 pages");
 }
 // the thread's open-cards view (every open request card on the active branch), not a transcript page that may not reach it
-async function openCardsOf(threadId) {
+async function openCardsOf(threadId, options) {
   let oc = await call("GET", `/api/threads/${threadId}/open-cards`, undefined, 30_000);
   // pending means the route's answer is incomplete: never zero cards and never "that card closed"
   // The server's own preparation can hold it while a turn runs (up to 120 s, transcript-backfill.ts), so this waits past that: a later answer reads high, never low.
@@ -725,7 +766,7 @@ async function openCardsOf(threadId) {
   if (oc.status === 200 && oc.json?.pending === true) throw new Error("open cards incomplete: pending for 150 s");
   // the transcript stands in only where the route does not exist (older builds), with a window long enough for an older open card
   if (oc.status !== 404 && !(oc.status === 200 && Array.isArray(oc.json?.openCards))) throw new Error(`open cards unreadable: status ${oc.status}`);
-  const open = openCards(oc.status === 200 ? oc.json.openCards : await threadMessages(threadId, 200));
+  const open = openCards(oc.status === 200 ? oc.json.openCards : await threadMessages(threadId, 200), options);
   for (const row of open) keepCard(currentScenario, threadId, row);
   return open;
 }
@@ -735,7 +776,7 @@ const delegationReceipts = () => { let text; try { text = readFileSync(join(DATA
 const ROOM_LATER = ["trust", "autoEveryday", "longThread", "deletion", "engineSwitch", "stop", "idle"];
 let roomCleanup = null, roomState = null;
 async function scenario(name, fn) {
-  if (R.roomNeverSettled || R.controlRestoreFailed) { R.scenarios[name] = { invalid: R.legFailureReason ?? "room never settled" }; save(); return; }
+  if (R.roomNeverSettled || R.controlRestoreFailed || R.levelChangeFailed) { R.scenarios[name] = { invalid: R.legFailureReason ?? "room never settled" }; save(); return; }
   if (!SCEN.has(name)) return;
   const from = Date.now(); let mark = null, measurement = null;
   currentScenario = name; scenarioBots = []; scenarioFrom = from;
@@ -760,10 +801,10 @@ async function scenario(name, fn) {
     for (const message of roomState.notes.splice(0)) note(keptText(message, redact, 1000));
   };
   await finishRoom();
-  if (R.controlRestoreFailed && name !== "room") await stopServer();
+  if (R.levelChangeFailed || (R.controlRestoreFailed && name !== "room")) await stopServer();
   // every turn the scenario left running is stopped before the next scenario starts (measured after the scenario's own rows)
   const ends = [];
-  for (const b of name === "room" || R.roomNeverSettled || R.controlRestoreFailed ? [] : scenarioBots) { try { ends.push(await settleBot(b.id, b.threadId, 30_000)); } catch (error) { ends.push({ settled: false, error: keptText(error?.message ?? error, redact, 100) }); } }
+  for (const b of name === "room" || R.roomNeverSettled || R.controlRestoreFailed || R.levelChangeFailed ? [] : scenarioBots) { try { ends.push(await settleBot(b.id, b.threadId, 30_000)); } catch (error) { ends.push({ settled: false, error: keptText(error?.message ?? error, redact, 100) }); } }
   R.scenarios[name] = { ...R.scenarios[name], endStop: { bots: ends.length, leftBusy: ends.filter(e => !e.settled).length, escalated: ends.filter(e => e.escalated).length, maxMs: ends.length ? Math.max(...ends.map(e => e.ms ?? 0)) : 0 } };
   if (ends.some(e => !e.settled)) note(`scenario ${name}: ${ends.filter(e => !e.settled).length} bot(s) still busy after the end-of-scenario Stop`);
   currentScenario = "run"; scenarioBots = [];
@@ -811,6 +852,12 @@ if (APP) {
   try { await loadInstances(); } catch (error) { await refusePackaged(error.message); }
 } else await loadInstances();
 log("instances", JSON.stringify(R.instances));
+if (APP && process.env.SMOOTH_REAL_ENGINE && instances[process.env.SMOOTH_REAL_ENGINE]?.state !== "available") {
+  const engine = process.env.SMOOTH_REAL_ENGINE;
+  console.error(`REAL-ENGINE: NOT RUN (${engine}: instance ${instances[engine]?.state ?? "absent"})`);
+  R.scenarios.realEngine = { engine, status: "NOT-RUN" };
+  await refusePackaged("required real engine is unavailable");
+}
 if (APP) {
   // A trace is emitted on dispatch, not at boot. One isolated, named bot proves the flag before measured scenarios.
   try {
@@ -831,8 +878,7 @@ await scenario("routineBurst", async () => {
   // MurageMain 11-06: on real legs S1 measures the burst, not Ask: a new bot is at Ask and a routine runs at the lower of its ceiling and the bot (S4.ask covers Ask).
   const routineMode = ENGINES === "real" ? "unlimited" : "auto";
   if (ENGINES === "real") for (const b of bots) {
-    const set = await setLevel(b.id, "unlimited");
-    if (set.status !== 200) throw new Error(`S1 level not set: status ${set.status}`);
+    await setLevel(b.id, "unlimited", b.threadId);
     const now = await getBot(b.id);
     if (!(now.autoApprove === true && now.fullAccess === true && now.noLimits === true)) throw new Error("S1 level did not read back as No limits");
   }
@@ -1020,8 +1066,8 @@ await scenario("trust", async () => {
   try {
     for (const level of LEVELS) {
       const bot = await makeBot(`Smooth ${level}`, "scripted");
-      const set = await setLevel(bot.id, level);
-      const row = { patch: set.status, ...(set.status >= 300 ? { patchError: keptText(set.json?.error ?? "", redact, 200) } : {}), cards: 0, extraCards: 0, autoAllowed: 0, turns: 0, failed: 0, stopCards: 0, wipeCards: 0, stopLineCards: 0, stopTurns: 0, cardsFor: [], outcomes: {} };
+      const set = await setLevel(bot.id, level, bot.threadId);
+      const row = { patch: set.status, cards: 0, extraCards: 0, autoAllowed: 0, turns: 0, failed: 0, stopCards: 0, wipeCards: 0, stopLineCards: 0, stopTurns: 0, cardsFor: [], outcomes: {} };
       const run = async (cmd, stop) => {
         ctl("permission-command", cmd);
         const t = turn(bot.id, bot.threadId, `Run exactly this command and tell me its first output line: ${cmd}`, { wait: false });
@@ -1094,7 +1140,7 @@ await scenario("autoEveryday", async () => {
   for (const id of S10_ENGINES) {
     if (instances[id]?.state !== "available") { engines[id] = { skipped: `engine ${instances[id]?.state ?? "missing"}` }; continue; }
     const bot = await makeBotOn(`Smooth everyday ${id}`, id);
-    const set = await call("PATCH", `/api/bots/${bot.id}`, levelPatch("auto"));
+    const set = await setLevel(bot.id, "auto", bot.threadId);
     const turns = [];
     for (let i = 0; i < EVERYDAY_TASKS.length; i++) { await quiesce(); turns.push({ task: i, ...(await cardTurn(bot, EVERYDAY_TASKS[i])) }); }
     const cards = turns.reduce((a, t) => a + t.cards, 0); autoCards += cards;
@@ -1104,7 +1150,7 @@ await scenario("autoEveryday", async () => {
   let ask = { skipped: `engine ${instances[S10_ASK_ENGINE]?.state ?? "missing"}` };
   if (instances[S10_ASK_ENGINE]?.state === "available") {
     const bot = await makeBotOn(`Smooth ask shell ${S10_ASK_ENGINE}`, S10_ASK_ENGINE);
-    const set = await call("PATCH", `/api/bots/${bot.id}`, levelPatch("ask"));
+    const set = await setLevel(bot.id, "ask", bot.threadId);
     const turns = [];
     for (const cmd of DEV_COMMANDS) { await quiesce(); turns.push({ cmd: DEV_COMMANDS.indexOf(cmd), ...(await cardTurn(bot, `Run exactly this command and tell me its first output line: ${cmd}`)) }); }
     const f = turns.filter(t => t.failed).length; failed += f;
@@ -1125,14 +1171,13 @@ await scenario("longThread", async ({ mark }) => {
   const bot = byThread.get(pick.t);
   // the bot's folder is the owner's Mac path: point it at a folder that exists here, so the turn is about the thread, not the folder
   const folder = botFolder(WORKDIR, "longThread", bot.id); mkdirSync(folder, { recursive: true });
-  const cwd = await call("PATCH", `/api/bots/${bot.id}`, { cwd: folder });
+  const setup = await prepareLongThread({ call, bot, threadId: pick.t, folder });
   scenarioBots.push({ id: bot.id, threadId: pick.t });
-  if (bot.threadId !== pick.t) await call("POST", `/api/bots/${bot.id}/tasks/${pick.t}?messages=0`, {});
   const turns = [];
   for (let i = 0; i < 5; i++) { const t = await turn(bot.id, pick.t, PROMPT(100 + i, "this conversation")); turns.push(t); log("long turn", i, t.wall, t.outcome, `firstText=${t.firstText} resumed=${t.resumed} resets=${t.resets}`); }
   const ms = await threadMessages(pick.t, 40);
   const sig = countSignatures(logFrom(mark));
-  return { thread: pick.t, threadMessages: pick.n, bot: bot.id, engine: bot.modelSelection?.instanceId, cwdPatch: cwd.status, ...summary(turns), resumed: turns.slice(1).filter(t => t.resumed === true).length, contextChanged: contextChangedIn(ms).length + sig.contextCard, turns: turns.map(t => ({ wall: t.wall, prep: t.prep, firstText: t.firstText, resumed: t.resumed, resets: t.resets, outcome: t.outcome })) };
+  return { thread: pick.t, threadMessages: pick.n, bot: bot.id, engine: bot.modelSelection?.instanceId, ...setup, ...summary(turns), resumed: turns.slice(1).filter(t => t.resumed === true).length, contextChanged: contextChangedIn(ms).length + sig.contextCard, turns: turns.map(t => ({ wall: t.wall, prep: t.prep, firstText: t.firstText, resumed: t.resumed, resets: t.resets, outcome: t.outcome })) };
 });
 
 // S6 deletion while three turns are held open: an old real conversation, then an idle fresh bot, then the gate opens
@@ -1142,7 +1187,7 @@ await scenario("deletion", async ({ mark }) => {
   const gate = join(CTL, "gate"); try { rmSync(gate); } catch {}
   ctl("gate-file", gate); ctl("grok.mode", "echo-gated");
   // real engines: the held turn is a shell sleep at Full access (no card), so it is still working when the DELETEs go out
-  if (ENGINES === "real") for (const b of held) await setLevel(b.id, "full"); // 1.0.13+ needs the preview and ifRev (see setLevel); a plain PATCH stays at Ask and the sleep waits on a card nobody answers
+  if (ENGINES === "real") for (const b of held) await setLevel(b.id, "full", b.threadId); // 1.0.13+ needs the preview and ifRev (see setLevel); a plain PATCH stays at Ask and the sleep waits on a card nobody answers
   const inFlight = held.map((b, i) => turn(b.id, b.threadId, heldPrompt(ENGINES, i), { timeout: 300_000, wait: false }));
   const busyOf = async id => (await getBot(id)).busy === true;
   const result = {};
@@ -1217,7 +1262,7 @@ await scenario("stop", async () => {
   const bot = await makeBot("Smooth Stop", "scripted");
   // real engines: the Stop bot is at Full access (SMOOTH_STOP_LEVEL to change it), so an unanswered approval card is not what holds the turn
   const stopLevel = ENGINES === "real" ? (process.env.SMOOTH_STOP_LEVEL ?? "full") : null;
-  if (stopLevel) await call("PATCH", `/api/bots/${bot.id}`, levelPatch(stopLevel));
+  if (stopLevel) await setLevel(bot.id, stopLevel, bot.threadId);
   const settles = [], outcomes = [], next = [];
   for (let i = 0; i < 3; i++) {
     ctl("grok.mode", "slow-tool");
@@ -1236,6 +1281,31 @@ await scenario("stop", async () => {
   // Murage's own activity chips in the Stop bot's thread, by name and count (e.g. the deletion-hold waiting note): never engine text
   const chips = {}; for (const m of await threadMessages(bot.threadId, 120)) if (m?.kind === "activity" && typeof m.tool?.name === "string" && !m.turnId) chips[m.tool.name.slice(0, 80)] = (chips[m.tool.name.slice(0, 80)] ?? 0) + 1;
   return { level: stopLevel ?? "default", bot: bot.id, thread: bot.threadId, chips, nextOutcomes: next.map(t => t.outcome), settle: stats(settles.map(s => s.ms)), settled: settles.filter(s => s.settled).length, stops: settles, outcomes, nextCompleted: next.filter(t => !t.failed).length, errorRows: errorRowsIn(await threadMessages(bot.threadId, 60)).length };
+});
+
+// Required nightly engine proof: same packaged preflight, owner routes and cleanup as the manual leg.
+await scenario("realEngine", async () => {
+  const engine = process.env.SMOOTH_REAL_ENGINE;
+  if (!APP || ENGINES !== "real") throw Error("realEngine requires a packaged server and real engines");
+  if (instances[engine]?.state !== "available") {
+    console.error(`REAL-ENGINE: NOT RUN (${engine}: instance ${instances[engine]?.state ?? "absent"})`);
+    return { engine, status: "NOT-RUN" };
+  }
+  const proof = await probeEngine({
+    makeBot: () => makeBotOn(`Nightly ${engine}`, engine),
+    setLevel: (bot, level) => setLevel(bot.id, level),
+    turn: (bot, text) => engineTurn({ bot, text,
+      send: (bot, text, sendId) => call("POST", `/api/bots/${bot.id}/messages`, { text, threadId: bot.threadId, sendId }),
+      state: (bot, sendId) => call("GET", `/api/bots/${bot.id}/turn-state?${new URLSearchParams({ threadId: bot.threadId, sendId })}`),
+    }),
+    openCards: bot => openCardsOf(bot.threadId, { publicExecution: true }),
+    respond: (bot, answer) => call("POST", `/api/bots/${bot.id}/respond`, answer),
+    send: (bot, text) => call("POST", `/api/bots/${bot.id}/messages`, { text, threadId: bot.threadId, sendId: randomBytes(16).toString("hex") }),
+    busy: async bot => (await getBot(bot.id)).busy,
+    stop: bot => settleBot(bot.id, bot.threadId),
+    messages: bot => threadMessages(bot.threadId),
+  });
+  return { engine, ...proof };
 });
 
 // S9 idle tail
