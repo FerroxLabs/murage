@@ -85,6 +85,7 @@ posixOnly("routine sheet Run now on each engine", () => {
       },
     }));
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -130,7 +131,10 @@ posixOnly("routine sheet Run now on each engine", () => {
         expect(ran.status, JSON.stringify(ran.body)).toBeLessThan(300);
         const finished = () => stream.frames.find((frame) =>
           frame.kind === "routine.run" && frame.run?.routineId === routine.body.routine.id && ["completed", "failed"].includes(frame.run?.status))?.run;
-        await expect.poll(() => finished()?.status, { timeout: 45_000 }).toBeDefined();
+        await expect.poll(() => finished()?.status, { timeout: 45_000 }).toBeDefined().catch(error => {
+          if (error instanceof Error) error.message += "\nFixture stderr:\n" + stderr.slice(-5000);
+          throw error;
+        });
         expect(finished()?.status, JSON.stringify(finished())).toBe("completed");
       } finally {
         stream.close();

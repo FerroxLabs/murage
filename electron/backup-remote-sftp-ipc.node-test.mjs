@@ -8,16 +8,21 @@
 // replaced here; only the storage adapter behind the host is a fixture.
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
-import test from "node:test";
+import test, {beforeEach} from "node:test";
 import {mkdtempSync,mkdirSync,writeFileSync,existsSync,readdirSync,realpathSync,symlinkSync,readFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import vm from "node:vm";
 import ts from "typescript";
 import {safeWipeSync} from "../server/testing/safe-wipe.mjs";
-import {createBackupRemoteHost} from "../dist-server/backup-remote-host.js";
 import {forgetRemoteWorkDirectory,remoteWorkDirectory} from "./backup-remote-runtime.mjs";
 import {createRemotePasswordStore} from "./backup-remote-password.mjs";
+// Keep packaged import failures attached to the named tests, with their full
+// count visible even when build:server has not produced a usable bundle.
+let createBackupRemoteHost;
+beforeEach(async()=>{
+ ({createBackupRemoteHost}=await import("../dist-server/backup-remote-host.js"));
+});
 
 const POSIX_ONLY=process.platform==="win32"&&"remote backup owner and mode checks are POSIX-only";
 const ORIGIN="http://127.0.0.1:47321";

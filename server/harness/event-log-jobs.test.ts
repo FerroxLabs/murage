@@ -19,7 +19,7 @@ import { EVENTS_DIR, ensureDirs } from "../config.ts";
 import type { RuntimeEvent } from "../contracts.ts";
 import { ConversationDeletions } from "../conversation-deletion.ts";
 import { readThreadEvents } from "../thread-events.ts";
-import { EventBus } from "./bus.ts";
+import { AdmittedEventBus as EventBus } from "../testing/admitted-event-bus.ts";
 import * as log from "./event-log.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 
@@ -225,11 +225,13 @@ describe("rotation (P1-2 and Windows)", () => {
     for (let i = 0; i < 12; i++) bus.publish(ev(t, { type: "item.completed", itemType: "tool", itemId: `b${i}`, ok: true, result: "x".repeat(500) }));
     expect(errors).not.toHaveBeenCalled();
     expect(size(join(EVENTS_DIR, `${t}.ndjson`))).toBeGreaterThan(before);
-    expect(readFileSync(join(EVENTS_DIR, `${t}.ndjson`), "utf8")).toContain("\"b11\"");
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: the last of these 24 standalone fixture turns logs host item 24-0, retaining the same rotation boundary.
+    expect(readFileSync(join(EVENTS_DIR, `${t}.ndjson`), "utf8")).toContain("\"24-0\"");
     // the handle is gone: the next event rotates
     L.eventLogIo.rename = renameSync;
     bus.publish(ev(t, { type: "item.completed", itemType: "tool", itemId: "c0", ok: true, result: "x" }));
-    expect(readFileSync(join(EVENTS_DIR, `${t}.previous.ndjson`), "utf8")).toContain("\"b11\"");
+    // MAIN RULING INT-CONFLICT-DEFAULT a62419d6d5 3ad2b8f428: rotation preserves the same final admitted item in the previous file.
+    expect(readFileSync(join(EVENTS_DIR, `${t}.previous.ndjson`), "utf8")).toContain("\"24-0\"");
     expect(size(join(EVENTS_DIR, `${t}.ndjson`))).toBeLessThan(4 * 1024);
   });
 });

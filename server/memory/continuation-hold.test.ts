@@ -1,3 +1,5 @@
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
+import { liveFrameSources, startLiveSession } from './testing/live-session-fixture.ts';
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -16,17 +18,16 @@ import { InternalCapabilities } from "../internal-capabilities.ts";
 import { authorityParts, authorityStamp, softChangedSince } from "./authority-epoch.ts";
 import { ownerMemoryTicket, saveMemoryCandidate } from "./authority.ts";
 import { captureSource } from "./capture.ts";
-import { continuationMemoryRevoked, noteMemoryLookup, resetSessionHolds } from "./disclosures.ts";
+import { bindMemoryDisclosureSession, deliverMemoryDisclosure, continuationMemoryRevoked, noteMemoryLookup, resetSessionHolds } from "./disclosures.ts";
 import { forgetMemory } from "./forget.ts";
-import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
-import { outputRootsFor, recordSessionRoots } from "./replay-lineage.ts";
+import { reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { archiveMemoryRecord } from "./retention.ts";
 import { reviewKeep, reviewUndo } from "./review.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
-import { stampFreshSession } from "./testing/writetime-fixture.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
-import { storeAnchorMessage } from "./testing/anchor-message.ts";
+import { storeLiveAnchor as storeAnchorMessage } from "./testing/live-session-fixture.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -49,11 +50,12 @@ function newRecord(state: "active" | "candidate" = "active") {
   database().prepare("UPDATE memory_records SET state=? WHERE id=?").run(state, record);
   return { record, sourceId };
 }
-const receipt = (id: string, records: Array<{ id: string; version: number }>, state = "delivered") =>
-  database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,'chat','engine','S',?,'[]','[]',(SELECT policy_revision FROM memory_meta),(SELECT deletion_epoch FROM memory_meta),0,?,?)")
-    .run(id, JSON.stringify(records), state, Date.now());
-// the session row as a 1.0.3 fresh start leaves it: stamped with the door epoch (S6 rule 26)
-const sessionRow = () => { recordSessionRoots("chat", "engine", "S", outputRootsFor(LineageAllowance.tool(1_000_000_000), [])); stampFreshSession(database(), "chat", "engine", "S"); };
+const receipt = (id: string, records: Array<{ id: string; version: number }>, state = "delivered", a = access(), session = "S") => {
+  database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,'engine',NULL,?,?,'[]',(SELECT policy_revision FROM memory_meta),(SELECT deletion_epoch FROM memory_meta),0,?,?)")
+    .run(id, a.threadId, JSON.stringify(records), JSON.stringify(liveFrameSources(records)), state, Date.now());
+  const bind = () => { bindMemoryDisclosureSession(id, session); deliverMemoryDisclosure(id, a); };
+  if (!startLiveSession(a, 'engine', session, bind)) bindMemoryDisclosureSession(id, session);
+};
 const check = (why?: { reason?: string }) => continuationMemoryRevoked(LineageAllowance.tool(), "chat", "engine", "S", access(), why);
 function countStatements(match: (text: string) => boolean) {
   const db = database(), real = db.prepare.bind(db);
@@ -63,6 +65,7 @@ function countStatements(match: (text: string) => boolean) {
 }
 // Continuations try current hydration first and may fall back to disclosed hydration.
 const continuationHydrations = (text: string) => text.startsWith("SELECT * FROM memory_records WHERE id=? AND version=? AND state");
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
 const hydrations = (text: string) => text.startsWith("SELECT * FROM memory_records WHERE id=? AND version=? AND state='active'");
 
 describe("a change between two turns is seen at the next one", () => {
@@ -82,7 +85,7 @@ describe("a change between two turns is seen at the next one", () => {
   for (const [name, change] of cases) {
     it(name, () => {
       const made = newRecord();
-      receipt("F1", [{ id: made.record, version: 1 }]); sessionRow();
+      receipt("F1", [{ id: made.record, version: 1 }]);
       expect(check()).toBe(false);
       expect(check()).toBe(false); // answered from the hold
       const noise = newRecord(); receipt("F2", [{ id: noise.record, version: 1 }]);
@@ -97,7 +100,7 @@ describe("a change between two turns is seen at the next one", () => {
     const made = newRecord("candidate");
     const ticket = ownerMemoryTicket();
     expect(reviewKeep(ticket, roster, { actionId: "k1", id: made.record, version: 1 }).result.status).toBe("kept");
-    receipt("F1", [{ id: made.record, version: 1 }]); sessionRow();
+    receipt("F1", [{ id: made.record, version: 1 }]);
     expect(check()).toBe(false);
     expect(check()).toBe(false);
     expect(reviewUndo(ticket, roster, { actionId: "u1", keepActionId: "k1", id: made.record, version: 1 }).result.status).toBe("archived");
@@ -106,7 +109,7 @@ describe("a change between two turns is seen at the next one", () => {
 
   it("a record that joins the session later is judged when it joins, and a change to it after that is seen", () => {
     const first = newRecord(), later = newRecord();
-    receipt("F1", [{ id: first.record, version: 1 }]); sessionRow();
+    receipt("F1", [{ id: first.record, version: 1 }]);
     expect(check()).toBe(false);
     receipt("F2", [{ id: later.record, version: 1 }]);
     expect(check()).toBe(false);
@@ -117,7 +120,7 @@ describe("a change between two turns is seen at the next one", () => {
 
   it("a record that is withdrawn before the session's next receipt is judged is not let in", () => {
     const first = newRecord(), later = newRecord();
-    receipt("F1", [{ id: first.record, version: 1 }]); sessionRow();
+    receipt("F1", [{ id: first.record, version: 1 }]);
     expect(check()).toBe(false);
     database().prepare("UPDATE memory_records SET state='archived' WHERE id=?").run(later.record);
     receipt("F2", [{ id: later.record, version: 1 }]);
@@ -128,10 +131,10 @@ describe("a change between two turns is seen at the next one", () => {
     const first = newRecord(), bound = newRecord();
     // F0 is written first and not yet in the session; F1 is the session's newest
     database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES('F0','chat','engine',NULL,?,'[]','[]',(SELECT policy_revision FROM memory_meta),(SELECT deletion_epoch FROM memory_meta),0,'delivered',1)").run(JSON.stringify([{ id: bound.record, version: 1 }]));
-    receipt("F1", [{ id: first.record, version: 1 }]); sessionRow();
+    receipt("F1", [{ id: first.record, version: 1 }]);
     expect(check()).toBe(false);
     database().prepare("UPDATE memory_records SET state='archived' WHERE id=?").run(bound.record);
-    database().prepare("UPDATE memory_disclosures SET native_session='S' WHERE bundle_id='F0'").run();
+    bindMemoryDisclosureSession('F0','S');
     // F0 has a lower rowid than F1, which is already in the session: binding it is a hard change
     expect(check()).toBe(true);
   });
@@ -176,7 +179,7 @@ describe("a direct write to each covered table moves the epoch", () => {
   for (const [name, sql] of cases) {
     it(name, () => {
       const made = newRecord(), other = newRecord();
-      receipt("F1", [{ id: made.record, version: 1 }]); sessionRow();
+      receipt("F1", [{ id: made.record, version: 1 }]);
       const db = database();
       db.exec("PRAGMA foreign_keys=OFF");
       db.prepare("INSERT OR IGNORE INTO memory_scope_bindings VALUES('human-thread:t0',(SELECT id FROM memory_scopes LIMIT 1),'human-thread','t0',1,'granted','{}')").run();
@@ -228,7 +231,8 @@ describe("a session's turns judge only what is new", () => {
     const stable = Array.from({ length: 30 }, () => newRecord());
     const unrelated = newRecord();
     receipt("F0", stable.map(made => ({ id: made.record, version: 1 })));
-    sessionRow();
+
+    database().prepare("UPDATE memory_session_checks SET up_to=0 WHERE thread_id='chat' AND driver_instance='engine' AND native_session='S'").run();
     const spy = countStatements(hydrations);
     try {
       expect(check()).toBe(false);
@@ -252,7 +256,7 @@ describe("a session's turns judge only what is new", () => {
 
   it("turn 495 does the same work as turn 100 when every turn cites one new record", () => {
     const first = newRecord();
-    receipt("F0", [{ id: first.record, version: 1 }]); sessionRow();
+    receipt("F0", [{ id: first.record, version: 1 }]);
     const spy = countStatements(hydrations);
     const work: Record<number, number> = {};
     try {
@@ -272,13 +276,11 @@ describe("a session's turns judge only what is new", () => {
 
 it.each(["revoke","delete"])("%s logs the receipt thread, rechecks its session and preserves an unrelated hold", operation => {
   const made=newRecord();
-  receipt("F1",[{id:made.record,version:1}]);sessionRow();
-  receipt("unrelated",[{id:made.record,version:1}]);
-  database().prepare("UPDATE memory_disclosures SET thread_id='older',native_session='U' WHERE bundle_id='unrelated'").run();
-  recordSessionRoots("older","engine","U",outputRootsFor(LineageAllowance.tool(1_000_000_000),[]));
-  stampFreshSession(database(),"older","engine","U");
+  receipt("F1",[{id:made.record,version:1}]);
   const registry=new InternalCapabilities();registry.begin("bot","older","g");
   const other=memoryAccess(registry,registry.resolve(`Bearer ${registry.mint({botId:"bot",threadId:"older",generation:"g",depth:0,kind:"memory",skillAuthoring:false})}`)!,()=>roster);
+  receipt("unrelated",[{id:made.record,version:1}],"delivered",other,"U");
+  database().prepare("UPDATE memory_session_checks SET up_to=0 WHERE thread_id='older' AND driver_instance='engine' AND native_session='U'").run();
   const otherCheck=()=>continuationMemoryRevoked(LineageAllowance.tool(),"older","engine","U",other);
   const spy=countStatements(continuationHydrations);
   try {

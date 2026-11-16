@@ -1,0 +1,197 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`structured bodies owner > function keyword > Full access snapshot protected=false 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; function f { touch ./notes; }",
+    "fullAccessOrigin": "owner",
+    "outsideRead": null,
+    "ownerStarted": true,
+  },
+}
+`;
+
+exports[`structured bodies owner > function keyword > Full access snapshot protected=true 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; function f { touch /etc/hosts; }",
+    "fullAccessOrigin": "owner",
+    "outsideRead": null,
+    "ownerStarted": true,
+  },
+}
+`;
+
+exports[`structured bodies owner > named coprocess > Full access snapshot protected=false 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; coproc worker { touch ./notes; }",
+    "fullAccessOrigin": "owner",
+    "outsideRead": null,
+    "ownerStarted": true,
+  },
+}
+`;
+
+exports[`structured bodies owner > named coprocess > Full access snapshot protected=true 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; coproc worker { touch /etc/hosts; }",
+    "fullAccessOrigin": "owner",
+    "outsideRead": null,
+    "ownerStarted": true,
+  },
+}
+`;
+
+exports[`structured bodies routine > function keyword > Full access snapshot protected=false 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; function f { touch ./notes; }",
+    "fullAccessOrigin": "routine",
+    "outsideRead": null,
+    "ownerStarted": false,
+    "routineLevel": true,
+  },
+}
+`;
+
+exports[`structured bodies routine > function keyword > Full access snapshot protected=true 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; function f { touch /etc/hosts; }",
+    "fullAccessOrigin": "routine",
+    "outsideRead": null,
+    "ownerStarted": false,
+    "routineLevel": true,
+  },
+}
+`;
+
+exports[`structured bodies routine > named coprocess > Full access snapshot protected=false 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; coproc worker { touch ./notes; }",
+    "fullAccessOrigin": "routine",
+    "outsideRead": null,
+    "ownerStarted": false,
+    "routineLevel": true,
+  },
+}
+`;
+
+exports[`structured bodies routine > named coprocess > Full access snapshot protected=true 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; coproc worker { touch /etc/hosts; }",
+    "fullAccessOrigin": "routine",
+    "outsideRead": null,
+    "ownerStarted": false,
+    "routineLevel": true,
+  },
+}
+`;

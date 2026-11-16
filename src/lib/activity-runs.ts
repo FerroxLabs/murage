@@ -59,7 +59,7 @@ function isQuietNote(name: string, message?: Message): boolean {
   if (message && routineRunMarker(message)) return true;
   if (message?.folderPrompt) return true;
   // DELEGATION-HOLD F5: a reply that ran without remembered context is a notice, never folded into a run Tool calls off hides
-  if (message?.memoryNote === "without-memory") return true;
+  if (message?.memoryNote === "without-memory" || message?.memoryNote === "resend") return true;
   if (name === TURN_STOPPED_NOTE || isStoppedMidDesktopAction(name)) return true;
   return Boolean(folderTrustNotice(name)) || Boolean(browserUnavailableReason(name)) || imagesLeftOutCount(name) !== undefined || Boolean(imagesNotSent(name));
 }

@@ -1,3 +1,4 @@
+import { readBrowserFailure } from './browser-choice-eligibility.ts';
 // A turn that could not bind the built-in browser runs without it. The
 // conversation says so with one activity message whose tool name carries this
 // prefix — the same convention as a host stop ("stopped:", shared/host-stop.ts)
@@ -82,5 +83,5 @@ export const BROWSER_UNAVAILABLE_SUMMARY: Record<BrowserUnavailableKind, string>
  * export, the task timeline). */
 export function browserUnavailableDisplayName(name: string | undefined | null): string | undefined {
   const reason = browserUnavailableReason(name);
-  return reason ? BROWSER_UNAVAILABLE_SUMMARY[browserUnavailableKind(reason)] : undefined;
+  return reason ? readBrowserFailure(reason)?.message ?? BROWSER_UNAVAILABLE_SUMMARY[browserUnavailableKind(reason)] : undefined;
 }

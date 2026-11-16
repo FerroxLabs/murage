@@ -1,4 +1,6 @@
 export declare const SPAWNED_PROXY_FILES: Readonly<{
+  cliMountShim: string;
+  consumingIngress: string;
   memory: string;
   panelAvatarEncoder: string;
   memoryWorker: string;
@@ -17,6 +19,7 @@ export declare const SPAWNED_PROXY_FILES: Readonly<{
   dweb: string;
   connectors: string;
   remoteMcp: string;
+  wipeMcp: string;
   phone: string;
   phoneJobs: string;
   highlevel: string;
@@ -24,6 +27,8 @@ export declare const SPAWNED_PROXY_FILES: Readonly<{
   headlessBrowser: string;
   unifiedBrowser: string;
   hostComputer: string;
+  cliMountShim: string;
   piMcpExtension: string;
   piPermissionGate: string;
 }>;
+export declare const SPAWNED_PROXY_ROLES: Readonly<Record<keyof typeof SPAWNED_PROXY_FILES, "server-relay-transport" | "server-final-ingress" | "non-consuming" | "consuming">>;

@@ -1,0 +1,94 @@
+
+ RUN  v4.1.12 /work
+
+ ❯ server/connector-reconnect-r2.test.ts (25 tests | 2 failed | 23 skipped) 171ms
+   ↓ R2 status INITIATED marks only the non-ACTIVE account
+   ↓ R2 status INITIALIZING marks only the non-ACTIVE account
+   ↓ R2 status FAILED marks only the non-ACTIVE account
+   ↓ R2 status INACTIVE marks only the non-ACTIVE account
+   ↓ R2 status EXPIRED marks only the non-ACTIVE account
+   ↓ R2 status UNKNOWN marks only the non-ACTIVE account
+   ↓ R2 broker JSON-RPC error message invalid_credentials becomes an attributed visible failure with no retry
+   ↓ R2 broker JSON-RPC error message Token has expired becomes an attributed visible failure with no retry
+   ↓ R2 broker JSON-RPC error message authentication failed becomes an attributed visible failure with no retry
+   ↓ R2 broker JSON-RPC error message invalid_auth becomes an attributed visible failure with no retry
+   ↓ R2 broker JSON-RPC error message token_revoked becomes an attributed visible failure with no retry
+   ↓ R2 broker JSON-RPC error message account is not active becomes an attributed visible failure with no retry
+   ↓ R2 successful content and permission refusals never impersonate an auth failure
+   × R2 scheduled preflight uses one safe read per account, hourly, before work; never probes unknown toolkits 130ms
+   × R2 preflight catches an ACTIVE idle lapse and stops scheduled work 29ms
+   ↓ R2 hourly probe budget survives reopening the ledger and renewal of the owner token
+   ↓ Flux contract: tool error refreshes inventory and EXPIRED identifies only its account
+   ↓ Flux contract: generic error with ACTIVE status is not a reconnect incident
+   ↓ Flux contract: project-key HTTP 401 is an outage, never a user reconnect
+   ↓ Flux contract: project-key HTTP 403 is an outage, never a user reconnect
+   ↓ Flux contract: an in-band project-key error is not mistaken for upstream account auth
+   ↓ Flux contract: preflight upstream 401 with ACTIVE status raises reconnect
+   ↓ Flux contract: preflight upstream 403 with ACTIVE status raises reconnect
+   ↓ Flux contract: a JSON error inside MCP content is still an upstream preflight failure
+   ↓ Flux contract: an unattributed multi-app tool error still refreshes account statuses
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 23 skipped (25)
+   Start at  04:26:12
+   Duration  11.75s (transform 9.04s, setup 10.24s, import 1.09s, tests 171ms, environment 0ms)
+
+stderr | server/connector-reconnect-r2.test.ts > R2 preflight catches an ACTIVE idle lapse and stops scheduled work
+connected apps: gmail needs reconnecting: HTTP 401
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 scheduled preflight uses one safe read per account, hourly, before work; never probes unknown toolkits
+AssertionError: expected [] to deeply equal ArrayContaining{…}
+
+- Expected
++ Received
+
+- ArrayContaining [
+-   {
+-     "account": "a",
+-     "arguments": {
+-       "user_id": "me",
+-     },
+-     "tool_slug": "GMAIL_GET_PROFILE",
+-   },
+-   {
+-     "account": "b",
+-     "arguments": {
+-       "user_id": "me",
+-     },
+-     "tool_slug": "GMAIL_GET_PROFILE",
+-   },
+- ]
++ []
+
+ ❯ server/connector-reconnect-r2.test.ts:68:58
+     66|   await Promise.all([call(undefined, undefined, { scheduled: true }), …
+     67|   const probes = () => calls.filter(c => String(c.id).startsWith("heal…
+     68|   expect(probes().map(c => c.params.arguments.tools[0])).toEqual(expec…
+       |                                                          ^
+     69|     { tool_slug: "GMAIL_GET_PROFILE", account: "a", arguments: { user_…
+     70|     { tool_slug: "GMAIL_GET_PROFILE", account: "b", arguments: { user_…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  server/connector-reconnect-r2.test.ts > R2 preflight catches an ACTIVE idle lapse and stops scheduled work
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ server/connector-reconnect-r2.test.ts:84:64
+     82|   failure = { result: { isError: true, content: [{ type: "text", text:…
+     83|   const reply = await call(undefined, undefined, { scheduled: true });
+     84|   expect(calls.every(c => String(c.id).startsWith("health-"))).toBe(tr…
+       |                                                                ^
+     85|   expect(calls).toHaveLength(2);
+     86|   expect(new TextDecoder().decode(reply.bytes)).toMatch(/Gmail.*Reconn…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+

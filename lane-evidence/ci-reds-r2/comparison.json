@@ -1,0 +1,43 @@
+{
+  "baselineCommit": "b45d7db77897a5ae38bc6f0356c3048998799a3d",
+  "restoredFiles": [
+    "server/channels/signal/storage.ts",
+    "server/channels/signal/service.ts",
+    "server/no-powershell-spawn.allowlist.json"
+  ],
+  "baseline": {
+    "exit": 1,
+    "failures": [
+      "server/channels/signal/transport.test.ts > Signal transport isolated fixtures > T-SPAWN-TOKEN: delayed send cannot adopt a replacement child's token (mutant: refresh token after await)",
+      "server/channels/signal/transport.test.ts > Signal transport isolated fixtures > T-SPAWN-TOKEN: real host confirms every chunk with the originating token (mutant: drop spawnToken)",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > every allowlist entry is current and carries a written reason",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > every shipped line naming PowerShell as a program is on the allowlist by its fingerprint",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > no additional direct PowerShell launch sites beyond the reviewed exceptions; the fixed probe uses execCli",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > a launch fails even when its line was put on the names-only list",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > a launch through a constant that names PowerShell fails (spawn(WINDOWS_FALLBACK_SHELL, ...))",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > a launch through cmd / start / conhost / wt arguments that include PowerShell fails",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > a new PowerShell spawn inside an already-listed file fails, as an unlisted line and as a launch",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > a second copy of the user_terminal launch, anywhere, and any change to its arguments fail",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > the real user_terminal launch passes, and is the only launch",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > the user_terminal exception does not cover the same text in another file"
+    ]
+  },
+  "current": {
+    "exit": 1,
+    "failures": [
+      "server/channels/signal/transport.test.ts > Signal transport isolated fixtures > T-SPAWN-TOKEN: delayed send cannot adopt a replacement child's token (mutant: refresh token after await)",
+      "server/channels/signal/transport.test.ts > Signal transport isolated fixtures > T-SPAWN-TOKEN: real host confirms every chunk with the originating token (mutant: drop spawnToken)",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > every allowlist entry is current and carries a written reason",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > every shipped line naming PowerShell as a program is on the allowlist by its fingerprint",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > no additional direct PowerShell launch sites beyond the reviewed exceptions; the fixed probe uses execCli",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > a launch fails even when its line was put on the names-only list",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > a launch through a constant that names PowerShell fails (spawn(WINDOWS_FALLBACK_SHELL, ...))",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > a launch through cmd / start / conhost / wt arguments that include PowerShell fails",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > a new PowerShell spawn inside an already-listed file fails, as an unlisted line and as a launch",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > a second copy of the user_terminal launch, anywhere, and any change to its arguments fail",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > the real user_terminal launch passes, and is the only launch",
+      "server/no-powershell-spawn.test.ts > no app-spawned PowerShell > the guard itself > the user_terminal exception does not cover the same text in another file"
+    ]
+  },
+  "conclusion": "Identical 12 failing test names before and after the Signal array fix. All temporary source changes restored."
+}

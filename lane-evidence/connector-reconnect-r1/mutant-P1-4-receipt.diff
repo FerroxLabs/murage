@@ -1,0 +1,11 @@
+--- a/electron/attention-main.mjs
++++ b/electron/attention-main.mjs
+@@ -210,7 +210,7 @@
+   }
+   function connectorFailed(record, words) {
+     if (record.kind !== "connector-reconnect") return false;
+-    deps.connectorReceipts?.failed?.(record.home, record.deliveryId);
++    /* mutant: keep the failed delivery receipt */
+     closeHandle(record);
+     // Keep only the connector retry in this record. Approval and card routing
+     // retain their existing rules. The persisted attempt count also fences restarts.

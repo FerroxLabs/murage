@@ -333,7 +333,7 @@ const disk = (files: Record<string, DiskProbe["kind"]>, extra: { real?: Record<s
 /** Every script operand exists as a regular file; no startup or config file exists anywhere. */
 const scripts: OutsideScanHooks = {
   cwd: "/w", home: "/h", lookupProgram: () => null,
-  probe: (p) => (CONFIG_NAMES.test(p.slice(p.lastIndexOf("/") + 1)) ? null : { kind: "file", real: p, fresh: false, zip: false }),
+  probe: (p) => (CONFIG_NAMES.test(p.slice(Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\")) + 1)) ? null : { kind: "file", real: p, fresh: false, zip: false }),
 };
 
 describe("H6 allowlist: an interpreter runs unmarked only as `<interp> <script> [operands]`", () => {

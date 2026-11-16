@@ -12,7 +12,8 @@ import { teamIdFor } from "./team-identities.ts";
 import { learningDestination, partitionOfScope, partitionOfScopeKey, partitionRoots } from "./execution-audience.ts";
 import { ensureWorkspace, loadMemory, readMemoryTopic, selectFileWorkspace } from "./workspace.ts";
 import { standingContextParts } from "./standing-context.ts";
-import { backgroundMemoryAudience, backgroundMemoryScopes, ensureScope, memoryAccess, reconcileMemoryRoster } from "./memory/policy.ts";
+import { backgroundMemoryAudience, backgroundMemoryScopes, ensureScope, reconcileMemoryRoster } from "./memory/policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "./testing/recall-access-fixture.ts";
 import { threadCaptureScope } from "./memory/capture-scope.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
@@ -87,13 +88,21 @@ it("recall payloads and bundles reject home canaries even when the search bridge
   const registry = new InternalCapabilities(); registry.begin(f.iris.id, f.work.threadId, "generation");
   const token = registry.mint({ botId: f.iris.id, threadId: f.work.threadId, generation: "generation", depth: 0, kind: "memory", skillAuthoring: false });
   const access = memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => f.store);
-  const bridge = { async search(input: { scopeIds: string[] }) {
-    expect(input.scopeIds).toEqual(expect.arrayContaining([f.scopes.sales, f.scopes.own, f.scopes.general]));
-    for (const scope of [f.scopes.home, f.scopes.other, f.scopes.room]) expect(input.scopeIds).not.toContain(scope);
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild)
+  let bridgeReads = 0;
+  const bridge = { async search(input: { view?: typeof access.view; reader?: { botId: string; threadId: string } }) {
+    bridgeReads++;
+    expect(input.view).toEqual(access.view);
+    expect(input.reader).toMatchObject({ botId: f.iris.id, threadId: f.work.threadId });
+    const scopes = database().prepare('SELECT scope_id FROM memory_recall_view_scopes WHERE view_id=? AND generation=? AND lineage_only=0').all(input.view!.viewId, input.view!.generation).map(row => String(row.scope_id));
+    expect(scopes).toEqual(expect.arrayContaining([f.scopes.sales, f.scopes.own, f.scopes.general]));
+    for (const scope of [f.scopes.home, f.scopes.other, f.scopes.room]) expect(scopes).not.toContain(scope);
     return { hits: ids.map(id => ({ id, version: 1, score: 1, lexical: true })), vectorRows: 0, coverageComplete: false };
   } };
   await expect(searchMemory("CANARY", access, bridge, {allowance: LineageAllowance.tool(1_000_000_000)})).rejects.toThrow("MEMORY_SCOPE_DENIED");
+  expect(bridgeReads).toBe(1);
   expect((await buildMemoryBundle("CANARY", access, bridge, {allowance: LineageAllowance.tool()})).text).not.toContain("CANARY_DESIGN_NOTE");
+  expect(bridgeReads).toBe(2);
 });
 it("selected managed roots and bookkeeping never include the home folder on Sales work", () => {
   const f = fixture(); f.work.cwd = join(DATA_DIR, "workspaces", f.iris.id, "threads", f.work.threadId);

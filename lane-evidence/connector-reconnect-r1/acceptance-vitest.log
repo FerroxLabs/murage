@@ -1,0 +1,175 @@
+
+ RUN  v4.1.12 /work
+
+stderr | server/composio-flux-broker.test.ts > which broker a data call uses > falls back to the Worker when FluxRouter is not reachable
+connected apps: unreachable (readiness probe): HTTP 503
+
+stderr | server/composio-flux-broker.test.ts > which broker a data call uses > has no broker left once the Worker cut-off has passed
+connected apps: unreachable (readiness probe): HTTP 503
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > keeps a FluxRouter 402 or 429 as itself, so the model and the panel see the real reason
+connected apps: managed inventory status check failed: HTTP 402 no
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > keeps a FluxRouter 402 or 429 as itself, so the model and the panel see the real reason
+connected apps: managed inventory status check failed: HTTP 429 no
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > keeps a FluxRouter 402 or 429 as itself, so the model and the panel see the real reason
+connected apps: managed inventory status check failed: HTTP 500 boom
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > stops trusting FluxRouter's readiness when it answers 404 or 503
+connected apps: unreachable (panel): HTTP 404
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > stops trusting FluxRouter's readiness when it answers 404 or 503
+connected apps: managed inventory status check failed: HTTP 404 not found
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > asks the desktop for a new token when FluxRouter revokes the one it has
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > asks the desktop for a new token when FluxRouter revokes the one it has
+connected apps: managed inventory status check failed: HTTP 401 gone
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > tells the desktop when another device's mint pushed this token out
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > tells the desktop when another device's mint pushed this token out
+connected apps: managed inventory status check failed: HTTP 401 gone
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > sends any other 401 (a code nobody has seen) to the desktop too, so apps never stay dead until expiry
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > sends any other 401 (a code nobody has seen) to the desktop too, so apps never stay dead until expiry
+connected apps: managed inventory status check failed: HTTP 401 gone
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > sends any other 401 (no code at all) to the desktop too, so apps never stay dead until expiry
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > sends any other 401 (no code at all) to the desktop too, so apps never stay dead until expiry
+connected apps: managed inventory status check failed: HTTP 401 unauthorized
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > sends any other 401 (a plain expiry) to the desktop too, so apps never stay dead until expiry
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > sends any other 401 (a plain expiry) to the desktop too, so apps never stay dead until expiry
+connected apps: managed inventory status check failed: HTTP 401 expired
+
+stderr | server/composio-flux-broker.test.ts > what a broker request carries > recognises an install whose apps somebody else moved
+connected apps: managed inventory status check failed: HTTP 410 moved
+
+stderr | server/composio-flux-broker.test.ts > the FluxRouter readiness probe > a turn re-checks a broker that failed one probe, so connected apps come back without a restart
+connected apps: unreachable (readiness probe): HTTP 503
+
+stderr | server/composio-flux-broker.test.ts > the FluxRouter readiness probe > re-probes an unhealthy answer after twenty seconds, not five minutes
+connected apps: unreachable (readiness probe): HTTP 503
+
+stderr | server/composio-flux-broker.test.ts > the FluxRouter readiness probe > treats a 200 that does not say ready as not ready
+connected apps: unreachable (readiness probe): HTTP 200 health not ready
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > mints from the stored Flux key, keeps the token owner-only on disk, and uses it for data calls
+[composio] FluxRouter connected-apps token ready
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-uses the stored token after a restart instead of minting again
+[composio] FluxRouter connected-apps token ready
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > has nothing to mint from without a stored key, and drops the token when the key goes
+[composio] FluxRouter connected-apps token ready
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-mints under a changed key and revokes the token the old key minted
+[composio] FluxRouter connected-apps token ready
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-mints under a changed key and revokes the token the old key minted
+[composio] FluxRouter connected-apps token ready
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > shows the panel why FluxRouter declined, and does not re-present a declined key on every route
+[composio] FluxRouter declined a connected-apps token (flux_key_budget_exhausted)
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-mints once FluxRouter says the token it holds was revoked
+[composio] FluxRouter connected-apps token ready
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-mints once FluxRouter says the token it holds was revoked
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-mints once FluxRouter says the token it holds was revoked
+connected apps: managed inventory status check failed: HTTP 401 gone
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > re-mints once FluxRouter says the token it holds was revoked
+[composio] FluxRouter connected-apps token ready
+
+stderr | server/composio-flux-broker.test.ts > the dev harness mints its own FluxRouter token > never makes a turn wait on a mint another request already started
+[composio] FluxRouter connected-apps token ready
+
+stderr | server/composio-flux-broker.test.ts > when the Murage Worker retires or hits its daily cap > learns the same retirement from a panel request
+connected apps: managed inventory status check failed: HTTP 410 service ended
+
+ ✓ server/composio-flux-broker.test.ts (54 tests) 3229ms
+       ✓ is bounded by the cap when the probe never answers in time  1505ms
+     ✓ is still bounded when the broker never answers in time  405ms
+ ✓ server/route-policy.test.ts (45 tests) 11079ms
+     ✓ (a) every discovered route has exactly one class, and every entry is a route  3290ms
+     ✓ (C5) a bare loopback request gets the unknown-route 404 on every conversation-class route  2452ms
+     ✓ every renderer fetch of a desktop route carries the desktop's proof  2603ms
+     ✓ the hidden-bot rule covers every non-desktop route on one bot or room  2564ms
+ ✓ server/mobile-push-outbox.test.ts (47 tests) 363ms
+ ✓ server/connected-app-health.test.ts (26 tests) 593ms
+stderr | server/composio-inventory-cache.test.ts > review round 1: the cache's edges > F8: a Flux outage does not flip the owner to the Worker identity and lose the list
+connected apps: unreachable (readiness probe): HTTP 503
+
+stderr | server/composio-inventory-cache.test.ts > review round 2 (N3): a 401 does not wipe what is remembered > keeps the last known list, marked stale, and its file, when the token is rejected
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-inventory-cache.test.ts > review round 2 (N3): a 401 does not wipe what is remembered > keeps the last known list, marked stale, and its file, when the token is rejected
+connected apps: managed inventory status check failed: HTTP 401
+
+stderr | server/composio-inventory-cache.test.ts > review round 2 (N3): a 401 does not wipe what is remembered > carries the list across the re-mint that follows a 401 (same install), still refetching
+connected apps: unreachable (panel): HTTP 401 token rejected
+
+stderr | server/composio-inventory-cache.test.ts > review round 2 (N3): a 401 does not wipe what is remembered > carries the list across the re-mint that follows a 401 (same install), still refetching
+connected apps: managed inventory status check failed: HTTP 401
+
+ ✓ server/composio-inventory-cache.test.ts (37 tests) 4038ms
+     ✓ the bot access card: a remembered list is served at once, then the background refresh updates it  310ms
+     ✓ waits for a Retry (force) but never longer than its budget  3008ms
+ ✓ server/mobile-push-routes.test.ts (26 tests) 150ms
+ ✓ src/lib/notify.test.ts (24 tests) 45ms
+ ✓ server/mobile-push-detail.test.ts (28 tests) 39ms
+stderr | server/composio-recovery.test.ts > readiness heals itself > re-checks a not-ready answer after the negative TTL even when nothing primes
+connected apps: unreachable (readiness probe): TypeError
+
+stderr | server/composio-recovery.test.ts > readiness heals itself > does not re-probe inside the negative TTL
+connected apps: unreachable (readiness probe): TypeError
+
+stderr | server/composio-recovery.test.ts > one failed call does not poison the rest of a turn > answers the next tool call after one 503
+connected apps: unreachable (tool call): HTTP 503
+
+stderr | server/composio-recovery.test.ts > one failed call does not poison the rest of a turn > answers the next tool call after one 404 that carried no session
+connected apps: unreachable (tool call): HTTP 404
+
+stderr | server/composio-recovery.test.ts > one failed call does not poison the rest of a turn > says the apps are briefly unreachable, in plain words, after a 503
+connected apps: unreachable (tool call): HTTP 503
+
+stderr | server/composio-recovery.test.ts > the prompt and the error tell an outage from 'not set up' > says unreachable, never 'not set up', when a token exists and the broker is down
+connected apps: unreachable (readiness probe): TypeError
+
+stderr | server/composio-recovery.test.ts > the whole drop and recovery, with no restart and no user action > recovers connected apps by itself after the network drops and comes back
+connected apps: unreachable (readiness probe): TypeError
+
+ ✓ server/composio-recovery.test.ts (9 tests) 123ms
+ ✓ server/connector-health-workflow.test.ts (1 test) 33517ms
+   ✓ an idle fixture discovers a lapse, retains it through restart and missing inventory, then clears verified recovery  33509ms
+ ✓ server/tray-summary.test.ts (14 tests) 29ms
+ ✓ server/notification-preferences.test.ts (11 tests) 34ms
+ ✓ server/connector-health-scheduled-workflow.test.ts (1 test) 117133ms
+   ✓ P2-6 scheduled Buffer work fails visibly while lapsed and safely continues after reconnect  117126ms
+ ✓ src/lib/deep-link.test.ts (17 tests) 39ms
+stderr | server/composio-identity.test.ts > late catalogue completion cannot replace newer backend inventory
+[connectors] app catalog: showing featured apps (identity) after 0 apps
+
+ ✓ server/composio-identity.test.ts (5 tests) 215ms
+ ✓ server/notify.test.ts (10 tests) 25ms
+ ✓ server/connector-health-store.test.ts (4 tests) 76ms
+ ✓ src/components/ReconnectAppsBanner.test.ts (9 tests) 37ms
+
+ Test Files  18 passed (18)
+      Tests  368 passed (368)
+   Start at  03:23:34
+   Duration  217.27s (transform 12.84s, setup 36.38s, import 6.08s, tests 170.77s, environment 3ms)
+

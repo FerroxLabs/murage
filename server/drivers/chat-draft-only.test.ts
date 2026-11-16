@@ -1,3 +1,4 @@
+// control: legacy cases retain their original assertions unless individually labelled red-at-4df086541 below.
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
@@ -9,7 +10,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { SendTurnInput } from "../contracts.ts";
 import { decorateDraftOnlyInstance } from "../harness/draft-only-adapter.ts";
 import { recordEvents } from "../testing/events.ts";
-import { OpenAICompatDriver } from "./openai-compat.ts";
+import { OpenAICompatDriver as rawDriver } from "./openai-compat.ts";
+import { bindOpenAIFixture } from "../testing/bound-openai-fixture.ts";
+const OpenAICompatDriver = { ...rawDriver, create: async (...args: Parameters<typeof rawDriver.create>) => bindOpenAIFixture(await rawDriver.create(...args)) };
+import { fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
 
 const MOUNTS = {
   composio: { command: "node", args: ["connector"], env: {} },
@@ -31,7 +35,8 @@ describe("a draft-only turn on openai-compat", () => {
     const instance = decorateDraftOnlyInstance(live);
     const recorder = recordEvents(instance.adapter);
     try {
-      await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-chat-draft", text: "draft a reply to ticket 812", model: "vendor/model", draftOnly: true, integrations: MOUNTS, system: "You are Sorrel." });
+      // control: the real decorator removes all mounts before bound chat admission.
+      await instance.adapter.sendTurn(fixtureMountTurn({ cwd: fixtureBotFolder(), threadId: "t-chat-draft", text: "draft a reply to ticket 812", model: "vendor/model", draftOnly: true, integrations: MOUNTS, system: "You are Sorrel." }));
       expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
       expect(bodies).toHaveLength(1);
       const body = bodies[0]!;

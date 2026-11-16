@@ -44,76 +44,54 @@ import { executableTarget, verifySha256 } from "./prepare-cloudflared.mjs";
 import { FUIGO_EXECUTABLE_NAMES } from "../electron/harness-resources.mjs";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
-export const FUIGO_VERSION = "1.0.40";
+export const FUIGO_VERSION = "1.0.43";
 export const FUIGO_REGISTRY = "https://registry.npmjs.org";
 
 // Pinned to an exact version — never a floating range for a shipped binary.
 // `tarballSha256` covers the published npm tarball; `binarySha256` covers the
 // brotli-decompressed executable that actually ships.
 //
-// Provenance for 1.0.40: official fuigo and all six @fuigo platform
-// metadata records report gitHead 28e8e198558e199896fd04a7ca164d92d9406d49.
-// Each registry archive was downloaded and verified against its published
-// SHA-512 integrity and SHA-1 shasum, then SHA-256 hashed. The matching
-// package/bin executable was Brotli-decompressed without install scripts,
-// SHA-256 hashed and its Mach-O/ELF/PE machine header independently checked.
-// Each executable digest also matches the FerroxLabs/fuigo v1.0.40 GitHub
-// release SHA256SUMS (tag commit 28e8e198558e199896fd04a7ca164d92d9406d49).
-// See fuigo-1.0.40-provenance.json for the exact source and registry receipts.
-// All six declared platform packages are pinned; the existing Linux/Windows
-// arm64 staging refusals below remain in force. Cross-target byte/header
-// verification is not native execution qualification on those platforms.
+// Pin preparation uses a sentinel that is deliberately not a digest:
+// packaging fails closed until scripts/fill-fuigo-pin.sh verifies the release.
+// Source marker for fuigo-bump.mjs: report gitHead 48d6f8e3c862c1a63043b44eb83a3615f0c3b8b8.
+// See fuigo-1.0.43-provenance.json; older release receipts remain historical.
 export const FUIGO_ASSETS = Object.freeze({
   "darwin-arm64": Object.freeze({
     package: "@fuigo/darwin-arm64",
-    tarballSha256: "0240936620b533ba7b73f24bff6e057f1e528f6f0d577689edf7ba10fa0a9df8",
-    binarySha256: "2955034fe0fd8dcd3520815e030b589183f54995e15f9c84de4a7f92c1ec031c",
+    tarballSha256: "820b41761792ecd4e706318339fc756ba11c0b9827c29a6839a662d39211b480",
+    binarySha256: "b5ea4aecd27b0e913026086e5ab5cac103c8fbfbb9ca26c24ce6117e19620091",
   }),
   "darwin-x64": Object.freeze({
     package: "@fuigo/darwin-x64",
-    tarballSha256: "4a161ec5baf43597a7e2ab135a0bcd37e50130ab22de5813b6b329a4211979c0",
-    binarySha256: "831c99f876656f2d9ec0578d0fb6942e0ecbf9f6c7e5c1fcc8452269c9b7060e",
+    tarballSha256: "f6542623d00d16fd0800abba7a5e70a2e924f69a8008bfa558257c0ef8ff6f85",
+    binarySha256: "3dbdcd2d99a65889524b6b77295b4f2a87d9cfd5db50b66fd421fa4f5cc80e4a",
   }),
   "linux-arm64": Object.freeze({
     package: "@fuigo/linux-arm64",
-    tarballSha256: "65d450da8c5d4aa15e67ff98332e5a32a02e31b36f76f92662668dd4a54325fb",
-    binarySha256: "1d3dc91951300f6fc41d562b035a753b4aaf583b63f6986166ddda710861a3d0",
+    tarballSha256: "fb28ae482cb11b0899d8200a7133857526473d583a24d79e96443099ef901139",
+    binarySha256: "1f83ffb549ab08e9668841e3d1aec0a70335187a6340687a2a3872353cffafae",
   }),
   "linux-x64": Object.freeze({
     package: "@fuigo/linux-x64",
-    tarballSha256: "b904e88ce22ddd55508e207ea0c5bb135ac1fb8efc8d17201330ff9b5def17a0",
-    binarySha256: "420798b0c18abd475513a51914fb85663086676037356c1d35477c9f1e97c6fd",
+    tarballSha256: "3d0d0932ed82e9ca497fb504f2aa87f2a9caa08f387277257d27772064497eb5",
+    binarySha256: "d62ea93bc75ed09693e1b085b320c5656bd96429511d5d2f494886ca909861a1",
   }),
-  // The old note here said fuigo-win32-arm64 was declared but unpublished.
-  // That is no longer true: under the scope, @fuigo/win32-arm64@1.0.40 publishes
-  // and resolves normally, re-checked against the live registry at this bump.
-  // The remaining obstacle is on our side, not upstream — see
-  // UNSTAGEABLE_TARGETS.
+  // Retained for the upstream package inventory; see UNSTAGEABLE_TARGETS.
   "win32-arm64": Object.freeze({
     package: "@fuigo/win32-arm64",
-    tarballSha256: "092d69704bc5f21d72b8d9907b1fed5a8b88883a99eba31e08034a0f586e2cc3",
-    binarySha256: "b486fa43eb0ef54c9020707cce14358426e027e8d95102ddf444f3ae0d072878",
+    tarballSha256: "01883dbb7a504ecf268746a6651f6b0c62294d61123627486b2dadc7611000ea",
+    binarySha256: "9e01826db39082ee3d9dccd024563beef49eaaff0663ff288be6053de28dfc0e",
   }),
   "win32-x64": Object.freeze({
     package: "@fuigo/win32-x64",
-    tarballSha256: "8e979957d45acfc65f8de204cf2def366abfef34f4be07f6711dbd88176c68d6",
-    binarySha256: "8e976d0c8f0c63598a33f3330b627f556ad448daac986a8a7b83500fc62545ed",
+    tarballSha256: "329627e2f0503a09dd661b66de189dc805c45409d5f2cc3b70aee1d1b21272f0",
+    binarySha256: "f837e817a71acce83d17542a84ad9e9fc5d8215e995ff45ae9c0ccd0b215bfdd",
   }),
 });
 
-// Pinned and digest-reviewed above, but NOT stageable yet. verifyPinnedBinary()
-// parses the real executable header through the shared executableTarget() in
-// prepare-cloudflared.mjs, and that parser classifies only ELF x86-64
-// (e_machine 0x3e) and PE AMD64 (0x8664). The published 1.0.40 arm64 engines are
-// ELF aarch64 (0xb7) and PE ARM64 (0xaa64) — read off the real downloaded bytes
-// at this bump — so staging either one
-// would download ~35-50MB, pass the tarball
-// digest, then die inside a cloudflared-worded "unsupported executable format"
-// before the binary digest was ever compared. Refuse up front instead.
-//
-// The refusal lives here rather than in a second header parser on purpose: one
-// parser is exactly why executableTarget is imported. Teaching it those two
-// machine values deletes this set and nothing else.
+// Pinned above, but NOT stageable yet: the shared executableTarget() parser
+// cannot classify PE ARM64 (0xaa64). Refuse before downloading an archive that
+// would pass its digest but fail header verification. Linux aarch64 is supported.
 const UNSTAGEABLE_TARGETS = Object.freeze(new Set(["win32-arm64"]));
 
 /** A target must be both pinned and classifiable by the shared header parser
@@ -143,8 +121,8 @@ function vendorEntry(target) {
 
 /** npm names a scoped package's tarball after the UNSCOPED half of the name:
  * `@fuigo/darwin-arm64` publishes at
- * `@fuigo/darwin-arm64/-/darwin-arm64-1.0.40.tgz`. Building the basename from
- * the full package id would request `@fuigo/darwin-arm64-1.0.40.tgz`, which
+ * `@fuigo/darwin-arm64/-/darwin-arm64-1.0.43.tgz`. Building the basename from
+ * the full package id would request `@fuigo/darwin-arm64-1.0.43.tgz`, which
  * 404s, and would also push a `/` into the MURAGE_FUIGO_ARCHIVE_DIR cache
  * path. */
 function unscopedPackageName(packageName) {
@@ -163,6 +141,14 @@ export function tarballUrl(target) {
   return `${FUIGO_REGISTRY}/${asset.package}/-/${tarballName(target)}`;
 }
 
+/** Both sources serve the same release tarball bytes and share one SHA-256 pin. */
+export function tarballUrls(target) {
+  return [
+    tarballUrl(target),
+    `https://github.com/FerroxLabs/fuigo/releases/download/v${FUIGO_VERSION}/fuigo-${tarballName(target)}`,
+  ];
+}
+
 /** Every target the desktop build for `platform` packages. This deliberately
  * covers LESS than FUIGO_ASSETS: electron-builder.yml builds macOS at arm64 and
  * x64, but Windows (nsis + zip) and Linux (AppImage + deb) at x64 only. The two
@@ -177,13 +163,7 @@ export function targetsForHost(platform) {
 
 export function targetForCurrentHost(platform = process.platform, arch = process.arch) {
   const target = `${platform}-${arch}`;
-  // Windows and Linux arm64 hosts stay refused even now that both engines are
-  // pinned, because staging on them cannot succeed: the shared header parser
-  // rejects ELF aarch64 and PE ARM64 (see UNSTAGEABLE_TARGETS). Refusing at
-  // argument time is a clear "unsupported"; allowing it would swap that for a
-  // long download ending in a misleading cloudflared error. The day
-  // executableTarget learns those two machine values, this stops refusing on
-  // its own with no edit here.
+  // Windows arm64 remains refused until the shared header parser supports it.
   if (!Object.hasOwn(FUIGO_ASSETS, target) || UNSTAGEABLE_TARGETS.has(target)) {
     throw new Error(`Fuigo development is unsupported on ${target}`);
   }
@@ -251,6 +231,13 @@ export function verifyPinnedBinary(value, target) {
   return verifySha256(value, asset.binarySha256, `${target} fuigo executable`);
 }
 
+export function assertFuigoPinReady(target) {
+  const asset = FUIGO_ASSETS[target];
+  if (!asset || ![asset.tarballSha256, asset.binarySha256].every(value => /^[a-f0-9]{64}$/.test(value))) {
+    throw new Error(`fuigo ${target}: FILL\x2dAT-NPM; run scripts/fill-fuigo-pin.sh after publication`);
+  }
+}
+
 function targetRunsOnHost(target, platform = process.platform, arch = process.arch) {
   return target === `${platform}-${arch}`;
 }
@@ -305,15 +292,33 @@ function extractionFailure(result) {
   return result.error?.message ?? String(result.stderr || result.stdout || `exit status ${result.status}`).trim();
 }
 
-async function registryBytes(target) {
-  const cacheDirectory = process.env.MURAGE_FUIGO_ARCHIVE_DIR;
-  const cached = cacheDirectory ? join(cacheDirectory, tarballName(target)) : "";
-  if (cached && existsSync(cached)) return readFileSync(cached);
+export async function registryBytes(target, {
+  fetcher = fetch,
+  archiveDirectory = process.env.MURAGE_FUIGO_ARCHIVE_DIR,
+} = {}) {
+  assertStageable(target);
+  const cached = archiveDirectory ? join(archiveDirectory, tarballName(target)) : "";
+  const verified = (bytes) => {
+    verifySha256(bytes, FUIGO_ASSETS[target].tarballSha256, tarballName(target));
+    return bytes;
+  };
+  if (cached && existsSync(cached)) return verified(readFileSync(cached));
 
-  const url = tarballUrl(target);
-  const response = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(300_000) });
-  if (!response.ok) throw new Error(`could not download ${tarballName(target)}: HTTP ${response.status}`);
-  return Buffer.from(await response.arrayBuffer());
+  const failures = [];
+  for (const url of tarballUrls(target)) {
+    let bytes;
+    try {
+      const response = await fetcher(url, { redirect: "follow", signal: AbortSignal.timeout(300_000) });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      bytes = Buffer.from(await response.arrayBuffer());
+    } catch (error) {
+      failures.push(`${url}: ${error.message}`);
+      continue;
+    }
+    // Only transport failures try the next source. Corrupt bytes fail closed.
+    return verified(bytes);
+  }
+  throw new Error(`could not download ${tarballName(target)}: ${failures.join("; ")}`);
 }
 
 export function stagedDirectory(root, target) {
@@ -339,8 +344,7 @@ export function finalizeTargetDirectory(staging, finalDirectory, target) {
 
 async function stageTarget(root, target) {
   assertStageable(target);
-  const asset = FUIGO_ASSETS[target];
-
+  assertFuigoPinReady(target);
   const finalDirectory = stagedDirectory(root, target);
   const executable = fuigoExecutableName(target);
   const binary = join(finalDirectory, executable);
@@ -354,7 +358,6 @@ async function stageTarget(root, target) {
   const scratch = mkdtempSync(join(tmpdir(), `murage-fuigo-${target}-`));
   try {
     const payload = await registryBytes(target);
-    verifySha256(payload, asset.tarballSha256, tarballName(target));
 
     const archive = join(scratch, basename(tarballName(target)));
     writeFileSync(archive, payload, { mode: 0o600 });

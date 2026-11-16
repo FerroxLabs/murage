@@ -1,3 +1,4 @@
+import { openFixtureApproval } from '../testing/approval-card.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -32,7 +33,7 @@ function thread(db: DatabaseSync, id: string, rows: number, cardAt: number[]) {
   for (let i = 1; i <= rows; i++) {
     const card = cardAt.includes(i);
     const message = { id: `${id}-${i}`, at: i, role: "bot", kind: card ? "options" : "text", text: "t", turnId: `${id}-turn-${Math.ceil(i / 10)}`, ...(card ? { card: { requestId: `req-${i}`, options: [] } } : {}) };
-    put.run(id, message.id, i, "bot", message.kind, "t", JSON.stringify(message));
+    put.run(id, message.id, i, "bot", message.kind, "t", JSON.stringify(openFixtureApproval(db, id, message)));
   }
   db.exec("COMMIT");
 }

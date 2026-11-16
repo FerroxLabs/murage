@@ -1,3 +1,5 @@
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
+import { startLiveSession } from './testing/live-session-fixture.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -14,14 +16,15 @@ import { beforeEach, expect, it } from "vitest";
 import { afterEach as thawAfterEach, beforeEach as thawBeforeEach } from "vitest";
 import { thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { DATA_DIR } from "../config.ts";
-import { closeDatabase, database } from "../database.ts";
+import { closeDatabase, database, transaction } from "../database.ts";
 import { stopWalMaintenance } from "../wal-maintenance.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { Store } from "../store.ts";
 import { captureWork } from "./chunks.ts";
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { refreshMemoryCheckpoint } from "./consolidate.ts";
-import { memoryAccess, type MemoryRoster } from "./policy.ts";
+import { type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { buildMemoryBundle } from "./bundle.ts";
 import { MemoryDispatchReceipt } from "./dispatch.ts";
@@ -33,7 +36,6 @@ import { ownerMemoryTicket } from "./authority.ts";
 import { forgetMemory } from "./forget.ts";
 import { drainRevokeMarker } from "./memory-revocation.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
-import { markSessionKnown } from "./testing/legacy-file-model.ts";
 import { isMurageVoice } from "../murage-voice.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { windowsPerfBudget } from "../testing/windows-hosted.ts";
@@ -106,9 +108,10 @@ function world(engine = "claude", { long = false }: { long?: boolean } = {}) {
     filterDirectReplay(allowance, threadId, store.activePath(threadId) as never, a, new Set());
     const bundle = await buildMemoryBundle(`item ${n}`, a, long ? recallLatestReplies(threadId) : bridge, {allowance: allowance});
     const receipt = new MemoryDispatchReceipt(bundle, a, engine);
-    receipt.sessionStarted(session); receipt.accepted();
+    const confirmation = startLiveSession(a, engine, session);
+    receipt.sessionStarted(session, Boolean(confirmation), confirmation); receipt.accepted();
     // index.ts writes the session's lineage row when the session starts or resumes (write-time privacy, DESIGN-WRITETIME 2.7)
-    markSessionKnown(threadId, engine, session, bot.id);
+
     const reply = store.appendMessage(threadId, { role: "bot", kind: "text", text: "", turnId: `t${n}`, from: { botId: bot.id, name: "Sable", color: "x" } } as never);
     receipt.output(reply.id);
     store.patchMessage(threadId, reply.id, { text: `Item ${n} is a blue widget with ${n} parts.` } as never);
@@ -189,10 +192,14 @@ it("the replay a reset turn carries on a long thread is bounded and quick to ass
   const insert = database().prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,0,'delivered',?)");
   // 1.0.2: the lines are stored (the write-time layer judges stored lines; a line it never saw reads "checking" and is withheld)
   const stored: Array<{ id: string; role: string; kind: string; text: string }> = [];
-  for (let turn = 0; turn < 3_000; turn++) {
-    stored.push(store.appendMessage(bot.threadId, { role: "user", kind: "text", text: `owner ${turn} ${filler}`, origin: "desktop" } as never) as never,
-      store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: `sable ${turn} ${filler}`, turnId: `t${turn}`, from: { botId: bot.id, name: "Sable", color: "x" } } as never) as never);
-  }
+  // Setup is outside the replay timer. Preserve all 6,000 real writer rows
+  // without a synchronous commit burst exceeding 5d5a791f19's WAL ceiling.
+  transaction(() => {
+    for (let turn = 0; turn < 3_000; turn++) {
+      stored.push(store.appendMessage(bot.threadId, { role: "user", kind: "text", text: `owner ${turn} ${filler}`, origin: "desktop" } as never) as never,
+        store.appendMessage(bot.threadId, { role: "bot", kind: "text", text: `sable ${turn} ${filler}`, turnId: `t${turn}`, from: { botId: bot.id, name: "Sable", color: "x" } } as never) as never);
+    }
+  });
   database().exec("BEGIN");
   for (let turn = 0; turn < 3_000; turn++) {
     messages.push(stored[2 * turn], stored[2 * turn + 1]);

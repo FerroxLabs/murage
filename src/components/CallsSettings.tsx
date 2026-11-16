@@ -80,15 +80,15 @@ export function CallsSettings() {
   const nameOf = (botId: string) => state.bots.find((b) => b.id === botId)?.name ?? "Your bot";
 
   return (
-    <section aria-labelledby="calls-settings-title" className="rounded-xl border border-hairline/40 bg-card p-4">
-      <h3 id="calls-settings-title" className="text-[15px] font-medium text-ink">Calls</h3>
+    <section aria-labelledby="calls-card-title" className="rounded-xl border border-hairline/40 bg-card p-4">
+      <h3 id="calls-card-title" className="text-[15px] font-medium text-ink">Calls</h3>
       <div className="mt-3 flex min-h-11 items-start justify-between gap-3 py-1.5 text-[13px] text-ink">
         <span id="calls-off-today">{BOT_CALL_WORDS.offToday}
           <span className="mt-0.5 block text-[11px] leading-relaxed text-ink-secondary">
             {off ? BOT_CALL_WORDS.offTodayOn(clock(offUntil!)) : BOT_CALL_WORDS.offTodayHelp}
           </span>
         </span>
-        <Switch aria-labelledby="calls-off-today" checked={off} disabled={!loaded || saving} onClick={() => void toggle()} className={focus} />
+        <Switch data-setting-control="calls-settings-title" aria-labelledby="calls-off-today" checked={off} disabled={!loaded || saving} onClick={() => void toggle()} className={focus} />
       </div>
       {error && <p role="alert" className="mt-1 text-[12px] text-danger">{error}</p>}
       <h4 className="mt-4 text-[13px] font-medium text-ink">{BOT_CALL_WORDS.history}</h4>

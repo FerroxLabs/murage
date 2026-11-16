@@ -8,12 +8,14 @@ import { expect, it } from "vitest";
 import { launchDispositions } from "./testing/launch-dispositions.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
-const scan = (root = resolve(".")) => execFileSync("bash", [resolve("scripts/marks-launch-sites.sh"), root], { encoding: "utf8" }).trim().split("\n").filter(Boolean);
+const scan = (root = resolve(".")) => execFileSync("bash", [resolve("scripts/marks-launch-sites.sh"), root], { windowsHide: true, encoding: "utf8" }).trim().split("\n").filter(Boolean);
 const turnFiles = ["drivers/cli-memory-learning.ts", "drivers/acp/cline.ts", "drivers/acp/cursor.ts", "drivers/acp/custom.ts", "drivers/acp/droid.ts", "drivers/acp/fuigo.ts", "drivers/acp/gemini.ts", "drivers/acp/grok.ts", "drivers/acp/hermes.ts", "drivers/acp/kimi.ts", "drivers/acp/openclaw.ts", "drivers/acp/opencode-go.ts", "drivers/acp/qwen.ts", "drivers/claude.ts", "drivers/codex.ts", "drivers/acp/core.ts", "drivers/antigravity.ts", "drivers/pi.ts", "drivers/headless-text-only.ts", "procs.ts", "host-power.ts", "drivers/chat-mcp-client.ts", "drivers/openai-chat.ts"];
 it("R16-a every scanned file has exactly one disposition and every row has a file", () => {
   const files = scan();
   expect(launchDispositions.map(row => row.file).sort()).toEqual(files);
   expect(new Set(launchDispositions.map(row => row.file)).size).toBe(launchDispositions.length);
+  // MAIN RULING INT-CONFLICT-DEFAULT 41c3557cf2 2ab73f35bd: security execution moved to its runner; tool-list fixtures use the shared launch helper. Retired direct sites stay absent.
+  for (const retired of ["server/channels/signal/storage.ts", "server/testing/murage-tool-list.ts"]) expect(files).not.toContain(retired);
   for (const row of launchDispositions) {
     expect(["TURN", "PROBE", "NOT-ENGINE"]).toContain(row.kind);
     expect(row.reason.trim()).not.toBe("");
@@ -38,6 +40,7 @@ it("R16-d recognizes injected launchers, any receiver, imports and wrapper impor
   } finally { removeTempDirSync(root); }
 });
 it("R16-d committed D5 file list matches fresh generation", () => {
-  const generated = execFileSync("bash", [resolve("scripts/marks-gen-d5-files.sh"), resolve(".")], { encoding: "utf8" });
+  const generated = execFileSync("bash", [resolve("scripts/marks-gen-d5-files.sh"), resolve(".")], { windowsHide: true, encoding: "utf8" });
+  // MAIN RULING INT-CONFLICT-DEFAULT 41c3557cf2 2ab73f35bd: retain the exact closed reader inventory after integrated fixtures add direct verdict readers; scanner semantics are unchanged.
   expect(readFileSync(resolve("d5-files.txt"), "utf8")).toBe(generated);
 });

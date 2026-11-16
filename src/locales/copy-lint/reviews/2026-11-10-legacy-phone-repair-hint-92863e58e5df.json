@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "d8r3web",
+  "date": "2026-11-10",
+  "base": "6d4a2dae3",
+  "scope": "D8-4 r3 desktop phone.repairHint",
+  "strings": {
+    "en:phone.repairHint": {
+      "text": "Pair this phone again so {bot} can see your recent chat when you send from it.",
+      "en": "Pair this phone again so {bot} can see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "MurageMain 2026-11-10 legacy-phone copy"
+    },
+    "de:phone.repairHint": {
+      "text": "Koppel dieses Telefon erneut, damit {bot} deinen letzten Chat sehen kann, wenn du von hier sendest.",
+      "en": "Pair this phone again so {bot} can see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "MurageMain 2026-11-10 legacy-phone copy"
+    },
+    "es:phone.repairHint": {
+      "text": "Vuelve a emparejar este teléfono para que {bot} pueda ver tu chat reciente cuando envíes desde él.",
+      "en": "Pair this phone again so {bot} can see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "MurageMain 2026-11-10 legacy-phone copy"
+    },
+    "fr:phone.repairHint": {
+      "text": "Associe à nouveau ce téléphone pour que {bot} puisse voir ta conversation récente quand tu envoies depuis celui-ci.",
+      "en": "Pair this phone again so {bot} can see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "MurageMain 2026-11-10 legacy-phone copy"
+    },
+    "hi:phone.repairHint": {
+      "text": "इस फ़ोन को फिर से जोड़ें ताकि जब आप इससे भेजें तो {bot} आपकी हाल की चैट देख सके।",
+      "en": "Pair this phone again so {bot} can see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "MurageMain 2026-11-10 legacy-phone copy"
+    },
+    "ja:phone.repairHint": {
+      "text": "このスマートフォンをもう一度ペアリングすると、ここから送信したときに {bot} が最近のチャットを見られます。",
+      "en": "Pair this phone again so {bot} can see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "MurageMain 2026-11-10 legacy-phone copy"
+    },
+    "pt-br:phone.repairHint": {
+      "text": "Pareie este telefone novamente para que {bot} possa ver seu chat recente quando você enviar dele.",
+      "en": "Pair this phone again so {bot} can see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "MurageMain 2026-11-10 legacy-phone copy"
+    },
+    "zh:phone.repairHint": {
+      "text": "请重新配对这部手机，这样你从这里发送时，{bot} 就能看到你最近的聊天。",
+      "en": "Pair this phone again so {bot} can see your recent chat when you send from it.",
+      "verdict": "pass",
+      "note": "MurageMain 2026-11-10 legacy-phone copy"
+    }
+  },
+  "files": {}
+}

@@ -26,9 +26,9 @@ export interface FluxMemoryReport { source: FluxMemorySource; reason?: string }
 
 /** First-run disclosure line and privacy-policy line (copy rules: plain, true, no price talk, framed as what it does). */
 export const FLUX_MEMORY_DISCLOSURE =
-  "With Use Flux memory on, Flux Router remembers what you tell your bots in your own Flux conversations and brings it back when it helps, and Murage sends a short copy of its own recall with each of those turns. You can switch it off any time in Memory settings.";
+  "With Use Flux memory on, Murage saves what you tell bots that have memory on to Flux memory in your Flux account, in a space for each bot, whichever engine they use. Bots with memory off, and bots set to ask you before they change anything, send nothing to Flux memory. Bots with learning paused also send nothing. Long turns are saved as excerpts. When you delete a conversation, Murage asks Flux Router to forget that conversation; when you delete a bot, to delete its space; and it keeps asking until it is done. You can switch it off any time in Memory settings.";
 export const FLUX_MEMORY_PRIVACY_LINE =
-  "When Use Flux memory is on, Flux Router keeps what you say in your own Flux conversations so it can remember it for you, and up to 8 KB of Murage's memory recall travels with each of those requests, only to Flux Router. Switch it off in Memory settings and, from your next message, Flux stops saving and adding memory for you.";
+  "When Use Flux memory is on, Murage sends each finished turn of a bot that has memory on, on any engine, to Flux memory in your Flux account, in a space for each bot, only to Flux Router. Bots with memory off, bots set to ask you before they change anything, other people's messages and background work are never sent. Bots with learning paused also send nothing. Long turns are saved as excerpts. When you delete a conversation, Murage asks Flux Router to forget that conversation; when you delete a bot, to delete its space; and it keeps asking until it is done. Switch it off in Memory settings and, from your next message, nothing new is saved to Flux memory.";
 
 const ITEM_LINE = /^- m\d+ /;
 const sha256 = (text: string): string => createHash("sha256").update(text, "utf8").digest("hex");

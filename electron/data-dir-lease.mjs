@@ -57,6 +57,13 @@ function uptimeMs() {
 // retain PID exclusion; notably failed uptime must not become zero.
 // With recordPath, a live Windows PID is also checked against the owner's
 // published creation identity; reapers and delegation checks pass none.
+export function provedOwnerReboot(owner, boot = bootSession(), uptimeValue) {
+  if (boot !== null && validBoot(boot) && validBoot(owner.boot)) return owner.boot !== boot;
+  if (!validUptime(owner.uptime)) return false;
+  const current = uptimeValue === undefined ? uptimeMs() : uptimeValue;
+  return validUptime(current) && current < owner.uptime;
+}
+
 function ownerIsAlive(owner, recordPath) {
   // A record naming this very process is live only while this process holds
   // its token. A container starts its server as the same PID on every restart
@@ -69,13 +76,7 @@ function ownerIsAlive(owner, recordPath) {
   // empty token set): there a record naming this PID is the running process
   // hosting the thread, and the checks below decide as for any other PID.
   if (owner.pid === process.pid && isMainThread) return heldTokens.has(owner.token);
-  const boot = bootSession();
-  if (boot !== null && typeof owner.boot === "string") {
-    if (owner.boot !== boot) return false;
-  } else if (validUptime(owner.uptime)) {
-    const current = uptimeMs();
-    if (current !== null && current < owner.uptime) return false;
-  }
+  if (provedOwnerReboot(owner)) return false;
   if (!processIsAlive(owner.pid)) return false;
   return recordPath === undefined || !creationIdentityDisproves(owner, recordPath);
 }
@@ -102,6 +103,11 @@ const HELD_IDENTITY_KEYS = ["version", "pid", "token"];
 const MAX_DISPROVED = 64;
 const disproved = new Set();
 const validStart = (value) => typeof value === "string" && WINDOWS_START.test(value) && BigInt(value) <= MAX_FILETIME;
+/** Same exact process-start policy for callers fencing external children. */
+export function validProcessStart(value, platform = process.platform) {
+  return platform === "linux" ? typeof value === "string" && LINUX_START.test(value)
+    : platform === "win32" && validStart(value);
+}
 const identityPath = (recordPath, owner) => `${recordPath}.identity-${owner.token}`;
 function isIdentity(value) {
   if (!value || typeof value !== "object" || Array.isArray(value) || !isPid(value.pid) || typeof value.token !== "string" || !UUID.test(value.token)) return false;
@@ -250,10 +256,10 @@ const localHost = () => hostname();
  * The boot session id proves it too: it is random per boot, so no two
  * computers share one. A record from an earlier boot under another name
  * cannot be told apart from another computer's and still fails closed. */
-function sameMachine(record) {
-  if (record.host === localHost()) return true;
-  const boot = bootSession();
-  return boot !== null && typeof record.boot === "string" && record.boot === boot;
+function sameMachine(record, host = localHost(), boot) {
+  if (record.host === host) return true;
+  const currentBoot = boot === undefined ? bootSession() : boot;
+  return currentBoot !== null && typeof record.boot === "string" && record.boot === currentBoot;
 }
 
 function withoutWindowsNamespace(path) {
@@ -330,14 +336,18 @@ function canonicalDataDir(dataDir) {
 /** The full canonical installation path selects a stable sibling anchor.
  * Replacing only DATA_DIR leaves all ownership records in place. Parent
  * directory renames and hostile same-UID filesystem races are not contained. */
+export function dataDirIdentity(canonical, platform = process.platform) {
+  const identity = platform === "darwin" ? canonical.normalize("NFC").toLowerCase() : canonical;
+  return createHash("sha256").update(identity).digest("hex");
+}
+
 export function dataDirLeasePaths(dataDir) {
   const canonical = canonicalDataDir(dataDir);
   // Darwin commonly uses a case-insensitive volume. Before a missing leaf
   // exists, realpath cannot normalize that leaf's case. Fold its identity
   // conservatively, while preserving the physical parent path for I/O.
   // Case-sensitive Darwin volumes may therefore over-exclude case-only peers.
-  const identity = process.platform === "darwin" ? canonical.normalize("NFC").toLowerCase() : canonical;
-  const digest = createHash("sha256").update(identity).digest("hex");
+  const digest = dataDirIdentity(canonical);
   const leasePath = join(dirname(canonical), `.murage-data-owner-${digest}.lease`);
   return Object.freeze({ canonicalDataDir: canonical, leasePath, childLeasePath: `${leasePath}.child` });
 }
@@ -714,4 +724,19 @@ export function acquireDataDirLeaseForProcess(dataDir, environment = process.env
       return true;
     },
   });
+}
+
+/** External-child probes deliberately exclude the current-process held-token shortcut. */
+export { validBoot, validUptime, localHost, sameMachine, bootSession, uptimeMs, linuxProcStat, processIsAlive, probeProcessStartSync };
+
+/** This process's currently held installation lease generation, never child death proof. */
+export function currentDataDirLeaseEpoch(dataDir) {
+  try {
+    const paths=dataDirLeasePaths(dataDir);
+    for(const path of [paths.childLeasePath,paths.leasePath]){
+      const owner=readRecord(path)?.owner;
+      if(owner&&owner.pid===process.pid&&heldTokens.has(owner.token)&&sameMachine(owner))return owner.token;
+    }
+  }catch{/* Unknown ownership cannot establish Signal coverage. */}
+  return null;
 }

@@ -14,7 +14,7 @@
 // database and its backup shape are untouched.
 import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "./sqlite-open.ts";
 import type { ConnectedAppRequirement } from "../shared/connected-app-calls.ts";
 import { InstallationSnapshotError } from "./installation-snapshot-error.ts";
 

@@ -88,7 +88,7 @@ const closedReasons = (f) => f.sent.filter((entry) => entry.channel === ENGINE_L
 // ── allow-list ───────────────────────────────────────────────────────────────
 
 test("the allow-list is exactly the vendor auth hosts the CLIs print", () => {
-  assert.deepEqual([...ENGINE_LOGIN_AUTH_HOSTS], ["accounts.x.ai", "auth.openai.com", "claude.ai", "claude.com", "platform.claude.com", "www.kimi.ai"]);
+  assert.deepEqual([...ENGINE_LOGIN_AUTH_HOSTS], ["accounts.google.com", "accounts.x.ai", "auth.openai.com", "claude.ai", "claude.com", "platform.claude.com", "www.kimi.ai"]);
   // The two URLs Sean saw on the live sign-in.
   assert.equal(checkAuthUrl("https://auth.openai.com/codex/device"), "https://auth.openai.com/codex/device");
   assert.equal(checkAuthUrl("https://accounts.x.ai/oauth2/device?user_code=ABCD-1234"), "https://accounts.x.ai/oauth2/device?user_code=ABCD-1234");
@@ -358,4 +358,34 @@ test("the IPC start passes bot, provider and secret through as strings only", as
   assert.equal(calls[1].bot, "", "a non-string bot becomes empty and is refused as a bad request");
   assert.equal((await createEngineLoginRelay({ client: { authorizeUpgrade: async () => { throw new Error("must not be called"); } }, createSocket: () => null, openExternal: async () => {} })
     .start({ sender: { send() {} }, homeId: HOME, engine: "codex", bot: "" })).code, "bad-request");
+});
+
+test("Antigravity: accounts.google.com is listed, a link there opens only when exactly agy's own, and login and logout need a bot", () => {
+  const good = "https://accounts.google.com/o/oauth2/v2/auth?client_id=1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com&redirect_uri=https%3A%2F%2Fantigravity.google%2Foauth-callback&response_type=code&code_challenge=" + "A".repeat(43) + "&code_challenge_method=S256";
+  assert.ok(ENGINE_LOGIN_AUTH_HOSTS.includes("accounts.google.com"));
+  assert.equal(checkAuthUrl(good), good);
+  assert.equal(checkAuthUrl(good.replace("1071006060591", "1")), null);
+  assert.equal(checkAuthUrl(good.replace("&code_challenge_method=S256", "")), null);
+  assert.equal(checkAuthUrl("https://accounts.google.com/signin"), null);
+  assert.equal(engineLoginPath({ engine: "antigravityAgent", action: "login" }), null);
+  assert.equal(engineLoginPath({ engine: "antigravityAgent", action: "logout" }), null);
+  assert.equal(engineLoginPath({ engine: "antigravityAgent", action: "login", bot: "atlas" }), "/api/engine-login/antigravityAgent?action=login&bot=atlas");
+});
+
+test("Antigravity sign-in is not cut at 2 minutes and is cut after 10; another engine is still cut at 2", async () => {
+  assert.equal(ENGINE_LOGIN_LIMITS.idleMs, 120_000);
+  assert.equal(ENGINE_LOGIN_LIMITS.agyIdleMs, 600_000);
+  const f = fixture({ engine: "antigravityAgent" });
+  await start(f, { bot: "bot-atlas" });
+  f.clock.tick(121_000);
+  assert.equal(f.relay.isOpen(), true, "still open past the usual idle limit");
+  f.clock.tick(478_000);
+  assert.equal(f.relay.isOpen(), true, "still open just before 10 minutes");
+  f.clock.tick(2_000);
+  assert.equal(f.relay.isOpen(), false);
+  assert.deepEqual(closedReasons(f), ["idle-timeout"]);
+  const other = fixture({ engine: "claudeAgent" });
+  await start(other);
+  other.clock.tick(121_000);
+  assert.equal(other.relay.isOpen(), false, "any other engine is cut at 2 minutes");
 });

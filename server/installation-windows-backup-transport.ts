@@ -1,5 +1,7 @@
+import "../shared/win-hide-child-process.mjs";
 import { randomUUID } from "node:crypto";
-import { closeSync, fsyncSync, openSync, writeSync } from "node:fs";
+import { writeSync } from "./counted-fs.ts";
+import { closeSync, fsyncSync, openSync } from "node:fs";
 import * as wire from "../native/backup-age/protocol.mjs";
 import { win32 } from "node:path";
 import type { EventEmitter } from "node:events";

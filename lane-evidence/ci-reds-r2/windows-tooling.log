@@ -1,0 +1,48 @@
+✔ MAIN 1: suspended job has no breakaway and verifies empty after owner close (0.992545ms)
+✔ MAIN 2: full task snapshots and prefix-only new-task cleanup (0.284181ms)
+✔ MAIN 3: HTTPS dispatch is handoff only; Desktop keeps refusal rows (0.174731ms)
+✔ MAIN 4: registration diff is Handoff-only and guarded by machine (0.219321ms)
+✔ MAIN 5: only operator finalizes after cleanup; receipt needs cleanup proof (0.263611ms)
+✔ P1-1 launcher wires write-ahead task intent and outer cleanup (0.960345ms)
+✔ P1-2 physical containment checks existing ancestors before writes (4.483953ms)
+✔ P1-3 full staged tree and embedded provenance are verified (6.882745ms)
+✔ P2-1 observation needs group controls, a final gap, and full coverage (0.759484ms)
+✔ P2-2 fixture environment is set before either helper compiles (0.285201ms)
+✔ P2-3 every tested scheduler completion requires a fresh publication (0.172791ms)
+✔ P2-4 includes Claude Node cmd and all OS shell rows (0.220881ms)
+✔ Windows entry points require the owned launcher context (0.273902ms)
+✔ Windows package hook stamps provenance exactly once (0.349062ms)
+✔ ZIP extraction validates destination after deriving it and never references copy-loop source (0.285683ms)
+✔ all three console/Terminal classes fail globally, without Murage ancestry (2.10679ms)
+✔ baseline allows only already visible windows, not initially hidden windows (0.677713ms)
+✔ hidden console windows are recorded but never offending (0.207241ms)
+✔ visible descendants include arbitrary classes at any tree depth; main app and unrelated GUI allowed (0.275461ms)
+✔ ancestry is resolved independent of snapshot order and executable path case/slashes (0.235921ms)
+✔ ancestry survives exited parents and PID reuse never invents new ancestry (0.477892ms)
+✔ reused HWND/PID with new process birth is not baseline-exempt (0.246972ms)
+✔ short one-sample flash remains evidence; repeated observations deduplicate (0.19115ms)
+✔ positive run requires complete workflow, cleanup, screenshot, prerequisites, and sample coverage (1.804428ms)
+✔ unresolvable offending owner metadata fails with actionable null fields (0.529333ms)
+✔ self-test must FAIL and separately prove detector health; blind sampler cannot pass self-test (0.498442ms)
+✔ invalid sample ordering/identity cannot produce PASS (0.935655ms)
+✔ BLOCK 1: visible owner absent from the process snapshot fails coverage (0.378603ms)
+✔ BLOCK 2: later invalid samples retain earlier offenders and subsequent detections (0.931634ms)
+✔ driver executes five real transports in order and waits for its exact routine completion (0.724373ms)
+✔ failed or hung routine prevents browser/Sentinel phases and cannot be recorded successful (0.772825ms)
+✔ missing routine run identity is fatal (0.300642ms)
+✔ wait timeout is bounded and callback errors are not swallowed (0.191951ms)
+✔ CLI emits JSON verdict and separate offending-owner list with failure exit status (34.129021ms)
+✔ BLOCK 2 CLI: invalid later sample retains the offending-window artifact (33.603108ms)
+✔ ROUND 3: malformed sample rows fail with counts and retain earlier and later detections (8.715247ms)
+✔ ROUND 3 CLI: later null JSONL row retains console metadata in both FAIL artifacts (34.875905ms)
+✔ BLOCK 3: verification cites behavioral RED and killed implementation mutants (1.206556ms)
+✔ BLOCK 4: every quoted harness string is inventoried (2.658764ms)
+✔ ROUND 3: fallback retains an existing offender artifact and driver writes it first (0.323632ms)
+ℹ tests 40
+ℹ suites 0
+ℹ pass 40
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 199.127977

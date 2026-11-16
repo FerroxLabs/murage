@@ -55,3 +55,16 @@ describe("thread recall sealed turns (design S2)", () => {
     expect(summary.recent[0]).toMatchObject({ threadId: "th-24", count: 2, instances: ["claude", "codex"] });
   });
 });
+
+// Owner: warm-keep. An exact reset counter is readable without relying on the fourth-reset warning.
+it("counts resets per thread, including checking sub-causes, before the loop threshold", async () => {
+  const { continuationResetCounts } = await import("./reset-watch.ts");
+  expect(continuationResetCounts()).toEqual([]);
+  noteContinuationReset("fixture-one", "claude", "checking:pending", 1);
+  noteContinuationReset("fixture-one", "claude", "checking:no-lineage", 2);
+  noteContinuationReset("fixture-two", "acp", "writetime-deny-session", 3);
+  expect(continuationResetCounts()).toEqual([
+    { threadId: "fixture-one", count: 2, recent: 2, reasons: ["checking:pending", "checking:no-lineage"] },
+    { threadId: "fixture-two", count: 1, recent: 1, reasons: ["writetime-deny-session"] },
+  ]);
+});

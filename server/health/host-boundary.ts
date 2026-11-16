@@ -1,3 +1,4 @@
+import "../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -20,3 +21,5 @@ export {
 export { checkInstall, registrationMatches, type RegistrationState, type CheckInstallReport } from "../sentinel/cli.ts";
 export { EXIT } from "../sentinel/supervisor.ts";
 export { currentUserSid } from "../sentinel/win-acl.ts";
+// Fresh launches establish a native barrier automatically; legacy enrollment still requires drain proof.
+export { provisionFileReceipts, prepareDefaultFileReceipts } from "../sentinel/file-receipts.ts";

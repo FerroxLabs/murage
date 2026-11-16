@@ -1,4 +1,8 @@
-import { DatabaseSync } from "node:sqlite";
+import { CURRENT_CHECKPOINT_SQL } from './checkpoints.ts';
+import { RecallPreparationPending } from './recall-recovery.ts';
+import { eligibleViewPage, lexicalViewPage, RecallWorkBudget } from './recall-view-index.ts';
+import { assertRecallView, type RecallViewHandle, type RecallViewBinding } from './recall-view.ts';
+import { DatabaseSync } from "../sqlite-open.ts";
 import { MemoryQueryCache } from "./cache.ts";
 import { PIP_ALL_KINDS_SQL } from "./pip-kinds.ts";
 import { DENIED_RECORD_SCOPE, DENIED_SOURCE } from "./deny.ts";
@@ -6,10 +10,10 @@ import { DENIED_RECORD_SCOPE, DENIED_SOURCE } from "./deny.ts";
 // The PIP kind list (brief, owner, lived, concern and episode rows) lives in pip-kinds.ts:
 // the exclusion below keeps every one of them out of search, recall and the index (PIP A1, I-15).
 // A source in a deleted conversation or bot, or a copy of a forgotten one, is refused from the deletion's commit (deny.ts).
-export const CURRENT_MEMORY = `r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND r.state='active' AND NOT ${DENIED_RECORD_SCOPE("r")} AND NOT EXISTS (
+export const CURRENT_MEMORY = `r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND r.state='active' AND ${CURRENT_CHECKPOINT_SQL} AND NOT ${DENIED_RECORD_SCOPE("r")} AND NOT EXISTS (
   SELECT 1 FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id
   WHERE e.record_id=r.id AND e.record_version=r.version AND (s.state!='active' OR s.revision!=e.source_revision OR ${DENIED_SOURCE("s")}))`;
-export const HISTORICAL_MEMORY = `r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND r.state IN ('active','archived','superseded') AND NOT ${DENIED_RECORD_SCOPE("r")} AND NOT EXISTS (
+export const HISTORICAL_MEMORY = `r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND r.state IN ('active','archived','superseded') AND ${CURRENT_CHECKPOINT_SQL} AND NOT ${DENIED_RECORD_SCOPE("r")} AND NOT EXISTS (
   SELECT 1 FROM memory_evidence e JOIN memory_sources s ON s.id=e.source_id WHERE e.record_id=r.id AND e.record_version=r.version AND (s.state='deleted' OR ${DENIED_SOURCE("s")})) AND NOT EXISTS (
   SELECT 1 FROM memory_record_details d WHERE d.record_id=r.id AND d.record_version=r.version AND d.claim_status='provisional')`;
 /** The part of "may a reader read this record" that does not depend on the reader, as SQL: a record someone forgot (a record
@@ -46,9 +50,16 @@ export class MemoryEligibility {
     const meta=this.db.prepare("SELECT policy_revision,deletion_epoch FROM memory_meta WHERE id=1").get()!;
     this.read({scopeIds,policyRevision:Number(meta.policy_revision),deletionEpoch:Number(meta.deletion_epoch),historical:false,cursor:""});
   }
-  read(input:{scopeIds:string[];policyRevision:number;deletionEpoch:number;historical:boolean;cursor:string}){
+  read(input:{view?:RecallViewHandle;reader?:RecallViewBinding;scopeIds:string[];policyRevision:number;deletionEpoch:number;historical:boolean;cursor:string},budget=new RecallWorkBudget(8192)){
     const meta=this.db.prepare("SELECT policy_revision,deletion_epoch,data_revision FROM memory_meta WHERE id=1").get()!;
     if(meta.policy_revision!==input.policyRevision||meta.deletion_epoch!==input.deletionEpoch)throw new Error("MEMORY_CONTEXT_REVOKED");
+    if(input.view) {
+      if(!input.reader)throw new RecallPreparationPending();
+      assertRecallView(this.db,input.view,input.reader);
+      const chunk=Math.min(eligibleLimits.chunk,4096,Math.max(0,budget.remaining-1));
+      const rows=eligibleViewPage(this.db,input.view,input.cursor,chunk+1,budget),over=rows.length>chunk;
+      return {allowed:rows.slice(0,chunk).map(({id,version})=>({id,version})),capacity:over,nextCursor:over?(chunk?encodeEligibleCursor(rows[chunk-1]):input.cursor):undefined};
+    }
     const scopes=this.db.prepare(`SELECT DISTINCT scope_id FROM memory_records WHERE scope_id IN (SELECT value FROM json_each(?)) AND state IN ${input.historical?"('active','archived','superseded')":"('active')"}`).all(JSON.stringify(input.scopeIds)).map(r=>String(r.scope_id)).sort();
     const key=JSON.stringify([scopes,meta.data_revision,meta.policy_revision,meta.deletion_epoch,input.historical,input.cursor]);
     let rows=this.cache.get(key);
@@ -60,6 +71,8 @@ export class MemoryEligibility {
     const chunk=eligibleLimits.chunk,over=rows.length>chunk;
     return {allowed:over?rows.slice(0,chunk):rows,capacity:over,nextCursor:over?encodeEligibleCursor(rows[chunk-1]):undefined};
   }
+  lexical(query:string,view:RecallViewHandle,budget=new RecallWorkBudget(8192)) { return lexicalViewPage(this.db,query,view,1000,0,budget); }
+  validate(view:RecallViewHandle,reader:RecallViewBinding) {assertRecallView(this.db,view,reader);}
   /** Ids of every PIP record, any state: what the derived index must not hold. */
   pipRecordIds():string[]{
     return this.db.prepare(`SELECT DISTINCT r.id FROM memory_records r WHERE r.kind IN ${PIP_ALL_KINDS_SQL} ORDER BY r.id`).all().map(r=>String(r.id));

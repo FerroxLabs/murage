@@ -11,6 +11,8 @@
 // DATA_DIR/engine-commands.json, owner-only, written atomically. It is a
 // convenience, not a source of truth: a damaged file reads as empty and the
 // next turn fills it again.
+import { createHash } from "node:crypto";
+import { redactSecretsForSink } from "./redact.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "./atomic.ts";
@@ -40,7 +42,7 @@ const ENGINE_LABELS: Record<string, string> = {
   openclawAgent: "OpenClaw",
   clineAgent: "Cline",
   museCode: "Muse Code",
-  copilotAgent: "GitHub Copilot",
+  deepseekAgent: "DeepSeek Harness", copilotAgent: "GitHub Copilot",
 };
 
 /** Drivers that can report commands. Every ACP engine goes through the
@@ -58,7 +60,7 @@ const ENGINE_LABELS: Record<string, string> = {
 const REPORTING_DRIVERS = new Set([
   "claudeAgent", "codex",
   "fuigoAgent", "grokAgent", "geminiAgent", "qwenAgent", "kimiAgent", "hermesAgent", "openclawAgent", "clineAgent",
-  "cursorAgent", "droidAgent", "opencodeGo", "copilotAgent", "customAcp",
+  "cursorAgent", "droidAgent", "opencodeGo", "deepseekAgent", "copilotAgent", "customAcp",
 ]);
 
 /** Commands that are never offered, for any engine.
@@ -208,4 +210,31 @@ export function engineCommandsView(
   if (cached) return { engine, driver, status: "ready", commands: cached };
   if (driver === "codex") return { engine, driver, status: "ready", commands: [...CODEX_BUILTIN_COMMANDS] };
   return { engine, driver, status: "unknown", commands: [] };
+}
+
+// PROVISIONAL INTERFACE: R2 freezes the handle encoding, but not helper names.
+// These helpers accept only the authenticated thread's bot/configured driver.
+function commandRevision(commands: readonly EngineCommand[]): string {
+  // normalizeEngineCommands fixes both field order and list order.
+  return createHash('sha256').update(JSON.stringify(commands)).digest('hex').slice(0, 16);
+}
+export function displayEngineCommands(cache: EngineCommandCache, botId: string, driver: string, displayName?: string): import('../shared/audience-wire.ts').DisplayCommandsView {
+  const view = engineCommandsView(cache, botId, driver, displayName);
+  const revision = commandRevision(view.commands);
+  // Scan the complete report as a unit before clipping a menu field. A hit
+  // masks sibling values, including a later command's name and description.
+  const fields = view.commands.flatMap(c => [c.name, c.description ?? '', c.hint ?? '']);
+  const masked = fields.some(text => redactSecretsForSink(text) !== text);
+  return { engine: redactSecretsForSink(view.engine), driver: view.driver, status: view.status,
+    commands: view.commands.map((command, i) => ({ handle: `c.${revision}.${i}`,
+      label: masked ? `Command ${i + 1}` : command.name,
+      ...(command.description ? { description: masked ? '«redacted»' : command.description } : {}),
+      ...(command.hint ? { hint: masked ? '«redacted»' : command.hint } : {}), takesArguments: Boolean(command.hint) })) };
+}
+export function resolveCommandHandle(cache: EngineCommandCache, botId: string, driver: string, handle: string, args: string): { ok: true; command: { name: string; args: string } } | { ok: false; status: 409; error: 'command_list_changed'; view: import('../shared/audience-wire.ts').DisplayCommandsView } {
+  const commands = engineCommandsView(cache, botId, driver).commands;
+  const match = typeof handle === 'string' ? /^c\.([0-9a-f]{16})\.(0|[1-9]\d*)$/.exec(handle) : null;
+  const command = match && match[1] === commandRevision(commands) ? commands[Number(match[2])] : undefined;
+  if (!command || typeof args !== 'string') return { ok: false, status: 409, error: 'command_list_changed', view: displayEngineCommands(cache, botId, driver) };
+  return { ok: true, command: { name: command.name, args } };
 }

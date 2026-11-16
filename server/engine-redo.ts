@@ -24,6 +24,7 @@
 // The journals are written and synced (the file and the folder) before the first overwrite. engine-exec.ts decides when and under which
 // hold; this module only reads and writes the records and rebuilds the bytes.
 import nodePath from "node:path";
+import { rebaseEngineRedoRecord } from "./engine-redo-paths.ts";
 import { randomBytes } from "node:crypto";
 
 import { exclOps, mutOps, realEngineFs } from "./engine-fs.ts";
@@ -179,6 +180,38 @@ export function listRedo(): AnyRecord[] {
   if (!dir) return [];
   const reader = realEngineFs();
   const out: AnyRecord[] = [];
+  const dataDir = nodePath.dirname(dir);
+  let previous: string[] = [];
+  let linkedRoots: unknown;
+  // The strict reader returns null for a missing marker. Every other read
+  // failure must refuse the plan, just like a failure reading an engine file.
+  const text = reader.readText(nodePath.join(dataDir, ".murage-root.json"));
+  if (text !== null) {
+    if (text.length > 65536) throw new Error("Engine recovery provenance exceeds its read bound.");
+    const roots = JSON.parse(text);
+    if (roots?.schema !== 1 || roots.root !== dataDir || !Array.isArray(roots.previous)) throw new Error("Engine recovery provenance needs repair before deletion can continue.");
+    linkedRoots = roots.linkedRoots;
+    previous = roots.previous.slice(0, 4).flatMap((entry: { root?: unknown }) => typeof entry?.root === "string" && nodePath.isAbsolute(entry.root) && entry.root !== nodePath.parse(entry.root).root ? [entry.root] : []);
+  }
+  const append = (record: AnyRecord) => {
+    const next = rebaseEngineRedoRecord(record, { dataDir, previous, platform: process.platform });
+    if (next) {
+      // Only moved managed homes reach this branch. DR4 refuses links below an
+      // approved root, and every executor path is pinned to that root's target.
+      if (next !== record) {
+        const home = reader.pinRecoveryDestination(dataDir, next.home, "directory", linkedRoots);
+        const pin = (path: string) => {
+          const leaf = reader.pinRecoveryDestination(dataDir, path, "file", linkedRoots);
+          const relative = nodePath.relative(home, leaf);
+          if (!relative || nodePath.isAbsolute(relative) || relative.split(nodePath.sep).some(part => part === "..")) throw new Error("Engine recovery destination changed during admission.");
+          return leaf;
+        };
+        if (next.kind === "join") out.push({ ...next, home, into: { ...next.into, path: pin(next.into.path) }, from: { ...next.from, path: pin(next.from.path) } });
+        else out.push({ ...next, home, path: pin(next.path) });
+      } else out.push(next);
+    }
+    else throw new Error("An engine recovery journal needs its original data folder before recovery can continue.");
+  };
   for (const name of reader.readdir(dir)) {
     const named = NAME.exec(name);
     if (!named) continue;
@@ -193,11 +226,11 @@ export function listRedo(): AnyRecord[] {
     const id = named[1]!;
     if (record.kind === "join") {
       if (!isId(record.into) || !isId(record.from) || typeof record.base !== "number" || (record.lead !== 0 && record.lead !== 1) || (record.undo !== undefined && (typeof record.undo !== "number" || !(record.undo >= 0))) || (record.filter !== undefined && !isFilter(record.filter))) continue;
-      out.push({ ...(record as unknown as JoinRecord), id });
+      append({ ...(record as unknown as JoinRecord), id });
       continue;
     }
     if (typeof record.path !== "string" || typeof record.dev !== "string" || typeof record.ino !== "string" || !Array.isArray(record.rows) || typeof record.how !== "string" || typeof record.format !== "string") continue;
-    out.push({ ...(record as unknown as RedoRecord), kind: "rows", id });
+    append({ ...(record as unknown as RedoRecord), kind: "rows", id });
   }
   return out;
 }

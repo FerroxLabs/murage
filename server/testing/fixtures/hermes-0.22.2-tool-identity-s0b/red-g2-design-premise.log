@@ -1,0 +1,34 @@
+test_G1_video (__main__.Evidence.test_G1_video) ... ok
+test_G2_unregistered (__main__.Evidence.test_G2_unregistered) ...
+  test_G2_unregistered (__main__.Evidence.test_G2_unregistered) (name='memory: x') ... FAIL
+test_G3_execute_code (__main__.Evidence.test_G3_execute_code) ... ok
+test_ISOLATION (__main__.Evidence.test_ISOLATION) ... ok
+
+======================================================================
+FAIL: test_G2_unregistered (__main__.Evidence.test_G2_unregistered) (name='memory: x')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/verify.py", line 45, in test_G2_unregistered
+    self.assertEqual(starts(scenario), [], 'G2: starts require fallback B for C1 other')
+AssertionError: Lists differ: [(16, {'content': [{'content': {'text': 'M[237 chars]l'})] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+(16, {'content': [{'content': {'text': 'Memory add (memory)\nPreview: s0b unregistered name', 'type': 'text'}, 'type': 'content'}], 'kind': 'other', 'locations': [], 'title': 'memory: +memory: "s0b unregistered name"', 'toolCallId': 'tc-542149cb9949', 'sessionUpdate': 'tool_call'})
+
++ []
+- [(16,
+-   {'content': [{'content': {'text': 'Memory add (memory)\n'
+-                                     'Preview: s0b unregistered name',
+-                             'type': 'text'},
+-                 'type': 'content'}],
+-    'kind': 'other',
+-    'locations': [],
+-    'sessionUpdate': 'tool_call',
+-    'title': 'memory: +memory: "s0b unregistered name"',
+-    'toolCallId': 'tc-542149cb9949'})] : G2: starts require fallback B for C1 other
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.002s
+
+FAILED (failures=1)

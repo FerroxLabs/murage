@@ -9,11 +9,14 @@
 //
 // Every file vite.config.ts includes must be in exactly one list. Tests over 60 s or with a wall-clock budget
 // carry the `nightly` / `perf-budget` tags and run in nightly.yml, wherever their file is listed.
+// Every *.node-test.mjs/ts must be reached by a blocking Node runner in ci.yml or nightly.yml.
 //
 //   node scripts/ci-test-tiers.mjs check
 //   node scripts/ci-test-tiers.mjs list --tier gate|extended|nightly [--os linux|mac|windows] [--shard i/n] [--skip path]...
 //       Prints one vitest argument per line: the selected files, then `--exclude <file>` for every other test
 //       file whose path contains a selected path (Vitest matches positional filters by substring).
+//   node scripts/ci-test-tiers.mjs run-node [--exclude path/glob] [--shard i/n] <node-test globs>...
+//       Expands quoted globs, then runs Node with bounded file concurrency; preserves failures.
 //   node scripts/ci-test-tiers.mjs import <tiers.tsv>
 //       Rewrites both lists from a tier table (path, decision, reason, ...). GATE/KEEP rows are gate files; every
 //       other decision (EXTENDED, MERGE, DELETE) is extended until its change lands; a NIGHTLY file is listed in
@@ -21,9 +24,11 @@
 //       listed keeps its OSes; a new one gets them from its own platform guards (see deriveOses).
 
 import { createHash } from "node:crypto";
-import { globSync, readFileSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, globSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parse } from "yaml";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const GATE = "ci/gate-tests.txt";
@@ -54,10 +59,68 @@ export function vitestFiles(root = ROOT) {
   return [...files].sort();
 }
 
-/** Node gates run in the existing blocking test:electron job, not in Vitest shards. */
+const nodeTestPath = /\.(?:node-test|test)\.(?:[cm]?[jt]s)$/;
+const generatedDirectory = /(^|[/\\])(?:node_modules|\.git|\.next|dist|dist-server|release)([/\\]|$)/;
+
+/** Discover independently of the runners: an orphan must not disappear from the inventory. */
+export function nodeTestFiles(root = ROOT) {
+  return [...globSync("**/*.node-test.{js,cjs,mjs,ts,cts,mts}", { cwd: root, exclude: path => generatedDirectory.test(path) })]
+    .map(file => file.replaceAll("\\", "/")).sort();
+}
+
+/** The same glob expansion/exclusions are used by the checker and the Node runner. */
+export function expandNodeTests(args, root = ROOT) {
+  const excluded = new Set();
+  const patterns = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === "--exclude") {
+      if (!args[i + 1]) fail("--exclude needs a path or glob");
+      for (const file of globSync(args[++i], { cwd: root })) excluded.add(file.replaceAll("\\", "/"));
+    } else if (nodeTestPath.test(args[i])) patterns.push(args[i]);
+  }
+  return [...new Set(patterns.flatMap(pattern => [...globSync(pattern, { cwd: root })]
+    .map(file => file.replaceAll("\\", "/"))))].filter(file => !excluded.has(file)).sort();
+}
+
+/** Node tests reached by blocking CI/nightly steps, including package-script indirection.
+ * Merely defining an unused package script is not wiring. This deliberately recognises
+ * direct node --test commands and our glob runner, not arbitrary shell/JS source text.
+ */
 export function nodeGateFiles(root = ROOT) {
-  let command;try { command = JSON.parse(readFileSync(join(root,"package.json"),"utf8")).scripts?.["test:electron"] ?? ""; } catch { return []; }
-  return [...command.matchAll(/"([^"]+\.node-test\.mjs)"/g)].flatMap(match => [...globSync(match[1],{cwd:root})].map(file=>file.split("\\").join("/")));
+  const scripts = JSON.parse(readFileSync(join(root, "package.json"), "utf8")).scripts ?? {};
+  const files = new Set();
+  const visit = (source, seen = new Set()) => {
+    // Only count the checked simple-command/&& subset. Shell alternatives,
+    // pipelines, background jobs and disabled errexit can hide a failed test.
+    // Refuse the whole unrecognised list rather than guess at shell semantics.
+    if (/\|\||;|(?<!\|)\|(?!\|)|(?<!&)&(?!&)|\bset\s+\+e\b/.test(source)) return;
+    for (const command of source.split(/\n|&&|\|\||;/)) {
+      let words = [...command.trim().matchAll(/"([^"]*)"|'([^']*)'|([^\s]+)/g)].map(m => m[1] ?? m[2] ?? m[3]);
+      // The existing Linux host-worker gate uses this exact checked root runner.
+      if (words[0] === "sudo" && words[1] === "-E" && words[2] === "$(command -v node)" && words[3] === "--test") words = ["node", ...words.slice(3)];
+      if (words[0] === "node" && (words.includes("--test") || (words[1] === "scripts/ci-test-tiers.mjs" && words[2] === "run-node"))) {
+        for (const file of expandNodeTests(words, root)) files.add(file);
+      } else if (words[0] === "pnpm" || (words[0] === "npm" && words[1] === "run")) {
+        const name = words[1] === "run" ? words[2] : words[1];
+        if (scripts[name] && !seen.has(name)) visit(scripts[name], new Set([...seen, name]));
+      }
+    }
+  };
+  const disabled = condition => condition === false || condition === 0 ||
+    (typeof condition === 'string' && /^(?:false|0|null|''|"")$/.test(condition.trim().replace(/^\$\{\{\s*([\s\S]*?)\s*\}\}$/, '$1').trim()));
+  for (const workflow of ["ci.yml", "nightly.yml"]) {
+    const path = join(root, ".github/workflows", workflow);
+    if (!existsSync(path)) continue;
+    const config = parse(readFileSync(path, "utf8"));
+    for (const job of Object.values(config.jobs ?? {})) {
+      if (job["continue-on-error"] || disabled(job.if) || job.defaults?.run?.["working-directory"]) continue;
+      for (const step of job.steps ?? []) {
+        if (!step.run || step["continue-on-error"] || disabled(step.if) || step["working-directory"]) continue;
+        visit(step.run);
+      }
+    }
+  }
+  return [...files].sort();
 }
 
 function parseOses(value, where) {
@@ -92,14 +155,17 @@ export function readLists(root = ROOT) {
 export function check(root = ROOT) {
   const { gate, extended } = readLists(root);
   const files = vitestFiles(root);
-  const known = new Set([...files,...nodeGateFiles(root)]);
+  const nodeFiles = nodeTestFiles(root);
+  const wired = new Set(nodeGateFiles(root));
+  const known = new Set([...files, ...nodeFiles, ...wired]);
   const unlisted = files.filter(file => !gate.has(file) && !extended.has(file));
   const stale = [...gate.keys(), ...extended.keys()].filter(file => !known.has(file));
   const problems = [
     ...unlisted.map(file => `unclassified test file: ${file} (add it to ${GATE} or ${EXTENDED}; see docs/testing.md)`),
     ...stale.map(file => `listed but not a configured test file: ${file}`),
+    ...nodeFiles.filter(file => !wired.has(file)).map(file => `unwired node-test file: ${file} (add a blocking CI/nightly Node runner)`),
   ];
-  return { problems, gate: gate.size, extended: extended.size, files: files.length };
+  return { problems, gate: gate.size, extended: extended.size, files: files.length, nodeFiles: nodeFiles.length };
 }
 
 /** Stable, directory-spreading order: sort by a hash of the path, then deal round-robin. */
@@ -187,7 +253,15 @@ function main(argv) {
     const result = check();
     for (const problem of result.problems) console.error(`::error::${problem}`);
     if (result.problems.length) process.exit(1);
-    console.log(`ok: ${result.files} Vitest files; ${result.gate} gate, ${result.extended} extended`);
+    console.log(`ok: ${result.files} Vitest files; ${result.gate} gate, ${result.extended} extended; ${result.nodeFiles} Node files wired`);
+  } else if (command === "run-node") {
+    const files = expandNodeTests(rest.filter((arg, i) => arg !== "--shard" && rest[i - 1] !== "--shard"));
+    const shard = option("shard");
+    const args = ["--import", fileURLToPath(new URL("../server/testing/safe-wipe-preload.mjs", import.meta.url)), "--test", "--test-concurrency=2", ...(shard ? [`--test-shard=${shard}`] : []), ...files];
+    if (!files.length) fail("run-node matched no test files");
+    const result = spawnSync(process.execPath, args, { cwd: ROOT, stdio: "inherit" });
+    if (result.error) throw result.error;
+    process.exit(result.status ?? 1);
   } else if (command === "list") {
     const tier = option("tier");
     if (!["gate", "extended", "nightly"].includes(tier)) fail("list needs --tier gate|extended|nightly");
@@ -201,7 +275,7 @@ function main(argv) {
     if (!rest[0]) fail("import needs a tier table");
     importTable(rest[0]);
   } else {
-    fail("usage: check | list --tier gate|extended|nightly [--os ...] [--shard i/n] [--skip path] | import <tsv>");
+    fail("usage: check | list --tier gate|extended|nightly [--os ...] [--shard i/n] [--skip path] | run-node [--exclude path/glob] [--shard i/n] <globs> | import <tsv>");
   }
 }
 

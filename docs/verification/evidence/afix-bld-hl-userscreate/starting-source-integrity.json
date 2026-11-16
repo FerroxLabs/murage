@@ -1,0 +1,8 @@
+{
+  "base": "0567676f107f5e8690b94841fd96a050b3da2748",
+  "archiveCommand": "git archive 0567676f1 | tar -x -C .test-tmp/afix-bld-hl-userscreate/starting-tree",
+  "checkedArchiveFiles": 14977,
+  "changedArchiveFiles": [],
+  "transplantedTest": "server/highlevel/users-create-starting.test.ts",
+  "transplantedTestSha256": "b890efe0324917b1bdcfcfe9fa99a81ad7d787a625faf504475803a785eeb3a2"
+}

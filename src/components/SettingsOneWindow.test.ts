@@ -7,6 +7,8 @@ import { createElement, createRef, type MutableRefObject } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+import { sidebarBots } from "@/lib/settings-shell-bots";
+
 const fixture = vi.hoisted(() => ({
   bots: [{ id: "nova", name: "Nova" }, { id: "pepper", name: "Pepper" }] as Array<Record<string, unknown>>,
   dispatch: vi.fn(),
@@ -39,10 +41,11 @@ describe("one Settings window", () => {
 
   it("lists the bots under a closed Bots group, leaves archived ones out except the open bot, and shows the chosen bot's page in the window", () => {
     const modal = read("./SettingsModal.tsx");
-    expect(modal).toContain('const bots = group === "bots" ? state.bots.filter((each) => !each.hidden || each.id === bot?.id) : [];');
-    expect(modal).toContain("const rows = botsListOpen || bots.length === 1 ? bots : bots.filter((each) => each.id === bot?.id);");
-    expect(modal).toContain("const [botsListOpen, setBotsListOpen] = useState(false);");
-    expect(modal).toContain("aria-expanded={botsListOpen}");
+    // 1.0.19 shell: Each bot lists up to five rows (no closed toggle); archived bots stay out except the open one.
+    expect(modal).toContain("const botRows = sidebarBots(state.bots, bot?.id);");
+    expect(modal).toContain('const rows = group === "bots" ? botRows.rows : [];');
+    const some = [{ id: "a", name: "Ann" }, { id: "b", name: "Bea", hidden: true }, { id: "c", name: "Cy", hidden: true }];
+    expect(sidebarBots(some, "c").rows.map((each) => each.id)).toEqual(["a", "c"]);
     expect(modal).toContain("data-settings-bot={each.id}");
     expect(modal).toContain('<Pane bot={bot} onClose={closeBot} leaveRef={botLeave} />');
     expect(modal).toContain('dispatch({ type: "toggleSettings", open: true, botId: id })');

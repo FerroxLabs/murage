@@ -8,7 +8,8 @@ import { managedOutputWorkspace } from "../execution-audience.ts";
 // generated-audio/<thread>, then saved to Files as a managed output, so the
 // chat's existing audio player plays it and Files keeps it. The speaking is
 // the same `speak()` a call uses, with the bot's own voice service and voice.
-import { lstatSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../counted-fs.ts";
+import { lstatSync, renameSync, unlinkSync } from "node:fs";
 import { rootsFor, WorkspaceTreeError } from "../data-roots.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { randomUUID } from "node:crypto";

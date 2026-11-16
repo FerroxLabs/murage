@@ -1,3 +1,5 @@
+// control: retain the isolated turn and mount admission used by server dispatch.
+import { bindFixtureAdapter } from "../../testing/mcp-admission-fixture.ts";
 import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
@@ -10,8 +12,8 @@ import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // listing) to record which pid each probe was asked about. Covered:
 //   - every tree probe a pooled process gets (turn baseline, park check, reused-tree reconcile) asks about the CLI,
 //     never the launcher;
-//   - reconcileReusedTree admits the MCP child an engine replaces each turn, whose parent is the CLI, so a pooled
-//     process is kept (one spawn over four replacing turns), never closed as a pre-prompt leftover;
+//   - a pooling-capable driver still retires every consuming MCP mount tree after its one turn;
+//     four configured replacements own four independent CLIs and leave no pre-prompt leftover;
 //   - a mid-turn Stop ends the whole tree: the launcher, the CLI and the CLI's own MCP child, pooled and per turn.
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -67,6 +69,7 @@ vi.mock("../process-tree.ts", async (original) => {
 
 const SUPPORT: AcpSupport = {
   driverKind: "treeStopTest",
+  fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
   displayName: "Tree Stop Test",
   models: { default: "m-one", options: [{ id: "m-one", label: "One" }] },
   defaultCli: "fake-tree-stop",
@@ -85,7 +88,7 @@ const SESSION = "fake-acp-session";
 
 const zombie = (pid: number) => {
   try {
-    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { encoding: "utf8" }).trim().startsWith("Z");
+    return execFileSync("ps", ["-o", "stat=", "-p", String(pid)], { windowsHide: true, encoding: "utf8" }).trim().startsWith("Z");
   } catch {
     return false;
   }
@@ -122,11 +125,13 @@ describe.skipIf(process.platform === "win32")("ACP Stop ends the whole tree behi
   const mcpChildren = () => lines(mcpLog);
   const create = async (driver = PooledDriver) => {
     instance = await driver.create({ instanceId: "tree-stop", displayName: "Tree Stop", environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: false } });
+    bindFixtureAdapter(instance.adapter);
     recorder = recordEvents(instance.adapter);
   };
-  /** An MCP server the fake really runs as its own child (`sleep 300`), with a fresh token per turn, so it is replaced. */
+  /** A real MCP peer with a fresh token per turn. The fake CLI also starts
+   * its own sleep child, independently logged below for the tree assertions. */
   const mcpAgents = (): NonNullable<SendTurnInput["integrations"]> => ({
-    agents: { command: "sleep", args: ["300"], env: { MURAGE_COMMS_TOKEN: `turn-${randomUUID()}` } },
+    agents: { command: process.execPath, args: [fileURLToPath(new URL("../../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_COMMS_TOKEN: `turn-${randomUUID()}` } },
   });
   const turn = async (input: Omit<SendTurnInput, "threadId">) => {
     const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-tree", ...input });
@@ -188,19 +193,30 @@ describe.skipIf(process.platform === "win32")("ACP Stop ends the whole tree behi
     for (const text of ["two", "three", "four"]) {
       expect(await turn({ text, resumeCursor: SESSION, integrations: mcpAgents() })).toMatchObject({ ok: true });
     }
-    // one launcher, one CLI behind it, and they are different processes
+    // MAIN RULING INT-CONFLICT-DEFAULT e0b126a887 6cfb3326db4: consuming mounts retire after each turn, even when the driver supports pooling.
+    // Every turn owns a different launcher and CLI; each old tree is dead.
     const map = launched();
-    expect(map.size).toBe(1);
-    const [[launcherPid, cliPid]] = [...map.entries()];
-    expect(launcherPid).not.toBe(cliPid);
-    expect(cliPids()).toEqual([cliPid]);
-    // four replacing turns on one process: every reconcile admitted the CLI's new MCP child
-    expect(mcpChildren()).toHaveLength(4);
+    expect(map.size).toBe(4);
+    for (const [launcherPid, cliPid] of map) expect(launcherPid).not.toBe(cliPid);
+    // MAIN RULING INT-CONFLICT-DEFAULT e0b126a887 6cfb3326db4: four consuming turns own four distinct CLIs, never a reusable mount process.
+    expect(cliPids()).toEqual([...map.values()]);
+    expect(new Set(cliPids()).size).toBe(4);
+    await until(() => [...map].flat().concat(mcpChildren()).every(pid => !alive(pid)), "every completed consuming tree to retire");
+    // MAIN RULING INT-CONFLICT-DEFAULT e0b126a887 / b3fe1b3b60: session/new launches once; each of three resumed turns loads and freshly reconnects its mount.
+    expect(mcpChildren()).toHaveLength(1 + 2 * 3);
+    expect(new Set(mcpChildren()).size).toBe(1 + 2 * 3);
     expect(logged("reason=pre-prompt-leftover")).toBe(false);
     expect(logged("reason=post-turn-descendant")).toBe(false);
-    probesSawOnlyTheCli();
     await stopMidTurnEndsTree({ resumeCursor: SESSION, integrations: mcpAgents() });
-    expect(cliPids()).toEqual([cliPid]);
+    // MAIN RULING INT-CONFLICT-DEFAULT e0b126a887 6cfb3326db4: the interrupted consuming turn has a fifth independent tree.
+    expect(cliPids()).toHaveLength(5);
+    expect(new Set(cliPids()).size).toBe(5);
+    // MAIN RULING INT-CONFLICT-DEFAULT e0b126a887 6cfb3326db4: actual pool probes run on a mount-free control; consuming trees cannot enter the pool.
+    // Keep the original nonvacuous CLI-versus-launcher probe assertions.
+    expect(await turn({ text: "native pool baseline", resumeCursor: SESSION })).toMatchObject({ ok: true });
+    expect(await turn({ text: "native pool reuse", resumeCursor: SESSION })).toMatchObject({ ok: true });
+    expect(cliPids()).toHaveLength(6);
+    probesSawOnlyTheCli();
   });
 
   it("per turn (the Windows default): a mid-turn Stop ends the launcher, the CLI and the CLI's MCP child", async () => {
@@ -209,6 +225,26 @@ describe.skipIf(process.platform === "win32")("ACP Stop ends the whole tree behi
     await stopMidTurnEndsTree({ integrations: mcpAgents() });
     expect(launched().size).toBe(2);
     for (const [launcherPid, cliPid] of launched()) expect(launcherPid).not.toBe(cliPid);
+  });
+
+  it("mount-free pooled turns keep one CLI, probe its native-child baseline and Stop ends its whole tree", async () => {
+    await create();
+    expect(await turn({ text: "one" })).toMatchObject({ ok: true });
+    for (const text of ["two", "three", "four"]) {
+      expect(await turn({ text, resumeCursor: SESSION })).toMatchObject({ ok: true });
+    }
+    const map = launched();
+    expect(map.size).toBe(1);
+    const [[launcherPid, cliPid]] = [...map];
+    expect(launcherPid).not.toBe(cliPid);
+    expect(cliPids()).toEqual([cliPid]);
+    expect(mcpChildren()).toHaveLength(1);
+    expect(logged("reason=pre-prompt-leftover")).toBe(false);
+    expect(logged("reason=post-turn-descendant")).toBe(false);
+    probesSawOnlyTheCli();
+    await stopMidTurnEndsTree({ resumeCursor: SESSION });
+    expect(cliPids()).toEqual([cliPid]);
+    probesSawOnlyTheCli();
   });
 });
 

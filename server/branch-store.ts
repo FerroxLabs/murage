@@ -28,6 +28,14 @@ export { prepareStats };
 
 type Shape = Message
 
+/** Copy ancestry is part of the replay proof even when no receipt changed.
+ * Runs in the message writer's transaction, outside best-effort derived work.
+ * I0 owns registration; an entirely legacy database has no replay epoch yet. */
+function noteReplayAncestryChange(database: DatabaseSync, threadId: string): void {
+  if (!database.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='send_replay_epochs'").get()) return;
+  database.prepare("INSERT INTO send_replay_epochs(thread_id,revision) VALUES(?,1) ON CONFLICT(thread_id) DO UPDATE SET revision=revision+1").run(threadId);
+}
+
 /** Whether the thread holds any row besides `mrow`, the row being written. A thread with no key and another row was stored before
  * the index existed (or before a fill reached it): it is not prepared until its fill says so. Not "an earlier row": a patch of the
  * oldest row of an unfilled thread has none earlier, and is still not the whole thread. */
@@ -44,6 +52,9 @@ function guarded(database: DatabaseSync, tk: ThreadKey, work: () => void): void 
 
 /** A row was stored at `mrow` (`prior`: the rowid it replaced, if any). `structure: "none"` is for a row a splice places itself. */
 export function afterInsert(database: DatabaseSync, threadId: string, message: Shape, mrow: number, prior: number | undefined, structure: "append" | "none" = "append", preview: "sync" | "defer" = "sync"): void {
+  // A new row was never in retained input. Replacing an existing row can
+  // change ancestry that a session already holds.
+  if (prior !== undefined) noteReplayAncestryChange(database, threadId);
   const tk = ensureThreadKey(database, threadId, hasOtherRows(database, threadId, mrow));
   if (prior !== undefined) database.prepare("UPDATE line SET mrow = ? WHERE key = ? AND mrow = ?").run(mrow, tk.key, prior);
   syncLines(database, tk, mrow, lineClassesOf(message), prior !== undefined);
@@ -60,7 +71,16 @@ export function afterInsert(database: DatabaseSync, threadId: string, message: S
 }
 
 /** A stored row was rewritten (same rowid). */
-export function afterUpdate(database: DatabaseSync, threadId: string, message: Shape, mrow: number, parentChanged: boolean, splicing = false, priorKind?: string): void {
+export function afterUpdate(database: DatabaseSync, threadId: string, message: Shape, mrow: number, parentChanged: boolean, splicing = false, priorKind?: string, replayUnchanged = false, copyChanged?: boolean): void {
+  // The message writer proves exact equality apart from attribution/terminal receipt metadata before
+  // rewriting the row. That receipt stamp changes no replay input. Unknown
+  // callers and every other rewrite retain the conservative invalidation,
+  // including removing copyOf from a former text row.
+  const conservative = copyChanged || message.copyOf || message.kind === "text" || priorKind === "text" || priorKind === undefined;
+  // Reviewed streaming writes preserve an unchanged copy graph. Attribution
+  // stamps still refuse any accompanying shape change; unknown callers retain
+  // the earlier conservative text-row rule.
+  if (!replayUnchanged && (copyChanged === undefined ? conservative : copyChanged || message.dispatchedIn !== undefined)) noteReplayAncestryChange(database, threadId);
   const tk = ensureThreadKey(database, threadId, hasOtherRows(database, threadId, mrow));
   syncLines(database, tk, mrow, lineClassesOf(message));
   // A card payload cannot change a text preview. Its parent can, as can a
@@ -94,6 +114,7 @@ export function afterSpliceAfter(database: DatabaseSync, threadId: string, fresh
 }
 
 export function forgetThread(database: DatabaseSync, threadId: string): void {
+  noteReplayAncestryChange(database, threadId);
   database.prepare("DELETE FROM thread_summary WHERE thread_id = ?").run(threadId);
   dropThread(database, threadId);
 }

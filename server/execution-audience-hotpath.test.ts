@@ -11,7 +11,7 @@ import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { Store, type BotRecord, type TaskRecord } from "./store.ts";
 import { teamIdFor } from "./team-identities.ts";
-import { homeThread, isHomePartition, threadPartition } from "./execution-audience.ts";
+import { audienceTask, issueWorkAudience, setExecutionStore, homeThread, isHomePartition, threadPartition } from "./execution-audience.ts";
 import { threadHasKeyed } from "./message-db.ts";
 import { BINDING_MEMO_LIMITS, bindHumanThread, linkHumanBinding, observeVerifiedHuman, OWNER, resolveHumanBinding, threadHumanPrincipal } from "./human-principals.ts";
 import { ownerMemoryTicket } from "./memory/authority.ts";
@@ -134,3 +134,34 @@ it("iohot2: [A(1, eligible), X(no createdAt, ineligible), B(2, eligible)] with n
   (X as { createdAt: number }).createdAt = Number.NaN;
   expect(homeThread(live).threadId).toBe(reference(live)!.threadId);
 });
+
+
+it("admitted destination indexes thousands of newer guest chats with bounded binding reads", () => {
+  const store = new Store(() => ({ instanceId: "fixture", model: "fixture" }));
+  const source = store.createBot({ name: 'admitted source', section: 'source' });
+  store.patchBot(source.id, { autoApprove: true, fullAccess: true, noLimits: true, permissionExplicit: true });
+  const bot = store.createBot({ name: 'admitted target', section: 'target' });
+  setExecutionStore(store);
+  const owned = bot.tasks!.find(task => task.threadId === bot.threadId)!;
+  const guest = person('ADMITTED-GUEST');
+  const tasks = Array.from({ length: 2400 }, (_, i) => {
+    const threadId = 'admitted-guest-'+i;
+    bindHumanThread(threadId, guest);
+    return { ...owned, threadId, createdAt: owned.createdAt+i+1 };
+  });
+  bot.tasks = [...tasks, owned]; bot.threadId = tasks[0]!.threadId;
+  bot.partitionedAt = 1;
+  const tag = issueWorkAudience(source.id, bot.id, source.threadId, null, 'admitted-hotpath', true)!;
+  expect(tag.admission).toBeTruthy();
+  let visits = 0;
+  for (const task of bot.tasks) {
+    const threadId = task.threadId;
+    Object.defineProperty(task, 'threadId', { configurable: true, get: () => { visits++; return threadId; } });
+  }
+  database().exec("UPDATE memory_scope_bindings SET revision=revision WHERE 0");
+  const start = statementRuns();
+  for (let n = 0; n < 3; n++) expect(audienceTask(store, bot, OWNER, tag)).toBe(owned);
+  expect(statementRuns()-start).toBeLessThanOrEqual(36);
+  expect(visits).toBeLessThan(2400*20);
+  setExecutionStore(undefined as unknown as Store);
+}, 120000);

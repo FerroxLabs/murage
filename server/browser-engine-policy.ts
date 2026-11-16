@@ -1,6 +1,7 @@
 // Restricted tool surface derived from agent-browser v0.36.0 cli/src/mcp.rs.
 // The harness owns session/namespace, restore policy and launch configuration.
 // No model-provided argument may override those or choose filesystem paths.
+import { WEB_READ_DESCRIPTION } from "./web-documents.ts";
 import { murageToolOnThisServer } from "./murage-tool-surface.ts";
 
 type Json = Record<string, unknown>;
@@ -16,7 +17,7 @@ function allow(names: string[], properties: Record<string, Field> = {}, required
   for (const name of names) policies[`agent_browser_${name}`] = { properties, required };
 }
 allow(["open"], { url: string });
-allow(["read"], { url: string, raw: boolean, requireMd: boolean, llms: { type: "string", enum: ["index", "full"] }, outline: boolean, filter: string, readTimeoutMs: integer });
+allow(["read"], { handle: string, offset: nonnegative, length: { type: "integer", minimum: 1, maximum: 16000 }, url: string, raw: boolean, requireMd: boolean, llms: { type: "string", enum: ["index", "full"] }, outline: boolean, filter: string, readTimeoutMs: integer });
 allow(["snapshot"], { interactive: boolean, compact: boolean, depth: nonnegative, selector: string, includeUrls: boolean });
 allow(["back", "forward", "reload", "get_url", "get_title", "tab_list", "close"]);
 allow(["click"], { selector: string, newTab: boolean }, ["selector"]);
@@ -121,7 +122,7 @@ export function listHeadlessBrowserTools(upstreamTools: unknown): Json[] {
     const policy = policies[tool.name];
     return [{ name: tool.name,
       ...(typeof tool.title === "string" ? { title: tool.title } : {}),
-      ...(typeof tool.description === "string" ? { description: describeSiblings(tool.description) } : {}),
+      ...(tool.name === "agent_browser_read" ? { description: WEB_READ_DESCRIPTION } : typeof tool.description === "string" ? { description: describeSiblings(tool.description) } : {}),
       inputSchema: { type: "object", properties: structuredClone(policy.properties), required: [...policy.required], additionalProperties: false },
     }];
   });

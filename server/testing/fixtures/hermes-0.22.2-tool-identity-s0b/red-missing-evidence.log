@@ -1,0 +1,91 @@
+it-remote: bld-toolid-s0b on murage-vt5 (load here 16)
+test_G1_video (__main__.Evidence.test_G1_video) ... ERROR
+test_G2_unregistered (__main__.Evidence.test_G2_unregistered) ... ERROR
+test_G3_execute_code (__main__.Evidence.test_G3_execute_code) ... ERROR
+test_ISOLATION (__main__.Evidence.test_ISOLATION) ... ERROR
+
+======================================================================
+ERROR: test_G1_video (__main__.Evidence.test_G1_video)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/verify.py", line 30, in test_G1_video
+    start, = starts('video-analyze')
+             ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/verify.py", line 24, in starts
+    return [(n, m['params']['update']) for n, m in messages(scenario)
+                                                   ^^^^^^^^^^^^^^^^^^
+  File "/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/verify.py", line 19, in messages
+    return [(e['wireLine'], json.loads(e['line'])) for e in wire()
+                                                            ^^^^^^
+  File "/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/verify.py", line 15, in wire
+    enumerate((ROOT / 'frames.jsonl').read_text().splitlines(), 1)]
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/pathlib.py", line 1059, in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/pathlib.py", line 1045, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/frames.jsonl'
+
+======================================================================
+ERROR: test_G2_unregistered (__main__.Evidence.test_G2_unregistered)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/verify.py", line 36, in test_G2_unregistered
+    responses = [json.loads(s) for s in (ROOT / 'model-responses.jsonl').read_text().splitlines()]
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/pathlib.py", line 1059, in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/pathlib.py", line 1045, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/model-responses.jsonl'
+
+======================================================================
+ERROR: test_G3_execute_code (__main__.Evidence.test_G3_execute_code)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/verify.py", line 48, in test_G3_execute_code
+    start, = starts('execute-code-terminal')
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/verify.py", line 24, in starts
+    return [(n, m['params']['update']) for n, m in messages(scenario)
+                                                   ^^^^^^^^^^^^^^^^^^
+  File "/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/verify.py", line 19, in messages
+    return [(e['wireLine'], json.loads(e['line'])) for e in wire()
+                                                            ^^^^^^
+  File "/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/verify.py", line 15, in wire
+    enumerate((ROOT / 'frames.jsonl').read_text().splitlines(), 1)]
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/pathlib.py", line 1059, in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/pathlib.py", line 1045, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/frames.jsonl'
+
+======================================================================
+ERROR: test_ISOLATION (__main__.Evidence.test_ISOLATION)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/verify.py", line 57, in test_ISOLATION
+    self.assertEqual(read('runtime.json')['interfaces'], ['lo'])
+                     ^^^^^^^^^^^^^^^^^^^^
+  File "/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/verify.py", line 10, in read
+    return json.loads((ROOT / name).read_text())
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/pathlib.py", line 1059, in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/pathlib.py", line 1045, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: '/work/server/testing/fixtures/hermes-0.22.2-tool-identity-s0b/runtime.json'
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.002s
+
+FAILED (errors=4)

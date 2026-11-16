@@ -7,7 +7,7 @@
 // Pi has no permission system of its own: its bash, edit and write tools run
 // the moment the model calls them. Murage's gate is loaded into the per-turn
 // `pi --mode rpc` process with `-e`, like pi-mcp-extension.ts, and shipped
-// verbatim as .ts. It imports nothing of Murage's (only node built-ins): the
+// verbatim as .ts, alongside the pure hook-control table. The
 // shared path check, the sensitive list and the directory walk are carried
 // INLINE below between the `@inline` markers, and pi-permission-gate.test.ts
 // (T105) asserts each block equals its module's source.
@@ -22,14 +22,25 @@
 // The ask travels as an `editor` dialog (extension_ui_request over RPC). The
 // title carries a per-turn secret the driver generates and hands over in
 // MURAGE_PI_GATE; the prefill carries the whole call as JSON. The driver
-// answers `{"allow": true, "input": {...}}` or `{"deny": true, "reason": ...}`
-// and the gate applies the input in place on `event.input`. The secret is
+// answers only `{code}` on bound turns; allow leaves `event.input` untouched.
+// Explicit open mode retains the legacy answer and input rewrite. The secret is
 // removed from this process's environment on load so the commands pi runs
 // never inherit it.
 
-import { lstatSync, readdirSync, realpathSync, statSync } from "node:fs";
+import "../../shared/win-hide-child-process.mjs";
+import { PI_CONTROL_FRAMES, preToolCode } from "./hook-control.ts";
+import { wipeBreaker, nativeWipeBreaker, RootRegistry } from "./pi-wipe-check.generated.mjs";
+import { lstatSync, readdirSync, realpathSync, statSync, openSync, closeSync, fstatSync, readSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { posix, win32 } from "node:path";
+
+// @inline begin shared/flux-route.ts:registerBusyloopPayloadSite
+// Keep the source inventory's pure identity marker without a Murage import.
+function registerBusyloopPayloadSite<T>(kind: "read" | "classify", payload: T): T {
+  void kind;
+  return payload;
+}
+// @inline end shared/flux-route.ts:registerBusyloopPayloadSite
 
 // @inline begin shared/scan-limits.ts
 const GATE_MESSAGE_BYTES = 16 * 1024 * 1024;
@@ -49,6 +60,8 @@ interface SensitivePathRow {
   /** Claude `permissions.ask` Read rules for this row: in-project rows
    * relative, home rows as `~/`. */
   read: readonly string[];
+  /** Additional named leaves/roots for unknown-cwd writes; never a filesystem scan. */
+  cwdSuffixes?: readonly string[];
   /** Claude `permissions.ask` Bash text rules for the same names. */
   bash: readonly string[];
 }
@@ -61,7 +74,16 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     bash: ["* .env*", "*/.env*"],
   },
   {
+    // A whole-input Ask read must recognize a glob that can select .env.
+    // Keep the literal env row's rule identity stable for existing verdicts.
+    id: "env-glob",
+    re: /(^|[\s/\\"'])\.env\*/i,
+    read: [".env"],
+    bash: ["* .env*", "*/.env*"],
+  },
+  {
     id: "ssh",
+    cwdSuffixes: ["*id_rsa*", "*id_ed25519*", "*authorized_keys*"],
     re: /\.ssh[\\/]|id_rsa|id_ed25519|authorized_keys/i,
     read: ["~/.ssh/**"],
     bash: ["*.ssh/*", "*id_rsa*", "*id_ed25519*", "*authorized_keys*"],
@@ -90,9 +112,9 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   },
   {
     id: "harness-keys",
-    re: /\.codex[\\/]auth\.json|\.claude[\\/]\.credentials|provider-keys|\.murage[\\/]config\.json/i,
-    read: ["~/.codex/auth.json", "~/.claude/.credentials*", "~/.murage/config.json", "**/provider-keys*"],
-    bash: ["*.codex/auth.json*", "*.claude/.credentials*", "*provider-keys*", "*.murage/config.json*"],
+    re: /\.codex[\\/]auth\.json|\.claude[\\/]\.credentials|provider-keys|(?:^|[\\/])\.credentials\.yaml|\.murage[\\/]config\.json/i,
+    read: ["**/.credentials.yaml", "~/.codex/auth.json", "~/.claude/.credentials*", "~/.murage/config.json", "**/provider-keys*"],
+    bash: ["*/.credentials.yaml*", "*.codex/auth.json*", "*.claude/.credentials*", "*provider-keys*", "*.murage/config.json*"],
   },
   // Desktop userData can be relocated by restore profiles: match the
   // store basename, not only the default Murage directory.
@@ -105,6 +127,7 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   // Rule 35: the Windows spellings, rows of their own.
   {
     id: "windows-credential-files",
+    cwdSuffixes: ["application_default_credentials.json"],
     // 1.0.10 fix round (Grok High): gcloud's POSIX folder too, and its application default credentials by name
     re: /(^|[\s\\/"'])_(netrc|npmrc)\b|\.azure[\\/]|appdata[\\/]roaming[\\/](?:gcloud|npm[\\/]etc)[\\/]|[\\/]npm[\\/]etc[\\/]npmrc\b|\.config[\\/]gcloud(?:[\\/]|$|["'\s])|application_default_credentials\.json|[\\/]login data\b/i,
     read: ["~/_netrc", "~/_npmrc", "~/.azure/**", "~/AppData/Roaming/gcloud/**", "~/.config/gcloud/**", "~/AppData/Roaming/npm/etc/**", "**/Login Data"],
@@ -159,11 +182,18 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
     read: ["**/murage-exec*/**", "**/murage-exec*"],
     bash: ["*murage-exec*"],
   },
+  {
+    id: "murage-copilot-mcp",
+    re: /murage-copilot-mcp(-[0-9A-Za-z]+)?([\\/]|$|["'\s])/i,
+    read: ["**/murage-copilot-mcp*/**", "**/murage-copilot-mcp*"],
+    bash: ["*murage-copilot-mcp*"],
+  },
   // 1.0.3 (hook self-guard): the hook programs Murage writes for an engine and
   // the folders they live in (DATA_DIR/native/antigravity-relay, -ask, -scope
   // and codex-scope). The engine re-reads them on every call, so a write to one
   // would replace the guard that judges every later call.
   // 1.0.10: native/hermes-ask (the Hermes ask hook and its overlay config): a bot editing the overlay could remove Murage's ask hook.
+  // No limits: no card; hook-canon.ts checks and restores these files before every use.
   {
     id: "murage-engine-hooks",
     re: /(?<![\w.-])(?:(?:antigravity-(?:relay|ask|scope)|codex-scope|hermes-ask)[. ]*(?:[\\/:]|$|["'\s;|&)>`])|murage-agy-relay|murage-hook\.(?:mjs|cmd|env)\b|ask-hook-[\w.-]*\.cjs\b)/i,
@@ -184,6 +214,7 @@ const SENSITIVE_PATHS: readonly SensitivePathRow[] = [
   // `plugins::$DATA`): Win32 reads those as the folder (lanes/release103/SG-WIN-PATHTRICKS.md), so the row does too.
   {
     id: "agy-workspace-hooks",
+    cwdSuffixes: [".agents", ".agent", "_agents", "_agent"],
     re: /(?<![\w.-])[._]agents?[\\/](?:hooks\.json|plugins\.json|(?:plugins|agents)[. ]*(?:[\\/:]|$|["'\s;|&)>`]))|(?<=^|[\s"'=\\/])[._]agents?(?:\/|\\(?!["']))(?=$|["'\s;|&)>])|(?<=^|[\s=\\/])\.agents?(?=$|[\r\n"']|[ \t]*[;|&>)])|(?<=(?:^|[\s=])["'])\.agents?(?=["'](?:$|[\r\n]|[ \t]*(?:[;|>]|&&)))|(?<=\(["'])\.agents?(?=["']\))|(?<=[ \t=]["'])_agents?(?=["'](?:$|[\r\n]|[ \t]*(?:[;|>]|&&)))|(?<=^|[\s=\\/])_agents?(?=$|[\r\n"']|[ \t]*(?:[;|>]|&&))|(?<=["'])[._]agents?["'][ \t]*,[ \t]*["'](?:hooks\.json|plugins\.json|plugins|agents)["']/i,
     ancestor: /(?<![\w.-])[._]agents?[\\/](?:hooks\.json|plugins\.json|(?:plugins|agents)[. ]*(?:[\\/:]|$|["'\s;|&)>`]))/i,
     read: [".agents/hooks.json", ".agent/hooks.json", "_agents/hooks.json", "_agent/hooks.json", ".agents/plugins.json", ".agent/plugins.json", "_agents/plugins.json", "_agent/plugins.json", ".agents/plugins/**", ".agent/plugins/**", "_agents/plugins/**", "_agent/plugins/**", ".agents/agents/**", ".agent/agents/**", "_agents/agents/**", "_agent/agents/**"],
@@ -846,12 +877,9 @@ export const GATE_UNASKED: ReadonlyArray<readonly [string, readonly string[]]> =
     "phone_contacts_search", "phone_contacts_get", "phone_location_get",
     "phone_alarm_set", "phone_timer_set", "phone_text_compose", "phone_call_dial",
   ]],
-  // native HighLevel, read only (a test pins them to HIGHLEVEL_READ_TOOL_NAMES and HIGHLEVEL_HELPER_NAMES through OWN_UNASKED)
+  // Family calls always reach the HighLevel host for operation-level grant and approval checks.
   ["own:highlevel", [
-    "HIGHLEVEL_SEARCH_CONTACTS", "HIGHLEVEL_GET_CONTACT", "HIGHLEVEL_LIST_NOTES", "HIGHLEVEL_LIST_TASKS",
-    "HIGHLEVEL_LIST_PIPELINES", "HIGHLEVEL_SEARCH_OPPORTUNITIES", "HIGHLEVEL_GET_OPPORTUNITY", "HIGHLEVEL_SEARCH_CONVERSATIONS",
-    "HIGHLEVEL_READ_CONVERSATION", "HIGHLEVEL_LIST_CALENDARS", "HIGHLEVEL_LIST_EVENTS", "HIGHLEVEL_GET_LOCATION",
-    "HIGHLEVEL_LIST_CONNECTIONS", "HIGHLEVEL_ACTION_STATUS",
+    "HIGHLEVEL_CONTACTS", "HIGHLEVEL_OPPORTUNITIES", "HIGHLEVEL_CONVERSATIONS", "HIGHLEVEL_CALENDARS", "HIGHLEVEL_AUTOMATIONS", "HIGHLEVEL_LOCATION", "HIGHLEVEL_USERS", "HIGHLEVEL_FORMS", "HIGHLEVEL_PAYMENTS", "HIGHLEVEL_SOCIAL", "HIGHLEVEL_BLOGS", "HIGHLEVEL_MEDIA", "HIGHLEVEL_DOCUMENTS", "HIGHLEVEL_FUNNELS", "HIGHLEVEL_COURSES", "HIGHLEVEL_SAAS", "HIGHLEVEL_SNAPSHOTS", "HIGHLEVEL_LIST_CONNECTIONS", "HIGHLEVEL_ACTION_STATUS"
   ]],
 ];
 function unaskedPair(mountId: string | undefined, tool: string): boolean {
@@ -889,7 +917,6 @@ interface GateApi {
 }
 
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
-const block = (reason: string): GateBlock => ({ block: true, reason });
 
 function mcpTable(): Map<string, McpToolEntry> | undefined {
   const table = (globalThis as Record<string, unknown>)[MCP_TABLE_KEY];
@@ -1035,6 +1062,8 @@ export function filterSelfCheck(hooks: FilterHooks = DEFAULT_HOOKS): boolean {
 
 // ---- the gate --------------------------------------------------------------
 
+type PiWipeInventoryCache = {path: string; revision: string; registry: RootRegistry};
+
 export interface GateOptions {
   hooks?: FilterHooks;
   now?: () => number;
@@ -1055,24 +1084,156 @@ function allowedKeys(tool: string, original: Record<string, unknown> | undefined
  *  environment, never this. */
 const GATE_SLOT = Symbol.for("murage.piGate");
 
+// MAIN RULING 1114-PI-FLOOR-FOLLOWS-AUTHORITY: the generated sibling carries
+// the approved checker; T105 pins its bytes to the source, and packaging stages
+// the sibling through the extension's ordinary static import graph.
+
+// Preserve the utility export as an adapter to the same approved native checker.
+export function visibleDeleteTarget(path:string,home:string,cwd?:string) {
+  return nativeWipeBreaker('delete_file',{path},{home,cwd})?.rule??null;
+}
+/** A throw lets Pi keep the native result. This boundary must never return or throw. */
+export function refusePiFilter(statusFile: string | undefined): never {
+  try {
+    try { if (statusFile) writeFileSync(statusFile, "refuse.pi.filter", { mode: 0o600 }); } catch { /* best effort */ }
+  } finally {
+    try { process.kill(process.pid, "SIGKILL"); } catch {
+      try { process.abort(); } catch { /* termination still cannot escape */ }
+    }
+    for (;;) { /* wait for termination without returning to Pi */ }
+  }
+}
+
 export default function piPermissionGate(pi: GateApi, options: GateOptions = {}): void {
   const hooks = options.hooks ?? DEFAULT_HOOKS;
   const now = options.now ?? Date.now;
   const slot = globalThis as Record<symbol, unknown>;
-  const kept = slot[GATE_SLOT] as { secret?: unknown; only?: unknown } | undefined;
+  const kept = slot[GATE_SLOT] as { secret?: unknown; only?: unknown; noLimits?: boolean; mode?: unknown; modeFile?: string; statusFile?: string; wipeContextFile?: string; wipeInventory?: PiWipeInventoryCache } | undefined;
   const fromEnv = process.env.MURAGE_PI_GATE ?? "";
   const secret = fromEnv || (typeof kept?.secret === "string" ? kept.secret : "");
   const only = (fromEnv ? process.env.MURAGE_PI_GATE_ONLY : typeof kept?.only === "string" ? kept.only : undefined) || undefined;
+  const modeFile = fromEnv ? process.env.MURAGE_PI_GATE_MODE_FILE : kept?.modeFile;
+  const statusFile = fromEnv ? process.env.MURAGE_PI_GATE_STATUS_FILE : kept?.statusFile;
+  // Owner producer: PiDriver; owner consumer: this staged extension.
+  // Keep the production inventory across Pi extension reloads, as with gate mode.
+  const wipeContextFile = process.env.MURAGE_PI_WIPE_CONTEXT_FILE || (!fromEnv ? kept?.wipeContextFile : undefined);
+  delete process.env.MURAGE_PI_WIPE_CONTEXT_FILE;
+  let mode = fromEnv ? process.env.MURAGE_PI_GATE_MODE : kept?.mode;
+  if (modeFile) {
+    try { mode = readFileSync(modeFile, "utf8") === "MODE=open\n" ? "open" : "bound"; }
+    catch { mode = "bound"; }
+  }
+  const bound = mode !== "open";
+  // Local diagnostics have only these two fixed reasons under a bound turn.
+  const block = (reason: string, code: "deny.policy" | "deny.unchecked" = "deny.unchecked"): GateBlock =>
+    bound ? PI_CONTROL_FRAMES[code] : { block: true, reason };
+  delete process.env.MURAGE_PI_GATE_MODE;
+  delete process.env.MURAGE_PI_GATE_MODE_FILE;
+  delete process.env.MURAGE_PI_GATE_STATUS_FILE;
+  const noLimits=process.env.MURAGE_PI_NO_LIMITS==='1'||(!fromEnv&&kept?.noLimits===true);
+  delete process.env.MURAGE_PI_NO_LIMITS;
   delete process.env.MURAGE_PI_GATE;
   delete process.env.MURAGE_PI_GATE_ONLY;
+  type OfflineRoots = {project?: string; home?: string; dataDir?: string};
+  const MAX_INVENTORY_BYTES = 16 * 1024 * 1024;
+  const MAX_ROOT_FORMS = 16_384;
+  const MAX_PATH_BYTES = 32 * 1024;
+  const REBUILD_BUDGET_MS = 250;
+  let descriptor: {context: OfflineRoots; path: string} | undefined;
+  let wipeState: PiWipeInventoryCache | undefined = kept?.wipeInventory;
+  // Short-lived descriptors permit replacement on Windows. Check both the
+  // opened inode and the pathname; an old descriptor never proves readiness.
+  const stamp = (s: NonNullable<ReturnType<typeof statSync>>): string =>
+    [s.dev, s.ino, s.size, s.mtimeMs, s.ctimeMs].join(":");
+  const readBounded = (path: string, limit: number, headerOnly = false) => {
+    const before = statSync(path);
+    if (!before.isFile() || before.size < 1 || before.size > limit) throw Error("invalid wipe inventory size");
+    const fd = openSync(path, "r");
+    try {
+      if (stamp(fstatSync(fd)) !== stamp(before)) throw Error("wipe inventory changed");
+      const bytes = Buffer.alloc(headerOnly ? Math.min(128, before.size) : before.size);
+      let offset = 0;
+      while (offset < bytes.length) {
+        const count = readSync(fd, bytes, offset, bytes.length - offset, offset);
+        if (!count) throw Error("torn wipe inventory");
+        offset += count;
+      }
+      if (stamp(fstatSync(fd)) !== stamp(before) || stamp(statSync(path)) !== stamp(before)) throw Error("wipe inventory changed");
+      return {bytes, stamp: stamp(before)};
+    } finally { closeSync(fd); }
+  };
+  const readInventory = (path: string, headerOnly: boolean) => {
+    const value = readBounded(path, MAX_INVENTORY_BYTES, headerOnly);
+    const newline = value.bytes.indexOf(10);
+    if (newline < 0 || newline > 127) throw Error("invalid wipe inventory header");
+    const header = value.bytes.subarray(0, newline).toString("utf8");
+    if (!/^MURAGE-PI-ROOTS 1 R [a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(header)) throw Error("wipe inventory unavailable");
+    return {revision: value.stamp + ":" + header, body: value.bytes.subarray(newline + 1)};
+  };
+  const offlineContext = (cwd: string) => {
+    if (!descriptor) {
+      if (!wipeContextFile) throw Error("missing wipe context");
+      const value: unknown = JSON.parse(new TextDecoder("utf-8", {fatal:true}).decode(readBounded(wipeContextFile, 64 * 1024).bytes));
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw Error("invalid wipe context");
+      const {context: supplied, inventoryPath: path} = value as {context?: unknown; inventoryPath?: unknown};
+      if (!supplied || typeof supplied !== "object" || Array.isArray(supplied) || typeof path !== "string" || !path || Buffer.byteLength(path) > MAX_PATH_BYTES || path.includes("\0")) throw Error("invalid wipe context");
+      const context: OfflineRoots = {};
+      for (const name of ["project", "home", "dataDir"] as const) {
+        const root = (supplied as Record<string, unknown>)[name];
+        if (root !== undefined && (typeof root !== "string" || !root || Buffer.byteLength(root) > MAX_PATH_BYTES || root.includes("\0"))) throw Error("invalid wipe root");
+        if (typeof root === "string") context[name] = root;
+      }
+      descriptor = {context, path};
+    }
+    const current = readInventory(descriptor.path, true);
+    if (wipeState?.path !== descriptor.path || wipeState.revision !== current.revision) {
+      // Never reuse a last-good registry following a failed refresh.
+      wipeState = undefined;
+      const started = performance.now();
+      const full = readInventory(descriptor.path, false);
+      if (full.revision !== current.revision) throw Error("wipe inventory changed");
+      const roots: unknown = JSON.parse(new TextDecoder("utf-8", {fatal:true}).decode(full.body));
+      if (!Array.isArray(roots) || roots.length > MAX_ROOT_FORMS) throw Error("invalid wipe inventory roots");
+      const registry = new RootRegistry();
+      for (const [index, root] of roots.entries()) {
+        if (typeof root !== "string" || !root || root.includes("\0") || Buffer.byteLength(JSON.stringify(root)) > MAX_PATH_BYTES) throw Error("invalid wipe root");
+        if (performance.now() - started > REBUILD_BUDGET_MS) throw Error("wipe inventory rebuild budget");
+        registry.replace("pi:inventory:" + index, [root]);
+      }
+      if (performance.now() - started > REBUILD_BUDGET_MS || readInventory(descriptor.path, true).revision !== current.revision) throw Error("wipe inventory changed or slow");
+      wipeState = {path: descriptor.path, revision: current.revision, registry};
+      const reload = slot[GATE_SLOT] as {wipeInventory?: PiWipeInventoryCache} | undefined;
+      if (reload) reload.wipeInventory = wipeState;
+    }
+    // These are the engine process's actual environment values.
+    return {home: homedir(), ...descriptor.context, cwd, platform: process.platform, env: process.env, registry: wipeState.registry};
+  };
+  const confirmInventory = () => {
+    if (!descriptor || !wipeState || readInventory(descriptor.path, true).revision !== wipeState.revision) throw Error("wipe inventory changed");
+  };
+  let fallbackNoted=false;
+  const localWipeOnly=(event:GateEvent,_ctx:GateContext):GateBlock|undefined=>{
+    if(!fallbackNoted){fallbackNoted=true;console.warn('[no-limits] Pi broker UI unavailable; continuing with the local wipe check');}
+    try{
+      const entry=mcpTable()?.get(event.toolName);
+      const tool=entry?entry.mcpTool:event.toolName;
+      const input=event.input as Record<string,unknown>|undefined;
+      const text=input?.command??input?.code??input?.script;
+      const context=offlineContext(_ctx.cwd);
+      const hit=typeof text==='string'?wipeBreaker(text,context):null;
+      if(hit||nativeWipeBreaker(tool,input,context))return block('This action names a wipe target. Ask the owner before running it.');
+      confirmInventory();
+    }catch{return block(PI_GATE_UNCHECKED); /* Unread input stays held. */}
+    return undefined;
+  };
   // Murage loads the gate only on a turn that asks, so a gate with no secret
   // anywhere cannot ask the owner: it blocks every call instead of letting
   // pi run its tools unasked.
+  slot[GATE_SLOT] = { secret, only, noLimits, mode, modeFile, statusFile, wipeContextFile, wipeInventory: wipeState };
   if (!secret) {
-    pi.on("tool_call", async () => block(PI_GATE_UNCHECKED));
+    pi.on("tool_call", async (event,ctx) => noLimits?localWipeOnly(event,ctx):block(PI_GATE_UNCHECKED));
     return;
   }
-  slot[GATE_SLOT] = { secret, only };
   const pending = new Map<string, number>();
   let filterTrusted = false;
   let staleNote: string | undefined;
@@ -1092,8 +1253,15 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
   // registration returned without throwing and the self-check passed.
   try {
     pi.on("tool_result", (event, ctx) => {
-      if (event.toolCallId) pending.delete(event.toolCallId);
-      return filterToolResult(event, ctx.cwd, hooks);
+      if (!bound) {
+        if (event.toolCallId) pending.delete(event.toolCallId);
+        return filterToolResult(event, ctx.cwd, hooks);
+      }
+      try {
+        if (event.toolCallId) pending.delete(event.toolCallId);
+        if (filterTrusted && filterToolResult(event, ctx.cwd, hooks) === undefined) return undefined;
+      } catch { /* exceptions are terminal too */ }
+      return refusePiFilter(statusFile);
     });
     filterTrusted = filterSelfCheck(hooks);
   } catch {
@@ -1108,13 +1276,20 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
   }
 
   const ask = async (event: GateEvent, ctx: GateContext, entry?: McpToolEntry, held?: string): Promise<GateBlock | undefined> => {
-    if (!ctx.hasUI) return block(PI_GATE_NO_UI);
+    if ((!ctx.hasUI || typeof ctx.ui?.editor!=='function') && !noLimits) return block(PI_GATE_NO_UI);
+    if(noLimits&&typeof ctx.ui?.editor!=='function')return localWipeOnly(event,ctx);
     const tool = entry ? entry.piName : event.toolName;
     const note = staleNote;
     staleNote = undefined;
     const answer = await ctx.ui.editor(`${PI_GATE_TITLE_PREFIX}${secret}`, piGateMessage(tool, isObject(event.input) ? event.input : undefined, entry, note, held));
     if (typeof answer !== "string" || !answer.trim()) return block(PI_GATE_NOT_ALLOWED);
-    const parsed: unknown = JSON.parse(answer);
+    const parsed: unknown = registerBusyloopPayloadSite("read", JSON.parse(answer));
+    if (bound) {
+      const code = preToolCode(parsed);
+      if (code !== "allow") return PI_CONTROL_FRAMES[code];
+      walks = new WalkCache();
+      return undefined;
+    }
     if (!isObject(parsed)) return block(PI_GATE_NOT_ALLOWED);
     if (parsed.deny === true) return block(typeof parsed.reason === "string" && parsed.reason ? parsed.reason.slice(0, 2_000) : PI_GATE_NOT_ALLOWED);
     // NOLIMITS-MEANS-IT 3.4: the server never saw this call whole, so there is nothing to echo. Allow means run what is
@@ -1178,6 +1353,7 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
       }
       // The filter is not trusted: walk the root and run only on a clean,
       // finished walk. Nothing is asked: a card cannot retract a result.
+      if (bound) return refusePiFilter(statusFile);
       let directory = true;
       try { directory = statSync(check.real).isDirectory(); } catch { return "ask"; }
       if (!directory) return "run";
@@ -1187,8 +1363,8 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
         walks.set("turn", check.real, walked);
       }
       if (!walked.ok) return block("Murage could not read this folder to check it for sensitive files; search a subdirectory.");
-      if (walked.hits.length) return block(`This would read ${walked.hits[0]!.path}; exclude it or name a subdirectory.`);
-      if (walked.unwalked.length) return block(`Murage could not finish checking this folder (${walked.unwalked.slice(0, 3).join(", ")}); exclude node_modules or search a subdirectory.`);
+      if (walked.hits.length) return bound ? PI_CONTROL_FRAMES["deny.policy"] : block(`This would read ${walked.hits[0]!.path}; exclude it or name a subdirectory.`, "deny.policy");
+      if (walked.unwalked.length) return bound ? PI_CONTROL_FRAMES["deny.unchecked"] : block(`Murage could not finish checking this folder (${walked.unwalked.slice(0, 3).join(", ")}); exclude node_modules or search a subdirectory.`);
       return "run";
     }
     return "ask";
@@ -1196,11 +1372,12 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
 
   const decide = async (event: GateEvent, ctx: GateContext): Promise<GateBlock | undefined> => {
     sweep(false);
+    if(noLimits)return ask(event,ctx,mcpTable()?.get(event.toolName));
     const name = event.toolName;
     const own = typeof name === "string" && Object.hasOwn(OWN_ROWS, name);
     const entry = typeof name === "string" ? mcpTable()?.get(name) : undefined;
     // Rule 14: exactly one of the two sets; a name in both or neither is blocked.
-    if (own === (entry !== undefined)) return block(PI_GATE_UNIDENTIFIED);
+    if (own === (entry !== undefined)) return block(PI_GATE_UNIDENTIFIED, "deny.policy");
     if (entry) {
       if (only) return entry.piName === only ? undefined : ask(event, ctx, entry);
       return unaskedPair(entry.mountId, entry.mcpTool) ? undefined : ask(event, ctx, entry);
@@ -1216,7 +1393,7 @@ export default function piPermissionGate(pi: GateApi, options: GateOptions = {})
     try {
       return await decide(event, ctx);
     } catch {
-      return block(PI_GATE_UNCHECKED);
+      return noLimits?localWipeOnly(event,ctx):block(PI_GATE_UNCHECKED);
     }
   });
 }

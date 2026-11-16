@@ -1,8 +1,6 @@
-// REDACT-MD-SINKS §3 stream rows 14-18 (designs/REDACT-MD-SINKS-1104.md §5),
-// plus the row 18 split-equivalence test and the row 19 stream clock. Each
-// describe loads a fresh native.ts so per-process stream state (latched
-// entries, overflow mode) never leaks between rows. Every row fails on the base
-// (int/1015 b47ece583) on an assertion.
+// Historical stream fixtures are native projection guards on this base: no delta
+// text reaches the writer's whole-sink redactor. They do not prove a native latch.
+// The shared detector tests below separately preserve its streaming contract.
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll, describe, expect, it, vi } from "vitest";
@@ -233,5 +231,56 @@ describe("the native trace holds no text payload (d9b5e9db8)", () => {
     send(n, t, "clean text");
     expect(raw(t)).not.toContain("hunter2");
     expect(raw(t)).not.toContain("clean text");
+  });
+});
+
+// RULING-l5a-1019 / DESIGN-r2 T10–T11: preservation guards, GREEN on base.
+describe("native-projection-contract", () => {
+  it.each(["in", "out"] as const)("drops every text carrier in %s while preserving metadata", async (dir) => {
+    const n = await freshNative(), t = thread(`projection-${dir}`);
+    const msg = {
+      type: "assistant", id: "frame-1", usage: { input_tokens: 12 },
+      delta: { text: "PLAIN-DELTA", thinking: "PLAIN-THINKING", partial_json: "PLAIN-JSON" },
+      event: { type: "content_block_delta", index: 1, delta: { text: "NESTED-DELTA" } },
+      message: { content: [
+        { type: "tool_use", id: "tool-1", name: "Bash", input: { cwd: "/work", command: "TOOL-INPUT" } },
+        { type: "tool_result", tool_use_id: "tool-1", content: "TOOL-OUTPUT" },
+      ] },
+      unknown: { text: "UNKNOWN-TEXT", payload: "UNKNOWN-PAYLOAD", count: 3 },
+    };
+    n.appendNative(t, { dir, source: "fixture", msg });
+    expect(JSON.parse(raw(t)).msg).toEqual({
+      type: "assistant", id: "frame-1", usage: { input_tokens: 12 },
+      event: { type: "content_block_delta", index: 1 },
+      message: { content: [
+        { type: "tool_use", id: "tool-1", name: "Bash", input: { cwd: "/work" } },
+        { type: "tool_result", tool_use_id: "tool-1" },
+      ] },
+      unknown: { count: 3 },
+    });
+    expect(raw(t)).not.toMatch(/PLAIN-|NESTED-DELTA|TOOL-INPUT|TOOL-OUTPUT|UNKNOWN-/);
+    expect(msg.delta.text).toBe("PLAIN-DELTA");
+  });
+
+  it("native-cleanup-no-dead-stream-scan", async () => {
+    const n = await freshNative(), t = thread("no-stream-scan");
+    const shared = await import("../../shared/md-secret-label.mjs");
+    const create = vi.spyOn(shared, "createLabelStream");
+    const scan = vi.spyOn(shared, "scanLabelDelta");
+    try {
+      for (const dir of ["in", "out"] as const) {
+        for (const field of ["text", "thinking", "partial_json"]) {
+          n.appendNative(t, { dir, source: "fixture", msg: { delta: { [field]: "**password**: hunter2" } } });
+        }
+        n.appendNative(t, { dir, source: "fixture", msg: { type: "user", text: "next prompt" } });
+      }
+      expect(create).not.toHaveBeenCalled();
+      expect(scan).not.toHaveBeenCalled();
+      expect(raw(t)).not.toContain("hunter2");
+      // Path strings survive projection and must still receive the whole-sink scanner.
+      n.appendNative(t, { dir: "in", source: "fixture", msg: { path: ("/work/_password_:hunter2T" + "AILSECRET") } });
+      expect(raw(t)).not.toMatch(/hunter2|TAILSECRET/);
+      expect(JSON.parse(raw(t).trimEnd().split("\n").at(-1)!).msg.path).toBe("/work/_password_: [hidden]");
+    } finally { create.mockRestore(); scan.mockRestore(); }
   });
 });
