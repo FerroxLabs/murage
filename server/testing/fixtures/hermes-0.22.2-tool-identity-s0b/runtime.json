@@ -1,0 +1,25 @@
+{
+  "version_stdout": "Hermes Agent v0.22.2 (2026.9.24) \u00b7 upstream d923a5eb\nInstall directory: /work/.s0b-runtime/hermes-agent-d923a5eb487a17c0a68801bba9ef0f56c81040a8\nInstall method: unknown\nPython: 3.14.10\nOpenAI SDK: 2.24.0\n",
+  "version_stderr": "",
+  "python_version": "3.14.10 (main, Nov  5 2026, 09:38:43) [GCC 12.2.0]",
+  "python_sha256": "18e5076d335579021f66100894222c763322c2a84c8eb78ad572e099b37de56f",
+  "cli_entry_sha256": "88a7fc166d3bfaac082d44bbfc36c93b53c50f7508ca96e32206dc3f1edfaa82",
+  "interfaces": [
+    "lo"
+  ],
+  "environment": {
+    "PATH": "/work/.s0b-runtime/python/bin:/usr/local/bin:/usr/bin:/bin",
+    "PYTHONHOME": "/work/.s0b-runtime/python",
+    "LD_LIBRARY_PATH": "/work/.s0b-runtime/python/lib",
+    "HOME": "/tmp/s0b-home",
+    "HERMES_HOME": "/tmp/s0b-home/hermes",
+    "PYTHONPATH": "/work/.s0b-runtime/deps:/work/.s0b-runtime/hermes-agent-d923a5eb487a17c0a68801bba9ef0f56c81040a8",
+    "PYTHONDONTWRITEBYTECODE": "1",
+    "NO_COLOR": "1",
+    "HERMES_ACCEPT_HOOKS": "1",
+    "XAI_API_KEY": "s0-dummy-xai-not-a-credential",
+    "XAI_BASE_URL": "http://127.0.0.1:18080/v1"
+  },
+  "node_version": "v22.23.3",
+  "node_sha256": "fde6a4bf8d0562f7751d1a2d6cb9b417c4cfe107bbcb0aa3e9a24e125e348f48"
+}

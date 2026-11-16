@@ -1,0 +1,197 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`unknown word prefix owner > \${!unknown} > Full access snapshot protected=false 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; touch ./out/\${!unknown}",
+    "fullAccessOrigin": "owner",
+    "outsideRead": null,
+    "ownerStarted": true,
+  },
+}
+`;
+
+exports[`unknown word prefix owner > \${!unknown} > Full access snapshot protected=true 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; touch /etc/\${!unknown}",
+    "fullAccessOrigin": "owner",
+    "outsideRead": null,
+    "ownerStarted": true,
+  },
+}
+`;
+
+exports[`unknown word prefix owner > {1..513} > Full access snapshot protected=false 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; touch ./out/{1..513}",
+    "fullAccessOrigin": "owner",
+    "outsideRead": null,
+    "ownerStarted": true,
+  },
+}
+`;
+
+exports[`unknown word prefix owner > {1..513} > Full access snapshot protected=true 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; touch /etc/{1..513}",
+    "fullAccessOrigin": "owner",
+    "outsideRead": null,
+    "ownerStarted": true,
+  },
+}
+`;
+
+exports[`unknown word prefix routine > \${!unknown} > Full access snapshot protected=false 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; touch ./out/\${!unknown}",
+    "fullAccessOrigin": "routine",
+    "outsideRead": null,
+    "ownerStarted": false,
+    "routineLevel": true,
+  },
+}
+`;
+
+exports[`unknown word prefix routine > \${!unknown} > Full access snapshot protected=true 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; touch /etc/\${!unknown}",
+    "fullAccessOrigin": "routine",
+    "outsideRead": null,
+    "ownerStarted": false,
+    "routineLevel": true,
+  },
+}
+`;
+
+exports[`unknown word prefix routine > {1..513} > Full access snapshot protected=false 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; touch ./out/{1..513}",
+    "fullAccessOrigin": "routine",
+    "outsideRead": null,
+    "ownerStarted": false,
+    "routineLevel": true,
+  },
+}
+`;
+
+exports[`unknown word prefix routine > {1..513} > Full access snapshot protected=true 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "value-path",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; touch /etc/{1..513}",
+    "fullAccessOrigin": "routine",
+    "outsideRead": null,
+    "ownerStarted": false,
+    "routineLevel": true,
+  },
+}
+`;

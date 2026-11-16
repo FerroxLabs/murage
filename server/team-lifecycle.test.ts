@@ -1,8 +1,8 @@
 import { manageBot } from "./bot-management.ts";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync, backup } from "node:sqlite";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { mkdirSync, readFileSync, copyFileSync } from "node:fs";
+import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
@@ -98,13 +98,17 @@ it("an open journal locks membership, filing and another team operation",()=>{
  expect(()=>deleteTeam(f.store,{section:"Sales",bots:"keep",revision:teamRevision(f.store)},deps)).toThrow("still finishing");
 });
 
-it("restored journal recovery changes only the supplied restored files and database",()=>{
- const f=fixture();setTeamJournalCheckpoint(at=>{if(at==="rename:2")throw Error("HARD_STOP");});expect(()=>renameTeam(f.store,{section:"Sales",name:"Revenue",revision:teamRevision(f.store)},deps)).toThrow("HARD_STOP");
+it("restored journal recovery changes only the supplied restored files and database",async()=>{
+ const f=fixture();
+ // Keep an older read snapshot open: the restore fixture must include committed WAL pages.
+ const reader=new DatabaseSync(join(DATA_DIR,"messages.db"),{readOnly:true});reader.exec("BEGIN");reader.prepare("SELECT count(*) FROM sqlite_schema").get();
+ try{setTeamJournalCheckpoint(at=>{if(at==="rename:2")throw Error("HARD_STOP");});expect(()=>renameTeam(f.store,{section:"Sales",name:"Revenue",revision:teamRevision(f.store)},deps)).toThrow("HARD_STOP");
  setTeamJournalCheckpoint(undefined);const restoredRoot=join(DATA_DIR,"restored");mkdirSync(restoredRoot);
  const bots=JSON.parse(readFileSync(join(DATA_DIR,"bots.json"),"utf8")),groups=JSON.parse(readFileSync(join(DATA_DIR,"groups.json"),"utf8"));
- database().exec("PRAGMA wal_checkpoint(TRUNCATE)");copyFileSync(join(DATA_DIR,"messages.db"),join(restoredRoot,"messages.db"));
+ await backup(database(),join(restoredRoot,"messages.db"));
  const restoredDb=new DatabaseSync(join(restoredRoot,"messages.db"));
  try{reconcileTeamJournalFiles(restoredRoot,restoredDb,bots,groups);expect(bots.find((b:{id:string})=>b.id===f.bot.id).section).toBe("Revenue");expect(database().prepare("SELECT op FROM team_identities WHERE team_id=?").get(f.id)?.op).toBe("rename");expect(f.store.bot(f.bot.id)?.section).toBe("Sales");}finally{restoredDb.close();}
+ }finally{reader.close();}
 });
 
 it("bot-management move returns the same 409 home-move refusal",()=>{

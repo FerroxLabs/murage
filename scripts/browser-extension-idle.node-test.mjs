@@ -16,9 +16,11 @@ function event() {
 
 // Isolated worker, profile storage, native host and clock. No browser or app is contacted.
 async function fixture({ stored = {}, now = 1_000_000, random = 0.5, absent = true, busy = () => false, storageFails = false, parseCommand } = {}) {
+  const navigations = [];
   const timers = new Map(), alarms = new Map(), ports = [], attempts = [], sent = [];
   let sequence = 0, reloads = 0, wakeups = 0;
   const runtime = {
+    navigation: async (...args) => { navigations.push(args); },
     initialize: async () => {}, connection: async () => ({ type: 'hello' }), restartReports: () => [],
     handlePanel: async () => ({}), handleRequest: async message => { parseCommand?.(message); return { result: {} }; },
     driving: () => { throw Error('update must use busy'); }, drivingBotName: () => 'Fixture',
@@ -82,7 +84,7 @@ async function fixture({ stored = {}, now = 1_000_000, random = 0.5, absent = tr
     await api.runtime.onMessage.fire({ action: 'reconnect' }, sender, value => { response = value; });
     await settle(); return response;
   };
-  return { api, runtime, stored, alarms, timers, ports, attempts, sent, advance, reconnect, now: () => now, reloads: () => reloads, wakeups: () => wakeups };
+  return { api, runtime, navigations, stored, alarms, timers, ports, attempts, sent, advance, reconnect, now: () => now, reloads: () => reloads, wakeups: () => wakeups };
 }
 
 test('startup and early alarms honor persisted nextRetryAt; owner Connect retries immediately', async () => {
@@ -235,4 +237,15 @@ test('E5: historical 1.0.0 parser rejects avatar and the real worker disconnects
  assert.throws(()=>oldParser(frame));
  const f=await fixture({absent:false,parseCommand:oldParser});let disconnected=false;
  f.ports[0].disconnect=()=>{disconnected=true;};await f.ports[0].onMessage.fire(frame);assert.equal(disconnected,true);
+});
+
+test('B2 worker distinguishes committed documents from history and fragment updates', async () => {
+ const f=await fixture();const details={tabId:1,frameId:0,url:'https://allowed.test/next'};
+ for(const name of ['onCommitted','onHistoryStateUpdated','onReferenceFragmentUpdated']){
+  await f.api.webNavigation[name].fire(details);await settle();
+ }
+ assert.equal(f.navigations.length,3);
+ assert.equal(f.navigations[0][1],undefined);
+ assert.equal(f.navigations[1][1],true);
+ assert.equal(f.navigations[2][1],true);
 });

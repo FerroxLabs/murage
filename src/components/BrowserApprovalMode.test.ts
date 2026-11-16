@@ -1,8 +1,11 @@
+// @vitest-environment jsdom
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { createElement, isValidElement, type ReactNode } from "react";
+import { act, createElement, isValidElement, type ReactNode } from "react";
+import { createRoot } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, it, expect, vi } from "vitest";
-import { BrowserApprovalModeView, FullPermissiveDialog, HazardStripe, setApprovalMode, setActionCheck } from "./BrowserApprovalMode";
+import { BrowserApprovalMode, BrowserApprovalModeView, FullPermissiveDialog, HazardStripe, setApprovalMode, setActionCheck } from "./BrowserApprovalMode";
+import * as store from "@/state/store";
 import { BrowserExtensionPanelView, endedBindingIds } from "./BrowserExtensionPanel";
 import { approvalSaveOutcome, ModeNotConfirmed, saveApprovalMode } from "@/lib/browser-approval-read";
 import { readFileSync } from "node:fs";
@@ -36,7 +39,7 @@ describe("mode selector", () => {
   });
   it("action check: Flux default, the bot's own engine, settings line, and the Ask each step note when unavailable", () => {
     const p = base(); const html = renderToStaticMarkup(createElement(BrowserApprovalModeView, p));
-    expect(html).toContain("Action check"); expect(html).toContain("Murage&#x27;s check service (default)"); expect(html).toContain("Mira&#x27;s own engine"); expect(html).toContain("compares the step with your request"); expect(html).not.toContain("Ask each step until the action check is available.");
+    expect(html).toContain("Action check"); expect(html).toContain("Murage&#x27;s check service (default)"); expect(html).toContain("Mira&#x27;s own engine"); expect(html).toContain("Turning this on sends your task and the page details to Flux to check browser actions."); expect(html).not.toContain("Ask each step until the action check is available.");
     find(BrowserApprovalModeView(p), i => i["data-check"] === "bot")!.onClick(); expect(p.onActionCheck).toHaveBeenCalledWith("bot");
     expect(renderToStaticMarkup(createElement(BrowserApprovalModeView, { ...p, checkerAvailable: false }))).toContain("Ask each step until the action check is available.");
   });
@@ -201,9 +204,42 @@ describe("a mode that is not known is never shown as the bot's", () => {
   it("an unconfirmed save marks the mode unknown and closes the Full dialog; a refusal keeps the stored mode", () => {
     expect(approvalSaveOutcome(new ModeNotConfirmed())).toBe("unconfirmed");
     expect(approvalSaveOutcome(new Error("Type Mira exactly"))).toBe("refused");
-    const source = readFileSync(new URL("./BrowserApprovalMode.tsx", import.meta.url), "utf8");
+    const source = readFileSync("src/components/BrowserApprovalMode.tsx", "utf8");
     expect(source).toContain('if (approvalSaveOutcome(cause) === "unconfirmed") {\n        // It may have changed');
     expect(source).toContain('setRead("failed"); setDialogOpen(false); setTyped("");');
     expect(source).toContain('onReread={read === "failed" ?');
   });
+});
+
+it("ROOM-ROUTING-CONSENT the Flux checker choice renders its processing disclosure", () => {
+  const copy = "Turning this on sends your task and the page details to Flux to check browser actions.";
+  for (const actionCheck of ["flux", "bot"] as const) {
+    const html = renderToStaticMarkup(createElement(BrowserApprovalModeView, { ...base(), actionCheck }));
+    expect(html).toContain('data-check="flux"');
+    expect(html).toContain(copy);
+  }
+  const compact = renderToStaticMarkup(createElement(BrowserApprovalModeView, { ...base(), compact: true }));
+  expect(compact).not.toContain('data-check="flux"');
+});
+
+it.each([
+  { actionCheck: undefined, selected: "false", label: "no saved actionCheck" },
+  { actionCheck: "flux" as const, selected: "true", label: "saved Flux choice" },
+])("ROOM-ROUTING-CONSENT $label renders Flux selected=$selected", async ({ actionCheck, selected }) => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const request = vi.spyOn(store, "api").mockResolvedValue({ mode: "task", ...(actionCheck ? { actionCheck } : {}), checkerAvailable: actionCheck === "flux" });
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(createElement(BrowserApprovalMode, { bot: { id: "consent-fixture", name: "Mira" }, phone: false })));
+    expect(request).toHaveBeenCalledExactlyOnceWith("/api/bots/consent-fixture/browser-extension/mode");
+    expect(container.querySelector('[role="radio"][data-check="flux"]')?.getAttribute("aria-checked")).toBe(selected);
+    if (!actionCheck) expect(container.querySelectorAll('[data-check][aria-checked="true"]')).toHaveLength(0);
+  } finally {
+    await act(async () => root.unmount());
+    container.remove();
+    request.mockRestore();
+    vi.unstubAllGlobals();
+  }
 });

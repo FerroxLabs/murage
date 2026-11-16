@@ -6,13 +6,13 @@
 // an explicit tool call, a helper that missed it left nothing but MEMORY_RECALL_UNAVAILABLE, and nothing was logged.
 // Now a tool search waits TOOL_SEARCH_BUDGET_MS, falls back to keywords marked partial instead of answering empty,
 // logs every degraded answer with its cause code (never memory text), and keeps every access check it had.
+import { openTestIndex, put } from "./testing/open-index.ts";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { database } from "../database.ts";
 import { resetObserveWindows, setObserveSink } from "../observe.ts";
-import { MemoryIndex } from "./index.ts";
 import { pendingProjectionRecords } from "./projection.ts";
 import { closeMemoryIndexReader, lexicalPage, RECALL_FIRST_PAGE } from "./index-reader.ts";
 import { SEARCH_BUDGET_MS, TOOL_SEARCH_BUDGET_MS, TOOL_SEMANTIC_CUTOFF_MS, searchMemory, type MemorySearchBridge } from "./search.ts";
@@ -25,13 +25,13 @@ beforeEach(() => { freshDataDir("active"); resetWorkerLog(); resetObserveWindows
 afterEach(() => { closeMemoryIndexReader(); setObserveSink(); });
 
 const FACTS = ["The quarterly launch review is on Friday at ten.", "Sean prefers concise status reports every Monday.", "Dinner reservations are at the harbour restaurant."];
-function seed(index = false) { for (const text of FACTS) captureAndPublish(text); if (index) indexPendingRecords(); }
+async function seed(index = false) { for (const text of FACTS) captureAndPublish(text); if (index) await indexPendingRecords(); }
 const recordFor = (word: string) => database().prepare("SELECT id,version FROM memory_records WHERE text LIKE ? AND state='active' LIMIT 1").get(`%${word}%`)!;
 const block = (ms: number) => { const end = performance.now() + ms; while (performance.now() < end) { /* memory work holding the event loop */ } };
 const recallLines = () => lines.filter(line => line.startsWith("[memory] recall "));
 
 it("under worker load a tool search waits for the helper and returns full results inside the tool budget, where a turn's budget gave up", async () => {
-  seed();
+  await seed();
   const record = recordFor("launch");
   // The helper is behind a backlog: it answers after 1.2 s, and the event loop stalls 0.8 s on the way (perf102 measured 0.4-0.9 s p90).
   const busy = (): MemorySearchBridge => ({ search: () => new Promise(resolve => {
@@ -55,7 +55,7 @@ it("under worker load a tool search waits for the helper and returns full result
 }, 30_000);
 
 it("a semantic timeout with no word index returns keyword hits marked partial, with a note the bot can read", async () => {
-  seed();
+  await seed();
   const started = performance.now();
   const result = await searchMemory("harbour restaurant", accessFor().access, hangingBridge, { allowance: LineageAllowance.tool(1_000_000_000), lexical: null, caller: "tool" });
   expect(performance.now() - started).toBeLessThan(TOOL_SEARCH_BUDGET_MS + 400);
@@ -66,7 +66,7 @@ it("a semantic timeout with no word index returns keyword hits marked partial, w
 }, 15_000);
 
 it("a semantic timeout with the word index ready answers from the words, marked partial, within the tool's semantic cutoff", async () => {
-  seed(true);
+  await seed(true);
   const started = performance.now();
   const result = await searchMemory("launch review Friday", accessFor().access, hangingBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool" });
   expect(performance.now() - started).toBeLessThan(TOOL_SEMANTIC_CUTOFF_MS + 400);
@@ -82,7 +82,7 @@ it("nothing found by any path is still reported unavailable, and the note says m
 });
 
 it("each failure cause is logged with its code, the caller and the outcome, and never the memory text", async () => {
-  seed();
+  await seed();
   const { access } = accessFor();
   await searchMemory("harbour", access, failingBridge("MEMORY_WORKER_NOT_READY"), { allowance: LineageAllowance.tool(1_000_000_000), lexical: null, caller: "tool" });
   await searchMemory("harbour", access, failingBridge("MEMORY_WORKER_START_BACKOFF"), { allowance: LineageAllowance.tool(1_000_000_000), lexical: null });
@@ -95,7 +95,7 @@ it("each failure cause is logged with its code, the caller and the outcome, and 
   const late = await searchMemory("reports", access, { search: () => { block(3600); return Promise.resolve({ hits: many, vectorRows: 3, coverageComplete: true }); } }, { allowance: LineageAllowance.tool(1_000_000_000), lexical: null, limit: 1, caller: "tool" });
   expect(late.hits).toHaveLength(0);
   expect(late).toMatchObject({ degradedReason: "MEMORY_RECALL_UNAVAILABLE", partial: true });
-  seed(true);
+  await seed(true);
   await searchMemory("launch", access, hangingBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool" });
   const logged = recallLines();
   for (const [caller, cause, outcome] of [["tool", "MEMORY_WORKER_NOT_READY", "partial"], ["turn", "MEMORY_WORKER_START_BACKOFF", "partial"], ["turn", "MEMORY_QUERY_DEADLINE", "partial"],
@@ -105,7 +105,7 @@ it("each failure cause is logged with its code, the caller and the outcome, and 
 }, 30_000);
 
 it("the keyword fallback keeps every access check: other audiences, records waiting for review, and revoked access", async () => {
-  seed();
+  await seed();
   const db = database();
   const other = randomUUID();
   db.prepare("INSERT INTO memory_scopes VALUES(?,'conversation',?,'[]',0)").run(other, "other-thread");
@@ -122,7 +122,7 @@ it("the keyword fallback keeps every access check: other audiences, records wait
 });
 
 it("old versions of a long thread's checkpoint no longer crowd the word page: they leave the index, and current recall finds the facts", async () => {
-  seed(true);
+  await seed(true);
   const db = database();
   const scope = String(db.prepare("SELECT scope_id FROM memory_records LIMIT 1").get()!.scope_id);
   const id = `checkpoint:${randomUUID()}`, versions = 300;
@@ -135,13 +135,13 @@ it("old versions of a long thread's checkpoint no longer crowd the word page: th
   }
   // An index an earlier build wrote: every version is in it, and they fill the first page.
   closeMemoryIndexReader();
-  let index = new MemoryIndex(join(DATA_DIR, "memory-index.db"));
-  try { index.upsert(rows); } finally { index.close(); }
+  let index = await openTestIndex(join(DATA_DIR, "memory-index.db"));
+  try { await put(index, rows); } finally { index.close(); }
   expect(lexicalPage("launch review reports", [scope], RECALL_FIRST_PAGE)!.hits.filter(hit => hit.id === id).length).toBe(RECALL_FIRST_PAGE);
   // The helper removes them in slices when it opens the index (worker.ts); the newest version stays.
   closeMemoryIndexReader();
-  index = new MemoryIndex(join(DATA_DIR, "memory-index.db"));
-  try { while (!index.purgeRolledCheckpoints({ maxExamined: 100 }).done) { /* steps */ } } finally { index.close(); }
+  index = await openTestIndex(join(DATA_DIR, "memory-index.db"));
+  try { while (!(await index.purgeRolledCheckpoints({ maxExamined: 100 })).done) { /* steps */ } } finally { index.close(); }
   expect(lexicalPage("launch review reports", [scope], RECALL_FIRST_PAGE)!.hits.filter(hit => hit.id === id).map(hit => hit.version)).toEqual([versions]);
   const result = await searchMemory("launch review reports", accessFor().access, hangingBridge, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool" });
   expect(result.hits.some(hit => hit.text.includes("quarterly launch review"))).toBe(true);

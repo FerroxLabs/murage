@@ -14,7 +14,7 @@ const fixture = fileURLToPath(new URL("./fixtures/updater-handoff.cjs", import.m
 
 const xvfb =
   process.platform === "linux" && !process.env.DISPLAY
-    ? spawnSync("which", ["xvfb-run"], { encoding: "utf8" }).stdout.trim()
+    ? spawnSync("which", ["xvfb-run"], { windowsHide: true, encoding: "utf8" }).stdout.trim()
     : "";
 // The clipboard is an X11 selection on Linux, so this needs a display.
 const canRun = process.platform === "linux" && (Boolean(process.env.DISPLAY) || Boolean(xvfb));
@@ -24,7 +24,7 @@ function runFixture() {
     ? [xvfb, ["-a", electron, "--no-sandbox", fixture]]
     : [electron, ["--no-sandbox", fixture]];
   return new Promise((resolve) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(command, args, { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (chunk) => (stdout += chunk));

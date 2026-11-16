@@ -41,6 +41,7 @@ posixOnly("a routine due when the server starts", () => {
   async function boot(): Promise<void> {
     stderr = "";
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
       env: {
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
@@ -101,7 +102,14 @@ posixOnly("a routine due when the server starts", () => {
     // Second start, with the routine already due: its run happens and finishes.
     while (Date.now() < dueAt + 1_000) await new Promise((resolve) => setTimeout(resolve, 250));
     await boot();
-    await expect.poll(async () => (await runsOf(routineId)).map((run: any) => run.status), { timeout: 60_000, interval: 500 })
+    // Completion precedes confirmed child close; wait for both within the same deadline.
+    await expect.poll(async () => {
+      const runs = await runsOf(routineId);
+      const completed = runs.find((run: any) => run.status === "completed");
+      if (!completed) return [];
+      const task = ((await api("GET", `/api/bots/${bot.id}`)).body.bot?.tasks ?? []).find((t: any) => t.threadId === completed.threadId);
+      return task?.busy === false ? runs.map((run: any) => run.status) : [];
+    }, { timeout: 60_000, interval: 500 })
       .toContain("completed");
     const [first] = (await runsOf(routineId)).filter((run: any) => run.status === "completed");
     expect(stderr).not.toMatch(/Cannot read properties of undefined|before initialization/);

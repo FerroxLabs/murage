@@ -2,9 +2,25 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "@/state/store";
 import { shouldPollTelegramStatus, telegramAutoPairPlan, telegramHealthLabel, telegramStatusFrom, type TelegramStatus } from "@/lib/telegram-status";
 import { copyTextOrThrow } from "@/lib/copy-text";
+import type { SettingsMode } from "@/lib/settings-mode";
+import { HowThisWorks, SetupArea } from "./SettingsPrimitives";
 
 interface PairCode { code: string; expiresAt: number; username?: string; botIdentityId: string }
-export function TelegramSettings() {
+
+/** SIMPLE-COPY 1 and 9 B6: the sentences Simple moves off the card, word for word, as a pure component so every branch
+ *  can be rendered on its own. (a) to (d) always; (e) once paired; (f) while a rejected token can be replaced. */
+export function TelegramHowThisWorks({ configured, paired, replaceable }: { configured: boolean; paired: boolean; replaceable: boolean }) {
+  return <>
+    <p>Message your Chief of Staff from Telegram. Messages share the Chief's current conversation. Keep Murage running to receive messages. Your completed pairing reconnects automatically after Murage restarts.</p>
+    <p>Open <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-accent underline">BotFather</a> in Telegram, send <code>/newbot</code> and follow the prompts. Copy the bot token it gives you.</p>
+    <p>{configured ? "Your token is saved securely on this computer. You do not need to enter it again." : "Your token will be stored encrypted on this computer and will not be shown again here."}</p>
+    <p>Create a code, then send the command below to your new bot in a private Telegram chat.</p>
+    {paired && <p>Connected. Send your bot a message in Telegram to talk to your Chief. Use owner-only buttons to allow once or deny pending actions. Other reviews stay in Murage.</p>}
+    {replaceable && <p>Paste a new token for the same bot from BotFather. Your pairing and owner link are kept. A token for a different bot is refused.</p>}
+  </>;
+}
+
+export function TelegramSettings({ mode }: { mode?: SettingsMode } = {}) {
   const [status, setStatus] = useState<TelegramStatus | null>(null);
   const [token, setToken] = useState("");
   const [pair, setPair] = useState<PairCode | null>(null);
@@ -63,6 +79,8 @@ export function TelegramSettings() {
     if (status.configured || linked) return;
     // Opening this screen leaves focus on the button that was pressed, so only another text field counts as the owner's choice.
     const active = document.activeElement;
+    // A tab the owner moved to by keyboard keeps focus: the Apps page shows this screen as its Messaging tab.
+    if (active?.closest('[role="tab"]')) return;
     if (active && active !== tokenInput.current && active.closest("input, textarea, select, [contenteditable]:not([contenteditable=false])")) return;
     tokenInput.current?.focus();
   }, [status, busy, linked]);
@@ -91,44 +109,93 @@ export function TelegramSettings() {
   };
   const startPair = () => run("pair", version => pairWork(version, expired));
   const username = pair?.username && /^[A-Za-z0-9_]{5,32}$/.test(pair.username) ? pair.username : null;
-  return <section aria-labelledby="telegram-settings-title" className="rounded-xl border border-hairline/40 bg-card p-4">
-    <h3 id="telegram-settings-title" className="text-[15px] font-semibold text-ink">Telegram</h3>
-    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Message your Chief of Staff from Telegram. Messages share the Chief's current conversation. Keep Murage running to receive messages. Your completed pairing reconnects automatically after Murage restarts.</p>
-    <p role="status" className="mt-3 text-[12px] font-medium text-ink">{telegramHealthLabel(status, expired, waiting)}</p>
-    <h4 className="mt-4 text-[13px] font-medium text-ink">1. Create a Telegram bot</h4>
-    <p className="mt-1 text-[12px] text-ink-secondary">Open <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-accent underline">BotFather</a> in Telegram, send <code>/newbot</code> and follow the prompts. Copy the bot token it gives you.</p>
-    <h4 className="mt-4 text-[13px] font-medium text-ink">{status?.configured ? "2. Token saved" : "2. Save your token"}</h4>
-    <p className="mt-1 text-[12px] text-ink-secondary">{status?.configured ? "Your token is saved securely on this computer. You do not need to enter it again." : "Your token will be stored encrypted on this computer and will not be shown again here."}</p>
-    <label className="mt-3 block text-[12px] text-ink-secondary">Bot token
-      <input ref={tokenInput} data-setting-control="telegram-settings-title" type="password" autoComplete="off" placeholder={status?.configured ? "Token saved" : "Paste your bot token"} value={token} disabled={Boolean(busy) || tokenLocked} onChange={event => setToken(event.target.value)}
-        className="mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink disabled:opacity-50" />
-    </label>
-    {tokenLocked && <p className="mt-1 text-[12px] text-ink-secondary">Revoke the connection before changing its token.</p>}
-    {replaceable && <p className="mt-1 text-[12px] text-ink-secondary">Paste a new token for the same bot from BotFather. Your pairing and owner link are kept. A token for a different bot is refused.</p>}
-    <div className="mt-3 flex flex-wrap gap-2">
-      <button type="button" disabled={Boolean(busy) || tokenLocked || !status || !token.trim()} onClick={() => void save()} className="rounded-lg bg-control px-3 py-2 text-[12px] text-ink disabled:opacity-50">{busy === "save" ? "Saving…" : replaceable ? "Replace token" : "Save token"}</button>
-    </div>
-    <h4 className="mt-4 text-[13px] font-medium text-ink">3. Pair with your Chief</h4>
-    <p className="mt-1 text-[12px] text-ink-secondary">Create a code, then send the command below to your new bot in a private Telegram chat.</p>
-    <div className="mt-3 flex flex-wrap gap-2">
-      <button type="button" disabled={Boolean(busy) || !status?.configured || (Boolean(linked) && !expired)} onClick={() => void startPair()} className="rounded-lg bg-accent px-3 py-2 text-[12px] text-accent-ink disabled:opacity-50">{busy === "pair" ? "Pairing…" : expired ? "Create new pairing code" : "Pair with Chief"}</button>
-      <button type="button" disabled={Boolean(busy)} onClick={() => void run("refresh", refresh)} className="rounded-lg border border-hairline/40 px-3 py-2 text-[12px] text-ink disabled:opacity-50">Refresh status</button>
-      <button type="button" disabled={Boolean(busy) || (!linked && !pair)} onClick={() => void run("revoke", async version => { await api("/api/telegram/revoke", { method: "POST", body: "{}" }); if (version !== actionVersion.current) return; setPair(null); await refresh(version); if (version === actionVersion.current) setNotice("Telegram connection revoked."); })} className="rounded-lg px-3 py-2 text-[12px] text-danger disabled:opacity-50">Revoke</button>
-    </div>
-    {pair && !expired && <div className="mt-3 rounded-lg bg-inset p-3 text-[12px] text-ink">
-      <p>Send this command to your Telegram bot:</p><code className="mt-2 block break-all select-all">/pair {pair.code}</code>
-      <button type="button" className="mt-2 rounded-lg border border-hairline/40 px-3 py-2" onClick={() => void run("copy", async () => { await copyTextOrThrow(`/pair ${pair.code}`); setNotice("Pairing command copied."); })} disabled={Boolean(busy)}>Copy pairing command</button>
-      <p className="mt-1 text-ink-secondary">Expires {new Date(pair.expiresAt).toLocaleTimeString()}. Status updates automatically while pairing.</p>
-      {username && <a href={`https://t.me/${username}`} target="_blank" rel="noreferrer" className="mt-2 inline-block text-accent hover:underline">Open Telegram bot</a>}
-    </div>}
+  // SIMPLE-COPY: no `mode` prop renders today's card exactly (standalone mounts, first-run). The Settings pages pass `mode`.
+  const piped = mode !== undefined;
+  const simple = mode === "simple";
+  const botFather = <a href="https://t.me/BotFather" target="_blank" rel="noreferrer" className="text-accent underline">BotFather</a>;
+  const tokenField = <label className="mt-3 block text-[12px] text-ink-secondary">Bot token
+    <input ref={tokenInput} data-setting-control="telegram-settings-title" type="password" autoComplete="off" placeholder={status?.configured ? "Token saved" : "Paste your bot token"} value={token} disabled={Boolean(busy) || tokenLocked} onChange={event => setToken(event.target.value)}
+      className="mt-1 w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink disabled:opacity-50" />
+  </label>;
+  const refreshButton = <button type="button" disabled={Boolean(busy)} onClick={() => void run("refresh", refresh)} className="rounded-lg border border-hairline/40 px-3 py-2 text-[12px] text-ink disabled:opacity-50">Refresh status</button>;
+  const saveButton = <button type="button" disabled={Boolean(busy) || tokenLocked || !status || !token.trim()} onClick={() => void save()} className="rounded-lg bg-control px-3 py-2 text-[12px] text-ink disabled:opacity-50">{busy === "save" ? "Saving…" : replaceable ? "Replace token" : "Save token"}</button>;
+  const lockedLine = tokenLocked && <p className="mt-1 text-[12px] text-ink-secondary">Revoke the connection before changing its token.</p>;
+  const replaceLine = replaceable && <p className="mt-1 text-[12px] text-ink-secondary">{piped ? "Paste a new token for the same bot. Your pairing is kept." : "Paste a new token for the same bot from BotFather. Your pairing and owner link are kept. A token for a different bot is refused."}</p>;
+  const pairButtons = <div className="mt-3 flex flex-wrap gap-2">
+    <button type="button" disabled={Boolean(busy) || !status?.configured || (Boolean(linked) && !expired)} onClick={() => void startPair()} className="rounded-lg bg-accent px-3 py-2 text-[12px] text-accent-ink disabled:opacity-50">{busy === "pair" ? "Pairing…" : expired ? "Create new pairing code" : "Pair with Chief"}</button>
+    {refreshButton}
+    <button type="button" disabled={Boolean(busy) || (!linked && !pair)} onClick={() => void run("revoke", async version => { await api("/api/telegram/revoke", { method: "POST", body: "{}" }); if (version !== actionVersion.current) return; setPair(null); await refresh(version); if (version === actionVersion.current) setNotice("Telegram connection revoked."); })} className="rounded-lg px-3 py-2 text-[12px] text-danger disabled:opacity-50">Revoke</button>
+  </div>;
+  const codeBox = pair && !expired && <div className="mt-3 rounded-lg bg-inset p-3 text-[12px] text-ink">
+    <p>Send this command to your Telegram bot:</p><code className="mt-2 block break-all select-all">/pair {pair.code}</code>
+    <button type="button" className="mt-2 rounded-lg border border-hairline/40 px-3 py-2" onClick={() => void run("copy", async () => { await copyTextOrThrow(`/pair ${pair.code}`); setNotice("Pairing command copied."); })} disabled={Boolean(busy)}>Copy pairing command</button>
+    <p className="mt-1 text-ink-secondary">Expires {new Date(pair.expiresAt).toLocaleTimeString()}. Status updates automatically while pairing.</p>
+    {username && <a href={`https://t.me/${username}`} target="_blank" rel="noreferrer" className="mt-2 inline-block text-accent hover:underline">Open Telegram bot</a>}
+  </div>;
+  const tail = <>
     {status?.resumeMessage && <p role="status" className="mt-3 text-[12px] text-ink-secondary">{status.resumeMessage}</p>}
     {status?.canResume && <button type="button" disabled={Boolean(busy)} onClick={() => void run("resume", async version => { await api("/api/telegram/resume", { method: "POST", body: "{}" }); await refresh(version); })} className="mt-3 rounded-lg bg-accent px-3 py-2 text-[12px] text-accent-ink disabled:opacity-50">{busy === "resume" ? "Reconnecting…" : "Retry now"}</button>}
-    {status?.paired && <p className="mt-3 text-[12px] text-success">Connected. Send your bot a message in Telegram to talk to your Chief. Use owner-only buttons to allow once or deny pending actions. Other reviews stay in Murage.</p>}
+    {status?.paired && <p className="mt-3 text-[12px] text-success">{piped ? "Connected. Message your bot in Telegram to talk to your Chief." : "Connected. Send your bot a message in Telegram to talk to your Chief. Use owner-only buttons to allow once or deny pending actions. Other reviews stay in Murage."}</p>}
     {(status?.pending ?? 0) > 0 && <p role="status" className="mt-2 text-[12px] text-ink-secondary">Telegram work is pending. A confirmed delivery will not be sent twice.</p>}
     {(status?.uncertain ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-warning">A message delivery is uncertain. Check Telegram before sending it again.</p>}
     {(status?.rejected ?? 0) > 0 && <p role="alert" className="mt-2 text-[12px] text-danger">A message could not be delivered. It will not be retried automatically.</p>}
     {status?.deliveryRetryAt && <p role="status" className="mt-2 text-[12px] text-ink-secondary">A reply is queued for a scheduled delivery retry.</p>}
     {(error || refreshError || status?.error) && <p role="alert" className="mt-2 text-[12px] text-danger">{error ?? refreshError ?? "Telegram reported a connection problem. Refresh status or review your setup."}</p>}
     {notice && <p role="status" className="mt-2 text-[12px] text-ink-secondary">{notice}</p>}
+  </>;
+  if (!piped) return <section aria-labelledby="telegram-settings-name" className="rounded-xl border border-hairline/40 bg-card p-4">
+    <h3 id="telegram-settings-name"className="text-[15px] font-semibold text-ink">Telegram</h3>
+    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Message your Chief of Staff from Telegram. Messages share the Chief's current conversation. Keep Murage running to receive messages. Your completed pairing reconnects automatically after Murage restarts.</p>
+    <p role="status" className="mt-3 text-[12px] font-medium text-ink">{telegramHealthLabel(status, expired, waiting)}</p>
+    <h4 className="mt-4 text-[13px] font-medium text-ink">1. Create a Telegram bot</h4>
+    <p className="mt-1 text-[12px] text-ink-secondary">Open {botFather} in Telegram, send <code>/newbot</code> and follow the prompts. Copy the bot token it gives you.</p>
+    <h4 className="mt-4 text-[13px] font-medium text-ink">{status?.configured ? "2. Token saved" : "2. Save your token"}</h4>
+    <p className="mt-1 text-[12px] text-ink-secondary">{status?.configured ? "Your token is saved securely on this computer. You do not need to enter it again." : "Your token will be stored encrypted on this computer and will not be shown again here."}</p>
+    {tokenField}
+    {lockedLine}
+    {replaceLine}
+    <div className="mt-3 flex flex-wrap gap-2">{saveButton}</div>
+    <h4 className="mt-4 text-[13px] font-medium text-ink">3. Pair with your Chief</h4>
+    <p className="mt-1 text-[12px] text-ink-secondary">Create a code, then send the command below to your new bot in a private Telegram chat.</p>
+    {pairButtons}
+    {codeBox}
+    {tail}
+  </section>;
+  const howThisWorks = <HowThisWorks id="telegram-how-this-works" mode={mode}>
+    <TelegramHowThisWorks configured={Boolean(status?.configured)} paired={Boolean(status?.paired)} replaceable={replaceable} />
+  </HowThisWorks>;
+  const midSetup = Boolean((status?.configured && !status.paired) || pair || expired);
+  return <section aria-labelledby="telegram-settings-name" className="rounded-xl border border-hairline/40 bg-card p-4">
+    <h3 id="telegram-settings-name"className="text-[15px] font-semibold text-ink">Telegram</h3>
+    <p className="mt-1 text-[12px] leading-relaxed text-ink-secondary">Message your Chief from Telegram.</p>
+    <p role="status" className="mt-3 text-[12px] font-medium text-ink">{telegramHealthLabel(status, expired, waiting)}</p>
+    {simple ? (status?.configured ? <>
+      <SetupArea id="telegram-setup-area" mode="simple" label={status?.configured ? "Manage" : "Set up Telegram"} forceOpen={midSetup} controlAnchor="telegram-settings-title" focusFirst={false}>
+        {tokenField}
+        {lockedLine}
+        {replaceLine}
+        <div className="mt-3 flex flex-wrap gap-2">{saveButton}</div>
+        <h4 className="mt-4 text-[13px] font-medium text-ink">Pair with your Chief</h4>
+        {pairButtons}
+        {codeBox}
+      </SetupArea>
+    </> : <>
+      <p className="mt-3 text-[12px] text-ink-secondary">Get a token: in Telegram, open {botFather} and send <code>/newbot</code>.</p>
+      {tokenField}
+      <div className="mt-3 flex flex-wrap gap-2">{saveButton}{refreshButton}</div>
+    </>) : <>
+      <h4 className="mt-4 text-[13px] font-medium text-ink">1. Create a Telegram bot</h4>
+      <p className="mt-1 text-[12px] text-ink-secondary">In Telegram, open {botFather}, send <code>/newbot</code> and copy the token.</p>
+      <h4 className="mt-4 text-[13px] font-medium text-ink">{status?.configured ? "2. Token saved" : "2. Save your token"}</h4>
+      {tokenField}
+      {lockedLine}
+      {replaceLine}
+      <div className="mt-3 flex flex-wrap gap-2">{saveButton}</div>
+      <h4 className="mt-4 text-[13px] font-medium text-ink">3. Pair with your Chief</h4>
+      {pairButtons}
+      {codeBox}
+    </>}
+    {tail}
+    {howThisWorks}
   </section>;
 }

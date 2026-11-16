@@ -92,7 +92,8 @@ describe("only the assistant-text fold materialises a fence", () => {
     const calls = [...source.matchAll(/materialiseQuestionFences\(/g)];
     // the definition and one call
     expect(calls).toHaveLength(2);
-    expect(source).toContain(`const said = pushMessage({ role: "bot", kind: "text", text: shown, turnId: event.turnId }, before, reply);
+    // MAIN RULING 1115-SOURCE-PINS (A1): `shown` was renamed `itemText`; call site, order and the asker guard are unchanged
+    expect(source).toContain(`const said = pushMessage({ role: "bot", kind: "text", text: itemText, turnId: event.turnId }, before, reply);
         // QW Q2: the reply's closed \`\`\`murage-question fences become question cards, here and nowhere else
         const asker = bot?.id ?? (group ? speaker?.botId : undefined);
         if (asker && said) materialiseQuestionFences(event.threadId, asker, said, event.turnId);`);

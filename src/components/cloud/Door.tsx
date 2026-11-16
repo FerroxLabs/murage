@@ -12,7 +12,7 @@ export type DoorState = { kind: "working"; text: string } | { kind: "app" } | { 
   | { kind: "blocked" };
 
 const ENTER_TEXT: Record<Exclude<EnterResult, "signed-in">, string> = {
-  expired: doorCopy.expired, "too-many": doorCopy.tooManyBrowsers, hold: doorCopy.computerConnected, failed: doorCopy.badLink,
+  expired: doorCopy.expired, "too-many": doorCopy.tooManyBrowsers, "too-many-tries": doorCopy.tooManyTries, hold: doorCopy.computerConnected, failed: doorCopy.badLink,
 };
 // A site origin the bounce would accept, judged without a key (the key's hash is only known after ensureDevice).
 const PLACEHOLDER_BIND = "0".repeat(64);
@@ -86,15 +86,31 @@ async function runDoorSteps(env: DoorEnv): Promise<DoorState | null> {
 }
 
 /** The door's own screen (everything but the app). */
-export function CloudDoorView({ state, onGo, onRetry }: { state: Exclude<DoorState, { kind: "app" }>; onGo(): void; onRetry?(): void }) {
+export function CloudDoorView({ state, onGo, onRetry, slow = false }: { state: Exclude<DoorState, { kind: "app" }>; onGo(): void; onRetry?(): void; slow?: boolean }) {
   const text = state.kind === "openFromSite" ? doorCopy.openFromSite : state.kind === "blocked" ? doorCopy.tabOpen : state.text;
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col items-center justify-center gap-4 p-6 text-center text-ink" aria-live="polite" data-murage-door={state.kind === "openFromSite" ? "continue" : state.kind}>
       <p className="text-[15px]">{text}</p>
+      {state.kind === "working" && slow ? <p className="text-[13px] text-ink-secondary">{doorCopy.stillOpening}</p> : null}
       {state.kind === "openFromSite" && state.button ? <button type="button" className="rounded-md bg-control px-4 py-2 text-[14px] font-medium hover:bg-inset" onClick={onGo}>{doorCopy.goButton}</button> : null}
       {state.kind === "blocked" ? <button type="button" className="rounded-md bg-control px-4 py-2 text-[14px] font-medium hover:bg-inset" onClick={onRetry}>{doorCopy.tryAgain}</button> : null}
     </main>
   );
+}
+
+/** How long the opening screen waits before it says it is still working. */
+export const STILL_OPENING_MS = 8000;
+
+/** True once the door has been in the working state for STILL_OPENING_MS. The timer restarts on each new working state and is cleared on leaving it and on unmount. */
+export function useStillOpening(working: boolean, attempt: number): boolean {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    setSlow(false);
+    if (!working) return undefined;
+    const timer = setTimeout(() => setSlow(true), STILL_OPENING_MS);
+    return () => { clearTimeout(timer); };
+  }, [working, attempt]);
+  return slow;
 }
 
 export function CloudDoor({ children }: { children: ReactNode }) {
@@ -121,6 +137,7 @@ export function CloudDoor({ children }: { children: ReactNode }) {
     const timer = setInterval(() => { void refreshed(); }, 12 * 60_000);
     return () => { clearInterval(timer); };
   }, []);
+  const slow = useStillOpening(state.kind === "working", attempt);
   if (state.kind === "app") return <>{children}</>;
   const goToSite = async () => {
     try {
@@ -133,5 +150,5 @@ export function CloudDoor({ children }: { children: ReactNode }) {
     }
   };
   const retry = () => { setState({ kind: "working", text: doorCopy.opening }); setAttempt(n => n + 1); };
-  return <CloudDoorView state={state} onGo={() => { void goToSite(); }} onRetry={retry} />;
+  return <CloudDoorView state={state} slow={slow} onGo={() => { void goToSite(); }} onRetry={retry} />;
 }

@@ -1,0 +1,14 @@
+{
+  "id": "fuigo-pwsh",
+  "provenance": "synthetic-definition",
+  "engine": "fuigo",
+  "dialect": "pwsh",
+  "command": "& 'C:\\Users\\fixture\\AppData\\Local\\Programs\\Git\\bin\\bash.exe' './build.sh'",
+  "inputDigest": "bcd81f007e36df430ee18b26f105baeeb6432daeb93d49c7bc230adf6a097609",
+  "effectiveCwdNative": "C:\\Users\\fixture\\work",
+  "runtimeEvidence": null,
+  "requiredProtocol": "murage/bash-launch/1",
+  "files": {
+    "build.sh": "echo ok\n"
+  }
+}

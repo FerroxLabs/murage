@@ -12,7 +12,8 @@
 // line still owed) -> gone. Every step that talks to one box (a send, a Stop's confirmation, a recovery) runs under that box's lock, shared
 // by every driver instance of this process. Every change of the list is synchronous (no await inside it), so no change can lose another's.
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, copyFileSync, fsyncSync, openSync, readFileSync, statSync } from "node:fs";
+import { copyFileSync } from "./counted-fs.ts";
+import { closeSync, fsyncSync, openSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
@@ -362,7 +363,10 @@ export async function recoverCloudComputerTurns(options: { token: () => string |
 export interface CloudSend {
   turnId: string; boxId: string; threadId: string; token: string;
   /** the submission fence: called right before the POST, nothing awaited between them */
-  beforeSubmit?: () => void;
+  beforeSubmit?: () => void | number;
+  /** The attempt API (1.0.19 D5): what the POST did to the attempt `beforeSubmit` opened. A proven refusal is zero bytes; an answer lost
+   * or an unproven status may have reached the box (uncertain); an acknowledged prompt is written. */
+  attempt?: { written: (id: number | void) => void; uncertain: (id: number | void) => void; notWritten: (id: number | void) => void };
   /** GET /events: the events the box lists now (C3 step 4); a throw refuses the send */
   events: () => Promise<unknown[]>;
   /** the POST of the prompt, raw (an HTTP answer of any status), or a throw when no answer came */
@@ -401,7 +405,8 @@ export function sendCloudPrompt(send: CloudSend): Promise<{ promptId: string | n
     if (sharing.length || load().quarantine?.[send.boxId] !== undefined) strictTurns.add(send.turnId);
     for (const other of sharing) strictTurns.add(other.turnId);
     const unsent = () => { monitored.delete(send.turnId); strictTurns.delete(send.turnId); };
-    try { send.beforeSubmit?.(); }
+    let attemptId: number | void;
+    try { attemptId = send.beforeSubmit?.(); }
     catch (error) { change(send.turnId, () => null); unsent(); throw error; }
     let answer: { status: number; body: any };
     // the POST's own await is a cleanup step: it never throws on a mark. The prompt is on the box and the record below must name it; the
@@ -411,10 +416,11 @@ export function sendCloudPrompt(send: CloudSend): Promise<{ promptId: string | n
       // no answer: the box may have it (L4, no id: the no-id rule clears it before the next prompt)
       change(send.turnId, (e) => ({ ...e, state: "fenced" }));
       unsent();
+      send.attempt?.uncertain(attemptId);
       throw error;
     }
     if (!acknowledged(answer as BoxAnswer)) {
-      if (PROVEN_REFUSAL.has(answer.status)) change(send.turnId, () => null); else change(send.turnId, (e) => ({ ...e, state: "fenced" }));
+      if (PROVEN_REFUSAL.has(answer.status)) { change(send.turnId, () => null); send.attempt?.notWritten(attemptId); } else { change(send.turnId, (e) => ({ ...e, state: "fenced" })); send.attempt?.uncertain(attemptId); }
       unsent();
       throw new Error(answer.body?.code ?? answer.body?.error ?? `box HTTP ${answer.status}`);
     }
@@ -423,6 +429,7 @@ export function sendCloudPrompt(send: CloudSend): Promise<{ promptId: string | n
     const promptId: string | null = typeof raw === "string" && raw ? raw : null;
     // a failed write leaves L1 on disk: a restart treats it by the no-id rule; this process's watcher still follows it to its end
     change(send.turnId, (e) => ({ ...e, promptId, state: "running" }));
+    send.attempt?.written(attemptId);
     return { promptId, body, before };
   });
 }

@@ -55,6 +55,15 @@ describe("09-A3: a native Windows path to .env is a key file", () => {
     expect(env.re.test("C:\\work\\project\\.env")).toBe(true);
     expect(env.re.test("C:\\work\\project\\.env.local")).toBe(true);
   });
+  it("holds an env glob without treating longer ordinary basenames as env files", () => {
+    for (const text of ['.env*', '/project/.env*', '{"glob":".env*"}']) {
+      expect(sensitivePathRow(text, false), text).toBe("env-glob");
+    }
+    for (const text of [".env", "/project/.env.local"]) expect(sensitivePathRow(text, false), text).toBe("env");
+    for (const text of [".environment", ".envoy", "/project/env*", "/project/notes.env*"]) {
+      expect(sensitivePathRow(text, false), text).toBeNull();
+    }
+  });
 });
 
 describe("09-B1: environment dumps and $HOME profile reads are sensitive text and paths", () => {
@@ -94,4 +103,24 @@ describe("NOLIMITS-KEY-TEXT Part A rows", () => {
     expect(sensitiveNameRow(".env")).toBe("env");
     expect(sensitiveNameRow("config.toml")).toBeNull();
   });
+});
+
+// Exercise an actual mkdtemp suffix and the config filename used by the launcher.
+it("holds generated Copilot launch credentials at the approval boundary", async () => {
+  const { CopilotMcpConfig } = await import("../server/drivers/acp/copilot-mcp-config.ts");
+  const files = await CopilotMcpConfig.create();
+  try {
+    const path = files.prepare("approval-fixture", []);
+    expect(sensitivePathRow(path, false)).toBe("murage-copilot-mcp");
+    expect(sensitiveNameRow(path)).toBe("murage-copilot-mcp");
+    for (const text of [path, `cat ${path}`, `printf x > ${path}`]) expect(looksSensitive(text)).toBe(true);
+  } finally { await files.dispose(); }
+});
+
+it('protects scoped Copilot launcher credentials across supported temporary roots', () => {
+  for (const path of ['/tmp/murage-copilot-mcp-Ab12Cd/012345.json', 'C:\\Temp\\murage-copilot-mcp-Ab12Cd\\012345.json']) {
+    expect(sensitivePathRow(path, false)).toBe('murage-copilot-mcp');
+    expect(sensitiveNameRow(path)).toBe('murage-copilot-mcp');
+    expect(looksSensitive(`cat ${path}`)).toBe(true);
+  }
 });

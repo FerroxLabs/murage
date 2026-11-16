@@ -7,7 +7,7 @@
 // G11, the picture-left-out note and the plain error sentence naming the bot.
 import { expect, test, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";

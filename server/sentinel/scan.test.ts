@@ -236,7 +236,7 @@ describe("scan commit and crash story", () => {
       db.exec("PRAGMA locking_mode=EXCLUSIVE"); db.exec("BEGIN EXCLUSIVE");
       process.stdout.write("locked\\n");
       setInterval(() => {}, 1000);
-    `], { stdio: ["ignore", "pipe", "ignore"], env: {} });
+    `], { windowsHide: true, stdio: ["ignore", "pipe", "ignore"], env: {} });
     await new Promise<void>((resolve, reject) => {
       holder.stdout!.on("data", (chunk: Buffer) => { if (chunk.toString().includes("locked")) resolve(); });
       holder.once("exit", () => reject(new Error("holder exited")));

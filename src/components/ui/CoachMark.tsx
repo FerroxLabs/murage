@@ -8,7 +8,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
-import { HINT_MIN_WIDTH, pageCovered } from "@/lib/hints-seen";
+import { HINT_MIN_WIDTH, anchorHasNoBox, pageCovered } from "@/lib/hints-seen";
 import { placeTip } from "./Tip";
 
 export interface CoachMarkProps {
@@ -21,18 +21,22 @@ export interface CoachMarkProps {
 export function CoachMark({ anchor, textKey, params, onDone }: CoachMarkProps) {
   const ref = useRef<HTMLDivElement>(null);
   const [place, setPlace] = useState<{ top: number; left: number } | null>(null);
+  const [noBox, setNoBox] = useState(false);
   useLayoutEffect(() => {
+    // The control has no box (a display:none ancestor): nothing to point at, so the hint ends here and draws nothing.
+    if (anchorHasNoBox(anchor.getBoundingClientRect())) { setNoBox(true); onDone(); return; }
     if (!ref.current) return;
     setPlace(placeTip(anchor.getBoundingClientRect(), ref.current.getBoundingClientRect(), window.innerWidth));
   }, [anchor]);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") onDone(); };
     const onDown = (event: PointerEvent) => { if (!ref.current?.contains(event.target as Node)) onDone(); };
-    const gone = setInterval(() => { if (!anchor.isConnected || window.innerWidth < HINT_MIN_WIDTH || pageCovered()) onDone(); }, 500);
+    const gone = setInterval(() => { if (!anchor.isConnected || anchorHasNoBox(anchor.getBoundingClientRect()) || window.innerWidth < HINT_MIN_WIDTH || pageCovered()) onDone(); }, 500);
     window.addEventListener("keydown", onKey);
     window.addEventListener("pointerdown", onDown, true);
     return () => { clearInterval(gone); window.removeEventListener("keydown", onKey); window.removeEventListener("pointerdown", onDown, true); };
   }, [anchor, onDone]);
+  if (noBox) return null;
   return (
     <div
       ref={ref}

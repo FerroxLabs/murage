@@ -1,3 +1,4 @@
+import {writeFileSync} from "./io-meter.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -26,7 +27,7 @@
 // A crash before commit leaves the old cursors: the same records replay. Nothing here sends a notification, opens a
 // source database read-write, or touches the network.
 import { createHash, randomBytes } from "node:crypto";
-import { chmodSync, closeSync, lstatSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, closeSync, lstatSync, openSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { posix, win32 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { HEALTH_LIMITS, type CoverageValue, type EvidenceSourceRole } from "../../shared/health-protocol.mjs";

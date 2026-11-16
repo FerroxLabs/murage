@@ -1,0 +1,418 @@
+[
+  {
+    "file": "server/browser-action-checker.ts",
+    "function": "parseStage1",
+    "type": "\"allow\" | \"flag\"",
+    "function_sha256": "de977b9abf56556723f351ddaf3403651f737f4baa907d64d06b0a0f19ec48cb",
+    "count": 2,
+    "reason": "Browser checker parser/failure helper; produces safety classification consumed by browser approvals, not No limits mode permission."
+  },
+  {
+    "file": "server/browser-action-checker.ts",
+    "function": "failed",
+    "type": "CheckerVerdict",
+    "function_sha256": "806bf2cad2f631da6007a53e186dbc8d053995c581537ab6fa1d1867add7902f",
+    "count": 1,
+    "reason": "Browser checker parser/failure helper; produces safety classification consumed by browser approvals, not No limits mode permission."
+  },
+  {
+    "file": "server/browser-extension-approvals.ts",
+    "function": "ask",
+    "type": "Promise<ApprovalState>",
+    "function_sha256": "54894939e0e72b88b2ac3d14d488df3c8a192671d792809adb6e0e80bc86e980",
+    "count": 5,
+    "reason": "Waits for the browser approval state; pending owner response transport, not a mode-based automatic allow."
+  },
+  {
+    "file": "server/browser-extension-decide.ts",
+    "function": "judge",
+    "type": "Promise<CheckerVerdict>",
+    "function_sha256": "44d3d05752365395d57ea0ee9c433e61b24ccfd595c113223f22815f1f7bc71c",
+    "count": 3,
+    "reason": "Calls browser checker; result is a browser safety classification independent of No limits mode."
+  },
+  {
+    "file": "server/cloud-home/engine-render.ts",
+    "function": "cloudMcpStanza",
+    "type": "CloudMcpStanza | null",
+    "function_sha256": "88617ada176493964dbab2db29320658062eab36a02821c35766a154dbd23fc2",
+    "count": 7,
+    "reason": "Renders MCP configuration, not a permission response."
+  },
+  {
+    "file": "server/cloud-home/engine-render.ts",
+    "function": "cloudRenderMcp",
+    "type": "Record<string, CloudMcpStanza>",
+    "function_sha256": "b3046a7e88701cb9271004cd311ff8e865829822a0b229965a9549a94b0733df",
+    "count": 1,
+    "reason": "Renders MCP configuration, not a permission response."
+  },
+  {
+    "file": "server/connected-app-receipts.ts",
+    "function": "answeredActionClasses",
+    "type": "ActionClass[]",
+    "function_sha256": "63fe52a764d65b482e76c4ae3740ac8fafa894d13f6b9497cb92650dcfc98b82",
+    "count": 3,
+    "reason": "Semantic action class vocabulary/evidence; the word approve describes a past action and is not executable permission."
+  },
+  {
+    "file": "server/connected-app-receipts.ts",
+    "function": "forTurn",
+    "type": "Set<ActionClass>",
+    "function_sha256": "10bbacbdfdbed43e883b064fc13faf19456221a5a2eafe9f0c89af28a5adccb2",
+    "count": 1,
+    "reason": "Semantic action class vocabulary/evidence; the word approve describes a past action and is not executable permission."
+  },
+  {
+    "file": "server/desktop-attention.ts",
+    "function": "parseOutsideBody",
+    "type": "OutsideBody",
+    "function_sha256": "afdf7af9ac7e3ab917f125ae7e8bdcb4a144f40fe2b81bdcba68c0df5f4d9af7",
+    "count": 10,
+    "reason": "Parses/stores explicit owner response data; does not decide No limits eligibility."
+  },
+  {
+    "file": "server/drivers/antigravity-relay.ts",
+    "function": "openAntigravityRelay",
+    "type": "Promise<AntigravityRelay>",
+    "function_sha256": "d5b888f25f2843a118a18ddd07a53ab609b6d1733d6f8ddd21e6d383bd028f7e",
+    "count": 1,
+    "reason": "Driver response/event adapter: consumes a resolved request or transports a runtime event. No limits routing assertions cover driver shortcuts."
+  },
+  {
+    "file": "server/drivers/codex-hook.ts",
+    "function": "get",
+    "type": "IssuedDecision | undefined",
+    "function_sha256": "483dd1d097d30ee44311b3235f0b03b4170a8881a97efea35f6798b16afc81a1",
+    "count": 1,
+    "reason": "Driver response/event adapter: consumes a resolved request or transports a runtime event. No limits routing assertions cover driver shortcuts."
+  },
+  {
+    "file": "server/drivers/codex.ts",
+    "function": "openHookAsk",
+    "type": "Promise<HookAnswer>",
+    "function_sha256": "2e43e98340c8e74ba4d2f04b1d49b72a85cffaacafb43d8e2ff770bd0afb7273",
+    "count": 1,
+    "reason": "Driver response/event adapter: consumes a resolved request or transports a runtime event. No limits routing assertions cover driver shortcuts."
+  },
+  {
+    "file": "server/drivers/openai-chat.ts",
+    "function": "completedEvent",
+    "type": "RuntimeEvent",
+    "function_sha256": "38d4741f7a67e61521875631836b921cf552e6f0bedac0b5b63cf8a1117be9d9",
+    "count": 1,
+    "reason": "Driver response/event adapter: consumes a resolved request or transports a runtime event. No limits routing assertions cover driver shortcuts."
+  },
+  {
+    "file": "server/drivers/pi-permission-gate.ts",
+    "function": "quiet",
+    "type": "\"run\" | \"ask\" | GateBlock | { held: string }",
+    "function_sha256": "daf4deb4aee9f52d43ea4cf84ebcf909775bf596bce54edf82fd84de55ea5583",
+    "count": 22,
+    "reason": "Pi hook transport consumes the harness gate response; quiet run is the resolved response, not a local No limits eligibility producer."
+  },
+  {
+    "file": "server/event-limit.ts",
+    "function": "ownerCard",
+    "type": "Promise<PeerApprovalOutcome>",
+    "function_sha256": "a4349ed683e98c5deb1737e7d7ad1ae297346d2ffe476b5600224ae87a197c77",
+    "count": 2,
+    "reason": "Waits on an explicit card/previous permission answer; image automatic path consumes gated callback. No mode-based No limits permission is produced here."
+  },
+  {
+    "file": "server/handoff-dispatch.ts",
+    "function": "peerApproval",
+    "type": "Promise<\"allow\" | \"settled\">",
+    "function_sha256": "3ceb109b76b6fe85f281146ac464861df7e8a8b9242e1beec6898fd4fa44890f",
+    "count": 2,
+    "reason": "Waits on an explicit card/previous permission answer; image automatic path consumes gated callback. No mode-based No limits permission is produced here."
+  },
+  {
+    "file": "server/harness/bus.ts",
+    "function": "withoutImageBytes",
+    "type": "RuntimeEvent",
+    "function_sha256": "c4debdf9234afe5c5079850806f701548a450d710191f91c2d4e082442610902",
+    "count": 2,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/harness/bus.ts",
+    "function": "withheldRequest",
+    "type": "RuntimeEvent",
+    "function_sha256": "f901511e8e80e311191eea7750e936ecca30f3c9b5bc17d0cd3f059f971a293a",
+    "count": 1,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/harness/bus.ts",
+    "function": "withheldQuestions",
+    "type": "RuntimeEvent",
+    "function_sha256": "9867662f903abb242b9845b3715e74ce29db5378f769a96934ee973fc740ec02",
+    "count": 1,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/harness/bus.ts",
+    "function": "withheldToolRow",
+    "type": "RuntimeEvent",
+    "function_sha256": "bbe51c6cff842cc98c8b4e82aa98a18d48b1189379eca50004cac3a19f6fc992",
+    "count": 1,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/harness/bus.ts",
+    "function": "withheldByType",
+    "type": "RuntimeEvent",
+    "function_sha256": "7eaea00da5a6d3261693bd5243a1f1f9084bc59ce360517c7e4c5cfa2ae9b0d7",
+    "count": 14,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/harness/bus.ts",
+    "function": "withoutRaw",
+    "type": "RuntimeEvent",
+    "function_sha256": "1f843cae63b5a36d28b0ae5415eebf339d652f0db828af56dd916db56d5beafa",
+    "count": 1,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/harness/bus.ts",
+    "function": "withheldForLog",
+    "type": "RuntimeEvent",
+    "function_sha256": "ecb8dad0c74eb7c6734b023d0b949c124624fd5062012472c4901bd115a37242",
+    "count": 4,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/harness/bus.ts",
+    "function": "runOwed",
+    "type": "RuntimeEventListener[]",
+    "function_sha256": "854edeaff3f34e72f0d42962a5de801d40d62e96a89c3bdb74818684fbe206eb",
+    "count": 2,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/image-approval.ts",
+    "function": "decideImageApproval",
+    "type": "ImageApprovalDecision",
+    "function_sha256": "fe59b7270a4fc84ab345edd705e2cee9be51e9fe63ae0144a93110d15bc17136",
+    "count": 7,
+    "reason": "Observations only: every branch returns reads; index.imageAutoApproval calls finalDecision and consumes its verdict. Direct ask:false is forbidden and mutation tested."
+  },
+  {
+    "file": "server/image-operations.ts",
+    "function": "approve",
+    "type": "Promise<ApprovalAnswer>",
+    "function_sha256": "56a1b3f03cca31386c1bb1efae7a7a89518b6d0751c3845f29e52bb913369e89",
+    "count": 4,
+    "reason": "Waits on an explicit card/previous permission answer; image automatic path consumes gated callback. No mode-based No limits permission is produced here."
+  },
+  {
+    "file": "server/index.ts",
+    "function": "requestBehavior",
+    "type": "\"allow\" | \"deny\" | \"answer\" | \"undo\" | null",
+    "function_sha256": "53543ef5124f07b316fe60bdfb77a303a89b849146a544a692d5e903661db0b7",
+    "count": 1,
+    "reason": "Parses the owner response or waits for an existing shared request; allow is an explicit response, not automatic No limits eligibility."
+  },
+  {
+    "file": "server/index.ts",
+    "function": "sharedRequestApproval",
+    "type": "Promise<\"allow\" | \"deny\" | \"expired\" | \"cancelled\">",
+    "function_sha256": "964d36eafcf2b736b189985c5e805252db639e710d20dc6ba7b400e7f0c462a1",
+    "count": 1,
+    "reason": "Parses the owner response or waits for an existing shared request; allow is an explicit response, not automatic No limits eligibility."
+  },
+  {
+    "file": "server/mac-folder-prompt.ts",
+    "function": "createMacFolderPromptWatch",
+    "type": "{ observe(event: RuntimeEvent): void }",
+    "function_sha256": "aff075b0ba9f933135df00b0691574425a5f4738a43e95ba332f0da3f0ee425c",
+    "count": 1,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/memory/revoke-marker.ts",
+    "function": "coverPop",
+    "type": "\"skip\" | \"run\" | \"wait\"",
+    "function_sha256": "79e3380e9882a34d65ff92c18ad35001ad66f64f32798322162b563f80e780d9",
+    "count": 11,
+    "reason": "Memory queue scheduling marker (skip/run/wait), not a tool approval."
+  },
+  {
+    "file": "server/mobile-push-store.ts",
+    "function": "unfinishedDecision",
+    "type": "\"allow\" | \"deny\" | null",
+    "function_sha256": "6a7b890fdc9f4ba1354020816323c9b336ec219a8da67ce98349efc458293e4c",
+    "count": 1,
+    "reason": "Parses/stores explicit owner response data; does not decide No limits eligibility."
+  },
+  {
+    "file": "server/output-publication.ts",
+    "function": "createOutputPublisher",
+    "type": "OutputPublisher",
+    "function_sha256": "4212809c06bd7e820d147c97b4159ea8bb06b53b4dd7d876037bb5b184a430f0",
+    "count": 1,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/peer-approval.ts",
+    "function": "requestPeerApproval",
+    "type": "Promise<PeerApprovalOutcome>",
+    "function_sha256": "e96c302803fa3fc0b539a095daabee705c5a31be9fb47ab6913209468f7fa773",
+    "count": 3,
+    "reason": "Waits on an explicit card/previous permission answer; image automatic path consumes gated callback. No mode-based No limits permission is produced here."
+  },
+  {
+    "file": "server/peer-approval.ts",
+    "function": "waitOnCard",
+    "type": "Promise<PeerApprovalOutcome>",
+    "function_sha256": "cdb5e1b455de534a57d3f737a4e9137c2fe7878d1e2f4c522672d8760a12b138",
+    "count": 1,
+    "reason": "Waits on an explicit card/previous permission answer; image automatic path consumes gated callback. No mode-based No limits permission is produced here."
+  },
+  {
+    "file": "server/peer-approval.ts",
+    "function": "requestEventLimitApproval",
+    "type": "Promise<PeerApprovalOutcome>",
+    "function_sha256": "e2f964a2273d2f2738395631a230b2f499be31030c47cc64576d86a04d2b3e15",
+    "count": 1,
+    "reason": "Waits on an explicit card/previous permission answer; image automatic path consumes gated callback. No mode-based No limits permission is produced here."
+  },
+  {
+    "file": "server/phones/withhold.ts",
+    "function": "makePhoneToolMatcher",
+    "type": "(event: RuntimeEvent) => { summary: string } | null",
+    "function_sha256": "8ff1d10aa4ceb43e68e34dad86d5c04f47514bdd5fae422932675aed03885a2b",
+    "count": 1,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/reply-action-evidence.ts",
+    "function": "branchActionEvidence",
+    "type": "ActionEvidence",
+    "function_sha256": "292f43e5090efd5e1159dbd8aacc6853811c533ad4792bf04ed026d0f4e8ea37",
+    "count": 1,
+    "reason": "Semantic action class vocabulary/evidence; the word approve describes a past action and is not executable permission."
+  },
+  {
+    "file": "server/route-policy.ts",
+    "function": "sentinelCloudDecision",
+    "type": "\"allow\" | \"deny\"",
+    "function_sha256": "8f181391183e9df934074ed096ec18120f551f756f3b9bf823dd6fcb21f9babf",
+    "count": 1,
+    "reason": "Cloud network route policy, independent of tool permissions and No limits mode."
+  },
+  {
+    "file": "server/route-policy.ts",
+    "function": "cloudRouteDecision",
+    "type": "CloudRouteDecision",
+    "function_sha256": "0908e978832a234ce3a3ef48f96c9888e395dd9a122aa5bd1a383af201552f1c",
+    "count": 17,
+    "reason": "Cloud network route policy, independent of tool permissions and No limits mode."
+  },
+  {
+    "file": "server/runtime-event-out.ts",
+    "function": "withExecEnvInfo",
+    "type": "RequestOpened",
+    "function_sha256": "73f4d377abdac4f8fe204aeed5ba866b98127eaa5680e63cc0e7fed00433a190",
+    "count": 1,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/runtime-event-out.ts",
+    "function": "requestOpenedOut",
+    "type": "RequestOpened",
+    "function_sha256": "df569c11c5bfc981d33186c3d97438e4fdee18c4a6768e965320210044328f50",
+    "count": 1,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/runtime-event-out.ts",
+    "function": "windowRuntimeEvent",
+    "type": "RuntimeEvent",
+    "function_sha256": "f128f718676daa6f7accd4dc16c2b30c0c4e69426a5eacca6f770d2005a32c9d",
+    "count": 4,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/thread-events.ts",
+    "function": "isRuntimeEvent",
+    "type": "value is RuntimeEvent",
+    "function_sha256": "a2442dca1afc03e6a1d304a3b64c0c181d017b43f5f5bec867977cb88e63780c",
+    "count": 20,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/thread-events.ts",
+    "function": "withDecidedBy",
+    "type": "RuntimeEvent",
+    "function_sha256": "e19de6d722e3dfed7fdbbd010cbd0816b2162b64d854cf121192cf2ea2946056",
+    "count": 2,
+    "reason": "Runtime event filtering/publication or observation callback; preserves existing response data and does not authorize execution."
+  },
+  {
+    "file": "server/user-chrome.ts",
+    "function": "userChromeTrouble",
+    "type": "Promise<\"off\" | \"allow\">",
+    "function_sha256": "8847ba474b2a69b10fa4b006e3458d1b356a97a14d953738d5facf190bd4171c",
+    "count": 2,
+    "reason": "Browser availability/access diagnostic, not permission to execute a tool."
+  },
+  {
+    "file": "server/user-chrome.ts",
+    "function": "probeUserChrome",
+    "type": "Promise<\"off\" | \"allow\">",
+    "function_sha256": "662876d5604fe3457cbfbde4b8beb7b66ae1e76af24eb5ba9388c7a96076c685",
+    "count": 2,
+    "reason": "Browser availability/access diagnostic, not permission to execute a tool."
+  },
+  {
+    "file": "shared/connected-app-action-table.ts",
+    "function": "connectedAppActionClasses",
+    "type": "ActionClass[]",
+    "function_sha256": "d0e7c4e0cd9782749fdfb18cb27109db171f692b8a62850280da1e124cb2ddaf",
+    "count": 1,
+    "reason": "Semantic action class vocabulary/evidence; the word approve describes a past action and is not executable permission."
+  },
+  {
+    "file": "shared/image-approval-setting.ts",
+    "function": "imageApprovalOf",
+    "type": "StoredImageApproval | undefined",
+    "function_sha256": "7227e673467d2690c0253cbdf7c4c5a119aa3587cc6f66538c215be7b08374c6",
+    "count": 1,
+    "reason": "Parses stored Images setting; not a permission decision. The image reader produces observations for finalDecision."
+  },
+  {
+    "file": "shared/mobile-push.ts",
+    "function": "parseRespondBody",
+    "type": "RespondBody | null",
+    "function_sha256": "646ac452f75cf9c05241e750f37602534a1bf68c1a9a60043ee59646389adff5",
+    "count": 5,
+    "reason": "Parses/stores explicit owner response data; does not decide No limits eligibility."
+  },
+  {
+    "file": "shared/reply-action-claims.ts",
+    "function": "classOfPast",
+    "type": "ActionClass | undefined",
+    "function_sha256": "836f476157ed9628ff5256a946b44da5cfaab0465843aa9de6f6783a5ae49fe3",
+    "count": 1,
+    "reason": "Semantic action class vocabulary/evidence; the word approve describes a past action and is not executable permission."
+  },
+  {
+    "file": "shared/reply-action-claims.ts",
+    "function": "classOfParticiple",
+    "type": "ActionClass | undefined",
+    "function_sha256": "b8c90cfbab988373767675d98b8b5096a71f224f780081952b5f68584277b1da",
+    "count": 2,
+    "reason": "Semantic action class vocabulary/evidence; the word approve describes a past action and is not executable permission."
+  },
+  {
+    "file": "shared/skill-request.ts",
+    "function": "skillRequestBehavior",
+    "type": "\"allow\" | \"deny\"",
+    "function_sha256": "36fe6aaf4e495c0a09359134dd8e42e4b319890ef74d6a7398061fd38ad9c6b9",
+    "count": 1,
+    "reason": "Parses/stores explicit owner response data; does not decide No limits eligibility."
+  }
+]

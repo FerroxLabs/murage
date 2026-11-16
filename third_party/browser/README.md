@@ -2,13 +2,42 @@
 
 The desktop application ships two separate components:
 
-- **agent-browser 0.36.0**, official Vercel release executables from
+- **agent-browser 0.36.0**, official Vercel release executables (superseded for every shipped target by the omb.2 vendor builds below) from
   <https://github.com/vercel-labs/agent-browser/releases/tag/v0.36.0>.
   Its Apache-2.0 license is included as `agent-browser-LICENSE.txt`.
   The bundled axe-core code's upstream license and third-party notices are
   included as `LICENSE-axe-core.txt` and `LICENSE-axe-core-THIRD-PARTY.txt`.
   These files are copied from the same `v0.36.0` source tag; there is no
   root-level NOTICE in that tag.
+- **Engine 0.36.0-omb.2 (macOS and Linux desktop targets), 0.36.0-omb.3 (Windows) and 0.38.1-omb.2 (Cloud home, Linux)** are Ferrox Labs
+  vendor builds. The macOS and Linux engine executables are no longer the official Vercel bytes: they are
+  built from the exact upstream source (v0.36.0 commit `eb05921bad874cd2a1b4fa5d1149f1ed26576cae`; v0.38.1
+  commit `aff6125c023b810ea3f2e5deec5379e9a4270bdc`) plus the reviewed `murage-control-token` patch
+  (`patches/murage-control-token.fix1.patch`, and its v0.38.1 port `patches/murage-control-token.v0381.patch`).
+  Windows applies `agent-browser-windows-stdio.patch` first, then the control-token patch; the order is
+  pinned in `scripts/build-browser-vendor.mjs`. The stdio patch was cut for omb.1, so the build stamps its
+  own vendor version (`0.36.0-omb.3` for Windows) over the patch's package version in `Cargo.toml` and
+  `Cargo.lock`; the Windows executable therefore prints `agent-browser 0.36.0-omb.3`, which is what Murage's
+  launch check requires. The vendor smoke runs that same comparison against the pinned asset version.
+  Windows applies a third patch last, `patches/murage-windows-no-console.patch` (revision omb.3): the engine's
+  daemon runs without a console, so each console-program child it starts (the browser, ffmpeg, aws, the engine
+  itself) opened a console window; the patch passes `CREATE_NO_WINDOW` on those spawns. It modifies
+  `cli/src/native/cdp/chrome.rs`, `cli/src/native/cdp/lightpanda.rs`, `cli/src/native/recording.rs`,
+  `cli/src/native/providers.rs`, `cli/src/native/stream/dashboard.rs`, `cli/src/native/stream/chat.rs`,
+  `cli/src/native/webdriver/appium.rs` and `cli/src/native/mod.rs`, and adds `cli/src/native/no_console.rs`.
+  **Modification notice (Apache-2.0 section 4(b))**: the `murage-control-token` patch modifies
+  `cli/src/connection.rs`, `cli/src/native/daemon.rs`, `cli/src/native/mod.rs`,
+  `cli/src/native/stream/*.rs` and `cli/src/native/actions.rs`, adds `cli/src/native/control_token.rs`, and
+  changes `cli/Cargo.toml`/`Cargo.lock` (dependency additions, locked). It makes the engine's local ports
+  (the daemon's Windows TCP port and the stream port's `/api/status`, `/api/command` and WebSocket) require a
+  per-launch secret from Murage, and bounds every daemon line and deadline. Each patched file carries its
+  modification notice; the original Apache and axe notices remain unchanged. The vendor builds pin the
+  source archive, every patch digest, Rust 1.97.1 and pnpm 11.1.3, build the real upstream dashboard, and
+  publish an executable digest plus `provenance.json` per asset at
+  <https://github.com/FerroxLabs/murage/releases> (tags `browser-engine-v0.36.0-omb.2`,
+  `browser-engine-v0.36.0-omb.3` (Windows only), `browser-engine-v0.38.1-omb.2`). Vendor bytes are unsigned; Murage packaging verifies the pinned SHA-256
+  and then applies Ferrox Labs' Developer ID signature and notarization on macOS. Pin gate:
+  `scripts/build-browser-vendor.mjs` refuses to build unless this notice is present.
 - **Windows exception: agent-browser 0.36.0-omb.1** is an OpenMausBot vendor
   build, not an official or unmodified Vercel executable. It starts from exact
   v0.36.0 commit `eb05921bad874cd2a1b4fa5d1149f1ed26576cae` and carries only
@@ -61,3 +90,7 @@ never included here; those belong in the user's isolated bot data directory.
 Google, Chromium and Vercel are their owners' names; their inclusion does not
 imply endorsement of OpenMausBot. This provenance record is not legal advice
 or a replacement for the included upstream licenses.
+
+## OMB4 ownership source candidate
+
+`patches/murage-window-ownership.patch` adds mandatory launch ownership, close-only maintenance, and held-child shutdown on top of the omb.3 patch stack. Its modification notices identify the changed Rust files. It is a review candidate: executable versions, release tags, build sets and asset pins remain unchanged until the native proofs and promotion in S2 section 15.5 pass. See [OMB4 verification](OMB4-VERIFICATION.md) for the ownership references and outstanding native rows.

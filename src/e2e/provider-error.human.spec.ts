@@ -1,6 +1,6 @@
 import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,7 +12,7 @@ test.beforeAll(async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   cache = mkdtempSync(join(tmpdir(), "murage-provider-error-ui-"));
   server = await createServer({
-    configFile: false, root, cacheDir: cache, envFile: false, optimizeDeps: { noDiscovery: true, include: ["react", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime", "lucide-react"] }, resolve: { alias: { "@": root + "/src" } },
+    configFile: false, root, cacheDir: cache, envFile: false, optimizeDeps: { noDiscovery: true, include: ["react", "react-dom", "react-dom/client", "react/jsx-runtime", "react/jsx-dev-runtime", "lucide-react"] }, resolve: { alias: { "@": root + "/src" } },
     server: { host: "127.0.0.1", watch: null, hmr: false },
     plugins: [tailwindcss(), {
       name: "provider-error-fixture",

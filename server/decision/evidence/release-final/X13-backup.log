@@ -1,0 +1,38 @@
+COMMAND node_modules/.bin/vitest run server/decision/schema-lifecycle.test.ts -t "bound email bodies"
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/schema-lifecycle.test.ts > A4 bound email bodies cannot escape in a staged backup
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/schema-lifecycle.test.ts (5 tests | 1 failed | 4 skipped) 830ms
+   ↓ A4 A5b M50 schema is registered once and migration DDL is atomic and restartable
+   ↓ A5c M57 restore/downgrade cancellation settles record before same-action row
+   ↓ A4 full downgrade with open engine and queue records is accepted by the real 1.0.1 inspector
+   ↓ A4 staged email redaction terminalizes records and changes display only
+   × A4 bound email bodies cannot escape in a staged backup 826ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 4 skipped (5)
+   Start at  07:36:44
+   Duration  9.55s (transform 7.14s, setup 8.09s, import 479ms, tests 830ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/schema-lifecycle.test.ts > A4 bound email bodies cannot escape in a staged backup
+AssertionError: expected [Function] to throw an error
+
+- Expected:
+null
+
++ Received:
+undefined
+
+ ❯ server/decision/schema-lifecycle.test.ts:33:44
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

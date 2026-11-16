@@ -23,7 +23,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { setupAgentsReading, setupSignedOutReading, type SetupInstanceReading } from "./setup.ts";
+import { setupAgentsReading, setupOwedEngineIds, setupSignedOutReading, type SetupInstanceReading } from "./setup.ts";
 
 const instance = (over: Partial<SetupInstanceReading> & { instanceId: string }): SetupInstanceReading => ({
   snapshot: { state: "available" },
@@ -59,7 +59,7 @@ describe("the engine that is here and signed out", () => {
 
   it("is offered instead, by name, with the command that fixes it", () => {
     expect(setupSignedOutReading([CLAUDE_SIGNED_OUT])).toEqual([
-      { id: "claude", name: "Claude Code", installed: true, signInCommand: "claude auth login" },
+      { id: "claude", name: "Claude Code", installed: true, signInCommand: "claude auth login", driverKind: "claudeAgent" },
     ]);
   });
 
@@ -96,6 +96,28 @@ describe("the engine that is here and signed out", () => {
     });
     expect(setupAgentsReading([codex]).map((agent) => agent.id)).toEqual(["codex"]);
     expect(setupSignedOutReading([codex])).toEqual([]);
+  });
+
+  it("marks only the signed-out engine that is owed", () => {
+    const kimi = { ...CLAUDE_SIGNED_OUT, instanceId: "kimi", driverKind: "kimiAgent" };
+    const out = setupSignedOutReading([CLAUDE_SIGNED_OUT, kimi], new Set(["kimi"]));
+    expect(out.find((a) => a.id === "kimi")).toMatchObject({ owedOnCloud: true });
+    expect(out.find((a) => a.id === "claude")).not.toHaveProperty("owedOnCloud");
+  });
+
+  // Cloud home, Flux fine. Flux does not route the Claude or Codex CLIs, so the owed set depends only on which visible bots run where.
+  it("owed set: engines no visible bot runs on are not owed, whatever Flux says", () => {
+    const four = ["claude", "codex", "kimi", "grok"].map((instanceId) => ({ ...CLAUDE_SIGNED_OUT, instanceId }));
+    const bots = [{ modelSelection: { instanceId: "fuigo" } }, { hidden: true, modelSelection: { instanceId: "codex" } }];
+    const out = setupSignedOutReading(four, setupOwedEngineIds(bots));
+    expect(out).toHaveLength(4);
+    expect(out.filter((a) => a.owedOnCloud)).toEqual([]);
+  });
+  it("owed set: one visible bot on unsigned Codex makes only Codex owed", () => {
+    const four = ["claude", "codex", "kimi", "grok"].map((instanceId) => ({ ...CLAUDE_SIGNED_OUT, instanceId }));
+    const bots = [{ modelSelection: { instanceId: "fuigo" } }, { modelSelection: { instanceId: "codex" } }];
+    const out = setupSignedOutReading(four, setupOwedEngineIds(bots));
+    expect(out.filter((a) => a.owedOnCloud).map((a) => a.id)).toEqual(["codex"]);
   });
 
   // The two readings are complementary by construction, and this is the

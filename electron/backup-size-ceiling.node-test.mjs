@@ -8,12 +8,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {createHash} from "node:crypto";
 import {closeSync,existsSync,mkdirSync,mkdtempSync,openSync,readFileSync,readSync,readdirSync,realpathSync,statSync,truncateSync,writeFileSync} from "node:fs";
-import {execFileSync} from "node:child_process";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import {safeWipeSync} from "../server/testing/safe-wipe.mjs";
 import {exportRemoteBackup} from "./backup-remote-export.mjs";
 import {MAX_BACKUP_BYTES} from "../shared/backup-max-bytes.mjs";
+import {gitFixture} from "../server/testing/git-fixture.mjs";
 const POSIX_ONLY=process.platform==="win32"&&"remote backup owner and mode checks are POSIX-only";
 const TWO_GIB=2*1024**3;
 function sparseCopy(t,bytes){
@@ -45,9 +45,14 @@ test("a failed export leaves a non-restore source alone",{skip:POSIX_ONLY},t=>{
   assert.throws(()=>exportRemoteBackup({...f.copy,receipt:{...f.copy.receipt,sha256:"0".repeat(64)}},f.destination,{...f.options,sourceRoot:f.restore}),/UNCONFIRMED/);
   assert.equal(existsSync(f.restore),true);
 });
-test("no backup code keeps its own size literal: everything uses MAX_BACKUP_BYTES",()=>{
+test("no backup code keeps its own size literal: everything uses MAX_BACKUP_BYTES",t=>{
   const root=path.resolve(import.meta.dirname,"..");
-  const files=execFileSync("git",["ls-files","electron","server","shared"],{cwd:root,encoding:"utf8"}).split("\n")
+  // Use disposable Git metadata, including in the gate's source-only archive.
+  const candidates=["electron","server","shared"].flatMap(top=>readdirSync(path.join(root,top),{recursive:true,withFileTypes:true})
+    .filter(entry=>entry.isFile()&&/\.(mjs|ts|cjs)$/.test(entry.name))
+    .map(entry=>path.relative(root,path.join(entry.parentPath,entry.name))));
+  const repository=gitFixture(candidates);t.after(()=>repository.dispose());
+  const files=repository.git("ls-files","electron","server","shared").split("\n")
     .filter(f=>/backup|installation-(archive|activation|fidelity|state|recovery)/i.test(f)&&/\.(mjs|ts|cjs)$/.test(f)&&!/test|\.d\.mts$/.test(f));
   assert.ok(files.length>20);
   // Platform/staging limits that are not the backup size ceiling.

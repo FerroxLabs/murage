@@ -1,3 +1,8 @@
+import { OWNER_LIMIT_OBJECTS } from "./owner-limit-continuation.ts";
+import { ROUTINE_LINK_OBJECTS } from "./routine-message-links.ts";
+import { dropRetiredSearchTables, RETIRED_SEARCH_OBJECTS } from "./settle-copy.ts";
+import { ADDED_TABLE_LIFECYCLE } from './added-table-lifecycle.ts';
+import { APPROVAL_OBJECTS, cancelOpenRecords } from './decision/records.ts';
 import { CHATS_PREVIEW_TABLES, CHATS_PREVIEW_INDEXES } from "./thread-summary.ts";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
@@ -9,16 +14,92 @@ import { dropWriteRevisionTriggers } from "./app-write-revision.ts";
 import { LEGACY_DELEGATIONS_FILE, syncDirectory } from "./pending-delegations-schema.ts";
 import { runBranchChangeSlice } from "./memory/branch-change.ts";
 import { SCHEMA_1_0_1, type Schema101Object } from "./schema-1.0.1.ts";
+import { TURN_INDEX } from "./message-tables.ts";
+import { beginWrite, endWrite, undoWrite } from "./write-tx.ts";
+import { restoreWindowOpen } from "./email/restore-job.ts";
+
+/** PROVISIONAL INTERFACE: §6.5 freezes the objects and ordering, but not
+ * the helper name. M2 leaves before the existing target-specific seq step.
+ * JSON and unrelated columns/indexes remain byte-for-byte authoritative.
+ */
+export function downgradeTurnIndexTo117(db: DatabaseSync, testing:{beforeEnd?:()=>void}={}): void {
+  beginWrite(db, "downgrade_turn_index");
+  try {
+    for (const name of ["messages_turn_dirty_insert", "messages_turn_dirty_update", "messages_turn_dirty_delete"])
+      db.exec(`DROP TRIGGER IF EXISTS ${name}`);
+    db.exec(`DROP INDEX IF EXISTS ${TURN_INDEX}`);
+    db.exec("DROP INDEX IF EXISTS messages_turn_v2");
+    db.exec("DROP TABLE IF EXISTS turn_index_dirty; DROP TABLE IF EXISTS turn_index_state");
+    if ((db.prepare("PRAGMA table_info(messages)").all() as Array<{name:string}>).some(column => column.name === "turn_id"))
+      db.exec("ALTER TABLE messages DROP COLUMN turn_id");
+    testing.beforeEnd?.();
+    endWrite(db, "downgrade_turn_index");
+  } catch (error) {
+    try { undoWrite(db, "downgrade_turn_index"); } catch { /* original failure wins */ }
+    throw error;
+  }
+}
 
 /** The spoken-reply objects 1.0.18 makes at every open (database.ts initializeReplySchema). No earlier build knows them, and every earlier
  *  build's database check refuses an object it does not know. Declared before APP_SCHEMA_102_ADDITIONS, which lists them too. */
-export const SPEECH_INDEXES_AFTER_117: readonly string[] = Object.freeze(["speech_generation_provider", "speech_session_connection", "speech_automatic_claim", "speech_attempt_rate", "speech_message_rate", "speech_thread_active", "speech_commands_pending"]);
+export const SPEECH_INDEXES_AFTER_117: readonly string[] = Object.freeze(["speech_generation_provider", "speech_generation_bot", "speech_generation_bound", "speech_generation_running", "speech_generation_identity", "speech_generation_unbound_done", "speech_generation_bound_done", "speech_settlement_time", "speech_settlement_thread", "speech_session_connection", "speech_session_closed", "speech_session_active", "speech_automatic_claim", "speech_attempt_rate", "speech_message_rate", "speech_thread_active", "speech_attempt_live_session", "speech_attempt_terminal", "speech_commands_pending", "speech_commands_pending_attempt"]);
 export const SPEECH_TABLES_AFTER_117: readonly string[] = Object.freeze(["speech_clock", "speech_threads", "speech_prompts", "speech_generations", "speech_settlements", "speech_sessions", "speech_accounts", "speech_plans", "speech_attempts", "speech_commands"]);
+const DELEGATION_PACK_OBJECTS = Object.freeze({ indexes: ["delegation_packs_source", "delegation_packs_destination"], tables: ["delegation_packs"] });
 /** Every non-memory object Murage 1.0.2 adds to messages.db beyond what 1.0.1 reads. Frozen by name: a retry after a crash must drop exactly the
  * same set, and a 1.0.2 object that is not listed here fails server/pm-sends-102-r22.test.ts (the check against the real 1.0.1 inspector). Memory objects
  * (`memory_*`) are not here: the memory downgrade (server/memory/schema.ts) owns them. Dropped in this order: triggers, indexes, tables. */
+// S1 registers its schema lifecycle beside its owned additions, before either
+// catalog is observed. The existing lifecycle module stays source-unchanged.
+Object.assign(ADDED_TABLE_LIFECYCLE, {
+  approval_records: { kind: 'retained', by: 'pruneRecords' },
+  send_replay_session_nodes: { kind: 'marker', reason: 'normalized accepted-session receipt deltas; fresh confirmation cleans evicted parents, restore and downgrade discard with positive replay receipts' },
+  send_replay_sessions: { kind: 'marker', reason: 'at most 512 exact accepted native-session proofs; confirmation evicts older keys and explicit retirement removes the key; downgrade discards proofs and clears retained sessions' },
+  decision_continuations: { kind: 'retained', by: 'deleteContinuationRecord' },
+});
+// Schema-removal owner: tri-s1-rd. Full-downgrade preflight owner: tri-s1-rd.
+// A legacy inspector cannot read these tables. Only empty scaffolding may leave;
+// retained receipts, exclusions, cleanup and retirement keys must stay intact.
+const SEND_ATTEMPT_TABLES_AFTER_101 = ['send_attempt_bindings','send_actions','send_replay_exclusions','send_replay_epochs','turn_cleanup_owed','send_retirement_keys','retired_send_ids','send_attempts'] as const;
+const SEND_ATTEMPT_INDEXES_AFTER_101 = ['send_attempts_message','send_attempt_bindings_provider','send_attempt_bindings_active','send_actions_replacement_attempt','send_actions_replacement_send','send_replay_exclusions_attempt','send_retirement_keys_active'] as const;
+// Send-custody schema owner: tri-s1-rd. Lifecycle registration repair: tri3-g2-e.
+Object.assign(ADDED_TABLE_LIFECYCLE, Object.fromEntries(SEND_ATTEMPT_TABLES_AFTER_101.map(table => [table,
+  { kind: 'marker', reason: 'durable send custody, exclusion and retirement metadata; retained with the send, and nonempty custody refuses full downgrade' },
+])));
+export function assertEmptySendAttemptTablesFor101(db: DatabaseSync): void {
+  for (const table of SEND_ATTEMPT_TABLES_AFTER_101) {
+    if (has(db, 'table', table) && db.prepare(`SELECT 1 FROM ${quoted(table)} LIMIT 1`).get()) throw Object.assign(new Error(DOWNGRADE_WORK_PENDING), {code: DOWNGRADE_WORK_PENDING});
+  }
+}
+/** Derived routine links can be rebuilt from messages by the next current open.
+ * Older releases do not register their tables or triggers. */
+export function downgradeRoutineMessageLinks(db: DatabaseSync): void {
+  beginWrite(db, "downgrade_routine_links");
+  try {
+    for (const [kind, names] of [["TRIGGER", ROUTINE_LINK_OBJECTS.triggers], ["INDEX", ROUTINE_LINK_OBJECTS.indexes], ["TABLE", ROUTINE_LINK_OBJECTS.tables]] as const)
+      for (const name of names) db.exec(`DROP ${kind} IF EXISTS ${quoted(name)}`);
+    endWrite(db, "downgrade_routine_links");
+  } catch (error) { undoWrite(db, "downgrade_routine_links"); throw error; }
+}
+
+/** Remove only empty send custody scaffolding. A newer-target downgrade keeps
+ * durable receipts. The 1.0.1 rewind separately refuses retained custody in
+ * its read-only preflight. */
+export function downgradeEmptySendAttemptTables(db: DatabaseSync): void {
+  for (const table of SEND_ATTEMPT_TABLES_AFTER_101)
+    if (has(db, "table", table) && db.prepare(`SELECT 1 FROM ${quoted(table)} LIMIT 1`).get()) return;
+  beginWrite(db, "downgrade_empty_send_attempts");
+  try {
+    for (const name of SEND_ATTEMPT_TABLES_AFTER_101) db.exec(`DROP TABLE IF EXISTS ${quoted(name)}`);
+    endWrite(db, "downgrade_empty_send_attempts");
+  } catch (error) { undoWrite(db, "downgrade_empty_send_attempts"); throw error; }
+}
+
 export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
   triggers: [
+    "own_writer_card_insert", "own_writer_card_update",
+    ...OWNER_LIMIT_OBJECTS.triggers,
+    ...ROUTINE_LINK_OBJECTS.triggers,
+    ...APPROVAL_OBJECTS.triggers,
     "pending_delegation_live_pair",
     "pending_delegation_mark_request",
     "room_request_dismissal_gone",
@@ -45,6 +126,15 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "turn_source_hold_u",
   ],
   indexes: [
+    ...OWNER_LIMIT_OBJECTS.indexes,
+    TURN_INDEX, "messages_turn_v2",
+    "send_attempt_bindings_generation", "send_replay_epochs_revision",
+    "own_write_holds_thread", "own_write_holds_due", "own_write_holds_ref", "own_write_holds_open",
+    ...SEND_ATTEMPT_INDEXES_AFTER_101,
+    "gh18_operations_pending",
+    ...ROUTINE_LINK_OBJECTS.indexes,
+    ...DELEGATION_PACK_OBJECTS.indexes,
+    ...APPROVAL_OBJECTS.indexes,
     ...CHATS_PREVIEW_INDEXES,
     // turnctx: indexed reads of the working context on tables 1.0.1 already has
     "artifacts_bot_date",
@@ -98,6 +188,7 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "email_events_received",
     "email_events_reference",
     "email_sends_due",
+    "email_sends_spend_wait",
     "email_sends_generation",
     "email_sends_hash",
     "email_sends_inbox",
@@ -111,6 +202,20 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     ...SPEECH_INDEXES_AFTER_117,
   ],
   tables: [
+    "own_write_holds",
+    ...OWNER_LIMIT_OBJECTS.tables,
+    "turn_index_dirty", "turn_index_state",
+    ...SEND_ATTEMPT_TABLES_AFTER_101,
+    "send_replay_session_nodes",
+    "send_replay_sessions",
+    "flux_space_meta", "flux_key_off", "flux_mem_used", "flux_mem_receipt", "flux_mem_owed", "flux_mem_tombstone", "flux_mem_limit", "flux_mem_proven",
+    "gh18_operations",
+    ...ROUTINE_LINK_OBJECTS.tables,
+    "highlevel_thread_marks",
+    "search_intents",
+    ...RETIRED_SEARCH_OBJECTS,
+    ...DELEGATION_PACK_OBJECTS.tables,
+    ...APPROVAL_OBJECTS.tables,
     ...CHATS_PREVIEW_TABLES,
     "app_write_revision",
     "attachment_name",
@@ -130,6 +235,7 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "pending_delegations_import",
     // 1.0.9 phone tools and share and ask (server/phones/): created only while the flag is on, so absent from most files
     "phone_ask_revocations",
+    "phone_ask_optins",
     "phone_receipts",
     "phone_registrations",
     "phone_revocations",
@@ -154,6 +260,7 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "email_bindings",
     "email_event_cursor",
     "email_events",
+    "email_parks",
     "email_payloads",
     "email_policy_sync",
     "email_sends",
@@ -166,6 +273,8 @@ export const APP_SCHEMA_102_ADDITIONS = Object.freeze({
     "room_shares",
     // spoken replies (server/tts/reply-schema.ts), 1.0.18
     ...SPEECH_TABLES_AFTER_117,
+    // the memory index's durable stop and its reset (server/memory/schema.ts index_overrun), 1.0.18 MEMW
+    "index_overrun",
   ],
 });
 
@@ -174,6 +283,16 @@ export const DOWNGRADE_WORK_PENDING = "DOWNGRADE_WORK_PENDING";
 /** Thrown when a finished card's result is still owed to its project room: the owed row and its payload are the only record of that delivery. */
 export const DOWNGRADE_CARD_DELIVERY_OWED = "DOWNGRADE_CARD_DELIVERY_OWED";
 export const CARD_DELIVERY_OWED_LINE = "Some card results have not reached their room yet. Reopen this version of Murage to retry delivery, then try again.";
+/** Thrown (as the `code`) while an owner restore has not finished (restore-job.json armed, captured or swapped, or unreadable): an older build opened in that
+ *  window writes into the database the restore still owes preparation, and the next start of this build would then prepare over those writes. */
+export const DOWNGRADE_RESTORE_OPEN = "DOWNGRADE_RESTORE_OPEN";
+export const RESTORE_OPEN_LINE = "A restore has not finished. Open this version of Murage to finish recovery, then try going back to the earlier version.";
+/** Read-only. Refuses (DOWNGRADE_RESTORE_OPEN) while restoreWindowOpen(dataDir) says a restore may still be changing the install; it fails closed on an
+ *  unreadable journal. Only the journal counts: marks left in the file with no journal on disk do not block. The caller runs it under the offline lease and
+ *  before its first write. */
+export function assertNoRestoreWindowOpen(dataDir: string): void {
+  if (restoreWindowOpen(dataDir)) throw Object.assign(new Error(RESTORE_OPEN_LINE), { code: DOWNGRADE_RESTORE_OPEN });
+}
 /** Thrown (as the `code`) when hand-offs are held for the owner: going back would drop work the owner has not decided. */
 export const DOWNGRADE_HANDOFFS_HELD = "DOWNGRADE_HANDOFFS_HELD";
 /** Thrown (as the `code`, "DOWNGRADE_VOICE_FINISHING_<minutes left, 1 to 99>") while a spoken reply is still held or inside its rate window
@@ -194,6 +313,119 @@ export interface AppSchemaDowngrade {
 const has = (db: DatabaseSync, type: string, name: string): boolean => Boolean(db.prepare("SELECT 1 AS x FROM sqlite_schema WHERE type=? AND name=?").get(type, name));
 const quoted = (name: string): string => `"${name.replace(/"/g, '""')}"`;
 const BUSY_FALLBACK_MS = 5 * 60_000;
+
+/** Every supported downgrade target predates the separate 1.0.19 opt-in table.
+ * Carry the latest choice into the legacy registration field before dropping
+ * it: otherwise a later upgrade could backfill stale consent from that field. */
+export function downgradePhoneAskOptIns(db: DatabaseSync): void {
+  if (!has(db, "table", "phone_ask_optins")) return;
+  beginWrite(db, "phone_optin_downgrade");
+  try {
+    if (has(db, "table", "phone_registrations")) {
+      db.exec(`UPDATE phone_registrations SET body=json_set(body, '$.deviceIdOptIn',
+        json(CASE (SELECT opted_in FROM phone_ask_optins WHERE device_id=phone_registrations.device_id)
+          WHEN 1 THEN 'true' ELSE 'false' END))
+        WHERE EXISTS (SELECT 1 FROM phone_ask_optins WHERE device_id=phone_registrations.device_id)
+          AND CASE WHEN json_valid(body) THEN json_type(body)='object' ELSE 0 END`);
+    }
+    db.exec("DROP TABLE phone_ask_optins");
+    endWrite(db, "phone_optin_downgrade");
+  } catch (error) {
+    undoWrite(db, "phone_optin_downgrade");
+    throw error;
+  }
+}
+
+/** Exact pre-pack table shape: old inspectors compare the SQL as well as the columns. */
+export const PENDING_DELEGATIONS_PRE_PACK_DDL = `CREATE TABLE pending_delegations (id TEXT PRIMARY KEY NOT NULL,
+  source_thread_id TEXT NOT NULL,
+  to_bot_id TEXT NOT NULL,
+  from_bot_id TEXT,
+  phase TEXT NOT NULL CHECK(phase IN ('fresh','busy','parked','started')),
+  retry_at INTEGER,
+  item TEXT NOT NULL,
+  origin TEXT NOT NULL DEFAULT 'legacy' CHECK(origin IN ('owner','room','shared','legacy')),
+  target_thread_id TEXT,
+  turn_key TEXT,
+  started_at INTEGER,
+  accepted_turn_id TEXT,
+  start_attempts INTEGER,
+  submitted_at INTEGER,
+  evidence_at INTEGER)`;
+
+/** Remove the 1.0.19 approval boundary before an older binary opens messages.
+ * Cancel first while records and guards still exist; DDL and cancellation share
+ * one transaction, so a crash leaves either the complete boundary or none. */
+export function downgradeApprovals(db: DatabaseSync): void {
+  beginWrite(db, "approval_downgrade");
+  try {
+    cancelOpenRecords(db, "Cancelled (version change)");
+    for (const name of APPROVAL_OBJECTS.triggers) db.exec(`DROP TRIGGER IF EXISTS ${quoted(name)}`);
+    for (const name of APPROVAL_OBJECTS.indexes) db.exec(`DROP INDEX IF EXISTS ${quoted(name)}`);
+    for (const name of APPROVAL_OBJECTS.tables) db.exec(`DROP TABLE IF EXISTS ${quoted(name)}`);
+    endWrite(db, "approval_downgrade");
+  } catch (error) { undoWrite(db, "approval_downgrade"); throw error; }
+}
+
+/** 1.0.18's backup inspector rejects the new phone admission evidence column.
+ * The shared read-only downgrade preflight has already held unfinished sends. */
+export function downgradeOwnerSendProof(db: DatabaseSync): void {
+  if (!has(db, "table", "owner_sends") || !db.prepare("PRAGMA table_info(owner_sends)").all().some(column => column.name === "via_proof")) return;
+  beginWrite(db, "owner_send_proof_downgrade");
+  try {
+    db.exec("ALTER TABLE owner_sends DROP COLUMN via_proof");
+    endWrite(db, "owner_send_proof_downgrade");
+  } catch (error) { undoWrite(db, "owner_send_proof_downgrade"); throw error; }
+}
+
+/** Older builds do not know pack metadata or the owner-rooted proof column.
+ * Keep the queue's rows, rowids, indexes and guards in one atomic step. */
+export function downgradeDelegationPacks(db: DatabaseSync): void {
+  beginWrite(db, "delegation_pack_downgrade");
+  try {
+    const present = has(db, "table", "pending_delegations")
+      ? (db.prepare("PRAGMA table_info(pending_delegations)").all() as Array<{ name: string }>).map(column => column.name) : [];
+    if (present.includes("owner_rooted")) {
+      // Cross-table handoff triggers would otherwise follow the temporary rename.
+      const dependents = (db.prepare("SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE sql IS NOT NULL AND (type='trigger' OR (type='index' AND tbl_name='pending_delegations'))").all() as Array<{ type: string; name: string; tbl_name: string; sql: string }>)
+        .filter(item => item.tbl_name === "pending_delegations" || /\bpending_delegations\b/i.test(item.sql));
+      for (const item of dependents) db.exec(`DROP ${item.type.toUpperCase()} ${quoted(item.name)}`);
+      db.exec("ALTER TABLE pending_delegations RENAME TO pending_delegations__pack");
+      db.exec(PENDING_DELEGATIONS_PRE_PACK_DDL);
+      const kept = (db.prepare("PRAGMA table_info(pending_delegations)").all() as Array<{ name: string }>).map(column => quoted(column.name)).join(",");
+      db.exec(`INSERT INTO pending_delegations(rowid,${kept}) SELECT rowid,${kept} FROM pending_delegations__pack`);
+      db.exec("DROP TABLE pending_delegations__pack");
+      for (const item of dependents) db.exec(item.sql);
+    }
+    db.exec("DROP TABLE IF EXISTS delegation_packs");
+    endWrite(db, "delegation_pack_downgrade");
+  } catch (error) {
+    undoWrite(db, "delegation_pack_downgrade");
+    throw error;
+  }
+}
+
+/** What a development build of 1.0.18 (136524a79, never released) left in a file: the span triggers, the column and its two state rows. */
+export const DEV_TURN_SPAN = Object.freeze({ triggers: ["turn_last_msg", "turn_last_fill"], column: "last_rowid", state: ["turn_last_floor", "turn_last"] });
+/** Clears those objects at open, before the turn index is built. One sqlite_schema read and no write on every other file. */
+export function removeDevTurnSpan(db: DatabaseSync): boolean {
+  const triggers = DEV_TURN_SPAN.triggers.filter(name => has(db, "trigger", name));
+  const column = has(db, "table", "turn_first") && (db.prepare("PRAGMA table_info(turn_first)").all() as Array<{ name: string }>).some(row => row.name === DEV_TURN_SPAN.column);
+  const stateTable = has(db, "table", "transcript_index_state");
+  const state = stateTable && db.prepare("SELECT 1 AS x FROM transcript_index_state WHERE name IN (?, ?)").get(...DEV_TURN_SPAN.state) !== undefined;
+  if (!triggers.length && !column && !state) return false;
+  beginWrite(db, "turn_span_cleanup");
+  try {
+    for (const name of triggers) db.exec(`DROP TRIGGER ${quoted(name)}`);
+    if (column) db.exec(`ALTER TABLE turn_first DROP COLUMN ${DEV_TURN_SPAN.column}`);
+    if (state) db.prepare("DELETE FROM transcript_index_state WHERE name IN (?, ?)").run(...DEV_TURN_SPAN.state);
+    endWrite(db, "turn_span_cleanup");
+  } catch (error) {
+    undoWrite(db, "turn_span_cleanup");
+    throw error;
+  }
+  return true;
+}
 
 /** The card tables 1.0.18 makes at every open (database.ts): the held Post in… posts (venue-post-held.ts) and the cross-chat share
  *  cards (room-shares-schema.ts). No earlier build knows them, and 1.0.2's database check refuses an object it does not know, so they
@@ -363,17 +595,36 @@ const OWNER_SENDS_102_DDL = `CREATE TABLE owner_sends (
   action_id TEXT,
   turn_id TEXT
 )`;
-export const PHONE_OWNER_SENDS_COLUMNS = Object.freeze(["via", "queue_only", "via_device", "attachments"]);
+export const PHONE_OWNER_SENDS_COLUMNS = Object.freeze(["via", "queue_only", "via_device", "attachments", "via_proof"]);
 /** Refuses (DOWNGRADE_WORK_PENDING) while any phone line is still waiting to send: a row that carries any of owner_sends's phone columns and is not
  * yet delivered, cancelled or answered with its text gone. Reads only. The memory downgrade runs it before its first change, and the phone step runs it again. */
 export function assertNoPendingPhoneWork(db: DatabaseSync): void {
   if (!has(db, "table", "owner_sends")) return;
   const present = new Set((db.prepare("PRAGMA table_info(owner_sends)").all() as Array<{ name: string }>).map(column => column.name));
-  const phone = [["queue_only", "queue_only=1"], ["via", "via IS NOT NULL"], ["via_device", "via_device IS NOT NULL"], ["attachments", "attachments IS NOT NULL"]]
+  const phone = [["queue_only", "queue_only=1"], ["via", "via IS NOT NULL"], ["via_device", "via_device IS NOT NULL"], ["attachments", "attachments IS NOT NULL"], ["via_proof", "via_proof IS NOT NULL"]]
     .filter(([name]) => present.has(name!)).map(([, test]) => test);
   if (phone.length === 0) return;
   const open = Number((db.prepare(`SELECT COUNT(*) AS n FROM owner_sends WHERE (${phone.join(" OR ")}) AND NOT ((status IN ('started','delivered','cancelled') OR (status IN ('unconfirmed','failed') AND message_id IS NOT NULL)) AND text='')`).get() as { n: number }).n);
   if (open > 0) throw Object.assign(new Error(`You have ${open} message${open === 1 ? "" : "s"} from a phone still waiting to send. Send or cancel ${open === 1 ? "it" : "them"}, then try again.`), { code: DOWNGRADE_WORK_PENDING });
+}
+
+/** 1.0.17/18 understand phone send rows but predate ask admission evidence.
+ * Keep every send and its phone metadata; remove only the unsupported proof.
+ * Pending proof-bearing work must settle before any authority is discarded. */
+export function downgradeOwnerSendAskProof(db: DatabaseSync): void {
+  if (!has(db, "table", "owner_sends")) return;
+  const present = new Set(db.prepare("PRAGMA table_info(owner_sends)").all().map(column => String(column.name)));
+  beginWrite(db, "owner_send_proof_downgrade");
+  try {
+    assertNoPendingPhoneWork(db);
+    if (present.has("via_proof")) db.exec("ALTER TABLE owner_sends DROP COLUMN via_proof");
+    // Empty queues have no isolation or late-refusal evidence to retain. Old
+    // inspectors reject those newer columns even when they contain no rows.
+    if (!db.prepare("SELECT 1 FROM owner_sends LIMIT 1").get())
+      for (const column of ["isolated", "late_refused"])
+        if (present.has(column)) db.exec(`ALTER TABLE owner_sends DROP COLUMN ${column}`);
+    endWrite(db, "owner_send_proof_downgrade");
+  } catch (error) { undoWrite(db, "owner_send_proof_downgrade"); throw error; }
 }
 
 export function downgradePhoneObjectsTo108(db: DatabaseSync, hooks: { beforeDrop?: (table: string) => void } = {}): { tables: number; columns: number } {
@@ -454,6 +705,11 @@ function heldHandoffs(db: DatabaseSync): number {
  * (design PIPPERF-DOWNGRADE13-rule.md): a send or restore hold still keeping the owner's words or a delivery, a finished card's result
  * still owed to its project room, a hand-off held for the owner, a finished hand-off whose reply is not yet in its conversation. Reads only. */
 export function assertNoOwedWorkForDowngrade(db: DatabaseSync, dataDir: string): void {
+  // The direct application-schema entry point needs the same read-only guard
+  // as the full memory downgrade: an applying write may still have an effect.
+  if (has(db, "table", "own_write_holds") && db.prepare("SELECT 1 FROM own_write_holds WHERE state='applying' LIMIT 1").get()) {
+    throw Object.assign(new Error("A reviewed change may still be running. Check its result before downgrading."), { code: DOWNGRADE_WORK_PENDING });
+  }
   const pending = pendingOwnerWork(db);
   if (pending > 0) {
     throw Object.assign(new Error(`You have ${pending} message${pending === 1 ? "" : "s"} still waiting to send or restore. Send or cancel ${pending === 1 ? "it" : "them"}, then try again.`), { code: DOWNGRADE_WORK_PENDING });
@@ -494,7 +750,9 @@ export function finishBranchChangeForDowngrade(db: DatabaseSync, progress?: (sli
  *     columns differ rebuilt from its executable original definition (schema-1.0.1.ts `ddl`); COMMIT.
  * A crash anywhere leaves the rows (or the finished result): a retry recomputes the same files and the same drops. */
 export function downgradeApplicationSchemaTo101(db: DatabaseSync, dataDir: string, hooks: { beforeCommit?: () => void; branchChangeProgress?: (slices: number) => void } = {}): AppSchemaDowngrade {
+  assertEmptySendAttemptTablesFor101(db);
   // (the memory downgrade already ran these in its preflight and its finish step; a direct caller gets them here, and the repeat is a no-op)
+  assertNoRestoreWindowOpen(dataDir);
   assertNoHeldVenuePosts(db);
   assertNoOwedWorkForDowngrade(db, dataDir);
   finishBranchChangeForDowngrade(db, hooks.branchChangeProgress);
@@ -558,6 +816,7 @@ export function downgradeApplicationSchemaTo101(db: DatabaseSync, dataDir: strin
   try {
     db.exec("BEGIN IMMEDIATE");
     try {
+      assertEmptySendAttemptTablesFor101(db);
       if (has(db, "table", "room_requests")) {
         // marks 1.0.2 wrote on requests that 1.0.1 would read as something else
         db.exec("UPDATE room_requests SET refusal=NULL WHERE refusal='retained_unresolved'");
@@ -568,7 +827,9 @@ export function downgradeApplicationSchemaTo101(db: DatabaseSync, dataDir: strin
         for (const id of exportedIds) requeue.run(id);
       }
       // before transcript_index_state (the fill's place) is dropped: leave an index 1.0.1's own resume completes
+      cancelOpenRecords(db, "Cancelled (version change)");
       trimUnfinishedSearchFill(db);
+      dropRetiredSearchTables(db);
       // the counter triggers (app-write-revision.ts) are temporary triggers of this connection that write app_write_revision: they go before it
       dropWriteRevisionTriggers(db);
       for (const [type, names] of [["trigger", APP_SCHEMA_102_ADDITIONS.triggers], ["index", APP_SCHEMA_102_ADDITIONS.indexes], ["table", APP_SCHEMA_102_ADDITIONS.tables]] as const) {
@@ -634,4 +895,43 @@ function rebuildDifferingTables(db: DatabaseSync): number {
     rebuilt++;
   }
   return rebuilt;
+}
+
+/** Every supported offline target predates by-reference intents and separate-file search.
+ * Drops stay in one transaction; a failed downgrade can repeat this safely before its success stamp. */
+export function downgradeMessageSearch(db: DatabaseSync): void {
+  beginWrite(db, "downgrade_message_search");
+  try {
+    dropRetiredSearchTables(db);
+    // Every supported older build stores FTS in messages.db. Its frozen
+    // schema validator requires the virtual table and its four shadow tables.
+    // A memory-only installation has no transcript table to index. Creating
+    // external-content FTS there makes the following orphan check unreadable.
+    const legacyFts = SCHEMA_1_0_1.find(object => object.name === "messages_fts")!;
+    if (has(db, "table", "messages") && !has(db, "table", "messages_fts")) db.exec(legacyFts.ddl!);
+    db.exec("DROP TABLE IF EXISTS search_intents");
+    if (has(db, "table", "transcript_index_state")) {
+      db.exec("DELETE FROM transcript_index_state WHERE name='search_owner'");
+      db.exec("UPDATE transcript_index_state SET done=0,cursor=0,skipped=0 WHERE name='search_fts'");
+    }
+    endWrite(db, "downgrade_message_search");
+  } catch (error) { undoWrite(db, "downgrade_message_search"); throw error; }
+}
+
+/** The Flux-space ledger is new in this port; every supported older release rejects these tables.
+ * A used space must keep its deletion destinations until the owner deletes it and Flux confirms the erase. */
+export const FLUX_MEMORY_TABLES_AFTER_118 = Object.freeze(["flux_space_meta", "flux_key_off", "flux_mem_used", "flux_mem_receipt", "flux_mem_owed", "flux_mem_tombstone", "flux_mem_limit", "flux_mem_proven"]);
+export function assertNoFluxMemoryForDowngrade(db: DatabaseSync): void {
+  for (const table of ["flux_mem_used", "flux_mem_owed", "flux_mem_receipt"]) {
+    if (has(db, "table", table) && db.prepare(`SELECT 1 FROM ${table} LIMIT 1`).get())
+      throw Object.assign(new Error("Flux memory still holds conversations from this version. Delete those conversations and let Flux finish forgetting them before going back to an older version."), { code: DOWNGRADE_WORK_PENDING });
+  }
+}
+export function downgradeFluxMemoryTables(db: DatabaseSync): void {
+  assertNoFluxMemoryForDowngrade(db);
+  beginWrite(db, "flux_memory_downgrade");
+  try {
+    for (const table of FLUX_MEMORY_TABLES_AFTER_118) db.exec(`DROP TABLE IF EXISTS ${table}`);
+    endWrite(db, "flux_memory_downgrade");
+  } catch (error) { undoWrite(db, "flux_memory_downgrade"); throw error; }
 }

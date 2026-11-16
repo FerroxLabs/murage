@@ -555,7 +555,7 @@ describe("F8. a 1.0.1 table that 1.0.2 grew is rebuilt from the executable origi
     const rows = count("SELECT COUNT(*) AS n FROM room_requests");
     database().exec("ALTER TABLE room_requests ADD COLUMN grown_by_a_later_build TEXT");
     closeDatabase();
-    const result = downgradeInstallationMemorySchema(DATA_DIR, 6, { testOnlyBefore102: true }) as { status: string };
+    const result = await downgradeInstallationMemorySchema(DATA_DIR, 6, { testOnlyBefore102: true }) as { status: string };
     expect(result.status).toBe("downgraded");
     const db = new DatabaseSync(join(DATA_DIR, "messages.db"));
     try {
@@ -565,10 +565,36 @@ describe("F8. a 1.0.1 table that 1.0.2 grew is rebuilt from the executable origi
       // the inbox projection stays in a stepped file, 1.0.2's own step included; the rebuilt table is what is judged here
       expect(() => inspectInstallationDatabase(db)).toThrow(expect.objectContaining({ code: "DATABASE_SCHEMA_UNSUPPORTED" }));
       discardInboxProjection(db);
+      expect(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='sqlite_sequence'").get()).toBeUndefined();
       expect(() => inspectInstallationDatabase(db)).not.toThrow();
     } finally { db.close(); }
   }, 120_000);
 });
+
+it("a stop before legacy compaction retains the newer stamp and owner rows, and a retry removes obsolete sequence metadata", async () => {
+  const s = setup("room");
+  s.store.appendMessage(s.from.threadId, { role: "user", kind: "text", text: "Retained owner note.", at: 1 }, "retained-owner-note");
+  closeDatabase();
+  await expect(downgradeInstallationMemorySchema(DATA_DIR, 6, {
+    testOnlyBefore102: true, at: point => { if (point === "optimized") throw new Error("fixture stop before compaction"); },
+  })).rejects.toThrow("fixture stop before compaction");
+  const interrupted = new DatabaseSync(join(DATA_DIR, "messages.db"));
+  try {
+    expect(Number(interrupted.prepare("SELECT schema_version FROM memory_meta WHERE id=1").get()?.schema_version)).toBeGreaterThan(6);
+    expect(interrupted.prepare("SELECT text FROM messages WHERE id='retained-owner-note'").get()?.text).toBe("Retained owner note.");
+  } finally { interrupted.close(); }
+  expect(await downgradeInstallationMemorySchema(DATA_DIR, 6, { testOnlyBefore102: true })).toMatchObject({ status: "downgraded", to: 6 });
+  const restored = new DatabaseSync(join(DATA_DIR, "messages.db"));
+  try {
+    expect(restored.prepare("SELECT text FROM messages WHERE id='retained-owner-note'").get()?.text).toBe("Retained owner note.");
+    expect(restored.prepare("SELECT 1 FROM sqlite_schema WHERE name='sqlite_sequence'").get()).toBeUndefined();
+    if (haveV101) {
+      discardInboxProjection(restored);
+      const { inspectInstallationDatabase } = await realV101();
+      expect(() => inspectInstallationDatabase(restored)).not.toThrow();
+    }
+  } finally { restored.close(); }
+}, 120_000);
 
 // ── F9 ────────────────────────────────────────────────────────────────────────────────
 describe("F9. the single re-dispatch goes into the conversation that holds the prompt", () => {

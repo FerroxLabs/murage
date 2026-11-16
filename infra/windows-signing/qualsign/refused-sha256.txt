@@ -1,0 +1,2 @@
+# Digest denylist producer: MAIN after artifact fetch; release refusal consumer: winsac-qualsign.
+# Append every fetched qualification collector SHA-256, including superseded digests.

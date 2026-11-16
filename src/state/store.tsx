@@ -1,5 +1,9 @@
+import { receiveLearningNoticeFrame } from "@/lib/live-events";
+import { forgetHighLevelReview, highlevelReviewId } from "@/components/HighLevelReviewValues";
+import type { TurnStateCapabilities, TurnStateEnvelope, ResendAction, ResendActionResult, SendActionTarget } from "../../shared/help-turn-state";
 import { chatsGenHello, chatsGenFrame, chatsGenUnproven, registerChatsGenReplacement } from "@/lib/chats-gen";
 import { createStoreSubscriptions } from "./store-subscriptions";
+import { acceptCreatedBot } from "./bot-creation";
 import { raiseTransientError, useChatErrorClear } from "./chat-error";
 import { createNewTaskOnce, NEW_TASK_DEADLINE_MS, NewTaskStalled, withDeadline } from "./new-task-once";
 import { t } from "@/lib/i18n";
@@ -51,6 +55,7 @@ import { botRole } from "@/lib/bot-role";
 import { SETUP_VIEW_EVENT } from "@/lib/app-events";
 import { idToSaveOnSetupView, landingId, readLastConversation, shouldRemember, workspaceKey, writeLastConversation } from "@/lib/last-conversation";
 import { homeMeta } from "@/lib/cloud-home-meta";
+import { ownerCodeRetryInit } from "@/lib/owner-code";
 import { extraTasksPatch, findTask, mayHoldTask, viewedThreadGone, windowCovers, withExtraTasks } from "@/lib/task-window";
 import { forgetProjectTab } from "@/lib/project-tab";
 import { createIndexedDbDraftBackend, forgetMarkdownDrafts } from "@/lib/markdown-drafts";
@@ -80,6 +85,7 @@ import type { Routine, RoutineInput, RoutineRun } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { currentCall } from "@/lib/call";
 import { isHealthPage, showHealthPage, showNotification } from "@/lib/notify";
+import { forwardAttentionConfig, forwardAttentionSettled, reportAttentionVisible, routeNotification } from "@/lib/attention-offer";
 import { replyController } from "@/lib/tts/reply-speech";
 import { knownComputer, surface } from "@/lib/surface";
 import { refreshAfterFluxKey } from "@/lib/flux-key-paste";
@@ -96,7 +102,7 @@ import { applyTranscriptInput, hydrateTranscript, legacyTranscriptInput, transcr
 import { skillRecorderEnabled } from "@/lib/feature-flags";
 import { desktopSurfaceHeaders, ensureDesktopSurfaceSecret, openLiveEvents } from "@/lib/live-events";
 import { newSendId } from "@/lib/send-id";
-import { busyRetriesFor, busyRetryDelayMs, createOutbox, createSendDelivery, deliverEdit, isDatabaseBusyAnswer, retryWhileBusy, venuePostBody, type OutboxDraft, type VenuePostPick } from "./send-delivery";
+import { busyRetriesFor, busyRetryDelayMs, createOutbox, createSendDelivery, sendActionRequest, terminalSendReceipt, deliverEdit, isDatabaseBusyAnswer, retryWhileBusy, venuePostBody, type OutboxDraft, type OutboxEntry, type VenuePostPick } from "./send-delivery";
 import { checkPinnedDrafts, draftJournal, forgetDeletedDrafts, migrateLegacyDrafts, noteRefusedChips, releaseRecoveredSend, setDraftOwnerCheck, setDraftSendLookup, settleDraftSend, type DraftSendLookupResult } from "@/lib/drafts";
 import { checkSession, onSignedOut, sessionSignedOut } from "@/lib/session-check";
 import { onSaveFailed } from "@/lib/save-file";
@@ -136,9 +142,74 @@ export type { EmberColor } from "@/lib/mascot";
 export type { RoutineRunCardData } from "../../shared/routine-run";
 import { isQuestionCard, type QuestionAnswer, type QuestionSpec } from "../../shared/questions";
 
+// PROVISIONAL INTERFACE: exact R1/F8 types, mirrored here until 1B's
+// shared/audience-wire.ts is integrated. This slice never edits that file.
+export type DisplayOption = Readonly<{ handle: string; label: string; description?: string }>;
+export type DisplayQuestion = Readonly<{
+  handle: string; question: string; header?: string; options: readonly DisplayOption[];
+  multiSelect: boolean; allowOther: boolean; secret?: boolean;
+}>;
+export type DisplayAnswer = Readonly<{ questionHandle: string; optionHandles: readonly string[]; other?: string }>;
+export type DisplayAction =
+  | Readonly<{ requestHandle: string; action: "answer"; answers: readonly DisplayAnswer[]; sentAsMessage?: true }>
+  | Readonly<{ requestHandle: string; action: "skip" }>
+  | Readonly<{ requestHandle: string; action: "allow" | "deny" }>;
+
+/** Handle metadata lives in the existing undrafted outbox record. It is
+ * retained by createOutbox on reload and by delivery retries. */
+export type CommandOutboxEntry = OutboxEntry & { displayCommand: { commandHandle: string; args: string } };
+export function commandOutboxBody(entry: OutboxEntry): { threadId: string; commandHandle: string; args: string; sendId: string } | null {
+  if (!("displayCommand" in entry)) return null;
+  const command = (entry as CommandOutboxEntry).displayCommand;
+  // Corrupt handle metadata must fail closed rather than send display text.
+  if (!command || typeof command.commandHandle !== "string" || !/^c\.[0-9a-f]{16}\.\d+$/.test(command.commandHandle) || typeof command.args !== "string") {
+    throw Object.assign(new Error("Choose the engine command again."), { status: 409 });
+  }
+  return { threadId: entry.threadId, commandHandle: command.commandHandle, args: command.args, sendId: entry.sendId };
+}
+
+export function permissionDisplayAction(requestHandle: string, action: "allow" | "deny"): DisplayAction {
+  return { requestHandle, action };
+}
+
+/** F8 has no raw request/question IDs. Older presentation helpers still
+ * use these property names; alias only the host handles at the wire edge. */
+export function normalizeAudienceWire(value: any, depth = 0): any {
+  if (!value || typeof value !== "object" || depth > 4) return value;
+  if (Array.isArray(value)) {
+    const entries = value.map((entry) => normalizeAudienceWire(entry, depth + 1));
+    return entries.some((entry, i) => entry !== value[i]) ? entries : value;
+  }
+  let result = value;
+  const put = (key: string, next: unknown) => {
+    if (next === value[key]) return;
+    if (result === value) result = { ...value };
+    result[key] = next;
+  };
+  if (value.role === "bot" && value.card?.requestHandle) {
+    const card = value.card;
+    const questions = card.questions?.map((question: DisplayQuestion | QuestionSpec) => "handle" in question
+      ? { ...question, id: question.handle, options: question.options.map((option) => ({ ...option })) } : question);
+    const answers = card.answers?.map((answer: DisplayAnswer | QuestionAnswer) => "questionHandle" in answer
+      ? { id: answer.questionHandle, selected: [...answer.optionHandles], ...(answer.other !== undefined ? { other: answer.other } : {}) } : answer);
+    put("card", { ...card, requestId: card.requestHandle, ...(questions ? { questions } : {}), ...(answers ? { answers } : {}) });
+  }
+  for (const key of ["bot", "bots", "group", "groups", "message", "messages", "openCards", "threadDelta"]) {
+    if (value[key] !== undefined) put(key, normalizeAudienceWire(value[key], depth + 1));
+  }
+  return result;
+}
+
 export interface OptionCardData {
+  writer?: import("../../shared/own-write-card").OwnWriteCardData;
+  botReviewId?: string;
+  botAuthority?: import("../../server/bot-call-authority").BotCardAuthority;
+  taskAllowSuggested?: { ownerWords: string };
+  /** Original ask evidence; the live driver alone validates reloads. */
+  identityFrame?: import("../../shared/tool-identity").EngineFrame;
+  toolIdentity?: import("../../shared/tool-identity").ToolIdentityWire | { namespace: string; name: string; kind?: string };
   /** A publish approval card (server/publish): never auto-approved, never "always allow". */
-  kind?: "publish" | "mcpEnable" | "email-send" | "email-trust-offer";
+  kind?: "publish" | "mcpEnable" | "email-send" | "email-trust-offer" | "own-write";
   publish?: import("../../shared/publish-card").PublishCardData;
   /** A "Turn on <name>?" card for a server a bot filed switched off (item 118). */
   mcpEnable?: { name: string; rev: string; botId: string; bot: string; kind: "stdio" | "remote"; command?: string; args?: string[]; url?: string; transport?: "http" | "sse"; pendingKeys: string[]; enabled?: boolean; error?: string };
@@ -151,6 +222,9 @@ export interface OptionCardData {
   dismissed?: boolean;
   /** Present when this card is a live provider ask (approval/question). */
   requestId?: string;
+  requestHandle?: string;
+  /** PROVISIONAL INTERFACE: F8 questions may arrive beside the legacy card fields. */
+  displayQuestions?: readonly DisplayQuestion[];
   /** 1.0.4 SL-I I5: the engine hit its limit; the engines that can answer now (server/limit-continuation.ts) */
   limitOffer?: { sourceMessageId: string; from: ModelSelection; resetsAt: number | null; choices: Array<{ label: string; selection: ModelSelection; billing: string }>; nextTimeLabel: string; routinesLabel: string };
   /** permission asks: the tool being requested (drives the approval box) */
@@ -279,6 +353,11 @@ export interface SecretRequestCardData {
 }
 
 export interface Message {
+  /** Server-owned application receipt; never part of a card's signed action. */
+  limitApplication?: { optionIndex: number; nextTime: boolean; routines: boolean };
+
+  /** Service-owned display; approval answers retain card's frozen identity. */
+  emailDisplay?: import('../../shared/email-copy.ts').EmailCardDisplay;
   /** CROSS-CHAT-READ-1019: the room row of a bot's share request; the card body is fetched for the owner (GET /api/room-shares/:id). */
   roomShareId?: string;
   /** CROSS-CHAT-READ-1019: an owner line the owner shared into the room from a chat with this bot. */
@@ -287,7 +366,12 @@ export interface Message {
   botCall?: import("@/lib/bot-calls").BotCallMark;
   /** User rows: the server left this message out of memory as notes exported from another assistant (memory/capture.ts); the chat shows a line under it.
    * "without-memory" (DELEGATION-HOLD F5): an activity row saying a reply ran without remembered context; shown with Tool calls off. */
-  memoryNote?: "export-paste" | "without-memory";
+  memoryNote?: "export-paste" | "without-memory" | "resend";
+  /** Resend rows: the message this offer is for (the user row the refused turn was answering), its conversation and, in a room, the member.
+   * Written by the server where the row is posted; Send again resolves exactly this message and offers nothing when it is not found. */
+  resendOf?: { messageId: string; threadId: string; botId?: string };
+  /** Resend rows: Send again was already pressed (the server claimed it once). */
+  resendUsed?: boolean;
   /** The row the server saved this message in front of (Store
    * insertMessageBefore). It arrives after that row, live and in pages. */
   insertedBefore?: string;
@@ -327,7 +411,7 @@ export interface Message {
   /** activity messages: tool name + outcome. `spoken` is the server's
    * narration of the same chip ("reading a file"), used by call mode. */
   /** `setup` marks an error fixed by installing something, not by retrying. */
-  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; busy?: { engine: string; reason: "busy" | "credit" | "unresolved" | "hold" | "freeCap" | "hourly"; resetsAt?: number }; localFailure?: LocalSetupFailure; localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number; /** 1.0.18 U6 E15: the turn ended with this step still open ("No result"). */ unrecorded?: boolean; /** An image made without an approval card: what was asked for and the whole prompt. */ imageRecord?: { summary: string; prompt: string }; /** U4 S3: a hand-off's "done when" line. */ doneWhen?: string };
+  tool?: { name: string; ok?: boolean; spoken?: string; summary?: string; setup?: boolean; authRequired?: boolean; claudeUpdate?: boolean; errorDetails?: string; errorKind?: string; providerError?: ProviderErrorInfo; busy?: { engine: string; reason: Exclude<import("../../shared/flux-busyloop").Reason, "other"> | "repeated"; resetsAt?: number; waitSeconds?: number; shortReason?: string }; localFailure?: LocalSetupFailure; localFailureEngine?: string; diagnostic?: RuntimeErrorDiagnostic; /** Full access approvals collapsed into one line: each step, newest last (bounded), and how many in all. */ steps?: string[]; stepCount?: number; /** 1.0.18 U6 E15: the turn ended with this step still open ("No result"). */ unrecorded?: boolean; /** An image made without an approval card: what was asked for and the whole prompt. */ imageRecord?: { summary: string; prompt: string }; /** U4 S3: a hand-off's "done when" line. */ doneWhen?: string };
   /** user messages sent into a running turn — the model saw it mid-turn */
   steered?: boolean;
   /** a steered message the bot has not confirmed yet; cleared when it does */
@@ -526,6 +610,7 @@ export interface ModelSelection {
   model: string;
   connectionId?: string;
   effort?: EffortLevel;
+  variant?: string;
 }
 
 /** One of a bot's separate contexts: its own thread, transcript and
@@ -586,6 +671,8 @@ export interface TaskUsage {
 }
 
 export interface Bot {
+  staged?: import("../../server/bot-staging-types").StagedBot;
+  pendingRevision?: import("../../server/bot-staging-types").PendingBotRevision;
   id: string;
   /** 1.0.14 FIRST-ENGINE-REPICK: moves with every write of this bot's engine; an owner tap sends the one it was drawn with. */
   engineRev?: number;
@@ -667,7 +754,9 @@ export interface Bot {
   fullAccess?: boolean;
   /** set by the server once the owner confirmed the one-time Full access warning */
   fullAccessAcknowledgedAt?: number;
-  /** No limits, above Full access: no stop line; on a turn the owner started only the gate files of the key guard ask */
+  permissionExplicit?: boolean;
+  permissionRev?: number;
+  /** No limits keeps only the wipe/catastrophe check (Sean 2026-11-12 02:05Z). */
   noLimits?: boolean;
   /** set by the server once the owner confirmed the one-time No limits warning */
   noLimitsAcknowledgedAt?: number;
@@ -738,6 +827,13 @@ export interface Bot {
   /** Named browser profile id (config.browserProfiles); absent/null = the
    * bot's own session (null is how a clear travels over PATCH). */
   browserProfile?: string | null;
+  browserMode?: 'builtin' | 'chrome-extension' | 'chrome-direct';
+  selectionRevision?: number;
+  browserSelectionRevision?: number;
+  browserSetupRevision?: number;
+  pendingBrowserChoice?: import('../../server/browser-mode-transition.ts').BrowserChoice;
+  previousBrowserChoice?: import('../../server/browser-mode-policy.ts').BrowserSelection;
+  browserRelease?: import('../../server/browser-mode-transition.ts').BrowserRelease;
   /** The owner opted this bot into their own running Chrome (one bot at most). */
   useMyChrome?: boolean;
   browserTransport?: "extension";
@@ -891,14 +987,20 @@ export function messageVersions(bot: Bot, message: Message): Message[] {
 }
 
 /** GET /api/config — configured flags only; secrets are never echoed. */
-export interface ConfigStatus {
+export interface ConfigStatus extends TurnStateCapabilities {
+  settingsDefaultMode?: "simple" | "advanced";
+  learningFluxSent?: boolean;
   xai?: { configured: boolean };
   composio: { configured: boolean; mode?: "managed" | "unavailable"; migration?: { state?: string }; broker?: "flux" | "legacy" | null; ownKeyRetired?: boolean };
   box: { configured: boolean };
   vps: { configured: boolean; sshAlias: string };
   rooms: { turnTimeoutMinutes: number };
   /** Effort every new bot starts with where its engine offers it; absent = none sent. */
-  newBots?: { effort?: EffortLevel };
+  newBots?: { effort?: EffortLevel; permissionLevel?: "ask" | "auto" | "full" | "no-limits" };
+  /** Which computer a new bot starts on (config computer.defaultForNewBots; "this" until chosen). Read at creation only. */
+  newBotComputer?: "off" | "this" | "vm" | "cloud";
+  /** Claude Code copy import: the owner's switch and what the last import added (counts only). */
+  claudeCodeImport?: { enabled: boolean; lastImportedAt: number | null; skills: number; servers: number; needsKey: number };
   localVm: { mode: "shared" | "per-bot"; maxInstances: number };
   opencodeGo?: { configured: boolean };
   /** Voice (ElevenLabs). `configured` = a key is saved; `ready` = a key AND
@@ -932,7 +1034,7 @@ export interface ConfigStatus {
   /** UI language override; "" (or absent) follows the system language. */
   language?: string;
   /** The monthly limit (a heads-up only) and the server's Flux key fingerprint, never a figure (src/lib/spend-meter.ts). The desktop's only; absent elsewhere. */
-  spend?: { monthlyLimitUsd: number | null; headsUpLeft: string | null; keyFingerprint: string | null };
+  spend?: { monthlyLimitUsd: number | null; headsUpLeft: string | null; keyFingerprint: string | null; pauseFingerprint?: string | null };
   /** Opt-in flags. Absent means off. */
   features?: { skillRecorder: boolean; fluxDesktopSignin?: boolean; showToolCalls?: boolean; browser?: boolean; projectsLead?: boolean; projectsGoals?: boolean; projectsBoard?: boolean; projectsDigest?: boolean; projectsAutonomy?: boolean; projectsParallelCards?: boolean; roomsQueue?: boolean };
   /** Named browser sessions any bot can be pointed at. */
@@ -946,6 +1048,14 @@ export interface ConfigStatus {
   harness?: { platform: string };
   /** Whether the owner has accepted No limits as it now stands. Desktop only: the phone's copy has no such field. */
   noLimitsTerms?: { accepted: boolean };
+  /** A Cloud home's owner browser: false once the owner factor ran out (chat only until they open Murage from murage.ai). Absent off a home. */
+  owner?: boolean;
+  /** When the owner factor ends (ms epoch), on a Cloud home. */
+  ownerUntil?: number;
+  /** false on a Cloud home: there is no computer to sign in on. */
+  computer?: boolean;
+  /** true when this page is an owner browser of a Cloud home. */
+  cloudOwnerBrowser?: boolean;
 }
 
 export interface BrowserProfile {
@@ -961,11 +1071,16 @@ export type FluxKeyState = "ok" | "missing" | "not-flux" | "refused";
 
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "composio" | "box" | "vps" | "rooms" | "newBots" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "decider" | "webSearch" | "notifications" | "profile" | "language" | "spend" | "features" | "browserProfiles" | "harness"
+  "turnStateContract" | "scopedTurnStop" | "sendActionContract" | "queueRemovable" | "settingsDefaultMode" | "xai" | "composio" | "box" | "vps" | "rooms" | "newBots" | "newBotComputer" | "claudeCodeImport" | "localVm" | "opencodeGo" | "tts" | "imageGen" | "flux" | "decider" | "webSearch" | "notifications" | "profile" | "language" | "spend" | "features" | "browserProfiles" | "harness"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
   return {
+    settingsDefaultMode: frame.settingsDefaultMode,
+    ...(frame.turnStateContract === 1 ? { turnStateContract: 1 as const } : {}),
+    ...(frame.scopedTurnStop === 1 ? { scopedTurnStop: 1 as const } : {}),
+    ...(frame.sendActionContract === 1 ? { sendActionContract: 1 as const } : {}),
+    ...(typeof frame.queueRemovable === "boolean" ? { queueRemovable: frame.queueRemovable } : {}),
     xai: frame.xai,
     composio: frame.composio,
     box: frame.box,
@@ -975,6 +1090,8 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     // Dropping them here made the auto-routing switch read off after any live
     // config change, and its next click saved it back on (U35).
     newBots: frame.newBots,
+    newBotComputer: frame.newBotComputer,
+    claudeCodeImport: frame.claudeCodeImport,
     localVm: frame.localVm,
     opencodeGo: frame.opencodeGo,
     tts: frame.tts,
@@ -1027,9 +1144,11 @@ export interface InstanceInfo {
     /** a reported cost on a subscription is notional; the UI says so */
     billing?: "metered" | "subscription";
     /** Cloud home: offer this engine's sign-in again (Claude's token is near expiry or no longer accepted) */
+    /** Home-level setup status only (some bot has a sign-in); never read it as a bot being signed in. */
+    setUpOnHome?: boolean;
     renewSignIn?: boolean;
   };
-  models: { default: string; options: Array<{ id: string; label: string; custom?: boolean; loaded?: boolean; provider?: string }> };
+  models: { default: string; options: Array<{ id: string; label: string; custom?: boolean; loaded?: boolean; provider?: string; variants?: Array<{ id: string; label: string }> }> };
   capabilities?: {
     computerMcp?: boolean;
     agentsMcp?: boolean;
@@ -1125,6 +1244,8 @@ export interface AppState {
   /** Which half the Connected apps panel opens on (Settings > Connected
    *  apps has a button for each). Read when the panel mounts. */
   pluginsSurface?: "apps" | "mcp";
+  reconnectIncidentId?: string;
+  pluginReconnect?: { slug: string; accountId?: string; alias?: string };
   computerOpen: boolean;
   /** the per-thread event inspector (runtime stream + native protocol tee) */
   inspectorOpen: boolean;
@@ -1141,6 +1262,8 @@ export interface AppState {
   screens: Record<string, { png: string; mime: string }>;
   /** A bounded preview warning; the last good pixels remain available. */
   screenNotices?: Record<string, string>;
+  /** Creation fallback explanations, kept for this session's per-bot Computer settings. */
+  botComputerNotices?: Record<string, string>;
   /** bots whose cloud computer is being provisioned */
   provisioning: Record<string, boolean>;
   /** who is driving each bot's computer: held = the person has the wheel
@@ -1299,7 +1422,18 @@ export const sendingQueueId = (sendId: string): string => `sending:${sendId}`;
 /** A send the server is holding for a thread: still being handed to the engine
  * ("sending") or waiting for the bot or room ("queued"). Authoritative: every
  * client shows this list, whichever device the words were typed on. */
+export interface HelpSendReceipt {
+  sendId: string; queued: boolean; queueId?: string; cancelled?: boolean;
+  failure?: "failed" | "refused" | "removed" | "stopped" | "unknown";
+  receipt?: Partial<TurnStateEnvelope>;
+}
+
+// PROVISIONAL INTERFACE: the existing sends projection has no frozen target
+// fields in the base. I supplies these three fields from the v1 attempt receipt.
 export interface ServerPendingSend {
+  attemptId?: string;
+  receiptRevision?: number;
+  bindingEpoch?: number;
   queueId: string;
   sendId?: string;
   text: string;
@@ -1315,8 +1449,11 @@ export interface ServerPendingSend {
   stopGen?: string;
 }
 
-/** What "Send again" repeats for a refused send: the same id, reply, mode and responder. */
+/** The immutable target and current fences behind a refused chip. */
 export interface PendingRefusal {
+  attemptId?: string;
+  receiptRevision?: number;
+  bindingEpoch?: number;
   notice: SendNoticeCode;
   replyToId?: string;
   mode?: "chat" | "goal";
@@ -1347,6 +1484,9 @@ function mergeServerPending(
     ...(entry.state === "sending" ? { sending: true as const } : {}),
     ...(entry.state === "refused" ? { refused: {
       notice: entry.notice ?? "refused",
+      attemptId: entry.attemptId,
+      receiptRevision: entry.receiptRevision,
+      bindingEpoch: entry.bindingEpoch,
       ...(entry.replyToId ? { replyToId: entry.replyToId } : {}),
       ...(entry.mode ? { mode: entry.mode } : {}),
       ...(entry.responderId ? { responderId: entry.responderId } : {}),
@@ -1434,6 +1574,9 @@ export interface GrantHolders { bot: string[]; task: string[]; taskThreadId?: st
 const stringList = (value: unknown): string[] => Array.isArray(value) ? value.filter((key: unknown): key is string => typeof key === "string") : [];
 
 export type Action =
+  | { type: "sendEngineCommand"; botId: string; threadId: string; commandHandle: string; args: string; sendId: string; text?: string;
+      onSent?: () => void; onError?: (error: unknown) => void }
+
   | ({
       type: "hydrate";
       bots: Bot[];
@@ -1537,7 +1680,7 @@ export type Action =
       responderId?: string;
       /** Runs when the harness accepts the send: the id it got and, when the
        * send waits for the room, the queue row it became. */
-      onReceipt?: (receipt: { sendId: string; requestId?: string; queued: boolean }) => void;
+      onReceipt?: (receipt: HelpSendReceipt & { requestId?: string }) => void;
       /** Runs after a failed send. Returning true means the caller has shown
        * the failure where it happened, so the store adds no toast of its own. */
       onError?: (error: unknown) => boolean | void;
@@ -1593,6 +1736,9 @@ export type Action =
        * landed from one the route refused, and the first run settled its last
        * step on a send it had never heard back from.
        */
+      noSteer?: boolean;
+      onReceipt?: (receipt: HelpSendReceipt) => void;
+      onIndexing?: () => void;
       onSent?: () => void;
       /** Runs after a failed send. Returning true means the caller has shown
        * the failure where it happened, so the store adds no toast of its own. */
@@ -1605,7 +1751,10 @@ export type Action =
   | { type: "sendingStarted"; threadId: string; sendId: string; text: string }
   | { type: "sendingSettled"; threadId: string; sendId: string }
   | { type: "consumePendingQueued"; threadId: string; queueId: string }
-  | { type: "cancelQueued"; botId: string; queueId: string }
+  | { type: "cancelQueued"; botId: string; queueId: string; target?: SendActionTarget; signal?: AbortSignal; onDone?: () => void; onError?: (error: unknown) => boolean | void }
+  | { type: "resendSend"; kind: "bot" | "group"; subjectId: string; text: string; action: ResendAction; onReceipt?: (receipt: ResendActionResult) => void; onError?: (error: unknown) => boolean | void }
+  | { type: "sendReplaced"; threadId: string; sendId: string; text: string; result: ResendActionResult }
+  | { type: "sendDismissed"; threadId: string; sendId: string }
   | {
       type: "cancelGroupQueued";
       groupId: string;
@@ -1635,6 +1784,9 @@ export type Action =
       message?: string;
       /** Exact proposal hash displayed by a current learned-skill client. */
       reviewedSha256?: string;
+      /** HighLevel: the digest of the open review whose values this surface showed (HL-S2-WRITES (a)4). */
+      reviewDigest?: string;
+      seen?: { renderer: string; digest: string };
       /** remember this exact grant (the server's allowKey) for the bot, or a
        * several-action card's whole set (its allowKeys, Rule 78c) */
       /** `onSaved` gets the save's `added` receipt BY HOLDER (the bot's
@@ -1685,6 +1837,7 @@ export type Action =
       threadId: string;
       requestId: string;
       behavior: "answer" | "skip";
+      displayAction?: DisplayAction;
       answers?: QuestionAnswer[];
       /** Local recovery hook for the card. Never sent to the server. */
       onError?: (message: string) => void;
@@ -1693,6 +1846,7 @@ export type Action =
    * and the message together (QW Q1b); a room (`groupId`) posts the message, then records it on the card. */
   | {
       type: "sendQuestionAsMessage";
+      displayAction?: DisplayAction;
       botId?: string;
       groupId?: string;
       threadId: string;
@@ -1716,10 +1870,11 @@ export type Action =
   | { type: "deleteTask"; botId: string; threadId: string }
   /** `profile`: hire in one sentence (UX-L6A part 2, src/lib/hire-defaults.ts). The engine is still the server's birth rule. */
   | { type: "newBot"; profile?: { name: string; description: string }; onSettled?: (error: unknown | null) => void }
+  | { type: "botComputerNotice"; botId: string; message: string }
   | ({ type: "botAdded"; bot: Bot } & HttpOrigin)
   /** The person deleted a bot (the sidebar, or the archived list with `archived`): removed at once, pending until the DELETE's own
    * answer or the deletion frame (§2.7). `attempt` is a client nonce (newDeleteAttempt); `onSettled` is a local hook, never sent. */
-  | { type: "deleteBot"; source: "local"; botId: string; attempt: string; archived?: boolean; onSettled?: (result: DeleteOutcome) => void }
+  | { type: "deleteBot"; source: "local"; botId: string; attempt: string; archived?: boolean; emailConfirm?: string; bulk?: boolean; onSettled?: (result: DeleteOutcome) => void }
   /** The stream's `bot.deleted`: `hidden` is a hide sent to a scoped stream (`audience: "remote"`), else a real deletion. */
   | { type: "botDeleted"; source: "stream"; botId: string; hidden: boolean; tasksSeq?: number; tasksEpoch?: string }
   /** The DELETE effect's outcome, matched to the pending delete by `attempt` (§2.7 r6). */
@@ -1771,7 +1926,8 @@ export type Action =
       answer?: boolean }
   | { type: "toggleSettings"; open?: boolean; intent?: BotSettingsIntent; botId?: string }
   | { type: "clearBotSettingsIntent" }
-  | { type: "togglePlugins"; open?: boolean; surface?: "apps" | "mcp" }
+  | { type: "openConnectorReconnect"; incidentId?: string }
+  | { type: "togglePlugins"; open?: boolean; surface?: "apps" | "mcp"; reconnect?: { slug: string; accountId?: string; alias?: string } }
   | { type: "toggleComputer"; open?: boolean }
   | { type: "toggleInspector"; open?: boolean }
   | { type: "workspacePane"; action: WorkspacePaneAction }
@@ -1917,9 +2073,13 @@ export function visibleNotificationThread(
 
 export function openNotificationTarget(
   dispatch: (action: Action) => void,
-  target: { botId?: string; threadId: string },
+  target: { botId?: string; threadId: string; reconnectIncidentId?: string },
   state: NotificationRoutingState,
 ): boolean {
+  if (target.reconnectIncidentId) {
+    dispatch({ type: "openConnectorReconnect", incidentId: target.reconnectIncidentId });
+    return true;
+  }
   // A room's approval/question notification carries the asker bot with the
   // GROUP's thread id; asking the bot to switch to that thread would 404.
   // Open the room itself. A thread that is neither a room nor one of the
@@ -2188,6 +2348,7 @@ export function pendingThreadActionBlocked(state: AppState, action: Action): boo
     case "answerCard":
     case "dismissCard":
       return state.bots.some(bot => bot.id === action.botId && bot.awaitingThreadSnapshot);
+    case "sendEngineCommand":
     case "decideRequest":
     case "answerQuestion":
     case "sendQuestionAsMessage":
@@ -3601,6 +3762,7 @@ function reduceState(state: AppState, action: Action): AppState {
     // lets the transcript hide the card again on its own.
     case "restoreCard":
       return patchCard(state, action.botId, action.messageId, { dismissed: false });
+    case "sendEngineCommand":
     case "decideRequest":
     case "answerQuestion":
     case "sendQuestionAsMessage":
@@ -3887,6 +4049,8 @@ function reduceState(state: AppState, action: Action): AppState {
         ...(action.message.kind === "options" ? { cardsRev: (b.cardsRev ?? 0) + 1 } : {}),
       }));
     }
+    case "botComputerNotice":
+      return { ...state, botComputerNotices: { ...state.botComputerNotices, [action.botId]: action.message } };
     case "screenUnavailable":
       return { ...state, screenNotices: { ...state.screenNotices, [action.botId]: action.message } };
     case "screenFrame": {
@@ -3963,9 +4127,10 @@ function reduceState(state: AppState, action: Action): AppState {
         appSettingsOpen: open ? false : state.appSettingsOpen,
       };
     }
+    case "openConnectorReconnect": return { ...state, reconnectIncidentId: action.incidentId };
     case "togglePlugins": {
       const open = action.open ?? !state.pluginsOpen;
-      return { ...state, pluginsOpen: open, pluginsSurface: open ? action.surface ?? "apps" : state.pluginsSurface };
+      return { ...state, pluginsOpen: open, pluginReconnect: action.reconnect, pluginsSurface: open ? action.surface ?? "apps" : state.pluginsSurface };
     }
     case "focusMessage":
       return {
@@ -4134,6 +4299,20 @@ function reduceState(state: AppState, action: Action): AppState {
     case "groupPatchReverted":
       return { ...state, groups: state.groups.map((g) => (g.id === action.groupId ? { ...g, ...action.fields } : g)) };
     // handled entirely by the async wrapper
+    case "sendDismissed": {
+      return { ...state, pendingQueued: { ...state.pendingQueued, [action.threadId]: (state.pendingQueued[action.threadId] ?? []).filter(e => e.sendId !== action.sendId) } };
+    }
+    case "sendReplaced": {
+      const prev = state.pendingQueued[action.threadId] ?? [];
+      const { receipt, replacementSendId } = action.result;
+      // A server SSE may already contain the replacement. Never add a second chip.
+      const rest = prev.filter(e => e.sendId !== action.sendId && e.sendId !== replacementSendId);
+      return { ...state, pendingQueued: { ...state.pendingQueued, [action.threadId]: [...rest, {
+        queueId: receipt.queueId ?? sendingQueueId(replacementSendId), sendId: replacementSendId,
+        text: action.text, ...(receipt.state === "queued" ? {} : { sending: true as const }), local: true as const,
+      }] } };
+    }
+    case "resendSend": return state;
     case "pendingQueued": {
       if (state.consumedQueueIds[action.queueId]) {
         const consumedQueueIds = { ...state.consumedQueueIds };
@@ -4186,13 +4365,14 @@ function reduceState(state: AppState, action: Action): AppState {
     }
     case "cancelQueued": {
       const bot = state.bots.find((candidate) => candidate.id === action.botId);
-      if (!bot) return state;
-      const prev = state.pendingQueued[bot.threadId] ?? [];
+      const threadId = action.target?.threadId ?? bot?.threadId;
+      if (!threadId) return state;
+      const prev = state.pendingQueued[threadId] ?? [];
       const rest = prev.filter((entry) => entry.queueId !== action.queueId);
       if (rest.length === prev.length) return state;
       const pendingQueued = { ...state.pendingQueued };
-      if (rest.length) pendingQueued[bot.threadId] = rest;
-      else delete pendingQueued[bot.threadId];
+      if (rest.length) pendingQueued[threadId] = rest;
+      else delete pendingQueued[threadId];
       return { ...state, pendingQueued };
     }
     case "cancelGroupQueued": {
@@ -4460,6 +4640,9 @@ export async function api(path: string, init?: RequestInit, busyTries: number = 
       // (server/task-delta.ts CARDS_BESIDE_*); an older one says nothing and is
       // sent every card inside its page.
       "x-murage-cards": "beside",
+      // This client carries the Connect entry and the masked code field for Antigravity, so the home may offer it (the flag means UI support, never
+      // authorization: the sign-in guard is the backstop; server/cloud-home/runnable-engines.ts CLIENT_CAPABILITIES_HEADER).
+      "x-murage-client-capabilities": "antigravity-signin",
       // Saying it is not proving it. The harness believes the marker only
       // when this launch's secret rides along; without it every call above
       // is answered as though it came from a paired phone. Spread before
@@ -4472,7 +4655,7 @@ export async function api(path: string, init?: RequestInit, busyTries: number = 
     // redirect would hand the launch secret to whatever it points at.
     redirect: "error",
   });
-  const body = await res.json().catch(() => ({}));
+  const body = normalizeAudienceWire(await res.json().catch(() => ({})));
   // Not proof on its own: a harness route answers 401 for a provider it
   // could not sign in to. The door's /session decides (lib/session-check.ts).
   if (res.status === 401) void checkSession();
@@ -4489,6 +4672,10 @@ export async function api(path: string, init?: RequestInit, busyTries: number = 
     if (Number.isFinite(retryAfter) && retryAfter > 0) body.retryAfterSeconds = retryAfter;
   }
   if (!res.ok) {
+    // An owner browser on a Cloud home: a high-risk change is refused with 403 email_code. The owner types the 6-digit code from
+    // their email (OwnerCodeDialog) and this exact request goes once more with the proof. null (anything else, anywhere else) falls through.
+    const withProof = res.status === 403 ? await ownerCodeRetryInit(init, res.status, body) : null;
+    if (withProof) return api(path, withProof, busyTries);
     const error = Object.assign(new Error(sendNoticeFromBody(body) ?? body.error ?? requestFailedSentence(res.status)), { status: res.status, body });
     // A delete or a settings write (PUT, PATCH: repeating one changes nothing a first run did not) that met the server's busy answer (503
     // DATABASE_BUSY) is repeated after its Retry-After, a few times, before the failure reaches the caller (send-delivery.ts busyRetriesFor).
@@ -4593,7 +4780,10 @@ export function useStreamHelpers(): HelperState {
   return useContext(HelpersContext);
 }
 
-export type PendingStreamDelta = { text: string; reasoning: string };
+export type PendingStreamDelta = { text: string; reasoning: string; replaceText?: true; replaceReasoning?: true };
+// PROVISIONAL INTERFACE: F3/F5 region metadata on content.delta. 1B supplies
+// regionId/itemRevision/speechDisposition; explicit replacements use op.
+export type AudienceRegion = { regionId?: string; itemRevision?: number; speechDisposition?: "append" | "none"; op?: "append" | "replace" | "omit" };
 
 /**
  * Paint once per frame, but keep draining when a hidden renderer pauses rAF.
@@ -4608,6 +4798,12 @@ export function createStreamDeltaBuffer(
   onFlush: (entries: Array<[string, PendingStreamDelta]>) => void,
 ) {
   const buffer = new Map<string, PendingStreamDelta>();
+  const regions = new Map<string, Map<string, { revision: number; text: string; suppressed: boolean }>>();
+  const regionKey = (threadId: string, kind: string) => JSON.stringify([threadId, kind]);
+  const clearRegions = (threadId: string, kind?: string) => {
+    if (!kind || kind === "assistant_text") regions.delete(regionKey(threadId, "assistant_text"));
+    if (!kind || kind === "reasoning_text") regions.delete(regionKey(threadId, "reasoning_text"));
+  };
   let timer: ReturnType<typeof setTimeout> | undefined;
   let characters = 0;
   const cancel = () => {
@@ -4623,17 +4819,47 @@ export function createStreamDeltaBuffer(
     onFlush(entries);
   };
   return {
-    push(threadId: string, kind: string, delta: string) {
+    push(threadId: string, kind: string, delta: string, audience?: AudienceRegion) {
       if (kind !== "assistant_text" && kind !== "reasoning_text") return;
+      let replacement = false;
+      if (audience?.regionId && Number.isSafeInteger(audience.itemRevision)) {
+        const key = regionKey(threadId, kind);
+        let own = regions.get(key);
+        if (!own) {
+          // Active display state is bounded; callers clear it at settlement.
+          if (regions.size >= 512) return;
+          own = new Map(); regions.set(key, own);
+        }
+        const previous = own.get(audience.regionId);
+        if (previous && audience.itemRevision! <= previous.revision) return;
+        // This is the server's fixed display marker, not a client secret
+        // detector. Once suppressed, a later snapshot cannot restore it.
+        const suppressed = audience.speechDisposition === "none" && delta.includes("«redacted»");
+        if (previous?.suppressed) { previous.revision = audience.itemRevision!; return; }
+        if (!previous && own.size >= 64) return;
+        const text = audience.op === "omit" ? "«redacted»"
+          : audience.op === "replace" ? delta : (previous?.text ?? "") + delta;
+        own.set(audience.regionId, { revision: audience.itemRevision!, text, suppressed: suppressed || audience.op === "omit" });
+        if (audience.op === "replace" || audience.op === "omit") {
+          delta = [...own.values()].map((entry) => entry.text).join("");
+          replacement = true;
+        }
+      }
       const entry = buffer.get(threadId) ?? { text: "", reasoning: "" };
-      if (kind === "assistant_text") entry.text += delta;
-      else entry.reasoning += delta;
+      if (kind === "assistant_text") {
+        if (replacement) { characters -= entry.text.length; entry.text = delta; entry.replaceText = true; }
+        else entry.text += delta;
+      } else {
+        if (replacement) { characters -= entry.reasoning.length; entry.reasoning = delta; entry.replaceReasoning = true; }
+        else entry.reasoning += delta;
+      }
       buffer.set(threadId, entry);
       characters += delta.length;
       if (characters >= 64 * 1024) flush();
       else if (timer === undefined) timer = setTimeout(flush, STREAM_FLUSH_MS);
     },
     clear(threadId: string) {
+      clearRegions(threadId);
       const entry = buffer.get(threadId);
       if (entry) characters -= entry.text.length + entry.reasoning.length;
       buffer.delete(threadId);
@@ -4642,6 +4868,7 @@ export function createStreamDeltaBuffer(
     /** Drop only the pending assistant text (a retried attempt's words);
      * reasoning stays. */
     clearText(threadId: string) {
+      clearRegions(threadId, "assistant_text");
       const entry = buffer.get(threadId);
       if (!entry) return;
       characters -= entry.text.length;
@@ -4651,6 +4878,7 @@ export function createStreamDeltaBuffer(
     },
     /** Drop only the pending reasoning (a discarded attempt's thoughts). */
     clearReasoning(threadId: string) {
+      clearRegions(threadId, "reasoning_text");
       const entry = buffer.get(threadId);
       if (!entry) return;
       characters -= entry.reasoning.length;
@@ -4662,6 +4890,7 @@ export function createStreamDeltaBuffer(
     dispose() {
       cancel();
       buffer.clear();
+      regions.clear();
       characters = 0;
     },
   };
@@ -4721,6 +4950,41 @@ async function setupFinished(): Promise<boolean> {
   return setupFinishedAnswer;
 }
 
+/** A browser window has no conversation, outbox, notifications or read receipts.
+ * Only the displayed bot and browser profiles are refreshed here. */
+export function BrowserStoreProvider({ botId, children }: { botId: string; children: ReactNode }) {
+  const [state, setState] = useState<AppState>(initialState);
+  const revision = useRef(0);
+  useEffect(() => {
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const refresh = async () => {
+      const asked = revision.current;
+      try {
+        const [{ bot }, config] = await Promise.all([
+          api(`/api/bots/${encodeURIComponent(botId)}?messages=0`) as Promise<{ bot: Bot }>,
+          api('/api/config').then(configReply<ConfigStatus>),
+        ]);
+        if (alive && asked === revision.current) setState({ ...initialState, bots: bot?.id === botId ? [bot] : [], config, connected: true });
+      } catch (error) {
+        if (alive && (error as { status?: number }).status === 404) setState({ ...initialState, connected: true });
+      } finally { if (alive) timer = setTimeout(refresh, 2000); }
+    };
+    void refresh();
+    return () => { alive = false; clearTimeout(timer); };
+  }, [botId]);
+  const dispatch = useCallback<React.Dispatch<Action>>(action => {
+    if (action.type === 'botPatched' && action.bot.id === botId) {
+      revision.current++;
+      setState(previous => ({ ...previous, bots: previous.bots.map(bot => ({ ...bot, ...action.bot })) }));
+    } else if (action.type === 'interrupt' && action.botId === botId) {
+      void api(`/api/bots/${encodeURIComponent(botId)}/interrupt`, { method: 'POST', body: '{}' }).catch(() => {});
+    }
+  }, [botId]);
+  const value = useMemo(() => ({ state, dispatch, flushBotPatches: async () => {}, refreshInstances: async () => {}, refreshAfterKey: async () => {} }), [state, dispatch]);
+  return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
+}
+
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, rawDispatch] = useReducer(reducer, initialState);
   const [selections] = useState(() => createStoreSubscriptions(state));
@@ -4730,6 +4994,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   stateRef.current = state;
   const syncReplyContext = (hydrated = Boolean(stateRef.current.hydrated)) => replyController.configure({ desktop: knownComputer() === true, hydrated, threadId: visibleNotificationThread(stateRef.current), botId: stateRef.current.bots.find(bot => bot.id === stateRef.current.selectedId)?.id, visible: document.visibilityState !== "hidden", call: currentCall() !== null });
   useEffect(() => { syncReplyContext(); }, [state.hydrated, state.selectedId, state.activeView, state.bots, state.groups]);
+  // NOTIFY-EVERYWHERE-1019 S3: tell the router which conversation is on screen and whether this window has focus (changes only).
+  useEffect(() => {
+    const report = () => reportAttentionVisible(visibleNotificationThread(stateRef.current), document.hasFocus() && document.visibilityState !== "hidden");
+    report();
+    window.addEventListener("focus", report);
+    window.addEventListener("blur", report);
+    document.addEventListener("visibilitychange", report);
+    return () => { window.removeEventListener("focus", report); window.removeEventListener("blur", report); document.removeEventListener("visibilitychange", report); };
+  }, [state.selectedId, state.activeView, state.bots, state.groups]);
   useEffect(() => {
     let alive = true;
     void surface().then(() => { if (alive) syncReplyContext(); });
@@ -4779,11 +5052,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         outbox: createOutbox(
           (() => { try { return window.localStorage; } catch { return undefined; } })(),
           draftJournal,
+          () => stateRef.current.config?.profile?.email,
         ),
         now: () => Date.now(),
         setTimer: (fn, ms) => setTimeout(fn, ms),
-        post: (entry, signal) =>
-          entry.kind === "group"
+        post: (entry, signal) => {
+          const request = sendActionRequest(entry);
+          if (request) return api(request.path, { method: "POST", signal, body: request.body });
+          return entry.kind === "group"
             ? api(`/api/groups/${entry.groupId}/messages`, {
                 method: "POST",
                 signal,
@@ -4801,15 +5077,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 api(`/api/bots/${entry.botId}/messages`, {
                   method: "POST",
                   signal,
-                  body: JSON.stringify({ text: entry.text, replyToId: entry.replyToId, threadId: entry.threadId, sendId: entry.sendId, ...venuePostBody(entry), ...(entry.resend ? { resend: true, ...(entry.restoreGen ? { restoreGen: entry.restoreGen } : {}), ...(entry.stopGen ? { stopGen: entry.stopGen } : {}), ...(entry.actionId ? { actionId: entry.actionId } : {}) } : {}) }),
+                  body: JSON.stringify(commandOutboxBody(entry) ?? { text: entry.text, replyToId: entry.replyToId, threadId: entry.threadId, sendId: entry.sendId, ...venuePostBody(entry), ...(entry.noSteer ? { noSteer: true, typedStop: false } : {}), ...(entry.resend ? { resend: true, ...(entry.restoreGen ? { restoreGen: entry.restoreGen } : {}), ...(entry.stopGen ? { stopGen: entry.stopGen } : {}), ...(entry.actionId ? { actionId: entry.actionId } : {}) } : {}) }),
                 }),
-              ),
+              );
+        },
         releaseRefused: (sendId) => {
           releaseRecoveredSend(sendId);
         },
-        showSending: (entry) => rawDispatch({ type: "sendingStarted", threadId: entry.threadId, sendId: entry.sendId, text: entry.text }),
-        settleSending: (entry) => rawDispatch({ type: "sendingSettled", threadId: entry.threadId, sendId: entry.sendId }),
+        showSending: (entry) => !entry.sendAction && rawDispatch({ type: "sendingStarted", threadId: entry.threadId, sendId: entry.sendId, text: entry.text }),
+        settleSending: (entry) => !entry.sendAction && rawDispatch({ type: "sendingSettled", threadId: entry.threadId, sendId: entry.sendId }),
         receipt: (entry, body) => {
+          if (entry.sendAction && body?.replacementSendId === entry.sendAction.replacementSendId && typeof body?.replacementAttemptId === "string" && body.receipt) {
+            rawDispatch({ type: "sendReplaced", threadId: entry.threadId, sendId: entry.sendAction.sendId, text: entry.text, result: body });
+            releaseRecoveredSend(entry.sendAction.sendId, { includeFrozen: true });
+            return;
+          }
           if (body?.message && typeof body.threadId === "string") {
             rawDispatch({ type: "messageAdded", threadId: body.threadId, message: body.message, ...seqEnvelope(body), origin: answerOrigin(body) });
           }
@@ -4819,7 +5101,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         },
         // A refusal the server meant for an undrafted send, with nobody waiting on it. A drafted send's words
         // never left its box (the record), so there is nothing to put back.
-        recover: (_entry, error) => {
+        recover: (entry, error) => {
+          if (entry.sendAction && (error as { body?: { code?: string } })?.body?.code === "target_dismissed") {
+            rawDispatch({ type: "sendDismissed", threadId: entry.threadId, sendId: entry.sendAction.sendId });
+            return;
+          }
           raiseTransientError(rawDispatch, error instanceof Error ? error.message : requestFailedSentence(0));
         },
       }),
@@ -4870,8 +5156,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           const streaming = { ...prev.streaming };
           const reasoning = { ...prev.reasoning };
           for (const [threadId, delta] of entries) {
-            if (delta.text) streaming[threadId] = (streaming[threadId] ?? "") + delta.text;
-            if (delta.reasoning) reasoning[threadId] = (reasoning[threadId] ?? "") + delta.reasoning;
+            if (delta.text || delta.replaceText) streaming[threadId] = (delta.replaceText ? "" : streaming[threadId] ?? "") + delta.text;
+            if (delta.reasoning || delta.replaceReasoning) reasoning[threadId] = (delta.replaceReasoning ? "" : reasoning[threadId] ?? "") + delta.reasoning;
           }
           return { ...prev, streaming, reasoning };
         });
@@ -5014,7 +5300,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // Sent with its attempt id; an answer carrying the server's own JSON error is a refusal (shown, the bot fetched again); no answer
     // (network, abort, a body that is not the server's) is retried with the same attempt, said out loud after the third try and given
     // up after DELETE_RETRY_MAX. The stream's deletion frame for the id ends it at any point.
-    type DeleteRun = { botId: string; attempt: string; name: string; archived: boolean; tries: number; inFlight: boolean; timer?: ReturnType<typeof setTimeout>; onSettled?: (result: DeleteOutcome) => void };
+    type DeleteRun = { botId: string; attempt: string; emailConfirm?: string; bulk?: boolean; endedByStream?: boolean; noted?: boolean; name: string; archived: boolean; tries: number; inFlight: boolean; timer?: ReturnType<typeof setTimeout>; onSettled?: (result: DeleteOutcome) => void };
     const deleteRuns = new Map<string, DeleteRun>();
     const forgetBotDrafts = (botId: string) => {
       forgetDeletedDrafts({ botId });
@@ -5026,6 +5312,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (outcome === "deleted") forgetBotDrafts(run.botId);
       rawDispatch({ type: "deletionSettled", source: "http", botId: run.botId, attempt: run.attempt, outcome, ...extra });
       run.onSettled?.({ outcome, ...(extra.error ? { error: extra.error } : {}) });
+    };
+    // What the person is told after a Delete the server accepted, once per run: the cleanup warning, the kept-inbox receipt (r3.2: a
+    // single delete only; a bulk delete has its one fixed line instead) and any leftovers. A warning and a receipt are both shown.
+    const noteDeletion = (run: DeleteRun, body: { warning?: unknown; emailKept?: unknown } | null) => {
+      if (run.noted) return;
+      run.noted = true;
+      const kept = (body?.emailKept as { address?: unknown } | null | undefined)?.address;
+      const receipt = !run.bulk && typeof kept === "string" && kept ? `${kept} was kept. Remove it in Settings if you don't need it.` : "";
+      if (typeof body?.warning === "string" && body.warning) {
+        rawDispatch({ type: "deletionNote", note: { title: `${run.name} was deleted. Some cleanup did not finish:`, items: receipt ? [body.warning, receipt] : [body.warning] } });
+        return;
+      }
+      const base = deletionNote(body as Parameters<typeof deletionNote>[0]);
+      if (receipt) rawDispatch({ type: "deletionNote", note: base ? { ...base, items: [...base.items, receipt] } : { title: receipt, items: [] } });
+      else rawDispatch({ type: "deletionNote", note: base });
     };
     const retryDelete = (run: DeleteRun) => {
       run.tries += 1;
@@ -5043,18 +5344,21 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       if (run.timer) clearTimeout(run.timer);
       run.timer = undefined;
       run.inFlight = true;
-      api(`/api/bots/${encodeURIComponent(run.botId)}${run.archived ? "?ifArchived=1" : ""}`, { method: "DELETE", headers: { "x-murage-attempt": run.attempt } })
-        .then((body: { ok?: unknown; tasksSeq?: unknown; tasksEpoch?: unknown; warning?: unknown } | null) => {
+      api(`/api/bots/${encodeURIComponent(run.botId)}${run.archived ? "?ifArchived=1" : ""}`, { method: "DELETE", headers: { "x-murage-attempt": run.attempt }, ...(run.emailConfirm !== undefined ? { body: JSON.stringify({ emailConfirm: run.emailConfirm }) } : {}) })
+        .then((body: { ok?: unknown; tasksSeq?: unknown; tasksEpoch?: unknown; warning?: unknown; emailKept?: unknown } | null) => {
           run.inFlight = false;
-          if (deleteRuns.get(run.botId) !== run) return;
-          if (body?.ok !== true) return retryDelete(run);
-          settleDelete(run, "deleted", {
-            ...(typeof body.tasksSeq === "number" ? { tasksSeq: body.tasksSeq } : {}),
-            ...(typeof body.tasksEpoch === "string" ? { tasksEpoch: body.tasksEpoch } : {}),
-          });
-          // the deletion happened; something after it did not finish
-          if (typeof body.warning === "string" && body.warning) rawDispatch({ type: "deletionNote", note: { title: `${run.name} was deleted. Some cleanup did not finish:`, items: [body.warning] } });
-          else showDeletionNote(body);
+          const current = deleteRuns.get(run.botId) === run;
+          // The stream's deletion frame can end this run before the DELETE's own answer arrives. That answer is still the only
+          // place the warning and the kept-inbox receipt come from, so it is read once (noteDeletion); nothing else about it applies.
+          if (!current && !(run.endedByStream && body?.ok === true)) return;
+          if (current) {
+            if (body?.ok !== true) return retryDelete(run);
+            settleDelete(run, "deleted", {
+              ...(typeof body.tasksSeq === "number" ? { tasksSeq: body.tasksSeq } : {}),
+              ...(typeof body.tasksEpoch === "string" ? { tasksEpoch: body.tasksEpoch } : {}),
+            });
+          }
+          noteDeletion(run, body);
         }, (error: unknown) => {
           run.inFlight = false;
           if (deleteRuns.get(run.botId) !== run) return;
@@ -5074,6 +5378,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       stop: (botId) => {
         const run = deleteRuns.get(botId);
         if (!run) return;
+        run.endedByStream = true;
         deleteRuns.delete(botId);
         if (run.timer) clearTimeout(run.timer);
         forgetBotDrafts(botId);
@@ -5089,6 +5394,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const error = new Error("The replacement conversation is still loading. Wait for its transcript before sending or responding.");
         showError(error);
         if (action.type === "send") action.onError?.(error);
+        else if (action.type === "sendEngineCommand") action.onError?.(error);
         else if (action.type === "decideRequest" || action.type === "answerQuestion" || action.type === "sendQuestionAsMessage") action.onError?.(error.message);
         return;
       }
@@ -5151,11 +5457,36 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // The server re-emits every stamped run, which clears the dots here.
           api("/api/routine-runs/seen-all", { method: "POST" }).catch(showError);
           break;
+        case "resendSend": {
+          const saved = deliveryRef.current.pendingResend(action.action.threadId, action.action.sendId);
+          const a = saved?.sendAction ?? action.action;
+          if (deliveryRef.current.inFlight(a.replacementSendId)) break;
+          void deliveryRef.current.submit(saved ?? {
+            sendId: a.replacementSendId, kind: action.kind,
+            ...(action.kind === "bot" ? { botId: action.subjectId } : { groupId: action.subjectId }),
+            threadId: a.threadId, text: action.text, sendAction: a,
+            account: stateRef.current.config?.profile?.email, at: Date.now(), attempts: 0,
+          }, {
+            onReceipt: (_entry, result) => action.onReceipt?.(result),
+            onFailed: (_entry, error) => {
+              if ((error as { body?: { code?: string } })?.body?.code === "target_dismissed") {
+                rawDispatch({ type: "sendDismissed", threadId: a.threadId, sendId: a.sendId });
+                return true;
+              }
+              if (action.onError?.(error) !== true) showError(error);
+              return true;
+            },
+          });
+          break;
+        }
         case "cancelQueued": {
           const dismissedSendId = queuedSendId(stateRef.current.pendingQueued, action.queueId);
-          void api(`/api/bots/${action.botId}/queue/${action.queueId}`, { method: "DELETE" })
-            .then(() => { rawDispatch(action); if (dismissedSendId) forgetSend(dismissedSendId); })
-            .catch(showError);
+          void api(`/api/bots/${action.botId}/queue/${action.queueId}`, { method: "DELETE", signal: action.signal, ...(action.target ? { body: JSON.stringify(action.target) } : {}) })
+            .then((body) => {
+              if (action.target && body?.state !== "cancelled") throw Object.assign(new Error("Could not remove it."), { body, status: 502 });
+              rawDispatch(action); if (dismissedSendId) forgetSend(dismissedSendId); action.onDone?.();
+            })
+            .catch(error => { if (action.onError?.(error) !== true) showError(error); });
           break;
         }
         case "cancelGroupQueued": {
@@ -5194,6 +5525,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 text: action.text,
                 ...(action.replyToId ? { replyToId: action.replyToId } : {}),
                 ...venuePostBody(action),
+                ...(action.noSteer ? { noSteer: true, account: stateRef.current.config?.profile?.email } : {}),
                 ...(action.outboxDraft ? { draft: action.outboxDraft } : {}),
                 ...(action.resend ? { resend: true as const, ...(action.restoreGen ? { restoreGen: action.restoreGen } : {}), ...(action.stopGen ? { stopGen: action.stopGen } : {}), ...(action.actionId ? { actionId: action.actionId } : {}) } : {}),
                 at: Date.now(),
@@ -5202,7 +5534,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               {
                 // The route answered, so the message is the server's problem
                 // now. Said last, after the state it implies has been applied.
-                onReceipt: () => action.onSent?.(),
+                onIndexing: () => action.onIndexing?.(),
+                onReceipt: (_entry, body) => {
+                  const receipt = terminalSendReceipt(body);
+                  action.onReceipt?.({ sendId, queued: receipt?.queued === true || receipt?.receipt?.state === "queued", queueId: receipt?.queueId ?? receipt?.receipt?.queueId, cancelled: receipt?.cancelled, failure: receipt?.failure, receipt: receipt?.receipt });
+                  if (!receipt?.failure && !receipt?.cancelled) action.onSent?.();
+                },
                 onFailed: (_entry, error) => {
                   if (action.onError?.(error) !== true) showError(error);
                   return true;
@@ -5266,12 +5603,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           });
           break;
         }
+        case "sendEngineCommand": {
+          // PROVISIONAL INTERFACE: F8 command body uses the existing bot message
+          // endpoint, pinned to the authenticated thread. The server resolves it.
+          const entry: CommandOutboxEntry = { kind: "bot", botId: action.botId, threadId: action.threadId,
+            sendId: action.sendId, text: action.text ?? action.args, at: Date.now(), attempts: 0,
+            displayCommand: { commandHandle: action.commandHandle, args: action.args } };
+          void deliveryRef.current.submit(entry, {
+            onReceipt: () => action.onSent?.(),
+            onFailed: (_entry, error) => { showError(error); action.onError?.(error); return true; },
+          });
+          break;
+        }
         case "decideRequest": {
-          const answer = {
+          const requestHandle = action.card && "requestHandle" in action.card && typeof action.card.requestHandle === "string"
+            ? action.card.requestHandle : action.requestId;
+          // PROVISIONAL INTERFACE: existing task-grant and fresh-auth proof
+          // fields are transport metadata. The route must separate them before
+          // strict resolveDisplayAction validation, as it does legacy proofs.
+          const answer = /^p\.[A-Za-z0-9-]+$/.test(requestHandle) && (action.behavior === "allow" || action.behavior === "deny")
+            ? { ...permissionDisplayAction(requestHandle, action.behavior), ...(action.allowForTask ? { allowForTask: true } : {}) }
+            : {
             requestId: action.requestId,
             behavior: action.behavior,
             message: action.message,
             reviewedSha256: action.reviewedSha256,
+            ...(action.reviewDigest ? { reviewDigest: action.reviewDigest } : {}),
+            ...(action.seen ? { seen: action.seen } : {}),
             ...(action.allowForTask ? { allowForTask: true } : {}),
           };
           // SEC-006: an Allow from the phone may be met by a challenge; the
@@ -5282,6 +5640,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             decideWithFreshAuth(
               async (extra) => {
                 const body = await api(`/api/threads/${action.threadId}/respond`, { method: "POST", body: JSON.stringify({ ...answer, ...extra }) });
+                const highlevelId = highlevelReviewId(action.requestId);
+                if (highlevelId && (body?.outcome === "allowed-once" || body?.outcome === "rejected")) forgetHighLevelReview(highlevelId);
                 // UX-TRUST-MOMENTS-1012 1.3: the allowance this answer added, for the card's Undo
                 if (allowForTask && body?.outcome === "allowed-once") onTaskAdded?.(stringList(body.taskAdded));
                 return body;
@@ -5355,7 +5715,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         case "answerQuestion": {
           api(`/api/threads/${action.threadId}/respond`, {
             method: "POST",
-            body: JSON.stringify({
+            body: JSON.stringify(action.displayAction ?? {
               requestId: action.requestId,
               behavior: action.behavior,
               ...(action.answers ? { answers: action.answers } : {}),
@@ -5390,7 +5750,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             // transaction and queues the words; a second press or another device gets "already settled".
             void api(`/api/threads/${action.threadId}/respond`, {
               method: "POST",
-              body: JSON.stringify({ requestId: action.requestId, behavior: "answer", answers: action.answers, sentAsMessage: true }),
+              body: JSON.stringify(action.displayAction ?? { requestId: action.requestId, behavior: "answer", answers: action.answers, sentAsMessage: true }),
             })
               .then((body) => {
                 if (body?.message && typeof body.threadId === "string") {
@@ -5403,11 +5763,16 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               .catch(fail);
             break;
           }
-          const sendId = newSendId();
+          const sendId = action.displayAction ? `ask-${action.displayAction.requestHandle.slice(2)}` : newSendId();
+          // PROVISIONAL INTERFACE: ordinary late room questions retain the
+          // existing send-then-record flow. The group message route resolves
+          // this DisplayAction against the stored card (owner, expiry, settled,
+          // secret and folder-trust checks included) before accepting the
+          // owner send; display labels must never be its execution text.
           const post = action.groupId
             ? () => api(`/api/groups/${action.groupId}/messages`, {
                 method: "POST",
-                body: JSON.stringify({ text: action.text, threadId: action.threadId, sendId, mode: "chat" }),
+                body: JSON.stringify(action.displayAction ? { threadId: action.threadId, sendId, mode: "chat", ...action.displayAction } : { text: action.text, threadId: action.threadId, sendId, mode: "chat" }),
               })
             : () => threadWrites.ready(action.threadId).then(() => api(`/api/bots/${action.botId}/messages`, {
                 method: "POST",
@@ -5423,7 +5788,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
               }
               return api(`/api/threads/${action.threadId}/respond`, {
                 method: "POST",
-                body: JSON.stringify({ requestId: action.requestId, behavior: "answer", answers: action.answers, sentAsMessage: true }),
+                body: JSON.stringify(action.displayAction ?? { requestId: action.requestId, behavior: "answer", answers: action.answers, sentAsMessage: true }),
               });
             })
             .catch(fail);
@@ -5503,8 +5868,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           break;
         case "newBot":
           api("/api/bots", action.profile ? { method: "POST", body: JSON.stringify({ name: action.profile.name, description: action.profile.description }) } : { method: "POST" })
-            .then(({ bot }) => {
-              rawDispatch({ type: "botAdded", ...fromAnswer(bot), bot });
+            .then((answer) => {
+              acceptCreatedBot(rawDispatch, answer);
               action.onSettled?.(null);
             })
             // A caller that says what happened (the Hire sheet) shows the refusal itself, with the owner's draft kept.
@@ -5553,7 +5918,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           if (action.archived !== true) forgetBotDrafts(action.botId);
           const previous = deleteRuns.get(action.botId);
           if (previous?.timer) clearTimeout(previous.timer);
-          const run: DeleteRun = { botId: action.botId, attempt: action.attempt, name: botBeforeDelete?.name || "This bot", archived: action.archived === true, tries: 0, inFlight: false, onSettled: action.onSettled };
+          const run: DeleteRun = { botId: action.botId, attempt: action.attempt, ...(typeof action.emailConfirm === "string" ? { emailConfirm: action.emailConfirm } : {}), ...(action.bulk ? { bulk: true } : {}), name: botBeforeDelete?.name || "This bot", archived: action.archived === true, tries: 0, inFlight: false, onSettled: action.onSettled };
           deleteRuns.set(action.botId, run);
           sendDelete(run);
           break;
@@ -5626,7 +5991,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
                 onReceipt: (_entry, body) => {
                   action.onReceipt?.({
                     sendId,
-                    queued: body?.queued === true,
+                    queued: body?.queued === true || body?.receipt?.state === "queued",
+                    failure: body?.failure, cancelled: body?.cancelled, receipt: body?.receipt,
                     ...(typeof body?.queueId === "string" ? { requestId: body.queueId } : typeof body?.message?.requestId === "string" ? { requestId: body.message.requestId } : {}),
                   });
                 },
@@ -6085,7 +6451,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         key: "config",
         request: async () => {
           const config = configReply<ConfigStatus>(await api("/api/config"));
-          return () => rawDispatch({ type: "configStatus", config });
+          return () => { receiveLearningNoticeFrame({ kind: "config", learningFluxSent: config.learningFluxSent }); rawDispatch({ type: "configStatus", config }); };
         },
       },
       {
@@ -6279,7 +6645,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     // server replays what we missed when it can, and re-downloading every
     // transcript on a reconnect it already covered is pure waste.
     handleFrame = (frame, replayed = false) => {
+      receiveLearningNoticeFrame(frame);
+      frame = normalizeAudienceWire(frame);
       if (frame.kind === "inbox.changed") { emitInboxChanged(frame.pollScale); return; }
+      if (frame.kind === "attention.settled") { forwardAttentionSettled(frame); return; }
+      if (frame.kind === "config") forwardAttentionConfig(); // a content-free signal; the handling below is unchanged
       // A memory the bot just kept (B5m): the open chat attaches its chip under the reply it came from.
       if (frame.kind === "learning.remembered" || frame.kind === "learning.improved") { window.dispatchEvent(new CustomEvent(REMEMBERED_EVENT, { detail: frame })); return; }
       // How many memories wait for the owner (counts only): the shared counts, the badge and the Memory screen move at once.
@@ -6339,6 +6709,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         }
         case "message.patch":
           conversationCache()?.applyFrame(frame);
+          if (frame.message?.card?.answered || frame.message?.card?.dismissed) {
+            const reviewId = highlevelReviewId(frame.message.card.requestId);
+            if (reviewId) forgetHighLevelReview(reviewId);
+          }
           rawDispatch({ type: "messagePatched", threadId: frame.threadId, message: frame.message, ...seqEnvelope(frame) });
           break;
         case "thread":
@@ -6399,12 +6773,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // unread:false back. Opening a bot from its own notification and
           // watching the badge return on the next hydration is exactly the
           // bug that makes notifications feel broken.
-          showNotification(
-            frame.notification,
+          // NOTIFY-EVERYWHERE-1019 S3: the desktop's router decides first (routing ids only cross); the display below is unchanged and
+          // runs when the router says show, or at once when there is no router.
+          routeNotification(frame.notification, (shown) => showNotification(
+            shown as typeof frame.notification,
             (target) => openNotificationTarget(dispatch, target, stateRef.current),
             stateRef.current.bots.find((bot) => bot.id === frame.notification.botId)?.avatarUrl,
             visibleNotificationThread(stateRef.current),
-          );
+          ));
           break;
         case "group.deleted":
           rawDispatch({
@@ -6446,7 +6822,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             // Batch token deltas per animation frame (t3code-style): a fast
             // stream dispatches once per frame instead of once per token, so
             // the app tree re-renders at most ~60x/s while streaming.
-            deltaBuffer.push(event.threadId, event.streamKind, event.delta);
+            deltaBuffer.push(event.threadId, event.streamKind, event.delta, event);
           } else if (event.type === "content.reset") {
             resetStreamText(event.threadId, event.streamKind);
           } else if (event.type === "plan.updated") {

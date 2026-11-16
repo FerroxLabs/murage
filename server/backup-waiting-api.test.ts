@@ -8,14 +8,17 @@
 // clears it and the backup restart is admitted.
 //
 // HEADLESS ONLY: a throwaway temp HOME and a probed port, clear of 8799.
+import { fixtureDisplayApi } from "./testing/display-fixture.ts";
+import { sessionBoundAcpPermissionEnvironment } from "./testing/acp-permission-fixture.ts";
+import { fixturePlatformEnv, stopFixtureServer } from "./testing/platform-fixtures.ts";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { removeTempDir } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -28,14 +31,14 @@ let child: ChildProcess;
 let home: string;
 let stderr = "";
 
-const request = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
+const request = fixtureDisplayApi(() => join(home, ".murage", "messages.db"), async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { ...desktopHeaders, ...(body ? { "content-type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: await res.json().catch(() => null) };
-};
+});
 const threadMessages = async (threadId: string) => ((await request("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []) as any[];
 const cardFor = async (threadId: string) =>
   (await threadMessages(threadId)).find((m) => m.kind === "options" && m.card?.requestId) ?? null;
@@ -61,17 +64,19 @@ async function makeBot(name: string) {
 
 let serverPort = 0;
 async function startServer() {
-  child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+  child = spawn(process.execPath, ["--import", pathToFileURL(join(home, "fake-engine-setup.mjs")).href, join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
-    env: {
+    env: { ...fixturePlatformEnv(),
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(serverPort),
       MURAGE_WEBHOOK_PORT: String(serverPort + 1),
       MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
+      NODE_ENV: "test",
     },
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["ignore", "pipe", "pipe", "ipc"],
   });
   child.stderr!.on("data", (c) => (stderr += c));
   const deadline = Date.now() + 20_000;
@@ -87,19 +92,22 @@ async function startServer() {
 }
 
 
-describe.skipIf(process.platform === "win32")("a backup held up by a card waiting on the owner", () => {
+describe("a backup held up by a card waiting on the owner", () => {
   beforeAll(async () => {
     const port = await freePortBlock([0, 1], 18_999, 200);
     base = `http://127.0.0.1:${port}`;
     chmodSync(FAKE_CLI, 0o755);
     home = mkdtempSync(join(tmpdir(), "murage-backup-waiting-"));
     expect(home.startsWith(tmpdir())).toBe(true);
+    // A process-local symbol cannot survive spawn(): the server child needs the fake-engine override (no shipped bwrap on a Linux
+    // test box; server/host-power.ts HOST_POWER_TEST_UNWRAPPED), as server/routine-approval-hold-api.test.ts does.
+    writeFileSync(join(home, "fake-engine-setup.mjs"), `globalThis[Symbol.for('murage.hostPower.testUnwrapped')] = true;\nawait import(${JSON.stringify(new URL("./testing/idle-load-preload.mjs",import.meta.url).href)});\n`);
     mkdirSync(join(home, ".murage"), { recursive: true });
     writeFileSync(join(home, ".murage", "config.json"), JSON.stringify({
       instances: {
         asker: {
           driver: "grokAgent",
-          environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: "printf 'tick 13:25' >> notes/log.md" },
+          environment: sessionBoundAcpPermissionEnvironment({ FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized", FAKE_ACP_MODE: "permission", FAKE_ACP_PERMISSION_COMMAND: "printf 'tick 13:25' >> notes/log.md" }),
           config: { cli: FAKE_CLI, fullAuto: false },
         },
       },
@@ -109,7 +117,7 @@ describe.skipIf(process.platform === "win32")("a backup held up by a card waitin
   }, 40_000);
 
   afterAll(async () => {
-    await waitForExit(child, { signal: "SIGTERM" });
+    await stopFixtureServer(child);
     await removeTempDir(home);
   });
 

@@ -1,0 +1,335 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "claude-sonnet-nolim-ui",
+  "date": "2026-11-10",
+  "base": "ee0c52050",
+  "scope": "NOLIM 1019 No limits copy F3, Approve all labels",
+  "strings": {
+    "en:ux.l1.level.unlimitedDetail": {
+      "text": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "en:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} lets {bot} run everything it decides, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message {bot} don't get {level}.",
+      "en": "{level} lets {bot} run everything it decides, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message {bot} don't get {level}.",
+      "verdict": "pass"
+    },
+    "en:ux.lcopyb.level.unlimitedHere": {
+      "text": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "en:ux.lcopyb.level.unlimited": {
+      "text": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "en:noLimits.v1.warning": {
+      "text": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "en:approveAll.buttonAll": {
+      "text": "Approve all",
+      "en": "Approve all",
+      "verdict": "pass"
+    },
+    "en:approveAll.approveCount": {
+      "text": "Approve {ok}",
+      "en": "Approve {ok}",
+      "verdict": "pass"
+    },
+    "en:approveAll.needLook": {
+      "text": "{rest} need a look",
+      "en": "{rest} need a look",
+      "verdict": "pass"
+    },
+    "de:noLimits.v1.warning": {
+      "text": "Murage führt alles aus, was deine Bots entscheiden, ohne nachzufragen. Es hält aber weiterhin an, bevor ein Befehl, den es lesen kann, deine Festplatte oder deinen Home-Ordner löscht, und für andere Personen, die deinen Bots schreiben, gilt Keine Grenzen nicht.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "de:approveAll.buttonAll": {
+      "text": "Alle erlauben",
+      "en": "Approve all",
+      "verdict": "pass"
+    },
+    "de:approveAll.approveCount": {
+      "text": "{ok} erlauben",
+      "en": "Approve {ok}",
+      "verdict": "pass"
+    },
+    "de:approveAll.needLook": {
+      "text": "{rest} müssen geprüft werden",
+      "en": "{rest} need a look",
+      "verdict": "pass"
+    },
+    "de:ux.l1.level.unlimitedDetail": {
+      "text": "Murage führt alles aus, was deine Bots entscheiden, ohne nachzufragen. Es hält aber weiterhin an, bevor ein Befehl, den es lesen kann, deine Festplatte oder deinen Home-Ordner löscht, und für andere Personen, die deinen Bots schreiben, gilt Keine Grenzen nicht.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "de:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} lässt {bot} alles ausführen, was er entscheidet, ohne nachzufragen. Er hält aber weiterhin an, bevor ein Befehl, den er lesen kann, deine Festplatte oder deinen Home-Ordner löscht, und für andere Personen, die {bot} schreiben, gilt {level} nicht.",
+      "en": "{level} lets {bot} run everything it decides, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message {bot} don't get {level}.",
+      "verdict": "pass"
+    },
+    "de:ux.lcopyb.level.unlimitedHere": {
+      "text": "Murage führt alles aus, was deine Bots entscheiden, ohne nachzufragen. Es hält aber weiterhin an, bevor ein Befehl, den es lesen kann, deine Festplatte oder deinen Home-Ordner löscht, und für andere Personen, die deinen Bots schreiben, gilt Keine Grenzen nicht.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "de:ux.lcopyb.level.unlimited": {
+      "text": "Murage führt alles aus, was deine Bots entscheiden, ohne nachzufragen. Es hält aber weiterhin an, bevor ein Befehl, den es lesen kann, deine Festplatte oder deinen Home-Ordner löscht, und für andere Personen, die deinen Bots schreiben, gilt Keine Grenzen nicht.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "es:noLimits.v1.warning": {
+      "text": "Murage ejecuta todo lo que deciden tus bots, sin preguntar. Aun así se detiene antes de un comando que pueda leer y que borre tu disco o tu carpeta personal, y las demás personas que escriben a tus bots no tienen Sin límites.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "es:approveAll.buttonAll": {
+      "text": "Aprobar todo",
+      "en": "Approve all",
+      "verdict": "pass"
+    },
+    "es:approveAll.approveCount": {
+      "text": "Aprobar {ok}",
+      "en": "Approve {ok}",
+      "verdict": "pass"
+    },
+    "es:approveAll.needLook": {
+      "text": "{rest} requieren revisión",
+      "en": "{rest} need a look",
+      "verdict": "pass"
+    },
+    "es:ux.l1.level.unlimitedDetail": {
+      "text": "Murage ejecuta todo lo que deciden tus bots, sin preguntar. Aun así se detiene antes de un comando que pueda leer y que borre tu disco o tu carpeta personal, y las demás personas que escriben a tus bots no tienen Sin límites.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "es:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} deja que {bot} ejecute todo lo que decida, sin preguntar. Aun así se detiene antes de un comando que pueda leer y que borre tu disco o tu carpeta personal, y las demás personas que escriben a {bot} no tienen {level}.",
+      "en": "{level} lets {bot} run everything it decides, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message {bot} don't get {level}.",
+      "verdict": "pass"
+    },
+    "es:ux.lcopyb.level.unlimitedHere": {
+      "text": "Murage ejecuta todo lo que deciden tus bots, sin preguntar. Aun así se detiene antes de un comando que pueda leer y que borre tu disco o tu carpeta personal, y las demás personas que escriben a tus bots no tienen Sin límites.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "es:ux.lcopyb.level.unlimited": {
+      "text": "Murage ejecuta todo lo que deciden tus bots, sin preguntar. Aun así se detiene antes de un comando que pueda leer y que borre tu disco o tu carpeta personal, y las demás personas que escriben a tus bots no tienen Sin límites.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "fr:noLimits.v1.warning": {
+      "text": "Murage exécute tout ce que tes bots décident, sans demander. Il s'arrête quand même avant une commande qu'il peut lire et qui effacerait ton disque ou ton dossier personnel, et les autres personnes qui écrivent à tes bots n'ont pas Sans limites.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "fr:approveAll.buttonAll": {
+      "text": "Tout approuver",
+      "en": "Approve all",
+      "verdict": "pass"
+    },
+    "fr:approveAll.approveCount": {
+      "text": "Approuver {ok}",
+      "en": "Approve {ok}",
+      "verdict": "pass"
+    },
+    "fr:approveAll.needLook": {
+      "text": "{rest} à examiner",
+      "en": "{rest} need a look",
+      "verdict": "pass"
+    },
+    "fr:ux.l1.level.unlimitedDetail": {
+      "text": "Murage exécute tout ce que tes bots décident, sans demander. Il s'arrête quand même avant une commande qu'il peut lire et qui effacerait ton disque ou ton dossier personnel, et les autres personnes qui écrivent à tes bots n'ont pas Sans limites.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "fr:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} laisse {bot} exécuter tout ce qu'il décide, sans demander. Il s'arrête quand même avant une commande qu'il peut lire et qui effacerait ton disque ou ton dossier personnel, et les autres personnes qui écrivent à {bot} n'ont pas {level}.",
+      "en": "{level} lets {bot} run everything it decides, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message {bot} don't get {level}.",
+      "verdict": "pass"
+    },
+    "fr:ux.lcopyb.level.unlimitedHere": {
+      "text": "Murage exécute tout ce que tes bots décident, sans demander. Il s'arrête quand même avant une commande qu'il peut lire et qui effacerait ton disque ou ton dossier personnel, et les autres personnes qui écrivent à tes bots n'ont pas Sans limites.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "fr:ux.lcopyb.level.unlimited": {
+      "text": "Murage exécute tout ce que tes bots décident, sans demander. Il s'arrête quand même avant une commande qu'il peut lire et qui effacerait ton disque ou ton dossier personnel, et les autres personnes qui écrivent à tes bots n'ont pas Sans limites.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "hi:noLimits.v1.warning": {
+      "text": "Murage आपके बॉट जो भी तय करते हैं, उसे बिना पूछे चलाता है। फिर भी वह ऐसे किसी कमांड से पहले रुक जाता है जिसे वह पढ़ सकता है और जो आपकी डिस्क या होम फ़ोल्डर मिटा दे, और आपके बॉट को संदेश भेजने वाले दूसरे लोगों पर “कोई सीमा नहीं” लागू नहीं होता।",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "hi:approveAll.buttonAll": {
+      "text": "सभी को मंज़ूरी दें",
+      "en": "Approve all",
+      "verdict": "pass"
+    },
+    "hi:approveAll.approveCount": {
+      "text": "{ok} को मंज़ूरी दें",
+      "en": "Approve {ok}",
+      "verdict": "pass"
+    },
+    "hi:approveAll.needLook": {
+      "text": "{rest} को देखना ज़रूरी है",
+      "en": "{rest} need a look",
+      "verdict": "pass"
+    },
+    "hi:ux.l1.level.unlimitedDetail": {
+      "text": "Murage आपके बॉट जो भी तय करते हैं, उसे बिना पूछे चलाता है। फिर भी वह ऐसे किसी कमांड से पहले रुक जाता है जिसे वह पढ़ सकता है और जो आपकी डिस्क या होम फ़ोल्डर मिटा दे, और आपके बॉट को संदेश भेजने वाले दूसरे लोगों पर “कोई सीमा नहीं” लागू नहीं होता।",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "hi:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} में {bot} जो भी तय करता है, उसे बिना पूछे चलाता है। फिर भी वह ऐसे किसी कमांड से पहले रुक जाता है जिसे वह पढ़ सकता है और जो आपकी डिस्क या होम फ़ोल्डर मिटा दे, और {bot} को संदेश भेजने वाले दूसरे लोगों पर “{level}” लागू नहीं होता।",
+      "en": "{level} lets {bot} run everything it decides, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message {bot} don't get {level}.",
+      "verdict": "pass"
+    },
+    "hi:ux.lcopyb.level.unlimitedHere": {
+      "text": "Murage आपके बॉट जो भी तय करते हैं, उसे बिना पूछे चलाता है। फिर भी वह ऐसे किसी कमांड से पहले रुक जाता है जिसे वह पढ़ सकता है और जो आपकी डिस्क या होम फ़ोल्डर मिटा दे, और आपके बॉट को संदेश भेजने वाले दूसरे लोगों पर “कोई सीमा नहीं” लागू नहीं होता।",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "hi:ux.lcopyb.level.unlimited": {
+      "text": "Murage आपके बॉट जो भी तय करते हैं, उसे बिना पूछे चलाता है। फिर भी वह ऐसे किसी कमांड से पहले रुक जाता है जिसे वह पढ़ सकता है और जो आपकी डिस्क या होम फ़ोल्डर मिटा दे, और आपके बॉट को संदेश भेजने वाले दूसरे लोगों पर “कोई सीमा नहीं” लागू नहीं होता।",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "ja:noLimits.v1.warning": {
+      "text": "Murage は、ボットが決めたことをすべて、確認せずに実行します。ただし、Murage が読み取れるコマンドがディスクやホームフォルダーを消去しようとする場合は、実行前に必ず止まります。また、ボットにメッセージを送る他の人には「制限なし」は適用されません。",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "ja:approveAll.buttonAll": {
+      "text": "すべて承認",
+      "en": "Approve all",
+      "verdict": "pass"
+    },
+    "ja:approveAll.approveCount": {
+      "text": "{ok}件を承認",
+      "en": "Approve {ok}",
+      "verdict": "pass"
+    },
+    "ja:approveAll.needLook": {
+      "text": "{rest}件は確認が必要です",
+      "en": "{rest} need a look",
+      "verdict": "pass"
+    },
+    "ja:ux.l1.level.unlimitedDetail": {
+      "text": "Murage は、ボットが決めたことをすべて、確認せずに実行します。ただし、Murage が読み取れるコマンドがディスクやホームフォルダーを消去しようとする場合は、実行前に必ず止まります。また、ボットにメッセージを送る他の人には「制限なし」は適用されません。",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "ja:ux.l1.confirm.unlimitedBody": {
+      "text": "{level}では、{bot} が決めたことをすべて、確認せずに実行します。ただし、読み取れるコマンドがディスクやホームフォルダーを消去しようとする場合は、実行前に必ず止まります。{bot} にメッセージを送る他の人には{level}は適用されません。",
+      "en": "{level} lets {bot} run everything it decides, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message {bot} don't get {level}.",
+      "verdict": "pass"
+    },
+    "ja:ux.lcopyb.level.unlimitedHere": {
+      "text": "Murage は、ボットが決めたことをすべて、確認せずに実行します。ただし、Murage が読み取れるコマンドがディスクやホームフォルダーを消去しようとする場合は、実行前に必ず止まります。また、ボットにメッセージを送る他の人には「制限なし」は適用されません。",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "ja:ux.lcopyb.level.unlimited": {
+      "text": "Murage は、ボットが決めたことをすべて、確認せずに実行します。ただし、Murage が読み取れるコマンドがディスクやホームフォルダーを消去しようとする場合は、実行前に必ず止まります。また、ボットにメッセージを送る他の人には「制限なし」は適用されません。",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "pt-br:noLimits.v1.warning": {
+      "text": "O Murage executa tudo o que seus bots decidem, sem perguntar. Mesmo assim, ele para antes de um comando que consegue ler e que apagaria seu disco ou sua pasta pessoal, e as outras pessoas que mandam mensagem para seus bots não têm Sem limites.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "pt-br:approveAll.buttonAll": {
+      "text": "Aprovar tudo",
+      "en": "Approve all",
+      "verdict": "pass"
+    },
+    "pt-br:approveAll.approveCount": {
+      "text": "Aprovar {ok}",
+      "en": "Approve {ok}",
+      "verdict": "pass"
+    },
+    "pt-br:approveAll.needLook": {
+      "text": "{rest} precisam de uma olhada",
+      "en": "{rest} need a look",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l1.level.unlimitedDetail": {
+      "text": "O Murage executa tudo o que seus bots decidem, sem perguntar. Mesmo assim, ele para antes de um comando que consegue ler e que apagaria seu disco ou sua pasta pessoal, e as outras pessoas que mandam mensagem para seus bots não têm Sem limites.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.l1.confirm.unlimitedBody": {
+      "text": "{level} deixa {bot} executar tudo o que decidir, sem perguntar. Mesmo assim, ele para antes de um comando que consegue ler e que apagaria seu disco ou sua pasta pessoal, e as outras pessoas que mandam mensagem para {bot} não têm {level}.",
+      "en": "{level} lets {bot} run everything it decides, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message {bot} don't get {level}.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.lcopyb.level.unlimitedHere": {
+      "text": "O Murage executa tudo o que seus bots decidem, sem perguntar. Mesmo assim, ele para antes de um comando que consegue ler e que apagaria seu disco ou sua pasta pessoal, e as outras pessoas que mandam mensagem para seus bots não têm Sem limites.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "pt-br:ux.lcopyb.level.unlimited": {
+      "text": "O Murage executa tudo o que seus bots decidem, sem perguntar. Mesmo assim, ele para antes de um comando que consegue ler e que apagaria seu disco ou sua pasta pessoal, e as outras pessoas que mandam mensagem para seus bots não têm Sem limites.",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "zh:noLimits.v1.warning": {
+      "text": "Murage 会直接执行你的机器人做出的所有决定，不再询问。遇到它能读懂、会清空你的磁盘或主文件夹的命令时，仍会在执行前停下来；给你的机器人发消息的其他人则不适用无限制。",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "zh:approveAll.buttonAll": {
+      "text": "全部批准",
+      "en": "Approve all",
+      "verdict": "pass"
+    },
+    "zh:approveAll.approveCount": {
+      "text": "批准 {ok} 项",
+      "en": "Approve {ok}",
+      "verdict": "pass"
+    },
+    "zh:approveAll.needLook": {
+      "text": "{rest} 项需要查看",
+      "en": "{rest} need a look",
+      "verdict": "pass"
+    },
+    "zh:ux.l1.level.unlimitedDetail": {
+      "text": "Murage 会直接执行你的机器人做出的所有决定，不再询问。遇到它能读懂、会清空你的磁盘或主文件夹的命令时，仍会在执行前停下来；给你的机器人发消息的其他人则不适用无限制。",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "zh:ux.l1.confirm.unlimitedBody": {
+      "text": "{level}会让 {bot} 直接执行它做出的所有决定，不再询问。遇到它能读懂、会清空你的磁盘或主文件夹的命令时，仍会在执行前停下来；给 {bot} 发消息的其他人则不适用{level}。",
+      "en": "{level} lets {bot} run everything it decides, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message {bot} don't get {level}.",
+      "verdict": "pass"
+    },
+    "zh:ux.lcopyb.level.unlimitedHere": {
+      "text": "Murage 会直接执行你的机器人做出的所有决定，不再询问。遇到它能读懂、会清空你的磁盘或主文件夹的命令时，仍会在执行前停下来；给你的机器人发消息的其他人则不适用无限制。",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    },
+    "zh:ux.lcopyb.level.unlimited": {
+      "text": "Murage 会直接执行你的机器人做出的所有决定，不再询问。遇到它能读懂、会清空你的磁盘或主文件夹的命令时，仍会在执行前停下来；给你的机器人发消息的其他人则不适用无限制。",
+      "en": "Murage runs everything your bots decide, without asking. It still stops before a command it can read wipes your disk or home folder, and other people who message your bots don't get No limits.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

@@ -9,13 +9,13 @@
 // the same file gives the "before" figures from an older checkout.
 //
 // Run with MEMORY_PERF_PENDING=0 so the fixture holds no capture backlog for the helper to drain while it is measured.
+import { openTestIndex, put } from "./testing/open-index.ts";
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { monitorEventLoopDelay } from "node:perf_hooks";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
-import { MemoryIndex } from "./index.ts";
 import { closeMemoryIndexReader, lexicalPage } from "./index-reader.ts";
 import { searchMemory } from "./search.ts";
 import { MemoryWorkerController } from "./worker-controller.ts";
@@ -29,7 +29,7 @@ const percentile = (values: number[], p: number) => { const sorted = [...values]
 const round = (value: number) => Math.round(value * 10) / 10;
 const SAMPLES = Number(process.env.MEMORY_PERF_SAMPLES ?? 200);
 
-suite("msearch round 4: memory_search end to end through the live helper on the 60k fixture", () => {
+suite("msearch round 4: memory_search end to end through the live helper on the 60k fixture", async () => {
   beforeAll(() => { loadPerfFixture(perfShape()); }, 30 * 60_000);
   afterAll(() => { closeMemoryIndexReader(); closeDatabase(); });
 
@@ -103,8 +103,8 @@ suite("msearch round 4: memory_search end to end through the live helper on the 
       const entries = [];
       for (let n = 0; n < denied; n++) { const id = `refused-${String(n).padStart(4, "0")}`; insert.run(id, scope, text); receipt.run(id); if (byRead) derive.run(id); entries.push({ id, version: 1, scopeId: scope, text, deleted: false }); }
       db.exec("UPDATE memory_meta SET data_revision=data_revision+1; COMMIT");
-      const index = new MemoryIndex(join(DATA_DIR, "memory-index.db"));
-      try { index.upsert(entries); } finally { index.close(); }
+      const index = await openTestIndex(join(DATA_DIR, "memory-index.db"));
+      try { await put(index, entries); } finally { index.close(); }
       closeMemoryIndexReader();
     }
     expect((await measure(denied)).length).toBe(SAMPLES);

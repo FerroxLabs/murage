@@ -97,7 +97,7 @@ test("real delegated writer holds primary lease until exact child exits",{timeou
       if(message==='finish') {lease.release();process.exit(0);}
     });
     process.send({event:'ready',consumed:process.env.MURAGE_INTERNAL_DATA_DIR_LEASE===undefined});
-  `],{env:{...process.env,OWNED_TEST_ROOT:data,...lease.utilityServerLeaseEnvironment()},stdio:["ignore","ignore","ignore","ipc"]});
+  `],{ windowsHide: true,env:{...process.env,OWNED_TEST_ROOT:data,...lease.utilityServerLeaseEnvironment()},stdio:["ignore","ignore","ignore","ipc"]});
   children.push(child);
   // Windows terminates on SIGTERM without running a JS signal handler.
   // Use a cooperative fixture stop to exercise the interval before actual

@@ -44,6 +44,8 @@ describe("durable cumulative event action budget", () => {
     expect(f.manager.getEventBudget(f.run.id)?.admissions).toEqual([]);
     rmdirSync(f.options.file); renameSync(backup, f.options.file);
     expect(readFileSync(f.options.file)).toEqual(before);
+    // The failed commit asked for lifecycle recovery; the host runs it (quiescent) before the next write.
+    f.manager.recoverPersistence();
     expect(f.manager.admitEventAction(f.run.id, "retry", "create")).toBe(true);
     expect(f.manager.admitEventAction(f.run.id, "retry", "create")).toBe(true);
     expect(new RoutineManager(f.options).getEventBudget(f.run.id)?.admissions).toEqual([{ id: "retry", kind: "create" }]);
@@ -71,6 +73,8 @@ describe("durable cumulative event action budget", () => {
     const legacy = new RoutineManager(f.options);
     expect(legacy.getEventBudget(f.run.id)).toBeNull();
     expect(legacy.admitEventAction(f.run.id, "request", "create")).toBe(false);
+    // The file was rewritten by another manager, so this one recovers (host-run, quiescent) before its next write.
+    f.manager.recoverPersistence();
     await f.manager.cancelRun(f.run.id);
     expect(f.manager.getEventBudget(f.run.id)?.closed).toBe(true);
   });

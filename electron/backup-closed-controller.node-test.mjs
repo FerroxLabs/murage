@@ -1,7 +1,7 @@
 import {backupStartupDispatch} from "./backup-startup.mjs";
 import assert from "node:assert/strict";
 import {EventEmitter} from "node:events";
-import {chmodSync,existsSync,mkdtempSync,mkdirSync,readFileSync,realpathSync,writeFileSync} from "node:fs";
+import {chmodSync,existsSync,mkdtempSync,mkdirSync,readFileSync,realpathSync,renameSync,writeFileSync} from "node:fs";
 import {tmpdir} from "node:os";
 import path from "node:path";
 import vm from "node:vm";
@@ -31,6 +31,19 @@ function fixture(t,{volume=()=>null}={}){
   const stage=()=>{const control=closedControlDirectory(installation),pointer=JSON.parse(readFileSync(path.join(control,"closed-job-pointer.json")));return readClosedBackupStage(path.join(control,pointer.directory));};
   return{root,profile,provider,controller,coordinator,stage,now:()=>clock,setNow:value=>{clock=value;},installs:()=>installs,removes:()=>removes,setConsent:value=>{consent=value;},setCurrent:value=>{current=value;},getCurrent:()=>current};
 }
+test("S5 site 24 rebuilds an owned closed-backup job after a recorded data-root move",{skip:POSIX_ONLY},async t=>{
+  const f=fixture(t);await f.controller.stage();await f.controller.install();
+  const previous=f.profile.installation,next=path.join(f.root,"moved-data");
+  renameSync(previous,next);
+  writeFileSync(path.join(next,".murage-root.json"),JSON.stringify({schema:1,root:next,previous:[{root:previous,at:"2026-11-13T00:00:00Z",source:"start"}]}),{mode:0o600});
+  Object.assign(f.profile,{requestedRoot:next,installation:next,installationIdentity:closedInstallationIdentity(next)});
+  const result=await f.controller.restageForUpgrade();
+  assert.equal(result.state,"installed");assert.equal(f.installs(),2);assert.equal(f.removes(),1);
+  const control=closedControlDirectory(next),pointer=JSON.parse(readFileSync(path.join(control,"closed-job-pointer.json")));
+  const current=readClosedBackupStage(path.join(control,pointer.directory));
+  assert.equal(current.descriptor.requestedRoot,next);assert.equal(current.descriptor.installation,next);
+  assert.ok(current.files.every(file=>!file.text.includes(previous)));
+});
 test("controller stages private stable trigger without registration and needs native confirmation/readback",{skip:POSIX_ONLY},async t=>{
   const f=fixture(t);assert.equal((await f.controller.status()).state,"unconfigured");assert.equal((await f.controller.stage()).state,"staged");assert.equal(f.installs(),0);
   const stage=f.stage();assert.ok(stage.descriptor.triggerEntry.startsWith(closedControlDirectory(f.profile.installation)));assert.match(path.basename(stage.descriptor.triggerEntry),/^closed-trigger-[a-f0-9]{64}\.mjs$/);
@@ -188,7 +201,7 @@ test("actual startup fences closed invocation before normal writers and selected
   const calls=[];
   const traced=[];
   const context=vm.createContext({backupStartupDispatch,cloudLive:{start(){},probeOnFocus(){}},takeLaunchCloudLink:async()=>false,closedTrace:stage=>traced.push(stage),desktopMark:()=>{},app:{whenReady:()=>Promise.resolve()},assertDesktopStartupActive:()=>{},closedBackupRequested:true,desktopRecoveryMode:false,
-    acquireDesktopDataOwner:()=>calls.push("owner"),initializeSentinelHost:async()=>calls.push("sentinel"),initializeBackupScheduleHost:async()=>calls.push("host"),
+    acquireDesktopDataOwner:()=>calls.push("owner"),initializeNotifySurfaces:()=>{},initializeAttentionActions:()=>{},initializeSentinelHost:async()=>calls.push("sentinel"),initializeBackupScheduleHost:async()=>calls.push("host"),
     // A slow first tool check must not turn the closed-app run into "unavailable".
     desktopBackupTool:{waitReady:async()=>{calls.push("tool");}},
     backupScheduleHost:{reconcileStartup:()=>({blocked:false}),publishCommitted(){},runClosedDue:async()=>{calls.push("capture");return{status:"verified"};}},finishClosedBackup:result=>calls.push(result.status),

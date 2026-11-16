@@ -9,7 +9,7 @@
     "build": "next build",
     "dev": "next dev",
     "start": "next start",
-    "types:check": "next typegen && tsc --noEmit",
+    "types:check": "next typegen && node ../../scripts/typecheck-budget.mjs docs",
     "lint": "oxlint .",
     "preview": "next start"
   },

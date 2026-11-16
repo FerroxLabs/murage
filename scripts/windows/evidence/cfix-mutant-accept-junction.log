@@ -1,0 +1,34 @@
+✔ P1-1 launcher wires write-ahead task intent and outer cleanup (1.765245ms)
+✖ P1-2 physical containment checks existing ancestors before writes (6.846831ms)
+✔ P1-3 full staged tree and embedded provenance are verified (7.901173ms)
+✔ P2-1 observation needs group controls, a final gap, and full coverage (1.772516ms)
+✔ P2-2 fixture environment is set before either helper compiles (0.325221ms)
+✔ P2-3 every tested scheduler completion requires a fresh publication (0.286921ms)
+✔ P2-4 includes Claude Node cmd and all OS shell rows (0.29576ms)
+✔ Windows entry points fail closed while P1-1 remains open (0.426242ms)
+✔ Windows package hook stamps provenance exactly once (0.392531ms)
+✔ ZIP extraction validates destination after deriving it and never references copy-loop source (0.416731ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 9
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 128.582408
+
+✖ failing tests:
+
+test at scripts/windows/safety.node-test.mjs:12:1
+✖ P1-2 physical containment checks existing ancestors before writes (6.846831ms)
+  AssertionError [ERR_ASSERTION]: Missing expected exception.
+      at TestContext.<anonymous> (file:///work/scripts/windows/safety.node-test.mjs:16:10)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: false,
+    code: 'ERR_ASSERTION',
+    actual: undefined,
+    expected: /reparse|link/,
+    operator: 'throws',
+    diff: 'simple'
+  }

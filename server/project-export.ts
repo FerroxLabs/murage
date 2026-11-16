@@ -2,7 +2,8 @@
 // Copyright 2026 Ferrox Labs
 import { ProjectLifecycleError } from "./project-close.ts";
 import { projectIsClosing } from "./project-records.ts";
-import { constants, openSync, closeSync, writeFileSync, fstatSync, lstatSync, realpathSync, unlinkSync } from 'node:fs';
+import { writeFileSync } from "./counted-fs.ts";
+import { constants, openSync, closeSync, fstatSync, lstatSync, realpathSync, unlinkSync } from "node:fs";
 import { join, dirname } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { currentProjectBrief, projectSettingsFor } from './project-records.ts';

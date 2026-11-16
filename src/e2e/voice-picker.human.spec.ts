@@ -7,7 +7,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -39,7 +39,7 @@ test.beforeAll(async () => {
       { find: "@", replacement: join(root, "src") },
     ] },
     // bundled up front: a first run that discovers them reloads the page mid-test
-    optimizeDeps: { noDiscovery: true, include: ["react", "react/jsx-dev-runtime", "react-dom/client", "lucide-react", "clsx", "tailwind-merge"] },
+    optimizeDeps: { noDiscovery: true, include: ["react", "react-dom", "react/jsx-dev-runtime", "react-dom/client", "lucide-react", "clsx", "tailwind-merge"] },
     server: { host: "127.0.0.1", watch: null, hmr: false },
     plugins: [react(), tailwindcss(), {
       name: "voice-picker-fixture",

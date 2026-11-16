@@ -165,11 +165,18 @@ export function createPrewarmGate() {
   };
 }
 
+/** A prewarm's fence refused its launch: nothing was spawned, nobody is told, and the next turn is a cold start. */
+export class PrewarmRefused extends Error {
+  readonly reason: string;
+  constructor(reason: string) { super(`prewarm refused: ${reason}`); this.reason = reason; }
+  get spareLoss(): string { return `fence:${this.reason}`; }
+}
+
 /** What a prewarm needs from a turn and no more: the spawn inputs (cwd, env source,
  * MCP config, settings, warm identity), without the message, its attachments, the
  * replay transcript or the caller's per-turn callbacks. */
 export function spawnInputsOf(turn: SendTurnInput): SendTurnInput {
-  return { ...turn, text: "", images: undefined, engineCommand: undefined, transcript: undefined, prewarm: undefined, onToolSurface: undefined, beforeSubmit: undefined };
+  return { ...turn, text: "", images: undefined, engineCommand: undefined, transcript: undefined, prewarm: undefined, onToolSurface: undefined, beforePrepare: undefined, beforeSubmit: undefined, prepareSubmit: undefined, notWritten: undefined, attemptWritten: undefined, attemptUncertain: undefined, attemptNotWritten: undefined, attemptSettled: undefined, launchFence: undefined };
 }
 
 /** The spawn inputs of each thread's last real (user) turn, held in memory only,

@@ -1,3 +1,5 @@
+// control: retain the isolated turn and mount admission used by server dispatch.
+import { bindFixtureAdapter } from "../../testing/mcp-admission-fixture.ts";
 import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
@@ -106,7 +108,8 @@ describe("vendor questions through the ACP driver (fake CLI)", () => {
 
   const start = async (method: string, params: unknown, driver: typeof GrokAgentDriver = GrokAgentDriver) => {
     Object.assign(process.env, { FAKE_ACP_MODE: "vendor-question", FAKE_ACP_ASK_METHOD: method, FAKE_ACP_ASK_PARAMS: JSON.stringify(params), FAKE_ACP_DUMP: dump });
-    instance = await driver.create({ instanceId: "acp-q3", displayName: "Q3", environment: {}, enabled: true, config: { cli: FAKE_CLI, fullAuto: true } });
+    instance = await driver.create({ instanceId: "acp-q3", displayName: "Q3", environment: { FAKE_ACP_MCP_LIST: "all:ready" }, enabled: true, config: { cli: FAKE_CLI, fullAuto: true } });
+    bindFixtureAdapter(instance.adapter);
     recorder = recordEvents(instance.adapter);
   };
   const decision = () => JSON.parse(readFileSync(dump, "utf8")).decision;
@@ -182,7 +185,7 @@ describe("vendor questions through the ACP driver (fake CLI)", () => {
     await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-grok-bad",
       text: "go",
-      integrations: { agents: { command: process.execPath, args: ["/fake/agents-proxy.js"], env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_COMMS_TOKEN: "t" } } },
+      integrations: { agents: { command: process.execPath, args: [new URL("../../testing/fake-idle-mcp.mjs", import.meta.url).pathname, "/fake/agents-proxy.js"], env: { MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_COMMS_TOKEN: "t" } } },
     });
     expect(await recorder.until((e) => e.type === "turn.completed")).toMatchObject({ ok: true });
     expect(recorder.events.some((e) => e.type === "request.opened")).toBe(false);
