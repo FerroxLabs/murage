@@ -8,7 +8,7 @@
 /** The only startTurn opts a proven owner line may carry. Any other key set to anything but undefined fails the proof, so an opt
  *  added later (a new kind of start) is closed until someone decides otherwise here. */
 export const HIGHLEVEL_OWNER_OPTS: readonly string[] = Object.freeze([
-  "threadId", "replyTo", "sendId", "origin", "phoneTicket", "hlTicket", "userMessage", "excludeMessageIds", "memoryRedispatch", "rebuildOf",
+  "attemptSeqs", "isolated", "threadId", "replyTo", "sendId", "origin", "phoneTicket", "hlTicket", "userMessage", "excludeMessageIds", "memoryRedispatch", "rebuildOf",
 ]);
 
 export interface HighLevelOwnerFacts {
@@ -43,6 +43,10 @@ export function highlevelOwnerTurn(facts: HighLevelOwnerFacts): boolean {
   if (typeof facts.ownerTicket !== "symbol" || facts.ticket !== facts.ownerTicket) return false;
   const opts = facts.opts;
   if (!opts || typeof opts !== "object") return false;
+  // Direct-send receipt metadata carries no independent owner authority.
+  if (opts.attemptSeqs !== undefined && (!Array.isArray(opts.attemptSeqs) || opts.attemptSeqs.length !== 1
+    || !Number.isSafeInteger(opts.attemptSeqs[0]) || opts.attemptSeqs[0] <= 0)) return false;
+  if (opts.isolated !== undefined && typeof opts.isolated !== "boolean") return false;
   for (const key of Reflect.ownKeys(opts)) {
     if (typeof key !== "string" || !HIGHLEVEL_OWNER_OPTS.includes(key)) {
       if ((opts as Record<PropertyKey, unknown>)[key] !== undefined) return false;

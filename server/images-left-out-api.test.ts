@@ -63,13 +63,15 @@ async function bootServer(homeDir: string, port: number): Promise<{ child: Child
       instances: {
         fuigo: {
           driver: "fuigoAgent",
-          environment: { FAKE_ACP_PROMPT_DUMP: promptDump, FAKE_ACP_RPC_DUMP: rpcDump },
+          environment: { FAKE_ACP_MCP_READY: "1", FAKE_ACP_PROMPT_DUMP: promptDump, FAKE_ACP_RPC_DUMP: rpcDump },
           config: { cli: FAKE_ACP, fullAuto: false },
         },
       },
     }),
   );
-  const proc = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+  // Carry the fake-engine test override into this child process (the native cage has its own suite).
+  const proc = spawn(process.execPath, ["--import", "data:text/javascript," + encodeURIComponent("process.env.NODE_ENV='test';globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;"), join(SERVER_DIR, "index.ts")], {
+    windowsHide: true,
     cwd: join(SERVER_DIR, ".."),
     env: {
       ...(process.env.PATH ? { PATH: process.env.PATH } : {}),

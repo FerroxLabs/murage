@@ -125,12 +125,14 @@ class Lexer {
   /** inside `case WORD in`: 1 the subject is next, 2 `in` is next, 3 a
    * pattern or `esac` is next */
   private casePhase = 0;
+  private readonly unknownUnreadableWords: boolean;
 
-  constructor(text: string, start = 0, depth = 0, mode: LexMode = "top") {
+  constructor(text: string, start = 0, depth = 0, mode: LexMode = "top", unknownUnreadableWords = false) {
     this.s = text;
     this.i = start;
     this.depth = depth;
     this.mode = mode;
+    this.unknownUnreadableWords = unknownUnreadableWords;
     this.nestedBody = mode === "nested";
     if (depth > MAX_LEX_DEPTH) throw new Unreadable("depth");
   }
@@ -151,7 +153,7 @@ class Lexer {
    * comments, quoting and continuations, up to its closing `)`. Returns the
    * index just past that `)`. */
   private nested(from: number): number {
-    const inner = new Lexer(this.s, from, this.depth + 1, "nested");
+    const inner = new Lexer(this.s, from, this.depth + 1, "nested", this.unknownUnreadableWords);
     if (!inner.scan()) throw new Unreadable("substitution", "$(");
     if (inner.pending.length) throw new Unreadable("heredoc", "no terminator inside a substitution");
     return inner.i + 1;
@@ -210,7 +212,10 @@ class Lexer {
    * where a command name stands opens one. */
   private pushWord(word: Word): void {
     const option = optionExpansion(word);
-    if (option) throw new Unreadable("expansion", option);
+    if (option) {
+      if (!this.unknownUnreadableWords) throw new Unreadable("expansion", option);
+      word = { parts: [this.unknownWordPart()] };
+    }
     this.tokens.push({ kind: "word", word });
     if (this.redirectTarget) { this.redirectTarget = false; return; }
     const bare = word.parts.length === 1 && word.parts[0]!.kind === "lit" && word.parts[0]!.quote === "none" ? word.parts[0]!.text : undefined;
@@ -421,8 +426,18 @@ class Lexer {
         continue;
       }
       if (c === "{") {
-        const brace = this.brace();
-        if (brace) { parts.push(brace); continue; }
+        const start = this.i;
+        try {
+          const brace = this.brace();
+          if (brace) { parts.push(brace); continue; }
+        } catch (error) {
+          if (!(error instanceof Unreadable) || error.reason !== "expansion" || !this.unknownUnreadableWords) throw error;
+          // Recover only after reading this expansion's real closing brace.
+          // Quotes, substitutions and nested braces must not hide the suffix.
+          this.i = this.matchBrace(start + 1) + 1;
+          parts.push(this.unknownWordPart());
+          continue;
+        }
       }
       lit(c, "none");
       this.i++;
@@ -486,7 +501,13 @@ class Lexer {
       return;
     }
     if (next === "{") {
-      parts.push(this.bracedVar(quote));
+      const start = this.i;
+      try { parts.push(this.bracedVar(quote)); }
+      catch (error) {
+        if (!(error instanceof Unreadable) || error.reason !== "expansion" || !this.unknownUnreadableWords) throw error;
+        this.i = this.matchBrace(start + 2) + 1;
+        parts.push(this.unknownWordPart());
+      }
       return;
     }
     if (next !== undefined && NAME_START.test(next)) {
@@ -503,6 +524,11 @@ class Lexer {
     }
     lit("$", quote);
     this.i++;
+  }
+
+  /** Same unbindable unknown used by the No limits walker's word recovery. */
+  private unknownWordPart(): Part {
+    return { kind: "var", name: "-unread-word", quote: "double" };
   }
 
   /** `${…}`: the name, an optional operator and its operand. */
@@ -611,7 +637,7 @@ class Lexer {
   /** Past a double-quoted string opened before `from`, read by the one
    * double-quote routine (so a `$( )` inside it re-enters the lexer). */
   private skipQuoted(from: number): number {
-    const inner = new Lexer(this.s, from, this.depth + 1);
+    const inner = new Lexer(this.s, from, this.depth + 1, "top", this.unknownUnreadableWords);
     inner.doubleQuoted([], () => {});
     return inner.i;
   }
@@ -630,11 +656,11 @@ class Lexer {
    * and substitutions. Whatever that inner text leaves open asks here, at
    * every site a backtick is read (a word, double quotes, `$(( ))`, `${ }`). */
   private backtickAt(at: number): { text: string; after: number } {
-    const closing = new Lexer(this.s, at + 1, this.depth + 1, "backtick");
+    const closing = new Lexer(this.s, at + 1, this.depth + 1, "backtick", this.unknownUnreadableWords);
     closing.run();
     const end = closing.closer;
     const text = this.s.slice(at + 1, end).replace(/\\([`\\$])/g, "$1");
-    new Lexer(text, 0, this.depth + 1).run();
+    new Lexer(text, 0, this.depth + 1, "top", this.unknownUnreadableWords).run();
     return { text, after: end + 1 };
   }
 
@@ -703,9 +729,10 @@ class Lexer {
     } else {
       return undefined;
     }
+    if (this.unknownUnreadableWords && alts.length > MAX_BRACE_ALTS) throw new Unreadable("expansion", "too many brace alternatives");
     this.i = close + 1;
     // each alternative is an unquoted word of its own: `{~,./x}` holds a `~`
-    return { kind: "brace", alts: alts.map((alt) => (alt === "" ? { parts: [] } : new Lexer(alt, 0, this.depth + 1).word())) };
+    return { kind: "brace", alts: alts.map((alt) => (alt === "" ? { parts: [] } : new Lexer(alt, 0, this.depth + 1, "top", this.unknownUnreadableWords).word())) };
   }
 }
 
@@ -799,9 +826,9 @@ function ansiUnescape(text: string): string {
 }
 
 /** Tokens for a whole script. */
-export function lex(text: string): Token[] {
+export function lex(text: string, unknownUnreadableWords = false): Token[] {
   if (text.length > MAX_TEXT_CHARS) throw new Unreadable("length");
-  return new Lexer(text).run();
+  return new Lexer(text, 0, 0, "top", unknownUnreadableWords).run();
 }
 
 /** One word lexed on its own (the operand of `${X:-word}`, an item xargs or

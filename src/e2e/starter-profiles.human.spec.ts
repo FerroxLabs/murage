@@ -1,8 +1,8 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { safeWipeSync } from "../../server/testing/safe-wipe.mjs";
@@ -18,7 +18,7 @@ test.beforeAll(async () => {
       name: "starter-profiles-fixture",
       resolveId(id) { if (id === "/__starters.js") return "\0starter-profiles"; if (id === "/starter-fixture-store") return "\0starter-store"; },
       load(id) {
-        if (id === "\0starter-store") return "import {useSyncExternalStore} from 'react';import {asAnswer} from '/src/state/answer-tag.ts';let state={instances:[]};const listeners=new Set();export async function api(path,init){const r=await fetch(path,init);const data=await r.json();if(!r.ok)throw Object.assign(new Error(data.error),{status:r.status});return asAnswer(data);}function dispatch(action){(window.fixtureActions??=[]).push(action);if(action.type==='instances'){state={...state,instances:action.instances};listeners.forEach(fn=>fn())}}export function useStoreIfAny(){return useStore();} export function useStore(){return {state:useSyncExternalStore(fn=>{listeners.add(fn);return ()=>listeners.delete(fn)},()=>state),dispatch}}";
+        if (id === "\0starter-store") return "import {useSyncExternalStore} from 'react';import {asAnswer} from '/src/state/answer-tag.ts';let state={instances:[]};const listeners=new Set();export async function api(path,init){const r=await fetch(path,init);const data=await r.json();if(!r.ok)throw Object.assign(new Error(data.error),{status:r.status});return asAnswer(data);}function dispatch(action){(window.fixtureActions??=[]).push(action);if(action.type==='instances'){state={...state,instances:action.instances};listeners.forEach(fn=>fn())}}export function useStoreActions(){return {dispatch,flushBotPatches:async()=>{}};}export function useStoreActionsIfAny(){return useStoreActions();}export function useStoreIfAny(){return useStore();} export function useStore(){return {state:useSyncExternalStore(fn=>{listeners.add(fn);return ()=>listeners.delete(fn)},()=>state),dispatch}}";
         if (id !== "\0starter-profiles") return;
         return "import React from 'react';import {createRoot} from 'react-dom/client';import {StarterProfiles} from '/src/components/StarterProfiles.tsx';import '/src/styles.css';document.documentElement.dataset.skin=new URLSearchParams(location.search).get('skin')||'dark';window.fixtureActions=[];createRoot(document.getElementById('root')).render(React.createElement(StarterProfiles));";
       },
@@ -48,7 +48,7 @@ async function fixture(page: Page, options: { stale?: boolean; fail?: boolean; t
   await page.route("**/api/starter-profiles", route => {
     const body = route.request().postDataJSON(); requests.push(body);
     if (body.action === "catalog") return route.fulfill({ json: { profiles } });
-    if (body.action === "preview") return route.fulfill({ json: { archiveSha256: "archive-sha", reviewHash: "review-hash", summary: { name: "Personal and home", agents: 2, routines: body.selection.routines.length }, missingDependencies: [], scan: { blocked: false, reviewRequired: false, findings: [] } } });
+    if (body.action === "preview") return route.fulfill({ json: { archiveSha256: "archive-sha", reviewHash: "review-hash", profileText: JSON.parse(readFileSync(new URL("../../library/packages/" + body.profileId + ".json", import.meta.url), "utf8")).package.playbooks.map((p: { instructions: string }) => p.instructions).join("\n\n"), summary: { name: "Personal and home", agents: 2, routines: body.selection.routines.length }, missingDependencies: [], scan: { blocked: false, reviewRequired: false, findings: [] } } });
     if (stale) { stale = false; return route.fulfill({ status: 409, json: { error: "Stale review" } }); }
     if (options.taken) return route.fulfill({ status: 409, json: { error: "This workspace already has bots or groups. Continue from your existing workspace or add a starter from Settings." } });
     if (options.fail) return route.fulfill({ status: 503, json: { error: "Failed import" } });
@@ -113,11 +113,19 @@ test("opening the first task preserves existing text, whitespace and attachment-
     await page.getByRole("button", { name: "Import starter profile" }).click();
     await expect(page.getByRole("button", { name: "Open first task" })).toBeVisible();
     await page.evaluate(({ id, existing }) => {
+      localStorage.removeItem("murage-draft:" + id);
       localStorage.setItem("murage-drafts", JSON.stringify({ [id]: existing.text }));
       localStorage.setItem("murage-draft-attachments", JSON.stringify({ [id]: existing.attachments }));
     }, { id: draftId, existing });
     await page.getByRole("button", { name: "Open first task" }).click();
-    expect(await page.evaluate(id => ({ text: JSON.parse(localStorage.getItem("murage-drafts")!)[id], attachments: JSON.parse(localStorage.getItem("murage-draft-attachments")!)[id] }), draftId)).toEqual(existing);
+    // Opening migrates old drafts into the current single-record format.
+    // Wait for the action to finish and inspect the active draft, rather than
+    // racing a read of the old keys while migration is still in progress.
+    await expect.poll(() => page.evaluate(() => (window as any).fixtureActions.some((action: any) => action.type === "select"))).toBe(true);
+    expect(await page.evaluate(id => {
+      const draft = JSON.parse(localStorage.getItem("murage-draft:" + id) ?? "null");
+      return draft ? { text: draft.text, attachments: draft.att } : null;
+    }, draftId)).toEqual(existing);
   }
 });
 
@@ -154,3 +162,18 @@ for (const skin of ["light", "dark"]) test("mobile " + skin + " starter review i
 // The outcome-first onboarding these starters used to open from (Onboarding.tsx)
 // was replaced in 0.1.58 by the Chief's first-run conversation (311387b1);
 // its specs went with it. The first run is covered by first-run-*.human.spec.ts.
+
+for (const profile of profiles) test("FB1 browser: " + profile.id + " opens instructions without importing", async ({ page }) => {
+  const requests = await fixture(page);
+  await page.goto(origin + "/__starters");
+  await page.getByRole("button", { name: new RegExp("^" + profile.name) }).click();
+  await page.getByRole("button", { name: "Review profile", exact: true }).click();
+  const review = page.getByRole("region", { name: "Starter import review", exact: true });
+  await expect(review).toBeFocused();
+  const instructions = page.getByRole("region", { name: "Starter profile instructions", exact: true });
+  await expect(instructions).toBeVisible();
+  const pkg = JSON.parse(readFileSync(new URL("../../library/packages/" + profile.id + ".json", import.meta.url), "utf8")).package;
+  for (const playbook of pkg.playbooks) await expect(instructions).toContainText(playbook.instructions);
+  expect(requests.map(request => request.action)).toEqual(["catalog", "preview"]);
+  expect(await page.evaluate(() => (window as any).fixtureActions)).toEqual([]);
+});

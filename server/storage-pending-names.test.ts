@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, describe, expect, it } from "vitest";
+import ts from "typescript";
 import { AttachmentList, type ListPage } from "./storage-attachments.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
@@ -44,7 +45,16 @@ describe("a new bot on a start whose engine probe is still running", () => {
   it("no creation path reads the boot selection: a bot with no owner pick is born by the birth rule, and marked", () => {
     const index = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
     const store = readFileSync(new URL("./store.ts", import.meta.url), "utf8");
-    const creations = index.match(/store\.createBot\((?:\{[^\n]*\}|\s*\{[\s\S]*?\},\s*\{ seedMessages: false \},?\s*)\)/g) ?? [];
+    // Additional creation options must not make a source regexp consume the
+    // intervening routes through the next seedMessages-only call.
+    const ast = ts.createSourceFile("index.ts", index, ts.ScriptTarget.Latest, true);
+    const creations: string[] = [];
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)
+        && node.expression.expression.getText(ast) === "store" && node.expression.name.text === "createBot") creations.push(node.getText(ast));
+      ts.forEachChild(node, visit);
+    };
+    visit(ast);
     expect(creations.length).toBeGreaterThanOrEqual(2);
     for (const call of creations) expect(call).not.toMatch(/bootSelection|defaultSelection/);
     expect(index).not.toMatch(/await defaultSelection\(\)/);
@@ -52,7 +62,7 @@ describe("a new bot on a start whose engine probe is still running", () => {
     expect(index).toMatch(/z\.object\(\{ action: z\.literal\("pair"\), label: [^\n]*, profileId: [^\n]*\}\)\.strict\(\)/);
     expect(index).toMatch(/store\.createBot\(\{ name: body\.label, title: "External browser connection" \}, \{ seedMessages: false \}\)/);
     expect(store).toMatch(/const born = profile\.modelSelection === undefined;/);
-    expect(store).toMatch(/modelSelection: this\.completeNewBotSelection\(born \? this\.birthSelection\(\) : profile\.modelSelection!\)/);
+    expect(store).toMatch(/modelSelection: this\.completeNewBotSelection\(born \|\| opts\.staged \? this\.birthSelection\(\) : profile\.modelSelection!\)/);
     expect(store).toMatch(/if \(born \|\| opts\.engineAutoPicked === true\) bot\.engineAutoPicked = true;/);
     expect(store).toMatch(/if \(!source && this\.birth\.copyChief && this\.birth\.firstBot\) \{/);
   });

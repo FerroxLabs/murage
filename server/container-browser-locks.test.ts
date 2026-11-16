@@ -26,7 +26,7 @@ function prepareScript(dir: string, workspace: string): string {
   const printf = dockerfile.slice(start + "RUN ".length, end).replaceAll(VM_WORKSPACE_GUEST, workspace)
     .replaceAll("/proc/sys/kernel/random/boot_id", join(dir, "boot-id")).replaceAll("/proc/1/stat", join(dir, "init-stat"));
   const script = join(dir, "prepare.sh");
-  execFileSync("/bin/sh", ["-c", `${printf} > '${script}'`]);
+  execFileSync("/bin/sh", ["-c", `${printf} > '${script}'`], { windowsHide: true });
   return script;
 }
 
@@ -37,7 +37,7 @@ describe.skipIf(process.platform === "win32")("desktop browser locks", () => {
     mkdirSync(home); mkdirSync(workspace);
     writeFileSync(join(dir, "boot-id"), "synthetic-boot"); writeFileSync(join(dir, "init-stat"), initStat(123));
     const script = prepareScript(dir, workspace);
-    const run = () => execFileSync("/bin/sh", [script], { env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home } });
+    const run = () => execFileSync("/bin/sh", [script], { windowsHide: true, env: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: home } });
     run();
     const chromium = join(workspace, ".browser-profiles", "chromium");
     const locks = [[join(chromium, "SingletonLock"), "host-4242"], [join(chromium, "SingletonSocket"), "/tmp/socket"], [join(chromium, "SingletonCookie"), "cookie"]] as const;

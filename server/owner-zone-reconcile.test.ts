@@ -96,3 +96,17 @@ describe("the owner zone reconciler", () => {
     expect(r.reconciler.pending()).toBe("boot");
   });
 });
+
+
+it("holds dispatch across incomplete slices and preserves the original change time", () => {
+  let now = 10, count = 0;
+  const calls: unknown[] = [];
+  const reconciler = createOwnerZoneReconciler(() => options => { calls.push(options); return { done: ++count === 3, moved: [] }; }, () => {}, () => now);
+  expect(reconciler.changed("UTC", "Europe/Paris")).toBe(false);
+  now = 500;
+  expect(reconciler.reconcile()).toBe(false);
+  expect(reconciler.pending()).toBe("change");
+  expect(reconciler.reconcile()).toBe(true);
+  expect(reconciler.pending()).toBeNull();
+  expect(calls).toEqual(Array(3).fill({ offWallClockOnly: false, since: 10 }));
+});

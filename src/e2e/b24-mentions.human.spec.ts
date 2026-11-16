@@ -3,7 +3,7 @@
 import { test, expect, type Page, type TestInfo } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { mkdirSync } from "node:fs";
@@ -67,7 +67,7 @@ test.beforeAll(async () => {
 test.afterAll(async () => { try { await vite?.close(); } finally { await fixture?.close(); } });
 
 async function openRoom(page: Page) {
-  await page.addInitScript(() => localStorage.setItem("murage-email-gate", "skipped"));
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin);
   await (await openSidebar(page)).getByText(ROOM, { exact: true }).click();
   const invitation = page.getByRole("complementary", { name: "Let your bots pick the right model", exact: true });

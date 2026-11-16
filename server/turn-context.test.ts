@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +10,9 @@ import { sourced } from "./testing/bot-row.ts";
 import {
   buildTurnContext,
   engineIsFresh,
+  isMessageOnlyDispatch,
+  isLegacyMessageOnlySession,
+  markMessageOnlyDispatch,
   replaysTranscriptNatively,
   TRANSCRIPT_REPLAY_DRIVER_KINDS,
 } from "./turn-context.ts";
@@ -187,5 +192,77 @@ describe("TRANSCRIPT_REPLAY_DRIVER_KINDS", () => {
       expect(out.turnText).toContain("do not restate");
     }
     expect(replaysTranscriptNatively("claudeAgent")).toBe(false);
+    expect(replaysTranscriptNatively("museCode")).toBe(true);
+  });
+});
+
+// A memory rebuild resets the engine session before its prompt is built: the prompt must carry the authorized replay on the routes that
+// read only turnText (Claude, Codex, ACP), and a dispatch that went out message-only must never leave a session later turns resume.
+describe("memory rebuild context", () => {
+  it("a refreshed rebuild replays the earlier conversation on the Claude, Codex and ACP routes", () => {
+    for (const kind of ["claudeAgent", "codex", "customAcp"]) {
+      expect(replaysTranscriptNatively(kind), kind).toBe(false);
+      const out = buildTurnContext({ text: "latest", transcript, rewound: false, fresh: false, externallyUpdated: false, memoryRefreshed: true, replaysNatively: replaysTranscriptNatively(kind) });
+      expect(out.resume, kind).toBe(false);
+      expect(out.turnText, kind).toContain("User: my dog is named Biscuit");
+      expect(out.turnText.endsWith("latest"), kind).toBe(true);
+      // the warm decision alone is the defect: it resumes a session the rebuild already ended and sends the latest message alone
+      expect(buildTurnContext({ text: "latest", transcript, rewound: false, fresh: false, externallyUpdated: false, memoryRefreshed: false, replaysNatively: false }).turnText).toBe("latest");
+    }
+  });
+
+  it("marks only the message-only dispatch, by its running turn", () => {
+    const messageOnly = {}, ordinary = {};
+    markMessageOnlyDispatch(messageOnly);
+    markMessageOnlyDispatch(undefined);
+    expect(isMessageOnlyDispatch(messageOnly)).toBe(true);
+    expect(isMessageOnlyDispatch(ordinary)).toBe(false);
+    expect(isMessageOnlyDispatch(undefined)).toBe(false);
+  });
+});
+
+
+describe("legacy message-only session recognition", () => {
+  it.each([
+    { name: "tier-two human input", expected: true },
+    { name: "tier-two automated input", expected: true, line: "Murage left stored context out of this turn." },
+    { name: "healthy tier-one rebuild", expected: false, line: "Murage left remembered details out of this reply." },
+    { name: "note from another turn", expected: false, noteTurn: "other-turn" },
+    { name: "later recovery note on a healthy session", expected: false, inputId: "later-input" },
+    { name: "unmarked activity", expected: false, murageLine: false },
+    { name: "missing starting output", expected: false, missingOutput: true },
+    { name: "deleted latest input does not fall back to an older note", expected: false, deletedInput: true },
+    { name: "deleted first lineage row does not walk to a later match", expected: false, deletedFirst: true },
+    { name: "missing session lineage", expected: false, missingSession: true },
+  ])("recognizes only a proven starting turn: $name", ({ expected, line, noteTurn, inputId, murageLine, missingOutput, missingSession, deletedInput, deletedFirst }) => {
+    const db = new DatabaseSync(":memory:");
+    try {
+      db.exec(`CREATE TABLE memory_session_lineage(thread_id TEXT,driver_instance TEXT,native_session TEXT,first_lsn INTEGER,PRIMARY KEY(thread_id,driver_instance,native_session));
+        CREATE TABLE memory_thread_no(thread_id TEXT PRIMARY KEY,no INTEGER);
+        CREATE TABLE memory_line_lineage(thread_no INTEGER,lsn INTEGER,message_id TEXT,turn_lsn INTEGER,PRIMARY KEY(thread_no,lsn));
+        CREATE INDEX memory_line_lineage_turn ON memory_line_lineage(thread_no,turn_lsn,lsn);
+        CREATE TABLE messages(thread_id TEXT,id TEXT,role TEXT,json TEXT,PRIMARY KEY(thread_id,id));
+        INSERT INTO memory_thread_no VALUES('chat',1);
+        INSERT INTO memory_line_lineage VALUES(1,10,'input',NULL);`);
+      if (!missingSession) db.exec("INSERT INTO memory_session_lineage VALUES('chat','engine','session',10)");
+      db.prepare("INSERT INTO messages VALUES('chat','input','user','{}')").run();
+      const id = `memory-note-${createHash("sha256").update("chat\0" + (inputId ?? "input")).digest("hex")}`;
+      db.prepare("INSERT INTO messages VALUES('chat',?,'bot',?)").run(id, JSON.stringify({ role: "bot", kind: "activity", murageLine: murageLine ?? true, memoryNote: "without-memory", turnId: noteTurn ?? "first-turn", tool: { name: line ?? "Murage prepared this reply from your message, with remembered context left out." } }));
+      if (!missingOutput) {
+        db.exec("INSERT INTO memory_line_lineage VALUES(1,12,'reply',10)");
+        db.prepare("INSERT INTO messages VALUES('chat','reply','bot',?)").run(JSON.stringify({ turnId: "first-turn" }));
+      }
+      if (deletedInput) db.exec("UPDATE memory_line_lineage SET lsn=9 WHERE message_id='input'; INSERT INTO memory_line_lineage VALUES(1,10,'deleted-input',NULL)");
+      if (deletedFirst) db.exec("INSERT INTO memory_line_lineage VALUES(1,11,'deleted-output',10)");
+      const reads: string[] = [], prepare = db.prepare.bind(db);
+      db.prepare = (sql: string) => { if (sql.startsWith("SELECT")) reads.push(sql); return prepare(sql); };
+      expect(isLegacyMessageOnlySession(db, "chat", "engine", "session")).toBe(expected);
+      for (const sql of reads) {
+        const plan = prepare("EXPLAIN QUERY PLAN " + sql).all(...Array((sql.match(/\?/g) ?? []).length).fill(1));
+        expect(plan.map(row => row.detail).join("\n")).not.toMatch(/\bSCAN\b/);
+      }
+      expect(isLegacyMessageOnlySession(db, "chat", "other-engine", "session")).toBe(false);
+      expect(isLegacyMessageOnlySession(db, "chat", "engine", "another-incarnation")).toBe(false);
+    } finally { db.close(); }
   });
 });

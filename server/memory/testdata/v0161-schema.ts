@@ -4,7 +4,7 @@
 // that 0.1.62 failed to upgrade. Never imported by app code.
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, rmSync } from "node:fs";
-import { DatabaseSync } from "node:sqlite";
+import { DatabaseSync } from "../../sqlite-open.ts";
 import { DEFAULT_MEMORY_LEARNING, memoryLearningSchema } from "./v0161-learning-policy.ts";
 
 /** Ordinary authoritative tables only. Search indexes are rebuilt separately. */

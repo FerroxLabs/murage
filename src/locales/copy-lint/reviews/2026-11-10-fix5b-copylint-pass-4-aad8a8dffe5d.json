@@ -1,0 +1,95 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "astra-fix-copylint",
+  "date": "2026-11-10",
+  "base": "d2084342ea5607d3741cddc7f534b03636591f0c",
+  "scope": "fix4b-copylint: Sol confirmation of exactly the 16 strings corrected by fix4-copylint",
+  "strings": {
+    "de:browser.disclosure.direct": {
+      "text": "Nutzt deine Anmeldungen in eigenen Tabs. Bei „Mein Chrome, angemeldet“ gibt es Einstellungen für jede Website und dafür, wie oft der Bot um Bestätigung bittet.",
+      "en": "Uses your logins in tabs of its own. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "de:browser.server.browser-owner-session.8": {
+      "text": "Diese Browseranfrage enthält mehr Daten, als Murage annehmen kann. Versuche, weniger Text auf einmal zu senden.",
+      "en": "This browser request contains more data than Murage can accept. Try sending less text at once.",
+      "verdict": "pass"
+    },
+    "es:browser.server.browser-owner-session.8": {
+      "text": "Esta solicitud del navegador contiene más datos de los que Murage puede aceptar. Prueba a enviar menos texto a la vez.",
+      "en": "This browser request contains more data than Murage can accept. Try sending less text at once.",
+      "verdict": "pass"
+    },
+    "fr:browser.directScope": {
+      "text": "{name} utilise tes identifiants dans ses propres onglets. Murage limite le bot à ces onglets et te rend la main pour les mots de passe et les paiements. « Mon Chrome, connecté » propose des réglages pour chaque site et pour choisir à quelle fréquence le bot te demande confirmation.",
+      "en": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and lets you take over to enter passwords and make payments. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "fr:browser.disclosure.direct": {
+      "text": "Utilise tes identifiants dans ses propres onglets. « Mon Chrome, connecté » propose des réglages pour chaque site et pour choisir à quelle fréquence le bot te demande confirmation.",
+      "en": "Uses your logins in tabs of its own. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "fr:browser.server.browser-owner-session.8": {
+      "text": "Cette requête du navigateur contient plus de données que Murage ne peut en accepter. Essaie d'envoyer moins de texte à la fois.",
+      "en": "This browser request contains more data than Murage can accept. Try sending less text at once.",
+      "verdict": "pass"
+    },
+    "hi:browser.server.browser-owner-session.8": {
+      "text": "ब्राउज़र के इस अनुरोध में Murage की सीमा से ज़्यादा डेटा है। एक बार में कम टेक्स्ट भेजकर देखें।",
+      "en": "This browser request contains more data than Murage can accept. Try sending less text at once.",
+      "verdict": "pass"
+    },
+    "ja:browser.directScope": {
+      "text": "{name} は専用タブであなたのログイン情報を使用します。Murage はボットの操作をそれらのタブに限定し、パスワードや支払いの操作はあなたに戻します。「自分の Chrome（ログイン済み）」では、サイトごとの設定や、ボットが確認を求める頻度の設定ができます。",
+      "en": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and lets you take over to enter passwords and make payments. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "ja:browser.disclosure.direct": {
+      "text": "専用タブであなたのログイン情報を使用します。「自分の Chrome（ログイン済み）」では、サイトごとの設定や、ボットが確認を求める頻度の設定ができます。",
+      "en": "Uses your logins in tabs of its own. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "ja:browser.server.browser-owner-session.8": {
+      "text": "このブラウザからのリクエストは、Murage が受け付けられるデータ量を超えています。一度に送信するテキストを減らしてみてください。",
+      "en": "This browser request contains more data than Murage can accept. Try sending less text at once.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.BrowserChoice.13": {
+      "text": "Método de conexão do seu Chrome",
+      "en": "Your Chrome connection method",
+      "verdict": "pass"
+    },
+    "pt-br:browser.disclosure.direct": {
+      "text": "Usa seus logins em guias próprias. Meu Chrome, com login tem configurações para cada site e para escolher com que frequência o bot pede confirmação.",
+      "en": "Uses your logins in tabs of its own. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "pt-br:browser.server.browser-owner-session.8": {
+      "text": "Esta solicitação do navegador contém mais dados do que o Murage pode aceitar. Tente enviar menos texto de cada vez.",
+      "en": "This browser request contains more data than Murage can accept. Try sending less text at once.",
+      "verdict": "pass"
+    },
+    "zh:browser.directScope": {
+      "text": "{name} 会在其专用标签页中使用你的登录信息。Murage 会将机器人限制在这些标签页内，并将密码和付款操作交还给你处理。“我的 Chrome（已登录）”提供针对每个网站的设置，也可设置机器人请求你确认的频率。",
+      "en": "{name} uses your logins in its own tabs. Murage keeps the bot to those tabs and lets you take over to enter passwords and make payments. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "zh:browser.disclosure.direct": {
+      "text": "在独立的标签页中使用你的登录信息。“我的 Chrome（已登录）”提供针对每个网站的设置，也可设置机器人请求你确认的频率。",
+      "en": "Uses your logins in tabs of its own. My Chrome, signed in has settings for each site and for how often the bot asks for confirmation.",
+      "verdict": "pass"
+    },
+    "zh:browser.server.browser-owner-session.8": {
+      "text": "此浏览器请求的数据量超出了 Murage 能接受的上限。请尝试减少每次发送的文字量。",
+      "en": "This browser request contains more data than Murage can accept. Try sending less text at once.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

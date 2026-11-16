@@ -4,7 +4,7 @@
 // POST /api/instances/:id/claude-update against the real harness (0.1.61
 // triage row 2). The Claude engine under test is a small script standing in
 // for the CLI: it records its arguments and prints a version.
-import { chmodSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
@@ -21,25 +21,30 @@ async function call(path: string, extra: Record<string, string> = headers) {
 beforeAll(async () => {
   fixture = await launchVerificationServer(process.env, undefined, { portRange: { from: 18_799, span: 10_000 } });
   log = join(fixture.info.dataDir, "claude-update-calls.log");
-  const script = join(fixture.info.dataDir, "claude-stand-in.sh");
-  writeFileSync(script, `#!/bin/sh\necho "$@" >> '${log}'\nif [ "$1" = "--version" ]; then echo "2.1.280 (Claude Code)"; fi\n`);
-  chmodSync(script, 0o755);
+  const script = join(fixture.info.dataDir, "claude-stand-in.cjs");
+  writeFileSync(script, `const fs=require('node:fs');fs.appendFileSync(${JSON.stringify(log)},process.argv.slice(2).join(' ')+'\\n');if(process.argv[2]==='--version')console.log('2.1.280 (Claude Code)');`);
   const configPath = join(fixture.info.dataDir, "config.json");
   const config = JSON.parse(readFileSync(configPath, "utf8"));
-  config.instances.updatable = { driver: "claudeAgent", displayName: "Updatable Claude", config: { cli: script } };
-  config.instances.hermes = { driver: "hermesAgent" };
+  config.instances.updatable = { driver: "claudeAgent", displayName: "Updatable Claude", config: { cli: `"${process.execPath}" "${script}"` } };
+  config.instances.hermes = { driver: "hermesAgent", config: { cli: `"${process.execPath}" "${script}"` } };
   writeFileSync(configPath, JSON.stringify(config));
   await fixture.restart();
   const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret?: unknown };
   if (typeof proof.secret !== "string") throw new Error("Missing fixture desktop proof");
   headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
+  // Await the registry's completed startup scan before either test resets the
+  // call log. A Node CLI can still be starting when health becomes ready.
+  const described = await fetch(`${fixture.info.url}/api/instances`, { headers });
+  expect(described.status).toBe(200);
+  const view = await described.json() as { instances: Array<{ instanceId: string; snapshot: { version?: string } }> };
+  expect(view.instances.find(instance => instance.instanceId === "updatable")?.snapshot.version).toBe("2.1.280 (Claude Code)");
 }, 60_000);
 
 afterAll(async () => {
   await fixture?.close();
 });
 
-describe.skipIf(process.platform === "win32")("Update Claude for me", () => {
+describe("Update Claude for me", () => {
   it("is desktop only and only for a Claude engine", async () => {
     // Engine probes at start also run the stand-in; only what follows counts.
     writeFileSync(log, "");

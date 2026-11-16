@@ -1,0 +1,324 @@
+{
+ "keepSuccessIsConfirmed#7": {
+  "verdict": "KILLED",
+  "witness": "cm-keepSuccessIsConfirmed-5-confirming-request-missing"
+ },
+ "keepSuccessIsConfirmed#8": {
+  "verdict": "KILLED",
+  "witness": "cm-keepSuccessIsConfirmed-5-confirming-request-missing"
+ },
+ "keepSuccessIsConfirmed#9": {
+  "verdict": "KILLED",
+  "witness": "cm-keepSuccessIsConfirmed-7-confirmed-by-list-request"
+ },
+ "keepSuccessIsConfirmed#10": {
+  "verdict": "KILLED",
+  "witness": "cm-keepSuccessIsConfirmed-8-get-of-another-inbox"
+ },
+ "keepSuccessIsConfirmed#11": {
+  "verdict": "KILLED",
+  "witness": "cm-keepSuccessIsConfirmed-9-get-under-another-keep-op"
+ },
+ "keepSuccessIsConfirmed#12": {
+  "verdict": "KILLED",
+  "witness": "cm-keepSuccessIsConfirmed-10-get-sent-before-claim"
+ },
+ "keepSuccessIsConfirmed#13": {
+  "verdict": "KILLED",
+  "witness": "cm-keepSuccessIsConfirmed-7-confirmed-by-list-request"
+ },
+ "keepSuccessIsConfirmed#14": {
+  "verdict": "KILLED",
+  "witness": "cm-keepSuccessIsConfirmed-12-get-answer-lost"
+ },
+ "keepSuccessIsConfirmed#15": {
+  "verdict": "KILLED",
+  "witness": "cm-keepSuccessIsConfirmed-13-get-answer-not-seen"
+ },
+ "keepSuccessIsConfirmed#16": {
+  "verdict": "KILLED",
+  "witness": "cm-keepSuccessIsConfirmed-14-get-result-not-ok"
+ },
+ "keepSuccessIsConfirmed#17": {
+  "verdict": "KILLED",
+  "witness": "cm-keepSuccessIsConfirmed-15-get-reports-closing"
+ },
+ "keepSuccessIsConfirmed#18": {
+  "verdict": "KILLED",
+  "witness": "cm-keepSuccessIsConfirmed-16-answer-step-differs"
+ },
+ "keepSuccessIsConfirmed#19": {
+  "verdict": "KILLED",
+  "witness": "cm-keepSuccessIsConfirmed-12-get-answer-lost"
+ },
+ "keepSuccessIsConfirmed#21": {
+  "verdict": "KILLED",
+  "witness": "cm-keepSuccessIsConfirmed-19-other-keep-op-restore-unanswered"
+ },
+ "opsLinesNeverNameAddress#1": {
+  "verdict": "KILLED",
+  "witness": "cm-opsLinesNeverNameAddress-1-inbox-with-empty-address"
+ },
+ "opsLinesNeverNameAddress#4": {
+  "verdict": "KILLED",
+  "witness": "cm-opsLinesNeverNameAddress-4-line-without-binding-with-gen"
+ },
+ "opsLinesNeverNameAddress#5": {
+  "verdict": "KILLED",
+  "witness": "cm-opsLinesNeverNameAddress-5-line-without-generation"
+ },
+ "opsLinesNeverNameAddress#7": {
+  "verdict": "KILLED",
+  "witness": "cm-opsLinesNeverNameAddress-1-inbox-with-empty-address"
+ },
+ "opsLinesNeverNameAddress#9": {
+  "verdict": "KILLED",
+  "witness": "cm-opsLinesNeverNameAddress-9-blip-line-without-window"
+ },
+ "opsLinesNeverNameAddress#11": {
+  "verdict": "KILLED",
+  "witness": "cm-opsLinesNeverNameAddress-11-guard-poll-needs-no-alert"
+ },
+ "opsLinesNeverNameAddress#14": {
+  "verdict": "KILLED",
+  "witness": "cm-opsLinesNeverNameAddress-14-guard-restore-without-alert"
+ },
+ "opsLinesNeverNameAddress#16": {
+  "verdict": "KILLED",
+  "witness": "cm-opsLinesNeverNameAddress-16-guard-restore-with-blip-alert"
+ },
+ "everyOrphanHasExecutableAction#1": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-1-orphan-row-invisible"
+ },
+ "everyOrphanHasExecutableAction#2": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-2-orphan-row-blank-line"
+ },
+ "everyOrphanHasExecutableAction#3": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-3-orphan-row-actions-disabled"
+ },
+ "everyOrphanHasExecutableAction#4": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-4-orphan-row-offers-other-action"
+ },
+ "everyOrphanHasExecutableAction#5": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-5-try-again-with-only-an-open-keep"
+ },
+ "everyOrphanHasExecutableAction#7": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-7-try-again-with-a-retrying-park"
+ },
+ "everyOrphanHasExecutableAction#9": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-9-disabled-try-again-nothing-pending"
+ },
+ "everyOrphanHasExecutableAction#11": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-11-enabled-try-again-nothing-pending"
+ },
+ "everyOrphanHasExecutableAction#13": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-3-orphan-row-actions-disabled"
+ },
+ "everyOrphanHasExecutableAction#14": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-14-known-inbox-excused-by-discovery"
+ },
+ "everyOrphanHasExecutableAction#16": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-16-reopened-inbox-keeps-old-cause"
+ },
+ "everyOrphanHasExecutableAction#19": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-19-closed-under-a-keep-authority"
+ },
+ "everyOrphanHasExecutableAction#20": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-20-remove-from-an-older-epoch"
+ },
+ "everyOrphanHasExecutableAction#21": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-21-removed-inbox-is-parked"
+ },
+ "everyOrphanHasExecutableAction#22": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-22-keep-claimed-after-the-remove"
+ },
+ "everyOrphanHasExecutableAction#23": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-23-keep-on-another-inbox-after-remove"
+ },
+ "everyOrphanHasExecutableAction#24": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-24-earlier-keep-before-the-remove"
+ },
+ "everyOrphanHasExecutableAction#25": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-25-foreign-inbox-needs-no-row"
+ },
+ "everyOrphanHasExecutableAction#28": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-28-orphan-inbox-while-another-bot-present"
+ },
+ "everyOrphanHasExecutableAction#29": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-16-reopened-inbox-keeps-old-cause"
+ },
+ "everyOrphanHasExecutableAction#31": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-31-delete-closing-without-guard"
+ },
+ "everyOrphanHasExecutableAction#34": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-34-flux-close-during-owner-remove"
+ },
+ "everyOrphanHasExecutableAction#36": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-36-keep-offered-on-a-parked-section-row"
+ },
+ "everyOrphanHasExecutableAction#37": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-37-keep-offered-on-another-bots-row"
+ },
+ "everyOrphanHasExecutableAction#38": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-38-bot-row-offers-only-remove"
+ },
+ "everyOrphanHasExecutableAction#39": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-39-bot-row-keep-disabled"
+ },
+ "everyOrphanHasExecutableAction#40": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-38-bot-row-offers-only-remove"
+ },
+ "everyOrphanHasExecutableAction#43": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-43-foreign-key-needs-no-row"
+ },
+ "everyOrphanHasExecutableAction#46": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-46-orphan-key-while-another-key-bound"
+ },
+ "everyOrphanHasExecutableAction#47": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-47-key-of-a-gone-bot"
+ },
+ "everyOrphanHasExecutableAction#48": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-48-key-of-a-parked-binding"
+ },
+ "everyOrphanHasExecutableAction#50": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-50-key-row-found-by-provisioning-op"
+ },
+ "everyOrphanHasExecutableAction#52": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-52-key-only-park-of-a-present-bot"
+ },
+ "everyOrphanHasExecutableAction#53": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-53-key-only-park-not-yet-parked"
+ },
+ "everyOrphanHasExecutableAction#54": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-54-key-only-park-row-in-other-section"
+ },
+ "everyOrphanHasExecutableAction#55": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-55-key-only-park-row-other-target"
+ },
+ "everyOrphanHasExecutableAction#56": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-54-key-only-park-row-in-other-section"
+ },
+ "everyOrphanHasExecutableAction#57": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-57-key-only-park-row-remove-only"
+ },
+ "everyOrphanHasExecutableAction#58": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-58-key-only-park-row-keep-only"
+ },
+ "everyOrphanHasExecutableAction#59": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-54-key-only-park-row-in-other-section"
+ },
+ "everyOrphanHasExecutableAction#60": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-60-key-only-park-keep-disabled"
+ },
+ "everyOrphanHasExecutableAction#61": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-57-key-only-park-row-remove-only"
+ },
+ "everyOrphanHasExecutableAction#62": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-62-key-only-park-remove-disabled"
+ },
+ "everyOrphanHasExecutableAction#63": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-58-key-only-park-row-keep-only"
+ },
+ "everyOrphanHasExecutableAction#64": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-64-parked-binding-without-inbox"
+ },
+ "everyOrphanHasExecutableAction#65": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-65-provisioning-binding-with-inbox"
+ },
+ "everyOrphanHasExecutableAction#66": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-66-provisioning-key-only-of-present-bot"
+ },
+ "everyOrphanHasExecutableAction#67": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-67-key-only-orphan-row-in-other-section"
+ },
+ "everyOrphanHasExecutableAction#68": {
+  "verdict": "KILLED",
+  "witness": "cm-everyOrphanHasExecutableAction-68-key-only-orphan-row-of-another-bot"
+ },
+ "keepAndRemoveSerialized#1": {
+  "verdict": "KILLED",
+  "witness": "cm-keepAndRemoveSerialized-1-two-open-keeps"
+ },
+ "keepAndRemoveSerialized#3": {
+  "verdict": "KILLED",
+  "witness": "cm-keepAndRemoveSerialized-3-keep-with-keeping-lease"
+ },
+ "keepAndRemoveSerialized#4": {
+  "verdict": "KILLED",
+  "witness": "cm-keepAndRemoveSerialized-4-keep-with-gone-lease"
+ },
+ "keepAndRemoveSerialized#5": {
+  "verdict": "KILLED",
+  "witness": "cm-keepAndRemoveSerialized-5-two-leases-on-one-inbox"
+ },
+ "keyTargetsNeverLost#1": {
+  "verdict": "KILLED",
+  "witness": "cm-keyTargetsNeverLost-1-process-down-records-unloaded"
+ },
+ "keyTargetsNeverLost#2": {
+  "verdict": "KILLED",
+  "witness": "cm-keyTargetsNeverLost-2-boot-prep-records-unloaded"
+ },
+ "keyTargetsNeverLost#3": {
+  "verdict": "KILLED",
+  "witness": "cm-keyTargetsNeverLost-3-foreign-live-key"
+ },
+ "keepSuccessIsConfirmed#6": {
+  "verdict": "EQUIVALENT",
+  "kind": "NULL",
+  "argument": "invariants.current.ts line 1144-1145: `c = k.confirmedBy; g = c ? requests.find(...) : undefined`, so `!c` implies `!g`; the chain `!c || !g` has the same truth value with or without `!c` (state fact: g is undefined exactly when c is null, or when c names an absent request, which `!g` alone catches)."
+ },
+ "everyOrphanHasExecutableAction#17": {
+  "verdict": "EQUIVALENT",
+  "kind": "NULL",
+  "argument": "invariants.current.ts line 1818 (removedByOwner): ClosingCause is only {kind delete, requestId} or {kind flux, reason} (line 468); a flux cause has no requestId, so with `closingCause?.kind !== \"delete\"` removed the lookup `requests.find(r => r.requestId === undefined)` finds nothing (every request has a requestId), authority a is undefined and line 1821 `!!a` returns false, exactly what the clause returned; a closing inbox with a null cause cannot exist (environmentWellFormed: every close writes a cause)."
+ }
+}

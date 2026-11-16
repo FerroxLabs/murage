@@ -22,7 +22,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { acpToolKey } from "../shared/mount-identity.ts";
 import { botAlwaysAllowSave, botAlwaysAllowUndo, taskGrantRefusal, type BotGrantDeps, type BotUndoDeps } from "./approval-grant-routes.ts";
-import { isDesktopApp, isOwnersComputer } from "./cloud-owner-surface.ts";
+import { isDesktopApp, isOwnersComputer, mayTakeAlwaysBack } from "./cloud-owner-surface.ts";
 import { setCloudIdentity } from "./cloud-request-identity.ts";
 import type { CloudDevice } from "./cloud-sessions.ts";
 import { DATA_DIR } from "./config.ts";
@@ -99,13 +99,18 @@ const route = (marker: string): string => {
   return source.slice(at, next > at ? next : at + 20000);
 };
 const GATE = "isOwnersComputer(req.headers, url.searchParams)";
+/** INT1019-CLOUD: taking a remembered Always BACK only narrows what a bot may do, so the home line lets the owner's desktop app and an owner
+ *  browser do it too (cloud-owner-surface.ts mayTakeAlwaysBack): B2 Undo and B3 remove. Saving one (B1), B4 and B5 stay the computer's alone. */
+const GATE_BACK = "mayTakeAlwaysBack(req.headers, url.searchParams)";
+const TAKE_BACK_ALSO = new Set(["Cloud passkey browser", "Cloud remembered owner browser", "Cloud owner-desktop"]);  // the "with a local desktop proof" surface spreads its headers, which drops the identity: no owner at all
+const takesBack = (surface: (typeof SURFACES)[number]): boolean => surface.computer || TAKE_BACK_ALSO.has(surface.name);
 
 /** The index.ts gate of each enumerated writer that is not a pure handler: it asks the predicate, and nothing else. */
-const WIRED: { writer: string; gate: () => string }[] = [
-  { writer: "B3 remove (Settings take-back)", gate: () => after("m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/always-allow\\/remove$/);", 400) },
+const WIRED: { writer: string; gate: () => string; back?: true }[] = [
+  { writer: "B3 remove (Settings take-back)", back: true, gate: () => after("m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/always-allow\\/remove$/);", 400) },
   { writer: "B4 task refresh, preview and apply", gate: () => after("m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/tasks\\/([\\w-]+)\\/permissions\\/refresh$/);", 400) },
   { writer: "B5 PATCH /api/bots/:id with alwaysAllow", gate: () => { const at = source.indexOf("if (body.alwaysAllow !== undefined && !isOwnersComputer("); expect(at).toBeGreaterThan(-1); return source.slice(at, at + 200); } },
-  { writer: "/api/config computer", gate: () => after('if (method === "GET" && path === "/api/config") {', 900) },
+  { writer: "/api/config computer", gate: () => after('if (method === "GET" && path === "/api/config") {', 1500) },
 ];
 
 describe.each(SURFACES)("$name", (surface) => {
@@ -125,10 +130,10 @@ describe.each(SURFACES)("$name", (surface) => {
     }
   });
 
-  it("B2 Undo: the computer passes the gate; anything else is 404 before the body is read", async () => {
-    const deps = undoDeps(isOwnersComputer(as(surface)));
+  it("B2 Undo: the computer, or on a home the owner's desktop app or browser, passes the gate; anything else is 404 before the body is read", async () => {
+    const deps = undoDeps(mayTakeAlwaysBack(as(surface)));
     const reply = await botAlwaysAllowUndo(deps, "b1");
-    if (surface.computer) {
+    if (takesBack(surface)) {
       expect(reply).toEqual({ status: 404, body: { error: "no such bot" } });
       expect(deps.calls).toEqual(["botName"]);
     } else {
@@ -137,9 +142,10 @@ describe.each(SURFACES)("$name", (surface) => {
     }
   });
 
-  it.each(WIRED)("$writer asks the owner's computer, which answers this surface accordingly", ({ gate }) => {
-    expect(gate()).toContain(GATE);
-    expect(isOwnersComputer(as(surface))).toBe(surface.computer);
+  it.each(WIRED)("$writer asks the owner's computer, which answers this surface accordingly", ({ gate, back }) => {
+    expect(gate()).toContain(back ? GATE_BACK : GATE);
+    if (back) expect(mayTakeAlwaysBack(as(surface))).toBe(takesBack(surface));
+    else expect(isOwnersComputer(as(surface))).toBe(surface.computer);
   });
 });
 
@@ -151,19 +157,19 @@ describe("on a Cloud home, isDesktopApp still admits the owner-desktop for other
   });
 });
 
-describe("index.ts: every enumerated writer asks isOwnersComputer and no older gate (integrator diff)", () => {
+describe("index.ts: every enumerated writer asks isOwnersComputer (B2 and B3: mayTakeAlwaysBack) and no older gate (integrator diff)", () => {
   it("B1 save and B2 Undo hand the predicate to the handler", () => {
-    for (const marker of ["m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/always-allow$/);", "m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/always-allow\\/undo$/);"]) {
+    for (const [marker, gate] of [["m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/always-allow$/);", GATE], ["m = path.match(/^\\/api\\/bots\\/([\\w-]+)\\/always-allow\\/undo$/);", GATE_BACK]] as const) {
       const text = after(marker, 300);
-      expect(text).toContain(`desktop: ${GATE},`);
+      expect(text).toContain(`desktop: ${gate},`);
       expect(text).not.toContain("isDesktopApp(");
       expect(text).not.toContain("requestSurface(");
     }
   });
   it("B3 and B4 refuse first, with no requestSurface or isDesktopApp gate left", () => {
-    for (const { gate } of WIRED.slice(0, 2)) {
+    for (const { gate, back } of WIRED.slice(0, 2)) {
       const text = gate();
-      expect(text).toMatch(new RegExp(`if \\(m && method === "POST"\\) \\{\\n(?:\\s*//[^\\n]*\\n)*\\s*if \\(!isOwnersComputer\\(req\\.headers, url\\.searchParams\\)\\) return json\\(res, 404`));
+      expect(text).toMatch(new RegExp(`if \\(m && method === "POST"\\) \\{\\n(?:\\s*//[^\\n]*\\n)*\\s*if \\(!${back ? "mayTakeAlwaysBack" : "isOwnersComputer"}\\(req\\.headers, url\\.searchParams\\)\\) return json\\(res, 404`));
       expect(text).not.toContain("isDesktopApp(");
       expect(text).not.toContain("requestSurface(");
     }
@@ -178,7 +184,7 @@ describe("index.ts: every enumerated writer asks isOwnersComputer and no older g
     }
   });
   it("/api/config says computer from the predicate", () => {
-    expect(WIRED[3]!.gate()).toContain(`computer: ${GATE} });`);
+    expect(WIRED[3]!.gate()).toContain(`computer: ${GATE}, ...(homeView ?? {}) });`);
   });
 });
 

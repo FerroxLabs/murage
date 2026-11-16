@@ -33,6 +33,23 @@ async function liveInstance() {
   return fake.created.get("inst-1")!;
 }
 
+it("a refused source emits one content-free terminal control and cannot end its replacement", async () => {
+  const { instance } = await liveInstance();
+  const bus = new EventBus(); bus.attach([instance]);
+  const old = bus.admitNewTurn("inst-1", "thread-1");
+  const execution = vi.fn(); bus.subscribeExecution(execution);
+  const terminal = bus.refuseTurn("thread-1", old);
+  expect(terminal).toHaveLength(1);
+  expect(terminal[0]!.event).toMatchObject({ type: "turn.completed", threadId: "thread-1", ok: false, stopReason: "memory_refused" });
+  expect(terminal[0]!.event).not.toHaveProperty("text");
+  expect(terminal[0]!.event).not.toHaveProperty("turnId");
+  expect(execution).not.toHaveBeenCalled();
+  expect(bus.refuseTurn("thread-1", old)).toEqual([]);
+  const current = bus.admitNewTurn("inst-1", "thread-1");
+  expect(bus.refuseTurn("thread-1", old)).toEqual([]);
+  expect(bus.refuseTurn("thread-1", current)).toHaveLength(1);
+});
+
 describe("EventBus", () => {
   beforeEach(() => {
     removeTempDirSync(EVENTS_DIR);
@@ -71,7 +88,7 @@ describe("EventBus", () => {
       .split("\n")
       .map((l) => JSON.parse(l));
     expect(logged).toHaveLength(1);
-    expect(logged[0].type).toBe("turn.started");
+    expect(logged[0].type).toBe("audience.omitted"); // unadmitted provider output is never a trusted log record
   });
 
   it("redacts credential-shaped content before writing the NDJSON log", () => {
@@ -128,9 +145,10 @@ describe("EventBus", () => {
     bus.publish(testEvent({ eventId: "ev-3" }));
 
     const recovered = writes[0].trim().split("\n").map((line) => JSON.parse(line));
-    expect(recovered.map((event) => event.type)).toEqual(["runtime.error", "turn.completed"]);
+    expect(recovered.map((event) => event.type)).toEqual(["runtime.error", "audience.omitted", "turn.completed"]);
     expect(recovered[0].message).toContain("event history is incomplete");
-    expect(writes[1].trim()).toContain('"eventId":"ev-3"');
+    expect(writes[1].trim()).toContain('"type":"audience.omitted"');
+    expect(writes[1]).not.toContain('"eventId":"ev-3"');
     expect(seen.filter((event) => event.type === "runtime.error")).toHaveLength(1);
   });
 
@@ -198,5 +216,54 @@ describe("EventBus", () => {
     expect(seen).toHaveLength(0);
     gateHeld = false;
     await vi.waitFor(() => expect(seen).toEqual(["held-1"]), { timeout: 3000 });
+  });
+});
+
+describe('R4 execution queue accounting', () => {
+  function heldBus() {
+    const bus = new EventBus(); bus.omitLog(() => true);
+    let held = true; let release!: () => void;
+    const wait = new Promise<void>(resolve => { release = resolve; });
+    const overflow = vi.fn(() => { held = false; release(); });
+    bus.gateDeliveries({ held: () => held, wait: () => wait, isBusy: () => false, overflow });
+    const seen: RuntimeEvent[] = [];
+    bus.subscribe(e => seen.push(e));
+    return { bus, seen, overflow, release: () => { held = false; release(); } };
+  }
+  it('bus.held-writer-huge-payload-bounded', async () => {
+    const rig = heldBus();
+    const event = testEvent({ raw: { source: 'fixture', payload: { unknown: 'x'.repeat(64 * 1024 * 1024) } } });
+    const stringify = vi.spyOn(JSON, 'stringify');
+    rig.bus.publish(event);
+    const calls = stringify.mock.calls.filter(([value]) => value === event).length;
+    stringify.mockRestore(); rig.release();
+    await vi.waitFor(() => expect(rig.bus.pendingDurable()).toBe(0));
+    expect(calls).toBe(0);
+    expect(rig.seen[0]).toBe(event);
+  });
+  it('bus.accessor-tripwire', async () => {
+    const rig = heldBus();
+    const getter = vi.fn(() => { throw new Error('execution accessor'); });
+    const event = testEvent({ raw: { source: 'fixture', payload: Object.defineProperty({}, 'unknown', { enumerable: true, get: getter }) } });
+    rig.bus.publish(event); rig.release();
+    await vi.waitFor(() => expect(rig.bus.pendingDurable()).toBe(0));
+    expect(getter).not.toHaveBeenCalled(); expect(rig.seen[0]).toBe(event);
+  });
+  it('bus.oversize-backpressure', async () => {
+    const rig = heldBus();
+    const events = Array.from({ length: 3 }, () => testEvent({ raw: { source: 'fixture', payload: 'x'.repeat(1_048_577) } }));
+    events.forEach(event => rig.bus.publish(event));
+    const released = rig.overflow.mock.calls.length;
+    rig.release(); await vi.waitFor(() => expect(rig.bus.pendingDurable()).toBe(0));
+    expect(released).toBe(1);
+    expect(rig.seen).toEqual(events); events.forEach((event, i) => expect(rig.seen[i]).toBe(event));
+  });
+  it('bus.reserved-terminal-capacity', async () => {
+    const rig = heldBus(); rig.bus.setDeliveryLimits({ maxEvents: 2 });
+    rig.bus.publish(testEvent({ type: 'turn.completed', ok: true }));
+    rig.bus.publish(testEvent({ type: 'session.exited' }));
+    expect(rig.overflow).not.toHaveBeenCalled();
+    rig.release(); await vi.waitFor(() => expect(rig.bus.pendingDurable()).toBe(0));
+    expect(rig.seen.map(e => e.type)).toEqual(['turn.completed', 'session.exited']);
   });
 });

@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // CUA computer-use wiring for the Electron main process.
 //
 // Two modes, per cua-driver's EMBEDDING.md:
@@ -158,7 +159,7 @@ function runCommand(command, args, options, signal) {
   let cancel;
   let cancelled = false;
   const operation = new Promise((resolve) => {
-    child = execFile(command, args, { ...options, killSignal: "SIGKILL" }, (error, stdout) => {
+    child = execFile(command, [...args], withHideInherit({ ...options, killSignal: "SIGKILL" }), (error, stdout) => {
       resolve({ error, stdout });
     });
     cancel = () => {

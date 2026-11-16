@@ -1,0 +1,37 @@
+COMMAND node_modules/.bin/vitest run server/decision/ingress.test.ts -t "scoped to their verified"
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/ingress.test.ts > R16 service request keys are scoped to their verified conversation, never another owner handle
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/ingress.test.ts (7 tests | 1 failed | 6 skipped) 446ms
+   ↓ A2 R16 M19 M22 M47 M48 first capture binds input, aliases and conflicts
+   ↓ A2 M49 claims alone supply service identity; spec/options are frozen and reserved fields rejected
+   ↓ R16 actor substitution ignored and all authority objects frozen at registration
+   ↓ R12 decision never reads message history
+   ↓ service execution joins concurrent calls, retains frozen content and never uses caller mutations
+   ↓ ingress duplicate event envelope metadata does not change input identity
+   × R16 service request keys are scoped to their verified conversation, never another owner handle 442ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 6 skipped (7)
+   Start at  06:30:40
+   Duration  5.67s (transform 4.10s, setup 4.83s, import 269ms, tests 446ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/ingress.test.ts > R16 service request keys are scoped to their verified conversation, never another owner handle
+AssertionError: expected 'run' to be 'card' // Object.is equality
+
+Expected: "card"
+Received: "run"
+
+ ❯ server/decision/ingress.test.ts:32:428
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

@@ -1,0 +1,7 @@
+[
+  "node_modules/.bin/vitest",
+  "run",
+  "server/connector-reconnect-r2.test.ts",
+  "-t",
+  "Flux contract: preflight upstream"
+]

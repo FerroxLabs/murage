@@ -55,13 +55,13 @@ describe("every reader of the messages json column uses the one decoder", () => 
   const PARSE = /JSON\.parse\(\s*(?:String\()?\s*[\w!.]*\.json\b/g;
   const DECODES = new Set([
     "server/message-db.ts", "server/transcript-backfill.ts", "server/bot-read.ts", "server/partition-sources.ts", "server/working-context.ts",
-    "server/project-memory-tools.ts", "server/installation-restore-preparation.ts", "server/inbox.ts", "server/mcp-signin-card.ts",
+    "server/project-memory-tools.ts", "server/restore-prep-core.ts", "server/inbox.ts", "server/mcp-signin-card.ts",
     "server/memory/reveal-capture.ts", "server/project-goals.ts", "server/installation-database-snapshot.ts", "server/installation-activation.ts",
     "server/memory/outcomes.ts", "server/memory/lineage-backfill.ts", "server/harness/event-log.ts", "server/murage-anchor.ts",
     "server/memory/capture.ts", "server/message-walker.ts", "server/bot-calls-machine.ts",
   ]);
   /** Writers that encode a whole row: storedJson. */
-  const ENCODES = new Set(["server/message-db.ts", "server/installation-restore-preparation.ts"]);
+  const ENCODES = new Set(["server/message-db.ts", "server/restore-prep-core.ts"]);
   /** file + a substring of the statement (SELECT through the end of its FROM line) or of the write's line: the reason it may read or
    *  write the column without the decoder. */
   const ALLOW: Array<[string, string, string]> = [

@@ -491,6 +491,8 @@ describe("project reminders (r5)", () => {
     let found: Record<string, string[]> = {};
     for (const history of [100, 10_000]) {
       const { store, bot, group } = await roomFixture(history);
+      // freshHome resets modules; seed through the same database copy as Store.
+      const { appendFixtureMessage } = await import("./testing/approval-card.ts");
       // the project's desk tasks on the bot, as many again
       bot.tasks = [...bot.tasks!, ...Array.from({ length: history }, (_, i) => ({ threadId: `desk-${i}`, title: `d${i}`, createdAt: i, resumeCursors: {}, channelProjectDesk: { groupId: group.id } }))];
       let asked = 0;
@@ -504,7 +506,7 @@ describe("project reminders (r5)", () => {
       }
       if (history !== 100) continue;
       for (const threadId of ["desk-7", group.tasks![3]!.threadId, group.threadId, "desk-2"]) {
-        store.appendMessage(threadId, { role: "bot", kind: "options", text: "Approve?", card: { requestId: `req-${threadId}`, title: "Approve?", options: [] } } as never);
+        appendFixtureMessage(store, threadId, { role: "bot", kind: "options", text: "Approve?", card: { requestId: `req-${threadId}`, title: "Approve?", options: [] } } as never);
       }
       found = Object.fromEntries([true, false].map(legacy => [legacy ? "before" : "after", extractDecisions(store, legacy)(group).approvals.map(a => a.requestId)]));
     }

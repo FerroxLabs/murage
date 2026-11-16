@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { HTTPError } from "./http";
+import { assertEnvIsolation } from "./env-isolation";
 
 const MAX_ALLOWED_ORIGINS = 20;
 const secretSchema = z.string().min(32);
@@ -101,6 +102,8 @@ function readCloudHome(env: Env): CloudHomeConfig {
 }
 
 export function readConfig(env: Env): ControlPlaneConfig {
+  // First: a mixed environment fails closed (503 env_mixed) before any other setting is read.
+  assertEnvIsolation(env);
   if (!secretSchema.safeParse(env.BETTER_AUTH_SECRET).success) {
     throw new Error("BETTER_AUTH_SECRET must contain at least 32 characters");
   }

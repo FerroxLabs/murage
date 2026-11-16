@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 import { createHash } from "node:crypto";
 import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync, type BigIntStats } from "node:fs";
 import { win32 } from "node:path";

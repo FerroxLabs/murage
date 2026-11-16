@@ -7,6 +7,7 @@
 // r15 (no prediction): send() appends the user line and runs NO warm step; dispatch() is the turn from IX:13283 on (one compare, then record, then
 // E2 -> recall -> E1 on the turn's own inputs, then the bot reply). compareFootprint is retired.
 import * as LW from "../lineage-warm.ts";
+import { lineageWarmTestSurface } from "../lineage-warm-surface.ts";
 
 /** r14.1 X1: the six kinds of the turn's userMessage (IX:12269-12291). Only APPENDED is ever covered (r15 W3'). */
 export type UserKind = "APPENDED" | "EXPLICIT" | "PROJECT" | "EDIT" | "HELD" | "SYNTHETIC";
@@ -107,8 +108,8 @@ export interface R14Surface {
   useSources(sources: { mint?: (botId: string, threadId: string) => unknown; lines?: unknown; task?: unknown } | null): void;
 }
 export function r14Surface(): R14Surface {
-  const make = (LW as unknown as Record<string, unknown>).lineageWarmTestSurface;
-  if (typeof make !== "function") throw new Error("RB b13e: lineage-warm.ts has no lineageWarmTestSurface (the r14 confirm, record and footprint do not exist)");
+  const make = lineageWarmTestSurface;
+  if (typeof make !== "function") throw new Error("RB b13e: lineage-warm-surface.ts has no lineageWarmTestSurface (the r14 confirm, record and footprint do not exist)");
   return (make as () => R14Surface)();
 }
 export const lineageThreadState = (thread: string): string => {

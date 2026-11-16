@@ -1,0 +1,65 @@
+#!/usr/bin/env python3
+# Run inside the integration adapter. Mutations touch only a private temporary model copy.
+import sys
+from mutation_runner import run_mutants
+R, M = "restore-reducer.ts", "moves.ts"
+MUT = {
+ "arm-dropped": (R, '  R.hit("restore.arm");\n', '  R.hit("restore.arm"); return R.finish();\n'),
+ "arm-wrong-phase": (R, 'phase: "armed", at: e.step } };\n  R.acts.push', 'phase: "captured", at: e.step } };\n  R.acts.push'),
+ "arm-no-w25": (R, '  R.acts.push({ k: "ownerResult", ok: true });\n  R.durable("W25_job_armed");\n', '  R.acts.push({ k: "ownerResult", ok: true });\n'),
+ "refuse-not-local-dropped": (R, 'if (!(R.s.fs.localArchives ?? []).includes(a.archiveId)) {', 'if (false) {'),
+ "refuse-window-dropped": (R, 'if (j) return refuseFinishing(R, jobOpen(R.s) ? "restore.refuse_window" : "restore.refuse_finished");', 'if (j && !jobOpen(R.s)) return refuseFinishing(R, "restore.refuse_finished");'),
+ "refuse-finished-dropped": (R, 'if (j) return refuseFinishing(R, jobOpen(R.s) ? "restore.refuse_window" : "restore.refuse_finished");', 'if (j && jobOpen(R.s)) return refuseFinishing(R, "restore.refuse_window");'),
+ "capture-no-w26": (R, 'restoreJob: { ...j, phase: "captured", at: e.step } };', 'restoreJob: { ...j, phase: "armed", at: e.step } };'),
+ "capture-carry-unstamped": (R, 'unconfirmedKept: clone(L.unconfirmedKept ?? {}), jobId,', 'unconfirmedKept: clone(L.unconfirmedKept ?? {}), jobId: null,'),
+ "capture-any-phase": (R, 'if (!j || jobPhaseOf(R.s) !== "armed") { R.hit("restore.capture_refused")', 'if (!j) { R.hit("restore.capture_refused")'),
+ "capture-carry-incomplete": (R, 'forEpoch: R.x.epoch, complete: true,', 'forEpoch: R.x.epoch, complete: false,'),
+ "abort-changes-carry": (R, '  R.hit("restore.abort");\n', '  R.hit("restore.abort"); R.s.carry = null;\n'),
+ "abort-no-line": (R, '  setHomeLine(R, RESTORE_FAILED_LINE);\n  R.durable("W29_job_aborted");', '  R.durable("W29_job_aborted");'),
+ "abort-no-w29": (R, '  R.durable("W29_job_aborted");', ''),
+ "abort-wrong-phase": (R, '{ ...j, phase: "aborted", at: e.step }', '{ ...j, phase: "captured", at: e.step }'),
+ "abort-any-phase": (R, 'if (!j || (jobPhaseOf(R.s) !== "armed" && jobPhaseOf(R.s) !== "captured")) { R.hit("restore.abort_refused")', 'if (!j) { R.hit("restore.abort_refused")'),
+ "window-decision-admitted": (R, '      if (a.t !== "owner.viewSurface" && jobOpen(R.s)) return refuseFinishing(R, "window.refuse_owner");\n', ''),
+ "window-backup-admitted": (R, '      if (jobOpen(R.s)) return refuseFinishing(R, "window.refuse_backup"); // r3.4b (N5): backup is a window decision\n', ''),
+ "window-view-no-line": (R, 'if (jw && jobOpen(R.s)) rows.push(homeRow(RESTORE_FINISHING_LINE));', 'if (false) rows.push(homeRow(RESTORE_FINISHING_LINE));'),
+ "harness-records-refused-request": (M, 'if (!dry.actions.some(a => a.k === "ownerResult" && !a.ok)) {', 'if (true) {'),
+ "harness-backup-not-local": (M, 'localAdd.push(aid, aid + NO_LIVE_SUFFIX);', ''),
+
+ # ---- r3.4d J2 ----
+ "swap-no-w27": (R, '  R.durable("W27_job_swapped_staged");\n', ''),
+ "swap-no-mark": (R, 'L.swappedJobId = j.id; L.preparedJobId = null;', 'L.preparedJobId = null;'),
+ "swap-journal-rewritten": (R, '  R.s.fs = { ...R.s.fs, messagesDbPresent: true };\n  R.s.proc', '  R.s.fs = { ...R.s.fs, messagesDbPresent: true, restoreJob: { ...j, phase: "swapped" } };\n  R.s.proc'),
+ "swap-keeps-store-open": (R, '  R.s.proc = { ...R.s.proc, phase: "boot_prep", emailOn: false }; //', '  //'),
+ "prepare-keeps-store-closed": (R, '  R.s.proc = { ...R.s.proc, phase: "store_open" }; // the prep opens', '  // the prep opens'),
+ "harness-prepare-offered-up": (M, 'if (ph === "boot_prep" && jph === "swapped") out.push', 'if (up && jph === "swapped") out.push'),
+ "harness-blind-with-live-db": (M, 'if (liveDb) out.push({ t: "owner.restore", source: s, archiveId: a.archiveId });\n        else if', 'out.push({ t: "owner.restore", source: s, archiveId: a.archiveId });\n        if'),
+ "harness-crash-keeps-move-action": (M, '(crashAct && JOB_MOVES.has(trigger.t) ? crashAct : trigFlushed', '(false ? crashAct : trigFlushed'),
+ "harness-w23-not-normalized": (M, 'arm.at === "W23_carry_capture" && arm.when === "after" ? {', 'false ? {'),
+ "harness-dropped-arm-reports-ok": (M, '!dry.actions.some(a => a.k === "ownerResult" && !a.ok) && !m.home.fs.restoreJob) patch.outcome', 'false) patch.outcome'),
+ "swap-any-phase": (R, '!(ph === "captured" || (ph === "armed" && e.blind))', '!(ph === "captured" || ph === "armed")'),
+ "swap-any-archive": (R, 'if (!j || j.archiveId !== e.archiveId || j.source !== e.source || !(ph === "captured"', 'if (!j || !(ph === "captured"'),
+ "swap-no-local-recheck": (R, 'if (!(R.s.fs.localArchives ?? []).includes(j.archiveId)) { R.hit("restore.swap_not_local")', 'if (false) { R.hit("restore.swap_not_local")'),
+ "swap-blind-needs-capture": (R, '(ph === "armed" && e.blind))) { R.hit("restore.swap_refused")', 'false)) { R.hit("restore.swap_refused")'),
+ "prepare-no-mark": (R, '  L.preparedJobId = jobId;\n', ''),
+ "prepare-no-restamp": (R, 'if (k in L.keptKeys) L.unconfirmedKept = ', 'if (false) L.unconfirmedKept = '),
+ "prepare-keeps-leases": (R, '  for (const k of Object.keys(L.leases)) delete L.leases[k];\n', ''),
+ "prepare-any-phase": (R, 'if (!j || jobPhaseOf(R.s) !== "swapped") { R.hit("restore.prepare_refused")', 'if (!j) { R.hit("restore.prepare_refused")'),
+ "boot-prep-no-prep": (R, 'if (jobPhaseOf(R.s) === "swapped") { R.hit("bootPrep.prep");', 'if (false) { R.hit("bootPrep.prep");'),
+ "clear-keeps-carry": (R, '  if (R.s.carry) { R.s.carry = null; R.durable("W24_carry_delete"); }', '  if (R.s.carry) { R.durable("W24_carry_delete"); }'),
+ "clear-no-w30": (R, '  R.durable("W30_job_cleared");\n', ''),
+ "clear-order": (R, '  if (R.s.carry) { R.s.carry = null; R.durable("W24_carry_delete"); }', '  if (R.s.carry) { R.s.fs = { ...R.s.fs, restoreJob: null }; R.s.carry = null; R.durable("W24_carry_delete"); }'),
+ "clear-any-phase": (R, 'if (ph !== "prepared" && ph !== "aborted") { R.hit("restore.clear_refused")', 'if (!ph) { R.hit("restore.clear_refused")'),
+ "arm-system-over-job": (R, 'if (R.s.fs.restoreJob || !(R.s.fs.localArchives ?? []).includes(e.archiveId)) { R.hit("restore.arm_system_refused")', 'if (!(R.s.fs.localArchives ?? []).includes(e.archiveId)) { R.hit("restore.arm_system_refused")'),
+ "arm-system-not-local": (R, 'if (R.s.fs.restoreJob || !(R.s.fs.localArchives ?? []).includes(e.archiveId)) { R.hit("restore.arm_system_refused")', 'if (R.s.fs.restoreJob) { R.hit("restore.arm_system_refused")'),
+ "fetch-no-add": (R, '    R.s.fs = { ...R.s.fs, localArchives: [...la, ...add] };\n', ''),
+ "fetch-line-always": (R, 'if (e.forOwner) setHomeLine(R, RESTORE_FAILED_LINE); else', 'if (true) setHomeLine(R, RESTORE_FAILED_LINE); else'),
+ "fetch-not-frozen": (R, 'if (j) { R.hit("fetch.frozen"); return R.finish(); }', 'if (false) { R.hit("fetch.frozen"); return R.finish(); }'),
+ "harness-swap-records-early": (M, '      react(m, { e: "restoreSwap"', '      swapRec(); react(m, { e: "restoreSwap"'),
+ "harness-record-on-dropped-write": (M, 'if (arm.when === "before") m.home = crashed(m.home); else', 'if (arm.when === "before") { m.home = crashed(m.home); landed(ef); } else'),
+ "harness-no-prepared-epoch": (M, 'g.preparedEpochs.push(g.epoch);', 'void 0;'),
+
+ "harness-clear-offered-early": (M, 'if (jph === "prepared" || jph === "aborted") out.push({ t: "auto.restoreJobClear" })', 'if (jph === "prepared" || jph === "aborted" || jph === "armed") out.push({ t: "auto.restoreJobClear" })'),
+ "harness-swap-invents-request": (M, 'reqStep = e.ext.jobReq ?? null;', 'reqStep = e.ext.jobReq ?? e.ghost.ownerRestoreRequests[0]?.atStep ?? 1;'),
+}
+if __name__ == "__main__":
+    run_mutants(MUT, ["s23-job.test.ts"], sys.argv[1:] or list(MUT))

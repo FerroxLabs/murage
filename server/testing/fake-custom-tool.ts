@@ -73,7 +73,8 @@ export function lostServerEnv(pid: number | undefined, expected: Readonly<Record
 
 /** Start the server, call its first tool, and return what came back. Never throws. `spawnAs` is the process actually
  * started (claudeMcpLaunch), when it is not the server's own command line; the log keeps the server's. */
-export function callFirstCustomTool(engine: string, name: string, launch: CustomToolLaunch, prompt = "", spawnAs: CustomToolLaunch = launch): Promise<CustomToolOutcome> {
+export function callFirstCustomTool(engine: string, name: string, launch: CustomToolLaunch, prompt = "", spawnAs: CustomToolLaunch = launch,
+  session?: { ready: Promise<void>; request(method: string, params: unknown): Promise<any> }): Promise<CustomToolOutcome> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) if (typeof value === "string") env[key] = value;
   Object.assign(env, launch.env);
@@ -84,14 +85,46 @@ export function callFirstCustomTool(engine: string, name: string, launch: Custom
   const done = (outcome: CustomToolOutcome): CustomToolOutcome => {
     const log = process.env.FAKE_CUSTOM_TOOL_LOG;
     if (log) {
+      // The fixture observes the admitted server separately from the actual
+      // engine wire. Never use this evidence to start or replace a transport.
+      let ownerLaunch: CustomToolLaunch | undefined;
+      try {
+        const evidence = env.MURAGE_CRED_FILE ?? env.MURAGE_RELAY_SOCKET;
+        if (evidence) {
+          const entry = JSON.parse(readFileSync(evidence + ".fixture-mounts.json", "utf8"))[name];
+          if (entry) ownerLaunch = { ...entry, env: { ...entry.env, ...turnSecrets } };
+        }
+      } catch { /* an uninstrumented fixture has no server-side observation */ }
       appendFileSync(log, `${JSON.stringify({
         engine, server: name, ...outcome, prompt,
         launch: { argv: [launch.command, ...launch.args], env, turnSecrets },
+        ...(ownerLaunch ? { ownerLaunch: { argv: [ownerLaunch.command, ...ownerLaunch.args], env: ownerLaunch.env } } : {}),
         engineArgv: process.argv,
       })}\n`);
     }
     return outcome;
   };
+  if (session) {
+    // Claude initialized this exact mounted session during mcp_status. A
+    // second shim connection correctly retires a single-use consuming mount.
+    return (async () => {
+      let tools: string[] = [], tool: string | undefined;
+      try {
+        await session.ready;
+        const listed = await session.request("tools/list", {});
+        const entries = Array.isArray(listed?.tools) ? listed.tools : [];
+        tools = entries.map((entry: { name?: string }) => String(entry?.name ?? ""));
+        const first = entries[0];
+        if (!first?.name) return done({ tools, text: "custom tool: the server lists no tools", isError: true });
+        tool = first.name;
+        const args = first.inputSchema?.properties && "text" in first.inputSchema.properties ? { text: `hello from ${engine}` } : {};
+        const result = await session.request("tools/call", { name: tool, arguments: args });
+        return done({ tools, tool, text: textOf(result), isError: result?.isError === true });
+      } catch (error) {
+        return done({ tools, ...(tool ? { tool } : {}), text: String((error as Error).message), isError: true });
+      }
+    })();
+  }
   return new Promise((resolve) => {
     let settled = false;
     let tools: string[] = [];
@@ -104,7 +137,7 @@ export function callFirstCustomTool(engine: string, name: string, launch: Custom
       setTimeout(() => { try { child.kill(); } catch { /* gone */ } }, 200).unref?.();
       resolve(done({ tools, ...(tool ? { tool } : {}), ...outcome }));
     };
-    const child = spawn(spawnAs.command, spawnAs.args, { env: spawnAs === launch ? env : { ...env, ...spawnAs.env }, stdio: ["pipe", "pipe", "ignore"] });
+    const child = spawn(spawnAs.command, spawnAs.args, { windowsHide: true, env: spawnAs === launch ? env : { ...env, ...spawnAs.env }, stdio: ["pipe", "pipe", "ignore"] });
     const timer = setTimeout(() => finish({ text: "custom tool: no answer in time", isError: true }), Number(process.env.FAKE_CUSTOM_TOOL_TIMEOUT_MS) || 90_000);
     child.on("error", (error) => finish({ text: `custom tool: could not start (${error.message})`, isError: true }));
     child.on("exit", () => finish({ text: "custom tool: the server closed", isError: true }));

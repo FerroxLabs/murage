@@ -1,9 +1,12 @@
+import { NotModelRequest } from "../../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 // Grok Build harness support — the official `grok` CLI over ACP stdio
 // (`grok … agent stdio`), on the grok.com subscription login
 // (~/.grok/auth.json), NOT the xAI API key (that driver is drivers/grok.ts).
 // The generic protocol runtime lives in acp/core.ts; this file is only the
 // per-harness quirks. Verified against grok 1.0.0.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "../../counted-fs.ts";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -21,15 +24,19 @@ import { scopeGrokHome } from "./grok-scope.ts";
 import { forceHookGatesOff } from "./hook-gates.ts";
 import { engineFolderUnavailable } from "../scoped-cli-home.ts";
 import { AskStopRefusal, ASK_STOP_GROK_OLD_NOTE } from "../ask-stop.ts";
+import { engineReach } from "../../flux-engine-reach.ts";
 
 export const STATIC_GROK_MODELS: ModelCatalog = {
-  default: "grok-4.6",
+  // https://docs.x.ai/developers/models recommends Grok 4.7 for code.
+  default: "grok-4.7",
   options: [
     // Upstream #1632: without a window the memory budget falls back to
     // 20,480 tokens (index.ts) for a model that takes 500k.
     { id: "grok-4.7", label: "Grok 4.7", contextWindow: 500_000 },
     { id: "grok-4.6", label: "Grok 4.6" },
     { id: "grok-4.5", label: "Grok 4.5" },
+    // https://x.ai/news/grok-build-0-1 identifies this as the model powering Grok Build.
+    { id: "grok-build-0.1", label: "Grok Build 0.1", contextWindow: 256_000 },
   ],
 };
 
@@ -163,7 +170,7 @@ export async function configureGrokSession(ctx: AcpSessionContext): Promise<void
   const record = (outcome: "ok" | "repinned" | "timeout" | "unlisted" | "error" | "aborted", waitedMs = 0) =>
     ctx.recordModelPin?.({ outcome, waitedMs, ...(held !== undefined ? { cacheAtSpawn: held } : {}) });
   const reason = (error: unknown) => (error as Error)?.message ?? String(error);
-  const pin = () => request("session/set_model", { sessionId, modelId: model });
+  const pin = () => NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", request("session/set_model", { sessionId, modelId: model }));
   const stopped = () => Boolean(ctx.cancelled?.());
   const aborted = (waitedMs = 0): Error => {
     record("aborted", waitedMs);
@@ -386,7 +393,7 @@ const PLUGIN_NAME = /^[a-z0-9][a-z0-9._-]{0,127}$/i;
 const MAX_SHADOWED_PLUGINS = 256;
 
 function readJson(path: string): unknown {
-  try { return JSON.parse(readText(path)); } catch { return null; }
+  try { return registerBusyloopPayloadSite("read", JSON.parse(readText(path))); } catch { return null; }
 }
 
 function manifestName(dir: string): string | null {
@@ -514,6 +521,8 @@ const support: AcpSupport = {
   driverKind: "grokAgent",
   // The map handed to the engine skips a value equal to Murage's own env, so the pin is set on it too.
   scrubHandedEnv: (map) => pinGrokAskClockOff(map),
+  // U05: model hosts (base_url) live in the Grok home config; none is xAI.
+  fluxReach: (env) => engineReach(env, { configFiles: [join(grokHome(env), "config.toml")], compiledDefault: "https://api.x.ai/v1" }),
   displayName: "Grok",
   // The same shell as Fuigo: a bare reject_once ends the prompt as `cancelled`
   // (10-29: a 15-minute card timeout ended a live image turn as "Stopped by
@@ -589,7 +598,7 @@ const support: AcpSupport = {
 
   spawnArgs: (_config, turn, ctx) => {
     // Fails closed at Ask on a grok its ask rules are not proven on (GROK_ASK_HOLD_MIN).
-    requireGrokAskHold(turn.askLevel, ctx?.cliVersion);
+    requireGrokAskHold((turn.permissionNow?.() ?? turn).askLevel, ctx?.cliVersion);
     noteCacheAtSpawn(ctx?.env);
     return [
       "--permission-mode",
@@ -601,6 +610,7 @@ const support: AcpSupport = {
       "default",
       // Murage owns persistent memory (same flag Fuigo and the headless reflection argv pass).
       "--no-memory",
+      ...(turn.integrations?.agents && !(turn.permissionNow?.() ?? turn).noLimits ? ["--deny", "WebFetch"] : []),
       "agent",
       // The owner's personal plugins off for this process (see grokIsolationArgs).
       ...grokIsolationArgs(ctx?.env ?? process.env, ctx?.cliVersion),
@@ -612,6 +622,7 @@ const support: AcpSupport = {
     ];
   },
   spawnNeedsCliVersion: true,
+  scopeVersionRequired: true,
 
   configureSession: configureGrokSession,
 
@@ -652,4 +663,6 @@ const support: AcpSupport = {
   textOnlyTurn: (turn, config) => headlessTextOnlyTurn(turn, { engine: "grok", cli: config.cli, tmpBase: join(DATA_DIR, "pip-tmp"), parentGrokHome: grokHome(process.env) }),
 };
 
+/** The support table, for the per-engine Flux reach tests (U05). */
+export const grokAcpSupport = support;
 export const GrokAgentDriver = createAcpDriver(support);

@@ -87,12 +87,14 @@ describe("WP3 one-per-person constants (Test 7 additions)", () => {
     for (const k of ["mismatch", "country_paused", "rejected_consent"]) expect(NOT_A_FIRST_PAYMENT_KINDS).toContain(k);
   });
   it("the Cloud terms ids carrying the limit are behind the launch flag: off until REFUND_LIMIT_V2_LIVE=1", () => {
-    const id = "cloud-terms-964155e36e8b";
-    expect(REFUND_LIMIT_V2_CLOUD_TERMS_IDS).toEqual([id]);
+    const old = "cloud-terms-964155e36e8b";
+    const id = "cloud-terms-d5a2fc1a2a13";
+    // Both are listed: customers who accepted the earlier text stay bound.
+    expect(REFUND_LIMIT_V2_CLOUD_TERMS_IDS).toEqual([old, id]);
     expect(refundLimitVersions({} as Env)).toEqual([]);
     expect(refundLimitVersions({ REFUND_LIMIT_V2_LIVE: "0" } as Env)).toEqual([]);
-    expect(refundLimitVersions({ REFUND_LIMIT_V2_LIVE: "1" } as Env)).toEqual([id]);
-    expect(refundLimitVersions({ REFUND_LIMIT_V2_LIVE: "1", REFUND_LIMIT_TERMS_VERSIONS: "x,y" } as Env).sort()).toEqual([id, "x", "y"]);
+    expect(refundLimitVersions({ REFUND_LIMIT_V2_LIVE: "1" } as Env)).toEqual([old, id]);
+    expect(refundLimitVersions({ REFUND_LIMIT_V2_LIVE: "1", REFUND_LIMIT_TERMS_VERSIONS: "x,y" } as Env).sort()).toEqual([old, id, "x", "y"].sort());
     // The site page's display label is never a version id: no acceptance row carries it.
     expect(refundLimitVersions({ REFUND_LIMIT_V2_LIVE: "1" } as Env)).not.toContain("2026-10-11.1");
   });

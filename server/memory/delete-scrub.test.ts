@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Real Store deletion, revocation, SQLite projections and receipt handling in
 // the throwaway HOME supplied by server/testing/setup.ts. No engine or model.
+import { configureHelperAdmission } from "./helper-admission.ts";
+import { openTestIndex, put, workerTick } from "./testing/open-index.ts";
+import { settleFixtureIndexGrant } from "./testing/helper-permits.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -12,7 +15,7 @@ import { ConversationDeletions, runConversationDeletion } from "../conversation-
 import { closeDatabase, database, transaction } from "../database.ts";
 import { Store } from "../store.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
-import { stopWalMaintenance, walMaintenanceReady, walScrubPending } from "../wal-maintenance.ts";
+import { stopWalMaintenance, walMaintenanceReady, walMaintenanceTestHooks, walScrubPending } from "../wal-maintenance.ts";
 import { ensureAgeTables } from "./age-index.ts";
 import { captureWork } from "./chunks.ts";
 import { DELETE_SCRUB_MERGE_PAGES, MemoryIndex, type IndexedMemory } from "./index.ts";
@@ -25,6 +28,7 @@ import { MemoryWorkerController } from "./worker-controller.ts";
 
 const indexFile = () => join(DATA_DIR, "memory-index.db");
 const inline = { ...INLINE_REVOCATION };
+const retryMs = walMaintenanceTestHooks.retryMs;
 let index: MemoryIndex, deletions: ConversationDeletions, controller: MemoryWorkerController;
 let reader: DatabaseSync | undefined;
 type Internals = {
@@ -44,18 +48,21 @@ function absent(marker: string) {
 beforeEach(async () => {
   closeDatabase(); await stopWalMaintenance();
   removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
+  // The search merge owes the log a scrub too (search-merge-runner.ts:238); its idle retry defaults to 30 s, far past the 10 s waits below.
+  walMaintenanceTestHooks.retryMs = 200;
   setMemoryMode("capture");
   await vi.waitFor(() => expect(walMaintenanceReady()).toBe(true), { timeout: 10_000 });
   // Force the asynchronous path, then drive its durable jobs explicitly.
   INLINE_REVOCATION.rows = 1; INLINE_REVOCATION.ms = 0;
   stopMemoryRevocation();
-  index = new MemoryIndex(indexFile());
+  index = await openTestIndex(indexFile());
   deletions = new ConversationDeletions({ dataDir: DATA_DIR, database, retryDelaysMs: [] });
   controller = new MemoryWorkerController();
   internals = controller as unknown as Internals;
   internals.child = { connected: true }; internals.ready = true;
 });
 afterEach(async () => {
+  walMaintenanceTestHooks.retryMs = retryMs;
   reader?.close(); reader = undefined;
   deletions.dispose();
   internals.child = null; await controller.stop();
@@ -73,7 +80,7 @@ async function project(): Promise<void> {
     archived: row.state !== "active", rolled: Number(row.rolled) === 1,
     ageKey: row.ageKey === null || row.ageKey === undefined ? null : Number(row.ageKey),
   }));
-  index.upsert(records);
+  await put(index, records);
   const requestId = randomUUID();
   internals.indexing = true; internals.indexRequestId = requestId;
   internals.indexSent = new Map(pending.map(row => [`${row.id}\u0000${row.version}`, String(row.state)]));
@@ -90,9 +97,9 @@ async function projectAll(): Promise<void> {
   expect(pendingProjectionRecords(database(), 1)).toEqual([]);
 }
 /** The helper's scrub timer, stepped directly until the debt is paid (true) or a reader blocks the checkpoint (false). Never live data. */
-function scrubUntilBlocked(): boolean {
+async function scrubUntilBlocked(): Promise<boolean> {
   for (let step = 0; step < 25_000; step++) {
-    if (index.scrubDeleted()) return true;
+    if (await index.scrubDeleted()) return true;
     if (index.scrubBlocked) return false;
   }
   throw new Error("fixture scrub did not finish");
@@ -117,25 +124,29 @@ async function seed(wholeBot = false) {
   await projectAll();
   expect(copies(indexFile(), marker).some(copy => copy.found)).toBe(true);
   // Keep an unrelated indexed entry to catch a whole-file wipe.
-  index.upsert([{ id: "kept", version: 1, scopeId: "kept", text: "unrelated retained words", deleted: false }]);
+  await put(index, [{ id: "kept", version: 1, scopeId: "kept", text: "unrelated retained words", deleted: false }]);
   return { store, bot, task, marker };
 }
 
 const pendingDeletes = () => Number(database().prepare("SELECT count(*) AS n FROM memory_projection_receipts WHERE lexical_status='delete-pending'").get()!.n);
 const revoke = () => transaction(db => runRevocationJobsNow(db));
 
-it("a blocked rewrite keeps its merge owed across restart and the successful retry leaves no WAL frames", () => {
+it("a blocked rewrite keeps its merge owed across restart and the successful retry leaves no WAL frames", async () => {
   const oldWord = "orchidrewritefixture";
   const row = { id: "rewrite", version: 1, scopeId: "fixture", text: oldWord, deleted: false };
-  index.upsert([row]);
+  await put(index, [row]);
   reader = new DatabaseSync(indexFile()); reader.exec("BEGIN"); reader.prepare("SELECT text FROM entries").all();
-  index.upsert([{ ...row, text: "retained replacement" }]);
-  expect(index.finishRewrite()).toBe(false);
+  await put(index, [{ ...row, text: "retained replacement" }]);
+  expect(await index.finishRewrite()).toBe(false);
   expect(index.maintenanceOwed()).toBe(true);
-  index.close(); index = new MemoryIndex(indexFile());
+  index.close(); index = await openTestIndex(indexFile());
   expect(index.maintenanceOwed()).toBe(true);
   reader.exec("COMMIT"); reader.close(); reader = undefined;
-  expect(index.finishRewrite()).toBe(true);
+  expect(await index.finishRewrite()).toBe(true);
+  // R3 permanently defers the optimize: pay the durable debt in worker-sized steps.
+  expect(index.maintenanceOwed()).toBe(true);
+  for (let step = 0; step < 1000 && index.maintenanceOwed(); step++) await workerTick(index);
+  expect((await index.sealAndTruncate()).truncated).toBe(true);
   expect(index.maintenanceOwed()).toBe(false);
   expect(bytes(`${indexFile()}-wal`).length).toBe(0);
   for (const copy of copies(indexFile(), oldWord)) expect(copy.found, copy.path).toBe(false);
@@ -173,19 +184,21 @@ it.each(["chat", "bot"] as const)("%s deletion scrubs both databases and their W
   await projectAll();
   expect(pendingDeletes()).toBe(0);
   expect(index.deletionScrubPending()).toBe(true);
-  expect(scrubUntilBlocked()).toBe(true);
+  expect(await scrubUntilBlocked()).toBe(true);
   await finish(marker);
 }, 30_000);
 
 it("a pinned reader keeps the index's scrub owed while receipts and chat removal finish, then retry clears it without repeating the merge", async () => {
-  const { store, bot, task, marker } = await seed();
+  // Pin before the marker is written: the checked seed path can otherwise
+  // seal and truncate its log before this fixture starts holding it.
   reader = new DatabaseSync(indexFile());
   reader.exec("BEGIN"); reader.prepare("SELECT count(*) FROM entries").get();
+  const { store, bot, task, marker } = await seed();
   expect(bytes(`${indexFile()}-wal`).includes(marker)).toBe(true);
   await runConversationDeletion(deletions, { threadIds: [task.threadId] }, () => store.deleteTask(bot.id, task.threadId));
   revoke();
   await projectAll();
-  expect(scrubUntilBlocked()).toBe(false);
+  expect(await scrubUntilBlocked()).toBe(false);
   // Acknowledged: no receipt waits on the scrub, which stays the index's own durable debt.
   expect(pendingDeletes()).toBe(0);
   expect(index.deletionScrubPending()).toBe(true);
@@ -193,7 +206,7 @@ it("a pinned reader keeps the index's scrub owed while receipts and chat removal
   // A second blocked attempt keeps the completed merge, rather than optimizing again.
   const exec = vi.spyOn((index as unknown as { db: DatabaseSync }).db, "exec");
   try {
-    expect(scrubUntilBlocked()).toBe(false);
+    expect(await scrubUntilBlocked()).toBe(false);
     expect(exec.mock.calls.some(([sql]) => sql.includes("'optimize'"))).toBe(false);
   } finally { exec.mockRestore(); }
   const probe = new DatabaseSync(indexFile());
@@ -201,7 +214,7 @@ it("a pinned reader keeps the index's scrub owed while receipts and chat removal
   finally { probe.close(); }
   expect(bytes(`${indexFile()}-wal`).includes(marker)).toBe(true);
   reader.exec("COMMIT"); reader.close(); reader = undefined;
-  expect(scrubUntilBlocked()).toBe(true);
+  expect(await scrubUntilBlocked()).toBe(true);
   await finish(marker);
 }, 30_000);
 
@@ -227,7 +240,7 @@ it("an unprojected deletion leaves a visible cleanup state and cannot hold the n
   expect(pendingDeletes()).toBeGreaterThanOrEqual(owed);
   revoke();
   await projectAll();
-  expect(scrubUntilBlocked()).toBe(true);
+  expect(await scrubUntilBlocked()).toBe(true);
   await finish(marker);
 }, 30_000);
 
@@ -249,6 +262,9 @@ it("a forget queued behind the last batch, while new rows keep arriving, is in t
   const batches:string[][]=[];
   internals.child={connected:true,send(message: {type:string;requestId:string;records:IndexedMemory[];stage?:string}){
     if(message.type==='index'){
+      // The stand-in performs no index I/O. Return its pool before the
+      // simulated arrivals and the independently controlled acknowledgement.
+      settleFixtureIndexGrant(message,event=>internals.onWorkerMessage(internals.child,event));
       batches.push(message.records.map(row=>row.id));
       // Capture keeps adding ordinary rows after this batch's position: a forward-only pass would never run dry.
       if(batches.length<6)transaction(()=>{for(let n=0;n<16;n++)live();});
@@ -276,21 +292,25 @@ it("a forget queued behind the last batch, while new rows keep arriving, is in t
 
 it("a crash mid-scrub keeps the index's scrub owed, and a restarted helper resumes that merge and erases the bytes", async () => {
   const { store, bot, task, marker } = await seed();
+  reader = new DatabaseSync(indexFile()); reader.exec("BEGIN"); reader.prepare("SELECT count(*) FROM entries").get();
   await runConversationDeletion(deletions, { threadIds: [task.threadId] }, () => store.deleteTask(bot.id, task.threadId));
   revoke();
   await projectAll();
   expect(pendingDeletes()).toBe(0);
   // One merge step committed, then the helper dies: no last-close checkpoint (an open reader keeps the log as it was).
-  expect(index.scrubDeleted()).toBe(false);
+  expect(await index.scrubDeleted()).toBe(false);
   expect(index.deletionScrubPending()).toBe(true);
   expect(copies(indexFile(), marker).some(copy => copy.found)).toBe(true);
-  reader = new DatabaseSync(indexFile()); reader.exec("BEGIN"); reader.prepare("SELECT count(*) FROM entries").get();
+  // Keep one connection through the simulated crash/reopen. Closing every SQLite
+  // connection would checkpoint without a seal, which a real process kill never does.
+  const keeper = new DatabaseSync(indexFile());
+  keeper.prepare("SELECT name FROM sqlite_schema LIMIT 1").get();
   index.close();
   reader.exec("COMMIT"); reader.close(); reader = undefined;
   // Restart: only the index's own marker is left, and it is enough.
-  index = new MemoryIndex(indexFile());
+  try { index = await openTestIndex(indexFile()); } finally { keeper.close(); }
   expect(index.deletionScrubPending()).toBe(true);
-  expect(scrubUntilBlocked()).toBe(true);
+  expect(await scrubUntilBlocked()).toBe(true);
   await finish(marker);
 }, 30_000);
 
@@ -303,15 +323,15 @@ it("startup settles a blocked scrub, including lexical_age shadow tables, before
     ensureAgeTables(setup);
     setup.exec("INSERT INTO lexical_age SELECT id,version,text FROM lexical; INSERT INTO lexical_age_keys SELECT id,CAST(version AS INTEGER),rowid FROM lexical_age");
   } finally { setup.close(); }
-  index.close(); index = new MemoryIndex(indexFile());
+  index.close(); index = await openTestIndex(indexFile());
   reader = new DatabaseSync(indexFile()); reader.exec("BEGIN"); reader.prepare("SELECT count(*) FROM lexical_age").get();
   await runConversationDeletion(deletions, { threadIds: [task.threadId] }, () => store.deleteTask(bot.id, task.threadId));
-  revoke(); await projectAll(); expect(scrubUntilBlocked()).toBe(false);
+  revoke(); await projectAll(); expect(await scrubUntilBlocked()).toBe(false);
   expect(index.deletionScrubPending()).toBe(true);
   // Keep another connection open so closing the writer cannot scrub on last close.
   index.close();
   reader.exec("COMMIT");
-  index = new MemoryIndex(indexFile());
+  index = await openTestIndex(indexFile());
   expect(index.deletionScrubPending()).toBe(false);
   expect(copies(indexFile(), marker).some(copy => copy.found)).toBe(false);
   expect(reader.prepare("SELECT 1 FROM lexical_age WHERE lexical_age MATCH ?").get(marker)).toBeUndefined();
@@ -329,7 +349,7 @@ it("an acknowledged rollover is requeued by a real forget and its late acknowled
     db.prepare("INSERT INTO memory_records(id,version,scope_id,kind,text,assertion,state,valid_from,created_at) VALUES(?, ?, ?, 'checkpoint','retained successor','assistant-inference','active',0,0)").run(row.id, Number(row.version) + 1, row.scope_id);
     db.prepare("UPDATE memory_projection_receipts SET lexical_status='deleted',embedding_status='deleted' WHERE record_id=? AND record_version=?").run(row.id, row.version);
   });
-  index.upsert([{ id: String(row.id), version: Number(row.version), scopeId: String(row.scope_id), text: "", deleted: true, rolled: true }]);
+  await put(index, [{ id: String(row.id), version: Number(row.version), scopeId: String(row.scope_id), text: "", deleted: true, rolled: true }]);
   expect(index.deletionScrubPending()).toBe(false);
   await runConversationDeletion(deletions, { threadIds: [task.threadId] }, () => store.deleteTask(bot.id, task.threadId));
   revoke();
@@ -342,7 +362,7 @@ it("an acknowledged rollover is requeued by a real forget and its late acknowled
   expect(status()).toBe("delete-pending");
   await projectAll();
   expect(status()).toBe("deleted");
-  expect(scrubUntilBlocked()).toBe(true);
+  expect(await scrubUntilBlocked()).toBe(true);
   await finish(marker);
 }, 30_000);
 
@@ -352,23 +372,24 @@ function scrubMeta(key:string):string|undefined{
   const value=db.prepare("SELECT value FROM index_meta WHERE key=?").get(key)?.value;
   return value===undefined?undefined:String(value);
 }
-function mergeToCheckpoint(){
-  for(let n=0;n<25_000&&scrubMeta("delete_scrub_owed")==="merge";n++)expect(index.scrubDeleted()).toBe(false);
+async function mergeToCheckpoint(){
+  for(let n=0;n<25_000&&scrubMeta("delete_scrub_owed")==="merge";n++)expect(await index.scrubDeleted()).toBe(false);
   expect(scrubMeta("delete_scrub_owed")).toBe("truncate");
 }
 
-it("a large index uses one-page merge budgets, resumes mid-merge, and erases raw bytes while retaining other rows", () => {
+it("a large index uses one-page merge budgets, resumes mid-merge, and erases raw bytes while retaining other rows", async () => {
   const marker="orchidlargeindexfixture";
   // Many distinct tokens and retained postings: forcing all segments into one cannot fit in one page.
   for(let batch=0;batch<512;batch++){
-    index.upsert(Array.from({length:16},(_,offset)=>{
+    await index.sealAndTruncate();
+    await put(index, Array.from({length:16},(_,offset)=>{
       const n=batch*16+offset;
       return {id:`large-${n}`,version:1,scopeId:"large-fixture",deleted:false,
         text:Array.from({length:80},(_,word)=>`fixtureterm${n}part${word}`).join(" ")+(n<16?` ${marker}`:"")};
     }));
   }
-  index.upsert(Array.from({length:16},(_,n)=>({id:`large-${n}`,version:1,scopeId:"large-fixture",deleted:true,text:""})));
-  const budgets:number[]=[],durations:number[]=[];
+  await put(index, Array.from({length:16},(_,n)=>({id:`large-${n}`,version:1,scopeId:"large-fixture",deleted:true,text:""})));
+  const budgets:number[]=[],durations:number[]=[],walls:number[]=[];
   let steps=0,restarted=false;
   while(index.deletionScrubPending()&&steps<25_000){
     const db=(index as unknown as {db:DatabaseSync}).db;
@@ -388,10 +409,10 @@ it("a large index uses one-page merge budgets, resumes mid-merge, and erases raw
       }
       return statement;
     });
-    const began=performance.now();
+    const began=process.cpuUsage(),wallBegan=performance.now();
     try{
-      index.scrubDeleted();
-      if(commands)durations.push(performance.now()-began);
+      await index.scrubDeleted();
+      if(commands){const used=process.cpuUsage(began);durations.push((used.user+used.system)/1000);walls.push(performance.now()-wallBegan);}
       expect(commands).toBeLessThanOrEqual(1);
       expect(exec.mock.calls.some(([sql])=>sql.includes("'optimize'"))).toBe(false);
     }finally{for(const restore of restoreRuns)restore();spy.mockRestore();exec.mockRestore();}
@@ -401,7 +422,7 @@ it("a large index uses one-page merge budgets, resumes mid-merge, and erases raw
       expect(JSON.parse(scrubMeta("delete_scrub_merge")!).started).toBe(true);
       // A keeper connection prevents last-close checkpointing from masking persistence errors.
       reader=new DatabaseSync(indexFile());
-      index.close();index=new MemoryIndex(indexFile());restarted=true;
+      index.close();index=await openTestIndex(indexFile());restarted=true;
     }
     // A normal search can run between every pair of merge steps.
     expect(index.search("fixtureterm8191part0",[{id:"large-8191",version:1}],null,"unused").hits.map(row=>row.id)).toEqual(["large-8191"]);
@@ -411,42 +432,69 @@ it("a large index uses one-page merge budgets, resumes mid-merge, and erases raw
   expect(index.deletionScrubPending()).toBe(false);
   expect(budgets[0]).toBe(-DELETE_SCRUB_MERGE_PAGES);
   expect(budgets.slice(1).every(pages=>pages===DELETE_SCRUB_MERGE_PAGES)).toBe(true);
-  // Wall-clock guard complements the one-command, one-page merge budget on the build box.
+  // CPU-time guard (a loaded build box can delay wall time arbitrarily) complements the one-command, one-page merge budget.
+  // Retain the existing wall-time guard as well as the CPU measurement.
   // The final checkpoint has its separate 50 ms reader wait and is not a merge step.
+  console.log(`DELETE-SCRUB-MERGE cpu_max_ms=${Math.max(...durations).toFixed(1)} wall_max_ms=${Math.max(...walls).toFixed(1)} steps=${durations.length}`);
   expect(Math.max(...durations)).toBeLessThan(50);
+  expect(Math.max(...walls)).toBeLessThan(50);
   for(const copy of copies(indexFile(),marker))expect(copy.found,copy.path).toBe(false);
   // Lost ack replay reuses the completed generation, without opening another merge.
-  index.upsert([{id:"large-0",version:1,scopeId:"large-fixture",deleted:true,text:""}]);
+  await put(index, [{id:"large-0",version:1,scopeId:"large-fixture",deleted:true,text:""}]);
   expect(index.deletionScrubPending()).toBe(false);
 },120_000);
 
-it.each(["during-merge","awaiting-truncate"] as const)("a rolled-out then forgotten row advances the generation %s", phase => {
+it.each(["during-merge","awaiting-truncate"].flatMap(phase=>[false,true].map(legacy=>({phase,legacy}))))("a rolled-out then forgotten row advances the generation $phase (legacy=$legacy)", async ({phase,legacy}) => {
+  // The old writer leaves tombstones; the new writer erases postings directly.
+  // Both must fence the later forget's generation through the final checkpoint.
+  if(legacy)(index as unknown as {db:DatabaseSync}).db.exec("INSERT INTO lexical(lexical,rank) VALUES('secure-delete',0)");
   const first="orchidfirstgeneration",later="orchidlatergeneration";
   const row=(id:string,text:string,deleted=false,rolled=false)=>({id,version:1,scopeId:"generation-fixture",text,deleted,rolled});
-  index.upsert([row("first",first),row("later",later),row("retained","retained generation fixture")]);
+  await put(index, [row("first",first),row("later",later),row("retained","retained generation fixture")]);
   reader=new DatabaseSync(indexFile());reader.exec("BEGIN");reader.prepare("SELECT text FROM entries").all();
-  index.upsert([row("first","",true)]);
-  expect(index.scrubDeleted()).toBe(false);
+  await put(index, [row("first","",true)]);
+  expect(await index.scrubDeleted()).toBe(false);
   if(phase==="awaiting-truncate"){
-    mergeToCheckpoint();
-    expect(index.scrubDeleted()).toBe(false);
+    await mergeToCheckpoint();
+    expect(await index.scrubDeleted()).toBe(false);
     expect(index.scrubBlocked).toBe(true);
   }
   const covered=JSON.parse(scrubMeta("delete_scrub_merge")!).generation;
-  index.upsert([row("later","",true,true)]);
+  await put(index, [row("later","",true,true)]);
   expect(Number(scrubMeta("delete_generation"))).toBeGreaterThan(covered);
   const generation=scrubMeta("delete_generation");
   // The forget itself now finds no row. Replaying it must neither skip nor restart its generation.
-  index.upsert([row("later","",true)]);
+  await put(index, [row("later","",true)]);
   expect(scrubMeta("delete_generation")).toBe(generation);
-  expect(index.scrubDeleted()).toBe(false);
-  expect(scrubMeta("delete_scrub_owed")).toBe("merge");
-  mergeToCheckpoint();
+  expect(await index.scrubDeleted()).toBe(false);
+  expect(scrubMeta("delete_scrub_owed")).toBe(!legacy&&phase==="awaiting-truncate"?"truncate":"merge");
+  await mergeToCheckpoint();
   expect(JSON.parse(scrubMeta("delete_scrub_merge")!).generation).toBe(Number(generation));
-  expect(index.scrubDeleted()).toBe(false);
+  expect(await index.scrubDeleted()).toBe(false);
   expect(index.scrubBlocked).toBe(true);
   reader.exec("COMMIT");reader.close();reader=undefined;
-  expect(index.scrubDeleted()).toBe(true);
+  expect(await index.scrubDeleted()).toBe(true);
   for(const marker of [first,later])for(const copy of copies(indexFile(),marker))expect(copy.found,copy.path).toBe(false);
   expect(index.search("retained",[{id:"retained",version:1}],null,"unused").hits.map(hit=>hit.id)).toEqual(["retained"]);
+});
+
+it.each(["scrub", "maintenance"])("%s propagates the pre-merge WAL drain before retrying owner deletion", async route => {
+  const record = { id: "drain-forget", version: 1, scopeId: "scope", text: "synthetic deletion evidence", deleted: false };
+  await put(index, [record]);
+  await put(index, [{ ...record, text: "", deleted: true }]);
+  expect(index.deletionScrubPending()).toBe(true);
+  const writer = (index as unknown as { writer: { admit(kind: string, reserve: number): boolean; write(...args: unknown[]): unknown } }).writer;
+  const admit = vi.spyOn(writer, "admit").mockReturnValue(false);
+  const write = vi.spyOn(writer, "write");
+  configureHelperAdmission({ request() {}, settle() {} });
+  try {
+    if (route === "maintenance") expect(await index.maintenanceStep()).toMatchObject({ drain: true });
+    else expect(await index.scrubDeleted()).toBe(false);
+    expect(index.scrubDrain).toBe(true);
+    expect(index.scrubBlocked).toBe(false);
+    expect(write).not.toHaveBeenCalled();
+  } finally { configureHelperAdmission(undefined); admit.mockRestore(); write.mockRestore(); }
+  await index.sealAndTruncate();
+  for (let step = 0; step < 100 && index.deletionScrubPending(); step++) await index.scrubDeleted();
+  expect(index.deletionScrubPending()).toBe(false);
 });

@@ -4,9 +4,11 @@ import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWorker } from "../src/index";
 import { fakeProvider, type CreateHomeInput } from "../src/b3-provider";
-import { AUTO_CANARY_FRESH_MS, AUTO_CANARY_PROBE_BUDGET_PER_PASS, AUTO_CANARY_PROBE_CONCURRENCY, AUTO_CANARY_RENDER_MAX_AGE_MS, AUTO_CANARY_STAGE_MS, AUTO_CANARY_DB_ANCHOR_SQL, UI_RENDER_MISSING_ALERT, UI_RENDER_MISSING_ALERT_MS, autoCanaryPass, LEASE_TTL_MS, PROVISION_MAX_MS, RECOVERY_HOLD_MS, type B3Dependencies, type Home } from "../src/b3-control";
+import { AUTO_CANARY_FRESH_MS, AUTO_CANARY_MINUTE_BUDGET, AUTO_CANARY_MINUTE_LEASE_MS, AUTO_CANARY_MINUTE_CONCURRENCY, AUTO_CANARY_MINUTE_PASS_MS, AUTO_CANARY_MINUTE_STAGE_MS, AUTO_CANARY_STEP_MS, AUTO_CANARY_PROBE_MS, AUTO_CANARY_PROBE_BUDGET_PER_PASS, AUTO_CANARY_PROBE_CONCURRENCY, AUTO_CANARY_RENDER_MAX_AGE_MS, AUTO_CANARY_STAGE_MS, AUTO_CANARY_DB_ANCHOR_SQL, UI_RENDER_MISSING_ALERT, UI_RENDER_MISSING_ALERT_MS, autoCanaryPass, LEASE_TTL_MS, PROVISION_MAX_MS, RECOVERY_HOLD_MS, b3Route, type B3Dependencies, type Home } from "../src/b3-control";
+import { HTTPError } from "../src/http";
 import { encodePayload, signPayload, verifyPayload, verifyRecoveryProof, verifyHomeKey, type SignedEnvelope } from "../src/b3-signatures";
 import { sha256 } from "../src/installations";
+import { MINUTE_TICK_DEADLINE_MS } from "../src/warm-pool";
 import { ALERT_POST_TIMEOUT_MS, ALERT_STAGE_MS, healthSchema, recordHealth, sweepMonitoring } from "../src/ops-monitor";
 
 const ADMIN = "test-only-b3-admin-no-real-access";
@@ -113,6 +115,40 @@ describe("B3 inert fake Worker/D1 construction", () => {
     expect((await call("/v1/fake-b3/reconcile", {}, "wrong")).status).toBe(401);
     expect((await reserve("home-1", INSTALL, { config: { ...CONFIG, quarantineRelayIP: "bad" } })).status).toBe(500);
     expect((await reserve("home-1", INSTALL2)).status).toBe(403);
+  });
+  it("capacity blocks seed <prefix>-1..<prefix>-N in slot order with one statement each, idempotently, alongside listed rows", async () => {
+    const blocks = { ...CONFIG, capacity: [{ id: "hel-available", projectId: "project-2", location: "hel1", serverType: "cpx32", outcome: "available" }],
+      capacityBlocks: [{ prefix: "prd", count: 400, projectId: "murage-live", location: "fsn1", serverType: "cx23", outcome: "available" }] };
+    expect((await reserve("home-1", INSTALL, { config: blocks })).status).toBe(201);
+    const rows = (await env.DB.prepare("SELECT id,project_id,location,server_type,outcome FROM cloud_capacity ORDER BY rowid").all<Record<string, string>>()).results;
+    expect(rows.length).toBe(401);
+    expect(rows[0].id).toBe("hel-available"); // listed rows first, then the block in number order
+    expect(rows.slice(1).map((r) => r.id)).toEqual(Array.from({ length: 400 }, (_, i) => `prd-${i + 1}`));
+    expect(rows[400]).toEqual({ id: "prd-400", project_id: "murage-live", location: "fsn1", server_type: "cx23", outcome: "available" });
+    expect((await env.DB.prepare("SELECT id FROM cloud_capacity WHERE home_id='home-1'").first())?.id).toBe("hel-available");
+    await seedInstallation(INSTALL2);
+    expect((await reserve("home-2", INSTALL2, { config: blocks })).status).toBe(201); // seeding again changes nothing
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_capacity").first<{ n: number }>())?.n).toBe(401);
+    expect((await env.DB.prepare("SELECT id FROM cloud_capacity WHERE home_id='home-2'").first())?.id).toBe("prd-1");
+  });
+  it("a block of the maximum 1000 slots seeds on D1 in one statement, and two blocks add up", async () => {
+    const big = { ...CONFIG, capacity: [], capacityBlocks: [
+      { prefix: "prd", count: 1000, projectId: "murage-live", location: "fsn1", serverType: "cx23", outcome: "available" },
+      { prefix: "prdb", count: 1000, projectId: "murage-live", location: "nbg1", serverType: "cx23", outcome: "available" }] };
+    expect((await reserve("home-1", INSTALL, { config: big })).status).toBe(201);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_capacity").first<{ n: number }>())?.n).toBe(2000);
+    expect((await env.DB.prepare("SELECT id FROM cloud_capacity ORDER BY rowid DESC LIMIT 1").first())?.id).toBe("prdb-1000");
+    expect((await env.DB.prepare("SELECT id FROM cloud_capacity WHERE home_id='home-1'").first())?.id).toBe("prd-1");
+  });
+  it("capacity blocks refuse a duplicate slot id (row or block), a bad prefix and more than the block maximum", async () => {
+    const block = { prefix: "prd", count: 3, projectId: "murage-live", location: "fsn1", serverType: "cx23", outcome: "available" };
+    const row = { id: "prd-2", projectId: "murage-live", location: "fsn1", serverType: "cx23", outcome: "available" };
+    for (const bad of [{ ...CONFIG, capacity: [row], capacityBlocks: [block] }, { ...CONFIG, capacityBlocks: [block, block] },
+      { ...CONFIG, capacityBlocks: [{ ...block, prefix: "Prd" }] }, { ...CONFIG, capacityBlocks: [{ ...block, prefix: "prd-x" }] },
+      { ...CONFIG, capacityBlocks: [{ ...block, count: 1001 }] }, { ...CONFIG, capacityBlocks: [{ ...block, count: 0 }] }]) {
+      expect((await reserve("home-1", INSTALL, { config: bad })).status, JSON.stringify(bad.capacityBlocks)).toBe(500);
+    }
+    expect(await env.DB.prepare("SELECT id FROM cloud_capacity WHERE id LIKE 'prd-%'").first()).toBeNull();
   });
   it("skips recorded 412/503 choices, reserves before checkout, and waitlists before payment", async () => {
     expect((await reserve()).status).toBe(201);
@@ -242,8 +278,15 @@ describe("B3 inert fake Worker/D1 construction", () => {
     expect((await verifyHomeKey(d.homeKey, publicJwk, "home-1", c.generation, "https://home-1.murage.test", NOW)).homeKey).toBe((await getHome()).home_key);
     // B4 wiring step 3: flux_renewal_due is behind the Flux switch. Off (default): absent. On: present (no Flux key yet: false).
     expect("flux_renewal_due" in d).toBe(false);
-    const on = await (await call("/v1/machines/home-1/desired", undefined, c.machineCredential, { env: { CLOUD_FLUX_ROUTES_ENABLED: "1" } })).json<Record<string, unknown>>();
+    const on = await (await call("/v1/machines/home-1/desired", undefined, c.machineCredential, { env: { CLOUD_FLUX_ROUTES_ENABLED: "1", FLUX_CLOUD_SERVICE_TOKEN: "s".repeat(40), FLUX_CLOUD_GRANTS_TOKEN: "g".repeat(40) } })).json<Record<string, unknown>>();
     expect(on.flux_renewal_due).toBe(false);
+    // The FIRST key: a paid, ready home with a live subscription that never had a Flux key is cued (on); dark, the field stays absent.
+    await env.DB.prepare(`INSERT OR REPLACE INTO billing_subscriptions (home_id,customer_id,subscription_id,plan,status,created_at,updated_at)
+      VALUES ('home-1','cus_1','sub_1','starter','active',?,?)`).bind(NOW, NOW).run();
+    const paidOn = await (await call("/v1/machines/home-1/desired", undefined, c.machineCredential, { env: { CLOUD_FLUX_ROUTES_ENABLED: "1", FLUX_CLOUD_SERVICE_TOKEN: "s".repeat(40), FLUX_CLOUD_GRANTS_TOKEN: "g".repeat(40) } })).json<Record<string, unknown>>();
+    expect(paidOn.flux_renewal_due).toBe(true);
+    expect("flux_renewal_due" in await (await call("/v1/machines/home-1/desired", undefined, c.machineCredential)).json<Record<string, unknown>>()).toBe(false);
+    await env.DB.prepare("DELETE FROM billing_subscriptions WHERE home_id='home-1'").run();
     vi.mocked(Date.now).mockReturnValue(NOW + 60_001);
     expect((await (await call("/v1/machines/home-1/desired", undefined, c.machineCredential)).json<{ heartbeatFresh: boolean }>()).heartbeatFresh).toBe(false);
     // Source service expiry only; runtime quiescence and sleep are home/B7 tests.
@@ -664,6 +707,18 @@ describe("B3 automatic canary: a paid home in checking passes on live evidence",
     expect((await heartbeat(c, { appResponding: true, checks: OK_CHECKS }, { "x-murage-door": "v2" })).status).toBe(200);
     expect(await doorProofOf()).toBe(0); expect(await doorOf()).toBe("v2");
   });
+  const proofOf = async () => (await env.DB.prepare("SELECT door_proof FROM cloud_homes WHERE id='home-1'").first<{ door_proof: number }>())!.door_proof;
+  it("browser owner: X-Murage-Owner-Factor 1 stamps door_proof 1, the next heartbeat without it clears it, any other value is not 1", async () => {
+    const c = await enrolled();
+    expect(await proofOf()).toBe(0);
+    expect((await heartbeat(c, { appResponding: true, checks: OK_CHECKS }, { "x-murage-door": "v2", "x-murage-owner-factor": "1" })).status).toBe(200);
+    expect(await proofOf()).toBe(1);
+    expect(await doorOf()).toBe("v2");
+    expect((await heartbeat(c, { appResponding: true, checks: OK_CHECKS }, { "x-murage-door": "v2" })).status).toBe(200);
+    expect(await proofOf()).toBe(0);
+    expect((await heartbeat(c, { appResponding: true, checks: OK_CHECKS }, { "x-murage-owner-factor": "2" })).status).toBe(200);
+    expect(await proofOf()).toBe(0);
+  });
   it("D1 heartbeat: a stale generation changes nothing, header or not", async () => {
     const c = await enrolled();
     expect((await heartbeat(c, { appResponding: true, checks: OK_CHECKS }, { "x-murage-door": "v2" })).status).toBe(200);
@@ -996,6 +1051,235 @@ describe("B3 automatic canary: a paid home in checking passes on live evidence",
     expect(await notices()).toBe(0);
     expect(await autoCanaryPass({ ...testEnv(), DB: delayed(0) } as Env, probe().deps.probeFetch)).toBe(0);
     expect((await readyRow())!.desired_state).toBe("ready");
+  });
+  describe("the 1-minute cron also runs the pass (a paid home is promoted within about a minute)", () => {
+    const NON5 = 1_800_000_060_000; // minute 30,000,001: not divisible by 5, so only the 1-minute cron reaches the home
+    const ON5 = 1_800_000_000_000; // minute 30,000,000: the */5 reconcile runs its own pass, the minute pass stands down
+    async function minuteCron(e: Env, scheduledTime: number, deps: B3Dependencies) {
+      const ctx = createExecutionContext();
+      createWorker(noNetwork, noNetwork, deps).scheduled({ scheduledTime, cron: "* * * * *", noRetry() {} }, e, ctx);
+      await waitOnExecutionContext(ctx);
+    }
+    /** The database with every statement recorded, and the ones matching `fail` refused. */
+    const watched = (fail?: (sql: string) => boolean) => {
+      const sqls: string[] = [];
+      const DB = new Proxy(env.DB, { get(target, key) {
+        if (key === "prepare") return (sql: string) => { sqls.push(sql); if (fail?.(sql)) throw new Error("d1_down"); return target.prepare(sql); };
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
+      } }) as D1Database;
+      return { sqls, DB };
+    };
+    it("a minute that is not a multiple of 5 probes and promotes a checking home whose evidence holds", async () => {
+      await enrolled();
+      await endpoint();
+      const p = probe();
+      await minuteCron(testEnv(), NON5, p.deps);
+      expect(p.calls).toHaveLength(1);
+      expect((await readyRow())!.desired_state).toBe("ready");
+    });
+    it("a minute divisible by 5 runs the pass too: the lease, not a skip, keeps two passes apart", async () => {
+      await enrolled();
+      await endpoint();
+      const p = probe();
+      await minuteCron(testEnv(), ON5, p.deps);
+      expect(p.calls).toHaveLength(1);
+      expect((await readyRow())!.desired_state).toBe("ready");
+    });
+    it("B3 off: the minute cron probes nothing", async () => {
+      await enrolled();
+      await endpoint();
+      const p = probe();
+      await minuteCron({ ...testEnv(), CLOUD_B3_MODE: "off" } as Env, NON5, p.deps);
+      expect(p.calls).toHaveLength(0);
+      expect((await readyRow())!.desired_state).toBe("checking");
+    });
+    it("a failing pass is logged with its errorCode and does not stop the pool tick", async () => {
+      const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const w = watched((sql) => sql.includes("ORDER BY p.probed_at"));
+      await minuteCron({ ...testEnv(), DB: w.DB } as Env, NON5, probe().deps);
+      const lines = log.mock.calls.map((c) => String(c[0]));
+      expect(lines.some((l) => l.includes("b3 minute auto-canary failed") && l.includes("b3_auto_canary_internal"))).toBe(true);
+      expect(lines.some((l) => l.includes("pool minute tick failed"))).toBe(false);
+      expect(w.sqls.some((sql) => sql.includes("warm_pool"))).toBe(true); // the tick ran beside the failed pass
+    });
+    it("with no home checking the pass costs the one candidate read and writes nothing", async () => {
+      const w = watched();
+      await minuteCron({ ...testEnv(), DB: w.DB } as Env, NON5, probe().deps);
+      expect(w.sqls.filter((sql) => sql.includes("ORDER BY p.probed_at"))).toHaveLength(1);
+      expect(w.sqls.filter((sql) => /UPDATE (provision_attempts|cloud_home_health)/.test(sql))).toHaveLength(0);
+    });
+    it("the scheduled minute handler applies the minute limits: 35 eligible homes, at most AUTO_CANARY_MINUTE_BUDGET probed, at most AUTO_CANARY_MINUTE_CONCURRENCY at once", async () => {
+      await enrolled();
+      await endpoint();
+      for (let i = 1; i < 35; i++) await cloneHome(`home-m${String(i).padStart(3, "0")}`);
+      let inflight = 0;
+      let most = 0;
+      const p = probe(async () => { inflight++; most = Math.max(most, inflight); await new Promise((r) => setTimeout(r, 2)); inflight--; return publicOk(); });
+      await minuteCron(testEnv(), NON5, p.deps);
+      expect(p.calls).toHaveLength(AUTO_CANARY_MINUTE_BUDGET);
+      expect(most).toBe(AUTO_CANARY_MINUTE_CONCURRENCY);
+      expect(AUTO_CANARY_MINUTE_STAGE_MS + AUTO_CANARY_STEP_MS).toBeLessThanOrEqual(AUTO_CANARY_MINUTE_PASS_MS);
+      expect(AUTO_CANARY_MINUTE_PASS_MS + AUTO_CANARY_STEP_MS).toBeLessThan(MINUTE_TICK_DEADLINE_MS);
+      expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_homes WHERE desired_state='ready'").first<{ n: number }>())!.n).toBe(AUTO_CANARY_MINUTE_BUDGET);
+    });
+    it("the minute pass admits no promotion once less than a step is left in its whole-pass deadline: the home keeps checking", async () => {
+      await enrolled();
+      await endpoint();
+      // Slow D1: the clock reaches 2 s before the pass deadline while the bookkeeping batch is built (after the probe stage).
+      const w = watched((sql) => { if (sql.includes("UPDATE cloud_home_health")) vi.mocked(Date.now).mockReturnValue(Date.now() + AUTO_CANARY_MINUTE_PASS_MS - AUTO_CANARY_STEP_MS + 1_000); return false; });
+      const p = probe();
+      await minuteCron({ ...testEnv(), DB: w.DB } as Env, NON5, p.deps);
+      expect(p.calls).toHaveLength(1);
+      expect((await readyRow())!.desired_state).toBe("checking");
+    });
+    describe("one pass at a time (auto_canary_lease)", () => {
+      const lease = () => env.DB.prepare("SELECT owner,expires_at FROM auto_canary_lease WHERE id=1").first<{ owner: string; expires_at: number }>();
+      beforeEach(async () => { await env.DB.prepare("DELETE FROM auto_canary_lease").run(); }); // storage is shared across tests in the file
+      afterEach(async () => { await env.DB.prepare("DELETE FROM auto_canary_lease").run(); });
+      it("two overlapping passes: the second skips without probing or writing; the first promotes and releases the lease", async () => {
+        await enrolled();
+        await endpoint();
+        let open!: () => void;
+        const gate = new Promise<void>((resolve) => { open = resolve; });
+        let entered!: () => void;
+        const inProbe = new Promise<void>((resolve) => { entered = resolve; });
+        const first = probe(async () => { entered(); await gate; return publicOk(); });
+        const second = probe();
+        const a = autoCanaryPass(testEnv(), first.deps.probeFetch);
+        await inProbe;
+        expect((await lease())!.owner).toBeTruthy();
+        expect(await autoCanaryPass(testEnv(), second.deps.probeFetch)).toBe(0);
+        expect(second.calls).toHaveLength(0);
+        open();
+        expect(await a).toBe(0);
+        expect(first.calls).toHaveLength(1);
+        expect((await readyRow())!.desired_state).toBe("ready");
+        expect(await lease()).toBeNull();
+      });
+      it("a pass finds the lease held by another and unexpired: it skips and leaves the row alone", async () => {
+        await enrolled();
+        await endpoint();
+        await env.DB.prepare("INSERT INTO auto_canary_lease (id,owner,expires_at) VALUES (1,'other',?)").bind(Date.now() + 60_000).run();
+        const p = probe();
+        expect(await autoCanaryPass(testEnv(), p.deps.probeFetch)).toBe(0);
+        expect(p.calls).toHaveLength(0);
+        expect(await lease()).toEqual({ owner: "other", expires_at: Date.now() + 60_000 });
+        expect((await readyRow())!.desired_state).toBe("checking");
+      });
+      it("an expired lease is taken over and released afterwards", async () => {
+        await enrolled();
+        await endpoint();
+        await env.DB.prepare("INSERT INTO auto_canary_lease (id,owner,expires_at) VALUES (1,'dead',?)").bind(Date.now()).run();
+        const p = probe();
+        expect(await autoCanaryPass(testEnv(), p.deps.probeFetch)).toBe(0);
+        expect(p.calls).toHaveLength(1);
+        expect((await readyRow())!.desired_state).toBe("ready");
+        expect(await lease()).toBeNull();
+      });
+      it("a pass whose lease was taken over mid-pass writes nothing, promotes nothing, and does not release the new owner's lease", async () => {
+        await enrolled();
+        await endpoint();
+        const before = await env.DB.prepare("SELECT * FROM cloud_home_health WHERE home_id='home-1'").first();
+        const p = probe(async () => {
+          await env.DB.prepare("UPDATE auto_canary_lease SET owner='thief',expires_at=? WHERE id=1").bind(Date.now() + 60_000).run();
+          return publicOk();
+        });
+        expect(await autoCanaryPass(testEnv(), p.deps.probeFetch)).toBe(0);
+        expect(p.calls).toHaveLength(1);
+        expect((await readyRow())!.desired_state).toBe("checking");
+        expect(await env.DB.prepare("SELECT * FROM cloud_home_health WHERE home_id='home-1'").first()).toEqual(before);
+        expect((await lease())!.owner).toBe("thief");
+      });
+      it("takeover between the candidate read and the stamp: the old owner stamps nothing, probes nothing, writes nothing", async () => {
+        await enrolled();
+        await endpoint();
+        const stampedAt = () => env.DB.prepare("SELECT probed_at FROM provision_attempts WHERE home_id='home-1'").first();
+        const beforeStamp = await stampedAt();
+        const before = await env.DB.prepare("SELECT * FROM cloud_home_health WHERE home_id='home-1'").first();
+        // The stamp statement runs only after the thief took the lease (the window between the candidate read and the stamp).
+        const DB = new Proxy(env.DB, { get(target, key) {
+          if (key === "prepare") return (sql: string) => {
+            const statement = target.prepare(sql);
+            if (!sql.includes("SET probed_at=?1 WHERE EXISTS")) return statement;
+            return new Proxy(statement, { get(inner, name) {
+              if (name === "bind") return (...args: unknown[]) => { const bound = inner.bind(...args); return new Proxy(bound, { get(b, n) {
+                if (n === "all") return async () => {
+                  await target.prepare("UPDATE auto_canary_lease SET owner='thief',expires_at=? WHERE id=1").bind(Date.now() + 60_000).run();
+                  return b.all();
+                };
+                const v = Reflect.get(b, n); return typeof v === "function" ? v.bind(b) : v;
+              } }); };
+              const v = Reflect.get(inner, name); return typeof v === "function" ? v.bind(inner) : v;
+            } });
+          };
+          const value = Reflect.get(target, key);
+          return typeof value === "function" ? value.bind(target) : value;
+        } }) as D1Database;
+        const p = probe();
+        expect(await autoCanaryPass({ ...testEnv(), DB } as Env, p.deps.probeFetch)).toBe(0);
+        expect(p.calls).toHaveLength(0);
+        expect(await stampedAt()).toEqual(beforeStamp);
+        expect(await env.DB.prepare("SELECT * FROM cloud_home_health WHERE home_id='home-1'").first()).toEqual(before);
+        expect((await readyRow())!.desired_state).toBe("checking");
+        expect((await lease())!.owner).toBe("thief");
+      });
+      it("work that runs past the pass deadline and the lease expiry is fenced: a thief holds the lease and the late pass writes no bookkeeping, alert or promotion", async () => {
+        await enrolled();
+        await endpoint();
+        const before = await env.DB.prepare("SELECT * FROM cloud_home_health WHERE home_id='home-1'").first();
+        const beforeAttempt = await env.DB.prepare("SELECT probed_at,ui_missing_since FROM provision_attempts WHERE home_id='home-1'").first();
+        const start = Date.now();
+        const p = probe(async () => {
+          // The probe answers after the whole-pass deadline AND the lease expiry; another pass has meanwhile taken the lease.
+          vi.mocked(Date.now).mockReturnValue(start + AUTO_CANARY_MINUTE_PASS_MS + 20_000);
+          await env.DB.prepare("UPDATE auto_canary_lease SET owner='thief',expires_at=? WHERE id=1").bind(Date.now() + AUTO_CANARY_MINUTE_LEASE_MS).run();
+          return publicOk();
+        });
+        await autoCanaryPass(testEnv(), p.deps.probeFetch, { stageMs: AUTO_CANARY_MINUTE_STAGE_MS, budget: AUTO_CANARY_MINUTE_BUDGET,
+          concurrency: AUTO_CANARY_MINUTE_CONCURRENCY, passMs: AUTO_CANARY_MINUTE_PASS_MS, leaseMs: AUTO_CANARY_MINUTE_LEASE_MS });
+        expect(p.calls).toHaveLength(1);
+        expect((await readyRow())!.desired_state).toBe("checking");
+        expect(await env.DB.prepare("SELECT * FROM cloud_home_health WHERE home_id='home-1'").first()).toEqual(before);
+        const after = await env.DB.prepare("SELECT probed_at,ui_missing_since FROM provision_attempts WHERE home_id='home-1'").first<{ probed_at: number; ui_missing_since: number | null }>();
+        expect(after!.ui_missing_since).toBe((beforeAttempt as { ui_missing_since: number | null }).ui_missing_since);
+        expect((await lease())!.owner).toBe("thief");
+        expect(AUTO_CANARY_MINUTE_LEASE_MS).toBe(AUTO_CANARY_MINUTE_PASS_MS + 15_000);
+      });
+      it("migration 0133 missing: the pass skips with a logged errorCode and reconcileB3 still completes its receipts", async () => {
+        await enrolled();
+        await endpoint();
+        await env.DB.prepare(`INSERT INTO cloud_outbox (id,home_id,generation,owner_id,kind,payload,created_at)
+          SELECT 'receipt-0133',id,generation,owner_id,'stop','{}',? FROM cloud_homes WHERE id='home-1'`).bind(Date.now()).run();
+        await env.DB.prepare("DROP TABLE auto_canary_lease").run();
+        const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+        try {
+          const p = probe();
+          const response = await reconcile(p.deps);
+          expect(response.status).toBe(200);
+          expect(p.calls).toHaveLength(0);
+          expect(logged.mock.calls.some((c) => String(c[0]).includes("auto_canary_lease_missing"))).toBe(true);
+          expect(await env.DB.prepare("SELECT completed_at FROM cloud_outbox WHERE id='receipt-0133'").first<{ completed_at: number | null }>())
+            .not.toMatchObject({ completed_at: null });
+          expect((await readyRow())!.desired_state).toBe("checking");
+        } finally {
+          logged.mockRestore();
+          await env.DB.prepare("CREATE TABLE auto_canary_lease (id INTEGER PRIMARY KEY CHECK(id=1), owner TEXT NOT NULL, expires_at INTEGER NOT NULL)").run();
+        }
+      });
+    });
+    it("a late probe on a home that is already ready leaves its health row unchanged (no epoch bump)", async () => {
+      await enrolled();
+      await endpoint();
+      const p = probe(async () => {
+        await env.DB.prepare("UPDATE cloud_homes SET desired_state='ready' WHERE id='home-1'").run();
+        return new Response("down", { status: 503 }); // a failed probe: a negative event on a home still checking
+      });
+      const before = await env.DB.prepare("SELECT * FROM cloud_home_health WHERE home_id='home-1'").first();
+      await autoCanaryPass(testEnv(), p.deps.probeFetch);
+      expect(p.calls).toHaveLength(1);
+      expect(await env.DB.prepare("SELECT * FROM cloud_home_health WHERE home_id='home-1'").first()).toEqual(before);
+    });
   });
   it("past the provisioning budget without evidence the home is still given up on (home_never_ready)", async () => {
     await enrolled(false);
@@ -1660,6 +1944,7 @@ describe("B3 automatic canary: a paid home in checking passes on live evidence",
       ["no instance", () => Response.json({ app: "murage", ui: "ok", uiAt: now })],
       ["an extra key", () => publicOk({ pid: 1 })],
       ["a door that is neither v1 nor v2", () => publicOk({ door: "v3" })],
+      ["an ownerFactor that is not 1", () => publicOk({ door: "v2", ownerFactor: 2 })],
     ];
     for (const [name, answer] of failing) {
       const p = probe(answer);
@@ -1670,8 +1955,9 @@ describe("B3 automatic canary: a paid home in checking passes on live evidence",
     await inStep(c); // every failed probe bumped the epoch
     // A second inside 15 min: still evidence. (Exactly 15 min old when probed is past it when the promotion batch executes: the guard
     // judges ages at execution on the database's clock, Astra AUTOCANARY-12 P2-2.)
-    // A door-v2 home names its door in the same body ("door":"v2"); that is not an extra key.
-    await reconcile(probe(() => publicOk({ door: "v2", uiAt: now - AUTO_CANARY_RENDER_MAX_AGE_MS + 1_000 })).deps);
+    // A door-v2 home names its door in the same body ("door":"v2"), and a home with the remembered-owner browser factor adds
+    // "ownerFactor":1 (server/cloud-home/health.ts publicHealthBody); neither is an extra key.
+    await reconcile(probe(() => publicOk({ door: "v2", ownerFactor: 1, uiAt: now - AUTO_CANARY_RENDER_MAX_AGE_MS + 1_000 })).deps);
     expect((await readyRow())!.desired_state).toBe("ready");
   });
   it("render missing for 10 minutes while everything else is green raises home.ui_render_missing once; ready resolves it (Astra AUTOCANARY-5 P2)", async () => {
@@ -1783,13 +2069,15 @@ describe("B3 automatic canary: a paid home in checking passes on live evidence",
     await reconcile(failed().deps);
     expect((await env.DB.prepare("SELECT id,resolved_at,resolve_notice_due FROM cloud_alerts WHERE id IN ('stray','gone') ORDER BY id").all()).results)
       .toEqual([{ id: "gone", resolved_at: t + 2, resolve_notice_due: 1 }, { id: "stray", resolved_at: t + 2, resolve_notice_due: 1 }]);
-    // The monitoring sweep sends each resolution notice once.
+    // Two-tier alerts: a row's own resolution notice is never sent (a closed page group posts one resolve message, and this group never opened:
+    // render alerts page only on 2 or more homes), and the sweep clears every owed notice.
     const sent: { kind: string; homeId: string }[] = [];
     const hook = (async (_url: string, init: RequestInit) => { sent.push(JSON.parse(init.body as string)); return new Response("ok"); }) as unknown as typeof fetch;
     const withHook = { ...testEnv(), ALERT_WEBHOOK_URL: "https://hooks.example.test/x" } as Env;
     await sweepMonitoring(withHook, t + 3, hook);
     await sweepMonitoring(withHook, t + 4, hook);
-    expect(sent.filter((m) => m.kind === `${UI_RENDER_MISSING_ALERT}.resolved`).map((m) => m.homeId).sort()).toEqual(["home-1", "home-1", "home-gone"]);
+    expect(sent.filter((m) => m.kind !== "daily.summary")).toEqual([]);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind=? AND resolve_notice_due=1").bind(UI_RENDER_MISSING_ALERT).first<{ n: number }>())!.n).toBe(0);
   });
   it("a held alert webhook never delays promotions: alerts are only recorded in the pass and sent by the monitoring sweep (Astra AUTOCANARY-6 P2)", async () => {
     await enrolled();
@@ -1812,11 +2100,17 @@ describe("B3 automatic canary: a paid home in checking passes on live evidence",
       expect(await env.DB.prepare("SELECT delivered_at,resolved_at FROM cloud_alerts WHERE home_id='home-2' AND kind=?").bind(UI_RENDER_MISSING_ALERT).first())
         .toEqual({ delivered_at: null, resolved_at: null });
     } finally { vi.unstubAllGlobals(); }
-    // The sweep delivers it.
-    const sent: { kind: string; homeId: string }[] = [];
-    await sweepMonitoring({ ...testEnv(), ALERT_WEBHOOK_URL: "https://hooks.example.test/x" } as Env, LATER, (async (_u: string, init: RequestInit) => {
+    // The sweep delivers it, as a page: one render-missing home is below the two-home threshold, so it waits; a second home makes the page.
+    const sent: { kind: string; homeId: string; homes?: string[] }[] = [];
+    const sweep = () => sweepMonitoring({ ...testEnv(), ALERT_WEBHOOK_URL: "https://hooks.example.test/x" } as Env, LATER, (async (_u: string, init: RequestInit) => {
       sent.push(JSON.parse(init.body as string)); return new Response("ok"); }) as unknown as typeof fetch);
-    expect(sent.filter((m) => m.kind === UI_RENDER_MISSING_ALERT).map((m) => m.homeId)).toEqual(["home-2"]);
+    await sweep();
+    expect(sent.filter((m) => m.kind !== "daily.summary")).toEqual([]);
+    await env.DB.prepare("INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at) VALUES ('second','home-3',?,'high','x',?)").bind(UI_RENDER_MISSING_ALERT, LATER).run();
+    await sweep();
+    const pages = sent.filter((m) => m.kind === "page.homes.not_created");
+    expect(pages).toHaveLength(1);
+    expect([...(pages[0].homes ?? [])].sort()).toEqual(["home-2", "home-3"]);
   });
   it("mixed fleet through the complete cron with D1 latency and a stalled webhook: old-image, render-missing and green homes, 90 probed, the green promoted, no D1 call in the stage (Astra AUTOCANARY-6/7)", async () => {
     await enrolled();
@@ -1911,8 +2205,8 @@ describe("B3 automatic canary: a paid home in checking passes on live evidence",
     const elapsed = clock - t0;
     console.log(JSON.stringify({ mixed: true, probes, most, stageMs: lastProbeEnd - firstProbe, cronMs: elapsed, dbInStage, webhookSends: sends.length }));
     // The render alerts were sent (and failed) by the sweep, never inside the canary pass, in a bounded stage; each stays owed (claimed,
-    // retried by a later sweep).
-    expect(sends.length).toBeGreaterThanOrEqual(of("missing").length);
+    // retried by a later sweep). Two-tier alerts: all of them are ONE page for the group, not one send per home.
+    expect(sends.length).toBeGreaterThanOrEqual(1);
     expect(sends.filter((x) => x.inStage)).toHaveLength(0);
     expect(Math.min(...sends.map((x) => x.start))).toBeGreaterThanOrEqual(lastProbeEnd);
     const hookSpan = Math.max(...sends.map((x) => x.end)) - Math.min(...sends.map((x) => x.start));
@@ -2282,5 +2576,32 @@ describe("pre-authentication answers do not reveal whether a home exists", () =>
   it("tells only an authenticated admin that a home is absent", async () => {
     expect((await call("/v1/fake-b3/homes/no-such-home/notice", { noticeId: "notice-key-0001", generation: 1 })).status).toBe(404);
     expect(await raw("POST", "/v1/fake-b3/homes/no-such-home/notice", { body: "{}", token: "wrong" })).toEqual(UNAUTHORIZED);
+  });
+  it("CH1 M2: POST /v1/fake-b3/reserve fails closed in production (live mode, not marked staging): 404 and no home row; fake mode and the marked staging control plane still reserve", async () => {
+    const prod = await reserve("home-prod", INSTALL, { mode: "live", env: { CLOUD_CP0_STAGING: "0" } });
+    expect(prod.status).toBe(404);
+    const unset = await reserve("home-unset", INSTALL, { mode: "live", env: { CLOUD_CP0_STAGING: "" } });
+    expect(unset.status).toBe(404);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_homes WHERE id IN ('home-prod','home-unset')").first()).toEqual({ n: 0 });
+    expect((await reserve("home-fake", INSTALL, { env: { CLOUD_CP0_STAGING: "0" } })).status).toBe(201); // fake mode (tests)
+    expect((await reserve("home-stg", INSTALL, { mode: "live", env: { CLOUD_CP0_STAGING: "1" } })).status).not.toBe(404); // the marked staging CP
+  });
+  it("CH1 P3: b3Route on a live MURAGE_ENV Worker refuses fake-b3 reserve and payments with 404 even when CLOUD_B3_MODE is overridden to fake; the same calls without a live MURAGE_ENV are not refused", async () => {
+    // b3Route is called directly: the fetch handler's own env isolation (503 env_mixed) would otherwise answer first for an inconsistent live env.
+    const viaRoute = async (path: string, body: unknown, extra: Record<string, string>) => {
+      let res: Response | null = null;
+      try {
+        res = await b3Route(new Request(`https://admin.murage.test${path}`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${ADMIN}`, "CF-Connecting-IP": "203.0.113.10" }, body: JSON.stringify(body) }),
+          { ...testEnv(), CLOUD_B3_MODE: "fake", ...extra } as Env);
+      } catch (e) { if (e instanceof HTTPError) return e.status; throw e; }
+      return res ? res.status : 0;
+    };
+    const reserveBody = (id: string) => ({ homeId: id, installationId: INSTALL, ownerId: OWNER, publicOrigin: `https://${id}.murage.test`, idempotencyKey: `reserve-key-${id}-0001` });
+    const payBody = { eventId: "evt-p3", homeId: "home-p3", version: 1, status: "paid", paymentId: "payment-p3" };
+    expect(await viaRoute("/v1/fake-b3/reserve", reserveBody("home-p3-live"), { MURAGE_ENV: "live" })).toBe(404);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_homes WHERE id='home-p3-live'").first()).toEqual({ n: 0 });
+    expect(await viaRoute("/v1/fake-b3/payments", payBody, { MURAGE_ENV: "live" })).toBe(404);
+    expect(await viaRoute("/v1/fake-b3/reserve", reserveBody("home-p3"), {})).toBe(201);        // control: no live MURAGE_ENV
+    expect(await viaRoute("/v1/fake-b3/payments", payBody, {})).not.toBe(404);
   });
 });

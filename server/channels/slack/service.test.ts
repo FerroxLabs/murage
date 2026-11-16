@@ -118,3 +118,15 @@ it("temporary disconnect keeps the saved binding authoritative but blocks transp
   await f.service.tick(); expect(f.sendText).not.toHaveBeenCalled();
   await f.service.stop(); expect(f.service.isCurrent(saved.binding)).toBe(false);
 });
+
+it("Cloud refuses raw sign-in codes before Slack persistence or enqueue", async () => {
+  vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+  try {
+    const f = fixture(); await f.pair();
+    const code = "4/fixtureCodeSecret0123456789";
+    await f.emit(f.raw(code));
+    expect(f.enqueue).not.toHaveBeenCalled();
+    for (const file of readdirSync(join(f.dir, "channels/slack"))) expect(readFileSync(join(f.dir, "channels/slack", file), "utf8")).not.toContain(code);
+    expect(f.sendText).toHaveBeenCalledWith(expect.objectContaining({ text: "That looks like a sign-in code. Paste it in the sign-in dialog, not here." }));
+  } finally { vi.unstubAllEnvs(); }
+});

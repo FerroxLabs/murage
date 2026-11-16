@@ -214,7 +214,8 @@ actor PhoneJobRunner {
         guard let args = offer.decodedArgs else {
             _ = await call(workspace, token, "POST", "/jobs/" + offer.operationId + "/decline", ["offerId": offer.offerId]); return
         }
-        guard await cards.canPresent(workspace: workspace), foreground, epoch == generation, !blocked.contains(workspace) else { return }
+        guard foreground, epoch == generation, !blocked.contains(workspace) else { return }
+        if !offer.permissionRun { guard await cards.canPresent(workspace: workspace) else { return } }
         if let held = current {
             if held.workspace != workspace || held.offer.operationId != offer.operationId {
                 waiting.removeAll { $0.0 == workspace }; waiting.append((workspace, offer))
@@ -223,6 +224,7 @@ actor PhoneJobRunner {
         }
         let job = Job(workspace, offer, args, token, generation)
         current = job
+        if offer.permissionRun { await answer(job, true); return }
         let needs = await environment.needsProvider(workspace, offer.provider.id)
         guard valid(job) else { return }
         if needs {

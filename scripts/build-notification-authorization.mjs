@@ -11,11 +11,13 @@ export function buildNotificationAuthorization({platform=process.platform,exec=e
  const version=readFileSync(path.join(headerDirectory,"node_version.h"),"utf8");
  const parts=["MAJOR","MINOR","PATCH"].map(part=>Number(new RegExp("#define NODE_"+part+"_VERSION +([0-9]+)").exec(version)?.[1]));
  if(parts.join(".")!==process.versions.node)throw Error("NOTIFICATION_AUTH_HEADER_VERSION_MISMATCH");
- const source=path.join(root,"native/notification-authorization/authorization.mm"),sourceSha256=createHash("sha256").update(readFileSync(source)).update(readFileSync(path.join(root,"native/notification-authorization/lifetime.h"))).digest("hex");
+ const sources=["authorization.mm","banners.mm"].map(name=>path.join(root,"native/notification-authorization",name));
+ const sourceHash=createHash("sha256");for(const source of sources)sourceHash.update(readFileSync(source));
+ const sourceSha256=sourceHash.update(readFileSync(path.join(root,"native/notification-authorization/lifetime.h"))).digest("hex");
  const outputs=[];
  for(const [arch,target] of [["arm64","arm64"],["x64","x86_64"]]){
   const directory=path.join(outputRoot,arch);mkdirSync(directory,{recursive:true});const output=path.join(directory,"notification-authorization.node");
-  exec("/usr/bin/xcrun",["clang++","-std=c++17","-fobjc-arc","-fblocks","-DNAPI_VERSION=9","-mmacosx-version-min=12.0","-arch",target,"-bundle","-undefined","dynamic_lookup","-I",headerDirectory,"-framework","Foundation","-framework","UserNotifications",source,"-o",output],{timeout:120000,stdio:"inherit"});
+  exec("/usr/bin/xcrun",["clang++","-std=c++17","-fobjc-arc","-fblocks","-DNAPI_VERSION=9","-mmacosx-version-min=12.0","-arch",target,"-bundle","-undefined","dynamic_lookup","-I",headerDirectory,"-framework","Foundation","-framework","UserNotifications",...sources,"-o",output],{timeout:120000,stdio:"inherit"});
   exec("/usr/bin/lipo",[output,"-verify_arch",target],{timeout:5000,stdio:"inherit"});
   const receipt={version:1,target:"darwin-"+arch,napiVersion:9,nodeHeadersVersion:parts.join("."),headerSha256:hashes,sourceSha256,sha256:createHash("sha256").update(readFileSync(output)).digest("hex")};
   writeFileSync(path.join(directory,"build.json"),JSON.stringify(receipt,null,2)+"\n");outputs.push(receipt);

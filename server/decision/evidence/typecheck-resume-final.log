@@ -1,0 +1,217 @@
+server/browser-extension-approvals.test.ts(38,142): error TS2322: Type '{ title: string; subtitle: string; options: string[]; tool: string; requestId: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; tool: string; requestId: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/browser-extension-approvals.test.ts(38,287): error TS2322: Type '{ title: string; subtitle: string; options: string[]; tool: string; requestId: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; tool: string; requestId: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/browser-extension-approvals.test.ts(194,60): error TS2322: Type '{ title: string; subtitle: string; options: string[]; tool: string; requestId: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; tool: string; requestId: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/browser-extension-approvals.ts(141,66): error TS2345: Argument of type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to parameter of type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+  Type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+    Types of property 'kind' are incompatible.
+      Type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run" | undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+        Type 'undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+server/browser-extension-approvals.ts(144,7): error TS2322: Type '{ held: string; browserCardKind?: "delete" | "newRecipient" | undefined; pushBody?: string | undefined; title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ held: string; browserCardKind?: "delete" | "newRecipient" | undefined; pushBody?: string | undefined; title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/email/send-service.ts(32,5): error TS2554: Expected 1-2 arguments, but got 3.
+server/engine-swap-fold.test.ts(238,84): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/engine-swap-fold.test.ts(263,71): error TS2322: Type '{ title: string; subtitle: string; options: never[]; requestId: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: never[]; requestId: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/event-limit.test.ts(178,85): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/host-computer-consent.test.ts(119,71): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/host-computer-consent.test.ts(140,42): error TS2345: Argument of type '{ role: "bot"; kind: "options"; card: { title: string; subtitle: string; options: string[]; requestId: string; tool: string; approvalScope: "local-computer"; answered: string; }; }' is not assignable to parameter of type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+  Type '{ role: "bot"; kind: "options"; card: { title: string; subtitle: string; options: string[]; requestId: string; tool: string; approvalScope: "local-computer"; answered: string; }; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+    Types of property 'card' are incompatible.
+      Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; approvalScope: "local-computer"; answered: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+        Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; approvalScope: "local-computer"; answered: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/host-computer-consent.test.ts(141,44): error TS2345: Argument of type '{ role: "bot"; kind: "options"; card: { title: string; subtitle: string; options: string[]; requestId: string; tool: string; approvalScope: "local-computer"; answered: string; }; }' is not assignable to parameter of type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+  Type '{ role: "bot"; kind: "options"; card: { title: string; subtitle: string; options: string[]; requestId: string; tool: string; approvalScope: "local-computer"; answered: string; }; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+    Types of property 'card' are incompatible.
+      Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; approvalScope: "local-computer"; answered: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+        Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; approvalScope: "local-computer"; answered: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/host-computer-consent.test.ts(163,44): error TS2345: Argument of type '{ role: "bot"; kind: "options"; card: { title: string; subtitle: string; options: string[]; requestId: string; tool: string; approvalScope: "local-computer"; answered: string; }; }' is not assignable to parameter of type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+  Type '{ role: "bot"; kind: "options"; card: { title: string; subtitle: string; options: string[]; requestId: string; tool: string; approvalScope: "local-computer"; answered: string; }; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+    Types of property 'card' are incompatible.
+      Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; approvalScope: "local-computer"; answered: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+        Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; approvalScope: "local-computer"; answered: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/host-computer-consent.ts(114,53): error TS2345: Argument of type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to parameter of type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+  Type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+    Types of property 'kind' are incompatible.
+      Type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run" | undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+        Type 'undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+server/host-computer-consent.ts(117,5): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: `${string}-${string}-${string}-${string}-${string}`; tool: string; approvalScope: "local-computer"; held: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: `${string}-${string}-${string}-${string}-${string}`; tool: string; approvalScope: "local-computer"; held: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/image-operations.ts(542,59): error TS2345: Argument of type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to parameter of type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+  Type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+    Types of property 'kind' are incompatible.
+      Type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run" | undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+        Type 'undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+server/image-operations.ts(542,151): error TS2322: Type '{ title: string; subtitle: string; held: string; options: string[]; requestId: string; tool: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; held: string; options: string[]; requestId: string; tool: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/index.ts(5112,51): error TS2322: Type '{ setup: { settled: true; step: "chat" | "flux" | "flow" | "hello" | "detect"; variant: "key" | "phone" | "notify" | "bare" | "jobs" | "next" | "brief" | "welcome" | "found" | "signed-out" | ... 9 more ... | "phone-needs-tailscale"; key: string; }; ... 52 more ...; intake?: IntakeCardData; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ setup: { settled: true; step: "chat" | "flux" | "flow" | "hello" | "detect"; variant: "key" | "phone" | "notify" | "bare" | "jobs" | "next" | "brief" | "welcome" | "found" | "signed-out" | ... 9 more ... | "phone-needs-tailscale"; key: string; }; ... 52 more ...; intake?: IntakeCardData; }' is not assignable to type 'PermissionCard | InfoCard'.
+    Type '{ setup: { settled: true; step: "chat" | "flux" | "flow" | "hello" | "detect"; variant: "key" | "phone" | "notify" | "bare" | "jobs" | "next" | "brief" | "welcome" | "found" | "signed-out" | ... 9 more ... | "phone-needs-tailscale"; key: string; }; ... 52 more ...; intake?: IntakeCardData; }' is not assignable to type 'InfoCard'.
+      Type '{ setup: { settled: true; step: "chat" | "flux" | "flow" | "hello" | "detect"; variant: "key" | "phone" | "notify" | "bare" | "jobs" | "next" | "brief" | "welcome" | "found" | "signed-out" | ... 9 more ... | "phone-needs-tailscale"; key: string; }; ... 52 more ...; intake?: IntakeCardData; }' is not assignable to type '{ requestId?: undefined; }'.
+        Types of property 'requestId' are incompatible.
+          Type 'string | undefined' is not assignable to type 'undefined'.
+            Type 'string' is not assignable to type 'undefined'.
+server/index.ts(5120,51): error TS2322: Type '{ setup: { settled: false; step: "chat" | "flux" | "flow" | "hello" | "detect"; variant: "key" | "phone" | "notify" | "bare" | "jobs" | "next" | "brief" | "welcome" | "found" | "signed-out" | ... 9 more ... | "phone-needs-tailscale"; key: string; }; ... 52 more ...; intake?: IntakeCardData; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ setup: { settled: false; step: "chat" | "flux" | "flow" | "hello" | "detect"; variant: "key" | "phone" | "notify" | "bare" | "jobs" | "next" | "brief" | "welcome" | "found" | "signed-out" | ... 9 more ... | "phone-needs-tailscale"; key: string; }; ... 52 more ...; intake?: IntakeCardData; }' is not assignable to type 'PermissionCard | InfoCard'.
+    Type '{ setup: { settled: false; step: "chat" | "flux" | "flow" | "hello" | "detect"; variant: "key" | "phone" | "notify" | "bare" | "jobs" | "next" | "brief" | "welcome" | "found" | "signed-out" | ... 9 more ... | "phone-needs-tailscale"; key: string; }; ... 52 more ...; intake?: IntakeCardData; }' is not assignable to type 'InfoCard'.
+      Type '{ setup: { settled: false; step: "chat" | "flux" | "flow" | "hello" | "detect"; variant: "key" | "phone" | "notify" | "bare" | "jobs" | "next" | "brief" | "welcome" | "found" | "signed-out" | ... 9 more ... | "phone-needs-tailscale"; key: string; }; ... 52 more ...; intake?: IntakeCardData; }' is not assignable to type '{ requestId?: undefined; }'.
+        Types of property 'requestId' are incompatible.
+          Type 'string | undefined' is not assignable to type 'undefined'.
+            Type 'string' is not assignable to type 'undefined'.
+server/index.ts(7324,49): error TS2345: Argument of type '{ card: { fenceOf?: { messageId: string; index: number; } | undefined; turnId?: string | undefined; title: string; subtitle: string; options: never[]; requestId: string; questions: QuestionSpec[]; answerAsSend: boolean; }; from?: { ...; } | undefined; role: "bot"; kind: "options"; } | { ...; }' is not assignable to parameter of type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+  Type '{ card: { fenceOf?: { messageId: string; index: number; } | undefined; turnId?: string | undefined; title: string; subtitle: string; options: never[]; requestId: string; questions: QuestionSpec[]; answerAsSend: boolean; }; from?: { ...; } | undefined; role: "bot"; kind: "options"; }' is not assignable to type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+    Type '{ card: { fenceOf?: { messageId: string; index: number; } | undefined; turnId?: string | undefined; title: string; subtitle: string; options: never[]; requestId: string; questions: QuestionSpec[]; answerAsSend: boolean; }; from?: { ...; } | undefined; role: "bot"; kind: "options"; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+      Types of property 'card' are incompatible.
+        Type '{ fenceOf?: { messageId: string; index: number; } | undefined; turnId?: string | undefined; title: string; subtitle: string; options: never[]; requestId: string; questions: QuestionSpec[]; answerAsSend: boolean; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+          Type '{ fenceOf?: { messageId: string; index: number; } | undefined; turnId?: string | undefined; title: string; subtitle: string; options: never[]; requestId: string; questions: QuestionSpec[]; answerAsSend: boolean; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/index.ts(8738,53): error TS2345: Argument of type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to parameter of type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+  Type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+    Types of property 'kind' are incompatible.
+      Type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run" | undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+        Type 'undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+server/index.ts(8738,185): error TS2322: Type 'EmailCardFields | EmailTrustCardFields' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type 'EmailCardFields' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+    Type 'EmailCardFields' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/index.ts(8743,91): error TS2322: Type 'EmailCardFields | EmailTrustCardFields' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type 'EmailCardFields' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+    Type 'EmailCardFields' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/index.ts(9918,15): error TS2322: Type '{ lowRisk?: true; held: string; approvalScope: "local-computer" | undefined; allowKeys?: string[] | undefined; grantRequest?: ApprovalGrantRequest | undefined; ... 13 more ...; subtitle: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ lowRisk?: true | undefined; held: string; approvalScope: "local-computer" | undefined; allowKeys?: string[] | undefined; grantRequest?: ApprovalGrantRequest | undefined; ... 13 more ...; subtitle: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/index.ts(10003,9): error TS2322: Type '{ lowRisk?: true; held: string | undefined; approvalScope: "local-computer" | undefined; toolInputTruncated?: true | undefined; outsideEngine?: OutsideEngine; ... 19 more ...; subtitle: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ lowRisk?: true; held: string | undefined; approvalScope: "local-computer" | undefined; toolInputTruncated?: true | undefined; outsideEngine?: OutsideEngine; ... 19 more ...; subtitle: string; }' is not assignable to type 'PermissionCard | InfoCard'.
+    Type '{ lowRisk?: true; held: string | undefined; approvalScope: "local-computer" | undefined; toolInputTruncated?: true | undefined; outsideEngine?: OutsideEngine; ... 19 more ...; subtitle: string; }' is not assignable to type 'InfoCard'.
+      Type '{ lowRisk?: true; held: string | undefined; approvalScope: "local-computer" | undefined; toolInputTruncated?: true | undefined; outsideEngine?: OutsideEngine; ... 19 more ...; subtitle: string; }' is not assignable to type '{ requestId?: undefined; }'.
+        Types of property 'requestId' are incompatible.
+          Type 'string | undefined' is not assignable to type 'undefined'.
+            Type 'string' is not assignable to type 'undefined'.
+server/index.ts(11366,60): error TS2345: Argument of type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to parameter of type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+  Type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+    Types of property 'kind' are incompatible.
+      Type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run" | undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+        Type 'undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+server/index.ts(11366,180): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/index.ts(12281,40): error TS2345: Argument of type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to parameter of type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+  Type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+    Types of property 'kind' are incompatible.
+      Type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run" | undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+        Type 'undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+server/index.ts(12282,7): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; limitOffer: { sourceMessageId: string; from: ModelSelection; resetsAt: number | null; choices: LimitChoice[]; nextTimeLabel: string; routinesLabel: string; }; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; limitOffer: { sourceMessageId: string; from: ModelSelection; resetsAt: number | null; choices: LimitChoice[]; nextTimeLabel: string; routinesLabel: string; }; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/index.ts(15761,3): error TS2322: Type 'Store' is not assignable to type 'RoutineRequestStore'.
+  Types of property 'appendMessage' are incompatible.
+    Type '(threadId: string, input: Omit<Message, "at" | "id"> & { at?: number | undefined; }, stableId?: string | undefined, within?: ((message: Message) => void) | undefined, reply?: ProviderReply | undefined, lineage?: readonly LineageRef[] | undefined) => Message' is not assignable to type '(threadId: string, message: { role: "bot"; kind: "options"; card: RoutineRequestOptionCard; from?: { botId: string; name: string; color: string; } | undefined; }) => RoutineRequestMessage'.
+      Types of parameters 'input' and 'message' are incompatible.
+        Type '{ role: "bot"; kind: "options"; card: RoutineRequestOptionCard; from?: { botId: string; name: string; color: string; } | undefined; }' is not assignable to type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+          Type '{ role: "bot"; kind: "options"; card: RoutineRequestOptionCard; from?: { botId: string; name: string; color: string; } | undefined; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+            Types of property 'card' are incompatible.
+              Type 'RoutineRequestOptionCard' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+                Type 'RoutineRequestOptionCard' is not assignable to type 'PermissionCard | InfoCard'.
+                  Type 'RoutineRequestOptionCard' is not assignable to type 'InfoCard'.
+                    Type 'RoutineRequestOptionCard' is not assignable to type '{ requestId?: undefined; }'.
+                      Types of property 'requestId' are incompatible.
+                        Type 'string | undefined' is not assignable to type 'undefined'.
+                          Type 'string' is not assignable to type 'undefined'.
+server/index.ts(21407,62): error TS2345: Argument of type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to parameter of type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+  Type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+    Types of property 'kind' are incompatible.
+      Type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run" | undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+        Type 'undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+server/index.ts(21412,5): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: `${string}-${string}-${string}-${string}-${string}`; tool: string; skillRequest: SkillRequestCardData; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: `${string}-${string}-${string}-${string}-${string}`; tool: string; skillRequest: SkillRequestCardData; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/index.ts(30718,43): error TS2345: Argument of type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to parameter of type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+  Type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+    Types of property 'kind' are incompatible.
+      Type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run" | undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+        Type 'undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+server/index.ts(30718,86): error TS2322: Type 'OptionCardData' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type 'OptionCardData' is not assignable to type 'PermissionCard | InfoCard'.
+    Type 'OptionCardData' is not assignable to type 'InfoCard'.
+      Type 'OptionCardData' is not assignable to type '{ requestId?: undefined; }'.
+        Types of property 'requestId' are incompatible.
+          Type 'string | undefined' is not assignable to type 'undefined'.
+            Type 'string' is not assignable to type 'undefined'.
+server/memory/automatic-learning.ts(50,52): error TS2554: Expected 1-2 arguments, but got 3.
+server/memory/murage-row-lineage.test.ts(178,11): error TS2322: Type '{ role: "bot"; kind: "options"; card: { title: string; subtitle: string; held: string; options: string[]; requestId: string; tool: string; }; } | { role: "bot"; kind: "activity"; tool: { name: string; ok: true; imageRecord: { ...; }; }; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+  Type '{ role: "bot"; kind: "options"; card: { title: string; subtitle: string; held: string; options: string[]; requestId: string; tool: string; }; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+    Types of property 'card' are incompatible.
+      Type '{ title: string; subtitle: string; held: string; options: string[]; requestId: string; tool: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+        Type '{ title: string; subtitle: string; held: string; options: string[]; requestId: string; tool: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/no-limits-b5-1019.test.ts(327,20): error TS2339: Property 'noLimitsInitiator' does not exist on type 'typeof import("/work/server/auto-approve", { with: { "resolution-mode": "import" } })'.
+server/no-limits-do-everything-1019.test.ts(17,40): error TS2339: Property 'noLimitsInitiator' does not exist on type 'typeof import("/work/server/auto-approve", { with: { "resolution-mode": "import" } })'.
+server/no-limits-do-everything-1019.test.ts(17,59): error TS2339: Property 'NO_LIMITS_SOURCE' does not exist on type 'typeof import("/work/server/auto-approve", { with: { "resolution-mode": "import" } })'.
+server/no-limits-one-rule.test.ts(26,103): error TS2554: Expected 5 arguments, but got 6.
+server/no-limits-r13b.test.ts(59,50): error TS2554: Expected 1-2 arguments, but got 3.
+server/no-limits-r13b.test.ts(64,40): error TS2554: Expected 1-2 arguments, but got 3.
+server/no-limits-r13b.test.ts(70,62): error TS2554: Expected 1-2 arguments, but got 3.
+server/no-limits-r13b.test.ts(79,36): error TS2554: Expected 1-2 arguments, but got 3.
+server/peer-approval.test.ts(217,7): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/peer-approval.test.ts(238,7): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/peer-approval.test.ts(270,7): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/peer-approval.test.ts(292,7): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/peer-approval.ts(141,56): error TS2345: Argument of type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to parameter of type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+  Type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+    Types of property 'kind' are incompatible.
+      Type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run" | undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+        Type 'undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+server/peer-approval.ts(145,5): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: PeerAction; allowKey: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: PeerAction; allowKey: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/peer-approval.ts(248,45): error TS2345: Argument of type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to parameter of type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+  Type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+    Types of property 'kind' are incompatible.
+      Type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run" | undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+        Type 'undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+server/peer-approval.ts(252,7): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/publish/publish-ops.ts(347,57): error TS2345: Argument of type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to parameter of type 'Omit<Message, "at" | "id"> & { at?: number | undefined; }'.
+  Type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to type 'Omit<Message, "at" | "id">'.
+    Types of property 'kind' are incompatible.
+      Type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run" | undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+        Type 'undefined' is not assignable to type '"text" | "activity" | "options" | "connector" | "secret" | "screen" | "mcpSignIn" | "routine.run" | "goal.run"'.
+server/publish/publish-ops.ts(347,149): error TS2322: Type '{ title: string; subtitle: string; held: string; options: string[]; requestId: string; tool: string; kind: "publish"; publish: PublishCardData; pushBody: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; held: string; options: string[]; requestId: string; tool: string; kind: "publish"; publish: PublishCardData; pushBody: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/routine-requests.ts(1173,56): error TS2345: Argument of type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to parameter of type '{ role: "bot"; kind: "options"; card: RoutineRequestOptionCard; from?: { botId: string; name: string; color: string; } | undefined; }'.
+  Types of property 'role' are incompatible.
+    Type '"bot" | "user"' is not assignable to type '"bot"'.
+      Type '"user"' is not assignable to type '"bot"'.
+server/routine-requests.ts(1173,67): error TS2345: Argument of type '{ role: "bot"; kind: "options"; card: RoutineRequestOptionCard; from?: { botId: string; name: string; color: string; } | undefined; }' is not assignable to parameter of type 'Partial<Message> & { role: "bot" | "user"; }'.
+  Type '{ role: "bot"; kind: "options"; card: RoutineRequestOptionCard; from?: { botId: string; name: string; color: string; } | undefined; }' is not assignable to type 'Partial<Message>'.
+    Types of property 'card' are incompatible.
+      Type 'RoutineRequestOptionCard' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+        Type 'RoutineRequestOptionCard' is not assignable to type 'PermissionCard | InfoCard'.
+          Type 'RoutineRequestOptionCard' is not assignable to type 'InfoCard'.
+            Type 'RoutineRequestOptionCard' is not assignable to type '{ requestId?: undefined; }'.
+              Types of property 'requestId' are incompatible.
+                Type 'string | undefined' is not assignable to type 'undefined'.
+                  Type 'string' is not assignable to type 'undefined'.
+server/routine-requests.ts(1221,56): error TS2345: Argument of type 'Partial<Message> & { role: "bot" | "user"; } & { murageLine: true; }' is not assignable to parameter of type '{ role: "bot"; kind: "options"; card: RoutineRequestOptionCard; from?: { botId: string; name: string; color: string; } | undefined; }'.
+  Types of property 'role' are incompatible.
+    Type '"bot" | "user"' is not assignable to type '"bot"'.
+      Type '"user"' is not assignable to type '"bot"'.
+server/routine-requests.ts(1221,67): error TS2345: Argument of type '{ role: "bot"; kind: "options"; card: RoutineRequestOptionCard; from?: { botId: string; name: string; color: string; } | undefined; }' is not assignable to parameter of type 'Partial<Message> & { role: "bot" | "user"; }'.
+  Type '{ role: "bot"; kind: "options"; card: RoutineRequestOptionCard; from?: { botId: string; name: string; color: string; } | undefined; }' is not assignable to type 'Partial<Message>'.
+    Types of property 'card' are incompatible.
+      Type 'RoutineRequestOptionCard' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+        Type 'RoutineRequestOptionCard' is not assignable to type 'PermissionCard | InfoCard'.
+          Type 'RoutineRequestOptionCard' is not assignable to type 'InfoCard'.
+            Type 'RoutineRequestOptionCard' is not assignable to type '{ requestId?: undefined; }'.
+              Types of property 'requestId' are incompatible.
+                Type 'string | undefined' is not assignable to type 'undefined'.
+                  Type 'string' is not assignable to type 'undefined'.
+server/store.test.ts(109,7): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/store.test.ts(1734,7): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; routineRequest: { version: 1; requestId: string; botId: string; threadId: string; createdAt: number; operation: { ...; }; }; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; routineRequest: { version: 1; requestId: string; botId: string; threadId: string; createdAt: number; operation: { ...; }; }; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/store.test.ts(1766,7): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; skillRequest: { version: 1; requestId: string; botId: string; threadId: string; stagedId: string; action: "create"; ... 6 more ...; createdAt: number; }; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; skillRequest: { version: 1; requestId: string; botId: string; threadId: string; stagedId: string; action: "create"; ... 6 more ...; createdAt: number; }; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash
+server/store.test.ts(1800,7): error TS2322: Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; skillRequest: { version: 1; requestId: string; botId: string; threadId: string; stagedId: string; action: "create"; ... 6 more ...; createdAt: number; }; }' is not assignable to type 'PermissionCard | InfoCard | undefined'.
+  Type '{ title: string; subtitle: string; options: string[]; requestId: string; tool: string; skillRequest: { version: 1; requestId: string; botId: string; threadId: string; stagedId: string; action: "create"; ... 6 more ...; createdAt: number; }; }' is missing the following properties from type 'PermissionCard': approvalId, requestRef, actionHash

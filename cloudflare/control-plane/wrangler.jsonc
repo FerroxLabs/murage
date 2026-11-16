@@ -1,5 +1,7 @@
 {
   "$schema": "../../node_modules/wrangler/config-schema.json",
+  // The top level below is the pre-launch skeleton and is NOT deployed any more: production is env.production (scripts/deploy.mjs production).
+  // It stays only so `wrangler types` sees the bindings. Do not fill it in; edit env.production.
   "name": "murage-control-plane",
   "main": "src/index.ts",
   "account_id": "b83123326a4b9ad76831b9cb9365b33b",
@@ -13,6 +15,8 @@
     }
   ],
   "vars": {
+    // Which environment this Worker is (src/env-policy.mjs refuses a mixed configuration). The top level is not deployed; the tests run on it.
+    "MURAGE_ENV": "live",
     "BETTER_AUTH_URL": "https://accounts.murage.ai",
     "EMAIL_FROM": "noreply@murage.ai",
     // The customer portal's server-side calls carry this Origin (Better Auth's fetch-metadata check requires it).
@@ -87,7 +91,7 @@
     { "name": "MACHINE_BEARER_LIMIT", "namespace_id": "73102", "simple": { "limit": 240, "period": 60 } }
   ],
   "triggers": {
-    "crons": ["*/5 * * * *"]
+    "crons": ["*/5 * * * *", "* * * * *"]
   },
   "observability": {
     "enabled": true,
@@ -101,8 +105,21 @@
       // production account and is never handed to this Worker.
       "account_id": "874fe1689a53e6f56ff74816a9f23b26",
       "workers_dev": true,
+      // The signed-image gate reads the environment from the bundle, never from a var (scripts/check-deploy.mjs refuses any other value).
+      "define": { "__MURAGE_BUILD_ENV__": "\"staging\"" },
       "routes": [],
       "vars": {
+        "MURAGE_ENV": "staging",
+        // Flux's staging app: ensureFluxAccount calls it, and FLUX_STAGING_VERCEL_BYPASS (optional secret, staging only) gets past its Vercel SSO.
+        "FLUX_APP_BASE": "https://app-staging.fluxrouter.ai",
+        // Flux on for the staging walk: Stage A keys and Stage B grants against Flux's staging proxy. Prod stays off (Sean's go).
+        "FLUX_API_BASE": "https://api-staging.fluxrouter.ai",
+        "FLUX_CLOUD_GRANTS_URL": "https://api-staging.fluxrouter.ai",
+        "CLOUD_FLUX_ROUTES_ENABLED": "1",
+        // ITEM 9: auto top-up charging and door device confirmation are locked off. src/held-until-item9-highs.ts also holds both off
+        // whatever these say, until AUTO-TOPUP-STATE-MACHINE lands (test/item9-held.test.ts pins both values to "0" here).
+        "CLOUD_AUTOTOPUP_ENABLED": "0",
+        "DOOR_JOIN_REQUIRED": "0",
         // Staging carries the Cloud terms with the one-per-person text (page label 2026-10-11.1, id in REFUND_LIMIT_V2_CLOUD_TERMS_IDS), so the one-per-person refund limit is live here (refund-identity.ts).
         "REFUND_LIMIT_V2_LIVE": "1",
         // Staging only: 500 responses log the error name, message and top frames (index.ts catch-all). Never set in production.
@@ -126,6 +143,10 @@
         "CLOUD_HOME_ZONE_ID": "98521dceb5535df78337fc26a9dc4d73",
         "CLOUD_HOME_ACCOUNT_ID": "b83123326a4b9ad76831b9cb9365b33b",
         "SENDLANE_LIST_ID": "37",
+        // Waitlist signups go only to their own list 39 ("Murage Waitlist (Team and Business plans)", MurageSite 11-04), never to 37.
+        "SENDLANE_WAITLIST_LIST_ID": "39",
+        // G3: staging must never write to the live Sendlane list. Signups are logged, not sent. Production does not set this (default on).
+        "SENDLANE_WRITES": "off",
         // Mounts the CP0 machine create and rotate routes. Never set in production.
         "CLOUD_CP0_STAGING": "1",
         // Launch rehearsal: the portal runs on a build host box at this origin; Stripe returns the browser there.
@@ -141,14 +162,24 @@
         "AWS_KMS_KEY_ARN": "arn:aws:kms:eu-west-1:149471050106:key/0c7fb20d-226b-4ccc-91c5-93fd414c1afb",
         "AWS_KMS_REGION": "eu-west-1",
         // Real build host/Vultr adapters (HCLOUD_TOKEN is a Worker secret). Capacity slots cap concurrent paid homes.
+        // Staging sells (test Stripe), so its checkout and /v1/status live:true can be exercised end to end.
+        "CLOUD_SALES_OPEN": "true",
+        // Dark-launch invite list (comma-separated exact emails): while CLOUD_SALES_OPEN is "false", only these signed-in accounts may buy. Empty: nobody.
+        "CLOUD_SALES_ALLOWLIST": "",
         "CLOUD_B3_MODE": "live",
-        "CLOUD_B3_CONFIG": "{\"reservationMs\":1800000,\"graceMs\":259200000,\"retentionMs\":2592000000,\"imageDigest\":\"sha256:294fb5e78367b222df59db83c78070eda8213977d6a112b78868a1b0172177fa\",\"engineSubscriptionGates\":{\"claudeAgent\":true,\"codex\":true,\"grokAgent\":true,\"kimiAgent\":true,\"opencodeGo\":true},\"quarantineRelayIP\":\"192.0.2.20\",\"capacity\":[{\"id\":\"stg-1\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-2\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-3\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-4\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-5\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-6\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-7\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-8\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-9\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-10\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-11\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-12\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-13\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-14\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-15\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-16\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-17\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-18\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-19\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-20\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"}]}",
-        "B5_PROVISIONER_CONFIG": "{\"images\":{\"hetzner\":{\"x86\":\"444142455\",\"arm\":\"444142428\"},\"vultr\":{}},\"sshKeyIds\":[130782531],\"firewallIds\":[11725298],\"storageBox\":[{\"id\":669748,\"host\":\"u687784.your-storagebox.de\",\"mainUser\":\"u687784\",\"knownHosts\":\"[u687784.your-storagebox.de]:23 ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAACFBAGK0po6usux4Qv2d8zKZN1dDvbWjxKkGsx7XwFdSUCnF19Q8psHEUWR7C/LtSQ5crU/g+tQVRBtSgoUcE8T+FWp5wBxKvWG2X9gD+s9/4zRmDeSJR77W6gSA/+hpOZoSE+4KgNdnbYSNtbZH/dN74EG7GLb/gcIpbUUzPNXpfKl7mQitw==\\n[u687784.your-storagebox.de]:23 ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEA5EB5p/5Hp3hGW1oHok+PIOH9Pbn7cnUiGmUEBrCVjnAw+HrKyN8bYVV0dIGllswYXwkG/+bgiBlE6IVIBAq+JwVWu1Sss3KarHY3OvFJUXZoZyRRg/Gc/+LRCE7lyKpwWQ70dbelGRyyJFH36eNv6ySXoUYtGkwlU5IVaHPApOxe4LHPZa/qhSRbPo2hwoh0orCtgejRebNtW5nlx00DNFgsvn8Svz2cIYLxsPVzKgUxs8Zxsxgn+Q/UvR7uq4AbAhyBMLxv7DjJ1pc7PJocuTno2Rw9uMZi1gkjbnmiOh6TTXIEWbnroyIhwc8555uto9melEUmWNQ+C+PwAK+MPw==\\n[u687784.your-storagebox.de]:23 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIICf9svRenC/PLKIL9nk6K/pxQgoiFC41wTNvoIncOxs\",\"baseDir\":\"murage\"}],\"opsSshFrom\":[\"95.216.244.213/32\"],\"quarantineFirewallId\":11769359,\"forbiddenTypePrefixes\":[],\"ladders\":{\"starter\":[{\"provider\":\"hetzner\",\"serverType\":\"cx23\",\"arch\":\"x86\"},{\"provider\":\"hetzner\",\"serverType\":\"cax11\",\"arch\":\"arm\"},{\"provider\":\"hetzner\",\"serverType\":\"cpx22\",\"arch\":\"x86\"}]}}"
+        // imageDigest is a label (recipe v1, lanes/cloud-v2/PROD-VALUES-COLLECTED.md): sha256 of {"v":1,"env":"staging","commit":"762fac084314f56eec2c2995a362c754eb346c86","x86":"452494027","arm":"452471210","controlKey":"<public verification key from the matching image manifest>"}. Both images are built from 762fac084 (int/1016-cloud-r2: Fuigo 1.0.39, Node 24.21.0, Claude Code 2.1.292, Codex 0.162.1, Grok Build 1.0.52, Kimi Code 2.2.0, OpenCode 1.19.0; 40 GB disk) and both are signed (check f06237aa). The previous pair 452086092 (91aa28bba; home-2e7edb8e and the two warm-pool servers run it), 452016490 (641c3d6a2), 451603575 (20f95f742) and 451260442 (ea81de2a3) keep their signed imageKinds entries so a held home built on them can rebuild; 452085957, 452015340 (no server runs them) were retired 2026-11-05 to stay under the 5.1 kB Workers text-binding limit.
+        "CLOUD_B3_CONFIG": "{\"reservationMs\":1800000,\"graceMs\":259200000,\"retentionMs\":2592000000,\"imageDigest\":\"sha256:a5a46599f2eb00f678d5d2fdc81cdfe8a36abd82ec3e3bdb226cb2e665a38210\",\"engineSubscriptionGates\":{\"claudeAgent\":true,\"codex\":true,\"grokAgent\":true,\"kimiAgent\":true,\"opencodeGo\":true},\"quarantineRelayIP\":\"192.0.2.20\",\"capacity\":[{\"id\":\"stg-1\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-2\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-3\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-4\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-5\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-6\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-7\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-8\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-9\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-10\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-11\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-12\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-13\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-14\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-15\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-16\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-17\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-18\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-19\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"},{\"id\":\"stg-20\",\"projectId\":\"mcq-staging\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"}]}",
+        "B5_PROVISIONER_CONFIG": "{\"images\":{\"hetzner\":{\"x86\":\"452494027\",\"arm\":\"452471210\"},\"vultr\":{}},\"imageKinds\":{\"452494027\":{\"kind\":\"customer\",\"verifiedBy\":\"hz-live-rescue\",\"checkVersion\":\"1\",\"verifiedAt\":\"20261105T154336Z\",\"createdAt\":\"2026-11-05T15:29:48Z\",\"imageSize\":\"14.745266283203126\",\"env\":\"staging\",\"checkSha256\":\"f06237aabcae77a7778d54655ebfb709c2e08df87b7be49f96ee0fb84283135a\",\"verdict\":\"pass\",\"keyFp\":\"3297b57ae1685fbdf5f176941735c276715124099519a8e0646a7f0bf2c4661b\",\"sig\":\"EPGYXoq8_xYcClfuNyhoD5MtHdeZvZGv0LWQIO4_IeJsBsvA3LaCF8yDIVilLSs2xJYX5GQT3I9NMOzaTY-rkQ\"},\"452471210\":{\"kind\":\"customer\",\"verifiedBy\":\"hz-live-rescue\",\"checkVersion\":\"1\",\"verifiedAt\":\"20261105T154721Z\",\"createdAt\":\"2026-11-05T14:39:33Z\",\"imageSize\":\"14.372594673828125\",\"env\":\"staging\",\"checkSha256\":\"f06237aabcae77a7778d54655ebfb709c2e08df87b7be49f96ee0fb84283135a\",\"verdict\":\"pass\",\"keyFp\":\"3297b57ae1685fbdf5f176941735c276715124099519a8e0646a7f0bf2c4661b\",\"sig\":\"e3SATudT8GxtFlIJk1Lk0FlQKh4kN6hrVsRUU6Nr1sCP0xL4odma0VgL2t_iXpIew7ZtNFgGnzPOd2Az4D_MeA\"},\"452086092\":{\"kind\":\"customer\",\"verifiedBy\":\"hz-live-rescue\",\"checkVersion\":\"1\",\"verifiedAt\":\"20261104T165644Z\",\"createdAt\":\"2026-11-04T16:37:13Z\",\"imageSize\":\"14.483449326171876\",\"env\":\"staging\",\"checkSha256\":\"f06237aabcae77a7778d54655ebfb709c2e08df87b7be49f96ee0fb84283135a\",\"verdict\":\"pass\",\"keyFp\":\"3297b57ae1685fbdf5f176941735c276715124099519a8e0646a7f0bf2c4661b\",\"sig\":\"aw5XhJzzPgxpI2D-I7oqEw886SRqlAidIH30qE_Vcoh4YAh_oKAELRixooADruq5bo7H91qOv1NWY8cASxkSww\"},\"452016490\":{\"kind\":\"customer\",\"verifiedBy\":\"hz-live-rescue\",\"checkVersion\":\"1\",\"verifiedAt\":\"20261104T135222Z\",\"createdAt\":\"2026-11-04T13:41:11Z\",\"imageSize\":\"13.634433924804688\",\"env\":\"staging\",\"checkSha256\":\"f06237aabcae77a7778d54655ebfb709c2e08df87b7be49f96ee0fb84283135a\",\"verdict\":\"pass\",\"keyFp\":\"3297b57ae1685fbdf5f176941735c276715124099519a8e0646a7f0bf2c4661b\",\"sig\":\"bTe_ClL71Jvvrgae2WbWxbXavlWnLGEvHqWV4SctMsthqYEZ0tZ0GlyiIhCXsEDmfOOo9LDoMoiyOAJAeBP8dA\"},\"451603575\":{\"kind\":\"customer\",\"verifiedBy\":\"hz-live-rescue\",\"checkVersion\":\"1\",\"verifiedAt\":\"20261103T203010Z\",\"createdAt\":\"2026-11-03T12:21:39Z\",\"imageSize\":\"14.340043159179688\",\"env\":\"staging\",\"checkSha256\":\"f06237aabcae77a7778d54655ebfb709c2e08df87b7be49f96ee0fb84283135a\",\"verdict\":\"pass\",\"keyFp\":\"3297b57ae1685fbdf5f176941735c276715124099519a8e0646a7f0bf2c4661b\",\"sig\":\"L-bt1-DoY2VC5arN3IORKScm5LtjdzRlYqw_p0_XXr280rIhPqFHcnAyDDAbIFxclE_XsRz2_dlf7One6wS4kQ\"},\"451260442\":{\"kind\":\"customer\",\"verifiedBy\":\"hz-live-rescue\",\"checkVersion\":\"1\",\"verifiedAt\":\"20261102T163355Z\",\"createdAt\":\"2026-11-02T16:20:42Z\",\"imageSize\":\"14.266326780273438\",\"env\":\"staging\",\"checkSha256\":\"f06237aabcae77a7778d54655ebfb709c2e08df87b7be49f96ee0fb84283135a\",\"verdict\":\"pass\",\"keyFp\":\"3297b57ae1685fbdf5f176941735c276715124099519a8e0646a7f0bf2c4661b\",\"sig\":\"0S4No3NfkoL6TriyQVeCx3VVHDuzOu5_3ZGUrnSVCcO8fK1eF4Jj_7rKLUNd_bOi5PaT2bPLSWCpGZC522SDYA\"}},\"sshKeyIds\":[130782531],\"firewallIds\":[11725298],\"storageBox\":[{\"id\":669748,\"host\":\"u687784.your-storagebox.de\",\"mainUser\":\"u687784\",\"knownHosts\":\"[u687784.your-storagebox.de]:23 ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAACFBAGK0po6usux4Qv2d8zKZN1dDvbWjxKkGsx7XwFdSUCnF19Q8psHEUWR7C/LtSQ5crU/g+tQVRBtSgoUcE8T+FWp5wBxKvWG2X9gD+s9/4zRmDeSJR77W6gSA/+hpOZoSE+4KgNdnbYSNtbZH/dN74EG7GLb/gcIpbUUzPNXpfKl7mQitw==\\n[u687784.your-storagebox.de]:23 ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEA5EB5p/5Hp3hGW1oHok+PIOH9Pbn7cnUiGmUEBrCVjnAw+HrKyN8bYVV0dIGllswYXwkG/+bgiBlE6IVIBAq+JwVWu1Sss3KarHY3OvFJUXZoZyRRg/Gc/+LRCE7lyKpwWQ70dbelGRyyJFH36eNv6ySXoUYtGkwlU5IVaHPApOxe4LHPZa/qhSRbPo2hwoh0orCtgejRebNtW5nlx00DNFgsvn8Svz2cIYLxsPVzKgUxs8Zxsxgn+Q/UvR7uq4AbAhyBMLxv7DjJ1pc7PJocuTno2Rw9uMZi1gkjbnmiOh6TTXIEWbnroyIhwc8555uto9melEUmWNQ+C+PwAK+MPw==\\n[u687784.your-storagebox.de]:23 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIICf9svRenC/PLKIL9nk6K/pxQgoiFC41wTNvoIncOxs\",\"baseDir\":\"murage\"}],\"opsSshFrom\":[\"95.216.244.213/32\"],\"quarantineFirewallId\":11769359,\"forbiddenTypePrefixes\":[],\"ladders\":{\"starter\":[{\"provider\":\"hetzner\",\"serverType\":\"cx23\",\"arch\":\"x86\"},{\"provider\":\"hetzner\",\"serverType\":\"cax11\",\"arch\":\"arm\"},{\"provider\":\"hetzner\",\"serverType\":\"cpx22\",\"arch\":\"x86\"}]},\"pool\":{\"env\":\"staging\",\"monthlyIdleCapEur\":20,\"classes\":{\"starter\":{\"rungs\":[{\"serverType\":\"cx23\",\"arch\":\"x86\"},{\"serverType\":\"cax11\",\"arch\":\"arm\"}],\"target\":2,\"red\":1,\"max\":3},\"pro\":{\"rungs\":[{\"serverType\":\"cax21\",\"arch\":\"arm\"},{\"serverType\":\"cx33\",\"arch\":\"x86\"}],\"target\":0,\"red\":0,\"max\":0}},\"maxCreatesPerTick\":2,\"maxCreatesPerDay\":12,\"maxConsecutiveCreateFailures\":3,\"limits\":{\"vcpu\":1500,\"primaryIps\":800,\"volumeGb\":60000,\"reserveForLive\":{\"vcpu\":400,\"primaryIps\":200,\"volumeGb\":20000}},\"overTargetRetireAfterH\":24}}",
+        // Public image-signing key (P-256 SPKI DER base64; not a secret). Its sha256 must equal TRUSTED_IMAGE_KEY_FPS in scripts/image-sig.mjs.
+        "B5_IMAGE_VERIFY_PUBKEY": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEO3QlvKOqz6qpRt7k/lc8IJgxhtxiwkk+jvwwn28fT4OV+bi/v5WP+5AAuM7OhyLJoNkvuDXPXcecqP/LNl18aA=="
       },
       // B4 Flux (wiring step 3): FLUX_CLOUD_SERVICE_TOKEN is deliberately NOT in secrets.required yet. The Flux routes, the
-      // flux_renewal_due field and the Flux cron are off (CLOUD_FLUX_ROUTES_ENABLED unset) and the cron is a no-op without the
+      // flux_renewal_due field and the Flux cron are off (the Flux route switch unset) and the cron is a no-op without the
       // token, so no deploy may demand it before Sean's go. At that go: add it here, set FLUX_LINK_PUBLIC_KEY, FLUX_AUTHORIZE_URL,
-      // FLUX_API_BASE (and optionally FLUX_APP_BASE, FLUX_B4_CONFIG) as vars, then CLOUD_FLUX_ROUTES_ENABLED="1" (.dev.vars.example).
+      // FLUX_API_BASE (and optionally FLUX_APP_BASE, FLUX_B4_CONFIG) as vars, then the Flux route switch="1" (.dev.vars.example).
+      // Billing's grant hooks (flux-live-hooks.ts) follow the same switch: with the Flux route switch unset they are the stub and call
+      // nothing. At the go also set FLUX_CLOUD_GRANTS_URL (var, the router's https base) and put FLUX_CLOUD_GRANTS_TOKEN (secret, 32+ characters,
+      // not the keys token) and add the token to secrets.required; neither is required before then.
       "secrets": {
         "required": ["BETTER_AUTH_SECRET", "CLOUDFLARE_API_TOKEN", "SENDLANE_API_KEY", "SENDLANE_HASH_KEY", "CLOUD_ADMIN_TOKEN", "CLOUD_KEK_V1", "CHECKOUT_DISCLOSURE_TOKEN_SECRET", "CANCELLATION_MAIL_KEY", "NOTICE_MAIL_KEY", "REFUND_KEY_SECRET"]
       },
@@ -172,7 +203,112 @@
         { "name": "MACHINE_OPEN_LIMIT", "namespace_id": "73201", "simple": { "limit": 30, "period": 60 } },
         { "name": "MACHINE_BEARER_LIMIT", "namespace_id": "73202", "simple": { "limit": 240, "period": 60 } }
       ],
-      "triggers": {"crons": ["*/5 * * * *"]}
+      "triggers": {"crons": ["*/5 * * * *", "* * * * *"]}
+    },
+    "production": {
+      // PRODUCTION (Cloudflare account b8312..., which holds the murage.ai zone). Deployed only by `node scripts/deploy.mjs production`
+      // (scripts/check-deploy.mjs refuses any PROD_TODO_ placeholder, any staging id, test Stripe and the mail sink). Every binding is
+      // declared here because wrangler does not inherit bindings or vars into an environment. Runbook: PROD-RUNBOOK.md.
+      // The Worker keeps the name murage-control-plane (set explicitly, or wrangler would call it murage-control-plane-production).
+      "name": "murage-control-plane",
+      "account_id": "b83123326a4b9ad76831b9cb9365b33b",
+      "workers_dev": false,
+      // The one allowed `define`: the signed-image gate reads the environment from the bundle (scripts/check-deploy.mjs refuses any other value).
+      "define": { "__MURAGE_BUILD_ENV__": "\"production\"" },
+      // The control plane's public host. The shipped desktop app hardcodes https://accounts.murage.ai. https://murage.ai is the customer
+      // SITE (members area murage.ai/home/cloud, the only allowed Origin), not this Worker. cloud.murage.ai has no DNS.
+      "routes": [{ "pattern": "accounts.murage.ai", "custom_domain": true }],
+      "vars": {
+        "MURAGE_ENV": "live",
+        "BETTER_AUTH_URL": "https://accounts.murage.ai",
+        // The public key(s) that verify image signatures: base64 SPKI, P-256, fingerprint pinned in scripts/image-sig.mjs. One value, two during a rotation.
+        "B5_IMAGE_VERIFY_PUBKEY": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEO3QlvKOqz6qpRt7k/lc8IJgxhtxiwkk+jvwwn28fT4OV+bi/v5WP+5AAuM7OhyLJoNkvuDXPXcecqP/LNl18aA==",
+        // Real mail: the Cloudflare send_email binding (Email Sending is on for murage.ai). No MAIL_SINK, no STAGING_MAIL_SINK.
+        "EMAIL_FROM": "noreply@murage.ai",
+        "ALLOWED_ORIGINS": "https://murage.ai",
+        "BILLING_RETURN_ORIGIN": "https://murage.ai",
+        // Sales switch (cloud-v2/status-stepup): "false" refuses reserve/checkout/resume with 503 sales_closed and GET /v1/status stays live:true for existing customers.
+        // "invite" (CH1): only emails in the sales_invites table can reserve/checkout/resume (403 not_invited otherwise). Needs migration 0146 applied first.
+        // Flip to "true" only on Sean's word to open the pre-launch (runbook step C).
+        "CLOUD_SALES_OPEN": "invite",
+        // Dark-launch invite list (B1): only consulted when CLOUD_SALES_OPEN is shut ("false" or unset); inert under "invite". Empty: nobody. Addresses are set by the deploy, never committed.
+        "CLOUD_SALES_ALLOWLIST": "",
+        "SITE_ORIGIN": "https://murage.ai",
+        "CLOUDFLARE_ACCOUNT_ID": "b83123326a4b9ad76831b9cb9365b33b",
+        "CLOUDFLARE_ZONE_ID": "98521dceb5535df78337fc26a9dc4d73",
+        "COMPANION_HOST_SUFFIX": "murage.ai",
+        // Homes get immutable opaque names h-<opaque>.murage.ai (one level, covered by the zone's certificate). Tunnels and DNS are in
+        // this same account, so the zone and account ids equal the ones above. CLOUD_HOME_API_TOKEN is a Worker secret.
+        "CLOUD_HOME_HOST_SUFFIX": "murage.ai",
+        "CLOUD_HOME_ZONE_ID": "98521dceb5535df78337fc26a9dc4d73",
+        "CLOUD_HOME_ACCOUNT_ID": "b83123326a4b9ad76831b9cb9365b33b",
+        "SENDLANE_LIST_ID": "37",
+        // Waitlist signups go only to their own list 39 ("Murage Waitlist (Team and Business plans)", MurageSite 11-04), never to 37.
+        "SENDLANE_WAITLIST_LIST_ID": "39",
+        // One-per-person refund limit, live with the Cloud terms (page label 2026-10-11.1; ids from the legal publish: see runbook).
+        "REFUND_LIMIT_V2_LIVE": "1",
+        // Flux is OFF in production for the ch1-g deploy (Sean 11-10, option A): the Flux route switch is absent, so the Flux routes, cron and
+        // grant hooks stay the stub, as on the live 353a1ccc. Switching Flux on is its own later step: Sean puts FLUX_CLOUD_SERVICE_TOKEN and
+        // FLUX_CLOUD_GRANTS_TOKEN (wrangler secret put --env production), then a commit adds "the Flux route switch": "1" here and names both
+        // secrets in secrets.required (check-deploy refuses Flux on without them).
+        // ITEM 9: auto top-up charging and door device confirmation are locked off. src/held-until-item9-highs.ts also holds both off
+        // whatever these say, until AUTO-TOPUP-STATE-MACHINE lands (test/item9-held.test.ts pins both values to "0" here).
+        "CLOUD_AUTOTOPUP_ENABLED": "0",
+        "DOOR_JOIN_REQUIRED": "0",
+        "FLUX_API_BASE": "https://api.fluxrouter.ai",
+        "FLUX_APP_BASE": "https://fluxrouter.ai",
+        "FLUX_CLOUD_GRANTS_URL": "https://api.fluxrouter.ai",
+        // STRIPE_ALLOW_LIVE is the LIVE-BILLING gate, not the sales switch: billingConfig() refuses a live Stripe key without it
+        // (billing_live_not_allowed), so it must be "1" before any live billing works (purchases, refunds, cancellations, portal, webhooks).
+        // To go live add `"STRIPE_ALLOW_LIVE": "1"` here, as its own commit, and redeploy (runbook part D). Any other value is refused.
+        // NEVER remove it to close sales once customers exist: that would break refunds and billing for existing customers.
+        // CLOUD_SALES_OPEN is strict: "true" open to all, "invite" open to emails in sales_invites, "false" shut, anything else shut.
+        // To CLOSE sales set CLOUD_SALES_OPEN to "false" (reserve/checkout/resume answer 503 sales_closed; GET /v1/status keeps live:true for
+        // existing customers) and keep STRIPE_ALLOW_LIVE.
+        // Stripe LIVE object ids (not secrets). PROD_TODO_ until created in the live dashboard.
+        "STRIPE_PRICE_STARTER": "price_1URfMiEuutHnlVmCdMuHJtIi",
+        "STRIPE_PRICE_PRO": "price_1URfO5EuutHnlVmCpmoWMo04",
+        "STRIPE_PRICE_MAX": "price_1URfOoEuutHnlVmCLxSq6dWd",
+        "STRIPE_PORTAL_CONFIGURATION": "bpc_1URfS8EuutHnlVmCl2UiQZ4w",
+        // AWS KMS wraps every home key. A production key (not staging's), with its own IAM user whose key pair is the AWS_* Worker secrets.
+        "AWS_KMS_KEY_ARN": "arn:aws:kms:eu-west-1:149471050106:key/b79b4dba-d9f8-485a-937b-c4704faba55b",
+        "AWS_KMS_REGION": "eu-west-1",
+        "CLOUD_B3_MODE": "live",
+        // Pinned prod home images (murage-live project): x86 451878214 + arm 451877100 built from 20f95f742 (Cloud home launcher: a routed Fuigo turn needs both base names,
+        // Flux keys stay on the Flux host, a blank key is no key; 40 GB disk), verified and signed (env prod, check f06237aa). imageDigest is a label (recipe v1): sha256 of
+        // {"v":1,"env":"prod","commit":"20f95f742a8aaa02dc73b7ae52674e17dcb9f35f","x86":"451878214","arm":"451877100","controlKey":"<public verification key from the matching image manifest>"}.
+        // The previous pair 449759230 / 449759735 (5be4cba3f, digest 5bac4cb3) keeps its signed imageKinds entries so a home built on it can rebuild.
+        // Capacity: one block of 400 admission slots prd-1..prd-400 (a Worker text var holds ~5 kB, so slots are not listed row by row), all engine sign-ins on.
+        "CLOUD_B3_CONFIG": "{\"reservationMs\":1800000,\"graceMs\":259200000,\"retentionMs\":2592000000,\"imageDigest\":\"sha256:7211bb35fcb80520d72e8496df143d2491531ae047a1b4ff766235e69aec4796\",\"engineSubscriptionGates\":{\"claudeAgent\":true,\"codex\":true,\"grokAgent\":true,\"kimiAgent\":true,\"opencodeGo\":true},\"quarantineRelayIP\":\"198.51.100.20\",\"capacity\":[],\"capacityBlocks\":[{\"prefix\":\"prd\",\"count\":400,\"projectId\":\"murage-live\",\"location\":\"fsn1\",\"serverType\":\"cx23\",\"outcome\":\"available\"}]}",
+        // Provisioner: image 4C ids, build host only (no cpx, no Vultr rung), EU locations, no operator ssh, warm pool 60 Starter / 25 Pro,
+        // idle cap EUR 700 per month. The pool stays OFF until warm_pool_control.grabber is switched on (migration 0110 default: off).
+        "B5_PROVISIONER_CONFIG": "{\"images\":{\"hetzner\":{\"x86\":\"451878214\",\"arm\":\"451877100\"},\"vultr\":{}},\"imageKinds\":{\"451878214\":{\"kind\":\"customer\",\"verifiedBy\":\"hz-live-rescue\",\"checkVersion\":\"1\",\"verifiedAt\":\"20261104T040928Z\",\"createdAt\":\"2026-11-04T03:56:06Z\",\"imageSize\":\"14.452710443359376\",\"env\":\"prod\",\"checkSha256\":\"f06237aabcae77a7778d54655ebfb709c2e08df87b7be49f96ee0fb84283135a\",\"verdict\":\"pass\",\"keyFp\":\"3297b57ae1685fbdf5f176941735c276715124099519a8e0646a7f0bf2c4661b\",\"sig\":\"NqPDLJNDcxPJCbGOOIs9HbQiy5RZtR_X1k6UJsnaDHyIsm9gVTNWbWSwtOeEyee5_mXxYXa5ASnw5gNrEzqaPA\"},\"451877100\":{\"kind\":\"customer\",\"verifiedBy\":\"hz-live-rescue\",\"checkVersion\":\"1\",\"verifiedAt\":\"20261104T041325Z\",\"createdAt\":\"2026-11-04T03:44:46Z\",\"imageSize\":\"10.932325149414062\",\"env\":\"prod\",\"checkSha256\":\"f06237aabcae77a7778d54655ebfb709c2e08df87b7be49f96ee0fb84283135a\",\"verdict\":\"pass\",\"keyFp\":\"3297b57ae1685fbdf5f176941735c276715124099519a8e0646a7f0bf2c4661b\",\"sig\":\"_6n5oNb9jNQ3KcwS7crphYFarPGpuMYi-U2oSz3pIQHmKbfHU_ywAIxju-WXiG-gyZqBIQPFt8WkmXXoxLgwtA\"},\"449759230\":{\"kind\":\"customer\",\"verifiedBy\":\"hz-live-rescue\",\"checkVersion\":\"1\",\"verifiedAt\":\"20261030T001049Z\",\"createdAt\":\"2026-10-30T00:00:02Z\",\"imageSize\":\"14.508941547851563\",\"env\":\"prod\",\"checkSha256\":\"f06237aabcae77a7778d54655ebfb709c2e08df87b7be49f96ee0fb84283135a\",\"verdict\":\"pass\",\"keyFp\":\"3297b57ae1685fbdf5f176941735c276715124099519a8e0646a7f0bf2c4661b\",\"sig\":\"HILNZ40dEoFM4Yva6Hdq5dMgybGWlGnpgxVPKbj8lwZ3RkGDfFuMBEmMpJWGvlvyH0JD1AIOXw6RLHpQ3AwDbA\"},\"449759735\":{\"kind\":\"customer\",\"verifiedBy\":\"hz-live-rescue\",\"checkVersion\":\"1\",\"verifiedAt\":\"20261030T012657Z\",\"createdAt\":\"2026-10-30T00:04:08Z\",\"imageSize\":\"14.160237385742187\",\"env\":\"prod\",\"checkSha256\":\"f06237aabcae77a7778d54655ebfb709c2e08df87b7be49f96ee0fb84283135a\",\"verdict\":\"pass\",\"keyFp\":\"3297b57ae1685fbdf5f176941735c276715124099519a8e0646a7f0bf2c4661b\",\"sig\":\"yAQp8jVRywcBhcJcgD18LCmdnVYMwk3IvDvxGUfypw3G_V7UnhBbTwtAKUxQZrXSTLrhc4K1_61es3n9PsDm6Q\"}},\"hetznerLocations\":[\"fsn1\",\"nbg1\",\"hel1\"],\"sshKeyIds\":[],\"firewallIds\":[11881742],\"storageBox\":[{\"id\":682135,\"host\":\"u700243.your-storagebox.de\",\"mainUser\":\"u700243\",\"knownHosts\":\"[u700243.your-storagebox.de]:23 ecdsa-sha2-nistp521 AAAAE2VjZHNhLXNoYTItbmlzdHA1MjEAAAAIbmlzdHA1MjEAAACFBAGK0po6usux4Qv2d8zKZN1dDvbWjxKkGsx7XwFdSUCnF19Q8psHEUWR7C/LtSQ5crU/g+tQVRBtSgoUcE8T+FWp5wBxKvWG2X9gD+s9/4zRmDeSJR77W6gSA/+hpOZoSE+4KgNdnbYSNtbZH/dN74EG7GLb/gcIpbUUzPNXpfKl7mQitw==\\n[u700243.your-storagebox.de]:23 ssh-rsa AAAAB3NzaC1yc2EAAAABIwAAAQEA5EB5p/5Hp3hGW1oHok+PIOH9Pbn7cnUiGmUEBrCVjnAw+HrKyN8bYVV0dIGllswYXwkG/+bgiBlE6IVIBAq+JwVWu1Sss3KarHY3OvFJUXZoZyRRg/Gc/+LRCE7lyKpwWQ70dbelGRyyJFH36eNv6ySXoUYtGkwlU5IVaHPApOxe4LHPZa/qhSRbPo2hwoh0orCtgejRebNtW5nlx00DNFgsvn8Svz2cIYLxsPVzKgUxs8Zxsxgn+Q/UvR7uq4AbAhyBMLxv7DjJ1pc7PJocuTno2Rw9uMZi1gkjbnmiOh6TTXIEWbnroyIhwc8555uto9melEUmWNQ+C+PwAK+MPw==\\n[u700243.your-storagebox.de]:23 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIICf9svRenC/PLKIL9nk6K/pxQgoiFC41wTNvoIncOxs\",\"baseDir\":\"murage-prod\"}],\"opsSshFrom\":[],\"quarantineFirewallId\":11881743,\"forbiddenTypePrefixes\":[\"cpx\"],\"ladders\":{\"starter\":[{\"provider\":\"hetzner\",\"serverType\":\"cx23\",\"arch\":\"x86\"},{\"provider\":\"hetzner\",\"serverType\":\"cax11\",\"arch\":\"arm\"}],\"pro\":[{\"provider\":\"hetzner\",\"serverType\":\"cax21\",\"arch\":\"arm\"},{\"provider\":\"hetzner\",\"serverType\":\"cx33\",\"arch\":\"x86\"}],\"max\":[{\"provider\":\"hetzner\",\"serverType\":\"cax21\",\"arch\":\"arm\"},{\"provider\":\"hetzner\",\"serverType\":\"cx33\",\"arch\":\"x86\"}]},\"pool\":{\"env\":\"production\",\"monthlyIdleCapEur\":700,\"classes\":{\"starter\":{\"rungs\":[{\"serverType\":\"cx23\",\"arch\":\"x86\"},{\"serverType\":\"cax11\",\"arch\":\"arm\"}],\"target\":60,\"red\":20,\"max\":70},\"pro\":{\"rungs\":[{\"serverType\":\"cax21\",\"arch\":\"arm\"},{\"serverType\":\"cx33\",\"arch\":\"x86\"}],\"target\":25,\"red\":8,\"max\":30}},\"maxCreatesPerTick\":10,\"maxCreatesPerDay\":150,\"maxConsecutiveCreateFailures\":5,\"limits\":{\"vcpu\":1500,\"primaryIps\":800,\"volumeGb\":60000,\"reserveForLive\":{\"vcpu\":400,\"primaryIps\":200,\"volumeGb\":20000}},\"overTargetRetireAfterH\":72}}"
+      },
+      // CLOUD_KEK_V1 is deliberately absent: production has no legacy v1 key blobs, every home key is wrapped by AWS KMS (key-wrapper.ts).
+      // Flux is OFF (the Flux route switch absent), so the two Flux secrets are not required yet; they join this list in the Flux switch-on commit.
+      // Names only; values are put with `wrangler secret put --env production` (runbook part B).
+      "secrets": {
+        "required": ["BETTER_AUTH_SECRET", "CLOUDFLARE_API_TOKEN", "SENDLANE_API_KEY", "SENDLANE_HASH_KEY", "CLOUD_ADMIN_TOKEN", "CHECKOUT_DISCLOSURE_TOKEN_SECRET", "CANCELLATION_MAIL_KEY", "NOTICE_MAIL_KEY", "REFUND_KEY_SECRET", "STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET", "CLOUD_HOME_API_TOKEN", "AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "HCLOUD_TOKEN", "STORAGEBOX_API_TOKEN", "STORAGEBOX_MAIN_PASSWORD", "CLOUD_B3_SIGNING_JWK", "SUPABASE_URL", "SUPABASE_PUBLISHABLE_KEY", "FIRSTPROMOTER_API_KEY", "FIRSTPROMOTER_ACCOUNT_ID"]
+      },
+      "d1_databases": [{
+        "binding": "DB",
+        "database_name": "murage-cloud-prod",
+        "database_id": "3247c1ab-911a-4961-b8b5-c301ab257bd6",
+        "migrations_dir": "migrations"
+      }],
+      // The identity reader must be deployed on this account first (cloudflare/identity-reader, top-level config = production).
+      "services": [{ "binding": "IDENTITY_READER", "service": "murage-identity-reader", "entrypoint": "IdentityReader" }],
+      "send_email": [{ "name": "EMAIL", "allowed_sender_addresses": ["noreply@murage.ai"] }],
+      "ratelimits": [
+        { "name": "MACHINE_OPEN_LIMIT", "namespace_id": "73101", "simple": { "limit": 30, "period": 60 } },
+        { "name": "MACHINE_BEARER_LIMIT", "namespace_id": "73102", "simple": { "limit": 240, "period": 60 } }
+      ],
+      "triggers": { "crons": ["*/5 * * * *", "* * * * *"] },
+      "observability": {
+        "enabled": true,
+        "logs": { "enabled": true, "head_sampling_rate": 1 },
+        "traces": { "enabled": true, "head_sampling_rate": 0.05 }
+      }
     }
   }
 }

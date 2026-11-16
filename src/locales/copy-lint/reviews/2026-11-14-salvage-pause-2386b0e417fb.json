@@ -1,0 +1,303 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "gap-spend",
+  "date": "2026-11-14",
+  "base": "8009bd1db97c8da7f4226971f55e1a8401b3d95f",
+  "scope": "Independent review of inherited PAUSE100 renderer strings",
+  "strings": {
+    "en:ux.l2c.pause.waiting": {
+      "text": "New work on Flux Router waits. Running replies finish. Bots on other engines keep working.",
+      "en": "New work on Flux Router waits. Running replies finish. Bots on other engines keep working.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "en:ux.l2c.pause.limitSetting": {
+      "text": "Monthly limit: {limit}. New work on Flux Router pauses at 100%.",
+      "en": "Monthly limit: {limit}. New work on Flux Router pauses at 100%.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "en:ux.l2c.pause.promiseTitle": {
+      "text": "How the limit works",
+      "en": "How the limit works",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "en:ux.l2c.pause.promise": {
+      "text": "Murage checks Flux Router’s billed figure before each new piece of work on Flux Router and stops starting new work once your limit is reached. Work already running finishes, and Flux Router can take up to 5 minutes to record a charge, so the month can end above your limit by the cost of that work. While the figure cannot be read, new work on Flux Router waits. Bots on other engines keep working. A limit you set inside Flux Router is separate from this one.",
+      "en": "Murage checks Flux Router’s billed figure before each new piece of work on Flux Router and stops starting new work once your limit is reached. Work already running finishes, and Flux Router can take up to 5 minutes to record a charge, so the month can end above your limit by the cost of that work. While the figure cannot be read, new work on Flux Router waits. Bots on other engines keep working. A limit you set inside Flux Router is separate from this one.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "en:ux.l2c.pause.accountBilled": {
+      "text": "Account spend through Flux Router this month: {amount}",
+      "en": "Account spend through Flux Router this month: {amount}",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "en:ux.l2c.pause.accountOfLimit": {
+      "text": "Account spend through Flux Router: {amount} of {limit} · {percent}%",
+      "en": "Account spend through Flux Router: {amount} of {limit} · {percent}%",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "de:ux.l2c.pause.waiting": {
+      "text": "Neue Aufgaben über Flux Router warten. Laufende Antworten werden fertiggestellt. Bots mit anderen Engines arbeiten weiter.",
+      "en": "New work on Flux Router waits. Running replies finish. Bots on other engines keep working.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "de:ux.l2c.pause.limitSetting": {
+      "text": "Monatslimit: {limit}. Neue Aufgaben über Flux Router pausieren bei 100%.",
+      "en": "Monthly limit: {limit}. New work on Flux Router pauses at 100%.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "de:ux.l2c.pause.promiseTitle": {
+      "text": "So funktioniert das Limit",
+      "en": "How the limit works",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "de:ux.l2c.pause.promise": {
+      "text": "Murage prüft den von Flux Router abgerechneten Betrag vor jeder neuen Aufgabe über Flux Router und startet keine neuen Aufgaben, sobald dein Limit erreicht ist. Laufende Aufgaben werden fertiggestellt. Flux Router kann bis zu 5 Minuten brauchen, um Kosten zu erfassen. Deshalb kann der Monatsbetrag durch diese Aufgaben über deinem Limit liegen. Solange der Betrag nicht gelesen werden kann, warten neue Aufgaben über Flux Router. Bots mit anderen Engines arbeiten weiter. Ein Limit in Flux Router gilt unabhängig von diesem Limit.",
+      "en": "Murage checks Flux Router’s billed figure before each new piece of work on Flux Router and stops starting new work once your limit is reached. Work already running finishes, and Flux Router can take up to 5 minutes to record a charge, so the month can end above your limit by the cost of that work. While the figure cannot be read, new work on Flux Router waits. Bots on other engines keep working. A limit you set inside Flux Router is separate from this one.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "de:ux.l2c.pause.accountBilled": {
+      "text": "Kontoausgaben über Flux Router diesen Monat: {amount}",
+      "en": "Account spend through Flux Router this month: {amount}",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "de:ux.l2c.pause.accountOfLimit": {
+      "text": "Kontoausgaben über Flux Router: {amount} von {limit} · {percent}%",
+      "en": "Account spend through Flux Router: {amount} of {limit} · {percent}%",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "es:ux.l2c.pause.waiting": {
+      "text": "El trabajo nuevo en Flux Router queda en espera. Las respuestas en curso terminan. Los bots con otros motores siguen trabajando.",
+      "en": "New work on Flux Router waits. Running replies finish. Bots on other engines keep working.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "es:ux.l2c.pause.limitSetting": {
+      "text": "Límite mensual: {limit}. El trabajo nuevo en Flux Router se pausa al llegar al 100%.",
+      "en": "Monthly limit: {limit}. New work on Flux Router pauses at 100%.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "es:ux.l2c.pause.promiseTitle": {
+      "text": "Cómo funciona el límite",
+      "en": "How the limit works",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "es:ux.l2c.pause.promise": {
+      "text": "Murage consulta el importe facturado por Flux Router antes de cada trabajo nuevo en Flux Router y deja de iniciar trabajo cuando se alcanza tu límite. El trabajo en curso termina y Flux Router puede tardar hasta 5 minutos en registrar un cargo. Por eso el mes puede acabar por encima del límite por el coste de ese trabajo. Si no se puede consultar el importe, el trabajo nuevo en Flux Router espera. Los bots con otros motores siguen trabajando. Un límite configurado en Flux Router es independiente de este.",
+      "en": "Murage checks Flux Router’s billed figure before each new piece of work on Flux Router and stops starting new work once your limit is reached. Work already running finishes, and Flux Router can take up to 5 minutes to record a charge, so the month can end above your limit by the cost of that work. While the figure cannot be read, new work on Flux Router waits. Bots on other engines keep working. A limit you set inside Flux Router is separate from this one.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "es:ux.l2c.pause.accountBilled": {
+      "text": "Gasto de la cuenta en Flux Router este mes: {amount}",
+      "en": "Account spend through Flux Router this month: {amount}",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "es:ux.l2c.pause.accountOfLimit": {
+      "text": "Gasto de la cuenta en Flux Router: {amount} de {limit} · {percent}%",
+      "en": "Account spend through Flux Router: {amount} of {limit} · {percent}%",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "fr:ux.l2c.pause.waiting": {
+      "text": "Les nouvelles tâches sur Flux Router attendent. Les réponses en cours se terminent. Les bots utilisant d’autres moteurs continuent de travailler.",
+      "en": "New work on Flux Router waits. Running replies finish. Bots on other engines keep working.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "fr:ux.l2c.pause.limitSetting": {
+      "text": "Limite mensuelle : {limit}. Les nouvelles tâches sur Flux Router sont mises en pause à 100%.",
+      "en": "Monthly limit: {limit}. New work on Flux Router pauses at 100%.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "fr:ux.l2c.pause.promiseTitle": {
+      "text": "Comment fonctionne la limite",
+      "en": "How the limit works",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "fr:ux.l2c.pause.promise": {
+      "text": "Murage consulte le montant facturé par Flux Router avant chaque nouvelle tâche sur Flux Router et ne lance plus de nouvelles tâches une fois ta limite atteinte. Les tâches en cours se terminent et Flux Router peut mettre jusqu’à 5 minutes à enregistrer un montant. Le total du mois peut donc dépasser ta limite du coût de ces tâches. Si le montant ne peut pas être lu, les nouvelles tâches sur Flux Router attendent. Les bots utilisant d’autres moteurs continuent de travailler. Une limite définie dans Flux Router est indépendante de celle-ci.",
+      "en": "Murage checks Flux Router’s billed figure before each new piece of work on Flux Router and stops starting new work once your limit is reached. Work already running finishes, and Flux Router can take up to 5 minutes to record a charge, so the month can end above your limit by the cost of that work. While the figure cannot be read, new work on Flux Router waits. Bots on other engines keep working. A limit you set inside Flux Router is separate from this one.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "fr:ux.l2c.pause.accountBilled": {
+      "text": "Dépenses du compte via Flux Router ce mois-ci : {amount}",
+      "en": "Account spend through Flux Router this month: {amount}",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "fr:ux.l2c.pause.accountOfLimit": {
+      "text": "Dépenses du compte via Flux Router : {amount} sur {limit} · {percent} %",
+      "en": "Account spend through Flux Router: {amount} of {limit} · {percent}%",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "hi:ux.l2c.pause.waiting": {
+      "text": "Flux Router पर नया काम रुका रहता है। चल रहे जवाब पूरे होते हैं। दूसरे इंजन वाले बॉट काम करते रहते हैं।",
+      "en": "New work on Flux Router waits. Running replies finish. Bots on other engines keep working.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "hi:ux.l2c.pause.limitSetting": {
+      "text": "मासिक सीमा: {limit}। Flux Router पर नया काम 100% पर रुक जाता है।",
+      "en": "Monthly limit: {limit}. New work on Flux Router pauses at 100%.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "hi:ux.l2c.pause.promiseTitle": {
+      "text": "सीमा कैसे काम करती है",
+      "en": "How the limit works",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "hi:ux.l2c.pause.promise": {
+      "text": "Murage, Flux Router पर हर नया काम शुरू करने से पहले उसका बिल किया गया खर्च जाँचता है। आपकी सीमा पूरी होने पर नया काम शुरू नहीं होता। चल रहा काम पूरा होता है और Flux Router को खर्च दर्ज करने में 5 मिनट तक लग सकते हैं। इसलिए उस काम की लागत से महीने का कुल खर्च सीमा से ऊपर जा सकता है। खर्च पढ़ा नहीं जा सके तो Flux Router पर नया काम रुका रहता है। दूसरे इंजन वाले बॉट काम करते रहते हैं। Flux Router में तय की गई सीमा इससे अलग है।",
+      "en": "Murage checks Flux Router’s billed figure before each new piece of work on Flux Router and stops starting new work once your limit is reached. Work already running finishes, and Flux Router can take up to 5 minutes to record a charge, so the month can end above your limit by the cost of that work. While the figure cannot be read, new work on Flux Router waits. Bots on other engines keep working. A limit you set inside Flux Router is separate from this one.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "hi:ux.l2c.pause.accountBilled": {
+      "text": "इस महीने Flux Router पर खाते का खर्च: {amount}",
+      "en": "Account spend through Flux Router this month: {amount}",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "hi:ux.l2c.pause.accountOfLimit": {
+      "text": "Flux Router पर खाते का खर्च: {limit} में से {amount} · {percent}%",
+      "en": "Account spend through Flux Router: {amount} of {limit} · {percent}%",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "ja:ux.l2c.pause.waiting": {
+      "text": "Flux Routerでの新しい作業は待機します。実行中の応答は最後まで続きます。他のエンジンのボットは作業を続けます。",
+      "en": "New work on Flux Router waits. Running replies finish. Bots on other engines keep working.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "ja:ux.l2c.pause.limitSetting": {
+      "text": "月間上限：{limit}。Flux Routerでの新しい作業は100%で一時停止します。",
+      "en": "Monthly limit: {limit}. New work on Flux Router pauses at 100%.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "ja:ux.l2c.pause.promiseTitle": {
+      "text": "上限の仕組み",
+      "en": "How the limit works",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "ja:ux.l2c.pause.promise": {
+      "text": "MurageはFlux Routerで新しい作業を始める前に、Flux Routerの請求額を確認し、上限に達すると新しい作業を開始しません。実行中の作業は完了まで続き、Flux Routerが料金を記録するまで最大5分かかることがあります。そのため、その作業の料金分だけ月の合計が上限を超える場合があります。金額を読み取れない間、Flux Routerでの新しい作業は待機します。他のエンジンのボットは作業を続けます。Flux Router内で設定した上限は、この上限とは別です。",
+      "en": "Murage checks Flux Router’s billed figure before each new piece of work on Flux Router and stops starting new work once your limit is reached. Work already running finishes, and Flux Router can take up to 5 minutes to record a charge, so the month can end above your limit by the cost of that work. While the figure cannot be read, new work on Flux Router waits. Bots on other engines keep working. A limit you set inside Flux Router is separate from this one.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "ja:ux.l2c.pause.accountBilled": {
+      "text": "今月のFlux Routerアカウントの支出：{amount}",
+      "en": "Account spend through Flux Router this month: {amount}",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "ja:ux.l2c.pause.accountOfLimit": {
+      "text": "Flux Routerアカウントの支出：{amount} / {limit} · {percent}%",
+      "en": "Account spend through Flux Router: {amount} of {limit} · {percent}%",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "pt-br:ux.l2c.pause.waiting": {
+      "text": "O trabalho novo no Flux Router aguarda. As respostas em andamento terminam. Os bots com outros motores continuam trabalhando.",
+      "en": "New work on Flux Router waits. Running replies finish. Bots on other engines keep working.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "pt-br:ux.l2c.pause.limitSetting": {
+      "text": "Limite mensal: {limit}. O trabalho novo no Flux Router pausa ao chegar a 100%.",
+      "en": "Monthly limit: {limit}. New work on Flux Router pauses at 100%.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "pt-br:ux.l2c.pause.promiseTitle": {
+      "text": "Como o limite funciona",
+      "en": "How the limit works",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "pt-br:ux.l2c.pause.promise": {
+      "text": "O Murage consulta o valor faturado pelo Flux Router antes de cada trabalho novo no Flux Router e deixa de iniciar trabalho quando seu limite é atingido. O trabalho em andamento termina, e o Flux Router pode levar até 5 minutos para registrar uma cobrança. Por isso, o mês pode terminar acima do limite pelo custo desse trabalho. Quando o valor não pode ser lido, o trabalho novo no Flux Router aguarda. Os bots com outros motores continuam trabalhando. Um limite definido dentro do Flux Router é separado deste.",
+      "en": "Murage checks Flux Router’s billed figure before each new piece of work on Flux Router and stops starting new work once your limit is reached. Work already running finishes, and Flux Router can take up to 5 minutes to record a charge, so the month can end above your limit by the cost of that work. While the figure cannot be read, new work on Flux Router waits. Bots on other engines keep working. A limit you set inside Flux Router is separate from this one.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "pt-br:ux.l2c.pause.accountBilled": {
+      "text": "Gasto da conta pelo Flux Router neste mês: {amount}",
+      "en": "Account spend through Flux Router this month: {amount}",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "pt-br:ux.l2c.pause.accountOfLimit": {
+      "text": "Gasto da conta pelo Flux Router: {amount} de {limit} · {percent}%",
+      "en": "Account spend through Flux Router: {amount} of {limit} · {percent}%",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "zh:ux.l2c.pause.waiting": {
+      "text": "Flux Router上的新工作会等待。正在进行的回复会完成。使用其他引擎的机器人会继续工作。",
+      "en": "New work on Flux Router waits. Running replies finish. Bots on other engines keep working.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "zh:ux.l2c.pause.limitSetting": {
+      "text": "每月限额：{limit}。Flux Router上的新工作会在达到100%时暂停。",
+      "en": "Monthly limit: {limit}. New work on Flux Router pauses at 100%.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "zh:ux.l2c.pause.promiseTitle": {
+      "text": "限额的工作方式",
+      "en": "How the limit works",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "zh:ux.l2c.pause.promise": {
+      "text": "Murage会在Flux Router开始每项新工作前检查其已计费金额，达到限额后不再开始新工作。正在进行的工作会完成，而Flux Router记录费用可能最多需要5分钟。因此，月底总额可能因这些工作的费用而超过限额。无法读取金额时，Flux Router上的新工作会等待。使用其他引擎的机器人会继续工作。在Flux Router内设置的限额与此限额相互独立。",
+      "en": "Murage checks Flux Router’s billed figure before each new piece of work on Flux Router and stops starting new work once your limit is reached. Work already running finishes, and Flux Router can take up to 5 minutes to record a charge, so the month can end above your limit by the cost of that work. While the figure cannot be read, new work on Flux Router waits. Bots on other engines keep working. A limit you set inside Flux Router is separate from this one.",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "zh:ux.l2c.pause.accountBilled": {
+      "text": "本月 Flux Router 账户花费：{amount}",
+      "en": "Account spend through Flux Router this month: {amount}",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    },
+    "zh:ux.l2c.pause.accountOfLimit": {
+      "text": "Flux Router 账户花费：{amount} / {limit} · {percent}%",
+      "en": "Account spend through Flux Router: {amount} of {limit} · {percent}%",
+      "verdict": "pass",
+      "note": "Reviewed inherited gap-spend text independently in salvage: correct account scope, placeholders and pause/recovery semantics; no wording authored or changed by this reviewer."
+    }
+  },
+  "files": {}
+}
