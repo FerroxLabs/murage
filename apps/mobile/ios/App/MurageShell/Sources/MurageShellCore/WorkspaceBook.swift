@@ -91,7 +91,7 @@ public struct WorkspaceBook: Encodable, Equatable, Sendable {
         if active == origin.serialized { active = nil }
     }
 
-    /// The MagicDNS machine name: `example-mac` from `example-mac.tail….ts.net`.
+    /// The MagicDNS machine name: `test-laptop-pro` from `test-laptop-pro.tail….ts.net`.
     public static func defaultName(_ origin: WorkspaceOrigin) -> String {
         origin.host.split(separator: ".").first.map(String.init) ?? origin.host
     }

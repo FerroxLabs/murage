@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 // MiniMax API driver. The wire protocol is OpenAI chat completions; this file
 // keeps only MiniMax's credentials, catalog, and request differences.
 import { readFileSync } from "node:fs";
@@ -15,6 +16,8 @@ const CN_URL = "https://api.minimaxi.com/v1";
 const MODELS: ModelCatalog = {
   default: "MiniMax-M3",
   options: [
+    // https://platform.minimax.io/docs/api-reference/text-openai-api
+    { id: "MiniMax-M3.1-Flash", label: "MiniMax M3.1 Flash", contextWindow: 1_000_000 },
     { id: "MiniMax-M3", label: "MiniMax M3", contextWindow: 1_000_000 },
     { id: "MiniMax-M2.7", label: "MiniMax M2.7", contextWindow: 204_800 },
     { id: "MiniMax-M2.7-highspeed", label: "MiniMax M2.7 Highspeed", contextWindow: 204_800 },
@@ -46,7 +49,7 @@ function normalizedApiUrl(value: string): string {
 
 export function loadLocalMiniMaxConfig(home = homedir()): LocalMiniMaxConfig {
   try {
-    const raw = localConfigSchema.parse(JSON.parse(readFileSync(join(home, ".mmx", "config.json"), "utf8")));
+    const raw = localConfigSchema.parse(registerBusyloopPayloadSite("read", JSON.parse(readFileSync(join(home, ".mmx", "config.json"), "utf8"))));
     const configuredUrl = raw.base_url?.trim()
       ? raw.base_url
       : raw.region === "cn" ? CN_URL : DEFAULT_URL;

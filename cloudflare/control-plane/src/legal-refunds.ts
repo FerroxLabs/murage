@@ -27,6 +27,8 @@ export interface RefundOpRow {
   target_cents: number | null; amount_cents: number | null; basis: string | null; detail: string | null; end_plan: number; cancel_subscription_id: string | null;
   decided_at: number | null; stripe_refund_id: string | null; refunded_at: number | null; canceled_at: number | null; credits_revoked_at: number | null;
   notified_at: number | null; done_at: number | null; attempts: number; next_attempt_at: number | null; last_error: string | null; created_at: number;
+  /** Migration 0147: the Flux Stop operation (flux_home_ops.op_id) a QUEUED Stop was journaled under; NULL when none is queued. */
+  flux_stop_op_id: string | null;
   refund_status: string | null; submission: number; submitted_at: number | null; lease_until: number | null; subscription_id: string | null;
   /** Migration 0060. refund_submitted_at: the refund (direct: its credit note) exists at Stripe: the only date promised. stripe_refund_status:
    *  Stripe's own state, kept apart from it. cutover_at / old_*: frozen values of a pro-rata refund. */
@@ -1407,6 +1409,9 @@ async function advanceLeased(env: Env, ctx: RefundContext, id: string): Promise<
     }
     // The plan this operation ended (end_plan=1: cancelled above, by this kind's own cancellation rule) stops its Flux service. The Stop never
     // reverses credit (keepGrants): the target above adjusts it for the money actually returned.
+    // CH1 M4 (Astra r1): the Stop is settled when it is not owed (not revoking, not ending the plan, or already recorded) or once it succeeds
+    // below; a settled Stop resolves its flux.stop_pending alert, so the alert never pages for a Stop that no longer needs doing.
+    let stopSettled = !(detail.revoke && op.end_plan === 1 && op.credits_revoked_at === null);
     if (detail.revoke && op.end_plan === 1 && op.credits_revoked_at === null) {
       if (ctx.flux.stub) {
         // Astra JOURNEY-A-10 #3: Flux is OFF (the pre-B4 stub): JOURNAL-ONLY. The Flux Stop is not sent; it stays pending on this operation
@@ -1415,10 +1420,33 @@ async function advanceLeased(env: Env, ctx: RefundContext, id: string): Promise<
         await fencedBatch(env, lease, [q("INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING",
           `alert:flux_stop_pending:${op.id}`, op.home_id, "flux.stop_pending", "high", JSON.stringify({ opId: op.id, invoiceId: op.invoice_id }), ctx.now)]);
       } else {
-        await ctx.flux.stopForBilling(env, op.home_id, undefined, { ...(op.invoice_id ? { invoiceId: op.invoice_id } : {}), keepGrants: true });
-        await set("credits_revoked_at=?", ctx.now);
+        // CH1 P2: a Stop already queued for this operation is read, not re-issued: its terminal outcome (done or superseded) stamps the marker.
+        const prior = op.flux_stop_op_id ? await queuedStopOutcome(env, op.flux_stop_op_id) : null;
+        if (prior === "settled") { await set("credits_revoked_at=?", ctx.now); stopSettled = true; }
+        else if (prior === "pending") { /* owed: Flux's own sweep retries that very Stop; the alert stays open */ }
+        else {
+        const stop = await ctx.flux.stopForBilling(env, op.home_id, undefined, { ...(op.invoice_id ? { invoiceId: op.invoice_id } : {}), keepGrants: true });
+        // CH1 N4 (Astra r1): b4-flux answers {state:"stopping"} when the Stop is only QUEUED behind another op of the home (recorded, not yet done at the
+        // router). That is not a completed Stop: credits_revoked_at stays NULL (the Stop stays owed on this operation), its flux.stop_pending alert is
+        // raised and stays open. Only a confirmed Stop ("stopped": done, or superseded by a later one) stamps the marker and resolves the alert.
+        if ((stop as { state?: unknown } | null | undefined)?.state === "stopping") {
+          // The Stop's own operation identity, kept with the refund so it is reconciled even after the refund completes (reconcileQueuedStops).
+          // CH1-G (Grok Low 2): the alert and the op id are ONE fenced batch, so a crash or a lost lease between them cannot leave the op id NULL and
+          // the Stop sent a second time.
+          const stopOp = (stop as { opId?: unknown } | null | undefined)?.opId;
+          const writes: Q[] = [q("INSERT INTO cloud_alerts (id,home_id,kind,severity,detail,raised_at) VALUES (?,?,?,?,?,?) ON CONFLICT DO NOTHING",
+            `alert:flux_stop_pending:${op.id}`, op.home_id, "flux.stop_pending", "high", JSON.stringify({ opId: op.id, invoiceId: op.invoice_id }), ctx.now)];
+          if (typeof stopOp === "string") writes.push(q("UPDATE refund_ops SET flux_stop_op_id=?,updated_at=? WHERE id=?", stopOp, ctx.now, id));
+          const written = await fencedBatch(env, lease, writes);
+          if (typeof stopOp === "string" && written[1]?.meta.changes !== 1) throw new LeaseLost();
+        } else {
+          await set("credits_revoked_at=?", ctx.now);
+          stopSettled = true;
+        }
+        }
       }
     }
+    if (stopSettled) await fencedRun(env, lease, "UPDATE cloud_alerts SET resolved_at=? WHERE id=? AND resolved_at IS NULL", ctx.now, `alert:flux_stop_pending:${op.id}`);
     // Reopens a refusal that no longer stands, and cancels its queued notice in the same write (Astra ASTRA-REFUND5 #1).
     const reopenRefusal = (cond: { sql: string; binds: unknown[] } | null) => fencedBatch(env, lease, [
       q(`UPDATE refund_ops SET decided_at=NULL,basis=NULL,amount_cents=NULL,target_cents=NULL,updated_at=?
@@ -2150,7 +2178,39 @@ export async function reopenRefusedRequest(env: Env, ctx: RefundContext, r: Refu
 /** Billing sweep: every unfinished refund operation that is due. Pending operations are never dropped. Requests refused at request time
  *  whose refusal an erasure invalidated (a recorded event, ASTRA-REFUND7 #3) are reopened first, from their original receipt. Rows still
  *  waiting for their submission date from Stripe (migration 0060) are reconciled next. */
+/** CH1 M4: stale flux.stop_pending alerts. One whose operation no longer owes a Stop (credits_revoked_at recorded, the plan not ended, or the
+ *  operation gone) is resolved, wherever it was left (a finished operation is never advanced again). */
+export async function reconcileStopPendingAlerts(env: Env, now: number): Promise<void> {
+  await env.DB.prepare(`UPDATE cloud_alerts SET resolved_at=? WHERE kind='flux.stop_pending' AND resolved_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM refund_ops r WHERE r.id=json_extract(cloud_alerts.detail,'$.opId') AND r.end_plan=1 AND r.credits_revoked_at IS NULL)`).bind(now).run();
+}
+
+/** CH1 P2: how a queued Flux Stop ended. "settled": done or superseded at Flux (a later resume owns the home), or its row already purged (only terminal
+ *  rows are purged); "pending": still queued or running (Flux's own sweep keeps retrying that very op). */
+async function queuedStopOutcome(env: Env, stopOpId: string): Promise<"settled" | "pending"> {
+  const row = await env.DB.prepare("SELECT state FROM flux_home_ops WHERE op_id=?").bind(stopOpId).first<{ state: string }>();
+  return row && (row.state === "queued" || row.state === "running") ? "pending" : "settled";
+}
+
+/** CH1 P2: a COMPLETED refund whose Stop was queued has no further advance, so the sweep reads the Stop's own operation. Terminal (done or
+ *  superseded) stamps credits_revoked_at; still pending changes nothing (the alert stays open and Flux keeps retrying that Stop). Never issues a Stop. */
+export async function reconcileQueuedStops(env: Env, ctx: Pick<RefundContext, "deps" | "lease" | "now">): Promise<void> {
+  const settled = await env.DB.prepare(`SELECT id,home_id FROM refund_ops WHERE done_at IS NOT NULL AND end_plan=1 AND credits_revoked_at IS NULL
+    AND flux_stop_op_id IS NOT NULL
+    AND NOT EXISTS (SELECT 1 FROM flux_home_ops f WHERE f.op_id=refund_ops.flux_stop_op_id AND f.state IN ('queued','running')) LIMIT 50`).all<{ id: string; home_id: string }>();
+  for (const r of settled.results) {
+    try {
+      // Written under the home's lease like every other refund checkpoint; a busy home is simply reconciled by the next sweep.
+      await withHomeLease(env, r.home_id, async (lease) => {
+        await fencedRun(env, lease, "UPDATE refund_ops SET credits_revoked_at=?,updated_at=? WHERE id=? AND credits_revoked_at IS NULL", ctx.now, ctx.now, r.id);
+      }, ctx.lease ?? ctx.deps.lease);
+    } catch (e) { if (!(e instanceof HomeBusy || e instanceof LeaseLost)) throw e; }
+  }
+}
+
 export async function sweepRefundOps(env: Env, ctx: RefundContext): Promise<void> {
+  await reconcileQueuedStops(env, ctx);
+  await reconcileStopPendingAlerts(env, ctx.now);
   for (const r of await receiptsToRecheck(env)) {
     try {
       await withHomeLease(env, r.home_id, async (lease) => {

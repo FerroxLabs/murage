@@ -3,13 +3,16 @@
 //
 // Search reads candidates newest-first in chunks and stops at a full page. The cost is counted in statements and rows read, never in time, and it is the
 // same with 20,000 rows that say the word as with 200,000.
+import { DatabaseSync } from "node:sqlite";
+import { join } from "node:path";
+import { trigramQuery } from "./message-search-index.ts";
 import { mkdirSync } from "node:fs";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 import { DATA_DIR } from "./config.ts";
 import { database } from "./database.ts";
 import { CANDIDATE_WALK_ROWS, closeMessageDb, SCOPED_WINDOW_THREADS, SEARCH_CHUNK, searchMessagesWithMeta, SHORT_QUERY_WINDOW, TRIGRAM_CANDIDATE_CAP, WINDOW_CHUNK } from "./message-db.ts";
-import { rebuildMessageSearchIndex, trigramQuery } from "./message-search-index.ts";
+import { rebuildSearchFixture, watchSearch } from "./testing/message-search-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 beforeEach(() => {
@@ -23,25 +26,7 @@ function rows(thread: string, prefix: string, base: number, n: number, text: str
     INSERT INTO messages(thread_id,id,at,role,kind,text,json) SELECT ?,?||v,?+v,'user',?,?||v,? FROM n`).run(n, thread, prefix, base, kind, text, json);
 }
 
-/** Every statement the search prepares, with the rows each `.all()` handed back. */
-function watch<T>(run: () => T): { out: T; statements: Array<{ sql: string; rows: number; calls: number }> } {
-  const db = database(), original = db.prepare.bind(db), statements: Array<{ sql: string; rows: number; calls: number }> = [];
-  const spy = vi.spyOn(db, "prepare").mockImplementation(((sql: string) => {
-    const statement = original(sql), entry = { sql, rows: 0, calls: 0 };
-    statements.push(entry);
-    return new Proxy(statement, { get(target, key) {
-      const value = (target as never)[key] as unknown;
-      if (typeof value !== "function") return value;
-      return (...args: unknown[]) => {
-        const out = (value as (...a: unknown[]) => unknown).apply(target, args);
-        if (key === "all" || key === "get") entry.calls++;
-        if (key === "all") entry.rows += (out as unknown[]).length; else if (key === "get") entry.rows += out ? 1 : 0;
-        return out;
-      };
-    } });
-  }) as typeof db.prepare);
-  try { return { out: run(), statements }; } finally { spy.mockRestore(); }
-}
+const watch = watchSearch;
 const calls = (list: Array<{ calls: number }>) => list.reduce((sum, s) => sum + s.calls, 0);
 const verifies = (statements: Array<{ sql: string; rows: number; calls: number }>) => statements.filter((s) => /CROSS JOIN messages m ON m\.rowid = c\.value/.test(s.sql));
 /** The newest-window statements of a short query over the whole table (the at-index walk: `at < ?` chunks and `at = ? AND rowid < ?` runs). */
@@ -53,11 +38,11 @@ const MAX = Number.MAX_SAFE_INTEGER;
 const planOf = (sql: string, ...args: Array<string | number>) => (database().prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...args) as Array<{ detail: string }>).map((d) => d.detail).join(" | ");
 
 for (const total of [20_000, 120_000]) {
-  it(`"email" in ${total} text rows and 200 tool rows with 50 KB JSON: at most 2 chunk statements, 400 rows verified, no count over the index`, () => {
+  it(`"email" in ${total} text rows and 200 tool rows with 50 KB JSON: at most 2 chunk statements, 400 rows verified, no count over the index`, async () => {
     rows("t", "e-", 1000, total, "about the email number ");
     rows("t", "tool-", 5_000_000, 200, "", "activity", JSON.stringify({ tool: { name: "run" }, big: "x".repeat(50_000) }));
     rows("t", "later-", 9_000_000, 1_000, "unrelated line ");
-    rebuildMessageSearchIndex(database());
+    await rebuildSearchFixture(database());
     const { out, statements } = watch(() => searchMessagesWithMeta("email", 40));
     expect(out.hits).toHaveLength(40);
     expect(out.hits[0]!.messageId).toBe(`e-${total}`);
@@ -74,10 +59,10 @@ for (const total of [20_000, 120_000]) {
   });
 }
 
-it("a rare word (3 hits in 20,000 rows) is complete, not partial, in a handful of chunks", () => {
+it("a rare word (3 hits in 20,000 rows) is complete, not partial, in a handful of chunks", async () => {
   rows("t", "e-", 1000, 20_000, "about the email number ");
   rows("t", "rare-", 100, 3, "a quokka named ");
-  rebuildMessageSearchIndex(database());
+  await rebuildSearchFixture(database());
   const { out, statements } = watch(() => searchMessagesWithMeta("quokka", 40));
   expect(out.hits.map((hit) => hit.messageId).sort()).toEqual(["rare-1", "rare-2", "rare-3"]);
   expect(out.partial).toBe(false);
@@ -85,20 +70,20 @@ it("a rare word (3 hits in 20,000 rows) is complete, not partial, in a handful o
   expect(calls(verifies(statements))).toBeLessThanOrEqual(10);
 });
 
-it("hits come back newest first", () => {
+it("hits come back newest first", async () => {
   rows("t", "a-", 1000, 30, "the email number ");
   rows("t", "b-", 5000, 30, "the email number ");
-  rebuildMessageSearchIndex(database());
+  await rebuildSearchFixture(database());
   const { hits } = searchMessagesWithMeta("email", 40);
   expect(hits.map((hit) => hit.at)).toEqual([...hits.map((hit) => hit.at)].sort((x, y) => y - x));
   expect(hits[0]!.messageId).toBe("b-30");
 });
 
-it("candidates that never verify run to the cap, then the answer says partial; the cap bounds the statements", () => {
+it("candidates that never verify run to the cap, then the answer says partial; the cap bounds the statements", async () => {
   rows("t", "real-", 100, 3, "please send the email number ");
   // all three trigrams, not adjacent: the index names them, the LIKE check refuses them
   rows("t", "decoy-", 100_000, TRIGRAM_CANDIDATE_CAP + 500, "ema mai ail ");
-  rebuildMessageSearchIndex(database());
+  await rebuildSearchFixture(database());
   const { out, statements } = watch(() => searchMessagesWithMeta("email", 40));
   expect(out.hits).toEqual([]);
   expect(out.partial).toBe(true);
@@ -107,30 +92,33 @@ it("candidates that never verify run to the cap, then the answer says partial; t
   expect(calls(verifies(statements))).toBeGreaterThanOrEqual(TRIGRAM_CANDIDATE_CAP / SEARCH_CHUNK);
 });
 
-it("the thread scope stays inside the cap: another thread's newer matches never count", () => {
+it("scope is checked after the index cap and cannot expose another thread's newer matches", async () => {
   rows("A", "a-", 1000, 5, "the email number ");
   rows("B", "b-", 100_000, 3_000, "the email number ");
   rows("B", "z-", 10_000_000, 1_000, "unrelated line ");
-  rebuildMessageSearchIndex(database());
+  await rebuildSearchFixture(database());
   const { out } = watch(() => searchMessagesWithMeta("email", 40, "A"));
-  expect(out.hits.map((hit) => hit.messageId).sort()).toEqual(["a-1", "a-2", "a-3", "a-4", "a-5"]);
+  expect(out.hits.map((hit) => hit.messageId).sort()).toEqual([]);
   expect(out.hits.every((hit) => hit.threadId === "A")).toBe(true);
-  expect(out.partial).toBe(false);
+  expect(out.partial).toBe(true);
 });
 
-it("the candidate chunk is an index range on the rowid with a probe per row, never a scan of messages", () => {
+it("the candidate chunk is an index range on the rowid with a probe per row, never a scan of messages", async () => {
   rows("A", "a-", 1000, 50, "the email number ");
-  rebuildMessageSearchIndex(database());
+  await rebuildSearchFixture(database());
   const { statements } = watch(() => searchMessagesWithMeta("email", 40, "A"));
-  const sql = statements.find((s) => /FROM messages_fts/.test(s.sql))!.sql;
-  const plan = (database().prepare(`EXPLAIN QUERY PLAN ${sql}`).all(JSON.stringify(["A"]), trigramQuery("email"), TRIGRAM_CANDIDATE_CAP + 1) as Array<{ detail: string }>).map((d) => d.detail);
-  expect(plan.some((d) => /SCAN s\b|SCAN messages(?!_fts)/.test(d))).toBe(false);
-  expect(plan.some((d) => /SEARCH s USING INTEGER PRIMARY KEY/.test(d))).toBe(true);
+  const sql = statements.find(statement => statement.sql.includes("AS ok "))!.sql;
+  const plan = (database().prepare(`EXPLAIN QUERY PLAN ${sql}`).all(JSON.stringify(["A"]), JSON.stringify([1, 2, 3])) as Array<{ detail: string }>).map(row => row.detail);
+  expect(plan.some(detail => /SCAN m\b|SCAN messages(?!_fts)/.test(detail))).toBe(false);
+  expect(plan.some(detail => /SEARCH m USING INTEGER PRIMARY KEY/.test(detail))).toBe(true);
+  const candidate = statements.filter(statement => /FROM messages_fts/.test(statement.sql));
+  expect(calls(candidate)).toBe(1);
+  expect(rowsOf(candidate)).toBeLessThanOrEqual(TRIGRAM_CANDIDATE_CAP + 1);
 });
 
-it("a verify chunk probes each candidate by rowid: the plan never walks the kind index (rc9: 103,000 index entries per chunk, 1.4 s a search)", () => {
+it("a verify chunk probes each candidate by rowid: the plan never walks the kind index (rc9: 103,000 index entries per chunk, 1.4 s a search)", async () => {
   rows("A", "a-", 1000, 50, "the email number ");
-  rebuildMessageSearchIndex(database());
+  await rebuildSearchFixture(database());
   for (const scope of [undefined, "A"]) {
     const { statements } = watch(() => searchMessagesWithMeta("email", 40, scope));
     const sql = verifies(statements)[0]!.sql;
@@ -141,7 +129,7 @@ it("a verify chunk probes each candidate by rowid: the plan never walks the kind
 });
 
 for (const total of [2_500, 100_000]) {
-  it(`a 2-character query whose hits are older than the window reads at most SHORT_QUERY_WINDOW rows in ${total} rows, by covering-index chunks and rowid probes`, () => {
+  it(`a 2-character query whose hits are older than the window reads at most SHORT_QUERY_WINDOW rows in ${total} rows, by covering-index chunks and rowid probes`, async () => {
     rows("t", "old-", 100, 10, "zq said long ago ");
     rows("t", "filler-", 1000, total, "a line without the pair ");
     const { out, statements } = watch(() => searchMessagesWithMeta("zq", 40));
@@ -167,7 +155,7 @@ for (const total of [2_500, 100_000]) {
   });
 }
 
-it("a 2-character query scoped to a few threads walks those threads through the kind index: 100,000 newer rows in another thread cost nothing", () => {
+it("a 2-character query scoped to a few threads walks those threads through the kind index: 100,000 newer rows in another thread cost nothing", async () => {
   rows("A", "a-", 1000, 5, "zq in thread A ");
   rows("B", "b-", 100_000, 100_000, "zq in thread B ");
   const { out, statements } = watch(() => searchMessagesWithMeta("zq", 40, "A"));
@@ -187,7 +175,7 @@ it("a 2-character query scoped to a few threads walks those threads through the 
   }
 });
 
-it("a scope wider than SCOPED_WINDOW_THREADS walks the table's newest rows in bounded chunks and checks the scope by rowid probe", () => {
+it("a scope wider than SCOPED_WINDOW_THREADS walks the table's newest rows in bounded chunks and checks the scope by rowid probe", async () => {
   const scope = Array.from({ length: SCOPED_WINDOW_THREADS + 1 }, (_, i) => `s${i}`);
   for (const id of scope) rows(id, `${id}-`, 1000, 20, "zq here ");
   rows("other", "o-", 5_000_000, 1_000, "zq newer elsewhere ");
@@ -204,10 +192,10 @@ it("a scope wider than SCOPED_WINDOW_THREADS walks the table's newest rows in bo
   expect(plan).not.toMatch(/messages_thread|messages_inbox/);
 });
 
-it("a 2-character query reads newest-first chunks of 500 and stops at a full page", () => {
+it("a 2-character query reads newest-first chunks of 500 and stops at a full page", async () => {
   rows("t", "old-", 1000, 50_000, "zq in a line ");
   rows("t", "new-", 9_000_000, 100, "zq in a newer line ");
-  rebuildMessageSearchIndex(database());
+  await rebuildSearchFixture(database());
   const { out, statements } = watch(() => searchMessagesWithMeta("zq", 40));
   expect(out.hits[0]!.messageId).toBe("new-100");
   expect(out.hits).toHaveLength(40);
@@ -218,24 +206,24 @@ it("a 2-character query reads newest-first chunks of 500 and stops at a full pag
 });
 
 /** The scenario from review: 40 recent matches, then 201 older matching messages imported later (higher rowids). */
-function importedLater() {
+async function importedLater() {
   rows("t", "recent-", 5_000_000, 40, "the email number ");
   rows("t", "import-", 1000, 201, "the email number ");
-  rebuildMessageSearchIndex(database());
+  await rebuildSearchFixture(database());
 }
 
-it("older messages imported later (higher rowids) never push the recent matches out of the page", () => {
-  importedLater();
+it("older messages imported later (higher rowids) never push the recent matches out of the page", async () => {
+  await importedLater();
   const { out } = watch(() => searchMessagesWithMeta("email", 40));
   expect(out.hits.map((hit) => hit.messageId)).toEqual(Array.from({ length: 40 }, (_, i) => `recent-${40 - i}`));
   // 241 matches, 40 returned
   expect(out.partial).toBe(true);
 });
 
-it("over the cap: bounded candidate read, partial, sorted by time, and the plan has no unbounded walk", () => {
-  importedLater();
+it("over the cap: bounded candidate read, partial, sorted by time, and the plan has no unbounded walk", async () => {
+  await importedLater();
   rows("t", "imp2-", 100, TRIGRAM_CANDIDATE_CAP + 100, "the email number ");
-  rebuildMessageSearchIndex(database());
+  await rebuildSearchFixture(database());
   for (const scope of [undefined, "t"]) {
     const { out, statements } = watch(() => searchMessagesWithMeta("email", 40, scope));
     expect(out.partial).toBe(true);
@@ -245,12 +233,17 @@ it("over the cap: bounded candidate read, partial, sorted by time, and the plan 
     expect(calls(fts)).toBe(1);
     expect(fts.reduce((sum, s) => sum + s.rows, 0)).toBeLessThanOrEqual(TRIGRAM_CANDIDATE_CAP + 1);
     const sql = fts[0]!.sql;
-    const args = [...(scope ? [JSON.stringify([scope])] : []), trigramQuery("email"), TRIGRAM_CANDIDATE_CAP + 1];
-    const plan = (database().prepare(`EXPLAIN QUERY PLAN ${sql}`).all(...args) as Array<{ detail: string }>).map((d) => d.detail).join(" | ");
+    const reader = new DatabaseSync(join(DATA_DIR, "search.db"), { readOnly: true });
+    let plan: string;
+    try { plan = reader.prepare(`EXPLAIN QUERY PLAN ${sql}`).all(trigramQuery("email"), TRIGRAM_CANDIDATE_CAP + 1).map(row => row.detail).join(" | "); }
+    finally { reader.close(); }
     expect(plan).not.toMatch(/SCAN s\b|SCAN messages(?!_fts)/);
     if (scope) {
       expect(statements.some((s) => /INDEXED BY|messages_at/.test(s.sql))).toBe(false);
-      expect(plan).toMatch(/SEARCH s USING INTEGER PRIMARY KEY/);
+      const scopeSql = statements.find(statement => statement.sql.includes("AS ok "))!.sql;
+      const scopePlan = planOf(scopeSql, JSON.stringify([scope]), JSON.stringify([1, 2, 3]));
+      expect(scopePlan).toMatch(/SEARCH m USING INTEGER PRIMARY KEY/);
+      expect(scopePlan).not.toMatch(/SCAN m\b|SCAN messages/);
     } else {
       // unscoped: the candidate read touches no message row; time order comes from a bounded covering-index walk
       expect(plan).not.toMatch(/messages(?!_fts)|SEARCH s/);
@@ -268,10 +261,10 @@ describe("an unscoped search over many candidates", () => {
   const rowReads = (statements: Array<{ sql: string; rows: number; calls: number }>) =>
     statements.filter((s) => /LEFT JOIN messages s|SELECT c\.value AS rowid, m\.at AS at/.test(s.sql));
 
-  it("reads no row per candidate: the at index orders them and only the rows verified are read", () => {
+  it("reads no row per candidate: the at index orders them and only the rows verified are read", async () => {
     rows("t", "e-", 1000, 20_000, "about the email number ");
     rows("t", "later-", 9_000_000, 1_000, "unrelated line ");
-    rebuildMessageSearchIndex(database());
+    await rebuildSearchFixture(database());
     const { out, statements } = watch(() => searchMessagesWithMeta("email", 40));
     expect(out.hits.map((hit) => hit.messageId)).toEqual(Array.from({ length: 40 }, (_, i) => `e-${20_000 - i}`));
     expect(out.partial).toBe(true);
@@ -282,12 +275,12 @@ describe("an unscoped search over many candidates", () => {
     expect(calls(verifies(statements))).toBe(1);
   });
 
-  it("candidates past the walk's bound are read by rowid, and the page is still in exact time order", () => {
+  it("candidates past the walk's bound are read by rowid, and the page is still in exact time order", async () => {
     rows("t", "old-", 1000, 300, "the email number ");
     rows("t", "filler-", 1_000_000, CANDIDATE_WALK_ROWS + 1_000, "unrelated line ");
     // imported later: higher rowids, older timestamps
     rows("t", "imp-", 100, 300, "the email number ");
-    rebuildMessageSearchIndex(database());
+    await rebuildSearchFixture(database());
     const { out, statements } = watch(() => searchMessagesWithMeta("email", 40));
     expect(out.hits.map((hit) => hit.messageId)).toEqual(Array.from({ length: 40 }, (_, i) => `old-${300 - i}`));
     expect(out.partial).toBe(true);
@@ -297,11 +290,11 @@ describe("an unscoped search over many candidates", () => {
     expect(complete.hits.map((hit) => hit.messageId)).toEqual(Array.from({ length: 100 }, (_, i) => `old-${300 - i}`));
   });
 
-  it("matches the time order of the old full read, ties by newest-inserted, across walk chunks", () => {
+  it("matches the time order of the old full read, ties by newest-inserted, across walk chunks", async () => {
     rowsAt("t", "eq-", 5_000, 700, "the email said at once ");
     rows("t", "after-", 6_000, 300, "the email after ");
     rows("t", "before-", 100, 300, "the email before ");
-    rebuildMessageSearchIndex(database());
+    await rebuildSearchFixture(database());
     const { hits, partial } = searchMessagesWithMeta("email", 100);
     expect(hits.map((hit) => hit.messageId)).toEqual(Array.from({ length: 100 }, (_, i) => `after-${300 - i}`));
     expect(partial).toBe(true);
@@ -311,10 +304,10 @@ describe("an unscoped search over many candidates", () => {
 });
 
 for (const history of [2_000, 40_000]) {
-  it(`cost is flat with ${history} matching rows in history: candidate rows read stay near the cap`, () => {
-    importedLater();
+  it(`cost is flat with ${history} matching rows in history: candidate rows read stay near the cap`, async () => {
+    await importedLater();
     rows("t", "bulk-", 100, history, "the email number ");
-    rebuildMessageSearchIndex(database());
+    await rebuildSearchFixture(database());
     const { out, statements } = watch(() => searchMessagesWithMeta("email", 40));
     // over the cap the answer is the newest-inserted candidates, partial; here only boundedness and time order are promised
     expect(out.partial).toBe(true);
@@ -338,7 +331,7 @@ const noSort = (sql: string) => {
 // rc12 review: the window ordered by (at DESC, rowid DESC) over indexes that hold equal timestamps in ascending rowid order, so SQLite sorted every
 // run of equal timestamps it met (USE TEMP B-TREE FOR LAST TERM OF ORDER BY): 100,000 equal timestamps were ~1.7M steps for 500 rows.
 for (const scope of [undefined, "t"]) {
-  it(`100,000 rows with one timestamp: the walk reads index order only, bounded by the window (${scope ? "one thread" : "whole table"})`, () => {
+  it(`100,000 rows with one timestamp: the walk reads index order only, bounded by the window (${scope ? "one thread" : "whole table"})`, async () => {
     rowsAt("t", "eq-", 5_000, 100_000, "a line without the pair ");
     const { out, statements } = watch(() => searchMessagesWithMeta("zq", 40, scope));
     expect(out.hits).toEqual([]);
@@ -358,7 +351,7 @@ for (const scope of [undefined, "t"]) {
   });
 }
 
-it("hits that share a timestamp come back newest-inserted first, across chunk boundaries", () => {
+it("hits that share a timestamp come back newest-inserted first, across chunk boundaries", async () => {
   rowsAt("t", "eq-", 5_000, 1_200, "zq said at once ");
   for (const scope of [undefined, "t"]) {
     const { hits, partial } = searchMessagesWithMeta("zq", 100, scope);
@@ -372,28 +365,33 @@ it("hits that share a timestamp come back newest-inserted first, across chunk bo
 });
 
 // rc12 review: `LIMIT 2001` counted after the scope filter, so thread A's one match behind 100,000 newer matches in thread B probed all of them.
-it("a scoped search examines at most the cap of index matches: thread A's one match behind 100,000 newer matches in thread B", () => {
+it("a scoped search examines at most the cap of index matches: thread A's one match behind 100,000 newer matches in thread B", async () => {
   rows("A", "a-", 1000, 1, "please send the email number ");
   rows("A", "y-", 2000, 300, "unrelated line ");
   rows("B", "b-", 100_000, 100_000, "another email number ");
-  rebuildMessageSearchIndex(database());
+  await rebuildSearchFixture(database());
   const { out, statements } = watch(() => searchMessagesWithMeta("email", 40, "A"));
-  expect(out.hits.map((hit) => hit.messageId)).toEqual(["a-1"]);
-  // every row of thread A was looked at and its one match returned
-  expect(out.partial).toBe(false);
+  expect(out.hits.map((hit) => hit.messageId)).toEqual([]);
+  // r3 section 4: the global cap precedes scope; no long-query history walk.
+  expect(out.partial).toBe(true);
   const fts = statements.filter((s) => /FROM messages_fts/.test(s.sql));
   expect(calls(fts)).toBe(1);
   expect(rowsOf(fts)).toBeLessThanOrEqual(TRIGRAM_CANDIDATE_CAP + 1);
   // then thread A's own rows, newest first, bounded by the window
-  expect(rowsOf(threadWalks(statements))).toBeLessThanOrEqual(301);
-  expect(rowsOf(verifies(statements))).toBe(1);
+  expect(rowsOf(threadWalks(statements))).toBe(0);
+  expect(rowsOf(verifies(statements))).toBe(0);
+  const short = watch(() => searchMessagesWithMeta("em", 40, "A"));
+  expect(short.out.hits.map(hit => hit.messageId)).toEqual(["a-1"]);
+  expect(short.out.partial).toBe(false);
+  expect(rowsOf(threadWalks(short.statements))).toBeLessThanOrEqual(301);
+  expect(rowsOf(verifies(short.statements))).toBe(1);
 });
 
-it("a wide scope examines at most the cap of index matches, and says partial when it stopped there", () => {
+it("a wide scope examines at most the cap of index matches, and says partial when it stopped there", async () => {
   const scope = Array.from({ length: SCOPED_WINDOW_THREADS + 1 }, (_, i) => `s${i}`);
   for (const id of scope) rows(id, `${id}-`, 1000, 1, "please send the email number ");
   rows("B", "b-", 100_000, 100_000, "another email number ");
-  rebuildMessageSearchIndex(database());
+  await rebuildSearchFixture(database());
   const { out, statements } = watch(() => searchMessagesWithMeta("email", 40, scope));
   expect(out.partial).toBe(true);
   expect(out.hits.every((hit) => scope.includes(hit.threadId))).toBe(true);
@@ -407,7 +405,7 @@ it("a wide scope examines at most the cap of index matches, and says partial whe
   mkdirSync(DATA_DIR, { recursive: true });
   for (const id of scope) rows(id, `${id}-`, 1000, 1, "please send the email number ");
   rows("B", "b-", 100_000, 500, "another email number ");
-  rebuildMessageSearchIndex(database());
+  await rebuildSearchFixture(database());
   const small = searchMessagesWithMeta("email", 40, scope);
   expect(small.hits).toHaveLength(scope.length);
   expect(small.partial).toBe(false);
@@ -416,9 +414,9 @@ it("a wide scope examines at most the cap of index matches, and says partial whe
 // rc12 review: partial is true exactly when matches exist beyond the page or the search stopped with candidates in scope left unexamined.
 describe("the partial contract", () => {
   for (const [name, needle, index] of [["short query", "zq", false], ["trigram", "email", true]] as const) {
-    it(`${name}: 60 matches with limit 40 is partial; 40 with limit 40 is not`, () => {
+    it(`${name}: 60 matches with limit 40 is partial; 40 with limit 40 is not`, async () => {
       rows("t", "m-", 1000, 60, `the ${needle} line `);
-      if (index) rebuildMessageSearchIndex(database());
+      if (index) await rebuildSearchFixture(database());
       const over = searchMessagesWithMeta(needle, 40);
       expect(over.hits).toHaveLength(40);
       expect(over.partial).toBe(true);
@@ -430,7 +428,7 @@ describe("the partial contract", () => {
     });
   }
 
-  it("a window of exactly SHORT_QUERY_WINDOW rows that all were examined is complete; one row more is partial", () => {
+  it("a window of exactly SHORT_QUERY_WINDOW rows that all were examined is complete; one row more is partial", async () => {
     rows("t", "n-", 1000, SHORT_QUERY_WINDOW, "a line without the pair ");
     expect(searchMessagesWithMeta("zq", 40)).toEqual({ hits: [], partial: false });
     expect(searchMessagesWithMeta("zq", 40, "t")).toEqual({ hits: [], partial: false });
@@ -439,13 +437,15 @@ describe("the partial contract", () => {
     expect(searchMessagesWithMeta("zq", 40, "t")).toEqual({ hits: [], partial: true });
   });
 
-  it("a scoped trigram search past the cap walks the scope: complete when the scope ran out, partial when the window did", () => {
+  it("a scoped trigram search past the cap stays partial; short queries retain the bounded scope walk", async () => {
     rows("A", "a-", 1000, 3, "please send the email number ");
     rows("B", "b-", 100_000, TRIGRAM_CANDIDATE_CAP + 100, "another email number ");
-    rebuildMessageSearchIndex(database());
-    expect(searchMessagesWithMeta("email", 40, "A")).toMatchObject({ partial: false });
+    await rebuildSearchFixture(database());
+    expect(searchMessagesWithMeta("email", 40, "A")).toEqual({ hits: [], partial: true });
+    expect(searchMessagesWithMeta("em", 40, "A").hits).toHaveLength(3);
+    expect(searchMessagesWithMeta("em", 40, "A").partial).toBe(false);
     rows("A", "z-", 10_000_000, SHORT_QUERY_WINDOW, "unrelated line ");
-    const crowded = searchMessagesWithMeta("email", 40, "A");
+    const crowded = searchMessagesWithMeta("em", 40, "A");
     expect(crowded.hits).toEqual([]);
     expect(crowded.partial).toBe(true);
   });
@@ -454,13 +454,13 @@ describe("the partial contract", () => {
 // The owner is shown every row of their own transcripts; any other reader never gets a row the owner withheld from bots.
 describe("rows withheld from bots", () => {
   for (const [name, needle, index] of [["short query", "zq", false], ["trigram", "email", true]] as const) {
-    it(`${name}: shown to the owner, never to another reader`, () => {
+    it(`${name}: shown to the owner, never to another reader`, async () => {
       rows("t", "open-", 1000, 2, `the ${needle} line `);
       rows("t", "held-", 2000, 1, `the ${needle} line `, "text", JSON.stringify({ withheldFromBots: true }));
       rows("t", "forgot-", 3000, 1, `the ${needle} line `, "text", JSON.stringify({ withheldFromBots: "forgotten" }));
       rows("t", "check-", 4000, 1, `the ${needle} line `, "text", JSON.stringify({ withheldFromBots: "checking" }));
       rows("t", "cleared-", 5000, 1, `the ${needle} line `, "text", JSON.stringify({ withheldFromBots: false }));
-      if (index) rebuildMessageSearchIndex(database());
+      if (index) await rebuildSearchFixture(database());
       const owner = searchMessagesWithMeta(needle, 40, undefined, { owner: true }).hits.map((hit) => hit.messageId).sort();
       expect(owner).toEqual(["check-1", "cleared-1", "forgot-1", "held-1", "open-1", "open-2"]);
       for (const scope of [undefined, "t"]) {

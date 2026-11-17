@@ -1,0 +1,25 @@
+{
+ "both-lists.json": {
+  "bytes": 670,
+  "valid": false
+ },
+ "hex17.json": {
+  "bytes": 653,
+  "valid": false
+ },
+ "max.json": {
+  "bytes": 9771,
+  "valid": true
+ },
+ "no-control.json": {
+  "bytes": 640,
+  "valid": false
+ },
+ "offered-ids.json": {
+  "ids": 32
+ },
+ "over-513.json": {
+  "bytes": 9791,
+  "valid": false
+ }
+}

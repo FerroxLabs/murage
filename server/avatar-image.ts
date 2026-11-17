@@ -1,9 +1,11 @@
+import { fluxRouteFor, registerBusyloopPayloadSite } from "../shared/flux-route.ts";
 import { z } from "zod";
 
 import { fluxKey } from "./flux-config.ts";
 import { FLUX_OPENAI_BASE } from "./flux-routing.ts";
 import { fluxCallHeaders, isFluxUrl } from "./flux-memory-headers.ts";
 import type { BotRecord } from "./store.ts";
+import { authorizeFluxDispatch } from "./flux-start-gate.ts";
 
 export const AVATAR_DIRECTION_MAX_CHARS = 400;
 export const AVATAR_IMAGE_TIMEOUT_MS = 120_000;
@@ -68,7 +70,7 @@ export interface GeneratedAvatarImage {
  * The format of the bytes a provider actually returned, read off the bytes.
  *
  * Not a guess from the request. OpenAI honours `output_format: "webp"`, but the
- * Flux image route (flux-router/src/images_route.py) forwards only prompt,
+ * Flux image route forwards only prompt,
  * size, n and response_format to its provider arms and has no output_format at
  * all, so its WEBP-shaped request would come back PNG. The mime picks the file
  * extension `saveImage` writes and the content-type the avatar is later served
@@ -96,14 +98,14 @@ export interface AvatarImageRoute {
  *  chat surfaces use (flux-routing.ts). Verified live 2026-09-03: an
  *  unauthenticated POST answers 401 `{"error":{"message":"unauthorized"}}`,
  *  which is this route's own 401 and only runs after its
- *  FLUX_CAP_IMAGE_ENABLED dark gate would have returned 404, so the endpoint
+ *  server-side rollout gate would have returned 404, so the endpoint
  *  is serving. */
 export const FLUX_IMAGE_URL = `${FLUX_OPENAI_BASE}/images/generations`;
 
 /**
  * The Flux image alias to ask for, and why it is this one.
  *
- * `flux-router/src/capability_image.py` maps `flux-image-gpt25-high` to
+ * The Flux service maps `flux-image-gpt25-high` to
  * `gpt-image-25-high`: GPT Image 2.5 Flare, high quality, 1024x1024.
  * This explicit alias matches Murage's Flux image-generation default and
  * preserves the selected model even if Flux's generic default changes.
@@ -175,7 +177,7 @@ export function resolveAvatarImageRoutes(openAiKey: string, fluxApiKey: string |
  * opposed to "this request failed". Flux's image route answers 402
  * `premium_locked` for an account that is not paid and cleared, 404 while the
  * capability is dark, 403 when the provider org is unverified, and 401 for a
- * key that is not good for it (images_route.py). Every one of those is
+ * key that is not good for it (the Flux router's image route). Every one of those is
  * permanent for the next thirty seconds and is exactly the case the second
  * route exists for. A 5xx or a timeout is NOT in this set: a transient
  * provider blip should surface, not quietly move someone's billing to their
@@ -265,8 +267,9 @@ async function attemptAvatarImage(
   const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal=admission.signal ? AbortSignal.any([admission.signal,timeoutSignal]) : timeoutSignal;
   let response: Response;
+  if (isFluxUrl(route.url)) await authorizeFluxDispatch(route.apiKey); // spend gate: a Flux call outside an admitted turn is a start
   try {
-    response = await fetchImpl(route.url, {
+    response = await fetchImpl(fluxRouteFor(route.url).requestUrl, {
       method: "POST",
       headers: {
         authorization: `Bearer ${route.apiKey}`,
@@ -304,7 +307,7 @@ async function attemptAvatarImage(
   if (!response.ok) {
     let message = `${route.label} image generation failed (HTTP ${response.status})`;
     try {
-      const parsed = z.object({ error: z.object({ message: z.string() }) }).safeParse(JSON.parse(text));
+      const parsed = z.object({ error: z.object({ message: z.string() }) }).safeParse(registerBusyloopPayloadSite("read", JSON.parse(text)));
       if (parsed.success) message = `${route.label}: ${parsed.data.error.message.slice(0, 500)}`;
     } catch {
       // Keep the bounded status-only message for malformed upstream errors.
@@ -317,7 +320,7 @@ async function attemptAvatarImage(
 
   let parsedJson: unknown;
   try {
-    parsedJson = JSON.parse(text);
+    parsedJson = registerBusyloopPayloadSite("read", JSON.parse(text));
   } catch {
     throw Object.assign(new Error(`${route.label} returned an invalid image response`), { status: 502 });
   }

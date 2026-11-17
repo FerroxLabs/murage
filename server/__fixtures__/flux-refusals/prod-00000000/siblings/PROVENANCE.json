@@ -1,0 +1,208 @@
+{
+ "fixture_set": "000000005e57485741d2ec74492392de7c049946",
+ "fixture_1ea68e60": "origin/fixture/branch2-1110",
+ "parent_set": "../PROVENANCE.json (20-case set); same method",
+ "staging": {
+  "namespace": "fixture-space",
+  "context": "region-a-fixture-cluster",
+  "deployment": "flux-proxy",
+  "pod": "fixture-node679bdff6",
+  "image": "registry.example.test/flux-router/flux-router@sha256:22222222222276652897686d830cd6f337f76d41969d263fbc93286392e91351",
+  "source_commit": "111111111111b09a0527aa44156c9497c3f495ea",
+  "litellm_version": "1.92.2",
+  "pod_source_md5_vs_00000000": {
+   "identical": [
+    "src/rate_limits.py",
+    "src/credit_state.py",
+    "src/batch_caps.py",
+    "src/credit_policy.py",
+    "src/pause_policy.py",
+    "src/message_renderers/errors.py",
+    "src/responses/errors.py",
+    "src/model_access_message.py",
+    "src/error_shapes.py",
+    "src/cloud_home_keys.py"
+   ],
+   "differs": {
+    "src/gateway.py": "pod 610f61c4 vs 00000000 7e778969; diff hunks only at :4671 and :9139-9146 (fixture model adjustments). Not imported: the failure-hook branch, _credit_402 (IM ON) and _PROVIDER_SANITIZATIONS were replicated from the 00000000 text."
+   }
+  }
+ },
+ "methods": {
+  "from-code": "exception built in the fixture env by calling the real 00000000-identical module (rate_limiter._raise_429/_entitlement_refusal_body, flux_credit_state._cap_block_from_reservation/_GATE_UNRESOLVED_MESSAGE, batch_caps.raise_throttled, fixture_policy.key_budget_reached, paid_pause.pause_message, litellm ProxyRateLimitError) and rendered with the real Flux renderers (anthropic_messages.errors.anthropic_http_exception_response, responses.endpoint._http_exception_response). Chat: failure-hook branch replicated from src/gateway.py:25974-26255 at 00000000, then the real LiteLLM 1.92.2 _serialize_http_exception_detail + ProxyException.to_dict + JSONResponse (openai_exception_handler). Script piped over kubectl exec stdin with PYTHONDONTWRITEBYTECODE=1; nothing written in the pod.",
+  "replication_check": "same script re-rendered 09 (batch_concurrency, live chat), 07 (requests, live chat) and 16: chat/messages/responses bodies byte-equal to the existing captures; messages/responses content-length equal. Chat content-length left as <n> like the parent from-code files (07's live length depends on the real key hash).",
+  "chat_headers": "chat headers = app-wide template from the parent set (date/server/x-flux-alias/security headers) + the exception's own headers as LiteLLM forwards them."
+ },
+ "snapshot_pin": {
+  "base": "/tmp/fixture-root/fixture-api/base/src (510 .py files): matches NO commit's tree exactly by content hash vs 00000000 (3 files differ: customer_pricing.py, model_names.py, vision_capability.py) and vs origin/master dfb4dfdd (38 differ). All 510 .py blobs equal commits 72d3700a (intake: MiniMax/Qwen/Gemini pins), 11026d50, 85c19eea and 6b86a5c1 = origin/deploy/models-1110 tip (src .py identical across those four; snapshot mtime 2026-11-10 15:13 UTC == 6b86a5c1 commit time 22:13 +0700). Pin: 6b86a5c1 (origin/deploy/models-1110), a descendant of 00000000. Every file the 13 rows cite is byte-identical to 00000000.",
+  "src": "/tmp/fixture-root/fixture-api/src/src (511 .py files) = base + uncommitted lane edits: new src/limit_refusal.py (blob 401922bc) and changed rate_limiter.py (328ce6cb), gateway.py (b83a9241), anthropic_messages/errors.py, anthropic_messages/endpoint.py, responses/endpoint.py, capability_key_scope.py. Those blobs are in no ref (git log --all --find-object empty). Matches no commit.",
+  "limit_refusal_py": "absent at 00000000 and in every ref (git log --all -- src/limit_refusal.py empty); it is the unmerged #654 fix module. Nothing in these files comes from it.",
+  "snapshot_removed": "the fixture-api lane directory was deleted by its owner during this task (after hashing at ~2026-11-10T20:5x UTC); hashes above were taken before removal."
+ },
+ "sentence_differences": "none: every cited sentence was read from 00000000, and the base snapshot file it was cited from is byte-identical to 00000000. Line-number differences vs the snapshot citations: daily_cap sentence :5010 (block :5008-5011), monthly_cap :5024 (block :5022-5025); others as cited. D16d cited :5346 (home gate) - rendered from the identical ordinary-path sentence (:4864/:5185/:5206).",
+ "not_reachable_in_prod": {
+  "D16c credit_hold": "home gate only (FIXTURE_FEATURE=false in prod)",
+  "D16e credit_exhausted (Murage Cloud text)": "home gate only (FIXTURE_FEATURE=false in prod)"
+ },
+ "utc_time": "2026-11-10T21:00:17.849016+00:00",
+ "files": {
+  "D04a-429-entitlement_missing.json": {
+   "commit": "000000005e57485741d2ec74492392de7c049946",
+   "fixture_3cab165d": "src/rate_limits.py:1160-1163 (_ENTITLEMENT_MESSAGES), body :1180-1188, verdict :1192-1204, raised :1848-1861 via _raise_429 :833",
+   "capture_method": {
+    "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)",
+    "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)"
+   },
+   "fixture_94cdfbc4": "registry.example.test/flux-router/flux-router@sha256:22222222222276652897686d830cd6f337f76d41969d263fbc93286392e91351",
+   "staging_source_commit": "111111111111b09a0527aa44156c9497c3f495ea",
+   "utc_time": "2026-11-10T21:00:17.849016+00:00",
+   "sentence_diff_vs_snapshot": "none (snapshot file byte-identical to 00000000)"
+  },
+  "D04b-429-subscription_account_mismatch.json": {
+   "commit": "000000005e57485741d2ec74492392de7c049946",
+   "fixture_3cab165d": "src/rate_limits.py:1164-1168, body :1180-1188, raised :1848-1861 via _raise_429 :833",
+   "capture_method": {
+    "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)",
+    "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)"
+   },
+   "fixture_94cdfbc4": "registry.example.test/flux-router/flux-router@sha256:22222222222276652897686d830cd6f337f76d41969d263fbc93286392e91351",
+   "staging_source_commit": "111111111111b09a0527aa44156c9497c3f495ea",
+   "utc_time": "2026-11-10T21:00:17.849016+00:00",
+   "sentence_diff_vs_snapshot": "none (snapshot file byte-identical to 00000000)"
+  },
+  "D04c-429-key_not_found.json": {
+   "commit": "000000005e57485741d2ec74492392de7c049946",
+   "fixture_3cab165d": "src/rate_limits.py:1169-1172, body :1180-1188, raised :1848-1861 via _raise_429 :833",
+   "capture_method": {
+    "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)",
+    "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)"
+   },
+   "fixture_94cdfbc4": "registry.example.test/flux-router/flux-router@sha256:22222222222276652897686d830cd6f337f76d41969d263fbc93286392e91351",
+   "staging_source_commit": "111111111111b09a0527aa44156c9497c3f495ea",
+   "utc_time": "2026-11-10T21:00:17.849016+00:00",
+   "sentence_diff_vs_snapshot": "none (snapshot file byte-identical to 00000000)"
+  },
+  "D04d-429-authorization_state_unknown.json": {
+   "commit": "000000005e57485741d2ec74492392de7c049946",
+   "fixture_3cab165d": "src/rate_limits.py:1173-1176, state :1142-1143, body :1180-1188, raised :1848-1861 via _raise_429 :833",
+   "capture_method": {
+    "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)",
+    "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)"
+   },
+   "fixture_94cdfbc4": "registry.example.test/flux-router/flux-router@sha256:22222222222276652897686d830cd6f337f76d41969d263fbc93286392e91351",
+   "staging_source_commit": "111111111111b09a0527aa44156c9497c3f495ea",
+   "utc_time": "2026-11-10T21:00:17.849016+00:00",
+   "sentence_diff_vs_snapshot": "none (snapshot file byte-identical to 00000000)"
+  },
+  "D16a-402-daily_cap.json": {
+   "commit": "000000005e57485741d2ec74492392de7c049946",
+   "fixture_3cab165d": "src/credit_state.py:5008-5011 (sentence :5010) in _cap_block_from_reservation :4966, ordinary gate overflow_precall_gate :5146; raised src/gateway.py:17692 via _credit_402 :12023-12061",
+   "capture_method": {
+    "/v1/chat/completions": "from-code (exception from the 00000000 code path, chat failure-hook branch replicated from src/gateway.py:25974-26255, serialized in fixture env with the real LiteLLM 1.92.2 _serialize_http_exception_detail + ProxyException.to_dict + openai_exception_handler JSONResponse)",
+    "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)",
+    "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)"
+   },
+   "fixture_94cdfbc4": "registry.example.test/flux-router/flux-router@sha256:22222222222276652897686d830cd6f337f76d41969d263fbc93286392e91351",
+   "staging_source_commit": "111111111111b09a0527aa44156c9497c3f495ea",
+   "utc_time": "2026-11-10T21:00:17.849016+00:00",
+   "sentence_diff_vs_snapshot": "none (snapshot file byte-identical to 00000000)"
+  },
+  "D16b-402-monthly_cap.json": {
+   "commit": "000000005e57485741d2ec74492392de7c049946",
+   "fixture_3cab165d": "src/credit_state.py:5022-5025 (sentence :5024) in _cap_block_from_reservation :4966; raised src/gateway.py:17692 via _credit_402 :12023-12061",
+   "capture_method": {
+    "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)",
+    "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)"
+   },
+   "fixture_94cdfbc4": "registry.example.test/flux-router/flux-router@sha256:22222222222276652897686d830cd6f337f76d41969d263fbc93286392e91351",
+   "staging_source_commit": "111111111111b09a0527aa44156c9497c3f495ea",
+   "utc_time": "2026-11-10T21:00:17.849016+00:00",
+   "sentence_diff_vs_snapshot": "none (snapshot file byte-identical to 00000000)"
+  },
+  "D16d-402-credit_unresolved.json": {
+   "commit": "000000005e57485741d2ec74492392de7c049946",
+   "fixture_3cab165d": "src/credit_state.py:4864 (_GATE_UNRESOLVED_MESSAGE), ordinary gate :5182-5185 (READ_FAILED) and :5203-5206 (no_state_row); src/gateway.py:17676-17682 (gate raised) and :17692 via _credit_402 :12023-12061. Home twins :5338-5339/:5345-5346/:5369-5370 not reachable in prod",
+   "capture_method": {
+    "/v1/chat/completions": "from-code (exception from the 00000000 code path, chat failure-hook branch replicated from src/gateway.py:25974-26255, serialized in fixture env with the real LiteLLM 1.92.2 _serialize_http_exception_detail + ProxyException.to_dict + openai_exception_handler JSONResponse)",
+    "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)",
+    "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)"
+   },
+   "fixture_94cdfbc4": "registry.example.test/flux-router/flux-router@sha256:22222222222276652897686d830cd6f337f76d41969d263fbc93286392e91351",
+   "staging_source_commit": "111111111111b09a0527aa44156c9497c3f495ea",
+   "utc_time": "2026-11-10T21:00:17.849016+00:00",
+   "sentence_diff_vs_snapshot": "none (snapshot file byte-identical to 00000000)"
+  },
+  "D09-429-batch_rate.json": {
+   "commit": "000000005e57485741d2ec74492392de7c049946",
+   "fixture_3cab165d": "src/batch_caps.py:389-423 (raise_throttled; batch_rate branch :394-399, sentence :397-398); exempt via src/gateway.py:9217-9225",
+   "capture_method": {
+    "/v1/chat/completions": "from-code (exception from the 00000000 code path, chat failure-hook branch replicated from src/gateway.py:25974-26255, serialized in fixture env with the real LiteLLM 1.92.2 _serialize_http_exception_detail + ProxyException.to_dict + openai_exception_handler JSONResponse)",
+    "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)",
+    "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)"
+   },
+   "fixture_94cdfbc4": "registry.example.test/flux-router/flux-router@sha256:22222222222276652897686d830cd6f337f76d41969d263fbc93286392e91351",
+   "staging_source_commit": "111111111111b09a0527aa44156c9497c3f495ea",
+   "utc_time": "2026-11-10T21:00:17.849016+00:00",
+   "sentence_diff_vs_snapshot": "none (snapshot file byte-identical to 00000000)"
+  },
+  "D12-402-key_budget_reached.json": {
+   "commit": "000000005e57485741d2ec74492392de7c049946",
+   "fixture_3cab165d": "src/credit_policy.py:591-642 (bot sentence :609-613, bot_id/bot_monthly_budget_usd :638-641), bot fence from metadata :200-211, decide :217-235; raised src/gateway.py:17590-17599 (FIXTURE_FEATURE=true in prod per 12)",
+   "capture_method": {
+    "/v1/chat/completions": "from-code (exception from the 00000000 code path, chat failure-hook branch replicated from src/gateway.py:25974-26255, serialized in fixture env with the real LiteLLM 1.92.2 _serialize_http_exception_detail + ProxyException.to_dict + openai_exception_handler JSONResponse)",
+    "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)",
+    "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)"
+   },
+   "fixture_94cdfbc4": "registry.example.test/flux-router/flux-router@sha256:22222222222276652897686d830cd6f337f76d41969d263fbc93286392e91351",
+   "staging_source_commit": "111111111111b09a0527aa44156c9497c3f495ea",
+   "utc_time": "2026-11-10T21:00:17.849016+00:00",
+   "sentence_diff_vs_snapshot": "none (snapshot file byte-identical to 00000000)"
+  },
+  "D17-402-credit_exhausted.json": {
+   "commit": "000000005e57485741d2ec74492392de7c049946",
+   "fixture_3cab165d": "src/pause_policy.py:70-73 (sentence :71-72), pause_message :109-115; src/gateway.py:11484-11555 (_check_paid_pause_at_zero, amount = policy.cap_microcents :11549), raised :17543-17551 (pause_block)",
+   "capture_method": {
+    "/v1/chat/completions": "from-code (exception from the 00000000 code path, chat failure-hook branch replicated from src/gateway.py:25974-26255, serialized in fixture env with the real LiteLLM 1.92.2 _serialize_http_exception_detail + ProxyException.to_dict + openai_exception_handler JSONResponse)",
+    "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)",
+    "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)"
+   },
+   "fixture_94cdfbc4": "registry.example.test/flux-router/flux-router@sha256:22222222222276652897686d830cd6f337f76d41969d263fbc93286392e91351",
+   "staging_source_commit": "111111111111b09a0527aa44156c9497c3f495ea",
+   "utc_time": "2026-11-10T21:00:17.849016+00:00",
+   "sentence_diff_vs_snapshot": "none (snapshot file byte-identical to 00000000)"
+  },
+  "D07-429-litellm_key_tpm_paid_key.json": {
+   "commit": "000000005e57485741d2ec74492392de7c049946",
+   "fixture_3cab165d": "litellm 1.92.2 proxy/hooks/parallel_request_limiter_v3.py:1862-1879; chat sanitize src/gateway.py:26200-26255 (_PROVIDER_SANITIZATIONS :7226-7237)",
+   "capture_method": {
+    "/v1/chat/completions": "from-code (exception from the 00000000 code path, chat failure-hook branch replicated from src/gateway.py:25974-26255, serialized in fixture env with the real LiteLLM 1.92.2 _serialize_http_exception_detail + ProxyException.to_dict + openai_exception_handler JSONResponse)",
+    "/v1/responses": "from-code (rendered in fixture env with the real Flux renderer)",
+    "/v1/messages": "from-code (rendered in fixture env with the real Flux renderer)"
+   },
+   "fixture_94cdfbc4": "registry.example.test/flux-router/flux-router@sha256:22222222222276652897686d830cd6f337f76d41969d263fbc93286392e91351",
+   "staging_source_commit": "111111111111b09a0527aa44156c9497c3f495ea",
+   "utc_time": "2026-11-10T21:00:17.849016+00:00",
+   "sentence_diff_vs_snapshot": "none (snapshot file byte-identical to 00000000)"
+  },
+  "D16c-402-credit_hold.json": {
+   "commit": "000000005e57485741d2ec74492392de7c049946",
+   "fixture_3cab165d": "src/credit_state.py:5350 (also :5374), both in _home_overflow_precall_gate :5291 / home draw path",
+   "capture_method": "not_reachable_in_prod (not rendered)",
+   "fixture_94cdfbc4": null,
+   "staging_source_commit": null,
+   "utc_time": "2026-11-10T21:00:17.849016+00:00",
+   "reason": "Text exists only in _home_overflow_precall_gate, dispatched only when the key class is 'home' (flux_credit_state._home_dispatch :150-179). The home class is bound only after the Murage Cloud home-key gate admits a request (src/gateway.py:16877-16943, src/capability_key_scope.py:329-419), and both refuse a home key with 503 when CLOUD_HOME_GATE_ENABLED is false (src/cloud_home_keys.py:200-208, default false). Prod FIXTURE_FEATURE=false (busyloop-429/PROVENANCE.json not_reachable_in_prod, read 2026-11-10).",
+   "sentence_diff_vs_snapshot": "none (snapshot file byte-identical to 00000000)"
+  },
+  "D16e-402-credit_exhausted.json": {
+   "commit": "000000005e57485741d2ec74492392de7c049946",
+   "fixture_3cab165d": "src/credit_state.py:5353 (also :5443), home gate only; the ordinary credit_exhausted sentence (:5286-5288) is case 16",
+   "capture_method": "not_reachable_in_prod (not rendered)",
+   "fixture_94cdfbc4": null,
+   "staging_source_commit": null,
+   "utc_time": "2026-11-10T21:00:17.849016+00:00",
+   "reason": "Text exists only in _home_overflow_precall_gate, dispatched only when the key class is 'home' (flux_credit_state._home_dispatch :150-179). The home class is bound only after the Murage Cloud home-key gate admits a request (src/gateway.py:16877-16943, src/capability_key_scope.py:329-419), and both refuse a home key with 503 when CLOUD_HOME_GATE_ENABLED is false (src/cloud_home_keys.py:200-208, default false). Prod FIXTURE_FEATURE=false (busyloop-429/PROVENANCE.json not_reachable_in_prod, read 2026-11-10).",
+   "sentence_diff_vs_snapshot": "none (snapshot file byte-identical to 00000000)"
+  }
+ }
+}

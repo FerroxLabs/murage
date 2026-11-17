@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // Door.tsx: the opening screen, the /enter bounce to the site, and the "/" screen for a browser with no device.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { StorageBlocked, StorageRefused, doorCopy } from "@/lib/cloud-door";
-import { CloudDoor, CloudDoorView, runDoor, type DoorEnv } from "./Door";
+import { CloudDoor, CloudDoorView, STILL_OPENING_MS, runDoor, type DoorEnv } from "./Door";
 
 const BIND = "ab".repeat(32);
 const SITE = "https://murage.ai";
@@ -98,6 +100,12 @@ describe("CloudDoor", () => {
     expect(calls.bounced).toEqual([`${SITE}/home/cloud/open?home=home-1&auto=1&k=${BIND}`]);
   });
 
+  it("a locked-out ticket shows the too-many-tries line, not the expired line", async () => {
+    const { env: e } = env({ pathname: "/enter", hash: "#t=abc.def", enterWithTicket: async () => "too-many-tries" });
+    expect(await runDoor(e)).toEqual({ kind: "message", text: doorCopy.tooManyTries });
+    expect(doorCopy.tooManyTries).not.toBe(doorCopy.expired);
+  });
+
   it("a key store that never answers leaves the spinner for the storage line, on every path", async () => {
     for (const over of [
       { pathname: "/enter", ensureDevice: async () => { throw new StorageRefused(); } },
@@ -115,5 +123,29 @@ describe("CloudDoor", () => {
   it("the other-tab copy matches the shared client copy", () => {
     expect(doorCopy.tabOpen).toBe("Another Murage tab for this home is open. Close it, then try again.");
     expect(doorCopy.tryAgain).toBe("Try again");
+  });
+});
+
+describe("the opening screen", () => {
+  it("says Opening Murage, and adds the still-opening line only once slow", () => {
+    expect(doorCopy.opening).toBe("Opening Murage");
+    const state = { kind: "working", text: doorCopy.opening } as const;
+    const quick = renderToStaticMarkup(createElement(CloudDoorView, { state, onGo: () => undefined }));
+    expect(quick).toContain("Opening Murage");
+    expect(quick).not.toContain(doorCopy.stillOpening);
+    const slow = renderToStaticMarkup(createElement(CloudDoorView, { state, onGo: () => undefined, slow: true }));
+    expect(slow).toContain("Still opening. A few more seconds.");
+  });
+
+  it("never shows the still-opening line on a message screen, even when slow is set", () => {
+    const html = renderToStaticMarkup(createElement(CloudDoorView, { state: { kind: "message", text: "x" }, onGo: () => undefined, slow: true }));
+    expect(html).not.toContain(doorCopy.stillOpening);
+  });
+
+  it("waits 8 seconds, and the timer is set and cleared by the hook", () => {
+    expect(STILL_OPENING_MS).toBe(8000);
+    const src = readFileSync(fileURLToPath(new URL("./Door.tsx", import.meta.url)), "utf8");
+    expect(src).toContain("setTimeout(() => setSlow(true), STILL_OPENING_MS)");
+    expect(src).toContain("clearTimeout(timer)");
   });
 });

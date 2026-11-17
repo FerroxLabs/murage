@@ -1,0 +1,13 @@
+{
+  "version": "codex-cli 0.167.0",
+  "sha256": "cdcb45aaa01d0f14e298985e09465aebccd47f64ecd298aea44814af7b62bbda",
+  "interfaces": [
+    "lo"
+  ],
+  "environment": {
+    "HOME": "/work/.s0b-runtime/codex-home",
+    "CODEX_HOME": "/work/.s0b-runtime/codex-home",
+    "PATH": "/usr/local/bin:/usr/bin:/bin",
+    "NO_COLOR": "1"
+  }
+}

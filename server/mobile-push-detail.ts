@@ -14,6 +14,7 @@ import type { PushEventRow } from "./mobile-push-store.ts";
 export interface DetailWorld {
   bot(botId: string): NotifyBot | undefined;
   message(threadId: string, messageId: string | null): { text?: string; card?: { title?: string; subtitle?: string; pushBody?: string } } | undefined;
+  connector?(incidentId: string): { label: string } | undefined;
   prefs: unknown;
   /** Explicit consent on this phone's binding, never the desktop default. */
   previewContent?: boolean;
@@ -55,6 +56,13 @@ export function pushDetail(event: PushEventRow, world: DetailWorld, now: Date): 
   try {
     if (world.previewContent !== true) return generic;
     const bot = world.bot(event.botId);
+    if (kind === "connector-reconnect") {
+      const incident = event.requestId ? world.connector?.(event.requestId) : undefined;
+      if (!bot || !incident) return generic;
+      const frame = buildNotification(kind, bot, event.threadId, incident.label);
+      const shown = frame && applyNotificationPreferences(frame, world.prefs, now);
+      return shown && !shown.privatePreview ? { title: shown.title, body: shown.body } : generic;
+    }
     const message = world.message(event.threadId, event.messageId);
     if (!bot || !message) return generic;
     const detail = message.card?.pushBody ?? message.card?.subtitle ?? message.card?.title ?? message.text ?? "";

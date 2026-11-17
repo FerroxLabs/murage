@@ -13,7 +13,7 @@
 import { test, expect, type Page } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -67,7 +67,7 @@ const release = (n: number) => writeFileSync(join(gateDir, `finish-${n}`), "");
 async function open(page: Page, width: number, entry: string) {
   await page.setViewportSize({ width, height: width < 600 ? 844 : 900 });
   await page.route("**/api/whats-new?*", (route) => route.fulfill({ json: { show: false } }));
-  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-setup-seen", "1"); });
+  await page.addInitScript(() => { localStorage.setItem("murage-email-gate", "skipped"); localStorage.setItem("murage-flux-invite-dismissed", "1"); localStorage.setItem("murage-setup-seen", "1"); localStorage.setItem("help.seen.chat.level-chip", "1"); });
   await page.goto(origin);
   await openEntry(page, entry);
 }

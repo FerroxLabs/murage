@@ -9,7 +9,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
-import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { launchVerificationServer, runControlMurage, type VerificationServer } from "../scripts/control-murage.ts";
 import { refillThread, waitForMessageWalk } from "./testing/bounded-reads.ts";
 import { openSse } from "./testing/sse.ts";
 import { CARDS_BESIDE_HEADER, CARDS_BESIDE_VALUE } from "./task-delta.ts";
@@ -39,7 +39,10 @@ type Row = Record<string, unknown> & { id: string; at: number; role: string; kin
 function insertRows(db: DatabaseSync, threadId: string, rows: Row[], leaf: string) {
   const insert = db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)");
   db.exec("BEGIN");
-  for (const row of rows) insert.run(threadId, row.id, row.at, row.role, row.kind, row.text ?? null, JSON.stringify(row));
+  // These are the fixture owner's historical typed rows. Preserve their
+  // authorship at the stored-row boundary; bot rows still take display masking.
+  for (const row of rows) insert.run(threadId, row.id, row.at, row.role, row.kind, row.text ?? null,
+    JSON.stringify({ ...row, ...(row.role === "user" ? { origin: "desktop" } : {}) }));
   db.prepare("INSERT INTO thread_state(thread_id,active_leaf_id) VALUES(?,?) ON CONFLICT(thread_id) DO UPDATE SET active_leaf_id=excluded.active_leaf_id").run(threadId, leaf);
   db.exec("COMMIT");
   refillThread(db, threadId);
@@ -62,7 +65,7 @@ function seed(db: DatabaseSync, threadId: string, rowsPerThread: number, big: bo
 }
 
 async function ownerShaped(rowsPerThread: number) {
-  fixture = await launchVerificationServer({});
+  fixture = await launchVerificationServer(process.env);
   await authHeaders();
   const model = await modelOf();
   const bots: Array<{ id: string; threadId: string }> = [];
@@ -143,11 +146,15 @@ it("test 1 / 16: view=sidebar on the owner-shaped fixture carries no rows, one s
 }, 900_000);
 
 it("test 2: a bot's line is its selected branch head, not its newest stored row; a room's line is its newest row", async () => {
-  fixture = await launchVerificationServer({});
+  fixture = await launchVerificationServer(process.env);
   await authHeaders();
   const model = await modelOf();
   const bot = (await api("POST", "/api/bots", { name: "Forked", modelSelection: { instanceId: "verification", model } })).body.bot;
   const room = (await api("POST", "/api/groups", { name: "Room", memberIds: [bot.id] })).body.group;
+  // Offline branch seeding must not interrupt the new bot's greeting. Its
+  // crash-recovery activity would otherwise replace the selected head later.
+  const greeting = await runControlMurage(["wait", "--bot", bot.id, "--timeout", "30", "--url", fixture.info.url]) as { status: string };
+  expect(greeting.status).toBe("settled");
   await fixture.stop();
   const db = new DatabaseSync(join(fixture.info.dataDir, "messages.db"));
   try {
@@ -170,11 +177,15 @@ it("test 2: a bot's line is its selected branch head, not its newest stored row;
   try {
     await stream.until((frame) => frame.kind === "hello");
     expect((await api("POST", `/api/bots/${bot.id}/active-branch`, { messageId: rowId(bot.threadId, 13), threadId: bot.threadId })).status).toBe(200);
-    const frame = await stream.until((candidate) => candidate.kind === "thread" && candidate.threadId === bot.threadId);
+    // Startup/card settlement can also publish this thread. Observe the frame
+    // for the branch change requested above, then check the listing separately.
+    const frame = await stream.until((candidate) => candidate.kind === "thread" && candidate.threadId === bot.threadId
+      && candidate.activeLeafId === rowId(bot.threadId, 13));
     expect(frame.activeLeafId).toBe(rowId(bot.threadId, 13));
     expect(frame.sidebarLine).toMatchObject({ messageId: rowId(bot.threadId, 13), text: "fork 13", role: "user" });
   } finally { await stream.close(); }
-  expect((await api("GET", "/api/bots?view=sidebar")).body.bots.find((candidate: any) => candidate.id === bot.id).sidebarLine.messageId).toBe(rowId(bot.threadId, 13));
+  const listed = (await api("GET", "/api/bots?view=sidebar")).body.bots.find((candidate: any) => candidate.id === bot.id);
+  expect(listed.sidebarLine.messageId, JSON.stringify({ sidebarLine: listed.sidebarLine, activeLeafId: listed.activeLeafId })).toBe(rowId(bot.threadId, 13));
   // test 5: messagesTotal is the stored count
   expect(roomEntry.messagesTotal).toBe(7);
   // `view` wins over `messages`
@@ -183,7 +194,7 @@ it("test 2: a bot's line is its selected branch head, not its newest stored row;
 }, 300_000);
 
 it("test 3: ?messages=3, ?messages=1 and no parameter answer whole rows, widened to the branch head, hasMore only when rows remain", async () => {
-  fixture = await launchVerificationServer({});
+  fixture = await launchVerificationServer(process.env);
   await authHeaders();
   const model = await modelOf();
   const bot = (await api("POST", "/api/bots", { name: "Whole", modelSelection: { instanceId: "verification", model } })).body.bot;
@@ -271,7 +282,7 @@ it("test 6: a script's grant and the companion see only the conversations they m
 }, 300_000);
 
 it("the roster carries the room horizon for the owner's surfaces only: roomClock, removedGroups and tasksEpoch, in the sidebar view and the full one (ROOM-ORDER R5)", async () => {
-  fixture = await launchVerificationServer({}, undefined, { env: { MURAGE_COMPANION_TOKEN: COMPANION_TOKEN } });
+  fixture = await launchVerificationServer(process.env, undefined, { env: { MURAGE_COMPANION_TOKEN: COMPANION_TOKEN } });
   await authHeaders();
   const member = (await api("POST", "/api/bots", { name: "Horizon member" })).body.bot;
   const first = (await api("POST", "/api/groups", { name: "Horizon one", memberIds: [member.id] })).body.group;

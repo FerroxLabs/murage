@@ -22,6 +22,7 @@ GATE=$?
 if [ "$RUNNER" -ne 0 ]; then GATE=$RUNNER; fi
 # Only fake prompt dumps are removed here. /out (including failed-turns JSONL)
 # is a host mount; hz-smooth.sh keeps it before removing the container or data.
-rm -rf -- /tmp/smooth-ctl/prompts
+control=/tmp/smooth-ctl
+rm -rf -- "${control:?}/prompts"
 echo "REALEXIT=$GATE"
 exit $GATE

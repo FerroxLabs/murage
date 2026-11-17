@@ -15,6 +15,21 @@ import {
 const total = (spentUsd: number) => ({ state: "ok" as const, spentUsd, asOf: "2026-11-04T10:00:00Z", resetsAt: "2026-12-01T00:00:00Z" });
 const answer = (fingerprint: string | null, spentUsd: number) => ({ fingerprint, total: total(spentUsd) });
 
+it("a saved Flux connection can show its pause without a legacy key, and rotating it voids old answers", () => {
+  let fp = "bank-old";
+  const shown: Array<HeldAnswer | null> = [];
+  const gate = createMeterGate({ fingerprint: () => fp, responseFingerprint: (body: any) => body?.pauseFingerprint, show: value => shown.push(value), reread() {} });
+  const old = gate.issue();
+  gate.settle(old, { fingerprint: null, pauseFingerprint: fp, pause: { held: [{ credentialId: "bank:b", holds: [{ kind: "unknown" }] }] } });
+  expect(shown.at(-1)?.body).toHaveProperty("pauseFingerprint", "bank-old");
+  const stale = gate.issue();
+  fp = "bank-new";
+  gate.settle(stale, { fingerprint: null, pauseFingerprint: "bank-old" });
+  expect(shown.at(-1)).toBeNull();
+  gate.settle(gate.issue(), { fingerprint: null, pauseFingerprint: fp });
+  expect(shown.at(-1)?.body).toHaveProperty("pauseFingerprint", "bank-new");
+});
+
 interface Meter { gate: MeterGate; shown: Array<HeldAnswer | null>; rereads: number; setFp(fp: string | null): void; fp(): string | null; screen(): unknown }
 
 /** One mounted meter: the hook's fingerprint ref, its held answer and the render guard, without React. */
@@ -246,4 +261,21 @@ describe("the meter is labelled as chat spend", () => {
     expect(read("./MonthCardView.tsx")).toContain("ux.l2c.month.chatOnly");
     expect(read("../SpendLimitCard.tsx")).toContain("ux.l2c.month.chatOnly");
   });
+});
+
+it("PAUSE100 renders every hold, limits actions to those that help, and keeps a fixed Flux destination", async () => {
+  const { createElement } = await import("react");
+  const { renderToStaticMarkup } = await import("react-dom/server");
+  const { SpendPauseCard } = await import("../SpendPauseCard");
+  const status = { capability: "on" as const, limitUsd: 100, figure: null, headsUpOnlyNotice: false,
+    held: [{ credentialId: "account", holds: [{ kind: "limit" as const }, { kind: "flux" as const, limit: "monthly_tokens" as const }] }] };
+  const html = renderToStaticMarkup(createElement(SpendPauseCard, { status, onOpenUsage: () => {}, onRefresh: () => {} }));
+  expect(html).toContain("You reached your $100 monthly limit.");
+  expect(html).toContain("A limit in Flux Router has also been reached.");
+  expect(html).toContain("Check again");
+  expect(html).toContain('href="https://fluxrouter.ai"');
+  expect(html).not.toContain("Raise limit");
+  expect(html).not.toContain("Leave it");
+  expect(html).toContain('type="button"');
+  expect(html).toContain('role="status"');
 });

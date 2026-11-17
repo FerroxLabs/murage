@@ -126,9 +126,9 @@ describe("read seam", () => {
     const html = "<p>" + "word ".repeat(10_000) + "</p>";
     const ctx = { currentUrl: "https://shop.test/", activeHtml: async () => html, authorize: () => true, admitUrl: async () => {} };
     const out: any = await readWithBrowserAuthority({}, { ...ctx, fenceOrigin: "https://shop.test" });
-    expect(out.content[0].text).toMatch(/^<<page-content/);
-    expect(out.content[0].text).toContain("Use read with filter");
-    expect(out.structuredContent.truncated).toBe(true);
+    expect(out.content[0].text).toContain("<<page-content");
+    expect(out.structuredContent).toMatchObject({ eof: false, next_offset: 16000, total_length: 49999 });
+    expect(out.structuredContent.truncated).toBe(false);
     const plain: any = await readWithBrowserAuthority({}, ctx);
     expect(plain.structuredContent.truncated).toBe(false);
   });

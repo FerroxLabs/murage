@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
 // One "Topic" dropdown beside the skills search box: All topics, then the
-// library's biggest topics with their counts. Shared by Settings → Skills and
+// library's topics with their counts. Shared by Settings → Skills and
 // the bot window's picker.
 import { ChevronDown } from "lucide-react";
 

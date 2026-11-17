@@ -57,8 +57,9 @@ describe("section 6: a 2.1.305 PowerShell ask on the inherit path, four levels",
     const command = 'Get-ChildItem env: | ForEach-Object { "$($_.Name)=$($_.Value)" }; Get-Location';
     expect(pinOverrideIn(command, valuePins("win32"), "pwsh")).toBeNull();
     for (const [label, bot] of [["Full access", FULL], ["No limits", NO_LIMITS]] as const) {
-      expect(autoVerdict(bot, "PowerShell", command, contextFor("PowerShell", command, inherited())).approve, label).not.toBeNull();
+      expect(autoVerdict(bot, "PowerShell", command, {...contextFor("PowerShell", command, inherited()),noLimitsOrigin:'owner'}).approve, label).not.toBeNull();
     }
+    expect(autoVerdict(NO_LIMITS,"PowerShell",command,contextFor("PowerShell",command,inherited())).approve).toBeNull();
   });
 
   it("an unread record (U20) holds at all four levels (regression guard for 3.5)", () => {

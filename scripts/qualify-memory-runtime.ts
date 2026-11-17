@@ -1,3 +1,4 @@
+import { buildInputUrls } from "./fetch-build-input.mjs";
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -43,31 +44,50 @@ async function prepare(dest: string) {
     if (existsSync(target) && statSync(target).size === asset.bytes && await hash(target) === asset.sha256) continue;
     const part = target + ".part";
     if (existsSync(part) && lstatSync(part).isSymbolicLink()) throw new Error("symlink partial refused");
-    // Bounded retry for transient network or server failures: each attempt
-    // resumes from the verified-size partial, and integrity is still checked
-    // once below, so a retry can never admit different bytes.
-    for (let attempt = 1; ; attempt++) {
-      let offset = existsSync(part) ? statSync(part).size : 0;
-      if (offset > asset.bytes) { rmSync(part); offset = 0; }
-      if (offset >= asset.bytes) break;
-      try {
-        const response = await fetch(`https://huggingface.co/${manifest.model}/resolve/${manifest.revision}/${asset.path}`, {
-          headers: offset ? {Range: `bytes=${offset}-`} : {}, signal: AbortSignal.timeout(180_000),
-        });
-        if (!response.ok || !response.body) throw Object.assign(new Error(`asset download failed ${asset.path}: HTTP ${response.status}`), {retryable: response.status >= 500 || response.status === 429});
-        if (response.status === 206) {
-          if (!response.headers.get("content-range")?.startsWith(`bytes ${offset}-`)) throw new Error("unexpected range response");
-        } else offset = 0;
-        await copyStream(Readable.fromWeb(response.body as never), createWriteStream(part, {flags: offset ? "a" : "w", mode: 0o600}));
-        break;
-      } catch (error) {
-        const retryable = (error as {retryable?: boolean}).retryable ?? !(error instanceof Error && error.message === "unexpected range response");
-        if (!retryable || attempt >= 3) throw error;
-        process.stderr.write(`Retrying ${asset.path} (attempt ${attempt + 1} of 3)\n`);
-        await new Promise(resolve => setTimeout(resolve, 2_000 * attempt));
+    const sources = buildInputUrls(`https://huggingface.co/${manifest.model}/resolve/${manifest.revision}/${asset.path}`, asset.sha256);
+    let verified = false;
+    let lastError: unknown;
+    for (const source of sources) {
+      // Resume only on the same source; every completed download is checked
+      // inside the attempt so HTTP and integrity failures can use the mirror.
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        let offset = existsSync(part) ? statSync(part).size : 0;
+        if (offset >= asset.bytes) {
+          if (offset === asset.bytes && await hash(part) === asset.sha256) { verified = true; break; }
+          rmSync(part); offset = 0;
+        }
+        try {
+          const response = await fetch(source, {
+            headers: offset ? {Range: `bytes=${offset}-`} : {}, signal: AbortSignal.timeout(180_000),
+          });
+          if (!response.ok || !response.body) {
+            await response.body?.cancel();
+            throw Object.assign(new Error(`asset download failed ${asset.path}: HTTP ${response.status}`), {retryable: response.status >= 500 || response.status === 429});
+          }
+          if (response.status === 206) {
+            if (!response.headers.get("content-range")?.startsWith(`bytes ${offset}-`)) {
+              await response.body.cancel();
+              throw Object.assign(new Error("unexpected range response"), {retryable: false});
+            }
+          } else offset = 0;
+          await copyStream(Readable.fromWeb(response.body as never), createWriteStream(part, {flags: offset ? "a" : "w", mode: 0o600}));
+          if (statSync(part).size !== asset.bytes || await hash(part) !== asset.sha256) {
+            throw Object.assign(new Error(`asset integrity mismatch ${asset.path}`), {retryable: false});
+          }
+          verified = true;
+          break;
+        } catch (error) {
+          lastError = error;
+          if ((error as {retryable?: boolean}).retryable === false || attempt === 3) break;
+          process.stderr.write(`Retrying ${asset.path} (attempt ${attempt + 1} of 3)\n`);
+          await new Promise(resolve => setTimeout(resolve, 2_000 * attempt));
+        }
       }
+      if (verified) break;
+      // Never carry a failed source's partial bytes into another endpoint.
+      if (existsSync(part)) rmSync(part);
     }
-    if (statSync(part).size !== asset.bytes || await hash(part) !== asset.sha256) throw new Error(`asset integrity mismatch ${asset.path}`);
+    if (!verified) throw lastError ?? new Error(`asset download failed ${asset.path}: no sources`);
     renameSync(part, target);
     process.stderr.write(`Verified ${asset.path}\n`);
   }

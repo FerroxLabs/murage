@@ -8,15 +8,16 @@
 //
 // data-safety.test.ts guards the other half (nothing recursive-deletes a data directory) and reads its vitest scope from the
 // same test-file-scope.ts, so the two lists cannot disagree about which files run under the safe-wipe guard.
-import { execFileSync } from "node:child_process";
+import { gitFixture } from "./git-fixture.mjs";
 import { readFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
 
 import { TEMP_CLEANUP_SCOPE, VITEST_INCLUDE } from "./test-file-scope.ts";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const repository = gitFixture();
+const ROOT = repository.root;
+afterAll(() => repository.dispose());
 
 /** A recursive delete through fs: sync, promise, callback or node's fs.rm, with the options object on one line or several. */
 const RAW_RECURSIVE_DELETE = /(?<![\w$])(?:(?:fs|fsp|nodeFs|fsPromises|promises)\.(?:promises\.)?)?(?:rmSync|rmdirSync|rm|rmdir)\s*\((?:[^;()]|\([^;()]*\))*?\brecursive\s*:\s*true|(?<![\w$.])rimraf\s*\(/g;
@@ -33,16 +34,7 @@ const ALLOWLIST: Record<string, string> = {
   "server/testing/safe-wipe.test.ts": "tests installSafeWipeGuard itself: it calls the raw fs.rmSync / fs.rm / fs.promises.rm / callback forms on purpose, to prove each is refused for a protected path (and admitted for a scratch one); its own fixture teardown at the end is the raw call under test's guard",
 };
 
-const tracked = (): string[] => {
-  let listing: string;
-  try {
-    listing = execFileSync("git", ["ls-files", "-z"], { cwd: ROOT, encoding: "utf8", maxBuffer: 64 * 1024 * 1024, stdio: ["ignore", "pipe", "ignore"] });
-  } catch {
-    // A copy made for a container run has no .git: the listing saved beside data-safety.test.ts is read instead.
-    listing = readFileSync(join(ROOT, "server/testing/.git-ls-files.fixture"), "utf8");
-  }
-  return listing.split("\0").filter(Boolean);
-};
+const tracked = (): string[] => repository.git("ls-files", "-z").split("\0").filter(Boolean);
 
 /** Same length as the source, with the inside of string literals, template text and comments blanked: a delete named in a
  * fixture string ("node -e fs.rmSync(...)") is data a test feeds a command, not a delete the test performs. Code inside a
