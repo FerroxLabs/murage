@@ -55,6 +55,7 @@ if (!promptFile) { // Claude shape: the prompt arrives on stdin
 
 switch (scenario) {
   case "ok": init(); result(); break;
+  case "flux-terminal-upstream": init(); result({structured_output:undefined,result:"not-json",upstream:{http_status:429,state:"key_revoked"},message:"Rate limit"}); break;
   case "debug-hook": writeFileSync(after("--debug-file"), "running hook from /external/hook.sh"); init(); result(); break;
   case "require-verbatim": init(); result({ structured_output: { ok: argv.includes("--verbatim") }, ...(argv.includes("--verbatim") ? {} : { is_error: true }) }); break;
   case "usage-before-abort": {
@@ -110,7 +111,7 @@ switch (scenario) {
   }
   case "helper": { // a same-group helper that outlives the root: the root exits, the helper stays
     const { spawn } = await import("node:child_process");
-    const h = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], { stdio: "ignore" }); h.unref(); appendFileSync(stub["stub-out"], JSON.stringify({ event: "helper", pid: h.pid }) + "\n");
+    const h = spawn(process.execPath, ["-e", "setTimeout(()=>{},60000)"], { windowsHide: true, stdio: "ignore" }); h.unref(); appendFileSync(stub["stub-out"], JSON.stringify({ event: "helper", pid: h.pid }) + "\n");
     init(); result(); break;
   }
   default: init(); result();

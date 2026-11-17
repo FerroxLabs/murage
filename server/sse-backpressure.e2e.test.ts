@@ -91,6 +91,7 @@ describe.skipIf(process.platform === "win32")("bounded SSE at the actual TCP bou
     port = await freePortBlock([0, 1]);
     base = `http://127.0.0.1:${port}`;
     child = spawn(process.execPath, [join(root, "server/index.ts")], {
+      windowsHide: true,
       cwd: root,
       env: { PATH: process.env.PATH, HOME: dataDir, USERPROFILE: dataDir, MURAGE_PORT: String(port), MURAGE_WEBHOOK_PORT: String(port + 1), MURAGE_DEV_DESKTOP_SECRET: secret, MURAGE_SSE_HEARTBEAT_MS: "100" },
       stdio: ["ignore", "ignore", "pipe"],

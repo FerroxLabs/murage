@@ -119,8 +119,9 @@ const LOOKUPS = Object.keys(APP_LOOKUPS).map((app) => `mcp__${CONNECTED_APPS_SER
 const place: StopLinePlace = { home: "/Users/ada", cwd: "/Users/ada/work", roots: ["/Users/ada/work"], knownRecipients: new Set(["ada@example.com"]), realpath: (p: string) => p };
 /** The context the host builds for an ask: the call, its stop line and rows. */
 const ctx = (ask: Ask, extra: AutoContext = {}): AutoContext => ({ call: ask, stopLine: classifyAsk(ask, place), stopRows: classifyAskRows(ask, place), ...extra });
-const routineRun = (alwaysAllow: string[], permissionMode: "ask" | "auto" | "full" | "unlimited" = "ask") => ({ permissionMode, alwaysAllow });
-/** The bot is on No limits, so a routine run is judged at its own ceiling. */
+const routineRun = (alwaysAllow: string[], permissionMode: "ask" | "auto" | "full" | "unlimited" = "ask") => ({ permissionMode, permissionExplicit: true, alwaysAllow });
+/** The bot is on No limits; these fixtures exercise an explicit routine ceiling. */
+// MAIN RULING 2026-11-13 wipe-only: explicit lower routine choices survive No limits.
 const judge = (ask: Ask, run: ReturnType<typeof routineRun> | null, extra: AutoContext = {}, bot: AutoApprover = run ? { autoApprove: true, fullAccess: true, noLimits: true } : {}) =>
   routineTurnApproval({ bot, run, tool: ask.tool, summary: ask.summary, context: ctx(ask, extra) }).verdict;
 const TRAINING = batch(
@@ -269,7 +270,8 @@ describe("Rule 80: a saved action is never a saved recipient", () => {
   it("stops a fresh To, Cc or Bcc destination despite the saved send", () => {
     for (const args of [{ recipient_email: "bob@example.com" }, { recipient_email: "ada@example.com", cc: ["carol@example.com"] }, { recipient_email: "ada@example.com", bcc: "dan@example.com" }]) {
       const ask = fuigo(batch(row("GMAIL_FETCH_EMAILS"), row("GMAIL_SEND_EMAIL", args)));
-      expect(judge(ask, routineRun(["app-action:GMAIL_FETCH_EMAILS", "app-action:GMAIL_SEND_EMAIL"], "unlimited")).source, JSON.stringify(args)).toBe("stop-line");
+      // MAIN RULING 2026-11-13 wipe-only: a fresh recipient is not a catastrophe at No limits.
+      expect(judge(ask, routineRun(["app-action:GMAIL_FETCH_EMAILS", "app-action:GMAIL_SEND_EMAIL"], "unlimited")).source, JSON.stringify(args)).toBe("no-limits");
     }
   });
 
@@ -384,9 +386,9 @@ describe("Rule 84: scheduled routine status", () => {
     expect(judge(ask, routineRun([], "ask")).approve).toBeNull();
     // the explicit unattended mark still outranks it
     expect(judge(ask, routineRun(TRAINING_KEYS, "ask"), { unattended: true }).approve).toBeNull();
-    // the routine is never No limits' owner turn: its stop line holds
+    // MAIN RULING 2026-11-13 wipe-only: a No limits routine ignores ordinary stops.
     const send = fuigo(batch(row("GMAIL_FETCH_EMAILS"), row("GMAIL_SEND_EMAIL", { recipient_email: "bob@example.com" })));
-    expect(judge(send, routineRun(["app-action:GMAIL_FETCH_EMAILS", "app-action:GMAIL_SEND_EMAIL"], "unlimited")).source).toBe("stop-line");
+    expect(judge(send, routineRun(["app-action:GMAIL_FETCH_EMAILS", "app-action:GMAIL_SEND_EMAIL"], "unlimited")).source).toBe("no-limits");
   });
 
   it("leaves a scheduled peer child unattended, with no key set to inherit", () => {

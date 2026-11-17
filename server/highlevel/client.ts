@@ -1,3 +1,4 @@
+import { frozenOperationExtension } from './operation-extension.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -15,7 +16,20 @@
 //     turn (upstream b075d6be4). The turn is also checked before any lease request, because a lease request is what
 //     lets the broker start a refresh: a stopped turn starts none, and a lease that arrives after Stop is dropped,
 //     never used (upstream 746a718f4).
+import { validateFrozenCopy } from './held-validation.ts';
+import { requestChanged, dispatchAdmissions, recheckAdmissions } from './request-change.ts';
 import { randomUUID } from "node:crypto";
+import { ActionRefused } from './actions.ts';
+import { operationSpec } from './operations/registry.ts';
+import type { OperationSpec, ReadDraft, PreflightRequester } from './operations/registry.ts';
+export type { PreflightRequester } from './operations/registry.ts';
+import { HeldRequest, type FrozenSendCopy } from './held-request.ts';
+import { usersCreateRecipientVerified } from './users-create-policy.ts';
+import { generatePrivateUserPassword, passwordEchoGuard } from './users-create-password.ts';
+import { userCreateProviderBodySchema } from './operations/schemas/users.ts';
+import { userCreatePublicResponse } from './users-create-response.ts';
+import { canonicalJson } from './operations/registry.ts';
+import type { OperationId } from '../../shared/highlevel.ts';
 import {
   endpointFor,
   HIGHLEVEL_API_ORIGIN,
@@ -46,34 +60,9 @@ const TEXT_MAX = 4_000;
 export const PAGE_MAX = 50;
 export const PAGE_NUMBER_MAX = 1_000;
 
-export type HighLevelOutcome = "not_applied" | "outcome_unknown";
-
-export class HighLevelError extends Error {
-  readonly status: number | undefined;
-  /** For a change: not_applied when HighLevel provably did not apply it, outcome_unknown when it may have. */
-  readonly outcome: HighLevelOutcome;
-  /** The connection needs Reconnect; the tool answer tells the bot to ask the person. */
-  readonly signedOut: boolean;
-  /** HighLevel's own words quoted in the message (apiMessage), if any: outside content wherever the message reaches a bot. */
-  readonly providerDetail: string | undefined;
-  constructor(message: string, options: { status?: number; outcome?: HighLevelOutcome; signedOut?: boolean; providerDetail?: string } = {}) {
-    super(message);
-    this.name = "HighLevelError";
-    this.status = options.status;
-    this.outcome = options.outcome ?? "not_applied";
-    this.signedOut = options.signedOut === true;
-    this.providerDetail = options.providerDetail || undefined;
-  }
-}
-
-/** The turn was stopped before the request was sent. Thrown only before a send, so a change is provably not applied. */
-export class HighLevelStopped extends Error {
-  readonly reason = "stopped_before_send";
-  constructor() {
-    super("Stopped. Nothing more was sent to the CRM.");
-    this.name = "HighLevelStopped";
-  }
-}
+import { HighLevelError, HighLevelStopped } from './errors.ts';
+export { HighLevelError, HighLevelStopped } from './errors.ts';
+export type { HighLevelOutcome } from './errors.ts';
 
 export type HighLevelConnectionState =
   | "connected" | "degraded" | "pending_browser_confirmation" | "needs_reconnect" | "disconnecting" | "disconnected";
@@ -129,7 +118,10 @@ export interface HighLevelCallContext {
   onDispatch?: (attempt: number) => void | Promise<void>;
   /** Called immediately before each read is sent (retries included); throws to refuse it. */
   beforeRead?: () => Promise<void>;
+  /** Numbered read attempt, including the one retry; C2 binds reviewed read authority. */
+  beforeReadAttempt?: (attempt: number) => void | Promise<void>;
 }
+
 
 export type HighLevelSleep = (ms: number, signal: AbortSignal) => Promise<void>;
 
@@ -168,10 +160,12 @@ export class HighLevelRateGate {
   readonly #dailyHeldUntil = new Map<string, number>();
   readonly #now: () => number;
   readonly #sleep: HighLevelSleep;
+  readonly #budget: number;
 
-  constructor(options: { now?: () => number; sleep?: HighLevelSleep } = {}) {
+  constructor(options: { now?: () => number; sleep?: HighLevelSleep; budget?: number } = {}) {
     this.#now = options.now ?? Date.now;
     this.#sleep = options.sleep ?? defaultSleep;
+    this.#budget = Math.max(1, Math.min(BUDGET_CALLS, options.budget ?? BUDGET_CALLS));
   }
 
   async admit(resource: string, ctx: HighLevelCallContext): Promise<RateReservation> {
@@ -187,7 +181,7 @@ export class HighLevelRateGate {
       const held = this.#heldUntil.get(resource) ?? 0;
       const slots = (this.#windows.get(resource) ?? []).filter((slot) => !slot.spent || now - slot.at < BUDGET_WINDOW_MS);
       this.#windows.set(resource, slots);
-      if (held <= now && slots.length < BUDGET_CALLS) {
+      if (held <= now && slots.length < this.#budget) {
         const slot: Slot = { at: now, spent: false };
         slots.push(slot);
         return {
@@ -240,7 +234,20 @@ export class HighLevelRateGate {
 
 type Query = Record<string, string | number | undefined>;
 type Json = Record<string, unknown>;
-interface RequestOptions { query?: Query; body?: unknown }
+interface RequestOptions { query?: Query; body?: unknown; multipart?: { bytes: Buffer; contentType: string } }
+interface PrivatePasswordTransport {
+  secret?: Buffer;
+  bytes?: Uint8Array;
+  echoes?: ReturnType<typeof passwordEchoGuard>;
+}
+
+/** Preserve the owned backing store so completion cleanup also wipes the view
+ * supplied to fetch. Shared backing stores are not valid request bodies. */
+function ownedFetchBody(bytes: Uint8Array): Buffer<ArrayBuffer> {
+  const backing = bytes.buffer;
+  if (!(backing instanceof ArrayBuffer)) throw new ActionRefused('request_shape', 'A held request is required.');
+  return Buffer.from(backing, bytes.byteOffset, bytes.byteLength);
+}
 
 const isRecord = (value: unknown): value is Json => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 const str = (value: unknown): string | undefined => (typeof value === "string" && value !== "" ? value.slice(0, TEXT_MAX) : undefined);
@@ -315,10 +322,10 @@ export const isScopeRefusal = (body: unknown): boolean => SCOPE_REFUSAL.test(raw
 
 export const HIGHLEVEL_RECONNECT_TEXT = "HighLevel needs Reconnect for this location. Ask the owner to open the HighLevel CRM card and choose Reconnect, then end this turn.";
 
-function refusal(status: number, operation: HighLevelOperation, body: unknown, secrets: readonly string[]): HighLevelError {
+function refusal(status: number, operation: HighLevelOperation, body: unknown, secrets: readonly string[], endpointScope?: string): HighLevelError {
   const detail = apiMessage(body, secrets);
   const said = detail ? ` HighLevel said: ${detail}` : "";
-  const scope = HIGHLEVEL_ENDPOINTS[operation].scope;
+  const scope = endpointScope ?? HIGHLEVEL_ENDPOINTS[operation].scope;
   const permission = HIGHLEVEL_PERMISSION_NAMES[scope] ? `${HIGHLEVEL_PERMISSION_NAMES[scope]} permission (${scope})` : `${scope} permission`;
   if ((status === 401 && isScopeRefusal(body)) || status === 403) {
     return new HighLevelError(`HighLevel refused this (${status}): the connection lacks the ${permission}. The owner can Reconnect and allow it.${said}`, { status, providerDetail: detail });
@@ -355,16 +362,20 @@ async function textUpTo(response: Response, max: number): Promise<string | null>
   if (!response.body) return "";
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
-  let size = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) return new TextDecoder().decode(Buffer.concat(chunks));
-    size += value.byteLength;
-    if (size > max) {
-      await reader.cancel().catch(() => {});
-      return null;
+  let size = 0, joined: Buffer | undefined;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) { joined = Buffer.concat(chunks); return new TextDecoder().decode(joined); }
+      chunks.push(value);
+      size += value.byteLength;
+      if (size > max) { await reader.cancel().catch(() => {}); return null; }
     }
-    chunks.push(value);
+  } finally {
+    joined?.fill(0);
+    for (const chunk of chunks) chunk.fill(0);
+    chunks.length = 0;
+    reader.releaseLock();
   }
 }
 
@@ -394,7 +405,10 @@ export class HighLevelClient {
   readonly #sleep: HighLevelSleep;
   readonly #deadlineMs: number;
   readonly gate: HighLevelRateGate;
+  // 90 ordinary requests plus five rechecks remain below the provider burst cap.
+  readonly #recheckGate: HighLevelRateGate;
   readonly #cache = new Map<string, CachedLease>();
+  readonly #privateCreates = new WeakSet<HeldRequest>();
   readonly #fields = new Map<string, { at: number; fields: CustomFieldDefinition[]; refused?: HighLevelError }>();
 
   constructor(options: HighLevelClientOptions) {
@@ -404,6 +418,7 @@ export class HighLevelClient {
     this.#sleep = options.sleep ?? defaultSleep;
     this.#deadlineMs = options.deadlineMs ?? REQUEST_DEADLINE_MS;
     this.gate = options.gate ?? new HighLevelRateGate({ now: this.#now, sleep: this.#sleep });
+    this.#recheckGate = new HighLevelRateGate({ now: this.#now, sleep: this.#sleep, budget: 5 });
   }
 
   /** Typed CRM calls bound to one authorized call. */
@@ -461,9 +476,45 @@ export class HighLevelClient {
   /** One manifest request. A read may be sent again once in all (after 5xx, no answer, 429 or an expired token);
    * a change is sent exactly once: any failure after it may have left is outcome_unknown, a refusal is not_applied. */
   async request(ctx: HighLevelCallContext, operation: HighLevelOperation, path: string, options: RequestOptions = {}): Promise<unknown> {
-    const declared = HIGHLEVEL_ENDPOINTS[operation];
-    const entry = endpointFor(operation, declared.method, path);
-    if (!entry) throw new HighLevelError("Murage never sends this request to HighLevel.", { status: 400 });
+    const legacy: Record<string, string> = { "contacts.notes.add": "contacts.notes.create", "contacts.tasks.add": "contacts.tasks.create", "pipelines.list": "opportunities.pipelines.list", "conversations.messages": "conversations.messages.list", "calendars.events": "calendars.events.list", "locations.get": "location.get", "locations.customFields": "location.customFields.list" };
+    operation = legacy[operation] ?? operation;
+    if (HIGHLEVEL_ENDPOINTS[operation]?.retry === 'write') throw new ActionRefused('request_shape', 'Changes require a frozen reviewed request.');
+    return this.#request(ctx, operation, path, options);
+  }
+
+  // Internal held transport; callers use sendFrozen/sendFrozenRead.
+  async sendHeld(ctx: HighLevelCallContext, held: HeldRequest, approvedRequestDigest?: string): Promise<unknown> {
+    if (!(held instanceof HeldRequest)) throw new ActionRefused('request_shape', 'A held request is required.');
+    if (held.frozen.completionKind || held.frozen.operation === 'users.create') throw new ActionRefused('not_approved', 'Only you can add users, from the desktop app.');
+    const f = held.frozen, entry = endpointFor(f.operation, f.method, f.path) ?? frozenOperationExtension(f)?.endpoint;
+    if (!entry || (entry.retry === 'write' && approvedRequestDigest === undefined)) throw new ActionRefused('request_shape', 'A mutation requires its approved request digest.');
+    // This check avoids acquiring credentials for an already invalid request. The authoritative check is after all waits.
+    try { validateFrozenCopy(held, held.sendCopy(), approvedRequestDigest); } catch (error) { requestChanged.get(ctx)?.(); throw error; }
+    return this.#request(ctx, f.operation, f.path, {}, held, approvedRequestDigest);
+  }
+
+  /** Dedicated host dispatch only. The password is generated after every wait and
+   * authority check; neither the held request nor any request digest contains it. */
+  async sendHeldWithPrivatePassword(ctx: HighLevelCallContext, held: HeldRequest, approvedRequestDigest: string): Promise<unknown> {
+    const completion: PrivatePasswordTransport = {};
+    try {
+      if (!usersCreateRecipientVerified() || !(held instanceof HeldRequest) || this.#privateCreates.has(held) || typeof ctx.onDispatch !== 'function' || held.frozen.operation !== 'users.create'
+        || held.frozen.completionKind !== 'private_generated_password_v1' || held.frozen.method !== 'POST')
+        throw new ActionRefused('request_shape', 'Only you can add users, from the desktop app.');
+      validateFrozenCopy(held, held.sendCopy(), approvedRequestDigest);
+      return await this.#request(ctx, held.frozen.operation, held.frozen.path, {}, held, approvedRequestDigest, completion);
+    } finally {
+      completion.bytes?.fill(0);
+      completion.echoes?.dispose();
+      completion.secret?.fill(0);
+      completion.secret = undefined; completion.bytes = undefined; completion.echoes = undefined;
+    }
+  }
+
+  async #request(ctx: HighLevelCallContext, operation: HighLevelOperation, path: string, options: RequestOptions = {}, held?: HeldRequest, approvedRequestDigest?: string, completion?: PrivatePasswordTransport): Promise<unknown> {
+    const declared = (held && frozenOperationExtension(held.frozen)?.endpoint) ?? HIGHLEVEL_ENDPOINTS[operation];
+    const entry = declared && (endpointFor(operation, declared.method, path) ?? (held && frozenOperationExtension(held.frozen)?.endpoint));
+    if (!entry || entry.method !== declared.method || !entry.path.test(path)) throw new HighLevelError("Murage never sends this request to HighLevel.", { status: 400 });
     const write = entry.retry === "write";
     const url = new URL(`${HIGHLEVEL_API_ORIGIN}${path}`);
     for (const [key, value] of Object.entries(options.query ?? {})) if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
@@ -472,40 +523,92 @@ export class HighLevelClient {
     let retried = false;
     for (;;) {
       ctx.assertActive();
-      let lease = await this.#lease(ctx, reason);
-      reason = "use";
-      const reservation = await this.gate.admit(ctx.connection.locationId, ctx);
-      try {
+      // Start before lease/admission/recheck, not after the reservation. Stop cancels
+      // unsent work; once spent, only this same deadline can interrupt a write.
+      const deadline = AbortSignal.timeout(completion ? Math.min(this.#deadlineMs, 30_000) : this.#deadlineMs);
+      const admissionSignal = AbortSignal.any([deadline, ctx.signal]);
+      const admission: HighLevelCallContext = { ...ctx, signal: admissionSignal, assertActive: () => {
         ctx.assertActive();
         if (ctx.signal.aborted) throw new HighLevelStopped();
-        // A long rate wait can outlive the lease: take a fresh one (Stop is checked first) rather than send a stale one.
-        if (!this.#fresh(lease)) {
-          this.#cache.delete(ctx.connection.connectionId);
-          lease = await this.#lease(ctx, "use");
-          ctx.assertActive();
-        }
-        if (write) await ctx.onDispatch?.(1);
-        else await ctx.beforeRead?.();
-        ctx.assertActive();
-        if (ctx.signal.aborted) throw new HighLevelStopped();
-      } catch (error) {
-        reservation.release();
-        throw error;
+        if (deadline.aborted) throw new HighLevelError('The dispatch deadline expired. Nothing was sent.', { status: 503 });
+      } };
+      const gate = !write && recheckAdmissions.has(ctx) ? this.#recheckGate : this.gate;
+      let reservation: RateReservation | undefined;
+      let lease!: HighLevelLease;
+      let out: FrozenSendCopy | undefined;
+      let onAbort!: () => void;
+      const cancelled = new Promise<never>((_, reject) => {
+        onAbort = () => { try { admission.assertActive(); } catch (error) { reject(error); } };
+        admissionSignal.addEventListener('abort', onAbort, { once: true });
+        if (admissionSignal.aborted) onAbort();
+      });
+      const prepare = async () => {
+        admission.assertActive();
+        lease = await this.#lease(admission, reason);
+        reason = 'use';
+        reservation = await gate.admit(ctx.connection.locationId, admission);
+        try {
+          admission.assertActive();
+          if (!this.#fresh(lease)) {
+            this.#cache.delete(ctx.connection.connectionId);
+            lease = await this.#lease(admission, 'use');
+            admission.assertActive();
+          }
+          dispatchAdmissions.set(ctx, admissionSignal);
+          if (write) await ctx.onDispatch?.(1);
+          else if (ctx.beforeReadAttempt) await ctx.beforeReadAttempt(retried ? 2 : 1);
+          else await ctx.beforeRead?.();
+          admission.assertActive();
+          if (held) {
+            out = held.sendCopy();
+            try { validateFrozenCopy(held, out, approvedRequestDigest); }
+            catch (error) { requestChanged.get(ctx)?.(); throw error; }
+          }
+        } catch (error) { reservation.release(); throw error; }
+      };
+      try { await Promise.race([prepare(), cancelled]); admission.assertActive(); }
+      catch (error) { reservation?.release(); throw error; }
+      finally { admissionSignal.removeEventListener('abort', onAbort); dispatchAdmissions.delete(ctx); }
+      reservation!.spend();
+      if (completion) {
+        // Only these non-secret bytes were reviewed. Verify them after all waits,
+        // then insert exactly one external field without changing the template.
+        if (!held || !out) throw new ActionRefused('request_shape', 'Only you can add users, from the desktop app.');
+        validateFrozenCopy(held, out, approvedRequestDigest);
+        const template = JSON.parse(Buffer.from(out.body!).toString('utf8'));
+        if (template.companyId !== ctx.connection.companyId || template.type !== 'account'
+          || template.locationIds?.length !== 1 || template.locationIds[0] !== ctx.connection.locationId)
+          throw new ActionRefused('stale', 'The location for this user changed. Review the request again.');
+        try {
+          if (!usersCreateRecipientVerified() || this.#privateCreates.has(held)) throw new Error();
+          this.#privateCreates.add(held);
+          completion.secret = generatePrivateUserPassword();
+          {
+            let password = completion.secret.toString('ascii');
+            let body: Record<string, unknown> | undefined;
+            try {
+              body = { ...template, password };
+              if (!userCreateProviderBodySchema.safeParse(body).success) throw new Error();
+              completion.echoes = passwordEchoGuard(password);
+              completion.bytes = canonicalJson(body);
+              out!.body = completion.bytes;
+            } finally { if (body) body.password = undefined; body = undefined; password = ''; }
+          }
+        } catch { throw new ActionRefused('not_approved', 'The user could not be confirmed.'); }
+        admission.assertActive();
       }
-      reservation.spend();
-      const deadline = AbortSignal.timeout(this.#deadlineMs);
       let response: Response;
       try {
-        response = await this.#fetch(url, {
-          method: entry.method,
+        response = await this.#fetch(out?.url ?? url, {
+          method: out?.method ?? entry.method,
           redirect: "manual",
           headers: {
             authorization: `Bearer ${lease.accessToken}`,
             version: entry.version,
             accept: "application/json",
-            ...(options.body === undefined ? {} : { "content-type": "application/json" }),
+            ...(out ? out.headers : options.body === undefined ? {} : { "content-type": "application/json" }),
           },
-          ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
+          ...(out ? out.body === undefined ? {} : { body: ownedFetchBody(out.body) } : options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
           // A sent change is not recalled by Stop: its answer still decides the outcome.
           signal: write ? deadline : AbortSignal.any([deadline, ctx.signal]),
         });
@@ -516,6 +619,23 @@ export class HighLevelClient {
         throw new HighLevelError("HighLevel did not answer (the request timed out or the network failed); try again in a minute.", { status: 503 });
       }
       this.gate.observe(ctx.connection.locationId, response.headers);
+      this.#recheckGate.observe(ctx.connection.locationId, response.headers);
+      if (completion) {
+        try {
+          if (!response.ok) {
+            await response.body?.cancel().catch(() => {});
+            throw new Error();
+          }
+          const raw = await this.#body(response, operation, true, ctx);
+          if (!completion.echoes?.safe(raw)) throw new Error();
+          const reviewed = JSON.parse(Buffer.from(held!.sendCopy().body!).toString('utf8'));
+          return userCreatePublicResponse(raw, reviewed);
+        } catch {
+          // Any response after this POST is uncertain until read reconciliation.
+          // Do not read or quote provider error prose, even for a 4xx response.
+          throw new HighLevelError('The user could not be confirmed.', { outcome: 'outcome_unknown' });
+        }
+      }
       if (response.status >= 300 && response.status < 400) {
         await response.body?.cancel().catch(() => {});
         if (write) throw unknownOutcome(operation, `HighLevel answered with a redirect (${response.status}), which Murage never follows`, response.status);
@@ -554,7 +674,7 @@ export class HighLevelClient {
         }
       }
       if (write && expired) throw new HighLevelError("HighLevel did not accept the sign-in for this change, so it was not made. Try again; if it keeps happening, the owner can Reconnect.", { status: 401 });
-      throw refusal(response.status, operation, body, [lease.accessToken]);
+      throw refusal(response.status, operation, body, [lease.accessToken], entry.scope);
     }
   }
 
@@ -874,4 +994,36 @@ export class HighLevelCrm {
       postalCode: str(location.postalCode), customFields,
     });
   }
+}
+
+export function createPreflightRequester(client: HighLevelClient, ctx: HighLevelCallContext, spec: Pick<OperationSpec, 'preflight'> & Partial<Pick<OperationSpec, 'id'>>,
+  resolveSpec: (id: string) => OperationSpec | undefined = id => operationSpec(id), input?: unknown): PreflightRequester {
+  // Bulk tags uses a budget bounded by its canonical 500-target
+  // schema and exact input paths. Reuse each observation through preparation;
+  // neither arbitrary routes nor repeated reads can spend extra requests.
+  const bulk = spec.id === 'contacts.tags.bulk' ? operationSpec(spec.id)?.args.safeParse(input) : undefined;
+  const paths = bulk?.success ? new Set((bulk.data.contacts as string[]).map(id => `/contacts/${encodeURIComponent(id)}`)) : undefined;
+  const cache = new Map<string, unknown>();
+  const maxReads = paths?.size ?? (["opportunities.followers.add", "opportunities.followers.remove", "opportunities.upsert"].includes(spec.id ?? "") ? 13 : 5);
+  let reads = 0;
+  return Object.freeze({ async read(op: OperationId, draft: ReadDraft) {
+    const target = resolveSpec(op);
+    if (!spec.preflight?.includes(op) || !target || target.id !== op || target.risk !== 'R' || target.endpoint.retry !== 'read') throw new ActionRefused('request_shape', 'This preflight read is not allowed.');
+    ctx.assertActive();
+    if (paths) {
+      if (op !== 'contacts.get' || !paths.has(draft.path) || draft.body !== undefined || draft.query !== undefined)
+        throw new ActionRefused('request_shape', 'This preflight read is not allowed.');
+      if (cache.has(draft.path)) return structuredClone(cache.get(draft.path));
+    }
+    if (++reads > maxReads) throw new ActionRefused('request_shape', 'This preflight read is not allowed.');
+    if (draft.body !== undefined && (target.endpoint.method === 'GET' || !target.row.bodySchema)) throw new ActionRefused('request_shape', 'This read does not accept a body.');
+    const segment = target.row.pathResourceSegment;
+    const resource = segment === null ? `location:${ctx.connection.locationId}` : `${target.family}:record:${decodeURIComponent(draft.path.split('/')[segment] ?? '')}`;
+    const held = HeldRequest.freeze(target, { path: draft.path, query: draft.query, resource, ...(draft.body === undefined ? {} : { body: { kind: 'json', value: draft.body } as const }) }, { locationId: ctx.connection.locationId });
+    const readContext = { ...ctx, onDispatch: undefined, beforeReadAttempt: undefined };
+    if (recheckAdmissions.has(ctx)) recheckAdmissions.add(readContext);
+    const value = await client.sendHeld(readContext, held);
+    if (paths) cache.set(draft.path, structuredClone(value));
+    return value;
+  } });
 }

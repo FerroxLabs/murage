@@ -31,11 +31,15 @@ import { basename, join } from "node:path";
 import { attachmentNameOf, attachmentsHomeOf, probeAttachment, readAttachmentFile, storedPathOf, type AttachmentsHome } from "./attachment-read.ts";
 import { ArtifactError, describeArtifact, readArtifact } from "./artifacts.ts";
 import { deleteAttachment, saveImage } from "./attachments.ts";
+import { onRollback } from "./tx-scope.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
 import { locateWorkspaceMedia, readPinnedMediaFile, sniffMedia, type MediaAssetsDeps } from "./media-assets.ts";
 import type { DelegatedRequest, DelegatedResult } from "./route-delegation.ts";
 import type { Store } from "./store.ts";
 import { murageLine } from "./murage-line.ts";
+import type { LineageRef } from "./memory/lineage-types.ts";
+import { fileRef } from "./memory/prompt-parts.ts";
+import { RETAINED_LINES_MAX } from "./memory/retained-refs.ts";
 import {
   IMAGE_GENERATION_REFERENCE_MAX, IMAGE_GENERATION_REFERENCE_MAX_TOTAL_BYTES, IMAGE_REFERENCE_LIMITS, IMAGE_REFERENCE_MIMES, isImageReferenceSource,
   type ImageReferenceErrorBody, type ImageReferenceErrorCode, type ImageReferenceMime, type ImageReferenceSource,
@@ -45,6 +49,9 @@ import {
 export type ImageReferenceDeps = MediaAssetsDeps & {
   /** Throws when the turn that asked is no longer live; asked again after the reads, before anything is written. */
   assertLive?: () => void;
+  /** Consuming callers preflight before file/disclosure attribution is committed. */
+  commitBound?: (refs: readonly LineageRef[], commit: () => PreparedImageReferences) => PreparedImageReferences;
+  chargeProvenance?: (maximumRows: number) => void;
 };
 /** The conversation a reference is prepared for. */
 export interface ImageReferenceAudience { botId: string; threadId: string }
@@ -152,6 +159,7 @@ function validImage(bytes: Buffer, index: number): Image {
 }
 
 interface Loaded extends Image {
+  refs: readonly LineageRef[];
   index: number;
   source: ImageReferenceSource;
   bytes: Buffer;
@@ -186,7 +194,16 @@ async function loadOne(source: ImageReferenceSource, index: number, audience: Im
     if (!allowed.has(source.attachmentId)) refuse("unavailable", "That image is not in this conversation.", index);
     const bytes = await readAttachmentReference(home, source.attachmentId, IMAGE_REFERENCE_LIMITS.maxBytesEach, index);
     const image = validImage(bytes, index);
-    return { index, source, bytes, sha256: sha256(bytes), label: source.attachmentId, existing: source.attachmentId, ...image };
+    assertAudience(deps.store, audience);
+    if (!conversationImageAttachments(deps.store, audience.threadId, home, [source.attachmentId]).has(source.attachmentId)) refuse("unavailable", "That image is not in this conversation.", index);
+    deps.assertLive?.();
+    deps.chargeProvenance?.(RETAINED_LINES_MAX + 1);
+    let rows: Record<string, unknown>[];
+    try { rows = deps.database().prepare("SELECT id FROM message_image WHERE thread_id=? AND path=? LIMIT ?").all(audience.threadId, storedPathOf(home, source.attachmentId), RETAINED_LINES_MAX + 1); }
+    catch { return refuse("unavailable", "The image's source could not be established.", index); }
+    if (!rows.length || rows.length > RETAINED_LINES_MAX) refuse("unavailable", "The image's source could not be established.", index);
+    const refs: LineageRef[] = rows.map(row => ({ kind: "line", threadId: audience.threadId, messageId: String(row.id) }));
+    return { index, source, bytes, refs, sha256: sha256(bytes), label: source.attachmentId, existing: source.attachmentId, ...image };
   }
   if (source.kind === "artifact") {
     const storage = join(deps.dataDir, "artifact-files"), access = { owner: true, scopes: deps.artifactScopes() };
@@ -207,7 +224,7 @@ async function loadOne(source: ImageReferenceSource, index: number, audience: Im
     const digest = sha256(bytes);
     if (digest !== source.sha256) refuse("changed", "That saved file no longer matches its recorded digest.", index);
     const image = validImage(bytes, index);
-    return { index, source, bytes, sha256: digest, label: artifact.name, existing: await existingAttachment(home, allowed, bytes, digest), ...image };
+    return { index, source, bytes, refs: [{ kind: "memory", ref: fileRef(audience.botId, artifact.relativePath) }], sha256: digest, label: artifact.name, existing: await existingAttachment(home, allowed, bytes, digest), ...image };
   }
   // Workspace: the root is this conversation's own authorized workspace. The
   // lookup refuses links, private names, HOME and files outside the root.
@@ -222,7 +239,7 @@ async function loadOne(source: ImageReferenceSource, index: number, audience: Im
   if (!bytes) refuse("changed", "That workspace file changed while it was being read.", index);
   const image = validImage(bytes, index);
   const digest = sha256(bytes);
-  return { index, source, bytes, sha256: digest, label: source.relativePath, existing: await existingAttachment(home, allowed, bytes, digest), ...image };
+  return { index, source, bytes, refs: [{ kind: "memory", ref: fileRef(audience.botId, source.relativePath) }], sha256: digest, label: source.relativePath, existing: await existingAttachment(home, allowed, bytes, digest), ...image };
 }
 
 function assertAudience(store: Store, audience: ImageReferenceAudience): void {
@@ -253,6 +270,7 @@ export async function loadImageReferences(sources: readonly unknown[], audience:
 }
 
 export interface PreparedImageReferences {
+  refs: readonly LineageRef[];
   references: ResolvedImageReference[];
   attachments: Array<MediaReferenceResponse["attachment"]>;
 }
@@ -282,6 +300,8 @@ export function commitImageReferences(loaded: readonly Loaded[], audience: Image
         throw new ImageReferenceError("storage", `Reference ${item.index + 1}: the stored copy landed outside Murage's attachment folder. ${NONE}`, item.index);
       }
       created.push({ path: saved.path, mime: item.mime, label: item.label });
+      const createdPath = saved.path;
+      onRollback(() => { deleteAttachment(createdPath); });
       byDigest.set(item.sha256, name);
       names.push(name);
     }
@@ -299,6 +319,7 @@ export function commitImageReferences(loaded: readonly Loaded[], audience: Image
     throw new ImageReferenceError("storage", `The reference images could not be added to this conversation. ${NONE}`);
   }
   return {
+    refs: loaded.flatMap(item => item.refs),
     references: loaded.map((item, position) => ({
       id: names[position]!, sha256: item.sha256, mime: item.mime, bytes: item.bytes.length, source: item.source.kind,
       ...(item.width !== undefined && item.height !== undefined ? { width: item.width, height: item.height } : {}),
@@ -319,7 +340,8 @@ export async function resolveImageReferences(sources: readonly unknown[], audien
     if (names.some(name => !still.has(name))) throw new ImageReferenceError("unavailable", `That image is not in this conversation. ${NONE}`);
   }
   deps.assertLive?.();
-  return commitImageReferences(loaded, audience, deps, options);
+  const commit = () => commitImageReferences(loaded, audience, deps, options);
+  return deps.commitBound ? deps.commitBound(loaded.flatMap(item => item.refs), commit) : commit();
 }
 
 // ---------------------------------------------------------------------------
@@ -328,7 +350,7 @@ export async function resolveImageReferences(sources: readonly unknown[], audien
 function answer(error: unknown): DelegatedResult {
   if (error instanceof ImageReferenceError) {
     const body: ImageReferenceErrorBody = { error: error.message, code: error.code, ...(error.index === undefined ? {} : { index: error.index }) };
-    return { status: error.status, headers: { ...HEADERS }, body };
+    return { status: error.status, headers: { ...HEADERS }, body, provenance: { refs: [] } };
   }
   throw error;
 }
@@ -349,7 +371,7 @@ async function body(request: DelegatedRequest): Promise<Record<string, unknown>>
  * Body: `{source}` or `{sources:[...]}` (1-4). The prepared images are shown
  * in the conversation before any approval is requested. */
 export async function resolveImageReferenceRoute(request: DelegatedRequest, claim: ImageReferenceClaim, deps: ImageReferenceDeps): Promise<DelegatedResult> {
-  if (request.method !== "POST") return { status: 405, headers: { ...HEADERS, allow: "POST" }, body: { error: "resolve-image-reference requires POST", code: "invalid-request" } };
+  if (request.method !== "POST") return { status: 405, headers: { ...HEADERS, allow: "POST" }, body: { error: "resolve-image-reference requires POST", code: "invalid-request" }, provenance: { refs: [] } };
   try {
     const value = await body(request), keys = Object.keys(value);
     const single = keys.length === 1 && keys[0] === "source";
@@ -357,9 +379,18 @@ export async function resolveImageReferenceRoute(request: DelegatedRequest, clai
       throw new ImageReferenceError("invalid-request", `Send {"source": ...} or {"sources": [...]}. ${NONE}`);
     }
     const sources = single ? [value.source] : value.sources as unknown[];
-    const prepared = await resolveImageReferences(sources, { botId: claim.botId, threadId: claim.threadId }, deps, { disclose: true, turnId: claim.turnId });
-    const response: ResolveImageReferenceResponse = { references: prepared.references, ...(single ? { reference: prepared.references[0] } : {}) };
-    return { status: 200, headers: { ...HEADERS }, body: response };
+    const audience = { botId: claim.botId, threadId: claim.threadId };
+    const loaded = await loadImageReferences(sources, audience, deps);
+    return { status: 200, headers: { ...HEADERS }, provenance: { refs: loaded.flatMap(item => item.refs) }, preparationError: answer, prepareBody: () => {
+      assertAudience(deps.store, audience);
+      deps.assertLive?.();
+      const names = loaded.flatMap(item => [...(item.source.kind === "attachment" ? [item.source.attachmentId] : []), ...(item.existing ? [item.existing] : [])]);
+      const still = conversationImageAttachments(deps.store, audience.threadId, attachmentsHome(deps), names);
+      if (names.some(name => !still.has(name))) throw new ImageReferenceError("unavailable", `That image is not in this conversation. ${NONE}`);
+      const prepared = commitImageReferences(loaded, audience, deps, { disclose: true, turnId: claim.turnId });
+      const response: ResolveImageReferenceResponse = { references: prepared.references, ...(single ? { reference: prepared.references[0] } : {}) };
+      return response;
+    } };
   } catch (error) { return answer(error); }
 }
 

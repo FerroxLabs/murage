@@ -1,13 +1,16 @@
+// control migration: real bound proxy ingress; existing assertions retained.
 // Contract test for the agent-to-agent comms MCP proxy (agents-proxy.ts):
 // spawn it exactly the way a driver's mcpServers entry does (process.execPath
 // + entry file + env) against a scripted stub of the harness's /api/internal
 // endpoints, and drive the MCP stdio surface end to end. No shebang, no
 // shell — plain node child, so this runs on every OS like index.test.ts.
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnBoundProxy, boundProxyState } from "../testing/bound-proxy-fixture.ts";
+import { LEDGER_REFUSAL_LINE } from "../ledger-refusal.ts";
 import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { ToolResults, TOOL_RESULT_PREVIEW_CHARS } from "../tool-results.ts";
 import type { HandoffOutcome } from "../event-limit.ts";
 import { formatHandoff } from "../handoff-outcome.ts";
@@ -58,6 +61,7 @@ let routinesResponse: unknown = {
   ],
 };
 let lastRoutineRequestBody: any = null;
+let routineRequestResponse: Record<string, unknown> | null = null;
 let lastOutcomeProposalBody: any = null;
 let lastSkillQuery = "";
 let lastSkillStageBody: any = null;
@@ -210,7 +214,7 @@ beforeAll(async () => {
       req.on("end", () => {
         lastRoutineRequestBody = JSON.parse(data);
         res.writeHead(201, { "content-type": "application/json" });
-        res.end(JSON.stringify({ requestId: "routine-request-1", summary: "Weekdays at 09:00 (Asia/Kolkata)" }));
+        res.end(JSON.stringify(routineRequestResponse ?? { requestId: "routine-request-1", summary: "Weekdays at 09:00 (Asia/Kolkata)" }));
       });
       return;
     }
@@ -297,8 +301,10 @@ beforeAll(async () => {
   });
   await new Promise<void>((r) => stub.listen(0, "127.0.0.1", r));
   stubPort = (stub.address() as { port: number }).port;
+});
 
-  child = spawn(process.execPath, [PROXY], {
+async function startProxy() {
+  child = await spawnBoundProxy("agents", process.execPath, [PROXY], {
     env: {
       ...process.env,
       MURAGE_HARNESS_URL: `http://127.0.0.1:${stubPort}`,
@@ -324,7 +330,29 @@ beforeAll(async () => {
       pending.delete(msg.id);
     }
   });
+}
+beforeEach(startProxy);
+afterEach(async () => {
+  pending.clear();
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill(); await new Promise<void>(resolve => child.once("close", () => resolve()));
+  }
 });
+
+async function terminalTool(name: string, args: unknown) {
+  const frames: Buffer[] = [];
+  child.stdout!.on("data", chunk => frames.push(Buffer.from(chunk)));
+  const closed = new Promise<void>(resolve => child.once("close", () => resolve()));
+  const replied = new Promise<void>(resolve => child.stdout!.once("data", () => resolve()));
+  child.stdin!.write(JSON.stringify({ jsonrpc: "2.0", id: nextId++, method: "tools/call", params: { name, arguments: args } }) + "\n");
+  await Promise.race([closed, replied]);
+  expect(frames).toEqual([]);
+  // MAIN RULING INT-CONFLICT-DEFAULT 5be0eafbea4 / 737318a0bdc: keep seal/count and require the authenticated terminal receipt.
+  expect(boundProxyState(child)).toEqual({ sealed: true, refusals: 1, terminal: {
+    jsonrpc: "2.0", id: null, error: { code: -32099, message: LEDGER_REFUSAL_LINE,
+      data: { code: "MEMORY_CONTEXT_REVOKED", terminal: true } },
+  } });
+}
 
 afterAll(async () => {
   child?.kill();
@@ -348,6 +376,7 @@ describe("agents-proxy MCP surface", () => {
       "get_prompt_block",
       "save_reference_pack",
       "list_reference_packs",
+      "web_read",
       "web_search",
       "tool_result_read",
       "allow_for_task",
@@ -515,7 +544,9 @@ describe("agents-proxy MCP surface", () => {
   });
 
   it("still delivers the work when the harness cannot park the overflow", async () => {
-    toolResultSaveStatus = 500;
+    // A well-formed storage refusal exercises the overflow fallback. A 5xx
+    // transport failure instead seals under design line 399 (entry matrix).
+    toolResultSaveStatus = 409;
     savedToolResultBodies = [];
     const previous = askResponse;
     askResponse = { botName: "Helper", text: "t".repeat(60_000) };
@@ -542,7 +573,7 @@ describe("agents-proxy MCP surface", () => {
     // api() turns a non-2xx body.error into a thrown Error, so this is the
     // real catch arm of handle(), not a hand-built rejection.
     const blown = Array.from({ length: 60_000 }, (_, i) => String.fromCharCode(97 + (i % 26))).join("");
-    searchStatus = 500;
+    searchStatus = 400; // application error; transport 5xx must seal (design 399)
     searchResponse = { error: blown };
     try {
       const result = await callTool("web_search", { query: "fixture research" });
@@ -602,18 +633,12 @@ describe("agents-proxy MCP surface", () => {
     expect(generateCalls).toHaveLength(0);
   });
 
-  // The proxy's own long wait for an image ends in words the bot can pass on:
-  // what happened and what to do, never a control-channel code or a claim
-  // that the connection failed.
-  it("says plainly when an image request got no answer within the proxy's wait", async () => {
+  // red-at-4df086541: design 12.1 H1a-REFUSE (line 399) makes a timeout
+  // terminal; an ordinary tool error could let the engine keep consuming.
+  it("seals when an image request got no answer within the proxy's wait", async () => {
     const started = Date.now();
-    const waited = await callTool("generate_image", { request_id: "r-never", prompt: "never" });
+    await terminalTool("generate_image", { request_id: "r-never", prompt: "never" });
     expect(Date.now() - started).toBeGreaterThanOrEqual(1_900);
-    expect(waited.result.isError).toBe(true);
-    const text = waited.result.content[0].text as string;
-    expect(text).toMatch(/no answer/i);
-    expect(text).toMatch(/approval/i);
-    expect(text).not.toMatch(/MURAGE_|_MS\b|control connection|failed/);
   });
 
   it("sends the saved prompt block and reference pack tools to their internal routes", async () => {
@@ -692,14 +717,14 @@ describe("agents-proxy MCP surface", () => {
     expect(tool.inputSchema.required).toEqual(["id"]);
   });
 
-  it("reports a forced control disconnect and keeps the MCP tool surface usable", async () => {
+  // red-at-4df086541: design line 399 seals this generation. Recovery must
+  // use a fresh bound generation; retain the original recovery assertions.
+  it("seals a forced control disconnect and recovers only in a fresh generation", async () => {
     disconnectAgents = true;
     try {
-      const failed = await callTool("list_bots", {});
-      expect(failed.result.isError).toBe(true);
-      expect(failed.result.content[0].text).toContain("MURAGE_AGENTS_UNAVAILABLE");
-      expect(failed.result.content[0].text).not.toContain(TOKEN);
+      await terminalTool("list_bots", {});
     } finally { disconnectAgents = false; }
+    await startProxy();
     const tools = await rpc("tools/list");
     expect(tools.result.tools.some((tool: { name: string }) => tool.name === "list_bots")).toBe(true);
     const recovered = await callTool("list_bots", {});
@@ -1065,6 +1090,18 @@ describe("agents-proxy MCP surface", () => {
     expect(res.result.isError).toBeFalsy();
   });
 
+  it("reports an applied No limits routine and its id without asking for a card", async () => {
+    routineRequestResponse = { autoApproved: true, approvalSource: "no-limits", action: "create", resultId: "routine-applied-42", summary: "Routine applied" };
+    try {
+      const result = await callTool("propose_routine", { name: "Applied routine", instructions: "Report status", schedule: { type: "interval", every_minutes: 60 } });
+      const text = result.result.content[0].text;
+      expect(text).toContain("under No limits");
+      expect(text).toContain("routine-applied-42");
+      expect(text).not.toContain("confirmation card");
+      expect(text).not.toContain("has not been applied");
+    } finally { routineRequestResponse = null; }
+  });
+
   it("forwards for_bot_id when the routine is for another bot", async () => {
     lastRoutineRequestBody = null;
     const res = await callTool("propose_routine", {
@@ -1340,7 +1377,7 @@ describe("agents-proxy MCP surface", () => {
   });
 
   it("turns a validation dump from the harness into one plain line", async () => {
-    artifactStatus = 500;
+    artifactStatus = 400; // validation response, not transport failure (design 399)
     artifactResponse = { error: JSON.stringify([{ code: "invalid_type", expected: "string", received: "undefined", path: ["relativePath"], message: "Required" }], null, 2) };
     try {
       const res = await callTool("register_artifact", { relative_path: "a.md" });

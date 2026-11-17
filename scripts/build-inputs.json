@@ -1,0 +1,356 @@
+{
+  "D017": {
+    "sha256": "e2020b073c44f692685a24d6abc378817eb81ffaaf49fd0531ef8565f767f2f5",
+    "bytes": 18106798,
+    "urls": [
+      "https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-darwin-arm64.tar.gz",
+      "https://api.github.com/repos/FiloSottile/age/releases/assets/535541897"
+    ]
+  },
+  "D020": {
+    "sha256": "cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10",
+    "bytes": 19405817,
+    "urls": [
+      "https://github.com/FiloSottile/age/releases/download/v1.3.2/age-v1.3.2-linux-amd64.tar.gz",
+      "https://api.github.com/repos/FiloSottile/age/releases/assets/535541903"
+    ]
+  },
+  "D022": {
+    "sha256": "7be0a144ccc377880f294204aa271d76e4b79554b42a751151d425ce6ebac143",
+    "bytes": 9733199,
+    "urls": [
+      "https://github.com/restic/restic/releases/download/v0.19.1/restic_0.19.1_darwin_arm64.bz2",
+      "https://api.github.com/repos/restic/restic/releases/assets/467000314"
+    ]
+  },
+  "D034": {
+    "sha256": "1615f063c894aa824fd55c89f8f05e9904f63cce0c95d0cbce7394d77884fba5",
+    "bytes": 97760996,
+    "urls": [
+      "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.82/mac-arm64/chrome-headless-shell-mac-arm64.zip",
+      "https://storage.googleapis.com/download/storage/v1/b/chrome-for-testing-public/o/152.0.7977.82%2Fmac-arm64%2Fchrome-headless-shell-mac-arm64.zip?alt=media"
+    ]
+  },
+  "D035": {
+    "sha256": "c903707292c6aaed7c6e572c0bb5e6645454e45d9e0e6db27e876b18e9165f31",
+    "bytes": 102895824,
+    "urls": [
+      "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.82/mac-x64/chrome-headless-shell-mac-x64.zip",
+      "https://storage.googleapis.com/download/storage/v1/b/chrome-for-testing-public/o/152.0.7977.82%2Fmac-x64%2Fchrome-headless-shell-mac-x64.zip?alt=media"
+    ]
+  },
+  "D036": {
+    "sha256": "0ca12ea26b502a83e32db334a17883c315348845efc071d908de7a6d94a97eff",
+    "bytes": 119454769,
+    "urls": [
+      "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.82/linux64/chrome-headless-shell-linux64.zip",
+      "https://storage.googleapis.com/download/storage/v1/b/chrome-for-testing-public/o/152.0.7977.82%2Flinux64%2Fchrome-headless-shell-linux64.zip?alt=media"
+    ]
+  },
+  "D037": {
+    "sha256": "86fb1fa7fbbda65f6f1572062c358803e61a6e6d9489e6619b37a61d609fa845",
+    "bytes": 119768220,
+    "urls": [
+      "https://storage.googleapis.com/chrome-for-testing-public/152.0.7977.82/win64/chrome-headless-shell-win64.zip",
+      "https://storage.googleapis.com/download/storage/v1/b/chrome-for-testing-public/o/152.0.7977.82%2Fwin64%2Fchrome-headless-shell-win64.zip?alt=media"
+    ]
+  },
+  "D039": {
+    "sha256": "636aa5c79f2693632e9921b8bbb050038ba11672e02346c06c20f991aed096f9",
+    "bytes": 120477194,
+    "urls": [
+      "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.92/linux64/chrome-headless-shell-linux64.zip",
+      "https://storage.googleapis.com/download/storage/v1/b/chrome-for-testing-public/o/154.0.8037.92%2Flinux64%2Fchrome-headless-shell-linux64.zip?alt=media"
+    ]
+  },
+  "D041": {
+    "sha256": "0ed0e47d9e9f639197f508d62ada09e5c6b4c4c60edab3160a9312a733091df6",
+    "bytes": 121182296,
+    "urls": [
+      "https://storage.googleapis.com/chrome-for-testing-public/154.0.8037.92/linux-arm64/chrome-headless-shell-linux-arm64.zip",
+      "https://storage.googleapis.com/download/storage/v1/b/chrome-for-testing-public/o/154.0.8037.92%2Flinux-arm64%2Fchrome-headless-shell-linux-arm64.zip?alt=media"
+    ]
+  },
+  "D042": {
+    "sha256": "ed24a72a5260d9c1ea454cd849c44159bac570a6939ac645e4c5bdb98a421646",
+    "bytes": 1904718,
+    "urls": [
+      "https://codeload.github.com/vercel-labs/agent-browser/tar.gz/eb05921bad874cd2a1b4fa5d1149f1ed26576cae",
+      "https://github.com/vercel-labs/agent-browser/archive/eb05921bad874cd2a1b4fa5d1149f1ed26576cae.tar.gz"
+    ]
+  },
+  "D043": {
+    "sha256": "ec9d69100e64727e0341951595253218753de29093885e807c8ef0725ddf21f2",
+    "bytes": 2038372,
+    "urls": [
+      "https://codeload.github.com/vercel-labs/agent-browser/tar.gz/aff6125c023b810ea3f2e5deec5379e9a4270bdc",
+      "https://github.com/vercel-labs/agent-browser/archive/aff6125c023b810ea3f2e5deec5379e9a4270bdc.tar.gz"
+    ]
+  },
+  "D047": {
+    "sha256": "6fac98f0c8202efc3135a9e9e42aa61963ec42d1c5cbb40caf231e7b14a24ef6",
+    "bytes": 61736206,
+    "urls": [
+      "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_x64_linux_hotspot_25.0.5_8.tar.gz",
+      "https://api.github.com/repos/adoptium/temurin25-binaries/releases/assets/665812575"
+    ]
+  },
+  "D048": {
+    "sha256": "d4fbab8aca7aa28755ea0a0bf1c3484d20afd0d2659e1cb70f40679891c8c6b6",
+    "bytes": 115,
+    "urls": [
+      "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_x64_linux_hotspot_25.0.5_8.tar.gz.sha256.txt",
+      "https://api.github.com/repos/adoptium/temurin25-binaries/releases/assets/665814614"
+    ]
+  },
+  "D049": {
+    "sha256": "5a05cd892795b092c45bc89d672529cc0d22b5890c7f680b09aa9693f5b1a8b0",
+    "bytes": 310,
+    "urls": [
+      "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_x64_linux_hotspot_25.0.5_8.tar.gz.sig",
+      "https://api.github.com/repos/adoptium/temurin25-binaries/releases/assets/665813355"
+    ]
+  },
+  "D050": {
+    "sha256": "72ebd76b502c849e88dea39afae51baf5f82f2b5b1b6389c28ea707b20451bce",
+    "bytes": 56298727,
+    "urls": [
+      "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_aarch64_mac_hotspot_25.0.5_8.tar.gz",
+      "https://api.github.com/repos/adoptium/temurin25-binaries/releases/assets/665171224"
+    ]
+  },
+  "D051": {
+    "sha256": "13ef4b61e95294a74916eb92a01d44e0c14072f7c5d57e392daeffac186e09ab",
+    "bytes": 117,
+    "urls": [
+      "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_aarch64_mac_hotspot_25.0.5_8.tar.gz.sha256.txt",
+      "https://api.github.com/repos/adoptium/temurin25-binaries/releases/assets/665170025"
+    ]
+  },
+  "D052": {
+    "sha256": "b4d90bf62532bce7fe49d51f3e33eb22c59b7122bff642b56519da9cae22d758",
+    "bytes": 310,
+    "urls": [
+      "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_aarch64_mac_hotspot_25.0.5_8.tar.gz.sig",
+      "https://api.github.com/repos/adoptium/temurin25-binaries/releases/assets/665169794"
+    ]
+  },
+  "D053": {
+    "sha256": "da78d54a2fcdbba1e92d5e3f07dd30236f96297891c4a21a781c3f38f5c0beae",
+    "bytes": 58589419,
+    "urls": [
+      "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_x64_windows_hotspot_25.0.5_8.zip",
+      "https://api.github.com/repos/adoptium/temurin25-binaries/releases/assets/677969374"
+    ]
+  },
+  "D054": {
+    "sha256": "45c964a438f899f275596d66d6740144e325c36812a7f800471dca391758c52c",
+    "bytes": 114,
+    "urls": [
+      "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_x64_windows_hotspot_25.0.5_8.zip.sha256.txt",
+      "https://api.github.com/repos/adoptium/temurin25-binaries/releases/assets/677970473"
+    ]
+  },
+  "D055": {
+    "sha256": "e9f0a2b60cc4dabbf66bcb3e152f17b9d019ee21e7f2a5d7b234236ff706d871",
+    "bytes": 310,
+    "urls": [
+      "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jre_x64_windows_hotspot_25.0.5_8.zip.sig",
+      "https://api.github.com/repos/adoptium/temurin25-binaries/releases/assets/677971050"
+    ]
+  },
+  "D056": {
+    "sha256": "68982529869257d0ee6b824ec5aa270ff8b118bb438670da0b97ebdab178d7fb",
+    "bytes": 141341188,
+    "urls": [
+      "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz",
+      "https://api.github.com/repos/adoptium/temurin25-binaries/releases/assets/665812068"
+    ]
+  },
+  "D057": {
+    "sha256": "2df2e8397f2e83a3fd82ad7caa45f5c979a541e497b43c27b2c7118b3a73735f",
+    "bytes": 115,
+    "urls": [
+      "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz.sha256.txt",
+      "https://api.github.com/repos/adoptium/temurin25-binaries/releases/assets/665813450"
+    ]
+  },
+  "D058": {
+    "sha256": "858b1b75763bf99fa11011553482b6e46819dd9020d9aefd076c1079f2f1eb69",
+    "bytes": 310,
+    "urls": [
+      "https://github.com/adoptium/temurin25-binaries/releases/download/jdk-25.0.5%2B8/OpenJDK25U-jdk_x64_linux_hotspot_25.0.5_8.tar.gz.sig",
+      "https://api.github.com/repos/adoptium/temurin25-binaries/releases/assets/665813403"
+    ]
+  },
+  "D060": {
+    "sha256": "a8758b3ac6a22f5b35f3690101759a269f765ed619317c6e7903eb040b3cbe9d",
+    "bytes": 556192,
+    "urls": [
+      "https://codeload.github.com/AsamK/signal-cli/tar.gz/48a0a5e90cb0c36153f0276c0affff090e588290",
+      "https://github.com/AsamK/signal-cli/archive/48a0a5e90cb0c36153f0276c0affff090e588290.tar.gz"
+    ]
+  },
+  "D061": {
+    "sha256": "21bd5da2de49b642904077f38c0efdc7778e92b3ed0889392dca61b97e389607",
+    "bytes": 151620138,
+    "urls": [
+      "https://services.gradle.org/distributions/gradle-9.8.2-bin.zip",
+      "https://downloads.gradle.org/distributions/gradle-9.8.2-bin.zip"
+    ]
+  },
+  "D062": {
+    "sha256": "dbe85cedd8ee4217b64e9a0e4c2aef92ab8bcaaa41f20bde99781ff02e600002",
+    "bytes": 10704555,
+    "urls": [
+      "https://github.com/indygreg/apple-platform-rs/releases/download/apple-codesign/0.29.0/apple-codesign-0.29.0-x86_64-unknown-linux-musl.tar.gz",
+      "https://api.github.com/repos/indygreg/apple-platform-rs/releases/assets/209933462"
+    ]
+  },
+  "D063": {
+    "sha256": "f3e32b717f34f074cd3ae3ed93cc3c9edbc09d8ef8eb2b897fd0437bdd2f9cf2",
+    "bytes": 50152,
+    "urls": [
+      "https://deb.debian.org/debian/pool/main/o/osslsigncode/osslsigncode_2.5-4_amd64.deb",
+      "https://ftp.debian.org/debian/pool/main/o/osslsigncode/osslsigncode_2.5-4_amd64.deb"
+    ]
+  },
+  "D064": {
+    "sha256": "ceacf45baae5fdf1ff9b80d9871c17a029c864c928af7620e456454d90c987f3",
+    "bytes": 344764,
+    "urls": [
+      "https://deb.debian.org/debian/pool/main/liba/libarchive/libarchive13_3.6.2-1+deb12u4_amd64.deb",
+      "https://ftp.debian.org/debian/pool/main/liba/libarchive/libarchive13_3.6.2-1+deb12u4_amd64.deb"
+    ]
+  },
+  "D065": {
+    "sha256": "651550a6ec39266b78f81414140a1e04776c935e72dfc70f1d7c8e0a3672ffba",
+    "bytes": 17035,
+    "urls": [
+      "https://files.pythonhosted.org/packages/88/3f/ff00c588ebd7eae46a9d6223389f5ae28a3af4b6d975c0f2a6d86b1342b9/libarchive_c-5.3-py3-none-any.whl",
+      "https://pypi.io/packages/88/3f/ff00c588ebd7eae46a9d6223389f5ae28a3af4b6d975c0f2a6d86b1342b9/libarchive_c-5.3-py3-none-any.whl"
+    ]
+  },
+  "D066": {
+    "sha256": "2c489aba7334ab0d4a9946ac51fe1b17085621a5476b89950e9c4f1e612cbab3",
+    "bytes": 3189365,
+    "urls": [
+      "https://files.pythonhosted.org/packages/01/50/2f7df57b08a3f6045e7a01aa5d6b00c8ccf4dc6603e2d2de02e1ec356c5a/diffoscope-306.tar.gz",
+      "https://pypi.io/packages/01/50/2f7df57b08a3f6045e7a01aa5d6b00c8ccf4dc6603e2d2de02e1ec356c5a/diffoscope-306.tar.gz"
+    ]
+  },
+  "D067": {
+    "sha256": "c212960ad306f700aa0d01e5d7a325d20548ff97eb9920dcd29513174f0294d3",
+    "bytes": 13840,
+    "urls": [
+      "https://files.pythonhosted.org/packages/6c/73/9f872cb81fc5c3bb48f7227872c28975f998f3e7c2b1c16e95e6432bbb90/python_magic-0.4.27-py2.py3-none-any.whl",
+      "https://pypi.io/packages/6c/73/9f872cb81fc5c3bb48f7227872c28975f998f3e7c2b1c16e95e6432bbb90/python_magic-0.4.27-py2.py3-none-any.whl"
+    ]
+  },
+  "D068": {
+    "sha256": "05b570bff786faa5c4604152aa16f19f77ed6dfc31e47dd0f3dd987078693ac7",
+    "bytes": 673,
+    "urls": [
+      "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/2c4055b12046f11709e9df2c122e59ffbdc2f900/config.json",
+      "https://hf-mirror.com/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/2c4055b12046f11709e9df2c122e59ffbdc2f900/config.json"
+    ]
+  },
+  "D069": {
+    "sha256": "06e405a36dfe4b9604f484f6a1e619af1a7f7d09e34a8555eb0b77b66318067f",
+    "bytes": 280,
+    "urls": [
+      "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/2c4055b12046f11709e9df2c122e59ffbdc2f900/special_tokens_map.json",
+      "https://hf-mirror.com/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/2c4055b12046f11709e9df2c122e59ffbdc2f900/special_tokens_map.json"
+    ]
+  },
+  "D070": {
+    "sha256": "3f5961b9ac86288cccdb97f32fb848d6187c78e1603958c53f3ea1f296b7d8a2",
+    "bytes": 496,
+    "urls": [
+      "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/2c4055b12046f11709e9df2c122e59ffbdc2f900/tokenizer_config.json",
+      "https://hf-mirror.com/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/2c4055b12046f11709e9df2c122e59ffbdc2f900/tokenizer_config.json"
+    ]
+  },
+  "D071": {
+    "sha256": "1faca2377fb36a7c5ee603ffdd170cf93126be37e7b3b422d319b8ed34081e73",
+    "bytes": 1151,
+    "urls": [
+      "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/2c4055b12046f11709e9df2c122e59ffbdc2f900/README.md",
+      "https://hf-mirror.com/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/2c4055b12046f11709e9df2c122e59ffbdc2f900/README.md"
+    ]
+  },
+  "D072": {
+    "sha256": "66fc00f5f29afcaff34092e1bdd20008ca3918265a82fb9695a551e510cc4ebc",
+    "bytes": 118308126,
+    "urls": [
+      "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/2c4055b12046f11709e9df2c122e59ffbdc2f900/onnx/model_quantized.onnx",
+      "https://hf-mirror.com/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/2c4055b12046f11709e9df2c122e59ffbdc2f900/onnx/model_quantized.onnx"
+    ]
+  },
+  "D073": {
+    "sha256": "b60b6b43406a48bf3638526314f3d232d97058bc93472ff2de930d43686fa441",
+    "bytes": 17082913,
+    "urls": [
+      "https://huggingface.co/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/2c4055b12046f11709e9df2c122e59ffbdc2f900/tokenizer.json",
+      "https://hf-mirror.com/Xenova/paraphrase-multilingual-MiniLM-L12-v2/resolve/2c4055b12046f11709e9df2c122e59ffbdc2f900/tokenizer.json"
+    ]
+  },
+  "D074": {
+    "sha256": "ee39ad5967e95c2a07f04dbcbde96b1a0c916ba376096db5d2f498b7727a5d1d",
+    "bytes": 16110554,
+    "urls": [
+      "https://dl.google.com/android/repository/platform-tools_r37.0.1-darwin.zip",
+      "https://dl.google.com/dl/android/repository/platform-tools_r37.0.1-darwin.zip",
+      "https://redirector.gvt1.com/edgedl/android/repository/platform-tools_r37.0.1-darwin.zip"
+    ]
+  },
+  "D075": {
+    "sha256": "d230f13842f60f782a8645f9c813f8f845bf36089ea7289f28c48f17979313f1",
+    "bytes": 9054187,
+    "urls": [
+      "https://dl.google.com/android/repository/platform-tools_r37.0.1-linux.zip",
+      "https://dl.google.com/dl/android/repository/platform-tools_r37.0.1-linux.zip",
+      "https://redirector.gvt1.com/edgedl/android/repository/platform-tools_r37.0.1-linux.zip"
+    ]
+  },
+  "D076": {
+    "sha256": "45f4d63113e895ebde0c90f194099a4676b6ac653bd28d54314a9e022bbc1a99",
+    "bytes": 8044989,
+    "urls": [
+      "https://dl.google.com/android/repository/platform-tools_r37.0.1-win.zip",
+      "https://redirector.gvt1.com/edgedl/android/repository/platform-tools_r37.0.1-win.zip"
+    ]
+  },
+  "D079": {
+    "sha256": "8fb52d2172d285b230c2857a90ba4dd28ecf6477ba4a91f91b6854a647b33b65",
+    "bytes": 112034330,
+    "urls": [
+      "https://github.com/PowerShell/PowerShell/releases/download/v7.4.13/PowerShell-7.4.13-win-x64.zip",
+      "https://api.github.com/repos/PowerShell/PowerShell/releases/assets/305227256"
+    ]
+  },
+  "D080": {
+    "sha256": "1f97e49381f8a42a629482eff8be98aa96d62e2e94410a8ec98e738f9c787680",
+    "bytes": 3041,
+    "urls": [
+      "https://registry.npmjs.org/opencode-ai/-/opencode-ai-1.19.5.tgz",
+      "https://registry.yarnpkg.com/opencode-ai/-/opencode-ai-1.19.5.tgz"
+    ]
+  },
+  "D081": {
+    "sha256": "2d7cfc303decc6cbbcdb22ff1be258b03ce2b5eae57583545afc8f12c01dd5e0",
+    "bytes": 79136190,
+    "urls": [
+      "https://registry.npmjs.org/opencode-linux-x64/-/opencode-linux-x64-1.19.5.tgz",
+      "https://registry.yarnpkg.com/opencode-linux-x64/-/opencode-linux-x64-1.19.5.tgz"
+    ]
+  },
+  "D099": {
+    "sha256": "740302fe768aaf1ba680c5213bd08983f219e0bcf0c96c0c6d7be393b8620c98",
+    "bytes": 4236561,
+    "urls": [
+      "https://registry.npmjs.org/pnpm/-/pnpm-11.1.3.tgz",
+      "https://registry.yarnpkg.com/pnpm/-/pnpm-11.1.3.tgz"
+    ]
+  }
+}

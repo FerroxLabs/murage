@@ -1,3 +1,4 @@
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 import { typedOpenCodeModel } from "../../../shared/opencode-model-id.ts";
 
 function record(value: unknown): Record<string, unknown> {
@@ -13,7 +14,7 @@ export function declareTypedOpenCodeModel(env: Record<string, string | undefined
   let config: Record<string, unknown> = {};
   if (env.OPENCODE_CONFIG_CONTENT?.trim()) {
     try {
-      const parsed = JSON.parse(env.OPENCODE_CONFIG_CONTENT) as unknown;
+      const parsed = registerBusyloopPayloadSite("read", JSON.parse(env.OPENCODE_CONFIG_CONTENT)) as unknown;
       if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return model;
       config = parsed as Record<string, unknown>;
     } catch {

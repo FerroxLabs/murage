@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Murage Cloud B3 WP3: the IPC channel inventory, measured on the real main.mjs.
 //
 // Loads main.mjs under an inert Electron stub (app.whenReady never resolves, so no window, server or helper starts)
@@ -121,7 +122,7 @@ export function loadIpcInventory({ electronDir = here, env = {} } = {}) {
       appData: scratch, downloads: scratch, desktop: scratch, documents: scratch, exe: process.execPath };
     const environment = { ...process.env };
     for (const key of Object.keys(environment)) if (key.startsWith("MURAGE_") || key.startsWith("ELECTRON_")) delete environment[key];
-    const result = spawnSync(process.execPath, ["--input-type=module", "-e", childSource], {
+    const result = spawnSync(process.execPath, ["--input-type=module", "-e", childSource], withHideInherit({
       cwd: scratch, encoding: "utf8", timeout: 60_000, maxBuffer: 16 * 1024 * 1024,
       env: {
         ...environment, ...env, HOME: home, USERPROFILE: home, MURAGE_DATA_DIR: dataDir, MURAGE_USER_DATA: userData,
@@ -129,7 +130,7 @@ export function loadIpcInventory({ electronDir = here, env = {} } = {}) {
         MURAGE_TEST_ELECTRON_EXPORTS: JSON.stringify(electronNamedImports(electronDir)),
         MURAGE_TEST_ELECTRON_PATHS: JSON.stringify(paths),
       },
-    });
+    }));
     if (result.error) throw result.error;
     const line = result.stdout.split("\n").find((entry) => entry.startsWith("MURAGE_IPC_INVENTORY "));
     if (!line) throw new Error(`main.mjs produced no inventory (status ${result.status}):\n${result.stdout}\n${result.stderr}`);

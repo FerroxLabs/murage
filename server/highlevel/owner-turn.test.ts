@@ -74,8 +74,23 @@ describe("HL-RO: highlevelOwnerTurn is an allow proof", () => {
     expect(highlevelOwnerTurn({ ...line, opts: { ...line.opts, commsDepth: 0 } })).toBe(false);
   });
 
+  it("direct-send receipt metadata keeps the owner proof and refuses malformed values", () => {
+    const line = ownerLine();
+    for (const isolated of [false, true]) {
+      const opts = { ...line.opts, attemptSeqs: [1], isolated };
+      expect(highlevelOwnerTurn({ ...line, opts })).toBe(true);
+      expect(highlevelOwnerTurn({ ...line, opts, ticket: undefined })).toBe(false);
+      expect(highlevelOwnerTurn({ ...line, opts: { ...opts, cardContinuation: true } })).toBe(false);
+    }
+    for (const attemptSeqs of [[], [0], [-1], [1.5], [1, 2], ["1"], "1"]) {
+      expect(highlevelOwnerTurn({ ...line, opts: { ...line.opts, attemptSeqs } })).toBe(false);
+    }
+    expect(highlevelOwnerTurn({ ...line, opts: { ...line.opts, isolated: "false" } })).toBe(false);
+  });
+
   it("the ALLOWED list is the design's, frozen", () => {
-    expect([...HIGHLEVEL_OWNER_OPTS].sort()).toEqual(["excludeMessageIds", "hlTicket", "memoryRedispatch", "origin", "phoneTicket", "rebuildOf", "replyTo", "sendId", "threadId", "userMessage"]);
+    // MAIN RULING 2026-11-14 direct-send receipt metadata (attemptSeqs singleton, boolean isolated) carries no owner authority; admitted, validated
+    expect([...HIGHLEVEL_OWNER_OPTS].sort()).toEqual(["attemptSeqs", "excludeMessageIds", "hlTicket", "isolated", "memoryRedispatch", "origin", "phoneTicket", "rebuildOf", "replyTo", "sendId", "threadId", "userMessage"]);
     expect(Object.isFrozen(HIGHLEVEL_OWNER_OPTS)).toBe(true);
   });
 

@@ -1,0 +1,1 @@
+{"transport": "compat", "status": 429, "headers": {}, "body": {"error": {"state": "concurrency", "retry_after": 2}}}

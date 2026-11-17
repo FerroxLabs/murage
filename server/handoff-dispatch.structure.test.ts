@@ -187,7 +187,16 @@ function analyse(program: ts.Program, only?: string): Analysis {
       const symbol = checker.getShorthandAssignmentValueSymbol(p);
       return Boolean(symbol?.declarations?.some((d) => ts.isParameter(d) && d.name.getText() === "rebuildOf" && ts.isArrowFunction(d.parent)));
     };
-    return after.every((p) => { const key = keyOf(p.name); return key === "threadId" || key === "userMessage" || key === "memoryRedispatch" || (key === "rebuildOf" && heldGeneration(p)); });
+    const suppression = (p: ts.ObjectLiteralElementLike): boolean => {
+      if (p !== literal.properties.at(-1) || !ts.isSpreadAssignment(p)) return false;
+      const value = strip(p.expression);
+      if (!ts.isConditionalExpression(value) || !ts.isIdentifier(value.condition) || value.condition.text !== "packRefusedHere") return false;
+      const yes = strip(value.whenTrue), no = strip(value.whenFalse);
+      if (!ts.isObjectLiteralExpression(yes) || !ts.isObjectLiteralExpression(no) || yes.properties.length !== 1 || no.properties.length !== 0) return false;
+      const flag = yes.properties[0];
+      return ts.isPropertyAssignment(flag) && keyOf(flag.name) === "packSuppressed" && strip(flag.initializer).kind === ts.SyntaxKind.TrueKeyword;
+    };
+    return after.every((p) => { const key = keyOf(p.name); return suppression(p) || key === "threadId" || key === "userMessage" || key === "memoryRedispatch" || (key === "rebuildOf" && heldGeneration(p)); });
   };
   /** Whether the node sits anywhere inside a function declaration with one of these names (an arrow or a closure nested in it counts: it is its code). */
   const insideFunction = (node: ts.Node, names: ReadonlySet<string>): boolean => { for (let at: ts.Node | undefined = node; at; at = at.parent) if (ts.isFunctionDeclaration(at) && at.name && names.has(at.name.text)) return true; return false; };
@@ -488,7 +497,7 @@ export const probe = () => relay(host[key]);
     expect(analyseIndex(real)).toEqual([]);                                                   // (the real file is clean)
     const helper = analyseIndex(`${real}\nexport function relayStart(botId: string, options: Parameters<typeof startTurn>[2]) { return startTurn(botId, "x", options); }\n`);
     expect(helper.join("\n")).toMatch(/R8 forward/);
-    const redispatch = "{ ...opts, threadId, userMessage, memoryRedispatch: attempt, rebuildOf }";
+    const redispatch = "{ ...opts, threadId, userMessage, memoryRedispatch: attempt, rebuildOf, ...(packRefusedHere ? { packSuppressed: true as const } : {}) }";
     expect(real).toContain(redispatch);
     const cleared = analyseIndex(real.replace(redispatch, "{ ...opts, threadId, userMessage: undefined, memoryRedispatch: attempt, rebuildOf }"));
     expect(cleared.join("\n")).toMatch(/R2 spread/);
@@ -502,6 +511,10 @@ export const probe = () => relay(host[key]);
     // DELETION-DRAIN-V2: `rebuildOf` passes only as the start callback's own parameter; any other value after the spread is reported
     const notHeld = analyseIndex(real.replace(redispatch, "{ ...opts, threadId, userMessage, memoryRedispatch: attempt, rebuildOf: userMessage.id }"));
     expect(notHeld.join("\n")).toMatch(/R2 spread/);
+    const smuggled = analyseIndex(real.replace(redispatch, redispatch.replace("packSuppressed: true as const", "packSuppressed: true as const, userMessage: undefined")));
+    expect(smuggled.join("\n")).toMatch(/R2 spread/);
+    const earlySuppression = analyseIndex(real.replace(redispatch, "{ ...opts, ...(packRefusedHere ? { packSuppressed: true as const } : {}), threadId, userMessage, memoryRedispatch: attempt, rebuildOf }"));
+    expect(earlySuppression.join("\n")).toMatch(/R2 spread/);
   });
   it("an options object spread that carries the run, and a callback that forwards it", () => {
     const spread = probe(`import type { HandoffTurnOptions } from "./handoff-dispatch.ts";

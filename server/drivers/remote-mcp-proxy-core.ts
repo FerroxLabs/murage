@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Copyright 2026 Ferrox Labs
+import { registerBusyloopPayloadSite } from "../../shared/flux-route.ts";
 //
 // The rules of the stdio proxy an engine talks to for a link server (spec
 // MCP-LINK 3.8), kept apart from the process so each is a function a test can
-// call. The process is server/drivers/remote-mcp-proxy.ts. This file imports
-// nothing: the proxy runs inside an engine's process tree.
+// call. The process is server/drivers/remote-mcp-proxy.ts. Its one shared import
+// registers the consuming payload sites in the busyloop inventory.
 //
 // What the proxy guarantees, one function each:
 //  - rewriteInitializeCapabilities: what Murage announces is only the
@@ -83,7 +84,7 @@ export class SseFrameReader {
     this.data = [];
     if (!joined || joined === "[DONE]") return;
     try {
-      const value: unknown = JSON.parse(joined);
+      const value: unknown = registerBusyloopPayloadSite("read", JSON.parse(joined));
       if (isRecord(value)) frames.push(value);
     } catch {
       // not JSON: skip it
@@ -97,7 +98,7 @@ export function splitUpstreamFrames(text: string, contentType: string): JsonRpcM
   if (!trimmed) return [];
   if (!/^text\/event-stream/i.test(contentType) && trimmed.startsWith("{")) {
     try {
-      const value: unknown = JSON.parse(trimmed);
+      const value: unknown = registerBusyloopPayloadSite("read", JSON.parse(trimmed));
       return isRecord(value) ? [value] : [];
     } catch {
       return [];
@@ -111,7 +112,7 @@ export function splitUpstreamFrames(text: string, contentType: string): JsonRpcM
     data = [];
     if (!joined || joined === "[DONE]") return;
     try {
-      const value: unknown = JSON.parse(joined);
+      const value: unknown = registerBusyloopPayloadSite("read", JSON.parse(joined));
       if (isRecord(value)) frames.push(value);
     } catch {
       // not JSON: skip it

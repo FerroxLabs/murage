@@ -28,6 +28,8 @@ const lines = async (threadId: string) =>
 beforeAll(async () => {
   // The server reads the close deadline at call time; the launcher passes no MURAGE_* through, so set it in the server.
   fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `
+      // This fixture CLI has no model host; unknown-host refusal has its own reach tests.
+      const { customAcpSupport: localFixtureHost } = await import(${JSON.stringify(new URL("./drivers/acp/custom.ts", import.meta.url).href)}); localFixtureHost.fluxReach = () => "elsewhere";
       process.env.MURAGE_PROVIDER_CLOSE_MS='800';
       const fs=await import('node:fs');const path=await import('node:path');
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));

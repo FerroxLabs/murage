@@ -18,7 +18,7 @@ const STARTUP = /^(?:sitecustomize|usercustomize)(?:\.pyc?)?$/;
 /** node and python3 resolve under /usr/bin (a system root); no startup file exists unless `extra` names one. */
 const clean = (extra: readonly string[] = []): OutsideScanHooks => ({
   cwd: "/w", home: "/h", lookupProgram: (name) => `/usr/bin/${name}`,
-  probe: (p) => (extra.includes(p) || !(STARTUP.test(p.slice(p.lastIndexOf("/") + 1))) ? { kind: "file", real: p, fresh: false, zip: false } : null),
+  probe: (p) => (extra.includes(p) || !(STARTUP.test(p.slice(Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\")) + 1))) ? { kind: "file", real: p, fresh: false, zip: false } : null),
 });
 const marks = (text: string, hooks: OutsideScanHooks = clean()) => outsideScanMarks(text, hooks);
 
@@ -173,10 +173,11 @@ describe("I10 and I11 the chat stays clean after node -e 1, and is marked after 
     const text = "node -e require(\"os\").cpus()";
     start(call(text, "k1"));
     expect(turnOutsideRead("t1")).toBe("interpreter");
-    expect(verdict(text, "k1").approve).toBeNull();
+    // NOLIM 1.0.19: the scanner's mark is not a wipe row: the owner's No limits turn runs the marked call and the next turn
+    expect(verdict(text, "k1").approve).toBeTruthy();
     beginOutsideTurn("t1", "i1", "turn-2", true);
     expect(turnOutsideRead("t1")).toBe("earlier turn");
-    expect(verdict("mkdir -p tmp/out", "k2")).toMatchObject({ approve: null, source: "outside-turn" });
+    expect(verdict("mkdir -p tmp/out", "k2").approve).toBeTruthy();
   });
 });
 

@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 import { constants,closeSync,fstatSync,lstatSync,openSync,readSync } from "node:fs";
 import { constants as osConstants } from "node:os";
 import { isAbsolute,join } from "node:path";

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, expect, it } from "vitest";
-import { inboxRequest, initializeInbox, listInbox, owedThreads, updateInboxState, type InboxAccess } from "./inbox.ts";
+import { fillInboxProjection, inboxProjectionReady, inboxRequest, initializeInbox, listInbox, owedThreads, updateInboxState, type InboxAccess } from "./inbox.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const roots: string[] = [], databases: DatabaseSync[] = [];
@@ -655,4 +655,66 @@ it("counts routine runs that left no card, from the routine's own run record", (
   ]);
   // and nothing about them becomes owed twice: the waiting card is the owed thing
   expect(listInbox(db, {}, { ...access, routineRuns }, now).decisions).toBe(0);
+});
+
+
+it.each([
+  { tool: "request_user_input", question: "Choose a database" },
+  { tool: "ask_user_question", questions: [] },
+  { tool: "provider_question", question: "" },
+  { question: "Choose a database" },
+  { tool: "request_user_input", question: "Choose", folderTrust: false },
+  { tool: "request_user_input", question: "Choose", folderTrust: "" },
+  { tool: "request_user_input", question: "Choose", folderTrust: 0 },
+  {},
+  { tool: "Bash" },
+  { tool: "Bash", question: "Trust folder?", folderTrust: {} },
+  { tool: "Bash", questions: [], folderTrust: true },
+  { tool: "Bash", question: "Choose", folderTrust: "trust" },
+  { tool: "Bash", question: 1, questions: {} },
+] as Array<Record<string, unknown>>)("classifies options by registry question shape: %j", card => {
+  const { db } = fixture(), now = 1_000_000;
+  const question = (!card.folderTrust && (typeof card.question === "string" || Array.isArray(card.questions))) || typeof card.tool !== "string";
+  const segment = question ? "question" : "approval";
+  put(db, { card: { requestId: "shape", options: ["First", "Second"], ...card } });
+  const item = listInbox(db, {}, access, now).items[0];
+  expect(item).toMatchObject({ segment, title: question ? "Question needs an answer" : "Approval requested" });
+  updateInboxState(db, { id: item.id, version: item.version, snoozedUntil: now + 60_000 }, access, now);
+  expect(listInbox(db, { view: question ? "questions" : "approvals" }, access, now)).toMatchObject({ total: 0, snoozedHere: 1 });
+  put(db, { card: { requestId: "shape", options: ["First", "Second"], ...card, expired: true } });
+  expect(listInbox(db, { view: "all", includeSnoozed: true }, access, now).items[0]).toMatchObject({ segment, title: question ? "Question expired" : "Approval expired" });
+});
+
+it("rebuilds v4 question projections at v5, replaces write triggers and preserves snooze marks", () => {
+  let { db, file } = fixture();
+  const now = 1_000_000;
+  const card = { requestId: "migration", options: ["First", "Second"], tool: "request_user_input", questions: [] };
+  put(db, { card });
+  const item = listInbox(db, {}, access, now).items[0];
+  updateInboxState(db, { id: item.id, version: item.version, snoozedUntil: now + 60_000 }, access, now);
+  db.exec("UPDATE inbox_raw SET kind_segment='approval',title='Approval requested'; UPDATE inbox_items SET kind_segment='approval',segment='approval',title='Approval requested'");
+  const indexes = db.prepare("SELECT name,sql FROM sqlite_schema WHERE type='index' AND sql IS NOT NULL AND name LIKE '%_5'").all() as Array<{ name: string; sql: string }>;
+  for (const index of indexes) {
+    db.exec(`DROP INDEX ${index.name}`);
+    db.exec(index.sql.replace(index.name, index.name.replace(/_5$/, "_4")));
+  }
+  // Old triggers must be replaced as well as the rows already projected.
+  db.exec(`UPDATE inbox_projection_state SET cursor=4 WHERE name='layout';
+    DROP TRIGGER inbox_project_insert; DROP TRIGGER inbox_project_update;
+    CREATE TRIGGER inbox_project_insert AFTER INSERT ON messages BEGIN SELECT RAISE(ABORT,'old projection trigger'); END;
+    CREATE TRIGGER inbox_project_update AFTER UPDATE ON messages BEGIN SELECT RAISE(ABORT,'old projection trigger'); END;`);
+  db.close(); db = new DatabaseSync(file); databases.push(db);
+  initializeInbox(db);
+  expect(db.prepare("SELECT cursor FROM inbox_projection_state WHERE name='layout'").get()).toEqual({ cursor: 5 });
+  expect(inboxProjectionReady(db)).toBe(false);
+  expect(db.prepare("SELECT kind_segment FROM retired4_inbox_items").get()).toEqual({ kind_segment: "approval" });
+  fillInboxProjection(db);
+  expect(inboxProjectionReady(db)).toBe(true);
+  expect(listInbox(db, { view: "questions" }, access, now)).toMatchObject({ total: 0, snoozedHere: 1 });
+  expect(listInbox(db, { view: "questions", includeSnoozed: true }, access, now).items[0]).toMatchObject({ id: item.id, segment: "question", title: "Question needs an answer", snoozedUntil: now + 60_000 });
+  put(db, { id: "new-question", card: { ...card, requestId: "new-question" } });
+  expect(listInbox(db, { view: "questions" }, access, now).total).toBe(1);
+  const changed = { id: "new-question", at: 100, role: "bot", kind: "options", card: { ...card, requestId: "new-question", expired: true } };
+  db.prepare("UPDATE messages SET json=? WHERE id='new-question'").run(JSON.stringify(changed));
+  expect(listInbox(db, { view: "all" }, access, now).items[0]).toMatchObject({ segment: "question", title: "Question expired" });
 });

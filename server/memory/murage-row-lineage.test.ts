@@ -7,10 +7,17 @@
 // with MEMORY_CONTEXT_REVOKED, the re-dispatch too, and the owner's session was reset. A row Murage writes is never a turn's engine output:
 // it gets only the refs of what it quotes, and no write makes another actor's open turn its inherit child. The real writers (message-db.ts
 // appendMessage / updateMessage on the app's database) with the real lineage and revoke code.
+import { openFixtureApproval } from '../testing/approval-card.ts';
+import { serviceQueueFixture } from '../testing/service-queue-fixture.ts';
+import { serviceQueue } from '../narrow-denials.ts';
+import { EmailSendService } from '../email/send-service.ts';
+import { EmailStore } from '../email/email-store.ts';
+import { FluxEmailClient } from '../email/flux-email-client.ts';
+import { FakeFlux } from '../testing/fake-flux-email.ts';
 import { copyFileSync, mkdirSync, rmSync } from "node:fs";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { appendMessage, closeMessageDb, readMessage, updateMessage } from "../message-db.ts";
@@ -43,6 +50,8 @@ const card = (status: "running" | "completed", extra: Partial<Message> = {}, sum
 });
 
 let opened: TurnLineage[] = [];
+const rowIds = new Map<string,string>();
+const rowId = (thread:string,id:string) => rowIds.get(`${thread}:${id}`) ?? id;
 function reset(): void { closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); }
 // The app's database is built once per file, not once per test: its schema and every table the writers create on first use (messages and
 // their search index, the write revision, hand-offs, project settings, ...) cost a fully synced commit each, and on a loaded machine the
@@ -62,7 +71,7 @@ beforeAll(() => {
   reset();
 });
 afterAll(() => { reset(); rmSync(TEMPLATE, { force: true }); });
-beforeEach(() => { reset(); opened = []; copyFileSync(TEMPLATE, join(DATA_DIR, "messages.db")); });
+beforeEach(() => { reset(); opened = []; rowIds.clear(); copyFileSync(TEMPLATE, join(DATA_DIR, "messages.db")); });
 afterEach(() => { for (const turn of opened) closeTurnLineage(turn); opened = []; });
 
 const lsnOf = (thread: string, id: string) => lineOf(database(), thread, id)!.lsn;
@@ -178,30 +187,33 @@ describe("a row Murage writes is never attached to an open turn", () => {
     const row: Omit<Message, "id" | "at"> = kind === "options"
       ? { role: "bot", kind, card: { title: "Approve image generation", subtitle: "One image", held: prompt, options: ["Allow", "Deny"], requestId: "image-1", tool: "generate_image" } }
       : { role: "bot", kind, tool: { name: "Making an image without asking (level)", ok: true, imageRecord: { summary: "1 image", prompt } } };
-    appendMessage(T, { id: "ask", at: Date.now(), parentId: "u1", ...murageLine({ ...row, turnId: "prov-a" }) });
+    appendMessage(T, openFixtureApproval(database(),T,{ id: "ask", at: Date.now(), parentId: "u1", ...murageLine({ ...row, turnId: "prov-a" }) }));
     const state = (thread: string, id: string) => denyLookup(database(), { threadId: thread, lines: [{ messageId: id, author: "generated" }] }, CONTENT).get(id)?.state;
     expect(state(T, "ask"), "the prompt is withheld with the turn's inputs").toBe("checking");
     expect(sessionRow(T), "Murage's card never advances the turn's session").toEqual(session);
     const R2 = `${T}-no-turn`;
     appendMessage(R2, owner("q1"));
-    appendMessage(R2, { id: "ask2", at: Date.now(), parentId: "q1", ...murageLine({ ...row, turnId: undefined }) });
+    appendMessage(R2, openFixtureApproval(database(),R2,{ id: "ask2", at: Date.now(), parentId: "q1", ...murageLine({ ...row, turnId: undefined }) }));
     expect(state(R2, "ask2")).toBe("shown");
   });
 
   // The browser approval card's summary carries the model's words (typed text, an address it chose). The real approvals class writes it
   // through the real message database; it names the turn running now (turnOf, the server's own turn state), so revoking that turn's inputs
   // withholds it, and it never becomes the turn's output or advances the turn's session. With no turn running it rests on none.
-  for (const running of [true, false]) it(`a browser approval card quoting the model is ${running ? "withheld when its turn's inputs are revoked" : "shown when no turn is running"}`, () => {
+  for (const running of [true, false]) it(`a browser approval card quoting the model is ${running ? "withheld when its turn's inputs are revoked" : "shown when no turn is running"}`, async () => {
     const T = `browser-approval-${running ? "turn" : "none"}`;
     pendingParent();
     appendMessage(T, owner("u1"));
     const turn = ownerTurn(T, "direct");
     bindProviderTurn(turn, "prov-b");
     const session = sessionRow(T);
-    const bus = { store: { appendMessage: (thread: string, row: Omit<Message, "id" | "at">) => { const written = { id: "bcard", at: Date.now(), parentId: "u1", ...row } as Message; appendMessage(thread, written); return written; }, messageById: () => undefined, patchMessage: () => null }, broadcast: () => {} } as unknown as ApprovalBus;
+    const transcript = realStore(['bcard']);
+    const producer = serviceQueueFixture(transcript,{persisted:true});producer.queue(serviceQueue('browser'));
+    const bus = {store:transcript,authorityFor:producer.authorityFor,broadcast:()=>{}} as unknown as ApprovalBus;
     const approvals = new BrowserExtensionApprovals(bus, { turnOf: thread => (running && thread === T ? "prov-b" : undefined) });
     void approvals.ask({ bot: { id: "bot-a", name: "Mira", color: "blue" }, threadId: T, bindingId: "binding", generation: 1, digest: "a".repeat(64), summary: "Type \"the owner's dog Biscuit\" into the search box", waitMs: 1000 });
-    const state = denyLookup(database(), { threadId: T, lines: [{ messageId: "bcard", author: "generated" }] }, CONTENT).get("bcard")?.state;
+    await vi.waitFor(()=>{if(!readMessage(T,rowId(T,'bcard')))throw new Error('browser approval not presented');});
+    const state = stateOf(T,'bcard');
     expect(state).toBe(running ? "checking" : "shown");
     expect(sessionRow(T), "Murage's card never advances the turn's session").toEqual(session);
     approvals.cancelBinding("binding");
@@ -212,23 +224,42 @@ describe("a row Murage writes is never attached to an open turn", () => {
   /** A store whose appends go to the real message database, with the ids the test names. */
   const realStore = (ids: string[]) => {
     const last = new Map<string, string>();
-    const written = (thread: string, row: Omit<Message, "id" | "at">) => { const message = { id: ids.shift() ?? randomUUID(), at: Date.now(), parentId: last.get(thread) ?? "u1", ...row } as Message; appendMessage(thread, message); last.set(thread, message.id); return message; };
-    return { appendMessage: written, messageById: () => undefined, patchMessage: () => null, patchGroup: () => undefined, groupByThread: () => undefined, group: () => undefined, bot: () => undefined } as never;
+    const written = (thread: string, row: Omit<Message, "id" | "at">, stableId?:string) => { const alias=ids.shift() ?? randomUUID(); const id=stableId??alias; rowIds.set(`${thread}:${alias}`,id); const message = { id, at: Date.now(), parentId: last.get(thread) ?? "u1", ...row } as Message; appendMessage(thread, message); last.set(thread, message.id); return message; };
+    return { appendMessage: written, messageById: readMessage, patchMessage: (thread:string,id:string,patch:Partial<Message>) => {const row=readMessage(thread,id);if(!row)return null;const next={...row,...patch};updateMessage(thread,next);return next;}, patchGroup: () => undefined, groupByThread: () => undefined, group: () => undefined, bot: () => undefined } as never;
   };
   const turnInThread = (T: string, window = true) => { if (window) pendingParent(); else appendMessage(P, owner("p1")); appendMessage(T, owner("u1")); const turn = ownerTurn(T, "direct"); bindProviderTurn(turn, `prov-${T}`); return { turn, session: sessionRow(T) }; };
-  const stateOf = (thread: string, id: string) => denyLookup(database(), { threadId: thread, lines: [{ messageId: id, author: "generated" }] }, CONTENT).get(id)?.state;
+  const stateOf = (thread: string, id: string) => {id=rowId(thread,id);return denyLookup(database(), { threadId: thread, lines: [{ messageId: id, author: "generated" }] }, CONTENT).get(id)?.state;};
   const bot = (id: string): BotRecord => ({ id, name: "Mira", color: "blue", threadId: "unused", alwaysAllow: [] }) as unknown as BotRecord;
 
-  for (const running of [true, false]) it(`a peer-approval card quoting the bot's message and an event-limit card are ${running ? "withheld when the turn's inputs are revoked" : "shown when no turn is running"}`, () => {
+  for (const running of [true, false]) it(`a peer-approval card quoting the bot's message and an event-limit card are ${running ? "withheld when the turn's inputs are revoked" : "shown when no turn is running"}`, async () => {
     const T = `peer-approval-${running ? "turn" : "none"}`;
     const { session } = turnInThread(T);
-    const bus = { store: realStore(["pcard", "lcard"]), broadcast: () => {}, turnOf: (thread: string) => (running && thread === T ? `prov-${T}` : undefined) } as unknown as ApprovalBus;
+    const transcript=realStore(['pcard','lcard']);const producer=serviceQueueFixture(transcript,{persisted:true});producer.queue(serviceQueue('peer'));producer.queue(serviceQueue('event-limit'));
+    const bus = { store: transcript,authorityFor:producer.authorityFor, broadcast: () => {}, turnOf: (thread: string) => (running && thread === T ? `prov-${T}` : undefined) } as unknown as ApprovalBus;
     void requestPeerApproval(bus, bot("bot-a"), { ...bot("bot-t"), name: "Target" }, "Tell them the owner's dog is Biscuit", "ask_bot", T);
     void requestEventLimitApproval(bus, bot("bot-a"), "handoff", 3, "ev-1", T, "Target");
+    await vi.waitFor(()=>{if(!readMessage(T,rowId(T,'pcard'))||!readMessage(T,rowId(T,'lcard')))throw new Error('peer approvals not presented');});
     expect(stateOf(T, "pcard")).toBe(running ? "checking" : "shown");
     expect(stateOf(T, "lcard")).toBe(running ? "checking" : "shown");
     expect(sessionRow(T), "Murage's cards never advance the turn's session").toEqual(session);
     cancelPeerApprovalsFor("bot-a");
+  });
+
+  for (const running of [true, false]) it(`an email approval preserves its source lineage with ${running ? "a producing turn" : "no producing turn"}`, async () => {
+    const T = `email-approval-${running ? "turn" : "none"}`;
+    const { session } = turnInThread(T);
+    const transcript = realStore(["email-card"]);
+    const producer = serviceQueueFixture(transcript, { persisted: true });
+    const emails = new EmailStore(database());
+    emails.insertBinding({ botId: "bot-a", inboxId: "ibx_fixture", address: "bot@example.invalid", username: "bot", displayName: "Bot", emailKeyRef: "fixture", fluxAccountId: null, state: "active", step: null, opId: null, opStartedAt: null, policy: "ask", failure: null, updatedAt: Date.now() });
+    const fake = new FakeFlux();
+    const client = new FluxEmailClient({ fetch: fake.fetch, apiBase: "https://api.flux.test", appBase: "https://app.flux.test", credentials: { account: () => null, owner: () => null, bot: () => null }, timeoutMs: 100 });
+    const send = new EmailSendService({ store: emails, client, installId: "fixture", authorityFor: (thread, bot) => producer.authorityFor(thread, bot, { turnId: running ? `prov-${T}` : undefined }) });
+    producer.queue(send.approvalQueue());
+    const result = await send.submit({ botId: "bot-a", generation: 1, threadId: T, draft: { kind: "send", to: ["recipient@example.invalid"], cc: [], subject: "Private source", text: "Words derived from the revoked parent", attachments: [], replyTo: null } });
+    expect(result.status).toBe("accepted");
+    expect(stateOf(T, "email-card")).toBe(running ? "checking" : "shown");
+    expect(sessionRow(T), "the card never advances the owner's session").toEqual(session);
   });
 
   // The room copy of a bot's message is the sender's bot row naming its source row by copyOf (LINEAGE-DESIGN-S6 rule 6): the sender's
@@ -325,7 +356,8 @@ describe("a row Murage writes is never attached to an open turn", () => {
     const { session } = turnInThread(T);
     const written = realStore(["scard"]) as unknown as { appendMessage: (t: string, r: Omit<Message, "id" | "at">) => Message };
     const store = { ...written, keyedCards: () => [], keyedCardsEverywhere: () => [], newestMatching: () => ({ id: "u1" }), bots: () => [], groups: () => [] };
-    const setup = new BrowserExtensionSetup({ store: store as never, owner: () => bot("bot-a"), startHelper: async () => undefined, status: () => ({ profiles: [], bindings: [] }), optIn: () => {}, continueTask: async () => {}, turnOf: thread => (running && thread === T ? `prov-${T}` : undefined) });
+    const producer=serviceQueueFixture(store,{persisted:true});producer.queue(serviceQueue('browser'));
+    const setup = new BrowserExtensionSetup({ store: store as never, authorityFor:producer.authorityFor, owner: () => bot("bot-a"), startHelper: async () => undefined, status: () => ({ profiles: [], bindings: [] }), optIn: () => {}, continueTask: async () => {}, turnOf: thread => (running && thread === T ? `prov-${T}` : undefined) });
     setup.request("bot-a", T, "I need your signed-in browser to read the owner's dog Biscuit's vet page");
     expect(stateOf(T, "scard")).toBe(running ? "checking" : "shown");
     expect(sessionRow(T), "Murage's card never advances the turn's session").toEqual(session);

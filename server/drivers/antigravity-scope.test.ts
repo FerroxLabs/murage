@@ -13,7 +13,7 @@ import { describe, expect, it } from "vitest";
 
 import { ensureDirs } from "../config.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
-import { recordEvents } from "../testing/events.ts";
+import { recordMountedFixtureEvents as recordEvents } from "../testing/admitted-events.ts";
 import { AntigravityDriver } from "./antigravity.ts";
 import { antigravityLockConfig, buildAntigravityScopedHome, forgetLiveScopes, recoverAllScopedHomes, removeAntigravityLegacyMcpEntries, type MirrorOps } from "./antigravity-scope.ts";
 import { processIdentity } from "./process-identity.ts";
@@ -448,7 +448,7 @@ describe("scoped homes reconcile what agy wrote; nothing is discarded", () => {
 
 /** A process that sleeps until killed; resolves once it is running. */
 async function sleeper(): Promise<ChildProcess> {
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: "ignore" });
   await new Promise<void>((resolve, reject) => { child.once("spawn", () => resolve()); child.once("error", reject); });
   return child;
 }

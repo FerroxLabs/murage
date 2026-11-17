@@ -1314,6 +1314,7 @@ public final class PhoneJobsContract {
 
     public static final class Offer {
         public final String operationId, offerId, workspace, capability, action, say;
+        public final boolean permissionRun;
         public final NamedParty bot, provider;
         public final long expiresAt;
         public final int leaseMs;
@@ -1321,6 +1322,7 @@ public final class PhoneJobsContract {
         // One immutable validated snapshot shared by the card and executor.
         private final Args decodedArgs;
         private Offer(JSONObject o) {
+            permissionRun = "run".equals(o.opt("permission"));
             operationId = (String) o.opt("operationId"); offerId = (String) o.opt("offerId"); workspace = (String) o.opt("workspace");
             capability = (String) o.opt("capability"); action = (String) o.opt("action"); say = (String) o.opt("say");
             bot = new NamedParty((JSONObject) o.opt("bot")); provider = new NamedParty((JSONObject) o.opt("provider"));
@@ -1333,7 +1335,9 @@ public final class PhoneJobsContract {
         public static Offer parse(Object any) {
             if (!(any instanceof JSONObject)) return null;
             JSONObject o = (JSONObject) any;
-            if (!keys(o, "operationId", "offerId", "workspace", "bot", "capability", "action", "args", "say", "provider", "expiresAt", "leaseMs")) return null;
+            JSONObject fieldsOnly = jsonObject(o.toString());
+            if (fieldsOnly.has("permission") && !"run".equals(fieldsOnly.remove("permission"))) return null;
+            if (!keys(fieldsOnly, "operationId", "offerId", "workspace", "bot", "capability", "action", "args", "say", "provider", "expiresAt", "leaseMs")) return null;
             if (!matches(o.opt("operationId"), UUID4) || !matches(o.opt("offerId"), UUID4) || !text(1, 120).accepts(o.opt("workspace"))) return null;
             if (!(o.opt("bot") instanceof JSONObject) || !accepts(fields("id", text(1, 128), "name", text(1, 120)), (JSONObject) o.opt("bot"))) return null;
             if (!CAPABILITIES.contains(o.opt("capability")) || !text(1, 48).accepts(o.opt("action")) || !matches(o.opt("action"), "[a-z]+\\.[a-z_]+")) return null;

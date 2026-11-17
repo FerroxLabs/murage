@@ -1,9 +1,13 @@
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
+import { fixtureNativeShim } from "./testing/native-launch-fixture.ts";
+import { boundProxyTerminal, spawnBoundProxy } from "./testing/bound-proxy-fixture.ts";
+import { createInterface } from "node:readline";
 import { cpSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
-import { startHeadlessEngine, type EngineClient } from "./drivers/headless-browser-proxy.ts";
+import { type EngineClient } from "./drivers/headless-browser-proxy.ts";
 import { shouldMountLocalComputer } from "./local-routing.ts";
 import { dataDirLeasePaths } from "../electron/data-dir-lease.mjs";
 
@@ -43,12 +47,45 @@ const api = async (method: string, path: string, body?: unknown) => {
   return { status: response.status, body: await response.json() as any };
 };
 const dump = (second: boolean) => {
-  try { return JSON.parse(readFileSync(second ? join(fixture.info.dataDir, "second-dump.json") : fixture.fixtureDumpPath, "utf8")); }
+  try { return withTurnSecrets(JSON.parse(readFileSync(second ? join(fixture.info.dataDir, "second-dump.json") : fixture.fixtureDumpPath, "utf8"))); }
   catch { return null; }
 };
 const state = async (id: string) => (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: any) => bot.id === id);
 const task = async (bot: any) => (await state(bot.id)).tasks.find((item: any) => item.threadId === bot.threadId);
 const messages = async (threadId: string) => (await api("GET", `/api/threads/${threadId}/messages?limit=100`)).body.messages as any[];
+
+// MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: drive the actual admitted
+// proxy through final ingress; the generic browser client has no spawn binding.
+async function boundHostClient(spec: { command: string; args: string[]; env: Record<string, string> }): Promise<EngineClient & { terminal(): unknown }> {
+  const child = await spawnBoundProxy("hostComputer", spec.command, spec.args, { env: { ...process.env, ...spec.env } });
+  const pending = new Map<number, { resolve(value: any): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
+  let serial = 0, ended = false;
+  const closed = new Promise<void>(resolve => child.once("close", () => {
+    ended = true;
+    for (const item of pending.values()) { clearTimeout(item.timer); item.reject(new Error("fixture proxy closed")); }
+    pending.clear(); resolve();
+  }));
+  const lines = createInterface({ input: child.stdout });
+  lines.on("line", line => {
+    const rpc = JSON.parse(line), item = pending.get(rpc.id);
+    if (!item) return;
+    pending.delete(rpc.id); clearTimeout(item.timer);
+    rpc.error ? item.reject(new Error("fixture proxy refused")) : item.resolve(rpc.result);
+  });
+  child.stderr.resume();
+  return {
+    terminal: () => boundProxyTerminal(child),
+    request(method, params) {
+      if (ended) return Promise.reject(new Error("fixture proxy closed"));
+      return new Promise((resolve, reject) => {
+        const id = ++serial, timer = setTimeout(() => { pending.delete(id); reject(new Error("fixture proxy deadline")); }, 5000);
+        pending.set(id, { resolve, reject, timer });
+        child.stdin.write(JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n");
+      });
+    },
+    async close() { child.stdin.end(); await closed; lines.close(); },
+  };
+}
 
 beforeAll(async () => {
   fixture = await launchVerificationServer({}, undefined, { instrumentationSource: `
@@ -107,7 +144,7 @@ it.each(["auto", "local"] as const)(`runs distinct %s bots on ${process.platform
   if (!admission) throw new Error(`No host-control admission is defined for ${process.platform}.`);
   const outcome = admission[destination];
   const bots: any[] = [];
-  const clients: EngineClient[] = [];
+  const clients: Array<EngineClient & { terminal(): unknown }> = [];
   try {
     for (const instanceId of ["verification", "second"]) {
       const created = await api("POST", "/api/bots", { name: `${destination} concurrency ${instanceId}`, modelSelection: { instanceId, model } });
@@ -115,7 +152,7 @@ it.each(["auto", "local"] as const)(`runs distinct %s bots on ${process.platform
       const bot = created.body.bot; bots.push(bot);
       // Auto bots are pre-confirmed for this computer; the one-time confirmation
       // itself is covered by server/auto-computer-consent-api.test.ts.
-      const configured = await api("PATCH", `/api/bots/${bot.id}`, { ...(destination === "local" ? { computer: "local" } : { hostComputerConsent: "allowed" }), browser: false, composio: false });
+      const configured = await api("PATCH", `/api/bots/${bot.id}`, { ...(destination === "local" ? { computer: "local" } : { computer: null, hostComputerConsent: "allowed" }), browser: false, composio: false });
       expect(configured.status).toBe(200);
       expect((await state(bot.id)).computer).toBe(destination === "local" ? "local" : undefined);
     }
@@ -148,6 +185,9 @@ it.each(["auto", "local"] as const)(`runs distinct %s bots on ${process.platform
     if (outcome === "host") {
       for (const captured of [first, second]) {
         const mounted = captured.mcpConfig.mcpServers.computer;
+        // MAIN RULING INT-CONFLICT-DEFAULT: retain the exact native shim and
+        // metered prefix checks alongside the actual supervised proxy below.
+        fixtureNativeShim(captured.wireMcpConfig.mcpServers.computer, "computer");
         expect(mounted.args.some((arg: string) => arg.includes("host-computer-proxy"))).toBe(true);
         expect(JSON.stringify(mounted)).not.toContain("fake-host-driver");
         expect(JSON.stringify(mounted)).not.toContain("fake-cua-driver");
@@ -159,7 +199,7 @@ it.each(["auto", "local"] as const)(`runs distinct %s bots on ${process.platform
           const result = await response.json() as any;
           console.info("isolated host HTTP diagnostic", { status: response.status, redactedToken: /redact/i.test(mounted.env.MURAGE_CONTROL_TOKEN), error: typeof result.error === "string" ? result.error.replace(/[A-Za-z0-9_-]{32,}/g, "[redacted]") : undefined, pong: JSON.stringify(result).includes("isolated-host-pong") });
         }
-        const client = startHeadlessEngine({ ...mounted, env: { ...process.env, ...mounted.env } }); clients.push(client);
+        const client = await boundHostClient(mounted); clients.push(client);
         await client.request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "isolated-test", version: "1" } });
         expect(await client.request("tools/call", { name: "fixture_ping", arguments: {} })).toMatchObject({ content: [{ type: "text", text: "isolated-host-pong" }] });
       }
@@ -169,7 +209,10 @@ it.each(["auto", "local"] as const)(`runs distinct %s bots on ${process.platform
     expect((await task(bots[1])).busy).toBe(true);
     expect(() => process.kill(second.pid, 0)).not.toThrow();
     if (outcome === "host") {
-      expect(await clients[0].request("tools/call", { name: "fixture_ping", arguments: {} })).toMatchObject({ isError: true });
+      // MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: a revoked proxy gives
+      // only an authenticated terminal refusal, never an ordinary tool result.
+      await expect(clients[0].request("tools/call", { name: "fixture_ping", arguments: {} })).rejects.toThrow();
+      expect(clients[0].terminal()).toMatchObject({ error: { code: -32099, data: { terminal: true } } });
       expect(await clients[1].request("tools/call", { name: "fixture_ping", arguments: {} })).toMatchObject({ content: [{ type: "text", text: "isolated-host-pong" }] });
     }
   } finally {

@@ -92,7 +92,7 @@ export function PlanUsageCard() {
       <div className="flex flex-col gap-3">
         {!report?.cloud && (
           <div className="flex justify-end">
-            <ActionButton action={refresh} blocked={loading} slowHint={t("memorySettings.stillWorking")} retryLabel={t("providerError.retry")} className={button}>{t("settings.l6.usage.plan.refresh")}</ActionButton>
+            <ActionButton data-setting-control="plan-usage-heading" action={refresh} blocked={loading} slowHint={t("memorySettings.stillWorking")} retryLabel={t("providerError.retry")} className={button}>{t("settings.l6.usage.plan.refresh")}</ActionButton>
           </div>
         )}
         {failed && !refresh.error && <div role="alert">{t("settings.l6.usage.plan.refreshFailed")}</div>}

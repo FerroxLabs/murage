@@ -15,6 +15,7 @@
 import { closeSync, lstatSync, openSync, rmSync } from "node:fs";
 import { posix, win32 } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { ensureScannerMeter } from "./io-meter.ts";
 import { HEALTH_LIMITS } from "../../shared/health-protocol.mjs";
 import type { PersistedDetectorState } from "./detectors/index.ts";
 import type { IssueRecord, PageLedger } from "./lifecycle.ts";
@@ -135,7 +136,7 @@ export class SentinelStore {
       try { closeSync(openSync(path, "wx", 0o600)); } catch { return { status: "unavailable", store: null, reason: "create" }; }
     }
     let db: DatabaseSync;
-    try { db = new DatabaseSync(path, { readOnly: options.readOnly === true, timeout: 0, allowExtension: false }); }
+    try { ensureScannerMeter(); db = new DatabaseSync(path, { readOnly: options.readOnly === true, timeout: 0, allowExtension: false }); }
     catch { return { status: "corrupt", store: null, reason: "open" }; }
     const store = new SentinelStore(db, path, options.readOnly === true);
     try {

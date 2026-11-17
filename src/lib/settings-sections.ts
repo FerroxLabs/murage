@@ -22,6 +22,8 @@ export type AppSettingsGroup = SettingsPageGroup;
 
 export type AppSettingsSection =
   | "general"
+  | "calls"
+  | "browseBots"
   | "aboutMe"
   | "botDefaults"
   | "houseRules"
@@ -62,20 +64,24 @@ export const SETTINGS_GROUPS: readonly AppSettingsGroup[] = SETTINGS_PAGE_GROUPS
 // thing you have already done.
 export const SETTINGS_SECTIONS: readonly SettingsSectionEntry[] = [
   { id: "general", group: "you" },
+  { id: "calls", group: "you", desktopOnly: true },
   { id: "aboutMe", group: "you", desktopOnly: true },
-  { id: "botDefaults", group: "bots", desktopOnly: true },
-  { id: "houseRules", group: "bots", desktopOnly: true },
-  { id: "skills", group: "bots", desktopOnly: true },
+  // Each bot's list page, past five bots (1.0.19 shell): a route, not one of the 13 pages.
+  { id: "browseBots", group: "bots", desktopOnly: true },
+  { id: "botDefaults", group: "allBots", desktopOnly: true },
+  { id: "houseRules", group: "allBots", desktopOnly: true },
+  { id: "skills", group: "allBots", desktopOnly: true },
   // An alias of the Teach a skill card on the Skills page (settings-pages.ts SECTION_ALIASES), grouped with it.
-  { id: "experimental", group: "bots", desktopOnly: true },
-  { id: "memory", group: "bots", desktopOnly: true },
+  { id: "experimental", group: "allBots", desktopOnly: true },
+  { id: "memory", group: "allBots", desktopOnly: true },
   { id: "models", group: "ai", desktopOnly: true },
   { id: "engines", group: "ai", desktopOnly: true },
   { id: "images", group: "ai", desktopOnly: true },
   { id: "webSearch", group: "ai", desktopOnly: true },
   { id: "voice", group: "ai", desktopOnly: true },
-  { id: "connections", group: "reach", desktopOnly: true },
-  { id: "channels", group: "reach", desktopOnly: true },
+  // Apps and its legacy Messaging route render remote readouts and guard individual desktop actions.
+  { id: "connections", group: "reach" },
+  { id: "channels", group: "reach" },
   { id: "companion", group: "reach", desktopOnly: true },
   { id: "computer", group: "reach", desktopOnly: true },
   { id: "backups", group: "app", desktopOnly: true },

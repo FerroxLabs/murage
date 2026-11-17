@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 
 /** Nothing a person reads in Murage should say what a developer would say.
  *
@@ -76,7 +77,39 @@ function findings(label: string, text: string, rules = FORBIDDEN): string[] {
   return hits;
 }
 
+/** Parse server strings so globs and regexes cannot be mistaken for comments or display text. */
+function serverStrings(file: string, source: string): string {
+  const sf = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true);
+  const strings: string[] = [];
+  const policyPattern = (node: ts.Node): boolean => {
+    // MAIN RULING INT-CONFLICT-DEFAULT 44a1e97b55 / 99bcb86fa9d: this exact inlined table is engine policy data.
+    if (!file.endsWith("/drivers/pi-permission-gate.ts") || !ts.isArrayLiteralExpression(node.parent)) return false;
+    const property = node.parent.parent;
+    if (!ts.isPropertyAssignment(property) || !["read", "bash"].includes(property.name.getText(sf))) return false;
+    for (let at: ts.Node | undefined = property.parent; at; at = at.parent) {
+      if (ts.isVariableDeclaration(at)) return ts.isIdentifier(at.name) && at.name.text === "SENSITIVE_PATHS";
+    }
+    return false;
+  };
+  const visit = (node: ts.Node) => {
+    if ((ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) && !policyPattern(node)) strings.push(node.text);
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return strings.join("\n");
+}
+
 describe("user-facing copy", () => {
+  it("excludes Pi policy globs while still checking adjacent and other server copy", () => {
+    const rules = FORBIDDEN.filter(rule => rule.name !== "a package-manager or shell command");
+    const table = 'const SENSITIVE_PATHS = [{ read: ["~/.murage/config.json"], bash: ["*.murage/config.json*"] }];';
+    const diagnostic = 'const unavailableReason = "Edit ~/.murage/config.json to continue";';
+    expect(findings("policy", serverStrings("server/drivers/pi-permission-gate.ts", table), rules)).toEqual([]);
+    expect(findings("diagnostic", serverStrings("server/drivers/pi-permission-gate.ts", table + diagnostic), rules)).toHaveLength(1);
+    expect(findings("other", serverStrings("server/other.ts", table), rules)).toHaveLength(1);
+    expect(findings("diagnostic", serverStrings("server/other.ts", '/* a comment */' + diagnostic), rules)).toHaveLength(1);
+  });
+
   it("never shows a terminal command, an internal codename or a config-file path in the renderer", () => {
     const hits: string[] = [];
     for (const file of walk(join(ROOT, "src"))) {
@@ -99,7 +132,7 @@ describe("user-facing copy", () => {
     const serverOnly = FORBIDDEN.filter((rule) => rule.name !== "a package-manager or shell command");
     const hits: string[] = [];
     for (const file of walk(join(ROOT, "server"))) {
-      const source = stripComments(readFileSync(file, "utf8"));
+      const source = serverStrings(file, readFileSync(file, "utf8"));
       hits.push(...findings(file.slice(ROOT.length), source, serverOnly));
     }
     expect(hits).toEqual([]);

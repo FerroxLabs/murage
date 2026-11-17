@@ -1,3 +1,5 @@
+import { NotModelRequest } from "../../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite } from "../../../shared/flux-route.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -22,6 +24,7 @@ import { createHash } from "node:crypto";
 import type { ModelCatalog } from "../../contracts.ts";
 import { splitCliString } from "../../env-path.ts";
 import { createAcpDriver, type AcpConfig, type AcpSupport } from "./core.ts";
+import { engineReach } from "../../flux-engine-reach.ts";
 
 export const CLINE_DEFAULT_MODEL = "cline-default";
 const MODELS: ModelCatalog = {
@@ -93,7 +96,7 @@ function selectedBlock(env: Record<string, string | undefined>, config: AcpConfi
     const path = clineSettingsPath(env, config);
     const stat = statSync(path);
     if (!stat.isFile() || stat.size > CLINE_MAX_SETTINGS_BYTES) return null;
-    const stored: unknown = JSON.parse(readFileSync(path, "utf8"));
+    const stored: unknown = registerBusyloopPayloadSite("read", JSON.parse(readFileSync(path, "utf8")));
     if (!isRecord(stored) || stored.version !== 1 || !isRecord(stored.providers)) return null;
     const provider = env.CLINE_PROVIDER || stored.lastUsedProvider;
     if (typeof provider !== "string" || !PROVIDER_NAME.test(provider) || !Object.hasOwn(stored.providers, provider)) return null;
@@ -145,6 +148,8 @@ export function clineForcedArgs(config: AcpConfig): string[] {
 /** The driver's ACP hooks, exported for its tests. */
 export const clineSupport: AcpSupport = {
   driverKind: "clineAgent",
+  // U05: Cline's selected provider lives in its providers.json; none is Cline's own backend.
+  fluxReach: (env, config) => engineReach(env, { configFiles: [clineSettingsPath(env, config)], compiledDefault: "https://api.cline.bot" }),
   displayName: "Cline",
   models: MODELS,
   defaultCli: "cline",
@@ -200,7 +205,7 @@ export const clineSupport: AcpSupport = {
     // pin the saved id after session/new, before the first prompt.
     const model = turn.model?.trim();
     if (model && model !== CLINE_DEFAULT_MODEL && model !== currentModelId) {
-      await request("session/set_model", { sessionId, modelId: model });
+      await NotModelRequest("ACP catalog probe or session configuration; no session/prompt is submitted", request("session/set_model", { sessionId, modelId: model }));
     }
   },
 };

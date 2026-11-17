@@ -26,12 +26,12 @@ export function fixture(stored = {}, runtimeOptions = {}) {
     runtime: { getManifest: () => ({ version: '0.1.0' }) },
     tabs: { create: vi.fn(async ({ url }) => { const tab = { id: next++, url }; tabs.set(tab.id, tab); for (const listener of completionListeners) listener({ tabId: tab.id, frameId: 0, url }); return tab; }), get: vi.fn(async id => { if (!tabs.has(id)) throw Error('missing'); return tabs.get(id); }), group: vi.fn(async () => 42), remove: vi.fn(async id => tabs.delete(id)) },
     // like Chrome: a looked-up item reports its file missing once removeFile has resolved for it
-    downloads: { cancel: vi.fn(async () => {}), removeFile: vi.fn(async id => { removedFiles.add(id); }), erase: vi.fn(async () => {}),
+    downloads: { pause: vi.fn(async () => {}), resume: vi.fn(async () => {}), cancel: vi.fn(async () => {}), removeFile: vi.fn(async id => { removedFiles.add(id); }), erase: vi.fn(async () => {}),
       search: vi.fn(async query => (Number.isSafeInteger(query?.id) ? [{ id: query.id, state: 'complete', exists: !removedFiles.has(query.id) }] : [])) },
     tabGroups: { update: vi.fn(async () => {}) }, action: { setBadgeText: vi.fn(async () => {}) },
     debugger: { attach: vi.fn(async () => {}), detach: vi.fn(async () => {}), sendCommand: vi.fn(sendCommand) },
   };
-  const events = []; const runtime = createBrowserExtensionRuntime(api, { uuid: () => 'profile_1', emit: e => events.push(e), commandTimeoutMs: 500, ...runtimeOptions });
+  const events = [], downloadTestHooks = {}; const runtime = createBrowserExtensionRuntime(api, { uuid: () => 'profile_1', emit: e => events.push(e), commandTimeoutMs: 500, ...runtimeOptions, downloadTestHooks });
   let requestId = 0, connectionNumber = 0, nonce = 'a'.repeat(32), wireConnected = false;
   const originalConnection=runtime.connection;
   runtime.connection=async value=>{const result=await originalConnection(value);if(value&&!wireConnected){requestId=0;nonce=(++connectionNumber).toString(16).padStart(32,'0');}wireConnected=value;return result;};
@@ -40,5 +40,5 @@ export function fixture(stored = {}, runtimeOptions = {}) {
   const bind = (bindingId = 'bot_a', generation = 1) => command('bind', { profileId: 'profile_1', botName: bindingId, approvedOrigins: ['https://allowed.test'] }, generation, bindingId);
   const init = async () => { await runtime.initialize(); await runtime.connection(true); return bind(); };
   const navigate = async () => { tabs.get(1).url = 'https://allowed.test/page'; await runtime.navigation({ tabId: 1, frameId: 0, url: tabs.get(1).url }); };
-  return { api, runtime, command, bind, init, navigate, tabs, stored, events, completionListeners, observer, sendCommand, wireId, nextId };
+  return { api, runtime, command, bind, init, navigate, tabs, stored, events, completionListeners, observer, sendCommand, wireId, nextId, downloadTestHooks };
 }

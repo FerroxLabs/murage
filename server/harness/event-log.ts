@@ -36,8 +36,10 @@
 import { heldStep } from "../observe.ts";
 import { EventLogMatcher } from "./event-log-matcher.ts";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, closeSync, existsSync, fstatSync, fsyncSync, linkSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from "node:fs";
-import { open as openAsync, readdir as readdirAsync, stat as statAsync, unlink as unlinkAsync, type FileHandle } from "node:fs/promises";
+import { appendFileSync, writeFileSync, writeSync } from "../counted-fs.ts";
+import { closeSync, existsSync, fstatSync, fsyncSync, linkSync, openSync, readFileSync, readSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
+import { open as openAsync } from "../counted-fs-promises.ts";
+import { readdir as readdirAsync, stat as statAsync, unlink as unlinkAsync, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 
 import { renameWithRetry, writeFileAtomic } from "../atomic.ts";
@@ -207,7 +209,7 @@ function isSessionLine(line: string): boolean { return line.includes("\"session.
 function compactSession(line: string): string | undefined {
   try {
     const e = JSON.parse(line) as Record<string, unknown>;
-    if (e.type !== "session.started") return undefined;
+    if (e.type !== "session.started" || typeof e.sessionId !== "string" || !e.sessionId) return undefined;
     return JSON.stringify({ type: "session.started", eventId: e.eventId, provider: e.provider, providerInstanceId: e.providerInstanceId, threadId: e.threadId, createdAt: e.createdAt, sessionId: e.sessionId });
   } catch { return undefined; }
 }
@@ -221,15 +223,30 @@ function sessionKey(line: string): string {
  * kept: deletion needs each one, and a line is about 250 bytes. */
 export function recordSessionLine(dir: string, threadId: string, line: string): void {
   const key = jobKey(dir, threadId);
-  const queue = pendingSessionLines.get(key) ?? [];
-  queue.push(line);
+  const compact = compactSession(line);
+  if (!compact) return;
+  let queue = pendingSessionLines.get(key);
+  if (!queue) {
+    queue = [];
+    // A restart can leave a private journal but no process-local retry queue.
+    const recovered = forEachLineSync(sessionsPendingMark(dir, threadId), old => { if (isSessionLine(old)) queue!.push(old); });
+    if (!recovered && existsSync(sessionsPendingMark(dir, threadId))) {
+      markSessionsPending(dir, threadId, compact);
+      throw new Error("Native session cleanup journal is unreadable");
+    }
+  }
+  queue.push(compact);
   pendingSessionLines.set(key, queue);
+  markSessionsPending(dir, threadId, compact);
   flushSessionLines(dir, threadId);
 }
 /** Called by the bus before the log append of a `session.started`: from here until the sessions file has the line, a
  * rescan of this thread's logs is owed (the mark outlives a restart; a failed mark write leaves the in-memory retry). */
-export function markSessionsPending(dir: string, threadId: string): void {
-  try { writeFileSync(sessionsPendingMark(dir, threadId), "", { mode: 0o600 }); } catch { /* the in-memory retry still holds the line */ }
+export function markSessionsPending(dir: string, threadId: string, compact?: string): void {
+  try {
+    if (compact) appendFileSync(sessionsPendingMark(dir, threadId), compact + "\n", { mode: 0o600 });
+    else writeFileSync(sessionsPendingMark(dir, threadId), "", { mode: 0o600 });
+  } catch { /* the in-memory retry still holds the line */ }
 }
 /** Retries session lines that did not reach the sessions file; the mark is cleared once none is owed. Never throws. */
 export function flushSessionLines(dir: string, threadId: string): void {
@@ -325,6 +342,23 @@ export async function threadSessionLines(dir: string, threadId: string, options:
   flushSessionLines(dir, threadId);
   const stale = existsSync(sessionsPendingMark(dir, threadId));
   await withThreadJob(dir, threadId, async () => {
+    let journal: { ino: bigint; size: bigint } | undefined;
+    if (stale) {
+      // New markers journal the execution-only handles before any audience
+      // append. Old empty markers still trigger the historical log rescan.
+      const handle = await openAsync(sessionsPendingMark(dir, threadId), "r").catch(error => {
+        if (errorCode(error) !== "ENOENT") throw error;
+        return undefined;
+      });
+      if (handle) try {
+        const sessions: string[] = [];
+        const scanner = new FileScanner(handle, 0, line => { if (isSessionLine(line)) sessions.push(line); }, options);
+        journal = await handle.stat({ bigint: true });
+        await scanner.readTo(Number(journal.size));
+        count(scanner.position);
+        mergeSessions(dir, threadId, sessions);
+      } finally { await handle.close().catch(() => undefined); }
+    }
     for (const path of [previousLog(dir, threadId), currentLog(dir, threadId)]) {
       let handle: FileHandle;
       try { handle = await openAsync(path, "r"); } catch { continue; }
@@ -339,7 +373,17 @@ export async function threadSessionLines(dir: string, threadId: string, options:
         coveredFiles.add(fileKey(dir, ino));
       } finally { await handle.close().catch(() => undefined); }
     }
-    if (stale && !pendingSessionLines.has(jobKey(dir, threadId))) try { unlinkSync(sessionsPendingMark(dir, threadId)); } catch { /* gone */ }
+    if (journal) {
+      // A new session may have arrived while the sliced scan yielded. Keep
+      // that newer journal and retry queue until its own handles are durable.
+      try {
+        const current = statSync(sessionsPendingMark(dir, threadId), { bigint: true });
+        if (current.ino === journal.ino && current.size === journal.size) {
+          pendingSessionLines.delete(jobKey(dir, threadId));
+          unlinkSync(sessionsPendingMark(dir, threadId));
+        }
+      } catch { /* gone, or leave the retry journal in place */ }
+    }
   });
   const out: string[] = [];
   let handle: FileHandle;

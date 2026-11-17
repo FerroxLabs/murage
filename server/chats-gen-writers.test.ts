@@ -1,7 +1,12 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import ts from "typescript";
-import { expect, it } from "vitest";
+import { gitFixture } from "./testing/git-fixture.mjs";
+import { afterAll, beforeAll, expect, it } from "vitest";
+
+let repository: ReturnType<typeof gitFixture>;
+beforeAll(() => { repository = gitFixture(); }, 120_000);
+afterAll(() => repository?.dispose());
 
 const owner = "server/thread-summary.ts";
 const permitted = new Set(["bumpChatsGen", "remintChatsGen"]);
@@ -38,9 +43,9 @@ function inspect(path: string, source: string) {
 }
 
 it("T-G2-writers: production names and SQL belong to the exported-name boundary with exactly two writers", () => {
-  const paths = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" }).split("\0").filter(path =>
+  const paths = repository.git("ls-files", "-z").split("\0").filter(path =>
     /\.(?:[cm]?js|tsx?)$/.test(path) && !/(?:^|\/)(?:testing|test|tests|fixtures|__fixtures__)(?:\/)|\.(?:test|spec|fixture)\./.test(path));
-  const results = paths.map(path => inspect(path, readFileSync(path, "utf8")));
+  const results = paths.map(path => inspect(path, readFileSync(join(repository.root, path), "utf8")));
   expect(results.flatMap(result => result.violations)).toEqual([]);
   expect([...new Set(results.flatMap(result => result.literals))]).toEqual([owner]);
   expect([...new Set(results.flatMap(result => result.writers))].sort()).toEqual([...permitted].sort());

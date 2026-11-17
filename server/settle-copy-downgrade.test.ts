@@ -12,15 +12,25 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { downgradeInstallationMemorySchema, type DowngradeSearchPoint } from "./installation-memory-downgrade.ts";
-import { prepareMessageSearchBackfill, stepMessageSearchBackfill } from "./message-search-index.ts";
+import { stopSearchIndex } from "./message-search-index.ts";
+import { stopWalMaintenance } from "./wal-maintenance.ts";
 import { backfillMessageSearchIndex as resumeAs101 } from "./testing/message-search-index-1.0.1.ts";
 import { ftsSettled } from "./settle-copy.ts";
 import { DELETED_TEXT, deleteThreadRows, fileHolds, ftsBlocksHold, holdMerges, keptRows, seedMixed } from "./testing/fts-copy-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 const open: DatabaseSync[] = [];
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
-afterEach(() => { for (const db of open.splice(0)) { try { db.close(); } catch { /* closed */ } } closeDatabase(); });
+beforeEach(async () => {
+  closeDatabase();
+  expect(await stopSearchIndex()).toBe(true);
+  expect(await stopWalMaintenance()).toBe(true);
+  removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
+  // These exercise offline legacy files. Serving search (5d5a791f19) must not run against the fixture.
+  database();
+  expect(await stopSearchIndex()).toBe(true);
+  expect(await stopWalMaintenance()).toBe(true);
+});
+afterEach(async () => { for (const db of open.splice(0)) { try { db.close(); } catch { /* closed */ } } closeDatabase(); });
 const file = () => join(DATA_DIR, "messages.db");
 
 /** The live file as R6 batch 1 leaves it: merges held, a deleted thread's tombstones owed, the marker row in `state`. */
@@ -51,69 +61,71 @@ function expectSettledLiveFile(kept = 600) {
   expect(fileHolds(`${file()}-wal`, DELETED_TEXT.zh)).toBe(false);
 }
 
-it("T15: a downgrade to 10 settles and vacuums the live index, writes the older defaults and removes the marker after the checkpoint", () => {
+it("T15: a downgrade to 10 settles and vacuums the live index, writes the older defaults and removes the marker after the checkpoint", async () => {
   owedInstallation(0);
-  expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
+  expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
   expectSettledLiveFile();
 });
 
-it.each<DowngradeSearchPoint>(["optimized", "config-restored", "checkpointed"])("T15: a crash after %s leaves the file owed or settled, and the rerun converges", point => {
+it.each<DowngradeSearchPoint>(["optimized", "config-restored", "checkpointed"])("T15: a crash after %s leaves the file owed or settled, and the rerun converges", async point => {
   owedInstallation(0);
-  expect(() => downgradeInstallationMemorySchema(DATA_DIR, 10, { at: at => { if (at === point) throw Object.assign(new Error("CRASH_INJECTED"), { code: "CRASH_INJECTED" }); } })).toThrow(/CRASH_INJECTED/);
+  await expect(downgradeInstallationMemorySchema(DATA_DIR, 10, { at: at => { if (at === point) throw Object.assign(new Error("CRASH_INJECTED"), { code: "CRASH_INJECTED" }); } })).rejects.toThrow(/CRASH_INJECTED/);
   const db = reopen();
   // the marker is still there at every crash point (it leaves only after the checkpoint), so the next start pays any debt
   expect(markerOf(db)).toBe(0);
   expect(["settled", "owed"]).toContain(ftsSettled(db));
   if (point !== "optimized") expect(ftsSettled(db)).toBe("settled");
   db.close(); open.splice(open.indexOf(db), 1);
-  expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
+  expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
   expectSettledLiveFile();
 });
 
-it.each<0 | 1>([0, 1])("T15: the marker (done=%s) survives a failed checkpoint and leaves after a good one", done => {
+it.each<0 | 1>([0, 1])("T15: the marker (done=%s) survives a failed checkpoint and leaves after a good one", async done => {
   owedInstallation(done);
   const reader = reopen();
   // a read snapshot taken after the VACUUM and before the memory step's writes holds the log, so the TRUNCATE cannot finish
   const hold = (point: DowngradeSearchPoint) => { if (point === "config-restored") { reader.exec("BEGIN"); reader.prepare("SELECT count(*) AS n FROM messages").get(); } };
-  expect(() => downgradeInstallationMemorySchema(DATA_DIR, 10, { at: hold })).toThrow(expect.objectContaining({ code: "WAL_CHECKPOINT_INCOMPLETE" }));
+  await expect(downgradeInstallationMemorySchema(DATA_DIR, 10, { at: hold })).rejects.toThrow(expect.objectContaining({ code: "WAL_CHECKPOINT_INCOMPLETE" }));
   reader.exec("COMMIT");
   expect(markerOf(reader)).toBe(done);
   reader.close(); open.splice(open.indexOf(reader), 1);
-  expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
+  expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
   expectSettledLiveFile();
 }, 60_000);
 
-it("T15: the TRUNCATE after the marker delete is checked: a held log fails the downgrade, and the rerun leaves a standalone settled file", () => {
+it("T15: the TRUNCATE after the marker delete is checked: a held log fails the downgrade, and the rerun leaves a standalone settled file", async () => {
   owedInstallation(0);
   const reader = reopen();
   // a read snapshot taken after the first TRUNCATE (an empty log) holds the marker delete's frame out of the file
   const hold = (point: DowngradeSearchPoint) => { if (point === "checkpointed") { reader.exec("BEGIN"); reader.prepare("SELECT count(*) AS n FROM messages").get(); } };
   let deleted = false;
-  expect(() => downgradeInstallationMemorySchema(DATA_DIR, 10, { at: point => { hold(point); if (point === "marker-deleted") deleted = true; } })).toThrow(expect.objectContaining({ code: "WAL_CHECKPOINT_INCOMPLETE" }));
+  await expect(downgradeInstallationMemorySchema(DATA_DIR, 10, { at: point => { hold(point); if (point === "marker-deleted") deleted = true; } })).rejects.toThrow(expect.objectContaining({ code: "WAL_CHECKPOINT_INCOMPLETE" }));
   expect(deleted).toBe(true);
   reader.exec("COMMIT");
   expect(markerOf(reader)).toBeUndefined();
   reader.close(); open.splice(open.indexOf(reader), 1);
-  expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
+  expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
   expectSettledLiveFile();
 }, 60_000);
 
-it("T15: no marker and no index rows to settle: the downgrade still runs its steps and writes the older defaults", () => {
-  database();
+it("T15: no marker and no index rows to settle: the downgrade still runs its steps and writes the older defaults", async () => {
+  holdMerges(database());
   closeDatabase();
-  expect(downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
+  expect(await downgradeInstallationMemorySchema(DATA_DIR, 10)).toMatchObject({ to: 10 });
   const db = reopen();
   expect(ftsSettled(db)).toBe("settled");
   expect(config(db)).toEqual({ automerge: 4, deletemerge: 10 });
 });
 
-it("T15: an unfinished search_fts fill on a to<=6 run: the trimmed entries' tombstones settle, and 1.0.1 resumes and searches", () => {
+it("T15: an unfinished search_fts fill on a to<=6 run: the trimmed entries' tombstones settle, and 1.0.1 resumes and searches", async () => {
   const db = database();
-  db.exec("DELETE FROM messages_fts; DELETE FROM transcript_index_state WHERE name='search_fts'; DELETE FROM messages");
   holdMerges(db);
+  db.exec("DELETE FROM messages_fts; DELETE FROM transcript_index_state WHERE name='search_fts'; DELETE FROM messages");
   for (let r = 1; r <= 40; r++) db.prepare("INSERT INTO messages(rowid,thread_id,id,at,role,kind,text,json) VALUES(?, 'ts', ?, ?, 'user', 'text', ?, '{}')").run(r, `s${r}`, r, `searchable words ${r}`);
-  expect(prepareMessageSearchBackfill(db)).toBe(true);
-  expect(stepMessageSearchBackfill(db, 10).more).toBe(true); // rows 1-10 filled, cursor 10
+  // Frozen pre-worker interrupted fill: legacy entry points became inert in 5d5a791f19.
+  db.exec("INSERT INTO messages_fts(rowid,t) SELECT rowid,text FROM messages WHERE rowid<=10");
+  db.exec("INSERT INTO transcript_index_state(name,done,cursor,skipped) VALUES('search_fts',0,10,0)");
+  expect(db.prepare("SELECT id FROM messages_fts_docsize ORDER BY id").all().map(row => Number(row.id))).toEqual(Array.from({ length: 10 }, (_, i) => i + 1));
   // live writes of this run indexed rows above the cursor: kept rows and a thread the owner then deleted, in the same transactions
   db.exec("BEGIN");
   for (let r = 41; r <= 140; r++) {
@@ -127,7 +139,7 @@ it("T15: an unfinished search_fts fill on a to<=6 run: the trimmed entries' tomb
   expect(ftsSettled(db)).toBe("owed");
   closeDatabase();
 
-  downgradeInstallationMemorySchema(DATA_DIR, 6, { testOnlyBefore102: true });
+  await downgradeInstallationMemorySchema(DATA_DIR, 6, { testOnlyBefore102: true });
   const after = reopen();
   expect(after.prepare("SELECT 1 AS x FROM sqlite_schema WHERE name='transcript_index_state'").get()).toBeUndefined();
   expect(ftsSettled(after)).toBe("settled");

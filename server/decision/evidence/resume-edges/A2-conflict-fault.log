@@ -1,0 +1,47 @@
+COMMAND node_modules/.bin/vitest run server/decision/ingress.test.ts -t "A2 BASE conflict"
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/ingress.test.ts > A2 BASE conflict reads the latest bounded snapshot and keeps reader faults inside policy
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/ingress.test.ts (9 tests | 1 failed | 8 skipped) 346ms
+   ↓ A2 R16 M19 M22 M47 M48 first capture binds input, aliases and conflicts
+   ↓ A2 M49 claims alone supply service identity; spec/options are frozen and reserved fields rejected
+   ↓ R16 actor substitution ignored and all authority objects frozen at registration
+   ↓ R12 decision never reads message history
+   ↓ service execution joins concurrent calls, retains frozen content and never uses caller mutations
+   ↓ ingress duplicate event envelope metadata does not change input identity
+   ↓ R16 service request keys are scoped to their verified conversation, never another owner handle
+   ↓ R12 ten and ten-thousand message histories have identical deny lookup cost and zero message reads
+   × A2 BASE conflict reads the latest bounded snapshot and keeps reader faults inside policy 342ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 8 skipped (9)
+   Start at  08:11:32
+   Duration  4.73s (transform 3.39s, setup 4.05s, import 224ms, tests 346ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/ingress.test.ts > A2 BASE conflict reads the latest bounded snapshot and keeps reader faults inside policy
+AssertionError: expected [Function] to not throw an error but 'Error: fixture-late-reader' was thrown
+
+- Expected:
+undefined
+
++ Received:
+"Error: fixture-late-reader"
+
+ ❯ server/decision/ingress.test.ts:44:43
+     42|  expect(d.decide(h,base).kind).toBe('card');
+     43|  const action=await import('./action.ts');const spy=vi.spyOn(action,'d…
+     44|  try{expect(()=>d.decide(h,baseCard)).not.toThrow();}finally{spy.mockR…
+       |                                           ^
+     45| });
+     46|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+

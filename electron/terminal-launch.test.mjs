@@ -35,13 +35,15 @@ describe("blank terminal launcher", () => {
 
   const WIN_ENV = { SystemRoot: "C:\\Windows", LOCALAPPDATA: "C:\\Users\\Sam\\AppData\\Local", USERPROFILE: "C:\\Users\\Sam" };
   it("opens Windows Terminal on Windows first, with the person's own environment", async () => {
-    const fake = launcher(["spawn"]);
     const wt = "C:\\Users\\Sam\\AppData\\Local\\Microsoft\\WindowsApps\\wt.exe";
     const { windowsTerminalLaunches } = await import("./terminal-launch.mjs");
-    expect(windowsTerminalLaunches(WIN_ENV, (file) => file === wt)[0]).toEqual([wt, [], { timeout: 15_000, env: WIN_ENV }, "wt"]);
-    await expect(openBlankTerminal("win32", fake.run, WIN_ENV, () => { throw new Error("no fallback needed"); }, (file) => file === wt)).resolves.toBe(true);
-    expect(fake.calls.map((call) => call.executable)).toEqual([wt]);
-    for (const call of fake.calls) expect(JSON.stringify(call)).not.toMatch(/powershell|pwsh/i);
+    const expected = ["C:\\Windows\\System32\\cmd.exe", ["/d", "/c", `start "" "${wt}"`], { windowsHide: true, windowsVerbatimArguments: true, stdio: "ignore", env: WIN_ENV }, "wt"];
+    expect(windowsTerminalLaunches(WIN_ENV, (file) => file === wt)[0]).toEqual(expected);
+    const calls = [];
+    const start = (executable, args, options) => { calls.push({ executable, args, options }); const child = new EventEmitter(); queueMicrotask(() => child.emit("exit", 0)); return child; };
+    await expect(openBlankTerminal("win32", () => { throw new Error("do not hide wt.exe directly"); }, WIN_ENV, start, (file) => file === wt)).resolves.toBe(true);
+    expect(calls).toEqual([{ executable: expected[0], args: expected[1], options: expected[2] }]);
+    expect(JSON.stringify(calls)).not.toMatch(/powershell|pwsh/i);
   });
 
   // MurageMain ruling (nops round 3, C): without wt.exe, a PowerShell console window, never cmd.
@@ -111,17 +113,17 @@ describe("blank terminal launcher", () => {
   });
 
   it("waits for the Windows launcher result instead of its spawn event", async () => {
-    let finish;
     let settled = false;
     const child = new EventEmitter();
-    const result = openBlankTerminal("win32", (_exe, _args, _options, callback) => {
-      finish = callback;
+    let attempts = 0;
+    const result = openBlankTerminal("win32", () => { throw new Error("no direct wt.exe launch"); }, WIN_ENV, () => {
+      if (attempts++ > 0) throw new Error("fallback refused");
       queueMicrotask(() => child.emit("spawn"));
       return child;
-    }, { SystemRoot: "C:\\Windows", LOCALAPPDATA: "C:\\Users\\Sam\\AppData\\Local" }, () => { throw new Error("fallback refused"); }, () => true).then((ok) => { settled = true; return ok; });
+    }, () => true).then((ok) => { settled = true; return ok; });
     await Promise.resolve();
     expect(settled).toBe(false);
-    finish(new Error("start failed"));
+    child.emit("exit", 1);
     await expect(result).resolves.toBe(false);
   });
 

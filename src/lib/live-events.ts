@@ -1,3 +1,4 @@
+import { requestLearningNotice } from "./learning-consent";
 import { validChatsGen, type ChatsGen } from "./chats-gen";
 import { onNativeEvent } from "./native-shell";
 
@@ -707,4 +708,9 @@ export function openLiveEvents(
     stopResume?.();
   };
   return Object.assign(stop, { wake });
+}
+
+/** Contentless transport events and reconnect snapshots share the pending notice. */
+export function receiveLearningNoticeFrame(frame: { kind: string; learningFluxSent?: unknown }): void {
+  if (frame.kind === "learning.flux-sent" || (frame.kind === "config" && frame.learningFluxSent === true)) requestLearningNotice(frame.kind === "learning.flux-sent");
 }

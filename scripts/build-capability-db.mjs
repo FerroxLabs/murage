@@ -27,6 +27,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildInventory } from "./build-capabilities.mjs";
+import { readPartitions } from "./locale-partitions.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path) => readFileSync(join(root, path), "utf8").replace(/\r\n/g, "\n");
@@ -35,15 +36,15 @@ export const STATUSES = ["can", "partial", "via-engine", "coming", "cannot"];
 export const PLATFORMS = ["mac", "windows", "linux", "android", "ios", "cloud"];
 const PHONES = ["android", "ios"];
 /** Fuigo first: the order every engine list follows (copy rule). */
-export const ENGINES = ["fuigo", "claude", "codex", "grok", "cursor", "kimi", "droid", "antigravity", "opencode", "qwen", "hermes", "gemini", "cline", "muse", "pi", "openclaw", "openai-compatible", "copilot"];
+export const ENGINES = ["fuigo", "claude", "codex", "grok", "cursor", "kimi", "droid", "antigravity", "opencode", "qwen", "hermes", "gemini", "cline", "muse", "pi", "openclaw", "openai-compatible", "copilot", "deepseek"];
 /** Every engine driver the primer names (server/capabilities-primer.ts ENGINE_LABELS) maps to one id above, so a new
  *  engine cannot ship without the capability lists being able to name it. customAcp and boxAgent are not one engine. */
 const DRIVER_ENGINES = { fuigoAgent: "fuigo", grokAgent: "grok", geminiAgent: "gemini", kimiAgent: "kimi", droidAgent: "droid", cursorAgent: "cursor",
-  qwenAgent: "qwen", hermesAgent: "hermes", openclawAgent: "openclaw", clineAgent: "cline", museCode: "muse", opencodeGo: "opencode", copilotAgent: "copilot" };
+  qwenAgent: "qwen", hermesAgent: "hermes", openclawAgent: "openclaw", clineAgent: "cline", museCode: "muse", opencodeGo: "opencode", copilotAgent: "copilot", deepseekAgent: "deepseek" };
 const DRIVER_NOT_ONE_ENGINE = new Set(["customAcp", "boxAgent"]);
 const ENGINE_NAMES = {
   fuigo: "Fuigo", claude: "Claude", codex: "Codex", grok: "Grok", cursor: "Cursor", kimi: "Kimi", droid: "Droid", antigravity: "Antigravity",
-  opencode: "OpenCode", qwen: "Qwen", hermes: "Hermes", gemini: "Gemini", cline: "Cline", muse: "Muse Code", pi: "Pi", openclaw: "OpenClaw", "openai-compatible": "OpenAI-compatible engines", copilot: "GitHub Copilot",
+  opencode: "OpenCode", qwen: "Qwen", hermes: "Hermes", gemini: "Gemini", cline: "Cline", muse: "Muse Code", pi: "Pi", openclaw: "OpenClaw", "openai-compatible": "OpenAI-compatible engines", copilot: "GitHub Copilot", deepseek: "DeepSeek Harness",
 };
 const PLATFORM_NAMES = { mac: "Mac", windows: "Windows", linux: "Linux", android: "the Android app", ios: "the iPhone app", cloud: "Murage Cloud" };
 const STATUS_SENTENCES = {
@@ -141,24 +142,55 @@ async function loadSources(srcDir) {
  * Each valid path records its owner, so an entry's path must match the thing
  * its anchor names, not just a label that exists somewhere. */
 export function buildNavigation() {
-  const en = JSON.parse(read("src/locales/en.json"));
+  const { main: en } = readPartitions();
   const pagesSource = read("src/lib/settings-pages.ts");
   const pages = new Map();
   const pagesStart = pagesSource.indexOf("export const SECTION_PAGES");
   const pagesEnd = pagesSource.indexOf("];", pagesStart);
-  for (const match of pagesSource.slice(pagesStart, pagesEnd).matchAll(/\{ id: "([A-Za-z]+)", group: "[a-z]+"(, desktopOnly: true)? \}/g)) {
+  if (pagesStart < 0 || pagesEnd < 0) throw new Error("settings-pages.ts: cannot find SECTION_PAGES");
+  // Other page metadata (including Simple mode) does not change its address.
+  for (const match of pagesSource.slice(pagesStart, pagesEnd).matchAll(/\{ id: "([A-Za-z]+)", group: "[A-Za-z]+"([^{}\n]*)\}/g)) {
     const label = en[`settings.page.${match[1]}`];
     if (!label) throw new Error(`settings page ${match[1]} has no settings.page.${match[1]} label`);
-    pages.set(match[1], { id: match[1], label, desktopOnly: Boolean(match[2]) });
+    pages.set(match[1], { id: match[1], label, desktopOnly: /\bdesktopOnly: true\b/.test(match[2]) });
   }
+  if (!pages.size) throw new Error("settings-pages.ts: SECTION_PAGES has no readable pages");
   const cards = new Map();
   const registry = read("src/lib/settings-card-registry.ts");
+  // Match cardLabel's source-owned overrides before the legacy locale key.
+  // Keep this a static reader: an unknown expression must fail, never invent a label.
+  const namesBlock = /^const CARD_NAMES[^\n]* = \{([\s\S]*?)\n\};/m.exec(registry)?.[1];
+  if (!namesBlock) throw new Error("settings-card-registry.ts: cannot read CARD_NAMES");
+  const names = new Map();
+  for (const [, id, expression] of namesBlock.matchAll(/^ {2}"([^"]+)": \(\) => (.*),$/gm)) {
+    const localized = /^t\("([^"]+)"\)$/.exec(expression);
+    const shared = /^([A-Z_]+)\.([A-Za-z]+)$/.exec(expression);
+    let label;
+    if (localized) label = en[localized[1]];
+    else if (/^"(?:[^"\\]|\\.)*"$/.test(expression)) label = JSON.parse(expression);
+    else if (shared) {
+      const [, symbol, field] = shared;
+      const imported = new RegExp(`import \\{ ${symbol} \\} from "([^"]+)"`).exec(registry)?.[1];
+      if (imported) {
+        const source = read(relative(root, resolve(root, "src/lib", `${imported}.ts`)));
+        const start = source.indexOf(`export const ${symbol} =`);
+        if (start >= 0) {
+          const literal = new RegExp(`\\b${field}:\\s*("(?:[^"\\\\]|\\\\.)*")`).exec(source.slice(start))?.[1];
+          if (literal) label = JSON.parse(literal);
+        }
+      }
+    }
+    if (!label) throw new Error(`settings card ${id} has an unreadable CARD_NAMES label`);
+    names.set(id, label);
+  }
   for (const match of registry.matchAll(/^ {2}card\("([a-z0-9-]+)", "([A-Za-z]+)", "([a-z0-9-]+)", \{([^\n]*)\}\),$/gm)) {
     const [, slug, page, anchor, spec] = match;
-    const id = `${page}.${slug}`;
-    const label = en[`settings.l1.card.${id}`];
+    // A moved card keeps the identity used by its labels and capability anchors.
+    const idSection = /\bidSection: "([A-Za-z]+)"/.exec(spec)?.[1] ?? page;
+    const id = `${idSection}.${slug}`;
+    const label = names.get(id) ?? en[`settings.l1.card.${id}`];
     if (!label) throw new Error(`settings card ${id} has no settings.l1.card.${id} label`);
-    cards.set(`${page}/${slug}`, { id, page, anchor, label, advanced: /advanced: true/.test(spec), surface: /surface: "any"/.test(spec) ? "any" : "desktop" });
+    cards.set(`${idSection}/${slug}`, { id, page, anchor, label, advanced: /advanced: true/.test(spec), surface: /surface: "any"/.test(spec) ? "any" : "desktop" });
   }
   const botSource = read("src/components/bot-settings-sections.ts");
   const gated = new Set([.../export const GATED_BOT_SETTINGS[^=]*= new Set\(\[([^\]]*)\]\)/.exec(botSource)[1].matchAll(/"([a-z]+)"/g)].map((m) => m[1]));
@@ -211,13 +243,13 @@ export function buildNavigation() {
   return { pages, cards, botSections, paths, controlErrors };
 }
 
-/** How an anchor names the owner of a path: settings-card:<page>/<card>,
+/** How an anchor names the owner of a path: settings-card:<idSection>/<card>,
  * bot-settings:<id>, settings-control:<id>. */
 function anchorOwners(anchors) {
   const owners = new Set();
   for (const anchor of anchors) {
     const [kind, value] = splitAnchor(anchor);
-    if (kind === "settings-card") { owners.add(`card:${value}`); owners.add(`page:${value.split("/")[0]}`); }
+    if (kind === "settings-card") owners.add(`card:${value}`);
     if (kind === "bot-settings") owners.add(`bot:${value}`);
     if (kind === "settings-control") owners.add(`control:${value}`);
   }
@@ -331,7 +363,7 @@ export async function buildDatabase({ srcDir = join(root, "shared", "capabilitie
       else if (/^(card|control|bot):/.test(pathInfo.owner) && !anchorOwners(anchors).has(pathInfo.owner)) {
         fail(`settings_path "${path}" belongs to ${pathInfo.owner}, which none of this entry's anchors names`);
       } else if (pathInfo.page) {
-        const cardPages = anchors.map(splitAnchor).filter(([kind]) => kind === "settings-card").map(([, value]) => value.split("/")[0]);
+        const cardPages = anchors.map(splitAnchor).filter(([kind]) => kind === "settings-card").map(([, value]) => navigation.cards.get(value)?.page);
         if (cardPages.length && !cardPages.includes(pathInfo.page)) fail(`settings_path "${path}" is on page ${pathInfo.page}, but the card anchor is on ${cardPages.join(", ")}`);
       }
       if (pathInfo?.desktopOnly && Array.isArray(platforms) && (platforms.join() === "all" || platforms.some((p) => PHONES.includes(p)))) {

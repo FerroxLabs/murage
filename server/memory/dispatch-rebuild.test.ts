@@ -7,11 +7,11 @@ import { describe, expect, it } from "vitest";
 import { MEMORY_REDISPATCH_ATTEMPTS, nextMemoryRebuild, refusalCauseNote, sessionCheckRefusal } from "./dispatch.ts";
 
 describe("nextMemoryRebuild", () => {
-  it("rebuilds three times, and the third rebuild is the last resort; past it the turn ends with a card", () => {
-    expect(MEMORY_REDISPATCH_ATTEMPTS).toBe(3);
+  it("rebuilds twice, and the second rebuild is the last resort; past it the turn ends with a card", () => {
+    expect(MEMORY_REDISPATCH_ATTEMPTS).toBe(2);
     expect(nextMemoryRebuild(0)).toEqual({ attempt: 1, lastResort: false });
-    expect(nextMemoryRebuild(1)).toEqual({ attempt: 2, lastResort: false });
-    expect(nextMemoryRebuild(2)).toEqual({ attempt: 3, lastResort: true });
+    expect(nextMemoryRebuild(1)).toEqual({ attempt: 2, lastResort: true });
+    expect(nextMemoryRebuild(2)).toBeUndefined();
     expect(nextMemoryRebuild(3)).toBeUndefined();
     expect(nextMemoryRebuild(7)).toBeUndefined();
     expect(nextMemoryRebuild(Number.NaN)).toBeUndefined();

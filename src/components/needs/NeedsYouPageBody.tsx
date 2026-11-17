@@ -21,7 +21,7 @@ export function NeedsYouPageBody({ tab, onTabChange, health }: NeedsYouPageProps
   const { state, dispatch } = useStore();
   const [error, setError] = useState<string>();
   return (
-    <main aria-label={t("ux.l2a.door.needsYou")} className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-app text-ink">
+    <main aria-label={t("ux.l2a.door.needsYou")} className="flex h-full min-w-0 flex-1 flex-col overflow-hidden bg-panel text-ink">
       <div className="mx-auto flex w-full max-w-4xl items-center justify-between gap-2 px-4 pt-2 sm:px-6">
         <div className="md:hidden"><OpenBotListButton /></div>
         <button type="button" data-needs-health-link aria-label={t("ux.l2b.health.linkLabel", { level: healthLevelWords(health?.level ?? "unknown") })} onClick={() => dispatch({ type: "showHealth" })}

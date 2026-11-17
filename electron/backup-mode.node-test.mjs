@@ -8,6 +8,7 @@ import { parse } from "yaml";
 import { BACKUP_MODE_ARGUMENT,BACKUP_AGE_SHA256,backupActivityBusy,createBackupModeController,prepareBackupRestart,readBackupIdentity,verifiedBackupTool } from "./backup-mode.mjs";
 import { createBackupRestartAdmission } from "../server/backup-restart-admission.ts";
 import { BACKUP_AGE_PIN } from "../shared/backup-age-pin.ts";
+import { backupNativeFixture } from "./backup-native-fixture.mjs";
 test("explicit idle confirmation is required before restart, with a second activity check",async()=>{
   const calls=[];const host={supported:()=>true,readActivity:async()=>{calls.push("activity");return{bots:[{busy:false}],groups:[]};},confirm:async()=>{calls.push("confirm");return true;},prepare:async()=>{calls.push("prepare");return async()=>{};},restart:async()=>calls.push("restart")};
   assert.deepEqual(await createBackupModeController(host).restart(),{restarting:true});
@@ -46,7 +47,7 @@ test("actual staged binary matches the packaged lookup and unsupported targets n
   const root=mkdtempSync(path.join(tmpdir(),"murage-backup-resources-test-"));
   try{
     const target=path.join(root,"backup-tools","arm64");mkdirSync(target,{recursive:true});
-    copyFileSync(new URL("../dist-native/backup-age/arm64/age",import.meta.url),path.join(target,"age"));
+    copyFileSync(backupNativeFixture("age"),path.join(target,"age"));
     assert.equal(verifiedBackupTool(root),process.platform==="darwin"&&process.arch==="arm64"?path.join(target,"age"):null);
     // Extra caller arguments cannot replace the actual runtime platform.
     assert.equal(verifiedBackupTool(root,"linux","x64"),verifiedBackupTool(root));

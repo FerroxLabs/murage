@@ -6,7 +6,7 @@
 // desktop-only. (a) discovery over the real source, (b) an injected route in
 // a fixture built on the real routing pattern and the real gate.
 // route-policy-api.test.ts is (c), the sweep against a running server.
-import { createHash, generateKeyPairSync, randomUUID, sign, type KeyObject } from "node:crypto";
+import { generateKeyPairSync, sign } from "node:crypto";
 import { once } from "node:events";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { createServer, request, type IncomingMessage } from "node:http";
@@ -31,6 +31,11 @@ describe("Cloud write classifications", () => {
     expect(writes.length).toBeGreaterThan(90);
     expect(writes.filter(entry => !entry.cloudWrite).map(entry => `${entry.methods} ${entry.path}`)).toEqual([]);
     expect(cloudRouteDecision("POST", "/api/unreviewed-permission-writer", "owner-desktop", {})).toBe("step-up required");
+  });
+  it("No limits inheritance retains desktop admission and fresh proof for writes", () => {
+    for (const method of ["GET", "POST"]) expect(routePolicy(method, "/api/permissions/no-limits")).toMatchObject({ class: "desktop", cloudWrite: "step-up" });
+    expect(cloudRouteDecision("POST", "/api/permissions/no-limits", "owner-desktop", {})).toBe("step-up required");
+    expect(cloudRouteDecision("POST", "/api/permissions/no-limits", "owner-desktop", {}, true)).toBe("allow");
   });
   it("ordinary task and routine deletion and non-elevating bot edits remain ordinary", () => {
     for (const path of ["/api/bots/b1/tasks/t1", "/api/routines/r1"]) expect(cloudRouteDecision("DELETE",path,"owner-desktop",{})).toBe("allow");
@@ -161,6 +166,20 @@ describe("route policy (strict)", () => {
     expect(routeClass("POST", "/api/terms/accept")).toBe("companion");
     expect(routeAdmits(routeClass("POST", "/api/terms/accept"), { ...nobody, door: true })).toBe(false);
     expect(routeAdmits(routeClass("POST", "/api/terms/accept"), { ...nobody, companion: true })).toBe(true);
+    // On a Cloud home the owner's remembered browser may also accept (terms only; see cloud-owner-browser.test.ts).
+  });
+
+  it("learning usage needs owner proof and leaves memory writes desktop-only", () => {
+    const path = "/api/memory/learning-usage";
+    const nobody = { desktop: false, companion: false, door: false, bot: false };
+    expect(ROUTE_POLICY.filter(entry => matches(entry, "GET", path))).toHaveLength(1);
+    expect(routeClass("GET", path)).toBe("companion");
+    for (const who of [nobody, { ...nobody, door: true }, { ...nobody, bot: true }]) expect(routeAdmits(routeClass("GET", path), who)).toBe(false);
+    for (const who of [{ ...nobody, desktop: true }, { ...nobody, companion: true }]) expect(routeAdmits(routeClass("GET", path), who)).toBe(true);
+    for (const method of ["POST", "PUT", "PATCH", "DELETE", "HEAD"]) expect(routeClass(method, path)).toBe("desktop");
+    expect(routeClass("GET", "/api/memory/status")).toBe("desktop");
+    expect(routeClass("POST", "/api/memory/action")).toBe("desktop");
+    expect(routeClass("GET", `${path}/extra`)).toBe("desktop");
   });
 
   it("refuses with the sentence only a caller that proved who it is", () => {
@@ -310,14 +329,21 @@ describe("/api/folder-trust on a Cloud home (FUIGO-TRUST-V2 S7)", () => {
         expect(cloudRouteDecision(method, route, scope, {}, true), `${scope} ${method} stepped up`).toBe("allow");
       }
     }
-    for (const scope of ["remembered-owner", "browser", "service", "anonymous"] as const) expect(cloudRouteDecision("GET", route, scope, {}), scope).toBe("deny");
+    for (const scope of ["browser", "service", "anonymous"] as const) expect(cloudRouteDecision("GET", route, scope, {}), scope).toBe("deny");
+    // The owner's browser (remembered-owner) is a full owner here: it reads the trust list, and a Trust or a Forget needs a fresh emailed code.
+    expect(cloudRouteDecision("GET", route, "remembered-owner", {})).toBe("allow");
+    for (const method of ["POST", "DELETE"]) {
+      expect(cloudRouteDecision(method, route, "remembered-owner", {}), `remembered-owner ${method} no code`).toBe("email-code required");
+      expect(cloudRouteDecision(method, route, "remembered-owner", {}, true), `remembered-owner ${method} step-up alone`).toBe("email-code required");
+      expect(cloudRouteDecision(method, route, "remembered-owner", {}, false, { proof: "ok" }), `remembered-owner ${method} with the code`).toBe("allow");
+    }
     // the phone keeps its ordinary owner reads
     expect(cloudRouteDecision("GET", "/api/bots", "owner-phone", {})).toBe("allow");
   });
 
   it("the real Cloud gate stops the phone before the store; the desktop and the passkey browser still read and forget", async () => {
     vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
-    const origin = "https://home.example", rpId = "home.example";
+    const origin = "https://home.example";
     const root = mkdtempSync(join(tmpdir(), "route-policy-trust-")), file = join(root, "folder-trust.json");
     const sessions = new CloudSessions(new DatabaseSync(":memory:"), undefined, origin);
     const folderTrust = new FolderTrustStore(file);
@@ -335,25 +361,9 @@ describe("/api/folder-trust on a Cloud home (FUIGO-TRUST-V2 S7)", () => {
       };
       return { auth: { authorization: `Bearer ${paired.accessToken}` }, stepUp };
     };
-    // The owner's passkey browser, as cloud-owner-browser.test.ts writes one: P-256 keys and a saved WebAuthn factor.
-    const passkeyBrowser = () => {
-      const pem = (key: { publicKey: KeyObject }) => key.publicKey.export({ format: "pem", type: "spki" }).toString();
-      const key = generateKeyPairSync("ec", { namedCurve: "prime256v1" }), confirm = generateKeyPairSync("ec", { namedCurve: "prime256v1" }), id = randomUUID();
-      sessions.db.prepare("INSERT OR IGNORE INTO cloud_meta VALUES ('account','owner')").run();
-      sessions.db.prepare("INSERT INTO cloud_devices (id,account,scope,publicKey,assertionKey,revoked,addedAt,lastSeenAt) VALUES (?,?,?,?,?,0,?,?)").run(id, "owner", "browser", pem(key), pem(confirm), 0, 0);
-      sessions.db.prepare("INSERT INTO cloud_browser_factors (device,payload) VALUES (?,?)").run(id, JSON.stringify({ origin, rpId, credentialId: "fixture-credential", counter: 1 }));
-      const { accessToken, deviceId } = sessions.issue(id);
-      let counter = 1;
-      const stepUp = (method: string, path: string, body: unknown) => {
-        const purpose = stepPurpose(method, path, body), challenge = sessions.challenge(deviceId, purpose), at = Date.now();
-        const message = `murage:${sessions.environmentId}:${deviceId}:${purpose}:${challenge}:${at}`;
-        const client = Buffer.from(JSON.stringify({ type: "webauthn.get", origin, crossOrigin: false, challenge: Buffer.from(message).toString("base64url") }));
-        const authData = Buffer.alloc(37); createHash("sha256").update(rpId).digest().copy(authData); authData[32] = 5; authData.writeUInt32BE(++counter, 33);
-        const signature = sign("sha256", Buffer.concat([authData, createHash("sha256").update(client).digest()]), confirm.privateKey).toString("base64url");
-        return { "x-murage-step-up": Buffer.from(JSON.stringify({ challenge, at, webauthn: { credentialId: "fixture-credential", clientDataJSON: client.toString("base64url"), authenticatorData: authData.toString("base64url"), signature } })).toString("base64url") };
-      };
-      return { auth: { cookie: `__Host-murage=${accessToken}` }, stepUp };
-    };
+    // The owner's browser is no longer a passkey row (it signs in with an emailed code, browser-owner-policy.ts): its folder-trust
+    // answer is the policy table's, asserted in the first test above and in browser-owner-policy's own tests. The wire legs here are
+    // the phone (refused) and the desktop (reads, Forget and Trust on a fresh step-up).
     // Stands in for the dispatcher's handler on the real store: anything that gets past the gate acts.
     let reached = 0;
     const gate = createCloudRequestAuth({ sessions, publicOrigin: origin, bootstrapSecret: () => "fixture-bootstrap-key-32-characters" });
@@ -378,7 +388,7 @@ describe("/api/folder-trust on a Cloud home (FUIGO-TRUST-V2 S7)", () => {
     });
     try {
       const forget = (key: string) => `${route}?key=${encodeURIComponent(key)}`;
-      const phone = pair("owner-phone"), desktop = pair("owner-desktop"), browser = passkeyBrowser();
+      const phone = pair("owner-phone"), desktop = pair("owner-desktop");
       const before = readFileSync(file, "utf8");
       const refused = { status: 403, body: { error: cloudHomeCopy.phoneCredential } };
       expect(await call("GET", `${route}?folder=${encodeURIComponent(root)}`, phone.auth)).toEqual(refused);
@@ -389,8 +399,8 @@ describe("/api/folder-trust on a Cloud home (FUIGO-TRUST-V2 S7)", () => {
       expect(reached).toBe(0);
       expect(readFileSync(file, "utf8")).toBe(before);
 
-      // The owner's two surfaces keep what they had: a read, and a Forget and a Trust on a fresh step-up.
-      for (const [name, owner] of [["desktop", desktop], ["passkey browser", browser]] as const) {
+      // The owner's desktop keeps what it had: a read, and a Forget and a Trust on a fresh step-up.
+      for (const [name, owner] of [["desktop", desktop]] as const) {
         const kept = folder(`kept-${name.replace(" ", "-")}`), key = folderTrust.remember(kept, "reject", "card")!;
         const read = await call("GET", route, owner.auth);
         expect(read.status, name).toBe(200);
@@ -476,4 +486,26 @@ it("H-G1-3 desktop reply speech has explicit Cloud denies on all other doors", (
       for (const stepped of [false, true]) expect(cloudRouteDecision("POST", path, scope, {}, stepped)).toBe("deny");
     }
   }
+});
+
+describe("DOOR-1 L8 receipt authorization", () => {
+  const routes = [
+    ["GET", "/api/bots/b1/turn-state", {scope:"bot",botId:"b1"}],
+    ["POST", "/api/bots/b1/send-actions", {scope:"bot",botId:"b1"}],
+    ["POST", "/api/groups/g1/send-actions", {scope:"group",groupId:"g1"}],
+    ["DELETE", "/api/bots/b1/queue/q1", {scope:"bot",botId:"b1"}],
+    ["DELETE", "/api/groups/g1/queue/q1", {scope:"group",groupId:"g1"}],
+  ] as const;
+  for (const [method,path,subject] of routes) it(`${method} ${path} is owner-proved and subject-scoped`, () => {
+    expect(routeClass(method,path)).toBe("companion");
+    expect(conversationSubject(path)).toEqual(subject);
+    const nobody = {desktop:false,companion:false,door:false,bot:false};
+    expect(routeAdmits(routeClass(method,path), nobody)).toBe(false);
+    expect(routeAdmits(routeClass(method,path), {...nobody, bot:true})).toBe(false);
+    expect(routeAdmits(routeClass(method,path), {...nobody, door:true})).toBe(false);
+    for (const caller of ["desktop","companion"] as const) expect(routeAdmits(routeClass(method,path), {...nobody,[caller]:true})).toBe(true);
+    for (const scope of ["service","anonymous","remembered-owner"] as const) expect(cloudRouteDecision(method,path,scope,{})).toBe("deny");
+    for (const scope of ["owner-desktop","owner-phone","owner-browser"] as const) expect(cloudRouteDecision(method,path,scope,{})).toBe("allow");
+    expect(cloudRouteDecision(method,path,"browser",{})).toBe(method === "GET" ? "allow" : "deny");
+  });
 });

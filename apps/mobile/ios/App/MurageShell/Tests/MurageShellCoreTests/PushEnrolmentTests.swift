@@ -55,8 +55,8 @@ final class RelayRequestTests: XCTestCase {
 }
 
 @MainActor final class PushEnrolmentTests: XCTestCase {
-    private let a = "https://mac.tailnet123.ts.net"
-    private let b = "https://old.tailnet123.ts.net"
+    private let a = "https://mac.tail000000.ts.net"
+    private let b = "https://old.tail000000.ts.net"
     private let old1 = "5b0c6f0e-1d2a-4c3b-8a9d-0e1f2a3b4c5d"
     private let old2 = "6c1d7a1f-2e3b-4d4c-9b0e-1f2a3b4c5d6e"
     private let s1 = "murage_ds_" + String(repeating: "1", count: 43)
@@ -519,9 +519,9 @@ private final class EnrolLedger: LedgerAccess {
     func testForgetAndSweepWriteTheObligationBeforeTheLocalDiscard() {
         let queue = MemoryDeletionQueue()
         let ledger = EnrolLedger(), secrets = EnrolSecrets()
-        _ = ledger.update { $0.bind("B1", origin: "https://a.tailnet123.ts.net"); $0.bind("B2", origin: "https://b.tailnet123.ts.net") }
+        _ = ledger.update { $0.bind("B1", origin: "https://a.tail000000.ts.net"); $0.bind("B2", origin: "https://b.tail000000.ts.net") }
         let bindings = PushBindings(ledger: ledger, secrets: secrets, owed: queue)
-        XCTAssertEqual(bindings.forget(origin: "https://a.tailnet123.ts.net").bindingId, "B1")
+        XCTAssertEqual(bindings.forget(origin: "https://a.tail000000.ts.net").bindingId, "B1")
         XCTAssertEqual(queue.ids(), ["B1"])
         _ = secrets.write("x", secret: .detail, account: "ORPHAN")
         let swept = bindings.sweep(knownOrigins: [])

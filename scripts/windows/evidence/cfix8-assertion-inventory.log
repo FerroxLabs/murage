@@ -1,0 +1,36 @@
+3:import nodeAssert from 'node:assert/strict';
+5:const assert=(...args)=>{const answer=nodeAssert(...args);assertionCount++;return answer;};
+6:assert.equal=(...args)=>{const answer=nodeAssert.equal(...args);assertionCount++;return answer;};
+7:assert.match=(...args)=>{const answer=nodeAssert.match(...args);assertionCount++;return answer;};
+22:assert.equal(process.platform,'win32');
+23:assert.match(process.env.MURAGE_GATE_RUN_PREFIX ?? '',/^MurageCI-[a-f0-9]{32}-$/);
+24:assert.equal(process.env.MURAGE_GATE_CREATE_JOB,undefined);
+35:assert.equal(pe.readUInt16LE(offset+24+68),3,'MCP must use a console-subsystem node.exe');
+43: assert.equal(process.env.COMPUTERNAME?.toLowerCase(),'gate-win-nogit'); assert.equal(process.env.USERNAME,'murage-gate');
+46: assert(!existsSync(data),'handoff requires a fresh gate user default profile');
+91: assert.equal(await app.evaluate(({app})=>app.isPackaged),true);
+92: assert.equal(await app.evaluate(({app})=>app.getVersion()),'1.0.19');
+100: assert(answer.status>=200&&answer.status<300,`${method} ${path}: ${JSON.stringify(answer)}`);return answer.body;
+109:async function settle(b){const r=await call('wait_for_conversation',{target_type:'bot',target_id:b.id,timeout_seconds:120});assert.equal(r.status,'settled',JSON.stringify(r));return r;}
+122: const endedAt=Date.now();await control(name,'end');await snapshot(name,'after');artifacts.push(`evidence/${name}-before-snapshot.json`,`evidence/${name}-after-snapshot.json`);const passed=assertionCount-lastRecordedAssertion;nodeAssert(passed>0);lastRecordedAssertion=assertionCount;json(join(evidence,`${name}.json`),result);groups.push({name,startedAt:timings.get(name),endedAt,passed,failed:0,skipped:0,artifacts:[`evidence/${name}.json`,...artifacts]});}
+123:async function turn(b,text){const before=logs().length;await send(b,text);const settled=await settle(b);const transcript=await messages(b);assert.match(JSON.stringify(transcript),/gate echo override-confirmed/);const protocol=logs().slice(before);assert(protocol.some(x=>x.method==='tools/list'));assert(protocol.some(x=>x.event==='result'));return {action:text,settled,transcript,protocol};}
+129: assert(requests.some(r=>r.url.startsWith('/latest.yml')));assert(requests.some(r=>r.url.startsWith('/'+manifest.installer)));
+151:   assert.match(readFileSync(fallbackMarker,'utf8'),/shell-fallback-entered/);
+154:    const dump=readFileSync(mountsFile,'utf8').trim().split('\n').map(JSON.parse).findLast(x=>x.kind===name);assert(dump);
+156:    const arg=dump.mounts.find(a=>a.startsWith(`mcp_servers.${key}.args=`));assert(arg);
+158:    assert(argv.includes('murage-env-launch'),'must exercise packaged collision launcher');
+160:    assert.equal(argv[4],name==='direct'?node:'gate-echo');
+167:   const descendant=chain.protocol.find(x=>x.event==='cmd-chain');assert(descendant,'Claude must launch Node MCP then cmd.exe');assert.equal(descendant.hookInstalled,true);assert.equal(descendant.preloadInherited,true);assert.equal(descendant.status,0);assert.match(descendant.stdout,/gate-cmd-chain/);
+169:   assert(success.protocol.some(x=>x.event==='start'&&x.override==='override-confirmed'));
+170:   writeFileSync(modeFile,'error');await send(b,'MCP error');await settle(b);const error=await messages(b);assert.match(JSON.stringify(error),/gate echo deliberate error/);
+175:   assert(Number.isSafeInteger(held.pid)&&held.pid>0);
+182:   assert(b.threadId,'browser fixture requires owned conversation thread');
+188:   assert.equal(refused.refused,true);assert.match(refused.message,/kind of file|file type|executable|script/i);assert.equal(existsSync(batMarker),false);shellRows.push({row:'bat-refused',...refused});
+191:    assert.equal(refusal.refused,true,`${url} must be refused`);assert(refusal.message);shellRows.push({url,...refusal});
+195:   assert.equal(exeRefusal,true);shellRows.push({row:'executable-refused',refused:exeRefusal});
+200:   assert.equal(navigation.url,manifest.feedUrl+'page');
+202:   const bytes=Buffer.from(frame.data.replace(/^data:image\/[^;]+;base64,/,''),'base64');assert(bytes.length>100);assert(frame.width>0&&frame.height>0);
+217:   const proof=JSON.parse(readFileSync(join(evidence,'sentinel-closed.json'),'utf8').replace(/^\uFEFF/,''));assert(proof.recurringRuns>=2);assert.equal(proof.lastTaskResult,0);
+226:   assert.match(refusal.message,/custom profile.*same profile launcher/i);
+229:   assert.equal(await app.evaluate(({app})=>app.getVersion()),'1.0.19');
+234:  assert.equal(kind,'handoff');assert.equal(process.env.COMPUTERNAME.toLowerCase(),'gate-win-nogit');

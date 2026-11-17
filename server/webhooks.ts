@@ -73,7 +73,7 @@ export interface WebhookManagerOptions {
   file?: string;
   now?: () => number;
   emit?: (event: WebhookManagerEvent) => void;
-  botState: (botId: string) => "ready" | "busy" | "missing";
+  botState: (botId: string) => "ready" | "busy" | "missing" | "staged";
   enqueue: (input: {
     webhookId: string;
     webhookName: string;

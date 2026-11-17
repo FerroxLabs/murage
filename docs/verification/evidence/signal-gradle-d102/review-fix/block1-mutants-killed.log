@@ -1,0 +1,64 @@
+truncation:
+test_exact_limit_is_not_truncated (regression.KeyRetrieval.test_exact_limit_is_not_truncated) ... ok
+test_export_failure_is_fatal (regression.KeyRetrieval.test_export_failure_is_fatal) ... ok
+test_import_failure_is_fatal_and_diagnostic_is_retained (regression.KeyRetrieval.test_import_failure_is_fatal_and_diagnostic_is_retained) ... ok
+test_local_process_failure_is_fatal (regression.KeyRetrieval.test_local_process_failure_is_fatal) ... ok
+test_local_write_failure_is_fatal (regression.KeyRetrieval.test_local_write_failure_is_fatal) ... ok
+test_network_fallback_retains_retrieval_diagnostics (regression.KeyRetrieval.test_network_fallback_retains_retrieval_diagnostics) ... ok
+test_oversized_response_is_fatal_and_never_imported (regression.KeyRetrieval.test_oversized_response_is_fatal_and_never_imported) ... FAIL
+test_unavailable_network_keeps_both_diagnostics (regression.KeyRetrieval.test_unavailable_network_keeps_both_diagnostics) ... ok
+
+======================================================================
+FAIL: test_oversized_response_is_fatal_and_never_imported (regression.KeyRetrieval.test_oversized_response_is_fatal_and_never_imported)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/repo/scripts/signal-gradle-verification.test.py", line 80, in test_oversized_response_is_fatal_and_never_imported
+    with self.assertRaisesRegex(RuntimeError, 'exceeds|oversiz'):
+AssertionError: RuntimeError not raised
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.048s
+
+FAILED (failures=1)
+
+KILLED: truncation
+swallowed-local-errors:
+test_exact_limit_is_not_truncated (regression.KeyRetrieval.test_exact_limit_is_not_truncated) ... ok
+test_export_failure_is_fatal (regression.KeyRetrieval.test_export_failure_is_fatal) ... ok
+test_import_failure_is_fatal_and_diagnostic_is_retained (regression.KeyRetrieval.test_import_failure_is_fatal_and_diagnostic_is_retained) ... FAIL
+test_local_process_failure_is_fatal (regression.KeyRetrieval.test_local_process_failure_is_fatal) ... FAIL
+test_local_write_failure_is_fatal (regression.KeyRetrieval.test_local_write_failure_is_fatal) ... FAIL
+test_network_fallback_retains_retrieval_diagnostics (regression.KeyRetrieval.test_network_fallback_retains_retrieval_diagnostics) ... ok
+test_oversized_response_is_fatal_and_never_imported (regression.KeyRetrieval.test_oversized_response_is_fatal_and_never_imported) ... ok
+test_unavailable_network_keeps_both_diagnostics (regression.KeyRetrieval.test_unavailable_network_keeps_both_diagnostics) ... ok
+
+======================================================================
+FAIL: test_import_failure_is_fatal_and_diagnostic_is_retained (regression.KeyRetrieval.test_import_failure_is_fatal_and_diagnostic_is_retained)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/repo/scripts/signal-gradle-verification.test.py", line 115, in test_import_failure_is_fatal_and_diagnostic_is_retained
+    with self.assertRaises(subprocess.CalledProcessError):
+AssertionError: CalledProcessError not raised
+
+======================================================================
+FAIL: test_local_process_failure_is_fatal (regression.KeyRetrieval.test_local_process_failure_is_fatal)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/repo/scripts/signal-gradle-verification.test.py", line 111, in test_local_process_failure_is_fatal
+    with self.assertRaisesRegex(OSError, 'process infrastructure failure'):
+AssertionError: OSError not raised
+
+======================================================================
+FAIL: test_local_write_failure_is_fatal (regression.KeyRetrieval.test_local_write_failure_is_fatal)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/repo/scripts/signal-gradle-verification.test.py", line 107, in test_local_write_failure_is_fatal
+    with self.assertRaisesRegex(OSError, 'local write failure'):
+AssertionError: OSError not raised
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.025s
+
+FAILED (failures=3)
+
+KILLED: swallowed-local-errors

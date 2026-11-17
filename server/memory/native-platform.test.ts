@@ -1,3 +1,4 @@
+import { openTestIndex, put } from "./testing/open-index.ts";
 import { mkdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -7,7 +8,6 @@ vi.mock("./embedding-runtime.ts",async importOriginal=>{const actual=await impor
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
 import { MemoryEmbeddings, supportsNativeMemoryModel } from "./embeddings.ts";
-import { MemoryIndex } from "./index.ts";
 import { ownerMemoryTicket } from "./authority.ts";
 import { reconcileMemoryRoster } from "./policy.ts";
 import { memoryOwnerRoute, memoryOwnerStatus } from "./settings.ts";
@@ -22,7 +22,7 @@ it("runs the model on every release target: native, or WebAssembly on Intel macO
   expect(supportsNativeMemoryModel("darwin","x64")).toBe(false);
   for(const [platform,arch] of [["darwin","arm64"],["linux","x64"],["win32","x64"]] as const)expect(supportsNativeMemoryModel(platform,arch)).toBe(true);
 });
-it("on Intel macOS reports smart search as available and lets the model be set up",()=>{
+it("on Intel macOS reports smart search as available and lets the model be set up",async () =>{
   intel();const owner=ownerMemoryTicket(),status=memoryOwnerStatus(owner,roster);
   expect(status.model.state).not.toBe("failed");expect(status.model.error).toBeUndefined();
 });
@@ -34,9 +34,9 @@ it("without any runtime, reports unsupported availability and never downloads wh
   intel();runtime.wasm=false;const fetch=vi.fn();vi.stubGlobal("fetch",fetch);
   const owner=ownerMemoryTicket();expect(memoryOwnerStatus(owner,roster).model).toMatchObject({state:"failed",error:expect.stringContaining("keyword memory")});
   await expect(memoryOwnerRoute("/api/memory/action",{action:"model-download",confirm:true},owner,roster)).rejects.toMatchObject({status:409,message:expect.stringContaining("keyword memory")});expect(fetch).not.toHaveBeenCalled();expect(existsSync(join(DATA_DIR,"memory-model"))).toBe(false);
-  const index=new MemoryIndex(join(DATA_DIR,"index.db"));
+  const index=await openTestIndex(join(DATA_DIR,"index.db"));
   try{
-    index.upsert(["allowed","private"].map(id=>({id,version:1,scopeId:id,text:"backups run nightly",deleted:false})));
+    await put(index, ["allowed","private"].map(id=>({id,version:1,scopeId:id,text:"backups run nightly",deleted:false})));
     const found=index.search("backups",[{id:"allowed",version:1}],null,"unused");
     expect(found.hits.map(hit=>hit.id)).toEqual(["allowed"]);expect(found.vectorRows).toBe(0);
   }finally{index.close();}
