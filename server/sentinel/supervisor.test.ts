@@ -69,7 +69,7 @@ describe("watch cadence", () => {
     let resolveScan: (() => void) | null = null;
     const supervisor = new WatchSupervisor({
       spec: node("process.exit(0)"), installationId: INST,
-      spawnChild: spec => { spawned++; return spawn(spec.execPath, [...spec.args], { stdio: "ignore", env: spec.env }); },
+      spawnChild: spec => { spawned++; return spawn(spec.execPath, [...spec.args], { windowsHide: true, stdio: "ignore", env: spec.env }); },
       setTimer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
       clearTimer: () => {},
       onResult: () => { results.push(Date.now()); resolveScan?.(); },

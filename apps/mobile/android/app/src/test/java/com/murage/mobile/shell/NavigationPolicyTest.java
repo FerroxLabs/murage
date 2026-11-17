@@ -67,13 +67,13 @@ public class NavigationPolicyTest {
     /** M3: only a failed load of the workspace's own main document closes it; a foreign form POST that fails is sent back. */
     @Test
     public void onlyTheOwnMainDocumentFailingClosesTheWorkspace() {
-        WorkspaceOrigin saved = WorkspaceOrigin.parse("https://mac.tailnet123.ts.net:8444");
-        assertTrue(NavigationPolicy.isOwnMainDocument("https://mac.tailnet123.ts.net:8444/", true, saved));
-        assertTrue(NavigationPolicy.isOwnMainDocument("https://MAC.tailnet123.ts.net:8444/enter", true, saved));
-        assertFalse(NavigationPolicy.isOwnMainDocument("https://mac.tailnet123.ts.net:8444/", false, saved));
+        WorkspaceOrigin saved = WorkspaceOrigin.parse("https://mac.tail000000.ts.net:8444");
+        assertTrue(NavigationPolicy.isOwnMainDocument("https://mac.tail000000.ts.net:8444/", true, saved));
+        assertTrue(NavigationPolicy.isOwnMainDocument("https://MAC.tail000000.ts.net:8444/enter", true, saved));
+        assertFalse(NavigationPolicy.isOwnMainDocument("https://mac.tail000000.ts.net:8444/", false, saved));
         assertFalse(NavigationPolicy.isOwnMainDocument("https://no-such-host.invalid/form", true, saved));
-        assertFalse(NavigationPolicy.isOwnMainDocument("https://mac.tailnet123.ts.net/", true, saved));
-        assertFalse(NavigationPolicy.isOwnMainDocument("https://mac.tailnet123.ts.net:8444@evil.example/", true, saved));
+        assertFalse(NavigationPolicy.isOwnMainDocument("https://mac.tail000000.ts.net/", true, saved));
+        assertFalse(NavigationPolicy.isOwnMainDocument("https://mac.tail000000.ts.net:8444@evil.example/", true, saved));
         assertFalse(NavigationPolicy.isOwnMainDocument(null, true, saved));
     }
 }

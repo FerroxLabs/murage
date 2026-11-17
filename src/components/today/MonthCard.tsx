@@ -7,6 +7,8 @@
 // as of Flux's time, for Flux's month. Not reported yet reads "Spending will
 // show here once Flux reports it", never $0. The heads-up at 80% and at the
 // limit is a notice only: nothing here holds or refuses work.
+import { matchedPause, pauseLines } from "@/lib/spend-pause";
+import type { SpendPauseStatus } from "../../../shared/spend-pause";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { api, useStore, type ConfigStatus } from "@/state/store";
 import { t } from "@/lib/i18n";
@@ -17,13 +19,13 @@ import type { MonthCardProps, NeedsSummaryRow, TodayTag } from "@/components/she
 /** While a meter is open it asks again this often (and on window focus), so a window that missed a key change re-learns it. */
 const SPEND_REVALIDATE_MS = 60_000;
 
-interface MonthReading { show: boolean; total: SpendTotal; state: SpendState }
+interface MonthReading { show: boolean; total: SpendTotal; state: SpendState; pause: SpendPauseStatus | null; refresh(): void }
 
 /** Whether the meter shows at all: config only, no figure. Only the owner's desktop has `spend` (scopedConfig drops it). */
 export function useMonthShow(): boolean {
   const { state } = useStore();
   const spend = state.config?.spend;
-  return Boolean(spend) && (Boolean(state.config?.flux?.configured) || (typeof spend?.monthlyLimitUsd === "number" && spend.monthlyLimitUsd > 0));
+  return Boolean(spend) && (Boolean(spend?.pauseFingerprint) || Boolean(state.config?.flux?.configured) || (typeof spend?.monthlyLimitUsd === "number" && spend.monthlyLimitUsd > 0));
 }
 
 /** What the hook holds: the body of the latest answer and the config fingerprint it was applied under. */
@@ -72,7 +74,7 @@ function retire(fingerprint: string): void {
  * The meter's single writer. `settle` is the only caller of `show`: an answer is applied only if it is the latest
  * ticket and its fingerprint equals the config fingerprint read on arrival. Every config change voids what is in flight.
  */
-export function createMeterGate(deps: { fingerprint(): string | null; show(answer: HeldAnswer | null): void; reread(): void }): MeterGate {
+export function createMeterGate(deps: { fingerprint(): string | null; responseFingerprint?(body: unknown): unknown; show(answer: HeldAnswer | null): void; reread(): void }): MeterGate {
   let counter = 0;
   const ticket = (): MeterTicket => ({ n: ++counter, asked: deps.fingerprint(), configSeq, configFp });
   const gate: MeterGate = {
@@ -84,7 +86,7 @@ export function createMeterGate(deps: { fingerprint(): string | null; show(answe
       // The ref can change before the effect voids tickets. Even a matching
       // response must have been requested under the current configuration.
       if (t.asked !== current) { deps.show(null); return; }
-      const raw = body && typeof body === "object" ? (body as { fingerprint?: unknown }).fingerprint : undefined;
+      const raw = deps.responseFingerprint ? deps.responseFingerprint(body) : body && typeof body === "object" ? (body as { fingerprint?: unknown }).fingerprint : undefined;
       // A failed or malformed read, or no config fingerprint: the message, never $0.
       if (!current || (typeof raw !== "string" && raw !== null)) { deps.show(null); return; }
       if (raw !== current) {
@@ -115,8 +117,9 @@ export function useMonthReading(refresh?: unknown): MonthReading {
   const { state, dispatch } = useStore();
   const spend = state.config?.spend;
   const show = useMonthShow();
-  const fingerprint = spend?.keyFingerprint ?? null;
-  const configured = Boolean(state.config?.flux?.configured);
+  const keyFingerprint = spend?.keyFingerprint ?? null;
+  const fingerprint = spend?.pauseFingerprint ?? keyFingerprint;
+  const configured = Boolean(spend?.pauseFingerprint || state.config?.flux?.configured);
   const fingerprintRef = useRef(fingerprint);
   fingerprintRef.current = fingerprint;
   const dispatchRef = useRef(dispatch);
@@ -124,11 +127,11 @@ export function useMonthReading(refresh?: unknown): MonthReading {
   const [answer, setAnswer] = useState<HeldAnswer | null>(null);
   const [reread] = useState(() => () => {
     void api("/api/config").then((config: ConfigStatus) => {
-      noteConfigResponse(config?.spend?.keyFingerprint);
+      noteConfigResponse(config?.spend?.pauseFingerprint ?? config?.spend?.keyFingerprint);
       dispatchRef.current({ type: "configStatus", config });
     }).catch(() => {});
   });
-  const [gate] = useState(() => createMeterGate({ fingerprint: () => fingerprintRef.current, show: setAnswer, reread }));
+  const [gate] = useState(() => createMeterGate({ fingerprint: () => fingerprintRef.current, responseFingerprint: body => body && typeof body === "object" ? ((body as { pauseFingerprint?: unknown }).pauseFingerprint ?? (body as { fingerprint?: unknown }).fingerprint) : undefined, show: setAnswer, reread }));
   useEffect(() => joinRetirement(gate), [gate]);
   useEffect(() => {
     noteConfigFingerprint(fingerprint);
@@ -142,10 +145,20 @@ export function useMonthReading(refresh?: unknown): MonthReading {
     ask();
     const timer = setInterval(ask, SPEND_REVALIDATE_MS);
     window.addEventListener("focus", ask);
-    return () => { clearInterval(timer); window.removeEventListener("focus", ask); gate.voidAll(); };
+    // Usage, Today and the composer each own a reading. An owner action
+    // refreshes all mounted readers so another surface cannot retain a hold.
+    window.addEventListener("murage-spend-refresh", ask);
+    return () => { clearInterval(timer); window.removeEventListener("focus", ask); window.removeEventListener("murage-spend-refresh", ask); gate.voidAll(); };
   }, [gate, reread, show, fingerprint, configured, refresh]);
-  const total = matchedSpend(answer && answer.asked === fingerprint && !isRetired(fingerprint) ? answer.body : null, fingerprint);
-  return { show, total, state: spendState(total, spend) };
+  const current = answer && answer.asked === fingerprint && !isRetired(fingerprint) ? answer.body : null;
+  const pause = matchedPause(current, fingerprint);
+  // An active pause serves the account figure, including bank-only installs.
+  // Its inventory binding, already checked above, owns that figure; a legacy
+  // key fingerprint is neither required nor sufficient for account status.
+  const total = matchedSpend(pause?.capability === "on" && current && typeof current === "object"
+    ? { fingerprint, total: (current as { total?: unknown }).total } : current,
+  pause?.capability === "on" ? fingerprint : keyFingerprint);
+  return { show, total, state: spendState(total, spend), pause, refresh: () => window.dispatchEvent(new Event("murage-spend-refresh")) };
 }
 
 export function headsUpLine(state: SpendState, limit: number): string {
@@ -155,27 +168,32 @@ export function headsUpLine(state: SpendState, limit: number): string {
 }
 
 /** The month's line, shared by Today and Usage. */
-export function monthLine(total: SpendTotal, state: SpendState): string {
+export function monthLine(total: SpendTotal, state: SpendState, account = false): string {
   if (total.state === "multiKey") return t("ux.l2c.month.multiKey");
   if (total.state !== "ok") return t("ux.l2c.month.pending");
   if (state.limitUsd !== null && state.percent !== null) {
-    return t("ux.l2c.month.ofLimit", { amount: formatDollars(total.spentUsd), limit: formatDollars(state.limitUsd), percent: state.percent });
+    return t(account ? "ux.l2c.pause.accountOfLimit" : "ux.l2c.month.ofLimit", { amount: formatDollars(total.spentUsd), limit: formatDollars(state.limitUsd), percent: state.percent });
   }
-  return t("ux.l2c.month.billed", { amount: formatDollars(total.spentUsd) });
+  return t(account ? "ux.l2c.pause.accountBilled" : "ux.l2c.month.billed", { amount: formatDollars(total.spentUsd) });
 }
 
 /** The heads-up as one Needs you row (Today's top rows and the badge count), until the owner leaves it for the month. */
 export function useMonthNeedsRow(open: () => void, refresh?: unknown): NeedsSummaryRow | null {
-  const { show, state } = useMonthReading(refresh);
+  const { show, state, pause } = useMonthReading(refresh);
+  if (show && pause?.held.length) {
+    const row = pause.held[0]!;
+    const line = pauseLines(row.holds, pause.limitUsd, row.botName, row.emailOnly).at(-1) ?? t("ux.l2c.pause.waiting");
+    return { id: "spend:paused", line, meta: t("ux.l2c.usage.title"), open };
+  }
   if (!show || !state.headsUp || state.limitUsd === null) return null;
   return { id: `spend:${state.leaveKey}`, line: headsUpLine(state, state.limitUsd), meta: t("ux.l2c.needs.meta"), open };
 }
 
 /** Today's status tag at 80% and at the limit only; quiet otherwise. */
 export function useMonthTag(): TodayTag | null {
-  const { show, total, state } = useMonthReading();
+  const { show, total, state, pause } = useMonthReading();
   if (!show || state.limitUsd === null || state.percent === null || (state.level !== "warn" && state.level !== "limit")) return null;
-  return { key: "month", tone: state.level === "limit" ? "bad" : "warn", text: monthLine(total, state) };
+  return { key: "month", tone: state.level === "limit" ? "bad" : "warn", text: monthLine(total, state, pause?.capability === "on") };
 }
 
 // The card itself loads on first show, so it stays off the first paint (check-bundle-budget).

@@ -8,18 +8,20 @@
 //
 // Generation is deterministic (a seeded generator, no clock in the content). The result is cached under
 // MEMORY_PERF_CACHE when that is set, so the long build is paid once per runner.
+import { openTestIndex, put } from "./open-index.ts";
 import { copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { join } from "node:path";
 import { DATA_DIR } from "../../config.ts";
 import { closeDatabase, database } from "../../database.ts";
-import { MemoryIndex } from "../index.ts";
 import { THREAD, freshDataDir } from "./recall-fixture.ts";
 
 export interface PerfShape {
   sources: number; indexedRecords: number; active: number; waiting: number; extraWaiting: number;
   deferredJobs: number; pendingJobs: number; disclosures: number; disclosureEntries: number;
+  /** how many of the indexed records the receipts cite, all of them when the receipts hold that many entries (default: the facts plus 200 chunks) */
+  cited?: number;
 }
 const env = (name: string, fallback: number) => { const value = Number(process.env[name]); return Number.isFinite(value) && value >= 0 && process.env[name] !== undefined ? value : fallback; };
 export function perfShape(): PerfShape {
@@ -53,7 +55,7 @@ const FILES = ["messages.db", "memory-index.db"];
 function copyFixture(from: string, to: string) { for (const file of FILES) copyFileSync(join(from, file), join(to, file)); }
 
 /** A data directory holding the fixture, ready for `database()`, memory mode active. */
-export function loadPerfFixture(shape = perfShape()): PerfShape {
+export async function loadPerfFixture(shape = perfShape()): Promise<PerfShape> {
   // Built in active mode: switching the mode later moves the policy revision, which would void every receipt of the store.
   freshDataDir("active");
   const cache = process.env.MEMORY_PERF_CACHE, key = `v3-${shape.sources}-${shape.indexedRecords}-${shape.pendingJobs}`;
@@ -64,7 +66,7 @@ export function loadPerfFixture(shape = perfShape()): PerfShape {
     copyFixture(cached, DATA_DIR);
     return shape;
   }
-  buildPerfFixture(shape);
+  await buildPerfFixture(shape);
   if (cached) {
     closeDatabase();
     rmSync(cached, { recursive: true, force: true }); mkdirSync(cached, { recursive: true });
@@ -84,7 +86,7 @@ export function conversationScope(db: DatabaseSync, owner: string): string {
   return id;
 }
 
-export function buildPerfFixture(shape: PerfShape, target?: PerfTarget) {
+export async function buildPerfFixture(shape: PerfShape, target?: PerfTarget) {
   const own = target === undefined;
   const db = target?.db ?? database();
   const threadId = target?.threadId ?? THREAD;
@@ -165,19 +167,20 @@ export function buildPerfFixture(shape: PerfShape, target?: PerfTarget) {
   add("realign-0", "éa weekly report", "owner", now, realignScope);
   insertJob.run("job-realign", "realign-0", "pending", 0, 1, "[]", policy, deletion);
   // Receipts of earlier turns: about 30 entries each, over the facts and chunks it knows, in sessions of 80.
-  const cited = indexed.slice(0, shape.active + 200).map(row => ({ id: row.id, version: row.version }));
+  const cited = indexed.slice(0, shape.cited ?? shape.active + 200).map(row => ({ id: row.id, version: row.version }));
   const insertDisclosure = db.prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,'delivered',?)");
   for (let n = 0; n < shape.disclosures; n++) {
     const entries: Array<{ id: string; version: number }> = [];
-    for (let i = 0; i < shape.disclosureEntries; i++) entries.push(cited[(n * 7 + i * 13) % cited.length]);
+    // a requested `cited` is covered exactly: the receipts walk the cited records in order (each record once before any repeats)
+    for (let i = 0; i < shape.disclosureEntries; i++) entries.push(cited[(shape.cited === undefined ? n * 7 + i * 13 : n * shape.disclosureEntries + i) % cited.length]);
     const unique = [...new Map(entries.map(entry => [entry.id, entry])).values()];
     const sources = unique.map(entry => ({ id: entry.id.startsWith("chunk-") ? `bulk-${entry.id.slice(6)}` : entry.id, revision: 1 }));
     insertDisclosure.run(`disc-${n}`, threadId, "claude", `session-${Math.floor(n / 80)}`, JSON.stringify(unique), JSON.stringify(sources), policy, deletion, 900, now + n);
   }
   db.exec("UPDATE memory_meta SET data_revision=data_revision+1; COMMIT");
   if (own) closeDatabase();
-  const index = new MemoryIndex(indexPath);
-  try { for (let at = 0; at < indexed.length; at += 500) index.upsert(indexed.slice(at, at + 500)); } finally { index.close(); }
+  const index = await openTestIndex(indexPath);
+  try { for (let at = 0; at < indexed.length; at += 500) await put(index, indexed.slice(at, at + 500)); } finally { index.close(); }
   if (!own) return;
   // Both files checkpointed and quiet, so copies of them are whole.
   const check = database();

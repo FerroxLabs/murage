@@ -257,7 +257,7 @@ export function placePath(path: string, root: string, opts: PlaceOptions = {}): 
  */
 export function win32Canonical(path: string, platform: NodeJS.Platform = process.platform): string {
   if (platform !== "win32") return path;
-  const unwrapped = win32Unprefixed(path).replace(/^[\\/]{2}[^\\/]+[\\/]([A-Za-z])\$(?=[\\/]|$)/, "$1:");
+  const unwrapped = win32Unprefixed(path.replace(/^(?:\$\{env:HOME\}|\$env:HOME)(?=[\\/]|$)/i, "~")).replace(/^[\\/]{2}[^\\/]+[\\/]([A-Za-z])\$(?=[\\/]|$)/, "$1:");
   const name = (part: string): string => {
     if (part === "." || part === "..") return part;
     const bare = part.replace(/:.*$/, "").replace(/[. ]+$/, "");

@@ -49,7 +49,7 @@ export function isLocalServerKind(value: unknown): value is LocalServerKind {
   return typeof value === "string" && (LOCAL_SERVER_KINDS as readonly string[]).includes(value);
 }
 
-/** "llama.cpp on seanbeast" — the name a picker row and a card use. */
+/** "llama.cpp on fixture-server" — the name a picker row and a card use. */
 export function localServerDisplayLabel(kind: LocalServerKind, name: string): string {
   const trimmed = name.trim();
   if (kind === "openai") return trimmed || LOCAL_SERVER_KIND_LABELS.openai;
@@ -469,7 +469,7 @@ export function contextPreflight(input: { contextWindow?: number; promptTokens: 
 
 // ── tool-calling test (spec T1) ───────────────────────────────────────────
 
-/** The seven checks of the SeanBeast probe (0152-LOCAL-MODELS-PROBE-SEANBEAST.md). */
+/** The seven checks of the local-server probe. */
 export const LOCAL_TOOL_CHECKS = [
   "chat.auto",
   "chat.required",
@@ -733,7 +733,7 @@ export interface LocalModelView {
 export interface LocalServerView {
   id: string;
   name: string;
-  /** "llama.cpp on seanbeast" */
+  /** "llama.cpp on fixture-server" */
   label: string;
   kind: LocalServerKind;
   /** The `…/v1` base. */

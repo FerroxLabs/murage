@@ -1,3 +1,4 @@
+import "../shared/win-hide-child-process.mjs";
 import {randomUUID} from "node:crypto";
 import {z} from "zod";
 import {backupReceiptSchema,type BackupReceipt} from "../shared/backup-schedule.ts";

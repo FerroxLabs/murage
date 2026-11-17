@@ -9,7 +9,7 @@
 // ACP's hosted tools, Pi's unasked rows are its exact mount/tool pairs). A
 // tool on an own mount that is NOT in OWN_UNASKED asks.
 
-import { HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_MCP_SERVER, HIGHLEVEL_READ_TOOL_NAMES } from "./highlevel.ts";
+import { HIGHLEVEL_HELPER_NAMES, HIGHLEVEL_MCP_SERVER, HIGHLEVEL_FAMILY_TOOLS } from "./highlevel.ts";
 import { PHONE_TOOL_NAMES } from "./phone-jobs-contract.ts";
 
 /** The built-in own mounts, by the `mountId` suffix of Rule 54
@@ -121,8 +121,8 @@ export const OWN_UNASKED: readonly OwnUnaskedRow[] = [
   },
   {
     mount: "own:highlevel",
-    tools: [...HIGHLEVEL_READ_TOOL_NAMES, ...HIGHLEVEL_HELPER_NAMES],
-    boundary: "native HighLevel (HL-S2, GAP-HIGHLEVEL-109 section 7), read only: the host checks the turn claim, the bot's native grant for that location and tool, and a confirmed connection on every call; reads go only to the fixed provider manifest. No change tool is listed or pre-allowed (server/highlevel/runtime.ts)",
+    tools: [...Object.values(HIGHLEVEL_FAMILY_TOOLS), ...HIGHLEVEL_HELPER_NAMES],
+    boundary: "native HighLevel: every family call reaches the host, which checks the owner turn, family level, operation, scope and connection, and requires the applicable owner approval before a change",
   },
 ];
 
@@ -138,6 +138,7 @@ export const OWN_ALWAYS_ASK: readonly { mount: `own:${OwnBuiltin}`; tool: string
   { mount: "own:agents", tool: "resolve_image_reference" },
   { mount: "own:agents", tool: "register_artifact" },
   { mount: "own:agents", tool: "web_search" },
+  { mount: "own:agents", tool: "web_read" },
 ];
 
 /** Own tools whose handler is the only place they are cleared or held (BOT-EMAIL-MURAGE-109 3.2): every engine reaches the handler at
@@ -216,8 +217,8 @@ export const OWN_READS: readonly { mount: `own:${OwnBuiltin}`; tools: readonly s
  * (OWN_UNASKED ruling). Kept apart from OWN_READS so that set stays read-only. */
 export const PHONE_PREALLOWED: readonly { mount: "own:phoneJobs" | "own:highlevel"; tools: readonly string[] }[] = [
   { mount: "own:phoneJobs", tools: PHONE_TOOL_NAMES },
-  // native HighLevel, read only: the host grant check is the gate (OWN_UNASKED row); no change tool is listed
-  { mount: "own:highlevel", tools: [...HIGHLEVEL_READ_TOOL_NAMES, ...HIGHLEVEL_HELPER_NAMES] },
+  // HighLevel family tools are handler-carded: the host decides reads, changes and approvals per operation
+  { mount: "own:highlevel", tools: [...Object.values(HIGHLEVEL_FAMILY_TOOLS), ...HIGHLEVEL_HELPER_NAMES] },
 ];
 
 /** Whether an own tool runs with no desktop card as a read or as a phone tool: an OWN_READS or PHONE_PREALLOWED row,

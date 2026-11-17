@@ -32,6 +32,7 @@ import {
 import { sendStore, type SendRow } from "./send-store.ts";
 import type { BotRecord, Message } from "./store.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -394,7 +395,7 @@ describe("via rows drain alone", () => {
     const seen: Array<{ via: string | null; viaDevice: string | null }> = [];
     via("s1", "share");
     drainSteeredMessages(store, (_b, _t, _p, _m, _x, batch) => { seen.push(batch); });
-    expect(seen).toEqual([{ via: "share", viaDevice: "dev1" }]);
+    expect(seen).toEqual([{ via: "share", viaDevice: "dev1", viaProof: null }]);
     expect(store.messages[0]).toMatchObject({ via: "share", origin: "unproven" });
   });
 
@@ -474,6 +475,7 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
   let stopGate: string;
   let stopRpcDump: string;
   let roomGate: string;
+  let desktopHeaders: Record<string, string> = {};
 
   /** the flat command payloads these tests POST/PATCH */
   type ApiBody = Record<
@@ -488,7 +490,7 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
   const api = async (method: string, path: string, body?: ApiBody): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
       method,
-      headers: body ? { "content-type": "application/json" } : undefined,
+      headers: { ...desktopHeaders, ...(body ? { "content-type": "application/json" } : {}) },
       body: body ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, body: await res.json() };
@@ -573,13 +575,15 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
       HOME: home,
       USERPROFILE: home,
       MURAGE_PORT: String(PORT),
+      MURAGE_ALLOW_DEV_DESKTOP_SECRET: "1",
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
     // Without SystemRoot, winsock fails to initialize in the child.
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), "--import", "data:text/javascript," + encodeURIComponent(`const { customAcpSupport: localFixtureHost } = await import(${JSON.stringify(new URL("./drivers/acp/custom.ts", import.meta.url).href)}); localFixtureHost.fluxReach = () => "elsewhere";`), join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env,
+      env: { ...env, ...powerBlockTestEnv() },
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.stderr!.on("data", (c) => (stderr += c));
@@ -596,6 +600,10 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
       if (child.exitCode !== null) throw new Error(`server exited ${child.exitCode}. stderr:\n${stderr}`);
       await new Promise((r) => setTimeout(r, 150));
     }
+    // These scenarios exercise the owner's attended sends and transcript.
+    const proof = await (await fetch(`${BASE}/api/desktop-secret`)).json() as { secret: string };
+    expect(proof.secret).toBeTypeOf("string");
+    desktopHeaders = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
   }, 30_000);
 
   afterAll(async () => {
@@ -793,6 +801,12 @@ describe("steer-queue: authoritative pending list and ordering", () => {
     const run = vi.fn();
     drainSteeredMessages(store, run);
     expect(store.messages).toHaveLength(1);
-    expect(run).toHaveBeenCalledWith("bot-q", "thread-q", "do the thing", already, [already.id], { via: null, viaDevice: null });
+    expect(run).toHaveBeenCalledWith("bot-q", "thread-q", "do the thing", already, [already.id], { via: null, viaDevice: null, viaProof: null });
   });
+});
+
+it("ISO-14: isolated rows are singleton batches at the head and a boundary later", () => {
+  const rows = [false, true, false].map((isolated, index) => sendStore.accept({ kind: "bot", ownerId: "iso-bot", threadId: "iso-thread", sendId: `iso-${index}`, text: "question", fingerprint: "question", status: "queued", isolated }).row);
+  expect(drainBatch(rows)).toEqual([rows[0]]);
+  expect(drainBatch(rows.slice(1))).toEqual([rows[1]]);
 });

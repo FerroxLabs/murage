@@ -70,7 +70,8 @@ const createBot = async (name: string, instanceId: string, grant = true) => {
   const created = await api("POST", "/api/bots", { name, modelSelection: { instanceId, model: "ask-1" } });
   expect(created.status).toBe(201);
   const bot = created.body.bot as { id: string; threadId: string };
-  if (grant) expect((await api("PATCH", `/api/bots/${bot.id}`, { phoneApps: { calendar: "read" } })).status).toBe(200);
+  // Phone-job marking exercises its lifecycle at Auto; Ask review is a separate prerequisite.
+  if (grant) expect((await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true, computer: "off", phoneApps: { calendar: "read" } })).status).toBe(200);
   return bot;
 };
 type Bot = { id: string; threadId: string };
@@ -274,6 +275,10 @@ posixOnly("share and ask, flags on, end to end (S44)", () => {
       expect((await ownerSend(queued, "second, queued")).status).toBe(202);
       release();
       await expect.poll(async () => (await userLines(queued.threadId)).length, { timeout: 30000 }).toBe(2);
+      // Appending the queued line precedes detached engine setup. Finish both
+      // turns before arming the shared one-shot limit flag for another bot.
+      await settle(queued.threadId, 2);
+      await expect.poll(async () => (await messages(queued.threadId)).filter((m) => m.role === "bot" && m.kind === "text" && m.text === "Ask reply").length, { timeout: 30000 }).toBe(2);
       await idle(queued.id);
       for (const line of await userLines(queued.threadId)) { expect(line.via).toBeUndefined(); expect(line.origin).not.toBe("unproven"); }
       expect(runs(queued.threadId).every((row) => row.phoneJobs === undefined)).toBe(true);
@@ -612,7 +617,8 @@ posixOnly("share and ask, flags on, end to end (S44)", () => {
         writeDb("UPDATE owner_sends SET queue_only=0 WHERE thread_id=? AND via='share' AND status='queued'", bot.threadId);
         return out;
       };
-      const resend = (bot: Bot, row: OwnerRow) => api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: row.text, sendId: row.send_id, resend: true });
+      // A fresh owner press names its action; replaying only the original send id is a receipt lookup.
+      const resend = (bot: Bot, row: OwnerRow) => api("POST", `/api/bots/${bot.id}/messages`, { threadId: bot.threadId, text: row.text, sendId: row.send_id, resend: true, actionId: uniq("resend") });
 
       it("stays via, keeps its attachments, is queued and never run at the idle entry", async () => {
         const bot = await createBot("S44 send again", "queues");

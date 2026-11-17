@@ -24,7 +24,8 @@
 // sink that could see one uses redactMediaCapability.
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { constants, lstatSync, realpathSync, type Stats } from "node:fs";
-import { open, type FileHandle } from "node:fs/promises";
+import { open } from "./counted-fs-promises.ts";
+import { type FileHandle } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, extname, join, parse, resolve, sep } from "node:path";
 import { Readable } from "node:stream";

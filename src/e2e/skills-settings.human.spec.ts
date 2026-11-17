@@ -3,7 +3,7 @@
 // so Skill Guard, the collection store and the bot gate all run for real.
 import { test, expect } from "./page-error-guard";
 import { createServer, type ViteDevServer } from "vite";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -134,7 +134,7 @@ test("a Blocked skill can be read and deleted but never switched on", async ({ p
   await expect(page.getByText("key-thief")).toHaveCount(0);
 });
 
-test("one Topic dropdown lists a topic, and it and the search clear each other", async ({ page }, info) => {
+test("one Topic dropdown lists every topic and keeps searches within the selected topic", async ({ page }, info) => {
   await page.goto(origin + "/__skills");
   const topic = page.getByLabel("Topic");
   await expect(topic).toBeVisible();
@@ -147,8 +147,17 @@ test("one Topic dropdown lists a topic, and it and the search clear each other",
   await expect(page.getByLabel("Search skills")).toHaveValue("");
   await expect(page.getByRole("list").filter({ has: page.getByRole("button") }).last().getByRole("button").first()).toBeVisible();
   await page.screenshot({ path: info.outputPath("topic.png"), fullPage: true });
+  const request = page.waitForRequest(request => {
+    const url = new URL(request.url());
+    return url.pathname === "/api/skills" && url.searchParams.get("q") === "invoice" && url.searchParams.get("category") === second;
+  });
   await page.getByLabel("Search skills").fill("invoice");
-  await expect(topic).toHaveValue("");
+  await expect(topic).toHaveValue(second!);
+  await request;
+  const browse = await (await page.request.get(origin + "/api/library/browse")).json();
+  await expect(topic.locator("option")).toHaveCount(browse.facets.length + 1);
+  await topic.selectOption("");
+  await expect(page.getByLabel("Search skills")).toHaveValue("");
 });
 
 test("a skill is duplicated, then the copy is edited and saved", async ({ page }, info) => {
@@ -195,8 +204,24 @@ test("editing a built-in skill edits the owner's own copy", async ({ page }, inf
 
 test("a search with no results says so", async ({ page }) => {
   await page.goto(origin + "/__skills");
+  const responseFor = (q: string) => page.waitForResponse(response => {
+    const url = new URL(response.url());
+    return url.pathname === "/api/skills" && url.searchParams.get("q") === q;
+  });
+  // This phrase contains real search words under the existing OR search.
+  // Waiting for the response prevents a transient empty list from passing.
+  const matches = responseFor("zzqxv nothing matches this");
   await page.getByLabel("Search skills").fill("zzqxv nothing matches this");
-  await expect(page.getByText("No skills match “zzqxv nothing matches this”.")).toBeVisible();
+  expect((await (await matches).json()).pagination.total).toBeGreaterThan(0);
+  await expect(page.locator("li button").first()).toBeVisible();
+  await expect(page.getByText("No skills match “zzqxv nothing matches this”.")).toHaveCount(0);
+  const empty = responseFor("zzqxv");
+  await page.getByLabel("Search skills").fill("zzqxv");
+  const result = await (await empty).json();
+  expect(result.library).toEqual([]);
+  expect(result.pagination.total).toBe(0);
+  await expect(page.getByText("No skills match “zzqxv”.")).toBeVisible();
+  await expect(page.getByRole("status")).toHaveText("0 of 0 skills");
 });
 
 test("Add a skill works inside the bot's own window, with nothing to close", async ({ page }, info) => {

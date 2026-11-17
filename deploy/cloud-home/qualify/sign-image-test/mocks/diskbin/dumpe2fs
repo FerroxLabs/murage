@@ -1,0 +1,14 @@
+#!/bin/bash
+. "$(dirname "$0")/common.sh"
+dev=${*: -1}
+feats="has_journal ext_attr resize_inode dir_index filetype extent 64bit flex_bg sparse_super large_file huge_file dir_nlink extra_isize metadata_csum"
+state=clean
+uuid=$ROOT_UUID
+case $dev in /dev/sda1) ;; *) uuid=$OTHER_UUID ;; esac
+if [[ $dev == /dev/sda1 && $scn == needs_recovery ]]; then feats="needs_recovery $feats"; fi
+if [[ $dev == /dev/sda1 && $scn == not_clean ]]; then state="not clean"; fi
+if [[ $dev == /dev/sda13 && $scn == boot_needs_recovery ]]; then feats="needs_recovery $feats"; fi
+echo "Filesystem volume name:   <none>"
+echo "Filesystem UUID:          $uuid"
+echo "Filesystem features:      $feats"
+echo "Filesystem state:         $state"

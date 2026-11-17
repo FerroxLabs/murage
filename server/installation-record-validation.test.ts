@@ -6,6 +6,7 @@ import { assertInstallationRecords } from "./installation-record-validation.ts";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
 import { RoutineManager } from "./routines.ts";
+import { readRoutinesWithRuns } from "./routine-runs-journal.ts";
 import { CalendarCallManager } from "./calendar-calls.ts";
 import { WebhookManager } from "./webhooks.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -99,10 +100,14 @@ it("round trips actual manager-produced schedules and acknowledgements with no p
     expect(webhooks.receive(hook.webhook.endpointId, hook.secret, { payload: {}, deliveryId: "one-delivery" }).duplicate).toBe(true);
     const names = ["routines.json", "calendar-calls.json", "webhooks.json"];
     const before = new Map(names.map(path => [path, readFileSync(join(data, path), "utf8")]));
+    // MAIN RULING INT-CONFLICT-DEFAULT: c0261fd8c6 journals generation-scoped
+    // receipts; compare the real durable projection and keep source-byte checks.
+    const expectedReceipts = readRoutinesWithRuns(join(data, "routines.json")).routineRequestReceipts;
+    expect(expectedReceipts).toHaveLength(1);
     await writeInstallationArchive(data, archive);
     const restored = await prepareInstallationRestore(archive, root);
     const read = (path: string) => JSON.parse(readFileSync(join(restored.stateDirectory, path), "utf8"));
-    expect(read("routines.json").routineRequestReceipts).toEqual(JSON.parse(before.get("routines.json")!).routineRequestReceipts);
+    expect(read("routines.json").routineRequestReceipts).toEqual(expectedReceipts);
     expect(read("webhooks.json").deliveries).toEqual(JSON.parse(before.get("webhooks.json")!).deliveries);
     expect(read("webhooks.json").webhooks[0].enabled).toBe(false);
     expect(read("calendar-calls.json").calls[0].nextRunAt).toBeNull();

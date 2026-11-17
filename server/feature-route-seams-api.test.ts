@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { withTurnSecrets } from "./testing/fixture-dump.ts";
+import { LEDGER_REFUSAL_LINE } from "./ledger-refusal.ts";
 
 // Isolated HTTP server with the fake Claude engine only. Proves the 0.1.52 K0
 // route prefixes and hooks are wired through server/index.ts with the same
@@ -21,7 +22,14 @@ const call = async (method: string, path: string, headers: Record<string, string
 const dump = () => { try { return withTurnSecrets(JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8"))); } catch { return null; } };
 
 beforeAll(async () => {
-  fixture = await launchVerificationServer({}, undefined, { instrumentationSource: "process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';" });
+  fixture = await launchVerificationServer({}, undefined, { instrumentationSource: `
+    process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';
+    const fs=await import('node:fs'),path=await import('node:path');
+    const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');
+    const config=JSON.parse(fs.readFileSync(file,'utf8'));
+    config.instances.verificationHold={...config.instances.verification,environment:{FAKE_CLAUDE_MODE:'hang'}};
+    fs.writeFileSync(file,JSON.stringify(config));
+  ` });
   const proof = await call("GET", "/api/desktop-secret");
   desktop = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.body.secret };
   model = (await call("GET", "/api/instances", desktop)).body.instances.find((instance: any) => instance.instanceId === "verification").models.options[0].id;
@@ -151,8 +159,10 @@ it("reads, saves, refuses stale and bot-busy saves, and saves a version through 
 
 it("serves resolve-image-reference only to the active turn's agents capability", async () => {
   const unauthenticated = await call("POST", "/api/internal/resolve-image-reference", {}, { source: { kind: "attachment", attachmentId: "x.png" } });
-  expect(unauthenticated.status).toBe(401);
-  const created = await call("POST", "/api/bots", desktop, { name: "Reference seam fixture", modelSelection: { instanceId: "verification", model } });
+  // MAIN RULING INT-CONFLICT-DEFAULT 9ebeda15406 5be0eafbea4: an unknown credential receives the uniform context-free refusal.
+  expect(unauthenticated.status).toBe(409);
+  expect(unauthenticated.text).toBe(LEDGER_REFUSAL_LINE);
+  const created = await call("POST", "/api/bots", desktop, { name: "Reference seam fixture", modelSelection: { instanceId: "verificationHold", model } });
   expect(created.status).toBe(201);
   const bot = created.body.bot;
   try {
@@ -165,16 +175,45 @@ it("serves resolve-image-reference only to the active turn's agents capability",
       // a turn start on a busy Windows runner can take well over 10 s; the test allows 60 s
     }, { timeout: 30_000 }).toBe(true);
     const auth = { authorization: `Bearer ${token}` };
-    expect((await call("GET", "/api/internal/resolve-image-reference", auth)).status).toBe(405);
     expect((await call("POST", "/api/internal/resolve-image-reference?botId=someone-else", auth, {})).status).toBe(403);
     // F5-T4 filled the K0 skeleton (intended behavior change from 501): the
     // route resolves real bytes, so a workspace file that is not there is
-    // refused as missing. The authority assertions around it are unchanged.
+    // refused as missing only while the agents capability is active.
     const resolved = await call("POST", "/api/internal/resolve-image-reference", auth, { source: { kind: "workspace", relativePath: "outputs/cover.png" } });
     expect(resolved.status).toBe(410);
     expect(resolved.body).toMatchObject({ code: "missing" });
+    // A live capability must also prepare and deliver real image bytes, not merely a missing-file error.
+    const root = join(fixture.info.dataDir, "workspaces", bot.id, "threads", bot.threadId);
+    mkdirSync(join(root, "references"), { recursive: true });
+    const u32 = (value: number) => { const bytes = Buffer.alloc(4); bytes.writeUInt32BE(value); return bytes; };
+    const image = Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), u32(13), Buffer.from("IHDR"), u32(3), u32(2), Buffer.from([8, 6, 0, 0, 0]), u32(0), Buffer.alloc(64, 17), Buffer.from("IEND")]);
+    writeFileSync(join(root, "references", "fixture.png"), image);
+    const prepared = await call("POST", "/api/internal/resolve-image-reference", auth, { source: { kind: "workspace", relativePath: "references/fixture.png" } });
+    expect(prepared.status).toBe(200);
+    expect(prepared.body.references).toHaveLength(1);
+    expect(readFileSync(join(fixture.info.dataDir, "attachments", prepared.body.reference.id)).equals(image)).toBe(true);
+    expect((await call("GET", `/api/threads/${bot.threadId}/messages?limit=100`, desktop)).text).toContain("Prepared a reference image");
     expect((await call("POST", `/api/bots/${bot.id}/interrupt`, desktop, { threadId: bot.threadId })).status).toBe(200);
-    await expect.poll(async () => (await call("POST", "/api/internal/resolve-image-reference", auth, {})).status, { timeout: 10000 }).toBe(401);
+    // MAIN RULING INT-CONFLICT-DEFAULT 9ebeda15406 / 93532017acc: P3 authenticates a retired generation before consulting its binding; it returns the exact generic 401.
+    await expect.poll(async () => {
+      const stale = await call("POST", "/api/internal/resolve-image-reference", auth, {});
+      return { status: stale.status, text: stale.text };
+    }, { timeout: 10000 }).toEqual({ status: 401, text: JSON.stringify({ error: "internal turn owner is unavailable" }) });
+    // Interrupt above revoked a capability that was live immediately before it.
+    // Exercise bad-method sealing on a fresh generation so it cannot make that proof vacuous.
+    expect((await call("POST", `/api/bots/${bot.id}/messages`, desktop, { threadId: bot.threadId, text: "__fixture_hold_authority__ reference-method" })).status).toBe(202);
+    let nextToken = "";
+    await expect.poll(() => {
+      const captured = dump();
+      nextToken = captured?.mcpConfig?.mcpServers?.agents?.env?.MURAGE_COMMS_TOKEN ?? "";
+      return (JSON.stringify(captured?.prompt) ?? "").includes("reference-method") && nextToken.length > 0 && nextToken !== token;
+    }, { timeout: 30_000 }).toBe(true);
+    const nextAuth = { authorization: `Bearer ${nextToken}` };
+    expect((await call("POST", "/api/internal/resolve-image-reference", nextAuth, { source: { kind: "workspace", relativePath: "outputs/cover.png" } })).status).toBe(410);
+    // MAIN RULING INT-CONFLICT-DEFAULT 9ebeda15406 5be0eafbea4: an unregistered method seals this separate live mount.
+    const wrongMethod = await call("GET", "/api/internal/resolve-image-reference", nextAuth);
+    expect(wrongMethod.status).toBe(409);
+    expect(wrongMethod.text).toBe(LEDGER_REFUSAL_LINE);
   } finally {
     await call("POST", `/api/bots/${bot.id}/interrupt`, desktop, { threadId: bot.threadId });
   }

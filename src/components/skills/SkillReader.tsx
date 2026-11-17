@@ -8,8 +8,12 @@
 // Blocked skill has no switch and no Add button at all.
 import { ChevronDown, ChevronLeft, ChevronRight, Copy, Pencil, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import Markdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { ChatMarkdown } from "../ChatMarkdown";
+import { MarkdownImage } from "../ImageMedia";
+import { MessageExternalLink } from "../ThreadLinkMenu";
 import { Switch } from "../SettingsPrimitives";
 import { BUILT_IN_COPY_NOTE, SkillEditor } from "./SkillEditor";
 import { VerdictBadge } from "./VerdictBadge";
@@ -41,6 +45,8 @@ export interface SkillReaderViewProps {
   onEdit?(): void;
   /** A line about what just happened (a copy made, a save that switched a bot off). */
   notice?: string;
+  /** The library supplies its own header, tabs, and bot controls. Always read the full instructions. */
+  instructionsOnly?: boolean;
 }
 
 const LINK = "-ml-1.5 flex items-center gap-1 rounded px-1.5 py-1 text-[12px] text-ink-secondary hover:bg-control hover:text-ink";
@@ -55,6 +61,17 @@ export function SkillReaderView(props: SkillReaderViewProps) {
   const inBot = mode.kind === "bot" ? skill.bots.find((bot) => bot.botId === mode.botId) : undefined;
   const body = skillBody(skill.text);
   const text = props.showAll || body.length <= READER_PREVIEW_CHARS ? body : body.slice(0, READER_PREVIEW_CHARS);
+
+  if (props.instructionsOnly) return (
+    <div className="rme !overflow-visible !border-0 !bg-transparent">
+      <article className="ProseMirror min-w-0 [overflow-wrap:anywhere] text-ink">
+        {body.trim() ? <Markdown remarkPlugins={[remarkGfm]} components={{
+          img: ({ src, alt }) => <MarkdownImage src={typeof src === "string" ? src : undefined} alt={alt} />,
+          a: ({ href, children }) => <MessageExternalLink href={href}>{children}</MessageExternalLink>,
+        }}>{body}</Markdown> : <p className="text-ink-secondary">This skill is empty.</p>}
+      </article>
+    </div>
+  );
 
   return (
     <div className="mt-1">

@@ -70,3 +70,21 @@ describe("limit field and dollars", () => {
     expect(SUGGESTED_MONTHLY_LIMIT_USD).toBe(1000);
   });
 });
+
+it("pause state follows the current credential and combined holds offer only useful actions", async () => {
+  const { matchedPause, pauseActions, pauseLines } = await import("./spend-pause");
+  const pause = { capability: "on", limitUsd: 100, figure: null, headsUpOnlyNotice: false, held: [{ credentialId: "account", holds: [{ kind: "limit" }] }] };
+  expect(matchedPause({ fingerprint: "old", pause }, "new")).toBeNull();
+  expect(matchedPause({ fingerprint: "new", pause }, "new")).toEqual(pause);
+  expect(matchedPause({ fingerprint: "new", pause: { ...pause, held: [{ credentialId: "account", holds: [{ kind: "other" }] }] } }, "new")).toBeNull();
+  expect(pauseActions([{ kind: "limit" }])).toEqual(["raise", "check"]);
+  expect(pauseActions([{ kind: "limit" }, { kind: "flux", limit: "monthly_tokens" }])).toEqual(["check", "openFlux"]);
+  expect(pauseLines([{ kind: "unknown" }, { kind: "flux", limit: "bot_monthly_spend" }], 100)).toEqual(["Murage cannot read Flux Router's figure right now.", "A limit in Flux Router has also been reached."]);
+});
+
+it("a malformed held row is dropped without crashing the owner meter", async () => {
+  const { matchedPause } = await import("./spend-pause");
+  for (const row of [null, undefined, 1, "hold", { credentialId: "account", holds: [null] }]) {
+    expect(matchedPause({ fingerprint: "current", pause: { capability: "on", limitUsd: 100, figure: null, headsUpOnlyNotice: false, held: [row] } }, "current")).toBeNull();
+  }
+});

@@ -17,6 +17,7 @@ import { createAcpDriver, type AcpSupport } from "./core.ts";
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
 const SUPPORT: AcpSupport = {
   driverKind: "subagentTest",
+  fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
   displayName: "Subagent Test",
   models: { default: "m-one", options: [{ id: "m-one", label: "One" }] },
   defaultCli: "fake-subagent",

@@ -1,3 +1,5 @@
+import { fixtureDisplayApi } from './testing/display-fixture.ts';
+import { prepareFixtureRecall } from './testing/recall-ready-fixture.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -22,6 +24,7 @@ import { makeTestHome, removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { assertSafeToWipe } from "./testing/safe-wipe.mjs";
 import { freePortBlock } from "./testing/ports.ts";
 import { raiseLevel } from "./testing/raise-level.ts";
+import { fakeEngineImportArgs, powerBlockTestEnv } from "./testing/power-block-test.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -39,7 +42,12 @@ let child: ChildProcess;
 let home: string;
 let stderr = "";
 
-const request = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
+const rawRequest = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> => {
+  const message = method === "POST" && /^\/api\/bots\/([^/]+)\/messages$/.exec(path);
+  if (message && typeof (body as {threadId?:unknown})?.threadId === 'string') {
+    // Prepare the real serving view before this fixture's turn; retain all authority assertions.
+    await prepareFixtureRecall(join(home, '.murage'), message[1]!, (body as {threadId:string}).threadId);
+  }
   const res = await fetch(`${base}${path}`, {
     method,
     headers: { ...headers, ...(body ? { "content-type": "application/json" } : {}) },
@@ -47,6 +55,7 @@ const request = async (method: string, path: string, body?: unknown, headers: Re
   });
   return { status: res.status, body: await res.json().catch(() => null) };
 };
+const request = fixtureDisplayApi(() => join(home, '.murage', 'messages.db'), rawRequest);
 const desktopApi = (method: string, path: string, body?: unknown) => request(method, path, body, desktopHeaders);
 const threadMessages = async (threadId: string) => ((await desktopApi("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages ?? []) as any[];
 const cardById = async (threadId: string, requestId: string) => (await threadMessages(threadId)).find((m) => m.card?.requestId === requestId)?.card;
@@ -125,9 +134,10 @@ describe.skipIf(process.platform === "win32")("answering a card needs the owner'
         },
       }),
     );
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, [...fakeEngineImportArgs(), "--import", new URL("./testing/recall-ready-preload.mjs", import.meta.url).href, join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
-      env: {
+      env: { ...powerBlockTestEnv(),
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         HOME: home,
         USERPROFILE: home,

@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "f2d348b4029a57845cb007e69c272afc4380a91e",
+  "date": "2026-11-15",
+  "base": "7ed777368bf7c1c63db51363c159e19e14df7825",
+  "scope": "1115-COPY-LEDGER-REVIEW: retained accepted verdicts, corrected last-changing locale-line author",
+  "strings": {
+    "en:memoryWords.scaleFreezeTitle": {
+      "text": "Memory search has an update coming",
+      "en": "Memory search has an update coming",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "en:memoryWords.scaleFreezeBody": {
+      "text": "Murage is keeping every new memory. Search shows your older memories now, and a coming Murage update adds the newest ones to search. Nothing is lost.",
+      "en": "Murage is keeping every new memory. Search shows your older memories now, and a coming Murage update adds the newest ones to search. Nothing is lost.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    }
+  },
+  "files": {}
+}

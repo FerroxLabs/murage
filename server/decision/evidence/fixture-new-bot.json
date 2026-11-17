@@ -1,0 +1,26 @@
+{
+  "success": true,
+  "bot": {
+    "id": "bd96fb03-a504-422a-ac5d-3ab9787dc2d8",
+    "name": "Verification Probe",
+    "title": "",
+    "description": "",
+    "section": null,
+    "chiefOfStaff": false,
+    "modelSelection": {
+      "instanceId": "verification",
+      "model": "claude-sonnet-5-5"
+    },
+    "busy": false,
+    "unread": false,
+    "activeTaskId": "c0c2c120-cdbf-48b0-8b36-6ed99bdba531",
+    "tasks": [
+      {
+        "taskId": "c0c2c120-cdbf-48b0-8b36-6ed99bdba531",
+        "title": "New task",
+        "createdAt": 1794384858257,
+        "active": true
+      }
+    ]
+  }
+}

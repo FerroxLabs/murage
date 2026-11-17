@@ -1,0 +1,105 @@
+{
+ "_note": "CONTRACT fixtures, hand-written from OWNER-VIEW-WIRE-CONTRACT.md. Replaced by real server output when the r3.4 server build lands.",
+ "homeView": {
+  "enabled": true,
+  "accountState": "active",
+  "rows": [
+   {
+    "rowId": "bot:b1",
+    "section": "bot",
+    "botId": "b1",
+    "inboxId": "in_1",
+    "keyIds": [
+     "k1"
+    ],
+    "target": "bot:b1",
+    "address": "ava@mail.example",
+    "botName": "Ava",
+    "line": "Ava has email at ava@mail.example.",
+    "actions": [
+     {
+      "kind": "remove",
+      "tokenId": "tok_b_1",
+      "enabled": true,
+      "path": "/api/email/bots/b1/remove"
+     }
+    ]
+   },
+   {
+    "rowId": "parked:b2",
+    "section": "parked",
+    "botId": "b2",
+    "inboxId": "in_2",
+    "keyIds": [
+     "k2"
+    ],
+    "target": "park:p2",
+    "address": "max@mail.example",
+    "botName": "Max",
+    "line": "This address came back with a restore. Keep it or remove it.",
+    "actions": [
+     {
+      "kind": "keep",
+      "tokenId": "tok_p_2k",
+      "enabled": true,
+      "path": "/api/email/parked/b2/keep"
+     },
+     {
+      "kind": "remove",
+      "tokenId": "tok_p_2r",
+      "enabled": true,
+      "path": "/api/email/parked/b2/remove"
+     }
+    ]
+   },
+   {
+    "rowId": "other_setup:in_9",
+    "section": "other_setup",
+    "botId": null,
+    "inboxId": "in_9",
+    "keyIds": [],
+    "target": "inbox:in_9",
+    "address": "old@mail.example",
+    "botName": null,
+    "line": "old@mail.example is set up on another install.",
+    "actions": [
+     {
+      "kind": "remove",
+      "tokenId": "tok_f_9",
+      "enabled": true,
+      "path": "/api/email/other-setups/in_9/remove"
+     }
+    ]
+   },
+   {
+    "rowId": "restore_check:home",
+    "section": "restore_check",
+    "botId": null,
+    "inboxId": null,
+    "keyIds": [],
+    "target": null,
+    "address": null,
+    "botName": null,
+    "line": "Check your email setup after the restore.",
+    "actions": [
+     {
+      "kind": "confirm_inventory",
+      "tokenId": "tok_r_1",
+      "enabled": true,
+      "path": "/api/email/restore/confirm-inventory"
+     }
+    ]
+   }
+  ]
+ },
+ "actionSuccess": {
+  "enabled": true,
+  "accountState": "active",
+  "rows": []
+ },
+ "refusal": {
+  "error": "A Keep is still finishing. Try again in a moment.",
+  "code": "keep_pending",
+  "rowId": "parked:b2"
+ }
+}

@@ -1,0 +1,32 @@
+Owner: win-sac-sign (expected output); MAIN (real execution).
+
+Successful run, exit 0:
+PASS preflight
+PASS presecret-both-workflows
+PASS acquisition
+PASS service-admission
+PASS sealed-tree-races
+PASS native-launch-network
+PASS locked-build
+PASS crash-receipt-write
+PASS crash-assignment
+PASS crash-pipe-disconnect
+PASS crash-bootstrap-death
+PASS crash-driver-death
+PASS crash-service-death
+PASS crash-controller-death
+PASS authenticode
+PASS installed-coverage
+PASS extraction-contract
+PASS vm-cleanup
+PASS sac-real-turn-s4
+PASS promotion-both-entries
+WINDOWS_WITNESS_PASS RELEASE_HOLD
+
+Independent verify, exit 0:
+WINDOWS_WITNESS_PASS RELEASE_HOLD
+
+Recovery cleanup, exit 0:
+WINDOWS_WITNESS_CLEANUP_PASS RELEASE_HOLD
+
+Any missing/changed enrollment or collector, skipped/replayed case, missing capture, incorrect typed observation or remaining resource: exit 1. Retain captures; do not promote.

@@ -3,6 +3,7 @@
 //
 // 1.0.3 lane 2 (LANE2-MEMORY-DESIGN r3): the age key, its backfill, the index in age order (fill, rename cutover, sweep), owner
 // search and browse over the three keyed streams, the cursor rule, the EXPLAIN pins, and the downgrade round trip.
+import { closeSealed, openTestIndex, put, workerTick } from "./testing/open-index.ts";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -10,7 +11,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database, transaction } from "../database.ts";
 import { ageFillBelow, downgradeMemoryIndexFile, lexicalGeneration, lexicalRowidsAged, sweepAgeRowidsStep } from "./age-index.ts";
+import { openIndexWal, IndexWalWriter } from "./index-wal.ts";
 import { MemoryIndex } from "./index.ts";
+import { MEMW_MERGE_PAGES, MEMW_W_MERGE_BYTES } from "./memw-steps.ts";
 import { closeMemoryIndexReader, lexicalPageSliced, RECALL_SEARCH_SQL } from "./index-reader.ts";
 import { ownerMemoryList, ownerSearchTrace, ownerSearchWork, OWNER_REORDER_NOTICE, type OwnerListInput } from "./owner-list.ts";
 import { ensureScope, reconcileMemoryRoster } from "./policy.ts";
@@ -24,6 +27,31 @@ const roster = { bots: [{ id: "a", threadId: "ta" }, { id: "b", threadId: "tb" }
 beforeEach(() => { closeMemoryIndexReader(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); reconcileMemoryRoster(roster); ownerSearchTrace.on = false; ownerSearchTrace.statements = []; ownerSearchTrace.times = []; });
 // every handle a test opens on the index is closed after it: Windows will not remove an open file, and the next beforeEach wipes the folder
 const opened: Array<{ close(): void }> = [];
+/** One fill step as the worker runs it: every iteration is a worker tick (tick, maintenance step, drain seal; testing/open-index.ts workerTick),
+ * and the age fill runs only when the worker's own gate says so. The step's own checked write is settled by the next tick's maintenance step. */
+let lastStep = "";
+async function fillStep(index: MemoryIndex, main: DatabaseSync, options: Parameters<MemoryIndex["fillAgeIndex"]>[1]) {
+  for (let guard = 0; guard < 1000; guard++) {
+    const tick = await workerTick(index);
+    if (!tick.fillMayRun) { await new Promise<void>(resolve => setTimeout(resolve, 5)); lastStep = `tick ${JSON.stringify(tick.step)}`; continue; }
+    const step = index.fillAgeIndex(main, options); lastStep = JSON.stringify(step);
+    if (step.waiting !== "gate" && !step.busy) { await workerTick(index); return step; }
+    await new Promise<void>(resolve => setTimeout(resolve, 5));
+  }
+  throw new Error(`age fill stayed gated or busy after 1000 worker ticks: ${lastStep} stop ${JSON.stringify(index.stopInfo())} L ${(index as unknown as { writer: { L(): number } }).writer.L()}`);
+}
+/** Drive staged steps to the requested boundary, failing instead of silently exhausting retries. */
+async function fillUntil(index: MemoryIndex, main: DatabaseSync, options: Parameters<MemoryIndex["fillAgeIndex"]>[1], stop: (step: ReturnType<MemoryIndex["fillAgeIndex"]>) => boolean) {
+  for (let guard = 0; guard < 10_000; guard++) {
+    const step = await fillStep(index, main, options);
+    if (stop(step)) return step;
+    if (step.blocked) throw new Error(`age fill blocked: ${JSON.stringify(step)}`);
+  }
+  throw new Error("age fill did not reach its boundary after 10000 steps");
+}
+/** Staged steps until one copies rows (the start and the D11 sum steps copy nothing). */
+const firstCopy = (index: MemoryIndex, main: DatabaseSync, maxKeys: number) =>
+  fillUntil(index, main, { maxKeys }, step => Boolean(step.copied || step.blocked || step.done));
 afterEach(() => { for (const handle of opened.splice(0)) try { handle.close(); } catch { /* already closed */ } closeMemoryIndexReader(); });
 
 const insert = (db: DatabaseSync, id: string, scope: string, at: number, text = `note ${id}`, state = "active", kind = "fact", pinned = 0) =>
@@ -45,21 +73,21 @@ async function allPages(input: OwnerListInput, limit = 200): Promise<string[][]>
   return pages;
 }
 /** The index as the helper writes it in age order: every FTS row at the record's age key. */
-function keyedIndex(db: DatabaseSync, rows: Array<{ id: string; version?: number; scopeId: string; text: string }>): MemoryIndex {
+async function keyedIndex(db: DatabaseSync, rows: Array<{ id: string; version?: number; scopeId: string; text: string }>): Promise<MemoryIndex> {
   // the reader a previous page opened lets go first: Windows will not remove a file another handle holds open
   closeMemoryIndexReader();
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
-  const index = new MemoryIndex(INDEX_PATH()); opened.push(index);
-  index.upsert(rows.map(row => ({ id: row.id, version: row.version ?? 1, scopeId: row.scopeId, text: row.text, deleted: false, ageKey: keyOf(db, row.id, row.version ?? 1) })));
+  const index = await openTestIndex(INDEX_PATH()); opened.push(index);
+  await seedRows(index, rows.map(row => ({ id: row.id, version: row.version ?? 1, scopeId: row.scopeId, text: row.text, deleted: false, ageKey: keyOf(db, row.id, row.version ?? 1) })));
   return index;
 }
 /** An index an earlier build wrote: automatic rowids in projection order, not in age order. */
-function legacyIndex(rows: Array<{ id: string; scopeId: string; text: string }>): void {
+async function legacyIndex(rows: Array<{ id: string; scopeId: string; text: string }>): Promise<void> {
   closeMemoryIndexReader();
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
-  const index = new MemoryIndex(INDEX_PATH());
-  index.upsert(rows.map(row => ({ id: row.id, version: 1, scopeId: row.scopeId, text: row.text, deleted: false })));
-  index.close();
+  const index = await openTestIndex(INDEX_PATH());
+  await put(index, rows.map(row => ({ id: row.id, version: 1, scopeId: row.scopeId, text: row.text, deleted: false })));
+  await closeSealed(index);
   const raw = new DatabaseSync(INDEX_PATH());
   raw.exec("DELETE FROM index_meta WHERE key IN ('lexical_rowids','lexical_generation')");
   raw.close();
@@ -98,7 +126,7 @@ describe("the age key: one integer, allocated by the trigger", () => {
     expect(keyOf(db, "gap")).toBe(base + 5000);
   });
 
-  it("the domain: created_at above 4398046511040 is refused; at the top every key of the span is a safe integer", () => {
+  it("the domain: created_at above 4398046511040 is refused; at the top every key of the span is a safe integer", async () => {
     const db = database(), scope = ensureScope("bot", "a");
     expect(() => insert(db, "beyond", scope, CREATED_AT_MAX + 1)).toThrow(/MEMORY_CREATED_AT_RANGE/);
     transaction(tx => { for (let n = 0; n < AGE_KEY_WINDOW; n++) insert(tx, `t${n}`, scope, CREATED_AT_MAX); });
@@ -287,19 +315,22 @@ describe("the index in age order: fill, rename cutover under a reader mid-page, 
 
   it("fills newest first in slices with a frontier, cuts over by rename with a reader mid-page, and every consumer keeps its SQL", async () => {
     const { db, rows } = fixture(2000);
-    legacyIndex(rows);
-    const index = new MemoryIndex(INDEX_PATH()), main = authority();
+    await legacyIndex(rows);
+    const index = await openTestIndex(INDEX_PATH()), main = authority();
     expect(index.ageFillOwed()).toBe(true);
     const generation = index.lexicalGeneration();
     // a slice: 256 keys newest first, the frontier recorded
-    const step = index.fillAgeIndex(main, { maxKeys: 256, maxMs: 1000 });
+    const step = await firstCopy(index, main, 256);
     expect(step).toMatchObject({ done: false, copied: 256, walked: 256 });
     const raw = new DatabaseSync(INDEX_PATH(), { readOnly: true });
     expect(ageFillBelow(raw)).toBe(keyOf(db, "p01744"));
     expect(raw.prepare("SELECT count(*) AS n FROM lexical_age").get()!.n).toBe(256);
     expect(raw.prepare("SELECT min(rowid) AS lo,max(rowid) AS hi FROM lexical_age").get()).toEqual({ lo: keyOf(db, "p01744"), hi: keyOf(db, "p01999") });
     // the rest, except the last slice
-    while ((ageFillBelow(raw) ?? 0) > keyOf(db, "p00100")) expect(index.fillAgeIndex(main, { maxKeys: 256, maxMs: 1000 }).done).toBe(false);
+    for (let guard = 0; (ageFillBelow(raw) ?? 0) > keyOf(db, "p00100"); guard++) {
+      if (guard >= 10_000) throw new Error("age fill did not reach the slice frontier after 10000 steps");
+      expect((await fillStep(index, main, { maxKeys: 256, maxMs: 1000 })).done).toBe(false);
+    }
     // a reader mid-page on the OLD table: a statement open across the cutover keeps its snapshot
     const reader = new DatabaseSync(INDEX_PATH(), { readOnly: true });
     const statement = reader.prepare(RECALL_SEARCH_SQL);
@@ -307,64 +338,87 @@ describe("the index in age order: fill, rename cutover under a reader mid-page, 
     const seen: Array<Record<string, unknown>> = [];
     for (let n = 0; n < 10; n++) { const next = scan.next(); if (next.done) break; seen.push(next.value as Record<string, unknown>); }
     expect(seen).toHaveLength(10);
-    let last = index.fillAgeIndex(main, { maxKeys: 4096, maxMs: 10_000 });
-    while (!last.done) last = index.fillAgeIndex(main, { maxKeys: 4096, maxMs: 10_000 });
+    const last = await fillUntil(index, main, { maxKeys: 4096, maxMs: 10_000 }, step => Boolean(step.cutover || step.blocked));
     expect(last.cutover).toBe(true);
-    expect(index.ageFillOwed()).toBe(false);
+    expect(index.ageFillOwed()).toBe(true); // D8: retiring until lexical_retired is emptied and dropped
     for (const next of scan) seen.push(next as Record<string, unknown>);
     expect(seen).toHaveLength(2000);
     // the same statement object again: re-prepared on SQLITE_SCHEMA, now over the renamed table in age order
     const after = statement.all('"durable"', JSON.stringify([rows[0]!.scopeId]), 2000, 0);
     expect(after).toHaveLength(2000);
     expect(reader.prepare("SELECT rowid AS r,id FROM lexical ORDER BY rowid DESC LIMIT 3").all().map(row => [row.id, row.r])).toEqual([["p01999", keyOf(db, "p01999")], ["p01998", keyOf(db, "p01998")], ["p01997", keyOf(db, "p01997")]]);
+    expect(reader.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'lexical_retired%'").all().length).toBeGreaterThan(0);
+    if (index.ageFillOwed()) await fillUntil(index, main, { maxKeys: 4096 }, () => !index.ageFillOwed());
+    expect(index.ageFillOwed()).toBe(false);
     expect(reader.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'lexical%' ORDER BY name").all().map(row => row.name)).toEqual(["lexical", "lexical_config", "lexical_content", "lexical_data", "lexical_docsize", "lexical_idx", "lexical_keys"]);
     expect(lexicalRowidsAged(reader)).toBe(true);
     expect(lexicalGeneration(reader)).toBe(generation + 1);
     reader.close(); raw.close();
     // the helper's own consumers after the cutover: upsert at the key, the ranked search, segment recovery, optimize
     insert(db, "fresh", rows[0]!.scopeId, 1_700_000_010_000, "durable needlefish fresh");
-    index.upsert([{ id: "fresh", version: 1, scopeId: rows[0]!.scopeId, text: "durable needlefish fresh", deleted: false, ageKey: keyOf(db, "fresh") }]);
+    await put(index, [{ id: "fresh", version: 1, scopeId: rows[0]!.scopeId, text: "durable needlefish fresh", deleted: false, ageKey: keyOf(db, "fresh") }]);
     const check = new DatabaseSync(INDEX_PATH(), { readOnly: true });
     expect(check.prepare("SELECT fts_rowid AS r FROM lexical_keys WHERE id='fresh'").get()!.r).toBe(keyOf(db, "fresh"));
     expect(check.prepare("SELECT rowid AS r FROM lexical WHERE id='fresh'").get()!.r).toBe(keyOf(db, "fresh"));
     check.close();
     expect(index.search("needlefish", [{ id: "fresh", version: 1 }, { id: "p00100", version: 1 }], null, "model", 10).hits.map(hit => hit.id).sort()).toEqual(["fresh", "p00100"]);
-    expect(index.recoverSegments()).toBe("none");
+    expect(await index.maintenanceStep()).toMatchObject({ran:null});
     expect(index.segmentCount()).toBeGreaterThan(0);
-    index.close(); main.close();
+    await closeSealed(index); main.close();
     // the main process's reader and recall over the renamed table
     const page = await lexicalPageSliced("needlefish", [rows[0]!.scopeId], 50);
     expect(page?.hits.length).toBeGreaterThanOrEqual(20);
     expect((await list({ botId: "a", query: "needlefish" })).rows.slice(0, 3).map(row => row.id)).toEqual(["fresh", "p01900", "p01800"]);
   });
 
-  it("the sweep puts a row an older binary wrote at an automatic rowid back at its key", () => {
+  it("the sweep puts a row an older binary wrote at an automatic rowid back at its key", async () => {
     const { db, rows } = fixture(300);
-    const index = keyedIndex(db, rows), main = authority();
-    index.close();
+    const index = await keyedIndex(db, rows), main = authority();
+    await index.prepareExit();
+    await closeSealed(index);
     // an older binary's write: an automatic rowid for a record that has a key
     insert(db, "old-binary", rows[0]!.scopeId, 1_700_000_000_150, "written by 1.0.2");
-    const raw = new DatabaseSync(INDEX_PATH());
-    raw.exec("INSERT INTO entries VALUES('old-binary',1,'s','written by 1.0.2')");
-    const inserted = raw.prepare("INSERT INTO lexical VALUES('old-binary',1,'written by 1.0.2')").run();
-    raw.prepare("INSERT INTO lexical_keys VALUES('old-binary',1,?)").run(inserted.lastInsertRowid);
-    let swept = sweepAgeRowidsStep(raw, main, { maxRows: 64 }), fixed = 0;
+    const legacy = new DatabaseSync(INDEX_PATH());
+    legacy.exec("INSERT INTO entries VALUES('old-binary',1,'s','written by 1.0.2')");
+    const inserted = legacy.prepare("INSERT INTO lexical VALUES('old-binary',1,'written by 1.0.2')").run();
+    legacy.prepare("INSERT INTO lexical_keys VALUES('old-binary',1,?)").run(inserted.lastInsertRowid);
+    // Finish the older binary's writes before opening the same checked WAL writer as MemoryIndex.
+    legacy.exec("PRAGMA wal_checkpoint(TRUNCATE)");
+    legacy.close();
+    const core = openIndexWal(INDEX_PATH(), { charge: async () => true });
+    expect(core.verdict.state).not.toBe("stopped");
+    expect((await core.wal.openCheck()).state).toBe("writable");
+    const raw = core.writable, writer = core.wal;
+    opened.push({ close: () => (writer as IndexWalWriter).closeForQuarantine() });
+    let swept = sweepAgeRowidsStep(raw, writer, main, { maxRows: 64 }), fixed = 0;
+    await writer.check();
     fixed += swept.fixed;
-    while (!swept.done) { swept = sweepAgeRowidsStep(raw, main, { maxRows: 64 }); fixed += swept.fixed; }
+    for (let guard = 0; !swept.done; guard++) {
+      if (guard > 200) throw new Error(`sweep never finished: ${JSON.stringify(swept)}`);
+      if (swept.waiting === "gate" || swept.busy) {
+        // Like worker maintenance, merge through the checked writer before retrying the sweep.
+        writer.write("merge", MEMW_W_MERGE_BYTES, () => {
+          raw.exec(`INSERT INTO lexical(lexical,rank) VALUES('merge',${MEMW_MERGE_PAGES})`);
+        });
+        await writer.check();
+      }
+      swept = sweepAgeRowidsStep(raw, writer, main, { maxRows: 64 }); await writer.check(); fixed += swept.fixed;
+    }
     expect(fixed).toBe(1);
     expect(raw.prepare("SELECT fts_rowid AS r FROM lexical_keys WHERE id='old-binary'").get()!.r).toBe(keyOf(db, "old-binary"));
     expect(raw.prepare("SELECT rowid AS r FROM lexical WHERE id='old-binary'").get()!.r).toBe(keyOf(db, "old-binary"));
     expect(raw.prepare("SELECT count(*) AS n FROM lexical").get()!.n).toBe(301);
-    raw.close(); main.close();
+    await writer.prepareExit();
+    (writer as IndexWalWriter).closeForQuarantine(); main.close();
   });
 
-  it("the downgrade step leaves the index file as 1.0.2 wrote it and the main file without the lane's objects; the next open makes them again", () => {
+  it("the downgrade step leaves the index file as 1.0.2 wrote it and the main file without the lane's objects; the next open makes them again", async () => {
     const { db, rows } = fixture(50);
-    legacyIndex(rows);
-    const index = new MemoryIndex(INDEX_PATH()), main = authority();
-    index.fillAgeIndex(main, { maxKeys: 10, maxMs: 1000 });
-    index.close(); main.close();
-    expect(downgradeMemoryIndexFile(INDEX_PATH())).toBe(true);
+    await legacyIndex(rows);
+    const index = await openTestIndex(INDEX_PATH()), main = authority();
+    expect((await firstCopy(index, main, 10)).copied).toBeGreaterThan(0);
+    await closeSealed(index); main.close();
+    expect(await downgradeMemoryIndexFile(INDEX_PATH())).toBe(true);
     const raw = new DatabaseSync(INDEX_PATH(), { readOnly: true });
     expect(raw.prepare("SELECT name FROM sqlite_schema WHERE name LIKE 'lexical_age%'").all()).toEqual([]);
     expect(raw.prepare("SELECT key FROM index_meta WHERE key LIKE 'age_%' OR key LIKE 'lexical_%'").all()).toEqual([]);
@@ -386,7 +440,7 @@ describe("the index in age order: fill, rename cutover under a reader mid-page, 
 });
 
 describe("owner search and browse over the keyed streams", () => {
-  function seed(count: number, { pending = 0, pins = [] as number[] } = {}) {
+  async function seed(count: number, { pending = 0, pins = [] as number[] } = {}) {
     const db = database(), scope = ensureScope("bot", "a"), other = ensureScope("bot", "b");
     const rows = Array.from({ length: count }, (_, n) => ({ id: `n${String(n).padStart(5, "0")}`, scopeId: scope, text: `durable note ${n}${n % 50 === 0 ? " orchid" : ""}` }));
     transaction(tx => {
@@ -402,14 +456,14 @@ describe("owner search and browse over the keyed streams", () => {
       tx.prepare("INSERT INTO memory_projection_receipts VALUES('rolled',2,1,'indexed','unavailable',NULL)").run();
     });
     const indexed = rows.filter((_, n) => n < count - pending);
-    const index = keyedIndex(db, [...indexed, { id: "rolled", version: 2, scopeId: scope, text: "checkpoint orchid new" }]);
-    index.close();
+    const index = await keyedIndex(db, [...indexed, { id: "rolled", version: 2, scopeId: scope, text: "checkpoint orchid new" }]);
+    await closeSealed(index);
     return { db, scope, other, rows };
   }
   const expected = (db: DatabaseSync, where: string, args: Array<string | number> = []) => (db.prepare(`SELECT r.id FROM memory_records r JOIN ${RECORD_KEYS_TABLE} k ON k.record_id=r.id AND k.record_version=r.version WHERE ${where} ORDER BY k.age_key DESC`).all(...args) as Array<{ id: string }>).map(row => row.id);
 
   it("browse: every view pages in age order, newest first, with one cursor shape, and no bot sees another's rows", async () => {
-    const { db, scope, other } = seed(3000, { pins: [10, 2999] });
+    const { db, scope, other } = await seed(3000, { pins: [10, 2999] });
     const pages = await allPages({ botId: "a", view: "recent" });
     expect(pages[0]![0]).toBe("n02999");
     expect(pages.flat()).toEqual(expected(db, "r.scope_id=? AND r.state='active'", [scope]));
@@ -429,7 +483,7 @@ describe("owner search and browse over the keyed streams", () => {
   });
 
   it("search: the index, the pending receipts and the never-indexed kinds come out as one newest-first list, counted, paged by one cursor", async () => {
-    const { db, scope } = seed(3000, { pending: 200 });
+    const { db, scope } = await seed(3000, { pending: 200 });
     const first = await list({ botId: "a", query: "orchid" });
     expect(first.searchMode).toBe("indexed");
     const want = expected(db, "r.scope_id=? AND r.state!='deleted' AND instr(r.text,'orchid')>0", [scope]);
@@ -446,13 +500,13 @@ describe("owner search and browse over the keyed streams", () => {
   });
 
   it("a record that moves from pending to indexed between two pages is shown once, whichever stream held it", async () => {
-    const { db, scope, rows } = seed(3000, { pending: 1500 });
+    const { db, scope, rows } = await seed(3000, { pending: 1500 });
     const page1 = await list({ botId: "a", query: "durable" });
     expect(page1.rows).toHaveLength(50);
     expect(page1.rows[0]!.id).toBe("n02999");
     // the helper catches up: every pending record is now in the index
-    const index = keyedIndex(db, rows);
-    index.close();
+    const index = await keyedIndex(db, rows);
+    await closeSealed(index);
     db.exec("UPDATE memory_projection_receipts SET lexical_status='indexed'");
     const rest = await allPages({ botId: "a", query: "durable", cursor: page1.nextCursor });
     const all = [...ids(page1), ...rest.flat()];
@@ -461,7 +515,7 @@ describe("owner search and browse over the keyed streams", () => {
   });
 
   it("a short page at the step cap carries its frontier: nothing below it is shown before the index reached it, and the next page carries on", async () => {
-    const { db, scope } = seed(6000);
+    const { db, scope } = await seed(6000);
     // ineligible matches (archived) are stepped but not shown; the cap stops the walk before the page fills
     db.exec("UPDATE memory_records SET state='archived' WHERE id LIKE 'n0%' AND id>'n00100'");
     const pages = await allPages({ botId: "a", query: "durable", view: "recent" }, 400);
@@ -470,10 +524,10 @@ describe("owner search and browse over the keyed streams", () => {
   });
 
   it("mode F: the page never reaches below the latched fill frontier, says so, and a stalled fill answers with the same cursor and a notice", async () => {
-    const { db, scope, rows } = seed(1000);
-    legacyIndex(rows);
-    const index = new MemoryIndex(INDEX_PATH()), main = new DatabaseSync(MAIN_PATH(), { readOnly: true });
-    index.fillAgeIndex(main, { maxKeys: 300, maxMs: 1000 });
+    const { db, scope, rows } = await seed(1000);
+    await legacyIndex(rows);
+    const index = await openTestIndex(INDEX_PATH()), main = new DatabaseSync(MAIN_PATH(), { readOnly: true });
+    await firstCopy(index, main, 300);
     const peek = new DatabaseSync(INDEX_PATH(), { readOnly: true }); opened.push(peek);
     const frontier = ageFillBelow(peek)!;
     const first = await list({ botId: "a", query: "durable" });
@@ -487,16 +541,15 @@ describe("owner search and browse over the keyed streams", () => {
     const stalled = await list({ botId: "a", query: "durable", cursor: (await list({ botId: "a", query: "durable" })).nextCursor });
     void stalled;
     // the fill advances: the next page reaches the rows it added, in order, none twice
-    let step = index.fillAgeIndex(main, { maxKeys: 4096, maxMs: 10_000 });
-    while (!step.done) step = index.fillAgeIndex(main, { maxKeys: 4096, maxMs: 10_000 });
-    index.close(); main.close();
+    await fillUntil(index, main, { maxKeys: 4096, maxMs: 10_000 }, step => step.done);
+    await closeSealed(index); main.close();
     closeMemoryIndexReader();
     const after = await allPages({ botId: "a", query: "durable" });
     expect(after.flat()).toEqual(expected(db, "r.scope_id=? AND r.state!='deleted' AND instr(r.text,'durable')>0", [scope]));
   });
 
   it("EXPLAIN pins: no statement of any view, state or search uses a temporary B-tree or scans the records or key table", async () => {
-    const { other } = seed(600, { pending: 100, pins: [5] });
+    const { other } = await seed(600, { pending: 100, pins: [5] });
     // The 50 ms gate below reads this test's own statements: slowestMs is never reset in production code, so without this it
     // held the slowest of every statement since the file began, not only the statements checked here.
     ownerSearchWork.slowestMs = 0;
@@ -527,3 +580,19 @@ describe("owner search and browse over the keyed streams", () => {
     expect(ownerSearchWork.slowestMs).toBeLessThan(50);
   });
 });
+
+/** Seed in small groups, servicing the checked writer before the next group. */
+async function seedRows(index: MemoryIndex, rows: Parameters<MemoryIndex["applyBatch"]>[0]) {
+  for (let at = 0; at < rows.length;) {
+    await index.sealAndTruncate();
+    for (let steps = 0; index.segmentCount() > 48; steps++) {
+      if (steps === 5000 || index.stopInfo()) throw new Error("fixture segment gate did not clear");
+      const step = await index.maintenanceStep();
+      if (step.drain) await index.sealAndTruncate();
+    }
+    // Each inserted row can flush a segment. Leave the next gate check between batches.
+    const count = Math.min(16, 49 - index.segmentCount());
+    await put(index, rows.slice(at, at + count));
+    at += count;
+  }
+}

@@ -559,7 +559,9 @@ describe("a dot in the sidebar means one thing", () => {
     const working = html({ kind: "working" });
     expect(working).toContain('data-sidebar-mark="working"');
     expect(working).toContain("animate-spin");
-    // Motion, not colour: nothing here is amber, accent or success.
+    // Motion plus the brand orange ring (text-accent); no dot fill: nothing here is amber, accent or success as a background.
+    expect(working).toContain("text-accent");
+    expect(working).not.toContain("text-ink-secondary");
     expect(working).not.toContain("bg-warning");
     expect(working).not.toContain("bg-accent");
     expect(working).not.toContain("bg-success");

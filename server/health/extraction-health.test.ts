@@ -11,6 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase } from "../database.ts";
+import { settleTestHandles } from "../test-handle-registry.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { openLearningGate } from "../testing/open-learning-gate.ts";
 import { withCliMemoryLearning } from "../drivers/cli-memory-learning.ts";
@@ -25,8 +26,8 @@ import { drainServerWindows, factsOf, freshServerCounters, rows, total } from ".
 const SOURCE = "PRIVATE_SOURCE_SENTINEL";
 const SECRETS = [SOURCE, "PRIVATE_REPLY_SENTINEL", "PRIVATE_KEY_SENTINEL", "PRIVATE-MODEL-ALIAS", "PRIVATE-CONNECTION", "PRIVATE_ERROR_SENTINEL"];
 
-beforeEach(() => {
-  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
+beforeEach(async () => {
+  closeDatabase(); await settleTestHandles(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   extractionOutcomes.clear(); clearPinQuarantineForTests();
   // The key's own Flux catalog lists the pinned learning model (a paid key), so the learning call asks for it.
   resetFluxKeyModelsForTests(); setFluxKeyCatalog(() => ["flux-auto", "flux-fast", FLUX_PINNED_LEARNING_MODEL]);
@@ -37,8 +38,8 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("unexpected fetch"); }));
   freshServerCounters();
 });
-afterEach(() => {
-  extractionOutcomes.clear(); closeDatabase();
+afterEach(async () => {
+  extractionOutcomes.clear(); closeDatabase(); await settleTestHandles();
   vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks();
 });
 
@@ -59,7 +60,7 @@ function http(...replies: Array<{ body: unknown; status?: number }>) {
 }
 /** A signed-in CLI engine (Codex) with a model alias that must never be reported, answering through `answer`. */
 function cli(answer: () => string | Promise<string>) {
-  const adapter = { provider: "codex", onEvent: () => () => undefined, sendTurn: async () => ({ turnId: "t" }), interruptTurn: async () => undefined };
+  const adapter = { provider: "codex", capabilities: { fencedLearningWrite: true }, onEvent: () => () => undefined, sendTurn: async () => ({ turnId: "t" }), interruptTurn: async () => undefined };
   const instance = {
     instanceId: "PRIVATE-CONNECTION-cli", driverKind: "codex", displayName: "Codex", enabled: true, models: { default: "PRIVATE-MODEL-ALIAS" },
     adapter, dispose: async () => undefined,
@@ -158,11 +159,12 @@ describe("extraction outcomes as health counters", () => {
     }), { learningConnection: "@murage/flux-fast", learningModel: () => "flux-fast", healthEngine: "gateway" as const });
     const pending = run(waiting, abort.signal);
     abort.abort();
-    expect(await pending).toMatchObject({ status: "deferred" });
+    const cancelled = await pending;
+    expect(cancelled).toMatchObject({ status: "deferred" });
     // a CLI engine whose hidden session exits before answering (drivers/cli-memory-learning.ts hiddenTurnRunner)
     const listeners = new Set<(event: RuntimeEvent) => void>();
     const adapter = {
-      provider: "codex", onEvent: (listener: (event: RuntimeEvent) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
+      provider: "codex", capabilities: { fencedLearningWrite: true }, onEvent: (listener: (event: RuntimeEvent) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
       sendTurn: async (input: { threadId: string }) => {
         for (const listener of [...listeners]) listener({ eventId: "e", provider: "codex", threadId: input.threadId, createdAt: "now", type: "session.exited" } as RuntimeEvent);
         return { turnId: "t" };
@@ -175,7 +177,7 @@ describe("extraction outcomes as health counters", () => {
     fixtureLearningBot(withCliMemoryLearning(instance));
     expect(await run(resolveMemoryExtractor(instance.instanceId, [instance])!)).toMatchObject({ status: "deferred" });
     const windows = drainServerWindows();
-    expect(total(windows, "extraction", "cancelled", { engineKind: "gateway" })).toBe(1);
+    expect(total(windows, "extraction", "cancelled", { engineKind: "gateway" }), JSON.stringify({ cancelled, windows })).toBe(1);
     expect(total(windows, "extraction", "interrupted", { engineKind: "codex" })).toBe(1);
     expect(total(windows, "extraction", "unusable")).toBe(0);
     noSecrets(windows);

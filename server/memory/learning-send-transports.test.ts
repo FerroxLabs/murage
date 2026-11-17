@@ -96,11 +96,11 @@ describe("T5b and T18e per transport", () => {
     const listeners = new Set<(event: RuntimeEvent) => void>();
     const written: string[] = [];
     const adapter = {
-      provider: "codex", capabilities: { sessionModelSwitch: "unsupported" },
+      provider: "codex", capabilities: { sessionModelSwitch: "unsupported", fencedLearningWrite: true },
       onEvent: (listener: (event: RuntimeEvent) => void) => { listeners.add(listener); return () => listeners.delete(listener); },
       sendTurn: async (input: SendTurnInput) => {
         input.beforeSubmit?.();
-        written.push(input.text);
+        (input.fencedWrite ?? (<R>(w: () => R) => w()))(() => written.push(input.text));
         const emit = (event: Record<string, unknown>) => listeners.forEach(l => l({ eventId: "e", provider: "codex", threadId: input.threadId, createdAt: "now", ...event } as RuntimeEvent));
         emit({ type: "turn.started" });
         emit({ type: "item.completed", itemType: "assistant_text", origin: "engine", text: JSON.stringify({ supported: true }) });

@@ -1,0 +1,58 @@
+{
+ "groups": {
+  "g1": [
+   "environmentWellFormed",
+   "restoreJobMatchesReality",
+   "noRemoveDuringKeep",
+   "keyTargetEntriesNeverDropped"
+  ],
+  "g2": [
+   "everyOrphanHasExecutableAction",
+   "keepSuccessIsConfirmed",
+   "opsLinesNeverNameAddress",
+   "keepAndRemoveSerialized",
+   "keyTargetsNeverLost"
+  ],
+  "g3": [
+   "guardLivesUntilEveryDeleteResolved",
+   "viewMintsScopedTokens",
+   "guardActsOnlyOnGuardRecord",
+   "carryImmutable",
+   "restorePrepNeverThrows"
+  ],
+  "g4": [
+   "admissionPinned",
+   "keptStaysKept",
+   "keepNetworkNeedsClaim"
+  ],
+  "g5": [
+   "keptKeysProtected",
+   "ownerAuthorityForEveryDestructiveSend",
+   "outgoingCapturedBeforeSwap",
+   "guardDiesOnFreshRemove"
+  ],
+  "g6": [
+   "restoreJobProtocol",
+   "keepEndsActive",
+   "heldInputDrains",
+   "savedKeyNeverOutlivesRevokeWithoutWork",
+   "keyOnlyActionsTouchNoInbox"
+  ],
+  "g7": [
+   "quiescenceReachable",
+   "deletedBotAuthorityDead",
+   "markerNeverArchivedAndConsumedAtBoot",
+   "guardArmedForEveryKeep",
+   "keepOpsFreshAndCasChecked"
+  ],
+  "g8": [
+   "restorePrepParksEverything",
+   "nothingAutomaticUnparks",
+   "removalSendNeedsSendingLease",
+   "blindRestoreIsOwnerVisible",
+   "everyReplacementPreparedBeforeStore",
+   "restoreUsesOwnerCredentialAndKeepPurpose",
+   "noDestructiveSendAfterBlindRestore"
+  ]
+ }
+}

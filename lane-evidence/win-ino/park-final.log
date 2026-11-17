@@ -1,0 +1,112 @@
+it-remote: win-ino on murage-vt1 (load here 3)
+
+ RUN  v4.1.12 /work
+
+ ✓ server/channels/signal/park-fs.test.ts (22 tests) 150ms
+ ✓ server/channels/signal/park-windows-cache.test.ts (24 tests) 807ms
+   ✓ parking a 200-file tree uses at most four native security spawns including pre-publish and final parent checks  488ms
+ ✓ server/channels/signal/park-replacement.test.ts (15 tests) 1133ms
+ ✓ server/channels/signal/park-windows-security.test.ts (16 tests) 58ms
+stdout | server/channels/signal/park-authority.test.ts > Signal authority flush retries a concurrent checkpoint and still requires the real durable checkpoint
+[memory] index build before listen name=memory_evidence_source_version ms=1
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[memory] index build before listen name=memory_revoke_jobs_state_kind_phase ms=1
+[sqlite] storage file=0 wal=6 freelist=0
+
+stderr | server/channels/signal/park-authority.test.ts > RED34 real people and routine stores revoke active authority and cancel running/queued work before fresh record; RED36 replay survives store reversal
+memory receipts revoked scope=global cause=human-principal count=0
+
+stderr | server/channels/signal/park-authority.test.ts > RED34 real people and routine stores revoke active authority and cancel running/queued work before fresh record; RED36 replay survives store reversal
+memory receipts revoked scope=global cause=human-principal count=0
+
+stderr | server/channels/signal/park-authority.test.ts > RED34 real people and routine stores revoke active authority and cancel running/queued work before fresh record; RED36 replay survives store reversal
+memory receipts revoked scope=global cause=human-principal count=0
+
+stderr | server/channels/signal/park-authority.test.ts > RED34 real people and routine stores revoke active authority and cancel running/queued work before fresh record; RED36 replay survives store reversal
+memory receipts revoked scope=global cause=human-principal count=0
+
+ ✓ server/channels/signal/park-authority.test.ts (4 tests) 6409ms
+   ✓ Signal authority flush retries a concurrent checkpoint and still requires the real durable checkpoint  385ms
+   ✓ Signal authority flush refuses a persistent checkpoint hold instead of claiming durable revocation  5275ms
+   ✓ RED34 real people and routine stores revoke active authority and cancel running/queued work before fresh record; RED36 replay survives store reversal  453ms
+ ✓ server/channels/signal/park-archive.test.ts (3 tests) 408ms
+ ✓ server/channels/signal/park-windows-parents.test.ts (16 tests) 124ms
+ ✓ server/channels/signal/park-state.test.ts (78 tests) 3839ms
+stdout | server/channels/signal/park-review.test.ts > AFIX H2 completed Keep both permits downgrade 10, linked=false, retaining replay history
+[memory] index build before listen name=memory_evidence_source_version ms=1
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[memory] index build before listen name=memory_revoke_jobs_state_kind_phase ms=1
+[sqlite] storage file=0 wal=6 freelist=0
+
+stdout | server/channels/signal/park-review.test.ts > AFIX H2 downgrade refuses people authority without forgetting replay or moving live files
+[sqlite] slow op=exec: COMMIT ms=52 source=exec:COMMIT
+
+stdout | server/channels/signal/park-review.test.ts > AFIX H2 downgrade refuses budget authority without forgetting replay or moving live files
+[sqlite] slow op=exec: CREATE TABLE IF NOT EXISTS project_settings ( group_id TEXT PRIMARY KEY NO ms=51 source=exec:CREATE TABLE IF NOT EXISTS project_setti
+
+ ✓ server/channels/signal/park-review.test.ts (15 tests) 31599ms
+   ✓ AFIX H2 completed Keep both permits downgrade 10, linked=false, retaining replay history  3879ms
+   ✓ AFIX H2 completed Keep both permits downgrade 10, linked=true, retaining replay history  3898ms
+   ✓ AFIX H2 completed Keep both permits downgrade 13, linked=false, retaining replay history  3621ms
+   ✓ AFIX H2 completed Keep both permits downgrade 13, linked=true, retaining replay history  3631ms
+   ✓ AFIX H2 downgrade refuses people authority without forgetting replay or moving live files  3526ms
+   ✓ AFIX H2 downgrade refuses queued authority without forgetting replay or moving live files  3475ms
+   ✓ AFIX H2 downgrade refuses running authority without forgetting replay or moving live files  3510ms
+   ✓ AFIX H2 downgrade refuses budget authority without forgetting replay or moving live files  3508ms
+   ✓ AFIX H2 downgrade refuses pending authority without forgetting replay or moving live files  384ms
+   ✓ AFIX M1 early discovery refusal preserves permanent authority replay obligation  385ms
+   ✓ AFIX M1 early fence refusal preserves permanent authority replay obligation  369ms
+   ✓ AFIX M1 early barrier refusal preserves permanent authority replay obligation  338ms
+   ✓ AFIX M2 startup replay retains durability typed hold and scheduler fence  363ms
+   ✓ AFIX M2 startup replay retains busy typed hold and scheduler fence  352ms
+   ✓ AFIX M2 startup replay retains adoption typed hold and scheduler fence  358ms
+ ✓ server/channels/signal/park-discovery.test.ts (20 tests) 743ms
+   ✓ RED32 incomplete Linux discovery cap refuses  394ms
+   ✓ RED32 incomplete Linux discovery total refuses  306ms
+ ✓ server/channels/signal/park-windows-race.test.ts (13 tests) 40ms
+ ✓ server/channels/signal/park.test.ts (10 tests) 900ms
+ ✓ server/channels/signal/park-downgrade-authority.test.ts (8 tests) 1454ms
+   ✓ R3 RED journal beyond spread and run-count limits refuses instead of silently skipping  747ms
+   ✓ R3 RUN journal above call-stack spread limit but within count limit parks correctly  601ms
+ ✓ server/connector-set-aside.test.ts (9 tests) 237ms
+ ✓ server/channels/signal/park-fence.test.ts (29 tests) 143ms
+stdout | server/channels/signal/park-downgrade.test.ts > RUN RED27 real downgrade target 10 parks both components before restoration
+[memory] index build before listen name=memory_evidence_source_version ms=1
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[memory] index build before listen name=memory_revoke_jobs_state_kind_phase ms=1
+[sqlite] storage file=0 wal=6 freelist=0
+
+ ✓ server/channels/signal/park-downgrade.test.ts (6 tests) 1391ms
+   ✓ RUN RED27 real downgrade target 10 parks both components before restoration  816ms
+   ✓ RUN RED27 real downgrade target 13 parks both components before restoration  557ms
+ ✓ server/channels/signal/park-identity.test.ts (11 tests) 84ms
+ ✓ server/channels/signal/park-windows-paths.test.ts (12 tests) 27ms
+ ✓ server/channels/signal/park-safety.test.ts (20 tests) 613ms
+ ✓ server/channels/signal/park-preflight.test.ts (6 tests) 59ms
+ ✓ server/channels/signal/park-writer.test.ts (9 tests) 212ms
+stdout | server/channels/signal/park-feature-baseline.test.ts > FEATURE exact-start RED target 10: physical auth custody
+[memory] index build before listen name=memory_evidence_source_version ms=1
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[memory] index build before listen name=memory_revoke_jobs_state_kind_phase ms=1
+[sqlite] storage file=0 wal=6 freelist=0
+
+ ✓ server/channels/signal/park-feature-baseline.test.ts (6 tests) 3710ms
+   ✓ FEATURE exact-start RED target 10: physical auth custody  739ms
+   ✓ FEATURE exact-start RED target 10: physical channel custody  699ms
+   ✓ FEATURE exact-start RED target 10: physical connector custody  720ms
+   ✓ FEATURE exact-start RED target 13: physical auth custody  494ms
+   ✓ FEATURE exact-start RED target 13: physical channel custody  556ms
+   ✓ FEATURE exact-start RED target 13: physical connector custody  499ms
+ ✓ server/channels/signal/park-atomic.test.ts (27 tests) 52ms
+ ✓ server/channels/signal/park-copy-inventory.test.ts (1 test) 7ms
+ ✓ server/channels/signal/park-parser.test.ts (3 tests) 12ms
+ ✓ server/channels/signal/park-frozen.test.ts (3 tests) 8ms
+
+ Test Files  26 passed (26)
+      Tests  386 passed (386)
+   Start at  20:59:16
+   Duration  88.10s (transform 5.94s, setup 28.44s, import 2.21s, tests 54.22s, environment 2ms)

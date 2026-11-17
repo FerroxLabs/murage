@@ -1,3 +1,4 @@
+import { prepareRecallContextSync } from './recall-view.ts';
 import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
@@ -16,11 +17,12 @@ beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_
 
 function fixture() {
   let now = 1000;
-  const roster = { bots: [{ id: "a", threadId: "thread", section: "alpha" }, { id: "b", threadId: "private", section: "beta" }], groups: [] };
+  const roster = { memoryRosterRevision:1, bots: [{ id: "a", threadId: "thread", section: "alpha" }, { id: "b", threadId: "private", section: "beta" }], groups: [] };
   reconcileMemoryRoster(roster);
   const registry = new InternalCapabilities({ now: () => now, orphanMs: 100 });
   registry.begin("a", "thread", "generation");
   const token = registry.mint({ botId: "a", threadId: "thread", generation: "generation", depth: 0, kind: "memory", skillAuthoring: false });
+  prepareRecallContextSync('a','thread',roster);
   const access = memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
   const add = (id: string, scopeId = ensureScope("bot", "a"), version = 1, state = "active") => {
     database().prepare("INSERT INTO memory_records VALUES(?,?,?,'constraint',?,'owner-statement',?,1,1,NULL,NULL,1)").run(id, version, scopeId, `text:${id}:${version}`, state);

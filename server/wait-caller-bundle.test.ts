@@ -1,11 +1,12 @@
+import { windowsHideBundlePlugin } from "../scripts/windows-hide-bundle-plugin.mjs";
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The `[sqlite] busy ... at=<caller>` attribution in the PACKAGED shape (rc13 real-data boot: `at=index.js:19949<index.js:19963`, which is
 // waitCaller and witnessWait themselves). The packaged server is one esbuild bundle: no frame carries database.ts or io-budget.ts as its file,
 // so the database layer's frames are skipped by function name, and the caller is named `function@index.js:line`.
 //
-// HEADLESS ONLY: a throwaway HOME and data folder for the bundled child; the bundle is written under node_modules/.cache.
+// HEADLESS ONLY: a throwaway HOME, data folder and bundle for the child.
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,7 +17,6 @@ import { removeTempDir } from "./testing/cleanup.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
-const OUT = join(ROOT, "node_modules", ".cache", "wait-caller-bundle");
 let home = "";
 afterAll(async () => { if (home) await removeTempDir(home); });
 
@@ -44,8 +44,9 @@ it("names the caller from a stack of the bundled shape, never a frame of the dat
 });
 
 it("in an esbuild bundle of the database layer (the build:server options), the busy lines name the caller function", async () => {
-  mkdirSync(OUT, { recursive: true });
   home = mkdtempSync(join(tmpdir(), "murage-wait-caller-"));
+  const OUT = join(home, "bundle");
+  mkdirSync(OUT, { recursive: true });
   const entry = join(OUT, "fixture-entry.mjs");
   const at = (file: string) => JSON.stringify(join(SERVER_DIR, file));
   writeFileSync(entry, `
@@ -74,13 +75,17 @@ process.exit(0);
   const outfile = join(OUT, "fixture.js");
   // the same options as scripts/bundle-server.mjs (one ESM file for node, Node built-ins through createRequire)
   await build({
+    plugins: [windowsHideBundlePlugin()],
     entryPoints: [entry], bundle: true, platform: "node", target: "node20", format: "esm", outfile, logLevel: "silent",
     banner: { js: 'import { createRequire as __harnessRequire } from "node:module"; const require = __harnessRequire(import.meta.url);' },
-    external: ["@huggingface/transformers"], packages: "external",
+    external: ["@huggingface/transformers"],
   });
+  // Match bundle-server.mjs's runtime sibling contract: this reader is
+  // inlined into fixture.js, so its wrapper must sit beside that output.
+  copyFileSync(join(SERVER_DIR, "drivers", "murage-exec"), join(OUT, "murage-exec"));
   const data = join(home, ".murage");
   mkdirSync(data, { recursive: true });
-  const run = spawnSync(process.execPath, [outfile], { cwd: ROOT, encoding: "utf8", timeout: 60_000, env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_DATA_DIR: data } });
+  const run = spawnSync(process.execPath, [outfile], { windowsHide: true, cwd: ROOT, encoding: "utf8", timeout: 60_000, env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, MURAGE_DATA_DIR: data } });
   const marker = /LINES(.*)\n/.exec(run.stdout ?? "");
   expect(marker, `${run.stdout}\n${run.stderr}`).not.toBeNull();
   const lines = JSON.parse(marker![1]!) as string[];

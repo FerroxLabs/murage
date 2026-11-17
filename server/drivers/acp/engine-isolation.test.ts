@@ -1,3 +1,5 @@
+import { bindFixtureAdapter } from "../../testing/mcp-admission-fixture.ts";
+import { REQUIRED_CONTROLS } from "./opencode-tool-budget.ts";
 import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -8,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { recordEvents } from "../../testing/events.ts";
+import { recordAdmittedEvents as recordEvents } from "../../testing/admitted-events.ts";
 import { FUIGO_EXTERNAL_MCP_GATES, FuigoAgentDriver } from "./fuigo.ts";
 import { DroidAgentDriver, scopeDroidHome } from "./droid.ts";
 import { ensureDirs } from "../../config.ts";
@@ -45,15 +47,23 @@ async function bootTurn(driver: ProviderDriver<AcpConfig>, home: string, extra: 
     environment: { HOME: home, USERPROFILE: home,
       // The CLI's config folder is chosen by these two before ~/.config; pin them so a runner's own values cannot redirect the fixture.
       OPENCODE_CONFIG_DIR: "", XDG_CONFIG_HOME: join(home, ".config"),
-      FAKE_ACP_MODE: "happy", FAKE_ACP_DUMP: dump, FAKE_ACP_MCP_READY: "1", FAKE_ACP_MODELS: "fixture-model", ...extra } });
+      FAKE_ACP_MODE: "happy", FAKE_ACP_MCP_CONNECT: "1", FAKE_ACP_TEXT_ONLY: "1", FAKE_ACP_DUMP: dump, FAKE_ACP_MCP_READY: "1", FAKE_ACP_MODELS: "fixture-model", ...extra } });
+  bindFixtureAdapter(instance.adapter);
   const recorder = recordEvents(instance.adapter);
   try {
+    const peer = fileURLToPath(new URL("../../testing/fake-c11-mcp.mjs", import.meta.url));
+    const mount = (name: string, tag: string, tools: string[]) => ({ command: process.execPath, args: [peer, tag],
+      env: { FIXTURE_TOOLS: JSON.stringify(tools), FIXTURE_SERVER_NAME: name, FIXTURE_ARGV_DUMP: join(home, `${name}.mount.json`) } });
     await instance.adapter.sendTurn({ threadId: "iso-1", text: "hello", cwd: home,
-      integrations: { agents: { command: process.execPath, args: ["fixture-agents"], env: {} }, memory: { command: process.execPath, args: ["fixture-memory"], env: {} } } });
+      integrations: { agents: mount("agents", "fixture-agents", REQUIRED_CONTROLS), memory: mount("murage-memory", "fixture-memory", ["memory_search"]) } });
     await recorder.until((event) => event.threadId === "iso-1" && event.type === "turn.completed", 15000);
+    // Engines receive shims. Inspect the actual children behind those shims
+    // for the original server argv, keeping every isolation assertion below.
+    const handed = JSON.parse(readFileSync(`${dump}.mcp.json`, "utf8")) as Array<{ name: string; args: string[] }>;
+    expect(handed.every(server => server.args.some(arg => arg.includes("cli-mount-shim")))).toBe(true);
     return {
       spawned: JSON.parse(readFileSync(dump, "utf8")) as { argv: string[]; env: Record<string, string> },
-      mounted: JSON.parse(readFileSync(`${dump}.mcp.json`, "utf8")) as Array<{ name: string; args: string[] }>,
+      mounted: ["agents", "murage-memory"].map(name => JSON.parse(readFileSync(join(home, `${name}.mount.json`), "utf8"))) as Array<{ name: string; args: string[] }>,
     };
   } finally { recorder.stop(); await instance.dispose(); }
 }

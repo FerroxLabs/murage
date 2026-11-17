@@ -8,12 +8,14 @@ import { afterEach, expect, it, vi } from "vitest";
 const state = vi.hoisted(() => ({ closed: 0 }));
 vi.mock("./embeddings.ts", () => ({ MemoryEmbeddings: class { identity = "fixture"; embed(texts: string[]) { return Promise.resolve(texts.map(() => [1])); } } }));
 vi.mock("./index.ts", () => ({ MemoryIndex: class {
+  static async create() { return new this(); }
+  resetDone() { return null; }
+  stopInfo() { return null; }
   rebuilt = false;
   prepareModel() {}
   purgeRolledCheckpoints() { return { removed: 0, examined: 0, merged: false, done: true }; }
   maintenanceOwed() { return false; }
-  purgeRecords() {}
-  close() { state.closed++; }
+  async prepareExit() { state.closed++; }
 } }));
 vi.mock("./eligibility.ts", () => ({ MemoryEligibility: class { pipRecordIds() { return []; } warm() {} close() {} } }));
 
@@ -25,13 +27,13 @@ async function helper() {
   const workerProcess = Object.create(realProcess) as NodeJS.Process;
   Object.defineProperties(workerProcess, {
     on: { value: (event: string, listener: (value?: unknown) => void) => { listeners.set(event, listener); return workerProcess; } },
-    send: { value: () => true },
+    send: { value: (_m: unknown, cb?: (e: Error | null) => void) => { if (typeof cb === "function") cb(null); return true; } },
     exit: { value: (code: number) => { exits.push(code); } },
     resourceUsage: { value: () => realProcess.resourceUsage() },
   });
   vi.stubGlobal("process", workerProcess);
   await import("./worker.ts");
-  listeners.get("message")!({ type: "init", indexPath: "/unused/index", authorityPath: "/unused/authority", modelDirectory: "/unused/model", manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] } });
+  await listeners.get("message")!({ type: "init", indexPath: "/unused/index", authorityPath: "/unused/authority", modelDirectory: "/unused/model", manifest: { model: "fixture", revision: "1", dimensions: 1, files: [] } });
   return { listeners, exits };
 }
 const sendFailure = (code: string) => Object.assign(new Error(`write ${code}`), { code });
@@ -43,8 +45,8 @@ it("a report that meets a closed channel is quiet, and disconnect still closes t
   expect(log).not.toHaveBeenCalled();
   expect(state.closed).toBe(0);
   listeners.get("disconnect")!();
+  await vi.waitFor(() => expect(exits).toEqual([0]));
   expect(state.closed).toBe(1);
-  expect(exits).toEqual([0]);
 });
 
 it("any other failed send reaches the log", async () => {

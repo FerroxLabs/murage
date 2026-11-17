@@ -17,7 +17,8 @@ import { managedOutputWorkspace } from "./execution-audience.ts";
 // Contract: shared/output-publication.ts and docs/plans/0152-CONTRACTS.md.
 import { murageTool } from "./murage-tool-surface.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, renameSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, realpathSync, renameSync, unlinkSync, type Stats } from "node:fs";
 import { rootsFor, WorkspaceTreeError } from "./data-roots.ts";
 import { basename, extname, join } from "node:path";
 import type { DatabaseSync } from "node:sqlite";

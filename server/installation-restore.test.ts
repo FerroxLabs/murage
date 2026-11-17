@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, renameSync, symlinkSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, existsSync, renameSync, symlinkSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,7 +28,7 @@ function crash(f: Awaited<ReturnType<typeof fixture>>, operation: "restore" | "r
     const checkpoint = phase => { if (phase === ${JSON.stringify(phase)}) process.exit(42); };
     ${operation === "restore" ? `await restoreInstallation(${JSON.stringify(f.target)}, ${JSON.stringify(f.archive)}, ${JSON.stringify(f.sha)}, { checkpoint });` : `rollbackInstallationRestore(${JSON.stringify(f.target)}, { checkpoint });`}`;
   let failure: any;
-  try { execFileSync(process.execPath, ["--input-type=module", "-e", source], { timeout: 20_000, stdio: "pipe", env: { PATH: dirname(process.execPath), HOME: f.root, USERPROFILE: f.root, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) } }); }
+  try { execFileSync(process.execPath, ["--input-type=module", "-e", source], { windowsHide: true, timeout: 20_000, stdio: "pipe", env: { PATH: dirname(process.execPath), HOME: f.root, USERPROFILE: f.root, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) } }); }
   catch (error) { failure = error; }
   expect(failure?.status, String(failure?.stderr)).toBe(42);
 }
@@ -140,7 +140,7 @@ it("the actual harness refuses to initialize an absent root during interrupted r
   expect(existsSync(f.target)).toBe(false);
   let failure: any;
   try {
-    execFileSync(process.execPath, [fileURLToPath(new URL("./index.ts", import.meta.url))], { timeout: 20_000, stdio: "pipe", env: { PATH: dirname(process.execPath), HOME: f.root, USERPROFILE: f.root, MURAGE_DATA_DIR: f.target, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) } });
+    execFileSync(process.execPath, [fileURLToPath(new URL("./index.ts", import.meta.url))], { windowsHide: true, timeout: 20_000, stdio: "pipe", env: { PATH: dirname(process.execPath), HOME: f.root, USERPROFILE: f.root, MURAGE_DATA_DIR: f.target, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}) } });
   } catch (error) { failure = error; }
   expect(failure?.status, String(failure?.stderr)).toBe(1);
   expect(String(failure.stderr)).toContain("RESTORE_REVIEW_REQUIRED");
@@ -184,4 +184,20 @@ it.each([true, false])("D17 archive provenance (record=%s); never reads restore 
     const ctor = (root: string) => [join(root, "workspaces", "b", "threads", "t"), join(root, "workspaces", "b", "threads", "t")];
     expect(rebaseStoredPath(ctor(f.source)[0]!, ctor, { dataDir: f.target, previous: roots.previousRoots() })).toEqual(withRecord ? { path: ctor(f.target)[0] } : { keep: true });
   } finally { read.mockRestore(); }
+});
+
+it.each(["search.db", "search.db-wal", "search.db-shm"])("T-RESTORE-SWAP / M16: retains previous %s, discards candidate before activation", async name => {
+  const f = await fixture(); writeFileSync(join(f.target, name), "previous derived postings");
+  const result = await restoreInstallation(f.target, f.archive, f.sha, { checkpoint: phase => {
+    if (phase === "prepared") {
+      // Model a stray derived file in the private candidate after preparation.
+      const prefix = `.${f.target.split(/[\\/]/).at(-1)}.restore-`;
+      const candidate = readdirSync(f.root).find(entry => entry.startsWith(prefix) && entry.endsWith(".candidate"))!;
+      writeFileSync(join(f.root, candidate, name), "candidate derived postings");
+    }
+  } });
+  expect(readFileSync(join(result.previousDataDir!, name), "utf8")).toBe("previous derived postings");
+  expect(existsSync(join(f.target, name))).toBe(false);
+  rollbackInstallationRestore(f.target);
+  expect(existsSync(join(f.target, name))).toBe(false);
 });

@@ -16,6 +16,8 @@ const moduleMaps = (text: string) => [...text.matchAll(/^(?:export )?(?:const|le
 const STORE_MAPS = ["verdicts", "sessionSound", "threadGroupStore", "sessionHolds"];
 /** T11(a) ALLOWED LIST (design 1B, Fable r13 L1) plus the b13e connection/statement/bookkeeping maps that hold no verdict, hold or group. */
 const ALLOWED = new Set(["sharedHandles", "partialWalks", "chains", "audienceHolds", "proving",
+  // MAIN RULING INT-CONFLICT-DEFAULT 845dabbd4f / e98bb792a54: connection-owned fresh-session replay evidence is revalidated against durable epochs, outside the four VerdictStore maps.
+  "replaySessions",
   "statements", "warned", "wantedThreads", "threadForgetsCache", "threadForgetsPass", "dependents", "epochReady", "foreignSeen", "judging", "prepared", "chainedTable", "chainWriters"]);
 
 describe("T11(a) four private maps in the VerdictStore", () => {

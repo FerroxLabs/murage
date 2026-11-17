@@ -1,5 +1,5 @@
 import { beginOutsideShutdown } from "./email/external-marks.ts";
-import { writeFileSync } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
 import { basename, isAbsolute } from "node:path";
 
 /** The server's own shutdown allowance (U24 design R7): every provider's immediate stop wait (child-teardown.ts

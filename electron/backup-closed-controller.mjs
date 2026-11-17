@@ -2,6 +2,8 @@ import {lstatSync,mkdirSync,readFileSync,realpathSync,rmSync,writeFileSync} from
 import path from "node:path";
 import {assertClosedProfileBinding,closedDigest,closedProfileAppFileShared,closedProfileFolderShared,closedProfileId,closedTriggerDigest,readClosedPrivateFile} from "./backup-closed-profile.mjs";
 import {disableClosedBackupJob,installClosedBackupJob,readClosedBackupStage,readLegacyClosedBackupStage,removeClosedBackupStage,stageClosedBackupJob} from "./backup-closed-jobs.mjs";
+import {recordedPreviousDataRoots} from "./data-root-history.mjs";
+import {rebaseStoredPath} from "../shared/stored-root-path.mjs";
 
 const refuse=()=>{throw Error("BACKUP_CLOSED_REVIEW_REQUIRED");};
 const same=(a,b)=>JSON.stringify(a)===JSON.stringify(b);
@@ -41,20 +43,39 @@ export function createClosedBackupController({profile,triggerSource,backupSuppor
    * which may be gone: taking a job down or moving it needs only the stage's
    * own integrity, never the app file it used to run. */
   function readStage({forRemoval=false}={}){
-    const p=profile();let value;
-    try{value=JSON.parse(readClosedPrivateFile(pointer()));}catch(error){if(error.code==="ENOENT")return null;throw error;}
-    if(!value||Object.keys(value).sort().join()!=="directory,version"||value.version!==1||value.directory!==`closed-${closedProfileId({...p,triggerEntry:path.join(location(),"unused-trigger.mjs"),triggerSha256:"0".repeat(64)})}`)refuse();
+    const p=profile(),previous=recordedPreviousDataRoots(p.installation,p.platform);
+    const controls=[location(),...(forRemoval?previous.map(closedControlDirectory):[])];
+    let value,control;
+    // Only bounded, constructor-built private control folders are inspected. No prior data folder is opened.
+    for(const candidate of [...new Set(controls)]){
+      try{value=JSON.parse(readClosedPrivateFile(path.join(candidate,"closed-job-pointer.json")));control=candidate;break;}
+      catch(error){if(error.code!=="ENOENT")throw error;}
+    }
+    if(!control)return null;
+    if(!value||Object.keys(value).sort().join()!=="directory,version"||value.version!==1||typeof value.directory!=="string"||!/^closed-[a-f0-9]{64}$/.test(value.directory))refuse();
     let stage;
     // A pointer whose stage was taken down (a move that could not finish) is
     // nothing staged: the person can set the job up again.
-    try{stage=readClosedBackupStage(path.join(location(),value.directory));}catch(error){
-      if(missing(path.join(location(),value.directory)))return null;
+    try{stage=readClosedBackupStage(path.join(control,value.directory));}catch(error){
+      if(missing(path.join(control,value.directory)))return null;
       // Written by an older Murage with a different job definition: it can
       // only be taken down (and rebuilt), so only removal may read it.
-      if(!forRemoval)throw error;stage=readLegacyClosedBackupStage(path.join(location(),value.directory));
+      if(!forRemoval)throw error;stage=readLegacyClosedBackupStage(path.join(control,value.directory));
     }
-    let moved=false;
-    for(const key of Object.keys(p))if(!same(stage.descriptor[key],p[key])){if(forRemoval&&key==="executable"){moved=true;continue;}refuse();}
+    if(value.directory!==`closed-${closedProfileId(stage.descriptor)}`||control!==closedControlDirectory(stage.descriptor.installation))refuse();
+    const context={dataDir:p.installation,previous,platform:p.platform};
+    const installed=rebaseStoredPath(stage.descriptor.installation,root=>[root],context);
+    const rootMoved='path' in installed&&installed.path===p.installation;
+    let moved=control!==location();
+    for(const key of Object.keys(p))if(!same(stage.descriptor[key],p[key])){
+      if(forRemoval&&key==="executable"){moved=true;continue;}
+      if(forRemoval&&rootMoved&&["installation","requestedRoot"].includes(key)){
+        const next=rebaseStoredPath(stage.descriptor[key],root=>[root],context);
+        if('path' in next&&next.path===p[key]){moved=true;continue;}
+      }
+      if(forRemoval&&rootMoved&&key==="installationIdentity"){moved=true;continue;}
+      refuse();
+    }
     if(moved)return{...stage,moved:true};
     if(!forRemoval)assertClosedProfileBinding(stage.descriptor);return stage;
   }

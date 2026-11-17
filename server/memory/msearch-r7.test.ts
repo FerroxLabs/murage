@@ -4,15 +4,17 @@
 // Msearch review round 7 (lanes/msearch-review/r7/REPORT.md). Both fail on 8fa045581.
 //  P1  an incomplete revalidation kept the records it had already read again, though their source moved after that read;
 //  P2  overlapping scan snapshots under continuous capture kept the write-ahead log from ever being truncated.
+import { openTestIndex, put } from "./testing/open-index.ts";
 import { mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
-import { MemoryIndex, walBytes, type IndexedMemory } from "./index.ts";
+import { walBytes, type IndexedMemory } from "./index.ts";
 import { closeMemoryIndexReader, lexicalPageSliced, setWalCheckpointRequester, resetScanAdmission, setWalDrainThreshold } from "./index-reader.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { setMemoryMode } from "./repository.ts";
 import { clearMemorySearchCache, searchMemory, setAuthorizeSliceMsForTest, type MemorySearchBridge } from "./search.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
@@ -40,12 +42,12 @@ function readable(id: string, scope: string) {
   database().prepare("INSERT INTO memory_records VALUES(?,1,?,'fact',?,'owner-statement','active',1,0,NULL,NULL,0)").run(id, scope, TEXT);
   database().prepare("INSERT OR REPLACE INTO memory_projection_receipts VALUES(?,1,0,?,'indexed',NULL)").run(id, "indexed");
 }
-function world(records: IndexedMemory[]) {
+async function world(records: IndexedMemory[]) {
   closeMemoryIndexReader(); clearMemorySearchCache();
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
-  const index = new MemoryIndex(INDEX_PATH());
+  const index = await openTestIndex(INDEX_PATH());
   index.prepareModel("model");
-  index.upsert(records);
+  await put(index, records);
   return index;
 }
 const emptyBridge: MemorySearchBridge = { search: async () => ({ hits: [], vectorRows: 0, coverageComplete: true }) };
@@ -54,7 +56,7 @@ describe("P1: a half-finished revalidation keeps nothing it read before the loop
   it("A is read again, its source moves while the loop is released, the deadline comes before B: A is not answered", async () => {
     const scope = ensureScope("bot", "a");
     readable("rec-a", scope); readable("rec-b", scope);
-    world(["rec-a", "rec-b"].map(id => entry(id, scope, TEXT))).close();
+    (await world(["rec-a", "rec-b"].map(id => entry(id, scope, TEXT)))).close();
     setAuthorizeSliceMsForTest(0);
     let stamps = 0, skew = 0, moved = false, started = false;
     const originalNow = performance.now.bind(performance), originalImmediate = globalThis.setImmediate, db = database(), prepare = db.prepare.bind(db);
@@ -93,14 +95,14 @@ describe("P2: when the log is over its threshold, admission drains open scans so
   const same = "harbour lantern notes for the Friday review";
 
   it("continuous capture plus overlapping scans: the writer checkpoints between them, so the log does not carry over", async () => {
-    const index = world(ids.map(id => entry(id, "s", same)));
+    const index = await world(ids.map(id => entry(id, "s", same)));
     setWalDrainThreshold(1);
     let truncated = 0;
-    setWalCheckpointRequester(() => { const ok = index.checkpointIfLarge(1); if (ok) truncated++; return ok; });
+    setWalCheckpointRequester(async () => { const ok = (await index.sealAndTruncate()).truncated; if (ok) truncated++; return ok; });
     const events: string[] = [];
     let captures = 0, second: ReturnType<typeof lexicalPageSliced> | null = null, secondFirstLog = -1;
     const first = lexicalPageSliced(QUERY, ["s"], 50, 0, async () => {
-      index.upsert([entry(`late-${captures++}`, "s", same)]);
+      await put(index, [entry(`late-${captures++}`, "s", same)]);
       if (!second) {
         second = lexicalPageSliced(QUERY, ["s"], 50, 0, async () => {
           if (secondFirstLog < 0) { secondFirstLog = walBytes(INDEX_PATH()); events.push("second-reads"); }

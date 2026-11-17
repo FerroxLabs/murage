@@ -14,9 +14,23 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 
+// The server's own startup writes (index builds, migrations: about 28 MB of block writes in the first seconds) spend the minute's background
+// room (io-budget.ts BG_MINUTE_BYTES, 12 MiB). Capture is then correctly deferred to the next wall-clock minute (worker-controller.ts
+// bgRetryMs, nextAdmissionMs), which is anywhere up to 60 s away: whether a turn's capture landed inside the poll below depended on where in
+// the minute the server happened to start. The budget has its own tests (io-admission*, bg-admission*); here the admission clock is
+// injected, the way io-admission-scale.test.ts and io-budget-slice-admission.test.ts fake admissionRead, so the server's first admission
+// minute ends a fixed ADMISSION_MINUTE_ENDS_AFTER_MS after the preload runs (past startup, before any turn's poll runs out) instead of at a wall-clock minute.
+const ADMISSION_MINUTE_ENDS_AFTER_MS = 15000;
+const admissionFixture = `
+  const {ioBudget}=await import(${JSON.stringify(new URL("./io-budget.ts", import.meta.url).href)});
+  const realRead=Reflect.get(ioBudget,'admissionRead');
+  if(typeof realRead!=='function')throw new Error('admissionRead is gone: re-pin this fixture to the admission reader');
+  const skew=(60000-((Date.now()+${ADMISSION_MINUTE_ENDS_AFTER_MS})%60000))%60000;
+  Reflect.set(ioBudget,'admissionRead',()=>{const reading=realRead.call(ioBudget);return {...reading,at:reading.at+skew};});
+`;
 const posixOnly = describe.skipIf(process.platform === "win32");
 let fixture: VerificationServer, headers: Record<string, string>;
 const api = async (method: string, path: string, body?: unknown) => {
@@ -48,12 +62,15 @@ const turns = (): Turn[] => {
 };
 
 posixOnly("a memory-active thread keeps its engine session across ordinary turns", () => {
-  beforeAll(async () => {
-    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: "process.env.MURAGE_TURN_TRACE = '1';" });
+  // Forgetting evidence in one scenario leaves a legitimate pending deny
+  // window. Each independent session scenario owns a fresh server so that
+  // window cannot turn the next scenario into a check of unfinished revocation.
+  beforeEach(async () => {
+    fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: `process.env.MURAGE_TURN_TRACE = '1';${admissionFixture}` });
     const proof = await (await fetch(`${fixture.info.url}/api/desktop-secret`)).json() as { secret: string };
     headers = { "x-murage-surface": "desktop", "x-murage-surface-secret": proof.secret };
   }, 30000);
-  afterAll(async () => { await fixture?.close(); });
+  afterEach(async () => { await fixture?.close(); });
 
   const createBot = async (name: string) => {
     const created = await api("POST", "/api/bots", { name });
@@ -63,9 +80,11 @@ posixOnly("a memory-active thread keeps its engine session across ordinary turns
     return bot;
   };
   const db = () => new DatabaseSync(join(fixture.info.dataDir, "messages.db"), { readOnly: true });
+  // Each roll publishes a new checkpoint record of the thread's family (id family:sequence, version 1: consolidate.ts), so the roll is
+  // the family head's sequence, not a record version.
   const checkpointVersion = (threadId: string) => {
     const handle = db();
-    try { return Number((handle.prepare("SELECT max(r.version) AS v FROM memory_records r JOIN memory_scopes s ON s.id=r.scope_id WHERE r.kind='checkpoint' AND s.kind='conversation' AND s.owner_key=?").get(threadId) as { v: number | null }).v ?? 0); }
+    try { return Number((handle.prepare("SELECT max(sequence) AS v FROM memory_checkpoint_heads WHERE thread_id=?").get(threadId) as { v: number | null }).v ?? 0); }
     finally { handle.close(); }
   };
   const pendingJobs = (threadId: string) => {
@@ -133,12 +152,20 @@ posixOnly("a memory-active thread keeps its engine session across ordinary turns
     expect(givenSources(bot.threadId).filter(source => forgotten.has(source.id))).toEqual([]);
   }, 120000);
 
-  it("ends the session when a bot is removed from the roster", async () => {
+  // Reviewed S6 changes 249523340e and 2fe571bb91 scope deletion to the
+  // removed bot's notebooks and session dependencies; a bystander keeps its session.
+  it("keeps the session when an unrelated bot is removed from the roster", async () => {
     const bot = await createBot("Roster bot");
     const other = await createBot("Departing bot");
     await turn(bot, "first");
     expect((await turn(bot, "second")).resumed).toBe(true);
+    const given = givenSources(bot.threadId);
+    expect(given.length).toBeGreaterThan(0);
+    const handle = db();
+    try {
+      for (const source of given) expect(handle.prepare("SELECT thread_id FROM memory_sources WHERE id=?").get(source.id)?.thread_id).toBe(bot.threadId);
+    } finally { handle.close(); }
     expect((await api("DELETE", `/api/bots/${other.id}`)).status).toBeLessThan(300);
-    expect(await turn(bot, "third")).toMatchObject({ resumed: false, built: 1 });
+    expect(await turn(bot, "third")).toMatchObject({ resumed: true, built: 1 });
   }, 120000);
 });

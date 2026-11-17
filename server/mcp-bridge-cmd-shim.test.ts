@@ -23,6 +23,7 @@ windowsOnly("starts an MCP server that is only reachable as a .cmd shim", async 
     const script = `import {runMcpBridge} from './server/mcp-bridge.ts';
       runMcpBridge({command:'shim-mcp',args:[],label:'fixture'});`;
     const bridge = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script], {
+      windowsHide: true,
       env: { ...process.env, MURAGE_EXTRA_PATH: dir },
       stdio: ["pipe", "pipe", "pipe"],
     });

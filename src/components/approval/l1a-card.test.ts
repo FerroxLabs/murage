@@ -143,6 +143,17 @@ describe("1.1 the card's buttons and why-line", () => {
     expect(html).toContain("Nova asked because Dana is someone new. Once this goes, Dana counts as known.");
     expect(html).toMatch(/>Send</);
   });
+  it("the narrow wipe card offers Run and Don't with its plain scope sentence", () => {
+    const p = pending({tool:'delete_file'});
+    p.message.card!.options = ['Run', "Don't"];
+    p.held = 'This would wipe your whole home folder. Run it anyway?';
+    const html = renderToStaticMarkup(createElement(PendingApprovalPanel, {pending:p,who:'Nova',bot:BOT,threadId:'t1'}))
+      + renderToStaticMarkup(createElement(PendingApprovalActions, {pending:p,threadId:'t1',bot:BOT,onCancelTurn:()=>undefined}));
+    expect(html).toMatch(/>Run</);
+    expect(html).toMatch(/>Don&#x27;t</);
+    expect(html).toContain(p.held);
+    expect(html).not.toContain('data-fold-caret');
+  });
   it("an unread call asks with the verb, never blocks, and offers no fold", () => {
     const html = actions({ ...UNREAD, why: { key: "ux.l1.why.unreadCall", params: {} } });
     expect(html).toMatch(/>Run</);

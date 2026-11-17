@@ -9,6 +9,7 @@
 //   where the last stopped, so the total follows the chain and no single call follows more than its allowance;
 // - the receipts of a retained session (retainedSessionInvalid): never more rows than the allowance can pay for, however long the session;
 // - the kept receipt groups of a thread are brought up to date without a scan of the thread's receipts.
+import { observeSqlReads } from "./testing/sql-read-observer.ts";
 import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
@@ -38,15 +39,11 @@ beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_
 afterEach(() => { setTurnLineageNodesForTest(null); });
 
 const tally = { rows: 0, statements: 0, sql: [] as string[] };
+const observer = { call(sql: string) { tally.statements++; tally.sql.push(sql); }, rows(n: number) { tally.rows += n; } };
 const realPrepare = DatabaseSync.prototype.prepare;
 beforeAll(() => {
   DatabaseSync.prototype.prepare = function (this: DatabaseSync, sql: string) {
-    const statement = realPrepare.call(this, sql);
-    const own = statement as unknown as Record<string, (...args: unknown[]) => unknown>;
-    const get = statement.get.bind(statement), all = statement.all.bind(statement);
-    own.get = (...args) => { tally.statements++; tally.sql.push(sql); const row = (get as (...a: unknown[]) => unknown)(...args); if (row) tally.rows++; return row; };
-    own.all = (...args) => { tally.statements++; tally.sql.push(sql); const rows = (all as (...a: unknown[]) => unknown[])(...args); tally.rows += rows.length; return rows; };
-    return statement;
+    return observeSqlReads(realPrepare.call(this, sql), sql, observer);
   } as typeof realPrepare;
 });
 afterAll(() => { DatabaseSync.prototype.prepare = realPrepare; });

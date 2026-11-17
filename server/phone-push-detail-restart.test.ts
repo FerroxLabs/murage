@@ -47,7 +47,8 @@ const createBot = async (name: string, grant: Record<string, string>) => {
   const created = await api("POST", "/api/bots", { name, modelSelection: { instanceId: "tools", model: "ask-1" } });
   expect(created.status).toBe(201);
   const bot = created.body.bot as { id: string; threadId: string };
-  expect((await api("PATCH", `/api/bots/${bot.id}`, { phoneApps: grant })).status).toBe(200);
+  // Job lifecycle fixtures choose Auto; Ask now correctly waits for an own-write review before opening a job.
+  expect((await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true, computer: "off", phoneApps: grant })).status).toBe(200);
   return bot;
 };
 /** Starts an owner turn that stays open and returns its device token (the env the engine was handed). */

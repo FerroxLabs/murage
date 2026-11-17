@@ -6,7 +6,7 @@ final class PushResponseTests: XCTestCase {
 
     let binding = "3f6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3"
     let other = "0a6c1a52-8d1e-4b7a-9c2e-5a0d7e41b9f3"
-    let originText = "https://mac.tailnet123.ts.net"
+    let originText = "https://mac.tail000000.ts.net"
     var origin: WorkspaceOrigin { WorkspaceOrigin(string: originText)! }
     let ref = String(repeating: "9", count: 64)
     let detailToken = "murage_pd_" + String(repeating: "d", count: 43)
@@ -159,12 +159,12 @@ final class PushResponseTests: XCTestCase {
     }
 
     func testTheRespondAddressIsTheCanonicalOriginOnly() {
-        let port = WorkspaceOrigin(string: "https://mac.tailnet123.ts.net:8444")!
+        let port = WorkspaceOrigin(string: "https://mac.tail000000.ts.net:8444")!
         XCTAssertEqual(PushResponse.respondRequest(origin: port, token: respondToken, requestId: "r", decision: "deny", revision: 2)?.url?.absoluteString,
-                       "https://mac.tailnet123.ts.net:8444/api/mobile/push/respond")
+                       "https://mac.tail000000.ts.net:8444/api/mobile/push/respond")
         XCTAssertEqual(PushResponse.origin(originText), origin)
-        for bad in ["http://mac.tailnet123.ts.net", "https://mac.tailnet123.ts.net/", "https://MAC.tailnet123.ts.net",
-                    "https://mac.tailnet123.ts.net:443", "https://user@mac.tailnet123.ts.net", "https://evil.example/x?", "", nil] as [String?] {
+        for bad in ["http://mac.tail000000.ts.net", "https://mac.tail000000.ts.net/", "https://MAC.tail000000.ts.net",
+                    "https://mac.tail000000.ts.net:443", "https://user@mac.tail000000.ts.net", "https://evil.example/x?", "", nil] as [String?] {
             XCTAssertNil(PushResponse.origin(bad), String(describing: bad))
         }
     }
@@ -209,7 +209,7 @@ final class PushResponseTests: XCTestCase {
     // MARK: reconciliation
 
     func testReconcileRemovesWhatWasAnsweredElsewhereAndCorrectsEachCount() async {
-        let second = "https://studio.tailnet123.ts.net:8444"
+        let second = "https://studio.tail000000.ts.net:8444"
         var l = PushLedger()
         l.bind(binding, origin: originText)
         l.bind(other, origin: second)
@@ -346,7 +346,7 @@ final class PushResponseTests: XCTestCase {
         let (status, _) = await PushExtension.send(request, session: session)
         XCTAssertEqual(status, 302)
         XCTAssertEqual(Stub.requests, 1)
-        XCTAssertEqual(Stub.seen?.url?.host, "mac.tailnet123.ts.net")
+        XCTAssertEqual(Stub.seen?.url?.host, "mac.tail000000.ts.net")
         XCTAssertEqual(PushOutcome.notice(status: status, body: nil, decision: "allow"), .openApp)
     }
 }

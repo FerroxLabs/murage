@@ -1,3 +1,10 @@
+import { fluxRouteFor } from "../../shared/flux-route.ts";
+vi.mock("../../shared/flux-route.ts", async (original) => {
+  const actual = await original<typeof import("../../shared/flux-route.ts")>();
+  return { ...actual, fluxRouteFor: vi.fn(actual.fluxRouteFor) };
+});
+import { bindFixtureAdapter, fixtureMountTurn } from "../testing/mcp-admission-fixture.ts";
+const buildMcpServers: typeof buildAdmittedMcpServers = (turn, options) => buildAdmittedMcpServers(fixtureMountTurn(turn), options);
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // pi driver contract tests, run against the scripted fake `pi` CLI in
@@ -13,11 +20,11 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { approvalKey, autoVerdict } from "../auto-approve.ts";
-import { shouldReview } from "../auto-review.ts";
+import { autoVerdict } from "../auto-approve.ts";
+import { inventoryPath, installPiRootInventoryWiring } from "../pi-root-inventory.ts";
+import { registeredWipeProjects } from "../wipe/registry.ts";
 import { ensureDirs, NATIVE_DIR } from "../config.ts";
 import { newId, type ProviderInstance } from "../contracts.ts";
-import { isMountRecord } from "../../shared/mount-identity.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { encodeInjectId, localHost } from "./local-inject.ts";
 import { execChecks, resetExecChecks } from "../testing/exec-check-spy.ts";
@@ -50,10 +57,12 @@ vi.mock("../local-server-probe.ts", async (original) => {
   };
 });
 import {
+  piRequestUrl,
   piGateAsk,
   applyPiLocalCatalog,
-  buildMcpServers,
+  buildMcpServers as buildAdmittedMcpServers,
   piMountRecords,
+  stampMcpServers,
   ensurePiInjectModel,
   fetchPiModels,
   parsePiCatalog,
@@ -69,6 +78,25 @@ import * as procs from "../procs.ts";
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-pi-cli.ts");
 const MODELS_LINE =
   '{"type":"response","command":"get_available_models","success":true,"data":{"models":[{"provider":"ollama-cloud","id":"glm-5.2","name":"glm-5.2"},{"provider":"openai","id":"gpt-4o","name":"GPT-4o"}]}}';
+
+describe("Pi effective destination", () => {
+  it("uses configured URLs regardless of the provider label, including the default selection", () => {
+    const home = mkdtempSync(join(tmpdir(), "pi-route-fixture-"));
+    const agent = join(home, ".pi", "agent");
+    mkdirSync(agent, { recursive: true });
+    try {
+      writeFileSync(join(agent, "models.json"), JSON.stringify({ providers: {
+        unrelated: { baseUrl: "https://api.fluxrouter.ai/v1", models: [{ id: "fixture" }] },
+        flux: { baseUrl: "https://other.invalid/v1", models: [{ id: "fixture" }] },
+      } }));
+      writeFileSync(join(agent, "settings.json"), JSON.stringify({ defaultProvider: "unrelated", defaultModel: "fixture" }));
+      expect(piRequestUrl("unrelated/fixture", { HOME: home })).toBe("https://api.fluxrouter.ai/v1");
+      expect(fluxRouteFor(piRequestUrl("unrelated/fixture", { HOME: home })).routed).toBe(true);
+      expect(fluxRouteFor(piRequestUrl("flux/fixture", { HOME: home })).routed).toBe(false);
+      expect(piRequestUrl(null, { HOME: home })).toBe("https://api.fluxrouter.ai/v1");
+    } finally { removeTempDirSync(home); }
+  });
+});
 
 describe("parsePiCatalog", () => {
   it("turns a get_available_models response into custom composite-id options", () => {
@@ -117,6 +145,13 @@ describe("parsePiCatalog", () => {
 });
 
 describe("buildMcpServers", () => {
+  it("P2 mounts the built-in browser with its own identity and reserves its name", () => {
+    const browser = {command:"node",args:["browser-proxy"],env:{MURAGE_BROWSER_TOKEN:"fixture"}};
+    const turn = {threadId:"p2",text:"browse",integrations:{browser}};
+    expect(buildMcpServers(turn)?.browser).toEqual(browser);
+    expect(piMountRecords(turn,buildMcpServers(turn))).toContainEqual({engineName:"browser",mountId:"own:browser",provenance:"own"});
+    expect(piMountRecords({threadId:"off",text:"off"},null)).not.toContainEqual(expect.objectContaining({mountId:"own:browser"}));
+  });
   it("returns null when there are no integrations", () => {
     expect(buildMcpServers({ threadId: "t", text: "hi" })).toBeNull();
   });
@@ -150,8 +185,26 @@ describe("buildMcpServers", () => {
     const withPhone = { threadId: "t", text: "hi", integrations: { phoneJobs } } as never;
     expect(piMountRecords(withPhone, buildMcpServers(withPhone))).toContainEqual({ engineName: "phoneJobs", mountId: "own:phoneJobs", provenance: "own" });
     // a server of that name that is not the phone mount is custom, never own
-    const records = piMountRecords({ threadId: "t", text: "hi" } as never, { phoneJobs: { command: "evil" } });
+    const admission = fixtureMountTurn({ threadId: "t", text: "hi" }).mountAdmission!;
+    const records = piMountRecords({ threadId: "t", text: "hi" } as never, { phoneJobs: admission.mount({ command: "evil", args: [], env: {} }) });
     expect(records).toEqual([{ engineName: "phoneJobs", mountId: "custom:phoneJobs", provenance: "custom" }]);
+  });
+
+  // The mount-content assertions the converted Pi mount tests used to make through sendTurn (a mounted Pi turn is refused whole,
+  // bc1bcaaeb, pi.test.ts T-R3-PI-BOUND-MOUNT-REFUSED / T-R3-PI-UNBOUND-MOUNT-REFUSED): scope and mountId stamps stay pinned here.
+  it("Rule 14b: every mounted server is stamped with its mountId, and gated servers say so (scope kept on the host computer)", () => {
+    const turn = { threadId: "t", text: "hi", integrations: {
+      localComputer: { command: "node", args: ["mcp"], env: {}, scope: "local-computer" },
+      agents: { command: "node", args: ["a"], env: {} },
+    } } as never;
+    const built = buildMcpServers(turn);
+    expect(built?.computer).toMatchObject({ scope: "local-computer" });
+    const stamped = stampMcpServers(fixtureMountTurn(turn as never), built, true) as Record<string, Record<string, unknown>>;
+    expect(stamped.computer).toMatchObject({ murageMountId: "own:computer", murageGated: true, scope: "local-computer" });
+    expect(stamped.agents).toMatchObject({ murageMountId: "own:agents", murageGated: true });
+    // a server that is not Murage's own mount stays custom (N1 above pins that provenance)
+    const ungated = stampMcpServers(fixtureMountTurn(turn as never), built, false) as Record<string, Record<string, unknown>>;
+    for (const name of ["computer", "agents"]) expect(ungated[name]).not.toHaveProperty("murageGated");
   });
 
   it("wraps the cloud computer in the computer-proxy spawn contract", () => {
@@ -292,11 +345,34 @@ describe("PiDriver catalog (fake CLI)", () => {
   });
 });
 
+/** Pi keeps a bot's memory out of its tools (pi.ts sendTurn): every mounted turn, bound or not, gets the same clean, user-facing
+ * refusal and the raw MEMORY_CONTEXT_REVOKED code never reaches the user (bc1bcaaeb, T-R3-PI-BOUND-MOUNT-REFUSED). */
+async function expectPiMountRefusedOnBothPaths(integrations: Record<string, unknown>): Promise<void> {
+  for (const bound of [true, false]) {
+    const driver = await PiDriver.create({ instanceId: `pi-refuse-${bound ? "bound" : "unbound"}`, displayName: "pi", environment: {}, enabled: true,
+      config: { cli: FAKE_CLI, fullAuto: false } });
+    try {
+      if (bound) bindFixtureAdapter(driver.adapter);
+      const recorded = recordEvents(driver.adapter);
+      const admissionNotLaunched = vi.fn();
+      const threadId = `t-refuse-${bound ? "bound" : "unbound"}-${newId()}`;
+      const turn = bound ? fixtureMountTurn({ threadId, text: "hello", admissionNotLaunched, integrations } as any)
+        : { threadId, text: "hello", admissionNotLaunched, integrations } as any;
+      const err = await driver.adapter.sendTurn(turn).then(() => null, (e: Error) => e);
+      expect(err?.message).toContain("Murage keeps this bot's memory out of Pi's tools.");
+      expect(err?.message).not.toContain("MEMORY_CONTEXT_REVOKED");
+      expect(admissionNotLaunched).toHaveBeenCalledWith("toolTurnRefused");
+      expect(recorded.events).toEqual([]);
+      recorded.stop();
+    } finally { await driver.dispose(); }
+  }
+}
+
 describe("PiDriver turns (fake CLI)", () => {
   let instance: ProviderInstance;
   let recorder: EventRecorder;
 
-  const create = async (mode?: string, environment: Record<string, string> = {}) => {
+  const create = async (mode?: string, environment: Record<string, string> = {}, bound = true) => {
     instance = await PiDriver.create({
       instanceId: "pi-test",
       displayName: "pi Test",
@@ -304,6 +380,8 @@ describe("PiDriver turns (fake CLI)", () => {
       enabled: true,
       config: { cli: FAKE_CLI, fullAuto: false },
     });
+    // Non-consuming probes retain the engine’s own exit and launch errors.
+    if (bound) bindFixtureAdapter(instance.adapter);
     recorder = recordEvents(instance.adapter);
   };
 
@@ -314,6 +392,32 @@ describe("PiDriver turns (fake CLI)", () => {
   afterEach(async () => {
     recorder?.stop();
     await instance?.dispose();
+  });
+
+  it("R3 reviewer witness: pi text hi reaches a URL decision before the engine prompt", async () => {
+    await create();
+    vi.mocked(fluxRouteFor).mockClear();
+    const observed: number[] = [];
+    const spawn = procs.spawnCli;
+    const spy = vi.spyOn(procs, "spawnCli").mockImplementation((...args) => {
+      const child = spawn(...args);
+      const write = child.stdin.write;
+      child.stdin.write = ((...params: unknown[]) => {
+        try {
+          const frame = JSON.parse(String(params[0]));
+          if (frame.type === "prompt") observed.push(vi.mocked(fluxRouteFor).mock.calls.length);
+        } catch { /* non-prompt control bytes */ }
+        return Reflect.apply(write, child.stdin, params);
+      }) as typeof write;
+      return child;
+    });
+    try {
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "r3-pi", text: "hi" });
+      expect(await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId)).toMatchObject({ ok: true });
+      expect(fluxRouteFor).toHaveBeenCalled();
+      expect(observed).toHaveLength(1);
+      expect(observed[0]).toBeGreaterThan(0);
+    } finally { spy.mockRestore(); }
   });
 
   // STOP-NONACP s6 (ruling A): gate.launch gives live back when the spawn throws synchronously, so the wrapper ends the turn.
@@ -393,7 +497,7 @@ describe("PiDriver turns (fake CLI)", () => {
   });
 
   it("fails promptly when the pi process exits before replying", async () => {
-    await create("exit-early");
+    await create("exit-early", {}, false);
     const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-exit", text: "hi" });
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     expect(done).toMatchObject({ ok: false, stopReason: "failed" });
@@ -403,7 +507,7 @@ describe("PiDriver turns (fake CLI)", () => {
   // S4 power gate (1.0.8): under bwrap or sandbox-exec the wrapper holds stdin open, so no EPIPE fires before the close;
   // a pi that exits before its turn ended must still show the owner exactly one error.
   const exitCase = async (mode: string, threadId: string) => {
-    await create(mode);
+    await create(mode, {}, false);
     const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "hi" });
     const done = await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     await new Promise((resolve) => setTimeout(resolve, 100));
@@ -492,8 +596,10 @@ describe("PiDriver turns (fake CLI)", () => {
       await create(undefined, { FAKE_PI_DUMP: dump });
       const threadId = `t-submission-refused-${newId()}`;
       const beforeSubmit = vi.fn(() => { throw new Error("MEMORY_CONTEXT_REVOKED"); });
-      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId, text:"hi", model:"openai/gpt-4o", beforeSubmit});
+      const notWritten = vi.fn();
+      const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId, text:"hi", model:"openai/gpt-4o", beforeSubmit, notWritten});
       expect(beforeSubmit).toHaveBeenCalledOnce();
+      expect(notWritten).toHaveBeenCalledOnce();
       expect(outboundCommands(threadId)).toEqual(["new_session", "set_model"]);
       expect(dumpRows(dump).filter(row => row.prompt)).toEqual([]);
       expect(turnEventTypes(turnId)).not.toContain("turn.completed");
@@ -680,6 +786,7 @@ describe("PiDriver turns (fake CLI)", () => {
   it("advertises the owner's own MCP servers (MCP-LINK T9)", async () => {
     await create();
     expect(instance.adapter.capabilities.customMcp).toBe(true);
+    expect(instance.adapter.capabilities.browserMcp).toBe(true);
   });
 
   it("advertises images and every harness effort level", async () => {
@@ -805,46 +912,7 @@ describe("PiDriver turns (fake CLI)", () => {
   });
 
   it("mounts integrations as stdio MCP servers and loads the pi-mcp-extension", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "murage-pi-mcp-dump-"));
-    const dump = join(dir, "dump.jsonl");
-    await create(undefined, { FAKE_PI_DUMP: dump });
-    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
-      threadId: "t-mcp",
-      text: "hi",
-      integrations: {
-        memory: { command: "node", args: ["memory-proxy.js"], env: { MURAGE_MEMORY_TOKEN: "fixture-memory" } },
-        composio: { command: "node", args: ["connector-proxy.js"], env: { COMPOSIO_KEY: "ck" } },
-        computer: { kind: "box", boxId: "b1", token: "bt", control: { url: "http://c", token: "ct" } },
-      },
-    });
-    await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
-
-    const rows = readFileSync(dump, "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line) as { argv: string[]; mcpConfig?: { mcpServers?: Record<string, any> } | null });
-    const mcpRow = rows.find((r) => r.mcpConfig != null);
-    expect(mcpRow).toBeTruthy();
-
-    // the extension rides `-e` so the external pi process mounts the servers
-    const extIndex = mcpRow!.argv.indexOf("-e");
-    expect(extIndex).toBeGreaterThanOrEqual(0);
-    expect(mcpRow!.argv[extIndex + 1]).toContain("pi-mcp-extension");
-
-    const servers = mcpRow!.mcpConfig!.mcpServers!;
-    expect(servers["murage-memory"]).toMatchObject({ command: "node", args: ["memory-proxy.js"], env: { MURAGE_MEMORY_TOKEN: "fixture-memory" } });
-    // Rule 14b: each server carries its mountId for the gate's table
-    expect(servers["murage-memory"].murageMountId).toBe("own:memory");
-    expect(servers.murage_connectors.murageMountId).toBe("own:connector");
-    expect(servers.computer.murageMountId).toBe("own:computer");
-    expect(JSON.stringify(mcpRow!.argv)).not.toContain("fixture-memory");
-    // connected apps pass through verbatim as a stdio server, under the plain name
-    expect(servers.murage_connectors).toMatchObject({ command: "node", args: ["connector-proxy.js"], env: { COMPOSIO_KEY: "ck" } });
-    // the cloud computer wraps in the computer-proxy spawn contract
-    expect(servers.computer.args[0]).toContain("computer-proxy");
-    expect(servers.computer.env).toMatchObject({ MURAGEBOX_BOX_ID: "b1", MURAGEBOX_BOX_TOKEN: "bt" });
-    // the box token lives in the 0600 config file, never in argv
-    expect(JSON.stringify(mcpRow!.argv)).not.toContain("bt");
+    await expectPiMountRefusedOnBothPaths({ memory: { command: "node", args: ["memory-proxy.js"], env: {} }, composio: { command: "node", args: ["connector-proxy.js"], env: {} }, computer: { kind: "box", boxId: "b1", token: "bt", control: { url: "http://c", token: "ct" } } });
   });
 
   it("rides the toolUse auto-continue and only settles on the final end_turn", async () => {
@@ -945,84 +1013,17 @@ describe("PiDriver turns (fake CLI)", () => {
   });
 
   type OpenedAsk = { requestId: string; requestType: string; tool: string; summary: string; approvalScope?: "local-computer" };
-  const hostControl = {
-    localComputer: { command: process.execPath, args: ["host-mcp.js"], env: {}, scope: "local-computer" as const },
-  };
 
   it("carries local-computer scope on a host-control confirmation from open through resolve", async () => {
-    await create("host-confirm");
-    const threadId = `t-host-scope-${newId()}`;
-    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "click it", integrations: hostControl });
-    const opened = await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId);
-    expect(opened).toMatchObject({
-      requestId: "ask-host",
-      requestType: "permission",
-      tool: "Allow click on your computer?",
-      approvalScope: "local-computer",
-    });
-
-    await expect(instance.adapter.respondToRequest(threadId, "ask-host", { behavior: "allow" })).resolves.toBe("allowed-once");
-    expect(await recorder.until((e) => e.type === "request.resolved" && e.turnId === turnId)).toMatchObject({
-      behavior: "allow",
-      source: "user",
-      approvalScope: "local-computer",
-    });
-    expect(await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId)).toMatchObject({ ok: true });
+    await expectPiMountRefusedOnBothPaths({ localComputer: { command: process.execPath, args: ["host-mcp.js"], env: {}, scope: "local-computer" } });
   });
 
   it("T63: the ask carries its engine and a record per server in the mcp.json it wrote", async () => {
-    await create("host-confirm");
-    const threadId = `t-63-${newId()}`;
-    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
-      threadId, text: "go",
-      integrations: {
-        ...hostControl,
-        agents: { command: "node", args: ["a"], env: {} },
-        custom: { notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: {} }, "a__b": { command: "npx", args: ["-y", "@x/ab-mcp"], env: {} } },
-      },
-    });
-    const opened = (await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId)) as any;
-    expect(opened.toolEngine).toBe("pi");
-    expect(opened.mcpMounts).toEqual([
-      { engineName: "computer", mountId: "own:computer", provenance: "own" },
-      { engineName: "agents", mountId: "own:agents", provenance: "own" },
-      { engineName: "notes", mountId: "custom:notes", provenance: "custom" },
-    ]);
-    expect(opened.mcpMounts.every(isMountRecord)).toBe(true);
-    await instance.adapter.respondToRequest(threadId, "ask-host", { behavior: "deny" });
+    await expectPiMountRefusedOnBothPaths({ localComputer: { command: process.execPath, args: ["host-mcp.js"], env: {}, scope: "local-computer" }, agents: { command: "node", args: ["a"], env: {} }, custom: { notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: {} } } });
   });
 
   it("keeps remembered grants from auto-approving a Pi host action and keeps it out of AI review", async () => {
-    await create("host-confirm");
-    const threadId = `t-host-policy-${newId()}`;
-    const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "click it", integrations: hostControl });
-    const opened = (await recorder.until((e) => e.type === "request.opened" && e.turnId === turnId)) as unknown as OpenedAsk;
-
-    // Every grant a user could have remembered for this card, with Auto off —
-    // run through the same join server/index.ts applies to request.opened.
-    const remembered = {
-      autoApprove: false,
-      alwaysAllow: [
-        opened.tool,
-        approvalKey(opened.tool, opened.summary)!,
-        approvalKey(opened.tool, opened.summary, "local-computer")!,
-      ],
-    };
-    const verdict = autoVerdict(remembered, opened.tool, opened.summary, { scope: opened.approvalScope });
-    expect(verdict).toMatchObject({ approve: null, source: "local-computer-block" });
-    expect(shouldReview({ source: verdict.source, mode: "enforce", unattended: false, approvalScope: opened.approvalScope })).toBe(false);
-    expect(shouldReview({ source: "no-grant", mode: "enforce", unattended: false, approvalScope: opened.approvalScope })).toBe(false);
-    // Explicit Auto on this computer keeps its separate, warned-about behavior.
-    expect(autoVerdict({ autoApprove: true }, opened.tool, opened.summary, { scope: opened.approvalScope }).approve).toBe(
-      `auto-approved ${opened.tool}`,
-    );
-
-    await expect(instance.adapter.respondToRequest(threadId, "ask-host", { behavior: "deny" })).resolves.toBe("rejected");
-    expect(await recorder.until((e) => e.type === "request.resolved" && e.turnId === turnId)).toMatchObject({
-      behavior: "deny",
-      approvalScope: "local-computer",
-    });
-    await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    await expectPiMountRefusedOnBothPaths({ localComputer: { command: process.execPath, args: ["host-mcp.js"], env: {}, scope: "local-computer" } });
   });
 
   it("cards a select as a question with its own options and answers pi with {value} (ASK1, ASK3)", async () => {
@@ -1118,55 +1119,7 @@ describe("PiDriver turns (fake CLI)", () => {
   });
 
   it("leaves ordinary asks, isolated computers and questions unscoped so ordinary grants still work", async () => {
-    // An ordinary permission ask (a confirm) with no host control.
-    await create("host-confirm");
-    const plain = `t-plain-scope-${newId()}`;
-    const first = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: plain, text: "go" });
-    const ordinary = (await recorder.until((e) => e.type === "request.opened" && e.turnId === first.turnId)) as unknown as OpenedAsk;
-    expect(ordinary).not.toHaveProperty("approvalScope");
-    expect(
-      autoVerdict({ alwaysAllow: [approvalKey(ordinary.tool, ordinary.summary)!] }, ordinary.tool, ordinary.summary, {
-        scope: ordinary.approvalScope,
-      }),
-    ).toMatchObject({ source: "always-allow" });
-    await instance.adapter.respondToRequest(plain, "ask-host", { behavior: "allow" });
-    expect(await recorder.until((e) => e.type === "request.resolved" && e.turnId === first.turnId)).not.toHaveProperty(
-      "approvalScope",
-    );
-    await recorder.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
-    recorder.stop();
-    await instance.dispose();
-
-    // An isolated computer (Cua VM / VPS) mounts without host-control scope.
-    await create("host-confirm");
-    const vm = `t-vm-scope-${newId()}`;
-    const second = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
-      threadId: vm,
-      text: "click it",
-      integrations: { localComputer: { command: process.execPath, args: ["vm-mcp.js"], env: {} } },
-    });
-    expect(await recorder.until((e) => e.type === "request.opened" && e.turnId === second.turnId)).not.toHaveProperty(
-      "approvalScope",
-    );
-    await instance.adapter.respondToRequest(vm, "ask-host", { behavior: "allow" });
-    await recorder.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
-    recorder.stop();
-    await instance.dispose();
-
-    // A question on a host-controlling turn is not a permission.
-    await create("question");
-    const asked = `t-question-scope-${newId()}`;
-    const third = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: asked, text: "go", integrations: hostControl });
-    const question = await recorder.until((e) => e.type === "request.opened" && e.turnId === third.turnId);
-    expect(question).toMatchObject({ requestType: "question" });
-    expect(question).not.toHaveProperty("approvalScope");
-    await expect(
-      instance.adapter.respondToRequest(asked, "ask-q", { behavior: "answer", message: "main" }),
-    ).resolves.toBe("answered");
-    expect(await recorder.until((e) => e.type === "request.resolved" && e.turnId === third.turnId)).not.toHaveProperty(
-      "approvalScope",
-    );
-    await recorder.until((e) => e.type === "turn.completed" && e.turnId === third.turnId);
+    await expectPiMountRefusedOnBothPaths({ localComputer: { command: process.execPath, args: ["vm-mcp.js"], env: {} } });
   });
 
   it("respondToRequest is unavailable for an ask that is not pending", async () => {
@@ -1204,6 +1157,23 @@ describe("PiDriver turns (fake CLI)", () => {
     expect(recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId)).toEqual([expect.objectContaining({ ok: true, stopReason: "cancelled" })]);
     expect(recorder.events.filter((e) => e.type === "runtime.error" && e.turnId === turnId)).toEqual([]);
   });
+
+  // CLOSE-STOP source: the server settles a turn only through the source its send was admitted under, so an end made outside the send keeps it.
+  for (const end of ["quit", "Stop"] as const) {
+    it(`CLOSE-STOP ${end}: the turn end carries the source the turn was sent under`, async () => {
+      await create("permission");
+      const source = { admission: "close-end-source" } as never;
+      const ends: unknown[] = [];
+      const off = instance.adapter.onEvent((event, endSource) => { if (event.type === "turn.completed") ends.push(endSource); });
+      try {
+        await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-close-source", text: "go", sourceContext: source });
+        await recorder.until((e) => e.type === "request.opened");
+        if (end === "quit") await instance.dispose(); else await instance.adapter.interruptTurn("t-close-source");
+        await vi.waitFor(() => expect(ends).toHaveLength(1));
+      } finally { off(); }
+      expect(ends).toEqual([source]);
+    });
+  }
 
   it("a Stop that lands while the turn is still starting (no pi child yet) ends it as cancelled before its prompt", async () => {
     await create();
@@ -1738,6 +1708,7 @@ describe("PiDriver bounded ingress (A4)", () => {
       enabled: true,
       config: { cli: FAKE_CLI, fullAuto: false },
     });
+    bindFixtureAdapter(instance.adapter);
     recorder = recordEvents(instance.adapter);
   };
   /** No event on the thread may carry the dropped frame's content. */
@@ -1815,7 +1786,7 @@ describe("PiDriver approvals gate (fake CLI)", () => {
   let instance: ProviderInstance | undefined;
   let recorder: EventRecorder | undefined;
   const dumps: string[] = [];
-  const create = async (fullAuto: boolean, environment: Record<string, string> = {}) => {
+  const create = async (fullAuto: boolean, environment: Record<string, string> = {}, bound = true) => {
     const dump = join(tmpdir(), `murage-pi-gate-${newId()}.jsonl`);
     dumps.push(dump);
     instance = await PiDriver.create({
@@ -1825,11 +1796,13 @@ describe("PiDriver approvals gate (fake CLI)", () => {
       enabled: true,
       config: { cli: FAKE_CLI, fullAuto },
     });
+    // Unbound probes exercise the instance and turn permission switches alone.
+    if (bound) bindFixtureAdapter(instance.adapter);
     recorder = recordEvents(instance.adapter);
     return dump;
   };
   // The last launch is the turn's; the first is the catalog probe at create.
-  const argvOf = (dump: string) => (readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((row) => row.argv).at(-1) ?? {}) as { argv: string[]; gate: { secretLength: number; prefixes: string } | null };
+  const argvOf = (dump: string) => (readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((row) => row.argv).at(-1) ?? {}) as { argv: string[]; gate: { secretLength: number; prefixes: string; mode: string | null } | null };
   beforeEach(() => { ensureDirs(); chmodSync(FAKE_CLI, 0o755); });
   afterEach(async () => {
     recorder?.stop();
@@ -1837,23 +1810,157 @@ describe("PiDriver approvals gate (fake CLI)", () => {
     for (const dump of dumps.splice(0)) rmSync(dump, { force: true });
   });
 
+  const launchInventoryCosts = new Map<number,object>();
+  it.each([50,5000])("review context: real Pi launch passes only a shared path at %i retained tasks", async count => {
+    const cwd = fixtureBotFolder();
+    const registered = join(cwd, 'registered');
+    mkdirSync(registered);
+    const wiring = installPiRootInventoryWiring({bots:()=>[{id:'review-fixture',cwd:registered,tasks:Array.from({length:count},(_,i)=>({threadId:String(i),cwd:join(registered,'task-'+i)}))}],groups:()=>[],groupRoots:()=>[],onChange:()=>()=>{}},registeredWipeProjects);
+    const before = {...wiring.stats};
+    const snapshots = vi.spyOn(registeredWipeProjects,'snapshot');
+    let captured: {path:string; value:unknown; build:string|undefined} | undefined;
+    const realSpawn = procs.spawnCli;
+    const spy = vi.spyOn(procs, 'spawnCli').mockImplementation((...args) => {
+      if (!args[1].includes('--version') && args[2]?.env?.MURAGE_PI_GATE) {
+        const path = args[2].env.MURAGE_PI_WIPE_CONTEXT_FILE;
+        captured = {path:path ?? '',value:path ? JSON.parse(readFileSync(path,'utf8')) : null,build:args[2].env.BUILD_DIR};
+      }
+      return realSpawn(...args);
+    });
+    try {
+      await create(false, {BUILD_DIR:join(registered,'build')}, false);
+      const {turnId} = await instance!.adapter.sendTurn({cwd,threadId:'review-context',text:'fixture',noLimits:true,releaseBinding:null as never});
+      // MAIN RULING 1114-PI-ROOTS-PUBLISH-ON-CHANGE: launch passes only the shared path.
+      expect(captured?.value).toMatchObject({context:{project:cwd},inventoryPath:inventoryPath()});
+      expect(captured?.value).not.toHaveProperty('roots');
+      const cost = {snapshots:snapshots.mock.calls.length,roots:wiring.stats.rootsVisited-before.rootsVisited,bytes:wiring.stats.serializedBytes-before.serializedBytes,publications:wiring.stats.publications-before.publications};
+      const measured = {...cost,descriptorWrites:captured?1:0,descriptorBytes:Buffer.byteLength(JSON.stringify(captured?.value))};
+      launchInventoryCosts.set(count,measured);
+      console.info('pi-roots real launch operations',JSON.stringify({count,...measured}));
+      expect(measured.descriptorWrites).toBe(1);expect(measured.descriptorBytes).toBeLessThan(4096);
+      if(launchInventoryCosts.size===2)expect(launchInventoryCosts.get(50)).toEqual(launchInventoryCosts.get(5000));
+      expect(cost).toEqual({snapshots:0,roots:0,bytes:0,publications:0});
+      snapshots.mockRestore();
+      expect(JSON.parse(readFileSync(inventoryPath(),'utf8').split('\n').slice(1).join('\n'))).toEqual(expect.arrayContaining([...registeredWipeProjects.snapshot()]));
+      expect(captured?.build).toBe(join(registered,'build'));
+      await recorder!.until(e => e.type === 'request.opened' && e.turnId === turnId);
+      await instance!.adapter.respondToRequest('review-context','ask-host',{behavior:'deny',message:'fixture'});
+      await recorder!.until(e => e.type === 'turn.completed' && e.turnId === turnId);
+      await instance!.dispose();
+      expect(existsSync(captured!.path)).toBe(false);
+    } finally {
+      spy.mockRestore();
+      snapshots.mockRestore();wiring.dispose();registeredWipeProjects.dropBot('review-fixture');
+    }
+  });
+
+  it("failed inventory invalidation hard-stops the owned Pi child and fences later launches", async () => {
+    const {writeFileAtomic}=await import('../atomic.ts');
+    const cwd=fixtureBotFolder();let reject=false,listener:((change:import('../store.ts').StoreChange)=>void)|undefined;
+    const wiring=installPiRootInventoryWiring({bots:()=>[],groups:()=>[],groupRoots:()=>[],onChange:fn=>{listener=fn;return()=>{};}},registeredWipeProjects,{write:(path,data)=>{if(reject)throw Error('fixture pending denied');writeFileAtomic(path,data,{mode:0o600});}});
+    const realSpawn=procs.spawnCli;let child:ReturnType<typeof procs.spawnCli>|undefined;
+    const spawn=vi.spyOn(procs,'spawnCli').mockImplementation((...args)=>{const result=realSpawn(...args);if(args[2]?.env?.MURAGE_PI_GATE)child=result;return result;});
+    try {
+      await create(false,{},false);
+      const {turnId}=await instance!.adapter.sendTurn({cwd,threadId:'inventory-failure',text:'fixture',noLimits:true,releaseBinding:null as never});
+      await recorder!.until(e=>e.type==='request.opened'&&e.turnId===turnId);
+      expect(child?.pid).toBeGreaterThan(0);const kill=vi.spyOn(child!,'kill');
+      reject=true;expect(()=>listener!({type:'workroot',owner:'group:fixture',paths:[cwd]})).toThrow('fixture pending denied');
+      expect(kill).toHaveBeenCalledWith('SIGKILL');
+      await recorder!.until(e=>e.type==='turn.completed'&&e.turnId===turnId);
+      await vi.waitFor(()=>expect(child!.exitCode!==null||child!.signalCode!==null).toBe(true));
+      const launches=spawn.mock.calls.length;
+      await expect(instance!.adapter.sendTurn({cwd,threadId:'inventory-fenced',text:'fixture',noLimits:true,releaseBinding:null as never})).rejects.toThrow('wipe-root-inventory-unavailable');
+      expect(spawn.mock.calls.length).toBe(launches);
+    } finally {
+      reject=false;listener!({type:'workroot-reset'});wiring.dispose();spawn.mockRestore();
+    }
+  });
+
+  it("inventory failure reentered during spawn kills the child before consumer registration", async () => {
+    const {writeFileAtomic}=await import('../atomic.ts');const cwd=fixtureBotFolder();
+    let reject=false,listener:((change:import('../store.ts').StoreChange)=>void)|undefined;
+    const wiring=installPiRootInventoryWiring({bots:()=>[],groups:()=>[],groupRoots:()=>[],onChange:fn=>{listener=fn;return()=>{};}},registeredWipeProjects,{write:(path,data)=>{if(reject)throw Error('fixture pending denied');writeFileAtomic(path,data,{mode:0o600});}});
+    await create(false,{},false);
+    const realSpawn=procs.spawnCli;let child:ReturnType<typeof procs.spawnCli>|undefined,kill:unknown;
+    const spawn=vi.spyOn(procs,'spawnCli').mockImplementation((...args)=>{
+      const result=realSpawn(...args);
+      if(args[2]?.env?.MURAGE_PI_GATE){
+        child=result;kill=vi.spyOn(result,'kill');reject=true;
+        expect(()=>listener!({type:'workroot',owner:'group:fixture',paths:[cwd]})).toThrow('fixture pending denied');
+      }
+      return result;
+    });
+    try {
+      const error=await instance!.adapter.sendTurn({cwd,threadId:'inventory-spawn-failure',text:'fixture',noLimits:true,releaseBinding:null as never}).then(()=>undefined,error=>error);
+      expect(kill).toHaveBeenCalledWith('SIGKILL');expect(error?.message).toBe('wipe-root-inventory-unavailable');
+      await vi.waitFor(()=>expect(child!.exitCode!==null||child!.signalCode!==null).toBe(true));
+    } finally {
+      if(child&&child.exitCode===null&&child.signalCode===null){child.kill('SIGKILL');procs.killCliTree(child);}
+      reject=false;listener!({type:'workroot-reset'});wiring.dispose();spawn.mockRestore();
+    }
+  });
+
+  it("T-R3-PI-UNBOUND-MOUNT-REFUSED: an unbound mounted turn gets the same clean refusal, never the raw revoked code", async () => {
+    await create(false, {}, false);
+    const admissionNotLaunched = vi.fn();
+    const err = await instance!.adapter.sendTurn({ threadId: `t-unbound-mount-${newId()}`, text: "hello", admissionNotLaunched,
+      integrations: { agents: { command: process.execPath, args: [], env: {} } } } as any).then(() => null, (e: Error) => e);
+    expect(err?.message).toContain("Murage keeps this bot's memory out of Pi's tools.");
+    expect(err?.message).not.toContain("MEMORY_CONTEXT_REVOKED");
+    expect(admissionNotLaunched).toHaveBeenCalledWith("toolTurnRefused");
+    expect(recorder!.events).toEqual([]);
+  });
+
+  it("T-R3-PI-BOUND-MOUNT-REFUSED", async () => {
+    await create(false, {}, false);
+    const admissionNotLaunched = vi.fn();
+    const turn = fixtureMountTurn({ threadId: `t-bound-mount-${newId()}`, text: "hello", admissionNotLaunched,
+      integrations: { agents: { command: process.execPath, args: [], env: {} } } });
+    expect(turn.releaseBinding).toBeTruthy();
+    await expect(instance!.adapter.sendTurn(turn)).rejects.toThrow("Murage keeps this bot's memory out of Pi's tools.");
+    expect(admissionNotLaunched).toHaveBeenCalledWith("toolTurnRefused");
+    expect(recorder!.events).toEqual([]);
+  });
+
+  it.each([
+    [{ behavior: "allow" as const }, "allow"],
+    [{ behavior: "deny" as const, message: "private-owner-note" }, "deny.owner"],
+    [{ behavior: "allow" as const, updatedInput: { command: "narrowed" } }, "deny.policy"],
+    [{ behavior: "deny" as const, source: "narrow" as const, message: "private-path" }, "deny.policy"],
+  ] as const)("T-PI-DECISION-FIXED / T-PI-NARROW-DENIES / T-PI-MODE: driver code-only reply %#", async (decision, code) => {
+    const dump = await create(false, { MURAGE_PI_GATE_MODE: "open" });
+    const threadId = `t-tier-f-${newId()}`;
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "check" });
+    await recorder!.until(e => e.type === "request.opened" && e.turnId === turnId);
+    expect(argvOf(dump).gate?.mode).toBe("bound");
+    await instance!.adapter.respondToRequest(threadId, "ask-host", decision);
+    await recorder!.until(e => e.type === "turn.completed" && e.turnId === turnId);
+    const replies = readFileSync(dump, "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line)).filter(r => r.uiResponse);
+    expect(replies).toEqual([{ uiResponse: { type: "extension_ui_response", id: "ask-host", value: JSON.stringify({ code }) } }]);
+  });
+
   // Section (d) of APP-GRANT-FIXPLAN-r6 (Rules 74a, 74d): F12 is computed per ask when its card opens, in the generation
   // it opens in; the turn keeps no record of its own
   it("checks each ask's environment in the generation its card opens in", async () => {
     await create(false, { FAKE_PI_GATE_TWICE: "1" });
-    resetExecChecks();
+    // Setup may already have loaded procs before node:child_process mocks.
+    // Observe the live fixed-helper launcher and let its real probe execute.
+    const probes = vi.spyOn(procs, "execCli");
+    const probeRuns = () => probes.mock.calls.filter(([, args]) => args.at(-1)?.startsWith("if [ -f /usr/bin/env ];")).length;
     const threadId = `t-gen-pi-${newId()}`;
     const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "tidy up" });
     const first = await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId && e.requestId === "ask-host") as any;
-    expect(execChecks.runs).toBe(1);
+    expect(probeRuns()).toBe(1);
     expect(first.execEnv?.shell.at(-1)).toBe("-c");
     expect(approveStartupWrite()).toBe(true);
     await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "deny", message: "not this one" });
     const second = await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId && e.requestId === "ask-host-2") as any;
-    expect(execChecks.runs).toBe(2);
+    expect(probeRuns()).toBe(2);
     expect(second.execEnv?.shell.at(-1)).toBe("-c");
     await instance!.adapter.respondToRequest(threadId, "ask-host-2", { behavior: "deny", message: "no" });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    probes.mockRestore();
   });
 
   // Astra r6 item 8: only the gate's command ask is checked, so only a command card can carry U20
@@ -1871,8 +1978,34 @@ describe("PiDriver approvals gate (fake CLI)", () => {
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
   });
 
+  // PRODUCT CHANGE Tier F §1: keep these tip byte assertions under explicit open admission.
   it("loads the gate and carries the real command to the stop line", async () => {
-    const dump = await create(false);
+    const dump = await create(false, {}, false);
+    const threadId = `t-gate-${newId()}`;
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), releaseBinding: null as never, threadId, text: "tidy up" });
+    const ask = await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId);
+    expect(ask).toMatchObject({
+      requestType: "permission",
+      tool: "Bash",
+      summary: "rm -rf ~/Documents/old",
+      toolCall: { name: "bash", input: { command: "rm -rf ~/Documents/old" } },
+    });
+    const row = argvOf(dump);
+    expect(row.argv.join(" ")).toMatch(/-e \S*pi-permission-gate\.(ts|js)/);
+    expect(row.gate?.secretLength).toBe(48);
+    expect(row.gate?.mode).toBe("open");
+    // an own tool carries no mcp identity; F12 rides on the ask (Rule 74)
+    expect(ask).not.toHaveProperty("toolIdentity");
+    expect((ask as { execEnv?: { shell: string[] } }).execEnv?.shell.at(-1)).toBe("-c");
+    await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "deny", message: "this would read .env; exclude it" });
+    await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
+    const replies = readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((r) => r.uiResponse);
+    // Rule 73d: the answer is a value the gate parses, never a bare cancel
+    expect(replies).toEqual([{ uiResponse: { type: "extension_ui_response", id: "ask-host", value: JSON.stringify({ deny: true, reason: "this would read .env; exclude it" }) } }]);
+  });
+
+  it("T-R3-PI-ABSENT-BINDING-IS-UNBOUND", async () => {
+    const dump = await create(false, {}, false);
     const threadId = `t-gate-${newId()}`;
     const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "tidy up" });
     const ask = await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId);
@@ -1885,6 +2018,7 @@ describe("PiDriver approvals gate (fake CLI)", () => {
     const row = argvOf(dump);
     expect(row.argv.join(" ")).toMatch(/-e \S*pi-permission-gate\.(ts|js)/);
     expect(row.gate?.secretLength).toBe(48);
+    expect(row.gate?.mode).toBe("open");
     // an own tool carries no mcp identity; F12 rides on the ask (Rule 74)
     expect(ask).not.toHaveProperty("toolIdentity");
     expect((ask as { execEnv?: { shell: string[] } }).execEnv?.shell.at(-1)).toBe("-c");
@@ -1896,9 +2030,9 @@ describe("PiDriver approvals gate (fake CLI)", () => {
   });
 
   it("Allow answers the editor with the input the gate sent, unchanged", async () => {
-    const dump = await create(false);
+    const dump = await create(false, {}, false);
     const threadId = `t-gate-allow-${newId()}`;
-    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "tidy up" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), releaseBinding: null as never, threadId, text: "tidy up" });
     await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId);
     await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "allow" });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
@@ -1911,16 +2045,16 @@ describe("PiDriver approvals gate (fake CLI)", () => {
     ["an unproven mount", { tool: "x_y", mount: "not_mounted", mcpTool: "y", input: { a: 1 } }],
     ["a missing required field", { tool: "bash", input: {} }],
   ])("S4: on %s Allow tells the gate to run what it holds, and Deny stays a deny", async (_name, call) => {
-    const dump = await create(false, { FAKE_PI_GATE_CALL: JSON.stringify(call) });
+    const dump = await create(false, { FAKE_PI_GATE_CALL: JSON.stringify(call) }, false);
     const threadId = `t-gate-keep-${newId()}`;
-    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go" });
+    const { turnId } = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), releaseBinding: null as never, threadId, text: "go" });
     await recorder!.until((e) => e.type === "request.opened" && e.turnId === turnId);
     await instance!.adapter.respondToRequest(threadId, "ask-host", { behavior: "allow" });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === turnId);
     const replies = readFileSync(dump, "utf8").split("\n").filter(Boolean).map((line) => JSON.parse(line)).filter((r) => r.uiResponse);
     expect(JSON.parse(replies[0].uiResponse.value)).toEqual({ allow: true, keep: true });
     const denied = `t-gate-keep-deny-${newId()}`;
-    const second = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: denied, text: "go" });
+    const second = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), releaseBinding: null as never, threadId: denied, text: "go" });
     await recorder!.until((e) => e.type === "request.opened" && e.turnId === second.turnId);
     await instance!.adapter.respondToRequest(denied, "ask-host", { behavior: "deny", message: "no" });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
@@ -1943,7 +2077,7 @@ describe("PiDriver approvals gate (fake CLI)", () => {
   it("routeAsks overrides only Pi skip-all gate setting", async () => {
     for (const fullAuto of [false, true]) {
       if (fullAuto) { recorder!.stop(); await instance!.dispose(); }
-      const dump = await create(fullAuto, { FAKE_PI_MODE: "happy" });
+      const dump = await create(fullAuto, { FAKE_PI_MODE: "happy" }, false);
       for (const [turn, enforced] of [false, true, false].entries()) {
         const sent = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(),
           threadId: `t-enforce-${fullAuto}-${turn}`, text: "hi",
@@ -1960,7 +2094,7 @@ describe("PiDriver approvals gate (fake CLI)", () => {
   });
 
   it("stays off when the instance skips asks and the bot is not on Full access, and on when it is", async () => {
-    const off = await create(true, { FAKE_PI_MODE: "happy" });
+    const off = await create(true, { FAKE_PI_MODE: "happy" }, false);
     const first = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-gate-off-${newId()}`, text: "hi" });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === first.turnId);
     expect(argvOf(off).argv.join(" ")).not.toMatch(/pi-permission-gate/);
@@ -1968,7 +2102,7 @@ describe("PiDriver approvals gate (fake CLI)", () => {
     recorder!.stop();
     await instance!.dispose();
 
-    const on = await create(true, { FAKE_PI_MODE: "happy" });
+    const on = await create(true, { FAKE_PI_MODE: "happy" }, false);
     const second = await instance!.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-gate-on-${newId()}`, text: "hi", stopLine: true });
     await recorder!.until((e) => e.type === "turn.completed" && e.turnId === second.turnId);
     expect(argvOf(on).argv.join(" ")).toMatch(/pi-permission-gate/);
@@ -1984,21 +2118,7 @@ describe("PiDriver approvals gate (fake CLI)", () => {
 
 describe("the gate table, not a prefix list, decides (Rule 14)", () => {
   it("stamps every written server with its mountId and the gate flag, and hands no prefix list", async () => {
-    const dump = join(tmpdir(), `murage-pi-prefix-${newId()}.jsonl`);
-    const instance = await PiDriver.create({ instanceId: "pi-prefix", displayName: "pi", environment: { FAKE_PI_MODE: "happy", FAKE_PI_DUMP: dump }, enabled: true, config: { cli: FAKE_CLI, fullAuto: true } });
-    const recorder = recordEvents(instance.adapter);
-    const composio = { command: "node", args: ["connector-proxy.js"], env: {} };
-    for (const [name, flags] of [["plain", {}], ["routeAsks", { routeAsks: true as const }]] as const) {
-      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: `t-prefix-${name}-${newId()}`, text: "hi", ...flags, integrations: { composio } });
-      await recorder.until((e) => e.type === "turn.completed" && e.turnId === sent.turnId);
-      const row = (readFileSync(dump, "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)).filter((r) => r.argv).at(-1)) as { gate: Record<string, unknown> | null; mcpConfig?: { mcpServers: Record<string, any> } };
-      expect(row.mcpConfig?.mcpServers.murage_connectors.murageMountId).toBe("own:connector");
-      if (name === "plain") { expect(row.gate).toBeNull(); expect(row.mcpConfig?.mcpServers.murage_connectors.murageGated).toBeUndefined(); }
-      else { expect(row.gate).not.toHaveProperty("prefixes"); expect(row.mcpConfig?.mcpServers.murage_connectors.murageGated).toBe(true); }
-    }
-    recorder.stop();
-    await instance.dispose();
-    rmSync(dump, { force: true });
+    await expectPiMountRefusedOnBothPaths({ composio: { command: "node", args: ["connector-proxy.js"], env: {} } });
   });
 });
 
