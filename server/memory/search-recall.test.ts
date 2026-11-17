@@ -7,6 +7,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it } from "vitest";
+import { stopSearchIndex } from "../message-search-index.ts";
 import { DATA_DIR } from "../config.ts";
 import { database } from "../database.ts";
 import { resetObserveWindows, setObserveSink } from "../observe.ts";
@@ -22,15 +23,15 @@ let lines: string[];
 beforeEach(() => { freshDataDir("active"); resetMemoryCounters(); resetWorkerLog(); resetObserveWindows(); lines = []; setObserveSink(line => lines.push(line)); });
 afterEach(() => { closeMemoryIndexReader(); setObserveSink(); });
 
-function seed() {
+async function seed() {
   captureAndPublish("The quarterly launch review is on Friday at ten.");
   captureAndPublish("Sean prefers concise status reports every Monday.");
   captureAndPublish("Dinner reservations are at the harbour restaurant.");
-  indexPendingRecords();
+  await indexPendingRecords();
 }
 
-it("finds words through the persistent read-only handle and orders them by rank, within the caller's scopes only", () => {
-  seed();
+it("finds words through the persistent read-only handle and orders them by rank, within the caller's scopes only", async () => {
+  await seed();
   const scopeId = String(database().prepare("SELECT DISTINCT scope_id FROM memory_records LIMIT 1").get()!.scope_id);
   const page = lexicalPage("launch review Friday", [scopeId], 10)!;
   expect(page.hits.length).toBeGreaterThan(0);
@@ -41,8 +42,8 @@ it("finds words through the persistent read-only handle and orders them by rank,
   expect(memoryIndexTerms("a b c d e f g h i j k l")).toHaveLength(RECALL_TERM_LIMIT);
 });
 
-it("the ranked word query streams from the index in rank order: no sort, no scan of the word table", () => {
-  seed();
+it("the ranked word query streams from the index in rank order: no sort, no scan of the word table", async () => {
+  await seed();
   const db = new DatabaseSync(join(DATA_DIR, "memory-index.db"), { readOnly: true });
   const plan = db.prepare(`EXPLAIN QUERY PLAN ${RECALL_SEARCH_SQL}`).all("\"launch\"", "[\"s\"]", 51, 0).map(row => String(row.detail)).join(" | ");
   db.close();
@@ -52,7 +53,7 @@ it("the ranked word query streams from the index in rank order: no sort, no scan
 });
 
 it("answers from the words alone when the helper never answers: not unavailable, 50 of 50, each inside the budget", async () => {
-  seed();
+  await seed();
   const { access } = accessFor();
   let unavailable = 0, slowest = 0;
   for (let n = 0; n < 50; n++) {
@@ -69,15 +70,22 @@ it("answers from the words alone when the helper never answers: not unavailable,
 });
 
 it("a failing helper is logged with its cause and recall still answers from the words", async () => {
-  seed();
+  await seed();
   const result = await searchMemory("launch review", accessFor().access, failingBridge("MEMORY_WORKER_EXITED"), {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(result.hits.length).toBeGreaterThan(0);
   expect(result.degradedReason).toBe("semantic-skipped");
   expect(lines.some(line => line.includes("subsystem=recall cause=MEMORY_WORKER_EXITED"))).toBe(true);
 });
 
+it("a ready word index with no matching hits still reports an unavailable semantic search", async () => {
+  await seed();
+  const result = await searchMemory("absent_fixture_token", accessFor().access, failingBridge(), {allowance: LineageAllowance.tool(1_000_000_000)});
+  expect(result.hits).toEqual([]);
+  expect(result).toMatchObject({degradedReason: "MEMORY_RECALL_UNAVAILABLE", partial: true, coverageComplete: false});
+});
+
 it("the helper's fused hits and the words are merged without duplicates", async () => {
-  seed();
+  await seed();
   const record = database().prepare("SELECT id,version FROM memory_records WHERE text LIKE '%harbour%'").get()!;
   const bridge = { search: async () => ({ hits: [{ id: String(record.id), version: Number(record.version), score: 0.5, similarity: 0.9 }], vectorRows: 3, coverageComplete: true }) };
   let seen = -1;
@@ -89,10 +97,13 @@ it("the helper's fused hits and the words are merged without duplicates", async 
 });
 
 it("recall and bundle assembly write nothing at all", async () => {
-  seed();
+  await seed();
   const { access } = accessFor();
   await searchMemory("launch review", access, emptyBridge, {allowance: LineageAllowance.tool(1_000_000_000)});  // warm anything lazy (the per-connection temp tables are made on first use)
   await buildMemoryBundle("launch review", access, emptyBridge, {allowance: LineageAllowance.tool()});
+  // The independent message-search worker may insert its startup reset marker
+  // across these awaits (5d5a791f19). Join it before measuring memory reads.
+  await stopSearchIndex();
   const before = changes();
   await searchMemory("launch review Friday", access, emptyBridge, {allowance: LineageAllowance.tool(1_000_000_000)});
   await searchMemory("weekly reports", access, hangingBridge, {allowance: LineageAllowance.tool(1_000_000_000)});
@@ -102,13 +113,16 @@ it("recall and bundle assembly write nothing at all", async () => {
 });
 
 it("retrieval counters are held in memory and written by the idle sweep, and the Details figures still count them", async () => {
-  seed();
+  await seed();
   const { access } = accessFor();
   flushMemoryCounters(Date.now(), true);  // creates the counter row
   await searchMemory("launch review", access, emptyBridge, {allowance: LineageAllowance.tool(1_000_000_000)});  // (the per-connection temp tables the dispatch checks use are made on first use)
   await buildMemoryBundle("launch review", access, emptyBridge, {allowance: LineageAllowance.tool()});
   const queries = () => Number(memoryHealth(null).retrieved.queries);
   const base = queries();
+  // The independent message-search worker may insert its startup reset marker
+  // across these awaits (5d5a791f19). Join it before measuring memory reads.
+  await stopSearchIndex();
   const before = changes();
   await searchMemory("launch review", access, emptyBridge, {allowance: LineageAllowance.tool(1_000_000_000)});
   expect(changes()).toBe(before);
@@ -128,7 +142,7 @@ it("fewer survivors than asked for reads one more page, up to 200 ranked hits", 
   const insert = database().prepare("INSERT INTO memory_records VALUES(?,1,?,'fact',?,'owner-statement','archived',0,0,NULL,NULL,0)");
   const receipt = database().prepare("INSERT INTO memory_projection_receipts VALUES(?,1,1,'pending','pending',NULL)");
   for (let n = 0; n < 60; n++) { insert.run(`junk-${n}`, scope, "alpha alpha alpha"); receipt.run(`junk-${n}`); }
-  indexPendingRecords();
+  await indexPendingRecords();
   const page = lexicalPage("alpha", [scope], RECALL_FIRST_PAGE)!;
   expect(page.hits).toHaveLength(RECALL_FIRST_PAGE);
   expect(page.more).toBe(true);
@@ -139,7 +153,7 @@ it("fewer survivors than asked for reads one more page, up to 200 ranked hits", 
 });
 
 it("a missing or damaged index is logged, the helper answers, and a rebuilding index is not reported complete", async () => {
-  seed();
+  await seed();
   const record = database().prepare("SELECT id,version FROM memory_records WHERE text LIKE '%launch%' LIMIT 1").get()!;
   const bridge = { search: async () => ({ hits: [{ id: String(record.id), version: Number(record.version), score: 1 }], vectorRows: 1, coverageComplete: true }) };
   closeMemoryIndexReader();
@@ -153,16 +167,16 @@ it("a missing or damaged index is logged, the helper answers, and a rebuilding i
 
 it("words only is reported incomplete while records are waiting for the index, complete once they are in", async () => {
   captureAndPublish("The launch review is on Friday.");
-  indexPendingRecords();
+  await indexPendingRecords();
   captureAndPublish("A new launch fact the index has not seen.");
   const { access } = accessFor();
   expect((await searchMemory("launch", access, failingBridge(), {allowance: LineageAllowance.tool(1_000_000_000)})).coverageComplete).toBe(false);
-  indexPendingRecords();
+  await indexPendingRecords();
   expect((await searchMemory("launch", access, failingBridge(), {allowance: LineageAllowance.tool(1_000_000_000)})).coverageComplete).toBe(true);
 });
 
 it("a turn that was stopped still stops the search, and access that went away still refuses it", async () => {
-  seed();
+  await seed();
   const { access, registry } = accessFor();
   const stop = new AbortController(); stop.abort();
   await expect(searchMemory("launch", access, emptyBridge, { allowance: LineageAllowance.tool(1_000_000_000), signal: stop.signal })).rejects.toThrow();

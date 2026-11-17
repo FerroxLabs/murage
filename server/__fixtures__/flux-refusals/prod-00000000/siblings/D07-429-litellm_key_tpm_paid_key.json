@@ -1,0 +1,60 @@
+{
+ "status": 429,
+ "headers": {
+  "date": "<HTTP-date>",
+  "server": "uvicorn",
+  "x-flux-alias": "deepseek-v4-flash",
+  "content-type": "application/json",
+  "x-frame-options": "DENY",
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-content-type-options": "nosniff",
+  "connection": "close",
+  "content-length": "<n>"
+ },
+ "body": {
+  "error": {
+   "message": "Flux Router error: 429: Rate limit exceeded for [REDACTED]: KEYHASH_REDACTED. Limit type: tokens. Current limit: 100000, Remaining: 0. Limit resets at: 2026-11-10 20:08:21 UTC",
+   "type": null,
+   "param": null,
+   "code": "429"
+  }
+ },
+ "endpoint": "/v1/chat/completions",
+ "chat_branch": "generic sanitize (:26200-26255)",
+ "per_endpoint": {
+  "/v1/responses": {
+   "status": 429,
+   "headers": {
+    "content-length": "217",
+    "content-type": "application/json"
+   },
+   "body": {
+    "error": {
+     "message": "Rate limit exceeded for api_key: KEYHASH_REDACTED. Limit type: tokens. Current limit: 100000, Remaining: 0. Limit resets at: 2026-11-10 20:08:21 UTC",
+     "type": "api_error",
+     "param": null,
+     "code": "429"
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  },
+  "/v1/messages": {
+   "status": 429,
+   "headers": {
+    "content-length": "213",
+    "content-type": "application/json"
+   },
+   "body": {
+    "type": "error",
+    "error": {
+     "type": "rate_limit_error",
+     "message": "Rate limit exceeded for api_key: KEYHASH_REDACTED. Limit type: tokens. Current limit: 100000, Remaining: 0. Limit resets at: 2026-11-10 20:08:21 UTC"
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  }
+ },
+ "notes": "Sibling of 07 with 'Limit type: tokens' (tpm_limit). ProxyRateLimitError built in the pod from the litellm 1.92.2 v3 limiter text (limit 100000, reset time copied from 07). Paid tier, so no free-tier rewrite; chat goes through the generic sanitizer ('api_key' -> '[REDACTED]', 'Flux Router error: 429: ...'), which drops retry-after; /v1/messages and /v1/responses renderers also ignore exc.headers. Reset time only in the message text."
+}

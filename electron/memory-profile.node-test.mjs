@@ -7,6 +7,7 @@ import test from "node:test";
 import { applyLoginProfileArguments } from "./background-login.mjs";
 import { CLOSED_DUE_FLAG, CLOSED_DESCRIPTOR_FLAG, parseClosedBackupArguments, readClosedBackupDescriptor, closedProfileEnvironment, assertClosedProfileBinding } from "./backup-closed-profile.mjs";
 import { enforceProxyLaunchGuard } from "./proxy-launch-guard.mjs";
+import { createOsShell } from "./os-shell.mjs";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
 
 const source=fs.readFileSync(new URL("./main.mjs",import.meta.url),"utf8");
@@ -17,7 +18,9 @@ assert(start>=0&&end>start,"Actual isolated startup block must exist");
 // the spawned proxies), then checks the closed-backup launch flags, then calls the real
 // sign-in profile argument parser, so inject the actual module exports.
 // The block opens with the G5 proxy-launch guard (main.mjs imports it): the real export, which leaves this test process alone.
-const closedProfile={enforceProxyLaunchGuard,CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding};
+// MAIN RULING c27f55e312: startup also builds the OS shell boundary; inject its
+// real factory so the full profile-isolation block still runs unchanged.
+const closedProfile={enforceProxyLaunchGuard,createOsShell,electronShell:{},CLOSED_DUE_FLAG,CLOSED_DESCRIPTOR_FLAG,parseClosedBackupArguments,readClosedBackupDescriptor,closedProfileEnvironment,assertClosedProfileBinding};
 const run=new Function("app","process","fs","path","applyLoginProfileArguments",...Object.keys(closedProfile),source.slice(start,end));
 function context(env,argv=[]){const calls=[];return {calls,env,run:()=>run({setPath:(key,value)=>calls.push([key,value]),setAppLogsPath:value=>calls.push(["logs",value])},{env,argv,exit:code=>{throw new Error(`unexpected exit ${code}`);}},fs,path,applyLoginProfileArguments,...Object.values(closedProfile))};}
 

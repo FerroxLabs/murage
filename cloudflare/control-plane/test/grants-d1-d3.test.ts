@@ -27,7 +27,7 @@ const ASTRA_CATALOGUE = JSON.stringify({ plans: { starter: { creditsUsd: 5 }, pr
 let router: GrantsRouterDouble;
 let e: Env;
 const envWith = (over: Partial<Env> = {}): Env => ({ ...env, FLUX_CLOUD_GRANTS_URL: "https://router.test", FLUX_CLOUD_GRANTS_TOKEN: router.token,
-  CLOUD_FLUX_ROUTES_ENABLED: "1", ...over } as Env);
+  FLUX_CLOUD_SERVICE_TOKEN: "s".repeat(40), CLOUD_FLUX_ROUTES_ENABLED: "1", ...over } as Env);
 /** Flux switched ON (Astra JOURNEY-A-10 #1): real hooks with the grants client built for a qualified router. */
 const flux = (): FluxEntitlementHooks => ({ ...stubFluxHooks, ...grantsHooks(router.fetch, { reversalTargets: true }), stub: false });
 /** Flux OFF, the launch state: the production default hooks (stub) with the grants client, no capability. */
@@ -647,7 +647,7 @@ describe("Astra JOURNEY-A-6 #2/#3: a refund's credit adjustment is a versioned c
     expect(router.requests.filter((r) => r.path.endsWith("/reverse"))).toEqual([]);
   });
   it("Astra JOURNEY-A-10 #1 probe: Flux off (stub hooks, no capability) with token, URL and switch ALL configured: every grant/target/reversal path journals, sends NOTHING, completes nothing, alerts", async () => {
-    e = envWith(); // credentials configured and CLOUD_FLUX_ROUTES_ENABLED on: the stub hooks alone must keep Flux off
+    e = envWith(); // credentials configured and the Flux route switch on: the stub hooks alone must keep Flux off
     const grantOff = (id: string) => withHomeLease(e, HOME, (lease) => grantOnce(e, lease, stubOff(), { ...INPUT, invoiceId: id }, "sub_1", NOW));
     // in_1: a refund-driven target on a grant that must go out WITH its target; in_2: a final (lane B) target; in_3 / in_4: legacy
     // refund-backed /reverse rows, one dispatched before (ambiguous), one never dispatched; in_5: an ordinary (non-refund) full reversal.
@@ -687,7 +687,7 @@ describe("Astra JOURNEY-A-6 #2/#3: a refund's credit adjustment is a versioned c
     expect(await alerts("credit.grant_held")).toBe(1);
     expect((await legacyReversalReport(e)).rows.map((x) => x.grantId)).toEqual(["in_3:period"]);
   });
-  it("Astra JOURNEY-A-10 #1: qualified real hooks but the Flux switch (CLOUD_FLUX_ROUTES_ENABLED) unset: the client sends nothing, completes nothing, ONE alert", async () => {
+  it("Astra JOURNEY-A-10 #1: qualified real hooks but the Flux switch (the Flux route switch) unset: the client sends nothing, completes nothing, ONE alert", async () => {
     e = envWith({ CLOUD_FLUX_ROUTES_ENABLED: undefined });
     expect(await grant()).toBe(false);
     await env.DB.prepare("INSERT INTO credit_reversals (invoice_id,kind,home_id,reason,op_id,requested_at) VALUES ('in_5','period',?,'downgrade',NULL,?)").bind(HOME, NOW).run();
@@ -851,11 +851,31 @@ describe("D3: the token guard runs before ANY dispatch", () => {
       await sweep(NOW + 2 * DAY);
       expect(router.requests).toHaveLength(0);
       expect(await stubLogRows()).toBe(0);
-      expect(await row()).toMatchObject({ g: null, err: "grants_token_absent" });
+      expect(await row()).toMatchObject({ g: null, t: 0, err: "grant_held:flux_not_ready" }); // PRODFLUX r3 (3): held before any count
       expect((await row())!.body === null).toBe(url === undefined); // quiesced state: frozen, not sent
       expect(await alerts("credit.grants_token_absent")).toBe(1);
     });
   }
+  it("PRODFLUX: the service token absent (grants token set): the hooks dispatch nothing, the claim is held with no attempt, ONE alert", async () => {
+    e = envWith({ FLUX_CLOUD_SERVICE_TOKEN: undefined });
+    expect(await grant()).toBe(false);
+    await sweep(NOW + DAY);
+    // The hook's own dispatch guard refuses too (a caller that skips billing's guard still sends nothing).
+    await expect(flux().grantMonthlyCredits(e, { ...INPUT, invoiceId: "in_1" })).rejects.toThrow();
+    expect(router.requests).toHaveLength(0);
+    expect(await row()).toMatchObject({ g: null, a: 0, t: 0, err: "grant_held:flux_not_ready" });
+    expect(await alerts("credit.flux_service_token_absent")).toBe(1);
+    e = envWith();
+    await sweep(NOW + 2 * DAY);
+    expect((await row())!.g).toBe(NOW + 2 * DAY);
+  });
+  it("PRODFLUX: the grants token absent consumes no attempt (a local hold), whatever the number of sweeps", async () => {
+    e = envWith({ FLUX_CLOUD_GRANTS_TOKEN: undefined });
+    expect(await grant()).toBe(false);
+    for (let i = 1; i <= 4; i++) await sweep(NOW + i * DAY);
+    expect(await row()).toMatchObject({ g: null, a: 0, t: 0, err: "grant_held:flux_not_ready" });
+    expect(router.requests).toHaveLength(0);
+  });
   it("token set but URL absent: refused with its own alert, never the stub", async () => {
     e = envWith({ FLUX_CLOUD_GRANTS_URL: undefined });
     expect(await grant()).toBe(false);

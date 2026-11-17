@@ -1,3 +1,6 @@
+import { fixtureSubmittedInput, fixtureMountTurn } from "./testing/mcp-admission-fixture.ts";
+import { buildMcpServers } from "./drivers/mcp-mounts.ts";
+import { codexMountConfiguration } from "./testing/codex-mount-configuration.ts";
 import { useOutsideStoreFixture } from "./testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "./testing/bot-folder-fixture.ts";
 import { createServer } from "node:http";
@@ -8,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { applyProviderRoute, routeEndpoint, type ProviderTurnRoute } from "./provider-routing.ts";
 import { providerEngineProtocol } from "../shared/provider-engine.ts";
-import { recordEvents } from "./testing/events.ts";
+import { recordAdmittedEvents as recordEvents } from "./testing/admitted-events.ts";
 import { fixtureCredentialFingerprint } from "./testing/fixture-dump.ts";
 import { QwenAgentDriver } from "./drivers/acp/qwen.ts";
 import { ClaudeDriver } from "./drivers/claude.ts";
@@ -41,6 +44,13 @@ describe('bound provider routes',()=>{
    result.cleanup();
   }
  });
+ it('a Flux connection on Hermes says capture off in its own home (explicit-only capture); another host gets no memory header',()=>{
+  const flux={...route,preset:'flux' as const,baseUrl:'https://api.fluxrouter.ai/v1'};
+  const env:NodeJS.ProcessEnv={};const result=applyProviderRoute('hermesAgent',env,flux);
+  try{const text=readFileSync(join(env.HERMES_HOME!,'config.yaml'),'utf8');expect(text).toContain('  extra_headers:\n    x-flux-memory-app: "murage"\n    x-flux-memory-capture: "off"\n');}finally{result.cleanup();}
+  const other:NodeJS.ProcessEnv={};const plain=applyProviderRoute('hermesAgent',other,route);
+  try{expect(readFileSync(join(other.HERMES_HOME!,'config.yaml'),'utf8')).not.toContain('x-flux-memory');}finally{plain.cleanup();}
+ });
  it('rejects catalog model IDs that could be interpreted as CLI switches',()=>{expect(()=>applyProviderRoute('qwenAgent',{}, {...route,model:'--dangerously-skip-permissions'})).toThrow();});
  it('keeps incompatible protocols and unproved CLI routes unavailable',()=>{
   expect(providerEngineProtocol('claudeAgent','deepseek','openai')).toBeNull();expect(providerEngineProtocol('grokAgent','flux','openai')).toBe('openai');expect(providerEngineProtocol('grokAgent','openai','responses')).toBeNull();expect(providerEngineProtocol('grok','flux','openai')).toBe('openai');expect(providerEngineProtocol('codex','openai','openai')).toBe('responses');
@@ -48,7 +58,7 @@ describe('bound provider routes',()=>{
  for(const [name,driver,fake]of [['qwen',QwenAgentDriver,'fake-acp-cli.ts'],['hermes',HermesAgentDriver,'fake-acp-cli.ts'],['fuigo',FuigoAgentDriver,'fake-acp-cli.ts']]as const){
   it(`dispatches ${name} through the real adapter with a scoped provider connection`,async()=>{
    const home=mkdtempSync(join(tmpdir(),`murage-provider-${name}-`)),dump=join(home,'dump.json');const instance=await driver.create({instanceId:`fixture-${name}`,displayName:name,enabled:true,environment:{HOME:home,USERPROFILE:home,FAKE_ACP_DUMP:dump,FAKE_ACP_MCP_READY:'1'},config:driver.decodeConfig({cli:join(import.meta.dirname,'testing',fake),fullAuto:false})});const events=recordEvents(instance.adapter);
-   try{await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:'provider-turn',text:'fixture only',model:route.model,providerRoute:route,integrations:{agents:{command:'node',args:['fixture-tools'],env:{}}}});const finished=await events.until(e=>e.type==='turn.completed');expect(finished.type).toBe('turn.completed');expect(existsSync(dump)).toBe(true);const child=JSON.parse(readFileSync(dump,'utf8'));if(name==='qwen'){expect(child.env.OPENAI_API_KEY).toBe(fixtureCredentialFingerprint(route.apiKey));expect(child.env.OPENAI_BASE_URL).toBe(route.baseUrl);}expect(JSON.stringify(child.argv)).not.toContain(route.apiKey);}
+   try{await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:'provider-turn',text:'fixture only',model:route.model,providerRoute:route,integrations:{agents:{command:'node',args:[join(import.meta.dirname,'testing/fake-idle-mcp.mjs'),'fixture-tools'],env:{}}}});const finished=await events.until(e=>e.type==='turn.completed');expect(finished.type).toBe('turn.completed');expect(existsSync(dump)).toBe(true);const child=JSON.parse(readFileSync(dump,'utf8'));if(name==='qwen'){expect(child.env.OPENAI_API_KEY).toBe(fixtureCredentialFingerprint(route.apiKey));expect(child.env.OPENAI_BASE_URL).toBe(route.baseUrl);}expect(JSON.stringify(child.argv)).not.toContain(route.apiKey);}
    finally{events.stop();await instance.dispose();removeTempDirSync(home);}
   });
  }
@@ -56,14 +66,15 @@ describe('bound provider routes',()=>{
   it(`binds ${name} at actual CLI spawn and preserves tool configuration`,async()=>{
    const home=mkdtempSync(join(tmpdir(),`murage-provider-${name}-`)),dump=join(home,'dump.json');const chosen={...route,...(name==='claude'?{preset:'anthropic' as const,protocol:'anthropic' as const}:{})};
    const instance=await driver.create({instanceId:`fixture-${name}`,displayName:name,enabled:true,environment:{HOME:home,USERPROFILE:home,[dumpVariable]:dump},config:driver.decodeConfig({cli:join(import.meta.dirname,'testing',fake)}) as any});const events=recordEvents(instance.adapter);
-   try{await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:'provider-turn',text:'fixture only',model:chosen.model,providerRoute:chosen,integrations:{agents:{command:'node',args:['fixture-tools'],env:{}}}});await events.until(e=>e.type==='turn.completed');const child=JSON.parse(readFileSync(dump,'utf8'));expect(JSON.stringify(child.argv)).not.toContain(route.apiKey);if(name==='claude'){expect(child.env.ANTHROPIC_API_KEY).toBe(fixtureCredentialFingerprint(route.apiKey));expect(child.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:49999');expect(JSON.stringify(child.mcpConfig)).toContain('fixture-tools');}else{expect(child.env.MURAGE_PROVIDER_API_KEY).toBe(fixtureCredentialFingerprint(route.apiKey));expect(child.calls.find((c:any)=>c.method==='thread/start').params.modelProvider).toMatch(/^murage_/);expect(child.argv.join(' ')).toContain('fixture-tools');}}
+   try{await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:'provider-turn',text:'fixture only',model:chosen.model,providerRoute:chosen,integrations:{agents:{command:'node',args:[join(import.meta.dirname,'testing/fake-idle-mcp.mjs'),'fixture-tools'],env:{}}}});await events.until(e=>e.type==='turn.completed');const child=JSON.parse(readFileSync(dump,'utf8'));expect(JSON.stringify(child.argv)).not.toContain(route.apiKey);if(name==='claude'){expect(child.env.ANTHROPIC_API_KEY).toBe(fixtureCredentialFingerprint(route.apiKey));expect(child.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:49999');/* MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: native shims hide server-side configuration. */expect(JSON.stringify(child.mcpConfig)).toContain('cli-mount-shim');expect(JSON.stringify(buildMcpServers(fixtureMountTurn(fixtureSubmittedInput(instance.adapter))))).toContain('fixture-tools');}else{expect(child.env.MURAGE_PROVIDER_API_KEY).toBe(fixtureCredentialFingerprint(route.apiKey));expect(child.calls.find((c:any)=>c.method==='thread/start').params.modelProvider).toMatch(/^murage_/);/* MAIN RULING INT-CONFLICT-DEFAULT eb01447e7d: assert the native shim and the independent server configuration. */expect(child.argv.join(' ')).toContain('cli-mount-shim');expect(JSON.stringify(codexMountConfiguration(fixtureSubmittedInput(instance.adapter)))).toContain('fixture-tools');}}
    finally{events.stop();await instance.dispose();removeTempDirSync(home);}
   });
  }
+ // MAIN RULING: 2ffd134722 extends the chat-tools MCP set with the built-in browser; exact provider routing remains required.
  it('routes Grok API to the exact selected provider; its MCP set is the chat-tools set (OPENAI-TOOLS-109: agents yes, browser no)',async()=>{
   let received:any;const server=createServer(async(req,res)=>{let body='';for await(const chunk of req)body+=chunk;received={url:req.url,auth:req.headers.authorization,body:JSON.parse(body)};res.setHeader('content-type','text/event-stream');res.end('data: '+JSON.stringify({choices:[{delta:{content:'fixture answer'}}]})+'\n\ndata: [DONE]\n\n');});await new Promise<void>(done=>server.listen(0,'127.0.0.1',done));
   const chosen={...route,baseUrl:`http://127.0.0.1:${(server.address()as{port:number}).port}/v1`};const instance=await GrokDriver.create({instanceId:'fixture-grok',displayName:'Grok API',enabled:true,environment:{},config:GrokDriver.decodeConfig({})});const events=recordEvents(instance.adapter);
-  try{await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:'grok-selected',text:'fake only',model:chosen.model,providerRoute:chosen});await events.until(e=>e.type==='turn.completed');expect(received).toMatchObject({url:'/v1/chat/completions',auth:'Bearer '+route.apiKey,body:{model:route.model}});expect(instance.adapter.capabilities.agentsMcp).toBe(true);expect(instance.adapter.capabilities.browserMcp).not.toBe(true);}
+  try{await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:'grok-selected',text:'fake only',model:chosen.model,providerRoute:chosen});await events.until(e=>e.type==='turn.completed');expect(received).toMatchObject({url:'/v1/chat/completions',auth:'Bearer '+route.apiKey,body:{model:route.model}});expect(instance.adapter.capabilities.agentsMcp).toBe(true);expect(instance.adapter.capabilities.browserMcp).toBe(true);}
   finally{events.stop();await instance.dispose();await new Promise<void>(done=>server.close(()=>done()));}
  });
 

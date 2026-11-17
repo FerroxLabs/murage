@@ -381,6 +381,9 @@ test("setup and start refuse an incompatible runtime before doing anything (I6)"
   mkdirSync(join(root, "installer", "bin"), { recursive: true });
   cpSync(join(dirname(dirname(CLI)), "lib"), join(root, "installer", "lib"), { recursive: true });
   cpSync(CLI, join(root, "installer", "bin", "murage.mjs"));
+  mkdirSync(join(root, "shared"), { recursive: true });
+  cpSync(new URL("../../shared/win-hide-child-process.mjs", import.meta.url), join(root, "shared", "win-hide-child-process.mjs"));
+  cpSync(new URL("../../shared/win-hide-child-process.cjs", import.meta.url), join(root, "shared", "win-hide-child-process.cjs"));
   writeFileSync(join(root, "package.json"), JSON.stringify({ name: "murage", version: "0.0.0-test", engines: { node: ">=99" } }));
   const cli = join(root, "installer", "bin", "murage.mjs");
   const log = join(root, "argv.log");

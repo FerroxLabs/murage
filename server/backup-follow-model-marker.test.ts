@@ -10,6 +10,9 @@ import { dirname, join } from "node:path";
 import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase } from "./database.ts";
+import { stopDataWriters } from "./data-writers.ts";
+import { stopWalMaintenance } from "./wal-maintenance.ts";
+import { stopSearchIndex } from "./message-search-index.ts";
 import { classifyDataDirEntry } from "./data-dir-inventory.ts";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
@@ -34,6 +37,10 @@ it("a folder that started once backs up, and the restore keeps the marker so a c
   expect(existsSync(join(DATA_DIR, FOLLOW_MODEL_MARKER)), "the first start wrote the marker").toBe(true);
   // after 1.0.4: the owner picks, in this chat, the same model the bot has
   store.patchTask(bot.id, bot.threadId, { modelSelection: structuredClone(store.bot(bot.id)!.modelSelection) });
+  // The product backs up after its data writers have stopped (data-writers.ts stopDataWriters: the database closed, then the log checkpointer's own
+  // connection gone). A checkpoint from either between the snapshot's two looks makes it refuse on purpose (SOURCE_CHANGED), and this test is about the
+  // marker, not that race: so the same stop runs here first. The guard itself is untouched.
+  expect(await stopDataWriters({ closeDatabase, stopEngineHistory: async () => true, stopWalMaintenance, stopSearchIndex })).toBe(true);
   const { manifest } = await stageInstallationState(DATA_DIR, dirname(DATA_DIR));
   expect(manifest.files.map(item => item.path)).toContain(FOLLOW_MODEL_MARKER);
   const archive = join(dirname(DATA_DIR), "follow-model-backup.zip");

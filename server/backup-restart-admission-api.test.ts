@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync,readFileSync } from "node:fs";
+import { existsSync,readFileSync,writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { beforeAll,afterAll,expect,it } from "vitest";
 import { launchVerificationServer,type VerificationServer } from "../scripts/control-murage.ts";
@@ -19,6 +19,9 @@ it("owner idle claim blocks direct and room dispatch; cancel reopens; busy prepa
   const bot=(await api("POST","/api/bots",{name:"Backup restart fixture",modelSelection:{instanceId:"verification",model:instance.models.options[0].id}})).body.bot;
   await api("PATCH",`/api/bots/${bot.id}`,{computer:"off",browser:false,composio:false});
   const group=(await api("POST","/api/groups",{name:"Backup room",memberIds:[bot.id],setup:{bulletin:"",defaultResponder:{kind:"member",botId:bot.id}}})).body.group;
+  // Switching the fixture's default host computer off fences its adapter.
+  // Measure interrupts from backup admission after that setup has completed.
+  writeFileSync(join(fixture.info.dataDir,"backup-interrupts.log"),"");
   const unauth=await fetch(fixture.info.url+"/api/backup-restart",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({action:"prepare",token:randomUUID()})});expect([403,404]).toContain(unauth.status);
   const token=randomUUID();expect((await api("POST","/api/backup-restart",{action:"prepare",token})).status).toBe(200);
   expect((await api("POST",`/api/bots/${bot.id}/messages`,{text:"Must not dispatch"})).status).toBe(409);

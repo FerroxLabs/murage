@@ -22,7 +22,7 @@ export function searchRowRendered(message: Message, showTools: boolean, now = Da
   const done = tool.doneWhen?.trim();
   return Boolean(message.comm || done && [...done].length <= 280 || message.murage?.held ||
     Array.isArray(tool.steps) || tool.imageRecord || message.routineRunAgain || message.delegationWait || message.delegationHeld ||
-    routineRunMarker(message) || sendNoticeCode(name) || message.memoryNote === "without-memory" ||
+    routineRunMarker(message) || sendNoticeCode(name) || message.memoryNote === "without-memory" || message.memoryNote === "resend" ||
     hostStoppedReason(name) || isStoppedMidDesktopAction(name) || name === TURN_STOPPED_NOTE ||
     hermesPinNoteProfile(name) || folderTrustNotice(name) || browserUnavailableReason(name) ||
     imagesLeftOutCount(name) || imagesNotSent(name) || name.startsWith("error:"));

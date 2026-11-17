@@ -11,7 +11,7 @@ function fixture() {
   let valid = true, busy = true;
   const startTurn = vi.fn(async () => {}), createTask = vi.fn(() => ({ threadId: "detached" }));
   const options = { file: join(dir, "routines.json"), automaticPaused: () => true,
-    isChannelCurrent: (origin: { platform: "slack" | "discord" | "whatsapp"; connectionId: string }, botId: string) => valid && origin.platform === "slack" && origin.connectionId === "binding" && botId === "chief",
+    isChannelCurrent: (origin: { platform: "slack" | "discord" | "whatsapp" | "signal"; connectionId: string }, botId: string) => valid && origin.platform === "slack" && origin.connectionId === "binding" && botId === "chief",
     botState: (): "busy" | "ready" => busy ? "busy" : "ready", startTurn, createTask, channelThread: () => ({ threadId: "chief-thread" }) };
   const input = { webhookId: "slack:binding", webhookName: "Slack", deliveryId: "EvONE", prompt: "hello", botId: "chief", runOn: "ember" as const, receivedAt: 1,
     channelOrigin: { platform: "slack" as const, connectionId: "binding" },
@@ -26,7 +26,9 @@ it("only a current bound Slack owner event obtains channel provenance and pause 
   expect(() => f.manager.enqueueWebhook({ ...f.input, deliveryId: "wrong", botId: "other" })).toThrow();
   expect(() => f.manager.enqueueWebhook({ ...f.input, deliveryId: "conflict", telegramConnectionId: "legacy" })).toThrow();
   expect(() => f.manager.enqueueWebhook({ ...f.input, deliveryId: "ordinary", channelOrigin: undefined })).toThrow("Automatic work is paused");
-  const noGuard = new RoutineManager({ ...f.options, file: join(roots.at(-1)!, "other.json"), isChannelCurrent: undefined });
+  // The run journal and its commit pin belong to the data folder's routines.json, so the second manager needs its own folder.
+  const otherDir = mkdtempSync(join(tmpdir(), "murage-slack-runtime-")); roots.push(otherDir);
+  const noGuard = new RoutineManager({ ...f.options, file: join(otherDir, "routines.json"), isChannelCurrent: undefined });
   expect(() => noGuard.enqueueWebhook(f.input)).toThrow();
 });
 it("reuses retained Slack identity after restart and checks Chief again before dispatch", async () => {

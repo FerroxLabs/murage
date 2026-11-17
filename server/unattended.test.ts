@@ -11,11 +11,11 @@
 //      survive the peer-comms hop, or it protects the bot that read the
 //      payload and releases the one that acts on it
 import { spawn, type ChildProcess } from "node:child_process";
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { OWNER_FIRST_MAX_DEFER_MS } from "./owner-first.ts";
 import { freePortBlock } from "./testing/ports.ts";
@@ -96,7 +96,10 @@ async function waitForRunThread(runId: string, ms = RUN_START_WAIT_MS) {
 }
 
 posixOnly("unattended turns keep asking", () => {
-  beforeAll(async () => {
+  // Each scenario owns its server: deleting the notification bots revokes
+  // memory work, which must not race a later scenario's permission poll.
+  beforeEach(async () => {
+    stderr = ""; stdout = "";
     const port = await freePortBlock([0, 1]);
     base = `http://127.0.0.1:${port}`;
     chmodSync(FAKE_CLI, 0o755);
@@ -110,28 +113,39 @@ posixOnly("unattended turns keep asking", () => {
           // moment auto mode would normally answer on the human's behalf
           grok: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "permission" },
+            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized", FAKE_ACP_MCP_LIST: "all:ready" },
+            config: { cli: FAKE_CLI, fullAuto: false },
+          },
+          // 41101333dacf/e466d1fa3465: the webhook assertion exercises
+          // permission handling with ready mounts, rather than timing out
+          // twice on a fake that does not implement the readiness method.
+          webhookPermission: {
+            driver: "grokAgent",
+            environment: { FAKE_ACP_MODE: "permission", FAKE_ACP_MCP_LIST: "all:ready" },
             config: { cli: FAKE_CLI, fullAuto: false },
           },
           // hands its work to a teammate, so the gate has to cross the hop
           delegator: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "delegate-peer" },
+            environment: { FAKE_ACP_MODE: "delegate-peer", FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized", FAKE_ACP_MCP_LIST: "all:ready" },
             config: { cli: FAKE_CLI, fullAuto: false },
           },
           // asks a teammate synchronously — the other comms path, and the
           // likelier one: a webhook bot pulling someone in for an answer
           asker: {
             driver: "grokAgent",
-            environment: { FAKE_ACP_MODE: "ask-peer" },
+            environment: { FAKE_ACP_MODE: "ask-peer", FAKE_ACP_MCP_READY: "1", FAKE_ACP_MCP_READY_METHOD: "_x.ai/mcp_initialized", FAKE_ACP_MCP_LIST: "all:ready", FAKE_ACP_RPC_FULL_LOG: join(home, "asker-rpc.jsonl") },
             config: { cli: FAKE_CLI, fullAuto: false },
           },
         },
       }),
     );
-    child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
+    child = spawn(process.execPath, ["--import", join(SERVER_DIR, "testing", "idle-load-preload.mjs"), "--import", "data:text/javascript,globalThis[Symbol.for('murage.hostPower.testUnwrapped')]=true;", join(SERVER_DIR, "index.ts")], {
+      windowsHide: true,
       cwd: join(SERVER_DIR, ".."),
+      // S4 power: this disposable child runs only fake engines, using the existing test-process seam.
       env: {
+        NODE_ENV: "test",
         ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
         ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
         HOME: home,
@@ -161,7 +175,7 @@ posixOnly("unattended turns keep asking", () => {
     expect((await api("GET", "/api/config")).body.surface).toBe("remote");
   }, 40_000);
 
-  afterAll(async () => {
+  afterEach(async () => {
     await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(home);
   });
@@ -176,7 +190,7 @@ posixOnly("unattended turns keep asking", () => {
       await desktopApi("PATCH", `/api/bots/${first.id}`, { name: "Private identity canary", notifications: true, autoApprove: false });
       const trigger = async (botId: string) => {
         const hook = await desktopApi("POST", "/api/webhooks", { name: "Notification fixture", prompt: "Request permission", botId });
-        expect(hook.status).toBe(201); hooks.push(hook.body.webhook.id);
+        expect(hook.status, JSON.stringify(hook.body)).toBe(201); hooks.push(hook.body.webhook.id);
         const delivered = await fetch(hook.body.credential.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ event: "notification-check" }) });
         expect(delivered.status).toBe(202);
         const result = await delivered.json() as { runId: string };
@@ -237,7 +251,7 @@ posixOnly("unattended turns keep asking", () => {
     async () => {
       // Its own bot: borrowing bots[0] inherits whatever an earlier test
       // left running, and a busy bot answers a settings edit with 409.
-      const bot = await makeBot("grok");
+      const bot = await makeBot("webhookPermission");
       // auto mode ON: an attended turn would sail straight through
       expect(
         (
@@ -246,7 +260,7 @@ posixOnly("unattended turns keep asking", () => {
             // the desktop dialog's acknowledgement rides along (AUTOOP2 finding 1).
             autoApprove: true,
             acknowledgeLocalAuto: true,
-            modelSelection: { instanceId: "grok", model: "fake-model" },
+            modelSelection: { instanceId: "webhookPermission", model: "fake-model" },
           })
         ).status,
       ).toBe(200);
@@ -257,7 +271,7 @@ posixOnly("unattended turns keep asking", () => {
         botId: bot.id,
         runOn: "ember",
       });
-      expect(hook.status).toBe(201);
+      expect(hook.status, JSON.stringify(hook.body)).toBe(201);
 
       const delivered = await fetch(hook.body.credential.url, {
         method: "POST",
@@ -276,6 +290,11 @@ posixOnly("unattended turns keep asking", () => {
       expect(card.card.requestId).toBeTruthy();
       // and it must not already be answered
       expect(card.card.answered).toBeUndefined();
+      // A fake without MCP status can happen to finish its timeout just
+      // inside this poll. Prove the fixture reached permissions with ready
+      // mounts, so a passing run cannot hide the same readiness stall.
+      expect(stdout.split("\n").filter(line => line.startsWith(`acp mcp gate thread=${threadId} `) && line.includes("wait=timeout")),
+        "the permission fixture must report ready mounts before prompting").toEqual([]);
     },
     RUN_START_WAIT_MS + 30_000 + 30_000,
   );
@@ -300,7 +319,7 @@ posixOnly("unattended turns keep asking", () => {
         name: "Delegator",
         autoApprove: true,
         acknowledgeLocalAuto: true,
-        hidden: true, // keep it out of its own peer list's way
+        // 4f6495f025: a webhook source must stay active; the fake chooses the named teammate.
         modelSelection: { instanceId: "delegator", model: "fake-model" },
       })).status).toBe(200);
 
@@ -310,7 +329,7 @@ posixOnly("unattended turns keep asking", () => {
         botId: delegator.id,
         runOn: "ember",
       });
-      expect(hook.status).toBe(201);
+      expect(hook.status, JSON.stringify(hook.body)).toBe(201);
 
       const delivered = await fetch(hook.body.credential.url, {
         method: "POST",
@@ -360,7 +379,7 @@ posixOnly("unattended turns keep asking", () => {
         name: "Asker",
         autoApprove: true,
         acknowledgeLocalAuto: true,
-        hidden: true, // keep it out of its own peer list's way
+        // 4f6495f025: a webhook source must stay active; the fake chooses the named teammate.
         modelSelection: { instanceId: "asker", model: "fake-model" },
       })).status).toBe(200);
 
@@ -370,7 +389,7 @@ posixOnly("unattended turns keep asking", () => {
         botId: asker.id,
         runOn: "ember",
       });
-      expect(hook.status).toBe(201);
+      expect(hook.status, JSON.stringify(hook.body)).toBe(201);
       const delivered = await fetch(hook.body.credential.url, {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -378,18 +397,34 @@ posixOnly("unattended turns keep asking", () => {
       });
       expect(delivered.status).toBe(202);
 
-      const deadline = Date.now() + RUN_START_WAIT_MS + 30_000;
-      let card: { card?: { requestId?: string; answered?: string } } | null = null;
+      const { runId } = await delivered.json() as { runId: string };
+      const sourceThread = await waitForRunThread(runId);
+      expect(sourceThread, deferralLog()).toBeTruthy();
+      // A refused mount never delivers session/prompt. Pin the source turn
+      // before checking the permission card produced by the actual peer turn.
+      const rpcPath = join(home, "asker-rpc.jsonl");
+      const promptDeadline = Date.now() + 25_000;
+      const calls = (): Array<{ method: string }> => existsSync(rpcPath)
+        ? readFileSync(rpcPath, "utf8").trim().split("\n").filter(Boolean).map(line => JSON.parse(line)) : [];
+      while (!calls().some(call => call.method === "session/prompt") && Date.now() < promptDeadline)
+        await new Promise(resolve => setTimeout(resolve, 100));
+      expect(calls().map(call => call.method), `asker never received its prompt. ${stderr}`).toContain("session/prompt");
+
+      // The source routine has already started; only the existing peer-card wait remains.
+      const deadline = Date.now() + 30_000;
+      let card: { card?: { requestHandle?: string; answered?: string } } | null = null;
       while (Date.now() < deadline && !card) {
-        const { body } = await api("GET", "/api/bots");
+        const { body } = await desktopApi("GET", "/api/bots");
         const peer = body.bots.find((b: { id: string }) => b.id === target.id);
         card =
           peer?.messages?.find(
-            (m: { kind: string; card?: { requestId?: string } }) => m.kind === "options" && m.card?.requestId,
+            // MAIN RULING INT-CONFLICT-DEFAULT de1ff54d75 a62419d6d5: inspect raw HTTP cards through their public handles.
+            (m: { kind: string; card?: { requestHandle?: string } }) => m.kind === "options" && m.card?.requestHandle,
           ) ?? null;
         if (!card) await new Promise((r) => setTimeout(r, 300));
       }
       expect(card, `the asked teammate auto-approved — ask_bot did not carry the gate. ${deferralLog()}`).not.toBeNull();
+      expect(card!.card!.requestHandle).toMatch(/^p\./);
       expect(card!.card!.answered).toBeUndefined();
     },
     RUN_START_WAIT_MS + 30_000 + 60_000,

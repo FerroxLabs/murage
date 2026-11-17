@@ -13,6 +13,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
+import { POWER_BLOCK_UNWRAP_SOURCE } from "./testing/power-block-test.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FAKE_ACP = join(HERE, "testing", "fake-acp-cli.ts");
@@ -36,7 +37,7 @@ const run = (sql: string, ...args: Array<string | number | null>) => {
 posixOnly("the turn engine in a project", () => {
   beforeAll(async () => {
     chmodSync(FAKE_ACP, 0o755);
-    fixture = await launchVerificationServer(process.env, undefined, { readyTimeoutMs: 60_000, instrumentationSource: `
+    fixture = await launchVerificationServer(process.env, undefined, { readyTimeoutMs: 60_000, instrumentationSource: `${POWER_BLOCK_UNWRAP_SOURCE}
       const fs=await import('node:fs');const path=await import('node:path');
       const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');const cfg=JSON.parse(fs.readFileSync(file,'utf8'));
       cfg.instances.projectAsker={driver:'grokAgent',displayName:'Project approval fixture',environment:{FAKE_ACP_MODE:'permission'},config:{cli:${JSON.stringify(FAKE_ACP)},fullAuto:false}};

@@ -1,6 +1,10 @@
+import { OwnWriteCard } from "./LazyChatCards";
+import { EngineLimitRow } from "./EngineLimitRow";
+import { engineLimitNotice } from "../../shared/web-read-routing";
 import { useFocusTrap } from "@/lib/focus-trap";
 import { LayerSurface } from "@/components/LayerSurface";
 import { LazyOverlay } from "@/components/LazyOverlay";
+import { toolBudgetLabel } from "@/lib/tool-budget-copy";
 import { ProjectLifecycleBanner } from "./ProjectLifecycleBanner";
 import { DoneWhenLine } from "./DoneWhenLine";
 import { hasDoneWhenLine } from "@/lib/done-when-line";
@@ -114,6 +118,8 @@ import { t } from "@/lib/i18n";
 import { StoppedByYouRow, StoppedMidActionRow, StoppedRow } from "./StoppedRow";
 import { SendNoticeRow } from "./SendNoticeRow";
 import { isWithoutMemoryNote, WithoutMemoryNoteRow } from "./WithoutMemoryNote";
+import { isResendNote, RoomResendNote } from "./ResendNote";
+import { claimResendFor } from "@/lib/resend-claim";
 import { sendNoticeCode } from "../../shared/send-notice";
 import { hostStoppedReason, isStoppedMidDesktopAction } from "../../shared/host-stop";
 import { TURN_STOPPED_NOTE } from "../../server/turn-outcome";
@@ -197,6 +203,8 @@ export function RoomErrorRow({ message, member, roomThreadId, onRetry }: {
     <ErrorRow
       message={tool.name.slice(6).trim()}
       botName={member.name}
+      engineName={engine?.displayName}
+      signInAgain={engine?.driverKind ? { bot: { id: member.id, name: member.name }, engine: engine.driverKind } : undefined}
       onRetry={onRetry}
       retryLabel={onRetry ? t("room.sendAgainTo", { name: member.name }) : undefined}
       setupInstance={tool.setup ? engine : undefined}
@@ -222,7 +230,7 @@ function RoomToolChip({ message, botName }: { message: Message; botName?: string
   if (!tool) return null;
   // A raw provider response reads as one plain sentence naming the bot
   // (G11); the provider's own words stay on hover.
-  const plain = botName && tool.name.startsWith("error:") ? plainEngineError(tool.name.slice(6).trim(), botName, { details: false }) : undefined;
+  const plain = tool.name.startsWith("error:") ? (toolBudgetLabel(tool.name.slice(6).trim()) ?? (botName ? plainEngineError(tool.name.slice(6).trim(), botName, { details: false }) : undefined)) : undefined;
   if (plain) return (
     <div className="flex justify-start">
       <div data-testid="tool-chip" title={tool.name.slice(6).trim()} className={cn(CHIP, "text-danger")}>
@@ -240,7 +248,7 @@ function RoomToolChip({ message, botName }: { message: Message; botName?: string
         data-testid="tool-chip"
         className={cn(CHIP, tool.ok === false ? "text-danger" : "text-ink-secondary")}
       >
-        <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{tool.name.startsWith("error:") && inNativeShell() ? withoutProviderSentence(tool.name) : (loopNoticeLabel(tool.name) ?? tool.name)}</span>
+        <span data-testid="tool-chip-name" className={cn(CHIP_NAME, "font-mono")}>{tool.name.startsWith("error:") && inNativeShell() ? withoutProviderSentence(tool.name) : (toolBudgetLabel(tool.name) ?? loopNoticeLabel(tool.name) ?? tool.name)}</span>
       </div>
       <DoneWhenLine text={tool.doneWhen} />
     </div>
@@ -269,7 +277,7 @@ function PinToggle({ group, message }: { group: Group; message: Message }) {
   );
 }
 
-const Transcript = memo(function Transcript({
+export const Transcript = memo(function Transcript({
   group,
   members,
   messages,
@@ -435,7 +443,9 @@ const Transcript = memo(function Transcript({
           // `tool` distinguishes a permission from a QUESTION — a question
           // only accepts an "answer", so routing it here would offer an
           // Allow the broker rejects
-          actor === "murage" || errorRow ? (
+          m.kind === "activity" && engineLimitNotice(m.tool?.name) ? (
+            <EngineLimitRow text={engineLimitNotice(m.tool?.name)!.text} botName={memberOf(m.from?.botId)?.name ?? m.from?.name ?? "This bot"} />
+          ) : actor === "murage" || errorRow ? (
             <MurageMessageRow message={m} group={group} members={members} disabledReason={group.channelProject ? projectWriteReason(project) : state.config?.features?.roomsQueue === true ? null : "Request controls are not available yet"} />
           ) : m.kind === "secret" && m.secret && m.from?.botId ? (
             <SecretRequestCard botId={m.from.botId} threadId={group.threadId} message={m} />
@@ -443,6 +453,8 @@ const Transcript = memo(function Transcript({
             <ConnectorCard botId={m.from.botId} threadId={group.threadId} message={m} />
           ) : m.kind === "mcpSignIn" && m.mcpSignIn && m.from?.botId ? (
             <McpSignInCard botId={m.from.botId} threadId={group.threadId} message={m} />
+          ) : m.kind === "options" && m.card?.kind === "own-write" ? (
+            <div className="flex justify-start"><OwnWriteCard threadId={group.threadId} message={m} /></div>
           ) : m.kind === "options" && m.card?.kind === "mcpEnable" && m.from?.botId ? (
             <McpEnableCard botId={m.from.botId} threadId={group.threadId} message={m} />
           ) : m.roomShareId && !m.from ? (
@@ -493,6 +505,9 @@ const Transcript = memo(function Transcript({
             ) : isWithoutMemoryNote(m) ? (
               // a reply that ran without remembered context: a quiet note, visible with Tool calls off (DELEGATION-HOLD F5)
               <WithoutMemoryNoteRow text={m.tool.name} />
+            ) : isResendNote(m) ? (
+              // a blocked rebuild in the room: the message may already have started, so it was not sent twice; Send again sends the same words to the same member under a NEW send id (D7)
+              <RoomResendNote transcript={transcript} note={m} memberIds={members.map((member) => member.id)} roomBusy={Boolean(group.busyBotId)} groupId={group.id} threadId={group.threadId} mintSendId={() => crypto.randomUUID()} dispatch={dispatch} claim={group.threadId ? claimResendFor(group.threadId, m.id) : undefined} />
             ) : hostStoppedReason(m.tool.name) ? (
               <StoppedRow reason={hostStoppedReason(m.tool.name)!} />
             ) : isStoppedMidDesktopAction(m.tool.name) ? (
@@ -502,7 +517,7 @@ const Transcript = memo(function Transcript({
             ) : folderTrustNotice(m.tool.name) ? (
               <FolderTrustRow kind={folderTrustNotice(m.tool.name)!.kind} sources={folderTrustNotice(m.tool.name)!.sources} forgetKey={folderTrustNotice(m.tool.name)!.key} />
             ) : browserUnavailableReason(m.tool.name) ? (
-              <BrowserUnavailableRow reason={browserUnavailableReason(m.tool.name)!} botName={m.from?.name} />
+              <BrowserUnavailableRow reason={browserUnavailableReason(m.tool.name)!} botName={m.from?.name} botId={m.from?.botId} />
             ) : m.comm ? (
               // Same as a direct chat: the bot⇄bot chip is navigation, not
               // work, so it stays with tool calls off and opens the pair room.

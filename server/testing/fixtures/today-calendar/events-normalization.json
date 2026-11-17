@@ -1,0 +1,329 @@
+{
+  "synthetic": true,
+  "cases": [
+    {
+      "name": "public",
+      "event": {
+        "eventId": "event-1",
+        "originalStart": null,
+        "start": {
+          "dateTime": "2026-11-10T10:00:00-05:00"
+        },
+        "end": {
+          "dateTime": "2026-11-10T11:00:00-05:00"
+        },
+        "status": "confirmed",
+        "selfResponse": "accepted",
+        "privacy": "public",
+        "summary": "SYNTHETIC_TITLE_CANARY",
+        "updatedAt": "2026-11-09T12:00:00Z"
+      },
+      "expected": "title"
+    },
+    {
+      "name": "private",
+      "event": {
+        "eventId": "event-1",
+        "originalStart": null,
+        "start": {
+          "dateTime": "2026-11-10T10:00:00-05:00"
+        },
+        "end": {
+          "dateTime": "2026-11-10T11:00:00-05:00"
+        },
+        "status": "confirmed",
+        "selfResponse": "accepted",
+        "privacy": "private",
+        "summary": "SYNTHETIC_TITLE_CANARY",
+        "updatedAt": "2026-11-09T12:00:00Z"
+      },
+      "expected": "Busy"
+    },
+    {
+      "name": "confidential",
+      "event": {
+        "eventId": "event-1",
+        "originalStart": null,
+        "start": {
+          "dateTime": "2026-11-10T10:00:00-05:00"
+        },
+        "end": {
+          "dateTime": "2026-11-10T11:00:00-05:00"
+        },
+        "status": "confirmed",
+        "selfResponse": "accepted",
+        "privacy": "confidential",
+        "summary": "SYNTHETIC_TITLE_CANARY",
+        "updatedAt": "2026-11-09T12:00:00Z"
+      },
+      "expected": "Busy"
+    },
+    {
+      "name": "unknown-privacy",
+      "event": {
+        "eventId": "event-1",
+        "originalStart": null,
+        "start": {
+          "dateTime": "2026-11-10T10:00:00-05:00"
+        },
+        "end": {
+          "dateTime": "2026-11-10T11:00:00-05:00"
+        },
+        "status": "confirmed",
+        "selfResponse": "accepted",
+        "privacy": "unknown",
+        "summary": "SYNTHETIC_TITLE_CANARY",
+        "updatedAt": "2026-11-09T12:00:00Z"
+      },
+      "expected": "Busy"
+    },
+    {
+      "name": "declined",
+      "event": {
+        "eventId": "event-1",
+        "originalStart": null,
+        "start": {
+          "dateTime": "2026-11-10T10:00:00-05:00"
+        },
+        "end": {
+          "dateTime": "2026-11-10T11:00:00-05:00"
+        },
+        "status": "confirmed",
+        "selfResponse": "declined",
+        "privacy": "default",
+        "summary": "SYNTHETIC_TITLE_CANARY",
+        "updatedAt": "2026-11-09T12:00:00Z"
+      },
+      "expected": "excluded"
+    },
+    {
+      "name": "no-self-attendee",
+      "event": {
+        "eventId": "event-1",
+        "originalStart": null,
+        "start": {
+          "dateTime": "2026-11-10T10:00:00-05:00"
+        },
+        "end": {
+          "dateTime": "2026-11-10T11:00:00-05:00"
+        },
+        "status": "confirmed",
+        "selfResponse": "absent",
+        "privacy": "default",
+        "summary": "SYNTHETIC_TITLE_CANARY",
+        "updatedAt": "2026-11-09T12:00:00Z"
+      },
+      "expected": "title"
+    },
+    {
+      "name": "tentative",
+      "event": {
+        "eventId": "event-1",
+        "originalStart": null,
+        "start": {
+          "dateTime": "2026-11-10T10:00:00-05:00"
+        },
+        "end": {
+          "dateTime": "2026-11-10T11:00:00-05:00"
+        },
+        "status": "confirmed",
+        "selfResponse": "tentative",
+        "privacy": "default",
+        "summary": "SYNTHETIC_TITLE_CANARY",
+        "updatedAt": "2026-11-09T12:00:00Z"
+      },
+      "expected": "tentative"
+    },
+    {
+      "name": "cancelled-instance",
+      "event": {
+        "eventId": "event-1",
+        "originalStart": null,
+        "start": {
+          "dateTime": "2026-11-10T10:00:00-05:00"
+        },
+        "end": {
+          "dateTime": "2026-11-10T11:00:00-05:00"
+        },
+        "status": "cancelled",
+        "selfResponse": "accepted",
+        "privacy": "default",
+        "summary": "SYNTHETIC_TITLE_CANARY",
+        "updatedAt": "2026-11-09T12:00:00Z"
+      },
+      "expected": "excluded"
+    },
+    {
+      "name": "moved-exception",
+      "event": {
+        "eventId": "event-1",
+        "originalStart": {
+          "dateTime": "2026-11-10T09:00:00-05:00"
+        },
+        "start": {
+          "dateTime": "2026-11-10T10:00:00-05:00"
+        },
+        "end": {
+          "dateTime": "2026-11-10T11:00:00-05:00"
+        },
+        "status": "confirmed",
+        "selfResponse": "accepted",
+        "privacy": "default",
+        "summary": "SYNTHETIC_TITLE_CANARY",
+        "updatedAt": "2026-11-09T12:00:00Z"
+      },
+      "expected": "identity-uses-originalStart"
+    },
+    {
+      "name": "multi-day-all-day",
+      "event": {
+        "eventId": "event-1",
+        "originalStart": null,
+        "start": {
+          "date": "2026-11-09"
+        },
+        "end": {
+          "date": "2026-11-12"
+        },
+        "status": "confirmed",
+        "selfResponse": "accepted",
+        "privacy": "default",
+        "summary": "SYNTHETIC_TITLE_CANARY",
+        "updatedAt": "2026-11-09T12:00:00Z"
+      },
+      "expected": "all_day"
+    }
+  ],
+  "sourceZone": "America/New_York",
+  "dateLine": {
+    "sourceZone": "Pacific/Kiritimati",
+    "viewerZones": [
+      "Pacific/Honolulu",
+      "Pacific/Kiritimati"
+    ],
+    "startDate": "2026-11-10",
+    "endDate": "2026-11-11",
+    "start": "2026-11-09T10:00:00Z",
+    "end": "2026-11-10T10:00:00Z"
+  },
+  "dst": [
+    {
+      "zone": "America/New_York",
+      "date": "2026-03-08",
+      "morningTime": "02:30",
+      "expected": "2026-03-08T07:00:00Z",
+      "hours": 23
+    },
+    {
+      "zone": "America/New_York",
+      "date": "2026-11-01",
+      "morningTime": "01:30",
+      "expected": "2026-11-01T05:30:00Z",
+      "hours": 25
+    }
+  ],
+  "duplicates": {
+    "identical": [
+      {
+        "eventId": "event-1",
+        "originalStart": null,
+        "start": {
+          "dateTime": "2026-11-10T10:00:00-05:00"
+        },
+        "end": {
+          "dateTime": "2026-11-10T11:00:00-05:00"
+        },
+        "status": "confirmed",
+        "selfResponse": "accepted",
+        "privacy": "default",
+        "summary": "SYNTHETIC_TITLE_CANARY",
+        "updatedAt": "2026-11-09T12:00:00Z"
+      },
+      {
+        "eventId": "event-1",
+        "originalStart": null,
+        "start": {
+          "dateTime": "2026-11-10T10:00:00-05:00"
+        },
+        "end": {
+          "dateTime": "2026-11-10T11:00:00-05:00"
+        },
+        "status": "confirmed",
+        "selfResponse": "accepted",
+        "privacy": "default",
+        "summary": "SYNTHETIC_TITLE_CANARY",
+        "updatedAt": "2026-11-09T12:00:00Z"
+      }
+    ],
+    "newer": [
+      {
+        "eventId": "event-1",
+        "originalStart": null,
+        "start": {
+          "dateTime": "2026-11-10T10:00:00-05:00"
+        },
+        "end": {
+          "dateTime": "2026-11-10T11:00:00-05:00"
+        },
+        "status": "confirmed",
+        "selfResponse": "accepted",
+        "privacy": "default",
+        "summary": "SYNTHETIC_TITLE_CANARY",
+        "updatedAt": "2026-11-09T12:00:00Z"
+      },
+      {
+        "eventId": "event-1",
+        "originalStart": null,
+        "start": {
+          "dateTime": "2026-11-10T10:00:00-05:00"
+        },
+        "end": {
+          "dateTime": "2026-11-10T11:00:00-05:00"
+        },
+        "status": "confirmed",
+        "selfResponse": "accepted",
+        "privacy": "default",
+        "summary": "SYNTHETIC_NEW_TITLE",
+        "updatedAt": "2026-11-09T13:00:00Z"
+      }
+    ],
+    "conflicting": [
+      {
+        "eventId": "event-1",
+        "originalStart": null,
+        "start": {
+          "dateTime": "2026-11-10T10:00:00-05:00"
+        },
+        "end": {
+          "dateTime": "2026-11-10T11:00:00-05:00"
+        },
+        "status": "confirmed",
+        "selfResponse": "accepted",
+        "privacy": "default",
+        "summary": "SYNTHETIC_TITLE_CANARY",
+        "updatedAt": "2026-11-09T12:00:00Z"
+      },
+      {
+        "eventId": "event-1",
+        "originalStart": null,
+        "start": {
+          "dateTime": "2026-11-10T10:00:00-05:00"
+        },
+        "end": {
+          "dateTime": "2026-11-10T11:00:00-05:00"
+        },
+        "status": "confirmed",
+        "selfResponse": "accepted",
+        "privacy": "default",
+        "summary": "SYNTHETIC_CONFLICT_TITLE",
+        "updatedAt": "2026-11-09T12:00:00Z"
+      }
+    ]
+  },
+  "malformedDates": [
+    "2026-02-30",
+    "2026-11-10T09:00:00",
+    "2026-11-10T24:00:00Z",
+    "2026-11-10T09:00:00+25:00"
+  ]
+}

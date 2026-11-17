@@ -123,6 +123,13 @@ describe("httpTextOnlyTurn", () => {
     reply = (res) => { res.statusCode = 503; res.end("{}"); };
     expect((await httpTextOnlyTurn(turn(), options())).verdict).toMatchObject({ state: "refused", reason: "transient", detail: "http-503" });
   });
+  it("classifies a Flux URL before cancellation and retains the empty-success refusal", async () => {
+    const providerRoute = { connectionId:"fixture", revision:"1", preset:"flux" as const, protocol:"openai" as const, baseUrl:url, apiKey:"fixture", model:"flux-auto" };
+    const stopped = await httpTextOnlyTurn(turn({providerRoute}), options({baseUrl:"https://api.fluxrouter.ai/v1",fetchImpl:async()=>new Response(null,{status:401})}));
+    expect(stopped.fluxDecision).toEqual({reason:"keyRefused",action:"STOP",wait:"-"});
+    const empty = await httpTextOnlyTurn(turn({providerRoute}), options({baseUrl:"https://api.fluxrouter.ai/v1",fetchImpl:async()=>new Response(null,{status:204})}));
+    expect(empty.verdict).toMatchObject({state:"refused",reason:"transient",detail:"http-204"});
+  });
   it("an abort rejects cancelled", async () => {
     const c = new AbortController(); c.abort();
     await expect(httpTextOnlyTurn(turn({ signal: c.signal }), options())).rejects.toMatchObject({ name: "cancelled" });

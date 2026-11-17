@@ -4,14 +4,15 @@
 // Settings → Skills: every skill in one place. Search first; Your skills,
 // then the library; click one to read it and choose which bots use it.
 import { ChevronRight, Search } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import { SkillImportPanel } from "./SkillImportPanel";
 import { SkillReader } from "./SkillReader";
+import { SkillPageControls } from "./SkillPageControls";
+import { useSkillsBrowser } from "./useSkillsBrowser";
 import { topicLabel, TopicSelect } from "./TopicSelect";
 import { VerdictBadge } from "./VerdictBadge";
-import { listSkills, verdictLabel, CLEAN_LINE, type SkillSummary, type SkillsPage } from "@/lib/skills-api";
-import { InAdvanced } from "../SettingsPrimitives";
+import { verdictLabel, CLEAN_LINE, type SkillSummary } from "@/lib/skills-api";
 
 type View = { kind: "list" } | { kind: "read"; ref: string } | { kind: "import" };
 
@@ -47,7 +48,7 @@ function SkillRow({ skill, onOpen, browsing }: { skill: SkillSummary; onOpen(ref
  *  says what they cover and what each verdict means. */
 export function SkillScanRules() {
   return (
-    <div id="skill-scan-rules-heading" data-setting-control="skill-scan-rules-heading" tabIndex={-1} className="rounded-xl bg-card p-4 outline-none">
+    <div data-setting-control="skill-scan-rules-heading" tabIndex={-1} className="rounded-xl bg-card p-4 outline-none">
       <h3 className="text-[15px] font-medium text-ink">Scan rules</h3>
       <p className="mt-0.5 text-[13px] leading-relaxed text-ink-secondary">Every skill is read before a bot can use it. The check looks for skills that:</p>
       <ul className="mt-2 list-disc space-y-0.5 pl-5 text-[12.5px] text-ink-secondary">
@@ -64,29 +65,7 @@ export function SkillScanRules() {
 
 export function SkillsSettings() {
   const [view, setView] = useState<View>({ kind: "list" });
-  const [query, setQuery] = useState("");
-  const [category, setCategory] = useState("");
-  const [page, setPage] = useState<SkillsPage | null>(null);
-  const [error, setError] = useState("");
-  const generation = useRef(0);
-
-  const load = useCallback(async () => {
-    const mine = ++generation.current;
-    try {
-      const next = await listSkills({ q: query, category });
-      if (mine === generation.current) {
-        setPage(next);
-        setError("");
-      }
-    } catch (cause) {
-      if (mine === generation.current) setError(cause instanceof Error ? cause.message : "Skills couldn't be loaded.");
-    }
-  }, [query, category]);
-
-  useEffect(() => {
-    const timer = setTimeout(() => void load(), query ? 200 : 0);
-    return () => clearTimeout(timer);
-  }, [load, query]);
+  const { query, category, page, error, busy, setQuery, setCategory, goToPage, load } = useSkillsBrowser();
 
   if (view.kind === "read") {
     return <SkillReader skillRef={view.ref} mode={{ kind: "settings" }} onBack={() => setView({ kind: "list" })} onChanged={() => void load()} />;
@@ -98,10 +77,10 @@ export function SkillsSettings() {
   const searching = Boolean(query.trim() || category);
   return (
     <>
-    <section aria-labelledby="skills-settings-title">
+    <section aria-labelledby="skills-library-title">
       <div className="flex items-center gap-3">
         <div className="min-w-0 flex-1">
-          <h2 id="skills-settings-title" className="text-[15px] font-medium text-ink">Skills</h2>
+          <h2 id="skills-library-title" className="text-[15px] font-medium text-ink">Skills</h2>
           <p className="text-[12.5px] text-ink-secondary">Instructions your bots can follow. Read any skill before you use it.</p>
         </div>
         <button type="button" data-setting-control="skills-settings-title" onClick={() => setView({ kind: "import" })} className="shrink-0 rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white">Import skill</button>
@@ -113,50 +92,53 @@ export function SkillsSettings() {
           <input
             autoFocus
             value={query}
-            onChange={(event) => { setQuery(event.target.value); setCategory(""); }}
-            placeholder="Search skills"
+            onChange={(event) => { setQuery(event.target.value); }}
+            placeholder={category ? "Search in " + topicLabel(category) : "Search skills"}
             aria-label="Search skills"
             className="min-h-10 min-w-0 flex-1 bg-transparent text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
           />
         </label>
         {page && page.libraryReady && page.categories.length > 0 && (
-          <TopicSelect topics={page.categories} value={category} onChange={(topic) => { setCategory(topic); setQuery(""); }} />
+          <TopicSelect topics={page.categories} value={category} onChange={setCategory} />
         )}
       </div>
 
-      {error && <div role="alert" className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</div>}
+      {error && <div role="alert" className="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger"><p>{error}</p><button type="button" onClick={() => void load()} className="mt-2 min-h-11 rounded-lg bg-control px-3 text-ink">Try again</button></div>}
       {!page && !error && <p className="mt-3 text-[12px] text-ink-secondary">Loading…</p>}
 
-      {page && (
+      {busy && page && <p role="status" className="mt-3 text-[12px] text-ink-secondary">Loading skills…</p>}
+      {page && !error && (
         <>
-          <h3 className="mt-4 px-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">Your skills</h3>
-          {page.yours.length ? (
-            <ul className="mt-1">{page.yours.map((skill) => <SkillRow key={skill.ref} skill={skill} onOpen={(ref) => setView({ kind: "read", ref })} />)}</ul>
-          ) : (
-            <p className="mt-1 px-2 text-[12px] text-ink-secondary">{searching ? `None of your skills match “${query.trim() || topicLabel(category)}”.` : "None yet. Import a skill, or switch on one from the library for a bot."}</p>
-          )}
+          {!busy && <>
+            <h3 className="mt-4 px-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">Your skills</h3>
+            {page.yours.length ? (
+              <ul className="mt-1">{page.yours.map((skill) => <SkillRow key={skill.ref} skill={skill} onOpen={(ref) => setView({ kind: "read", ref })} />)}</ul>
+            ) : (
+              <p className="mt-1 px-2 text-[12px] text-ink-secondary">{searching ? `None of your skills match “${query.trim() || topicLabel(category)}”.` : "None yet. Import a skill, or switch on one from the library for a bot."}</p>
+            )}
 
-          {!!page.builtins?.length && (
-            <>
-              <h3 className="mt-4 px-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">Built-in</h3>
-              <ul className="mt-1">{page.builtins.map((skill) => <SkillRow key={skill.ref} skill={skill} onOpen={(ref) => setView({ kind: "read", ref })} />)}</ul>
-            </>
-          )}
+            {!!page.builtins?.length && (
+              <>
+                <h3 className="mt-4 px-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">Built-in</h3>
+                <ul className="mt-1">{page.builtins.map((skill) => <SkillRow key={skill.ref} skill={skill} onOpen={(ref) => setView({ kind: "read", ref })} />)}</ul>
+              </>
+            )}
 
-          <h3 className="mt-4 px-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">Library</h3>
-          {!page.libraryReady ? (
-            <p className="mt-1 px-2 text-[12px] text-ink-secondary">The library is still loading.</p>
-          ) : !searching ? (
-            <p className="mt-1 px-2 text-[12px] text-ink-secondary">Search, or choose a topic.</p>
-          ) : page.library.length ? (
-            <ul className="mt-1">{page.library.map((skill) => <SkillRow key={skill.ref} skill={skill} browsing onOpen={(ref) => setView({ kind: "read", ref })} />)}</ul>
-          ) : (
-            <p className="mt-1 px-2 text-[12px] text-ink-secondary">No skills match “{query.trim() || topicLabel(category)}”.</p>
-          )}
+            <h3 className="mt-4 px-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">Library</h3>
+            {!page.libraryReady ? (
+              <p className="mt-1 px-2 text-[12px] text-ink-secondary">The library is still loading.</p>
+            ) : !searching ? (
+              <p className="mt-1 px-2 text-[12px] text-ink-secondary">Search, or choose a topic.</p>
+            ) : page.library.length ? (
+              <ul className="mt-1">{page.library.map((skill) => <SkillRow key={skill.ref} skill={skill} browsing onOpen={(ref) => setView({ kind: "read", ref })} />)}</ul>
+            ) : (
+              <p className="mt-1 px-2 text-[12px] text-ink-secondary">No skills match “{query.trim() || topicLabel(category)}”.</p>
+            )}
+          </>}
+          {searching && page.libraryReady && <SkillPageControls page={page.pagination} busy={busy} onPage={goToPage} />}
         </>
       )}
     </section>
-    <InAdvanced><SkillScanRules /></InAdvanced>
     </>
   );
 }

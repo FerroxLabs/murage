@@ -1,2 +1,3 @@
+# /usr/local/libexec/murage-turn-launch is an image-owned regular file (root 0755, FS_IMMUTABLE_FL); never a link into a release slot (LANE-G r3 sec. 1.6).
 Defaults:murage env_reset, !setenv, closefrom_override
 murage ALL=(root) NOPASSWD: /usr/local/libexec/murage-turn-launch ""

@@ -1,6 +1,6 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
-import { spawn } from "node:child_process";
+import { runBoundBridge } from "../testing/bound-proxy-fixture.ts";
 import { expect, it } from "vitest";
 import { PROJECT_TOOL_ROLES } from "../project-tool-routing.ts";
 
@@ -8,16 +8,15 @@ const ECHO = "globalThis.fetch = async (url, init) => Response.json({ url, body:
 async function rpc(role: string, method = "tools/list", params = {}, fetchStub = ECHO, venueRead = false) {
   // A file: URL, not a path: import() of a bare "D:\\..." path is refused on Windows.
   const proxy = new URL("./agents-proxy.ts", import.meta.url).href;
-  const script = `${fetchStub} await import(${JSON.stringify(proxy)});`;
-  const child = spawn(process.execPath, ["--experimental-strip-types", "--input-type=module", "--eval", script], {
-    env: { PATH: process.env.PATH, MURAGE_PROJECT_ROLE: role, MURAGE_VENUE_READ: venueRead ? "1" : "0", MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_BOT_ID: "fixture", MURAGE_THREAD_ID: "desk" }, stdio: ["pipe", "pipe", "pipe"],
-  });
-  let output = "", error = "";
-  child.stdout.on("data", chunk => { output += chunk; });
-  child.stderr.on("data", chunk => { error += chunk; });
-  child.stdin.end(JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) + "\n");
-  await new Promise<void>((resolve, reject) => { child.on("error", reject); child.on("close", code => code === 0 ? resolve() : reject(new Error(error))); });
-  return JSON.parse(output.trim());
+  const frames = await runBoundBridge(
+    `const controlFetch = globalThis.fetch; ${fetchStub}
+     const toolFetch = globalThis.fetch;
+     globalThis.fetch = (url, init) => String(url).includes('/api/internal/turn-release/') ? controlFetch(url, init) : toolFetch(url, init);
+     await import(${JSON.stringify(proxy)});`,
+    [JSON.stringify({ jsonrpc: "2.0", id: 1, method, params })], 1, false,
+    { role: "agents", env: { MURAGE_PROJECT_ROLE: role, MURAGE_VENUE_READ: venueRead ? "1" : "0",
+      MURAGE_HARNESS_URL: "http://127.0.0.1:1", MURAGE_BOT_ID: "fixture", MURAGE_THREAD_ID: "desk" } });
+  return JSON.parse(frames[0]!);
 }
 async function list(role: string) {
   return (await rpc(role)).result.tools.filter((tool: { name: string }) => tool.name.startsWith("project_")) as Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }>;

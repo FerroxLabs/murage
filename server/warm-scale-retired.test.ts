@@ -35,14 +35,14 @@ const instrumentation = `
   const fs=await import('node:fs');const path=await import('node:path');const sqlite=await import('node:sqlite');const {pathToFileURL}=await import('node:url');
   process.env.FAKE_CLAUDE_DUMP_EACH_TURN='1';
   const LWM=await import(pathToFileURL(${JSON.stringify(LW)}).href);
-  const dir=process.env.MURAGE_DATA_DIR;let watched=null;let frozen=false;let statements=0;
+  const dir=process.env.MURAGE_DATA_DIR;let watched=null;let frozen=false;let statements=0;let bySql={};let traces={};
   const proto=sqlite.StatementSync.prototype;
   for(const name of ['all','get','iterate','run']){const original=proto[name];proto[name]=function(...args){const result=original.apply(this,args);
-    if(watched!==null&&!frozen&&args.some(arg=>arg===watched||(arg&&typeof arg==='object'&&Object.values(arg).includes(watched))))statements++;return result;};}
+    if(watched!==null&&!frozen&&args.some(arg=>arg===watched||(arg&&typeof arg==='object'&&Object.values(arg).includes(watched)))){statements++;const key=String(this.sourceSQL).replace(/\\s+/g,' ');bySql[key]=(bySql[key]??0)+1;if(!(key in traces)&&(/SELECT seq, json FROM messages WHERE thread_id =|withheldFromBots.*id IN/.test(key)))traces[key]=String(new Error().stack);}return result;};}
   ${countControlSource(`(command)=>{
     if(command.idle){fs.writeFileSync(path.join(dir,'idle.json'),JSON.stringify({idle:LWM.lineageWarmIdle()}));return;}
-    if(command.start){watched=command.start;frozen=false;statements=0;fs.writeFileSync(path.join(dir,'window-open'),'1');return;}
-    if(command.counts){frozen=true;fs.writeFileSync(path.join(dir,'counts.json'),JSON.stringify({statements}));return;}
+    if(command.start){watched=command.start;frozen=false;statements=0;bySql={};traces={};fs.writeFileSync(path.join(dir,'window-open'),'1');return;}
+    if(command.counts){frozen=true;fs.writeFileSync(path.join(dir,'counts.json'),JSON.stringify({statements,bySql,traces}));return;}
     if(command.state){Promise.all([import(pathToFileURL(${JSON.stringify(DB)}).href),import(pathToFileURL(${JSON.stringify(RT)}).href)]).then(([m,r])=>
       fs.writeFileSync(path.join(dir,'state.json'),JSON.stringify({retired:r.readTimeRetired(m.database())})));}}`)}
 `;
@@ -91,13 +91,15 @@ async function send(bot: { id: string; threadId: string }, text: string) {
     await new Promise((r) => setTimeout(r, 200));
   }
   expect(idle, "the warmer was still busy at the deadline").toBe(true);
-  const { statements } = await ask({ counts: true }, "counts.json");
+  const { statements, bySql, traces } = await ask({ counts: true }, "counts.json");
+  console.log("WARM-SCALE statements", JSON.stringify(bySql));
+  console.log("WARM-SCALE callers", JSON.stringify(traces));
   console.log("WARM-SCALE guard", bot.threadId, { acceptedS, promptS, replyS, statements });
   return { acceptedS, promptS, replyS, statements };
 }
 
 beforeAll(async () => {
-  fixture = await launchVerificationServer({}, undefined, { instrumentationSource: instrumentation });
+  fixture = await launchVerificationServer(process.env, undefined, { instrumentationSource: instrumentation });
   await auth();
   model = (await api("GET", "/api/instances")).body.instances.find((i: any) => i.instanceId === "verification").models.options[0].id;
 }, 120_000);

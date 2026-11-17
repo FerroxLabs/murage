@@ -101,7 +101,9 @@ describe("direct run late close", () => {
   it("6. after a Murage restart there is nothing to release, and nothing throws", async () => {
     const fresh = new TurnTeardowns(async () => true); // a new process tracks no child
     const closed = fresh.closed("thread", "turn");
-    await expect(closed).resolves.toBeUndefined();
+    // MAIN RULING INT-CONFLICT-DEFAULT: the reviewed close-confirmation producer
+    // refuses an unknown turn after restart; no caller may infer provider exit.
+    await expect(closed).rejects.toMatchObject({ code: "provider_stop_unconfirmed" });
     const run = retained(closed, { owns: false, exists: true }); // no direct run survives a restart
     await flush();
     expect(run.releases).toBe(0);

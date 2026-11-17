@@ -6,8 +6,11 @@ export const workSchema = z.object({id:z.string(),sourceId:z.string(),revision:z
 export type MemoryWork = z.infer<typeof workSchema>;
 export const resultSchema = z.object({id:z.string(),leaseGeneration:z.number().int(),status:z.enum(["complete","partial","deferred","failed"]),nextCursor:z.number().int().nonnegative(),chunks:z.array(chunkSchema).max(1024),reason:z.string().max(160).optional()});
 export type MemoryWorkResult = z.infer<typeof resultSchema>;
-export const indexBatchSchema=z.array(z.object({id:z.string(),version:z.number().int(),scopeId:z.string(),text:z.string().max(65536),deleted:z.boolean(),archived:z.boolean().optional(),rolled:z.boolean().optional(),ageKey:z.number().int().nonnegative().nullable().optional()})).max(16);
-export const searchInputSchema=z.object({query:z.string().max(4096),scopeIds:z.array(z.string().max(512)).max(256),scopeCount:z.number().int().min(1).max(200000).optional(),policyRevision:z.number().int(),deletionEpoch:z.number().int(),historical:z.boolean(),cursor:z.string(),limit:z.number().int().min(1).max(20),semantic:z.boolean(),deadlineAt:z.number().optional(),profile:z.boolean().optional()});
+/** id and scopeId bounded at 512 (1.11 BOUNDED INPUT): an over-bound record goes the index reset path, never a wedge (T2(3)). */
+export const indexBatchSchema=z.array(z.object({id:z.string().max(512),version:z.number().int(),scopeId:z.string().max(512),text:z.string().max(65536),deleted:z.boolean(),archived:z.boolean().optional(),rolled:z.boolean().optional(),ageKey:z.number().int().nonnegative().nullable().optional()})).max(16);
+export const recallViewHandleSchema=z.object({viewId:z.string().uuid(),generation:z.string().uuid(),digest:z.string().length(64)}).strict();
+export const recallReaderSchema=z.object({botId:z.string().max(512),threadId:z.string().max(512),humanPrincipal:z.object({personId:z.string().max(512),bindingId:z.string().max(512),revision:z.number().int().nonnegative()}).strict(),notOwnerAudience:z.boolean()});
+export const searchInputSchema=z.object({view:recallViewHandleSchema.optional(),reader:recallReaderSchema.optional(),query:z.string().max(4096),scopeIds:z.array(z.string().max(512)).max(256),scopeCount:z.number().int().min(1).max(200000).optional(),policyRevision:z.number().int(),deletionEpoch:z.number().int(),historical:z.boolean(),cursor:z.string(),limit:z.number().int().min(1).max(20),semantic:z.boolean(),deadlineAt:z.number().optional(),profile:z.boolean().optional()});
 /** One bounded part of a scope list too long for the query message itself (scope-set.ts). */
 export const scopePartSchema=z.object({part:z.number().int().nonnegative(),ids:z.array(z.string().max(512)).max(256)});
 export type MemorySearchInput=z.infer<typeof searchInputSchema>;

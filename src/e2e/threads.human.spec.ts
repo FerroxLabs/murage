@@ -1,7 +1,8 @@
 import { test,expect,type Page } from "./page-error-guard";
 import { createServer,type ViteDevServer } from "vite";
+import { readFileSync } from "node:fs";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { launchVerificationServer,type VerificationServer } from "../../scripts/control-murage.ts";
@@ -16,8 +17,9 @@ const api=async(method:string,path:string,body?:unknown)=>{
 };
 const state=async()=> (await api("GET","/api/bots?messages=0")).bots.find((bot:any)=>bot.id===botId);
 test.beforeAll(async()=>{
-  fixture=await launchVerificationServer(process.env,undefined,{instrumentationSource:`
+  fixture=await launchVerificationServer(process.env,undefined,{dumpLog:true,instrumentationSource:`
     const fs=await import('node:fs');const path=await import('node:path');const file=path.join(process.env.MURAGE_DATA_DIR,'config.json');
+    process.env.FAKE_CLAUDE_HOLD_MARKER='__fixture_hold_authority__';process.env.FAKE_CLAUDE_HOLD_GATE=path.join(process.env.MURAGE_DATA_DIR,'release-held-turns');
     const cfg=JSON.parse(fs.readFileSync(file,'utf8'));cfg.instances.second={...cfg.instances.verification,displayName:'Second fixture account'};fs.writeFileSync(file,JSON.stringify(cfg));
   `});
   const proof=await api("GET","/api/desktop-secret");headers={"x-murage-surface":"desktop","x-murage-surface-secret":proof.secret};
@@ -53,6 +55,11 @@ async function send(page:Page,text:string,threadId:string){
   await page.getByRole("textbox",{name:"Message Threads UI fixture",exact:true}).fill(text);
   await page.getByRole("textbox",{name:"Message Threads UI fixture",exact:true}).press(SEND_KEY);
   const response=await sent;expect(response.status()).toBe(202);expect(response.request().postDataJSON().threadId).toBe(threadId);
+  if(text.startsWith('__fixture_hold_authority__')){
+    // Busy includes dispatch preparation. Wait for the fake engine to accept
+    // this prompt before the fixture switches the bot's selected conversation.
+    await expect.poll(()=>{try{return readFileSync(fixture.fixtureDumpLogPath,'utf8').trim().split('\n').map(line=>JSON.parse(line)).some(row=>row.cwd.endsWith(threadId)&&JSON.stringify(row.prompt).includes(text));}catch{return false;}}).toBe(true);
+  }
 }
 // 1.0.4 SL-K K1 (server/store.ts createTask): a new chat is born following its
 // bot's model, even when it is opened from a chat with a pick of its own.
@@ -61,7 +68,7 @@ test("New task follows the bot's model after click and reload, even from a chat 
   const before=await state();
   const selection={...before.tasks.find((task:any)=>task.threadId===second).modelSelection,effort:"high"};
   await api("PATCH",`/api/bots/${botId}/tasks/${second}`,{modelSelection:selection});
-  await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));await page.goto(origin);
+  await page.addInitScript(()=>{localStorage.setItem("murage-email-gate","skipped");localStorage.setItem("help.seen.chat.level-chip","1");});await page.goto(origin);
   const sidebar=await openSidebar(page);await sidebar.getByText("Threads UI fixture",{exact:true}).click();
   const invitation=page.getByRole("complementary",{name:"Let your bots pick the right model",exact:true});
   if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();
@@ -119,7 +126,7 @@ test("thread controls, sends, Stop and read state follow the visible conversatio
     const {effort:_effort,...plain}=own;
     await api("PATCH",`/api/bots/${botId}/tasks/${threadId}`,{modelSelection:plain});
   }
-  await page.addInitScript(()=>localStorage.setItem("murage-email-gate","skipped"));await page.goto(origin);
+  await page.addInitScript(()=>{localStorage.setItem("murage-email-gate","skipped");localStorage.setItem("help.seen.chat.level-chip","1");});await page.goto(origin);
   const sidebar=await openSidebar(page);await sidebar.getByText("Threads UI fixture",{exact:true}).click();
   const invitation=page.getByRole("complementary",{name:"Let your bots pick the right model",exact:true});
   if(await invitation.count())await invitation.getByRole("button",{name:"Not now",exact:true}).last().click();

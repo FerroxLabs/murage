@@ -1,0 +1,62 @@
+
+ RUN  v4.1.12 /work
+
+stderr | server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch mixed creates no incident
+connected apps: gmail needs reconnecting: HTTP 401
+connected apps: slack needs reconnecting: HTTP 401
+
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2a wrapped multi attributes A failure and B success separately
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2b direct provider preserves B account for attribution and guard
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2c unknown account never creates or blocks an incident
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2d unknown account never creates or blocks an incident
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2e six call shapes use the same normalized rows in requirements, attribution and guard
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order false
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2 duplicate account failure wins regardless of row order true
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch same creates no incident
+ × server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch mixed creates no incident 71ms
+   → expected [ { slug: 'gmail', …(2) }, …(1) ] to deeply equal []
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch missing-index creates no incident
+ ↓ server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch malformed creates no incident
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/connector-reconnect-r3-attribution.test.ts > R2 unattributed batch mixed creates no incident
+AssertionError: expected [ { slug: 'gmail', …(2) }, …(1) ] to deeply equal []
+
+- Expected
++ Received
+
+- []
++ [
++   {
++     "accounts": [
++       {
++         "alias": "work",
++         "id": "A",
++       },
++     ],
++     "label": "Gmail",
++     "slug": "gmail",
++   },
++   {
++     "accounts": [
++       {
++         "id": "S",
++       },
++     ],
++     "label": "Slack",
++     "slug": "slack",
++   },
++ ]
+
+ ❯ server/connector-reconnect-r3-attribution.test.ts:83:46
+
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 10 skipped (11)
+   Start at  05:10:23
+   Duration  9.67s (transform 7.56s, setup 8.55s, import 891ms, tests 80ms, environment 0ms)
+

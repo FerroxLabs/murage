@@ -7,6 +7,7 @@ import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // generic archive/restore/forget controls, delete under a version fence and a
 // bounded tombstone, report coverage on delivery only, and leave room for
 // recall on a small window. Synthetic fixture text only.
+import { openTestIndex, put } from "./testing/open-index.ts";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -15,7 +16,8 @@ import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { ownerMemoryTicket } from "./authority.ts";
-import { memoryAccess, reconcileMemoryRoster, assertMemoryAccess } from "./policy.ts";
+import { reconcileMemoryRoster, assertMemoryAccess } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { attachContinuityCoverage, deleteBotIdentity, readContinuity, readContinuityCoverage, recordContinuityCoverage, writeBotIdentity, type IdentityWrite } from "./identity.ts";
 import { buildMemoryBundle, MEMORY_FRAME_TOKENS } from "./bundle.ts";
 import { MemoryEligibility } from "./eligibility.ts";
@@ -82,12 +84,12 @@ function fact(botId: string, text: string) {
   return id;
 }
 /** What the worker controller does with what it selects: index it, mark it indexed. */
-function project(index: MemoryIndex) {
+async function project(index: MemoryIndex) {
   let projected = 0;
   for (;;) {
     const batch = pendingProjectionRecords(database(), 16);
     if (!batch.length) return projected;
-    index.upsert(batch.map(row => ({ id: String(row.id), version: Number(row.version), scopeId: String(row.scopeId), text: row.state === "deleted" ? "" : String(row.text), deleted: row.state === "deleted", archived: row.state !== "active" })));
+    await put(index, batch.map(row => ({ id: String(row.id), version: Number(row.version), scopeId: String(row.scopeId), text: row.state === "deleted" ? "" : String(row.text), deleted: row.state === "deleted", archived: row.state !== "active" })));
     for (const row of batch) database().prepare("UPDATE memory_projection_receipts SET lexical_status='indexed',embedding_status='indexed' WHERE record_id=? AND record_version=?").run(row.id, row.version);
     projected += batch.length;
   }
@@ -122,8 +124,8 @@ describe("PIP keeps continuity out of the shared recall index", () => {
     for (const text of ["dock rope was coiled on Friday", "dock lantern needs oil on Tuesdays", "neutral harbour notes are in the blue book"]) fact("neutral", text);
     writeBotIdentity(ticket, brief(), roster);
     writeBotIdentity(ticket, brief("Neutral keeps the dock notes.", "neutral"), roster);
-    const index = new MemoryIndex(join(DATA_DIR, "memory-index.db")); opened.push(index);
-    project(index);
+    const index = await openTestIndex(join(DATA_DIR, "memory-index.db")); opened.push(index);
+    await project(index);
     // Recall answers on a wall-clock budget (search.ts SEARCH_BUDGET_MS, HYDRATION_LIMIT_MS): on a stalled runner a search can
     // come back cut short (partial, or empty and MEMORY_RECALL_UNAVAILABLE), by design. A cut answer says nothing about the index,
     // so a snapshot holding one is taken again; only a snapshot in which every search and bundle answered in full is compared.
@@ -174,7 +176,7 @@ describe("PIP keeps continuity out of the shared recall index", () => {
     writeBotIdentity(ticket, pip("commitment", "lantern-b", "lantern oil quartz quartz quartz dock rope tuesdays", { expectedVersion: 1 }), roster);
     writeBotIdentity(ticket, pip("self-trait", "lantern-c", "harbour lantern glass spring tuesdays"), roster);
     writeBotIdentity(ticket, pip("relation", "owner", "harbour lantern harbour lantern harbour lantern harbour lantern harbour lantern quartz"), roster);
-    expect(project(index)).toBe(0);
+    expect(await project(index)).toBe(0);
     expect(pendingProjectionRecords(database(), 16)).toEqual([]);
     expect(Number(database().prepare("SELECT count(*) AS n FROM memory_projection_receipts p JOIN memory_records r ON r.id=p.record_id AND r.version=p.record_version WHERE r.kind IN ('commitment','self-trait','relation')").get()!.n)).toBe(0);
     expect(corpus(["harbour", "lantern", "oil", "quartz", "tuesdays", "dock", "rope"])).toEqual(before);
@@ -186,7 +188,7 @@ describe("PIP keeps continuity out of the shared recall index", () => {
     expect(await snapshot(() => cold)).toEqual(baseline);
     // and a deleted PIP row changes nothing either
     deleteBotIdentity(ticket, { action: "identity-delete", botId: "moss", kind: "commitment", key: "lantern-a", expectedVersion: 1 }, roster);
-    expect(project(index)).toBe(0);
+    expect(await project(index)).toBe(0);
     expect(corpus(["harbour", "lantern", "oil", "quartz", "tuesdays", "dock", "rope"])).toEqual(before);
     expect(await snapshot(() => productionBridge(index, freshEligibility()))).toEqual(baseline);
   });
@@ -207,8 +209,8 @@ describe("PIP keeps continuity out of the shared recall index", () => {
   it("still lists continuity rows for the owner from the authoritative records, and does not slow the indexed search of other rows", async () => {
     const f = fact("moss", "harbour lantern notes");
     const row = writeBotIdentity(ticket, pip("commitment", "lantern-promise", "A lantern promise for the owner."), roster);
-    const index = new MemoryIndex(join(DATA_DIR, "memory-index.db")); opened.push(index);
-    project(index);
+    const index = await openTestIndex(join(DATA_DIR, "memory-index.db")); opened.push(index);
+    await project(index);
     const found = await ownerMemoryList({ botId: "moss", query: "lantern" }, roster);
     expect(found.searchMode).toBe("indexed");
     expect(found.rows.map(r => String(r.id)).sort()).toEqual([f, row.id].sort());
@@ -304,7 +306,7 @@ describe("PIP delete fence and bounded tombstone", () => {
     expect(await memoryOwnerRoute(ACTION, { action: "identity-delete", botId: "moss", kind: "commitment", key: "call-back", expectedVersion: 2 }, ticket, roster)).toEqual({ id: first.id, deleted: true });
   });
 
-  it("does not requeue another bot's completed deletion receipts or its pending work", () => {
+  it("does not requeue another bot's completed deletion receipts or its pending work", async () => {
     const gone = fact("neutral", "a forgotten neutral note");
     database().prepare("UPDATE memory_records SET state='deleted' WHERE id=?").run(gone);
     database().prepare("UPDATE memory_projection_receipts SET lexical_status='deleted',embedding_status='deleted' WHERE record_id=?").run(gone);
@@ -543,7 +545,7 @@ describe("PIP entries an earlier build indexed leave the derived index", () => {
   const TERMS = ["harbour", "lantern", "oil", "quartz", "tuesdays"];
   const FACTS = ["harbour lantern schedule is posted on the door", "harbour lantern oil is bought on Tuesdays", "the quartz bell rings at noon"];
   /** The pre-fix state: continuity rows with indexed receipts and index entries. */
-  function seedPreFix(index: MemoryIndex) {
+  async function seedPreFix(index: MemoryIndex) {
     const rows = [
       writeBotIdentity(ticket, pip("commitment", "lantern-a", "harbour lantern harbour lantern harbour lantern oil"), roster),
       writeBotIdentity(ticket, pip("self-trait", "lantern-b", "quartz quartz quartz tuesdays lantern"), roster),
@@ -551,8 +553,8 @@ describe("PIP entries an earlier build indexed leave the derived index", () => {
     ];
     for (const row of rows) {
       database().prepare("INSERT OR REPLACE INTO memory_projection_receipts VALUES(?,1,0,'indexed','indexed',NULL)").run(row.id);
-      index.upsert([{ id: row.id, version: 1, scopeId: scopeOf("moss"), text: String(database().prepare("SELECT text FROM memory_records WHERE id=?").get(row.id)!.text), deleted: false }]);
-      index.vector({ id: row.id, version: 1, scopeId: scopeOf("moss"), text: "", deleted: false }, "m", 0, [1, 0, 0]);
+      await put(index, [{ id: row.id, version: 1, scopeId: scopeOf("moss"), text: String(database().prepare("SELECT text FROM memory_records WHERE id=?").get(row.id)!.text), deleted: false }]);
+      await index.vector({ id: row.id, version: 1, scopeId: scopeOf("moss"), text: "", deleted: false }, "m", 0, [1, 0, 0]);
     }
     return rows;
   }
@@ -562,20 +564,20 @@ describe("PIP entries an earlier build indexed leave the derived index", () => {
     finally { db.close(); }
   };
 
-  it("startup cleanup removes continuity entries (lexical and vectors), is idempotent, and BM25 equals a clean index", () => {
+  it("startup cleanup removes continuity entries (lexical and vectors), is idempotent, and BM25 equals a clean index", async () => {
     for (const text of FACTS) fact("moss", text);
     const cleanPath = join(DATA_DIR, "clean-index.db"), path = join(DATA_DIR, "memory-index.db");
-    const clean = new MemoryIndex(cleanPath); opened.push(clean);
-    const dirty = new MemoryIndex(path); opened.push(dirty);
-    project(dirty);
+    const clean = await openTestIndex(cleanPath); opened.push(clean);
+    const dirty = await openTestIndex(path); opened.push(dirty);
+    await project(dirty);
     for (const row of database().prepare("SELECT id,version,scope_id,text FROM memory_records WHERE kind='fact'").all())
-      clean.upsert([{ id: String(row.id), version: Number(row.version), scopeId: String(row.scope_id), text: String(row.text), deleted: false }]);
-    const rows = seedPreFix(dirty);
+      await put(clean, [{ id: String(row.id), version: Number(row.version), scopeId: String(row.scope_id), text: String(row.text), deleted: false }]);
+    const rows = await seedPreFix(dirty);
     const dirtyScores = bm25(path), cleanScores = bm25(cleanPath);
     expect(dirtyScores).not.toEqual(cleanScores); // the pre-fix state really does skew ranking
     const eligibility = freshEligibility();
     expect(eligibility.pipRecordIds().sort()).toEqual(rows.map(row => row.id).sort());
-    expect(dirty.purgeRecords(eligibility.pipRecordIds())).toBeGreaterThan(0);
+    expect(await dirty.purgeRecords(eligibility.pipRecordIds())).toBeGreaterThan(0);
     expect(bm25(path)).toEqual(cleanScores);
     const db = new DatabaseSync(path, { readOnly: true });
     try {
@@ -584,16 +586,16 @@ describe("PIP entries an earlier build indexed leave the derived index", () => {
       }
     } finally { db.close(); }
     // a second open finds nothing left to do
-    expect(dirty.purgeRecords(eligibility.pipRecordIds())).toBe(0);
+    expect(await dirty.purgeRecords(eligibility.pipRecordIds())).toBe(0);
     expect(bm25(path)).toEqual(cleanScores);
   });
 
-  it("a deleted continuity record with an existing index entry is selected for removal and removed; a live one is never inserted", () => {
+  it("a deleted continuity record with an existing index entry is selected for removal and removed; a live one is never inserted", async () => {
     const path = join(DATA_DIR, "memory-index.db");
-    const index = new MemoryIndex(path); opened.push(index);
+    const index = await openTestIndex(path); opened.push(index);
     fact("moss", FACTS[0]);
-    project(index);
-    const [commitment] = seedPreFix(index);
+    await project(index);
+    const [commitment] = await seedPreFix(index);
     // live continuity (even with an old pending receipt) is not selected for insertion
     database().prepare("UPDATE memory_projection_receipts SET lexical_status='pending',embedding_status='pending' WHERE record_id=?").run(commitment.id);
     expect(pendingProjectionRecords(database(), 16)).toEqual([]);
@@ -601,7 +603,7 @@ describe("PIP entries an earlier build indexed leave the derived index", () => {
     deleteBotIdentity(ticket, { action: "identity-delete", botId: "moss", kind: "commitment", key: "lantern-a", expectedVersion: 1 }, roster);
     const pending = pendingProjectionRecords(database(), 16);
     expect(pending.map(row => [String(row.id), row.state, row.text])).toEqual([[commitment.id, "deleted", ""]]);
-    expect(project(index)).toBe(1);
+    expect(await project(index)).toBe(1);
     const db = new DatabaseSync(path, { readOnly: true });
     try {
       for (const table of ["entries", "vectors", "lexical_keys", "lexical"]) expect(Number(db.prepare(`SELECT count(*) AS n FROM ${table} WHERE id=?`).get(commitment.id)!.n)).toBe(0);

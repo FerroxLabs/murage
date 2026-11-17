@@ -8,12 +8,12 @@ import { fixtureCredentialFingerprint } from "../../testing/fixture-dump.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirs } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
 import { recordEvents, type EventRecorder } from "../../testing/events.ts";
-import { CustomAcpDriver } from "./custom.ts";
+import { CustomAcpDriver, customAcpSupport } from "./custom.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
@@ -49,7 +49,7 @@ describe("CustomAcpDriver config", () => {
     });
     expect(CustomAcpDriver.models).toEqual({
       default: "agent-default",
-      options: [{ id: "agent-default", label: "Agent default" }],
+      options: [{ id: "agent-default", label: "Agent default", custom: true }],
     });
     // no install descriptor: there is nothing generic to install
     expect(CustomAcpDriver.install).toBeUndefined();
@@ -57,6 +57,10 @@ describe("CustomAcpDriver config", () => {
 });
 
 describe("CustomAcpDriver turns (fake CLI)", () => {
+  // The fake CLI never reaches a model host. Unknown-host refusal is covered by flux-engine-reach.test.ts.
+  let restoreFixtureHost: (() => void) | undefined;
+  beforeEach(() => { const spy = vi.spyOn(customAcpSupport, "fluxReach").mockReturnValue("elsewhere"); restoreFixtureHost = () => spy.mockRestore(); });
+  afterEach(() => restoreFixtureHost?.());
   let instance: ProviderInstance;
   let recorder: EventRecorder;
   let scratch: string;

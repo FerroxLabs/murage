@@ -1,0 +1,34 @@
+{
+  "schema": 1,
+  "sourceRevision": "MAIN: full selected candidate source revision",
+  "planSha256": "MAIN: SHA256 of this pack's plan.json",
+  "checkout": "C:\\Witness\\checkout",
+  "systemRoot": "C:\\Windows",
+  "machineTag": {
+    "file": "C:\\Program Files\\MurageSigning\\controller\\witness-tag.json",
+    "sha256": "MAIN: independently selected existing box tag digest"
+  },
+  "collector": {
+    "file": "C:\\Program Files\\MurageSigning\\controller\\witness-collector.exe",
+    "sha256": "MAIN: measured sealed collector digest"
+  },
+  "identity": {
+    "repositoryId": "MAIN: repository ID",
+    "workflowSha": "MAIN: full workflow revision",
+    "sourceRevision": "MAIN: same full candidate source revision",
+    "version": "1.0.19",
+    "target": "win32-x64",
+    "runId": "MAIN: original build run ID",
+    "runAttempt": "MAIN: original build attempt"
+  },
+  "inputs": {
+    "assetsDir": "C:\\Witness\\qualified-assets",
+    "signingOutputDir": "C:\\Witness\\signing-output",
+    "candidateFile": "C:\\Witness\\release-sac\\candidate.json",
+    "candidateSha256": "MAIN: protected candidate digest",
+    "evidenceFile": "C:\\Witness\\release-sac\\evidence.json",
+    "evidenceSha256": "MAIN: protected evidence digest",
+    "publicationRunId": "MAIN: publication run ID",
+    "publicationRunAttempt": "MAIN: publication attempt"
+  }
+}

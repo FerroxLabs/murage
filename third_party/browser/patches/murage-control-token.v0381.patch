@@ -1,0 +1,3291 @@
+diff --git a/cli/Cargo.lock b/cli/Cargo.lock
+index 37cc5b7..4e9a165 100644
+--- a/cli/Cargo.lock
++++ b/cli/Cargo.lock
+@@ -67,6 +67,7 @@ dependencies = [
+  "sha2",
+  "similar",
+  "socket2",
++ "subtle",
+  "tempfile",
+  "time",
+  "tokio",
+diff --git a/cli/Cargo.toml b/cli/Cargo.toml
+index 6d5a274..2817ade 100644
+--- a/cli/Cargo.toml
++++ b/cli/Cargo.toml
+@@ -34,6 +34,7 @@ zip = { version = "8.2.0", default-features = false, features = ["deflate"] }
+ time = { version = "0.3", features = ["formatting"] }
+ hmac = "0.12"
+ hex = "0.4"
++subtle = "2"
+ chrono = "0.4"
+ urlencoding = "2"
+ rust-embed = "8"
+diff --git a/cli/src/connection.rs b/cli/src/connection.rs
+index 8d5f66a..591339e 100644
+--- a/cli/src/connection.rs
++++ b/cli/src/connection.rs
+@@ -4,7 +4,7 @@ use serde_json::{json, Value};
+ use std::env;
+ use std::fs;
+ use std::hash::{Hash, Hasher};
+-use std::io::{BufRead, BufReader, Read, Write};
++use std::io::{BufReader, Read, Write};
+ use std::net::TcpStream;
+ use std::path::PathBuf;
+ use std::process::{Command, Stdio};
+@@ -1082,47 +1082,143 @@ fn has_os_error(error: &str, code: u32) -> bool {
+     error.contains(&format!("(os error {})", code))
+ }
+ 
+-/// Socket read timeout for one request. Ordinary commands get a 30s floor.
+-/// Commands carrying an operation timeout (the wait family, which
+-/// parse_command stamps with AGENT_BROWSER_DEFAULT_TIMEOUT when no explicit
+-/// --timeout is given) get that timeout plus margin, so the daemon can report
+-/// a proper operation timeout instead of the client dying with EAGAIN at 30s
+-/// and the retry loop re-sending the whole long-running command.
+-///
+-/// The env var is deliberately NOT consulted here. Reading it would apply a
+-/// long wait budget to every command, so a genuinely hung daemon on a simple
+-/// `url`/`title`/`snapshot` call would take the full budget to surface
+-/// instead of 30s. Only commands that actually carry a `timeout` field get
+-/// the extended budget, and that field is set client-side per invocation,
+-/// avoiding the daemon's spawn-time env snapshot drifting from the client.
+-fn read_timeout_for(cmd: &Value) -> Duration {
+-    let mut op_ms = cmd.get("timeout").and_then(|v| v.as_u64()).unwrap_or(0);
+-    if cmd.get("action").and_then(Value::as_str) == Some("mousemove") {
+-        op_ms = op_ms.max(cmd.get("duration").and_then(Value::as_u64).unwrap_or(0));
+-    }
+-    Duration::from_millis(op_ms.saturating_add(10_000).max(30_000))
++impl crate::native::control_token::Timed for Connection {
++    fn set_read_timeout(&self, dur: Option<Duration>) -> std::io::Result<()> {
++        Connection::set_read_timeout(self, dur)
++    }
++
++    fn set_write_timeout(&self, dur: Option<Duration>) -> std::io::Result<()> {
++        Connection::set_write_timeout(self, dur)
++    }
+ }
+ 
+-fn send_command_once(cmd: &Value, session: &str) -> Result<Response, String> {
+-    let mut stream = connect(session)?;
++/// Text for a failed bounded read of the daemon's reply. Keeps the substrings the retry logic keys
++/// on (`WouldBlock` for a missed deadline, `Broken pipe`, `Connection reset`).
++fn reply_error_text(e: crate::native::control_token::ReadError, framed: bool) -> String {
++    use crate::native::control_token::ReadError;
++    match e {
++        ReadError::TimedOut => {
++            "Failed to read: control_reply_timeout: the reply deadline passed (WouldBlock)"
++                .to_string()
++        }
++        ReadError::TooLong => {
++            "control_frame_too_large: the daemon's reply exceeded the size limit".to_string()
++        }
++        ReadError::Closed | ReadError::BadFrame if framed => {
++            "control_token_mismatch: the daemon's reply was not authentic".to_string()
++        }
++        ReadError::Closed | ReadError::BadFrame => "Failed to read: connection closed".to_string(),
++        ReadError::Io(kind) => format!("Failed to read: {}", io_kind_text(kind)),
++    }
++}
+ 
+-    stream.set_read_timeout(Some(read_timeout_for(cmd))).ok();
+-    stream.set_write_timeout(Some(Duration::from_secs(5))).ok();
++fn io_kind_text(kind: std::io::ErrorKind) -> String {
++    use std::io::ErrorKind;
++    match kind {
++        ErrorKind::BrokenPipe => "Broken pipe".to_string(),
++        ErrorKind::ConnectionReset => "Connection reset by peer".to_string(),
++        ErrorKind::UnexpectedEof => "EOF".to_string(),
++        other => other.to_string(),
++    }
++}
+ 
+-    let mut json_str = serde_json::to_string(cmd).map_err(|e| e.to_string())?;
+-    json_str.push('\n');
++fn send_command_once(cmd: &Value, session: &str) -> Result<Response, String> {
++    let stream = connect(session)?;
+ 
+-    stream
+-        .write_all(json_str.as_bytes())
+-        .map_err(|e| format!("Failed to send: {}", e))?;
++    // Murage patch: the Windows daemon port proves the control token both ways before a command is
++    // sent (native/control_token.rs); the token itself never crosses the wire. The Unix socket is
++    // guarded by its private directory and needs none of this. Only the choice of gate is
++    // platform-specific: the exchange below is compiled and tested on every platform.
++    #[cfg(windows)]
++    let control: Option<crate::native::control_token::Token> = {
++        use crate::native::control_token::Gate;
++        match Gate::from_env() {
++            Gate::Token(token) => Some(token),
++            Gate::Open => None,
++            Gate::Refuse => {
++                return Err("control_token_missing: AGENT_BROWSER_CONTROL_TOKEN is not set".to_string())
++            }
++        }
++    };
++    #[cfg(not(windows))]
++    let control: Option<crate::native::control_token::Token> = None;
++
++    exchange(
++        stream,
++        cmd,
++        control.as_ref(),
++        crate::native::control_token::HANDSHAKE_BUDGET,
++        crate::native::control_token::reply_budget(cmd),
++    )
++}
+ 
++/// One command over one connection, every read and write spending what is left of one of two
++/// absolute deadlines: `hs_budget` from entry for the handshake (the caller calls this the moment
++/// `connect` returns), then `reply_budget` taken once just before the command is written, covering
++/// the command write and the whole reply read. One `BufReader` serves the whole connection.
++pub(crate) fn exchange<S>(
++    stream: S,
++    cmd: &Value,
++    control: Option<&crate::native::control_token::Token>,
++    hs_budget: Duration,
++    reply_budget: Duration,
++) -> Result<Response, String>
++where
++    S: Read + Write + crate::native::control_token::Timed,
++{
++    use crate::native::control_token as ct;
++
++    let d_hs = ct::Deadline::after(hs_budget);
+     let mut reader = BufReader::new(stream);
+-    let mut response_line = String::new();
+-    reader
+-        .read_line(&mut response_line)
+-        .map_err(|e| format!("Failed to read: {}", e))?;
++    let mut session = match control {
++        Some(token) => Some(ct::client_handshake_blocking_by(&mut reader, token, d_hs)?),
++        None => None,
++    };
++
++    let d_reply = ct::Deadline::after(reply_budget);
++    let mut json_str = serde_json::to_string(cmd).map_err(|e| e.to_string())?;
++    let wire = match session.as_mut() {
++        Some(session) => session
++            .seal(&json_str)
++            .map_err(|_| "control_frame_invalid: the command could not be framed".to_string())?,
++        None => {
++            json_str.push('\n');
++            json_str.into_bytes()
++        }
++    };
++    ct::write_all_by(reader.get_mut(), &wire, d_reply).map_err(|e| match e {
++        ct::ReadError::TimedOut => {
++            "Failed to send: control_reply_timeout: the reply deadline passed (WouldBlock)"
++                .to_string()
++        }
++        ct::ReadError::Io(kind) => format!("Failed to send: {}", io_kind_text(kind)),
++        _ => "Failed to send: connection closed".to_string(),
++    })?;
++
++    let framed = session.is_some();
++    let (max, grammar) = if framed {
++        (
++            ct::frame_line_max(ct::REPLY_PAYLOAD_MAX),
++            ct::Grammar::Framed,
++        )
++    } else {
++        (ct::REPLY_PAYLOAD_MAX + 1, ct::Grammar::LineOrEof)
++    };
++    let line = match ct::read_line_by_blocking(&mut reader, max, grammar, d_reply) {
++        Ok(line) => line,
++        // A plain connection that closes without a reply parses as an empty reply, as upstream.
++        Err(ct::ReadError::Closed) if !framed => Vec::new(),
++        Err(e) => return Err(reply_error_text(e, framed)),
++    };
++
++    let text = match session.as_mut() {
++        Some(session) => session.open(&line).map_err(|_| {
++            "control_token_mismatch: the daemon's reply was not authentic".to_string()
++        })?,
++        None => String::from_utf8(line).map_err(|e| format!("Invalid response: {}", e))?,
++    };
+ 
+-    serde_json::from_str(&response_line).map_err(|e| format!("Invalid response: {}", e))
++    serde_json::from_str(&text).map_err(|e| format!("Invalid response: {}", e))
+ }
+ 
+ #[cfg(test)]
+@@ -1133,7 +1229,7 @@ mod tests {
+     #[test]
+     fn long_mouse_movement_gets_its_requested_time_budget() {
+         assert_eq!(
+-            read_timeout_for(&json!({"action":"mousemove", "duration": 35_000})),
++            crate::native::control_token::reply_budget(&json!({"action":"mousemove", "duration": 35_000})),
+             Duration::from_secs(45)
+         );
+     }
+@@ -1616,4 +1712,177 @@ mod tests {
+ 
+         let _ = fs::remove_dir(&dir);
+     }
++
++    // ---- Murage patch: the CLI's bounded exchange, against a fake daemon on a real loopback socket ----
++
++    mod exchange_tests {
++        use super::*;
++        use crate::native::control_token::{
++            server_finish, server_reply, ReadError, Session, Token, FRAME_PREFIX_LEN,
++            REPLY_PAYLOAD_MAX,
++        };
++        use std::io::{BufRead, BufReader, Write};
++        use std::net::{TcpListener, TcpStream};
++        use std::sync::atomic::{AtomicUsize, Ordering};
++        use std::sync::Arc;
++
++        const GOOD: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
++        // Kernel socket buffers on loopback (send plus receive, both sides) may hold unread bytes.
++        const SOCKET_SLACK: usize = 32 * 1024 * 1024;
++
++        fn token() -> Token {
++            Token::from_hex(GOOD).unwrap()
++        }
++
++        /// Accept one connection, run the daemon side of the handshake for real, read the command
++        /// line, and hand the stream and session to `then`.
++        fn fake_daemon<T: Send + 'static>(
++            then: impl FnOnce(TcpStream, Session) -> T + Send + 'static,
++        ) -> (std::net::SocketAddr, std::thread::JoinHandle<T>) {
++            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
++            let addr = listener.local_addr().unwrap();
++            let handle = std::thread::spawn(move || {
++                let (stream, _) = listener.accept().unwrap();
++                let t = token();
++                let mut reader = BufReader::new(stream.try_clone().unwrap());
++                let mut hello = String::new();
++                reader.read_line(&mut hello).unwrap();
++                let (reply, pending) = server_reply(&t, &hello).unwrap();
++                (&stream).write_all(format!("{reply}\n").as_bytes()).unwrap();
++                let mut auth = String::new();
++                reader.read_line(&mut auth).unwrap();
++                let session = server_finish(&t, &pending, &auth).unwrap();
++                let mut command = String::new();
++                reader.read_line(&mut command).unwrap();
++                then(stream, session)
++            });
++            (addr, handle)
++        }
++
++        fn prefix() -> Vec<u8> {
++            format!("ab1 {} {} ", "0".repeat(16), "0".repeat(64)).into_bytes()
++        }
++
++        #[test]
++        fn cli_exchange_refuses_an_oversized_unterminated_reply() {
++            let sent = Arc::new(AtomicUsize::new(0));
++            let counter = sent.clone();
++            let (addr, daemon) = fake_daemon(move |mut stream, _session| {
++                let head = prefix();
++                stream.write_all(&head).unwrap();
++                counter.fetch_add(head.len(), Ordering::SeqCst);
++                let chunk = vec![b'a'; 1024 * 1024];
++                for _ in 0..(REPLY_PAYLOAD_MAX / chunk.len() + 8) {
++                    match stream.write_all(&chunk) {
++                        Ok(()) => {
++                            counter.fetch_add(chunk.len(), Ordering::SeqCst);
++                        }
++                        Err(_) => break,
++                    }
++                }
++            });
++            let stream = TcpStream::connect(addr).unwrap();
++            let err = exchange(
++                stream,
++                &json!({"id": "1", "action": "x"}),
++                Some(&token()),
++                Duration::from_secs(5),
++                Duration::from_secs(60),
++            )
++            .err()
++            .expect("an oversized reply is an error, never a truncated success");
++            assert!(err.contains("control_frame_too_large"), "{err}");
++            daemon.join().unwrap();
++            let accepted = sent.load(Ordering::SeqCst);
++            assert!(
++                accepted <= FRAME_PREFIX_LEN + REPLY_PAYLOAD_MAX + 1 + SOCKET_SLACK,
++                "the daemon side was allowed to send {accepted} bytes"
++            );
++        }
++
++        #[test]
++        fn cli_exchange_reply_drip_fails_at_the_reply_deadline() {
++            let (addr, daemon) = fake_daemon(move |mut stream, _session| {
++                for byte in prefix() {
++                    if stream.write_all(&[byte]).is_err() {
++                        return;
++                    }
++                    std::thread::sleep(Duration::from_millis(250));
++                }
++            });
++            let stream = TcpStream::connect(addr).unwrap();
++            let started = Instant::now();
++            let err = exchange(
++                stream,
++                &json!({"id": "1", "action": "x"}),
++                Some(&token()),
++                Duration::from_secs(5),
++                Duration::from_millis(600),
++            )
++            .err()
++            .unwrap();
++            let elapsed = started.elapsed();
++            assert!(err.contains("control_reply_timeout"), "{err}");
++            assert!(is_transient_error(&err), "a missed reply deadline keeps the old retry behaviour");
++            assert!(
++                elapsed >= Duration::from_millis(550) && elapsed <= Duration::from_millis(700),
++                "took {elapsed:?}"
++            );
++            daemon.join().unwrap();
++        }
++
++        #[test]
++        fn cli_exchange_round_trips_a_framed_command() {
++            let (addr, daemon) = fake_daemon(move |mut stream, mut session| {
++                // The fake daemon re-reads nothing: it answers the command it already consumed.
++                let wire = session.seal("{\"id\":\"1\",\"success\":true}").unwrap();
++                stream.write_all(&wire).unwrap();
++            });
++            let stream = TcpStream::connect(addr).unwrap();
++            let response = exchange(
++                stream,
++                &json!({"id": "1", "action": "x"}),
++                Some(&token()),
++                Duration::from_secs(5),
++                Duration::from_secs(5),
++            );
++            // The fake never opened the client's frame, so only the daemon's seal counter moved:
++            // its first reply is frame 0 and authentic.
++            assert!(response.unwrap().success);
++            daemon.join().unwrap();
++        }
++
++        #[test]
++        fn cli_exchange_refuses_a_reply_that_is_not_an_ab1_frame() {
++            let (addr, daemon) = fake_daemon(move |mut stream, _session| {
++                stream.write_all(b"{\"id\":\"1\",\"success\":true}\n").unwrap();
++            });
++            let stream = TcpStream::connect(addr).unwrap();
++            let err = exchange(
++                stream,
++                &json!({"id": "1", "action": "x"}),
++                Some(&token()),
++                Duration::from_secs(5),
++                Duration::from_secs(5),
++            )
++            .err()
++            .unwrap();
++            assert!(err.contains("control_token_mismatch"), "{err}");
++            daemon.join().unwrap();
++        }
++
++        #[test]
++        fn read_error_texts_keep_the_retry_substrings() {
++            assert!(is_transient_error(&reply_error_text(ReadError::TimedOut, true)));
++            assert!(is_transient_error(&reply_error_text(
++                ReadError::Io(std::io::ErrorKind::BrokenPipe),
++                false
++            )));
++            assert!(is_transient_error(&reply_error_text(
++                ReadError::Io(std::io::ErrorKind::ConnectionReset),
++                false
++            )));
++            assert!(!is_transient_error(&reply_error_text(ReadError::TooLong, true)));
++        }
++    }
+ }
+diff --git a/cli/src/native/actions.rs b/cli/src/native/actions.rs
+index 7342a11..cbe71fc 100644
+--- a/cli/src/native/actions.rs
++++ b/cli/src/native/actions.rs
+@@ -5413,6 +5413,17 @@ fn handle_cdp_url(state: &DaemonState) -> Result<Value, String> {
+ }
+ 
+ async fn handle_inspect(state: &mut DaemonState) -> Result<Value, String> {
++    // Murage patch: the inspect proxy is an unauthenticated DevTools listener on loopback; it does
++    // not run under a control token.
++    if !matches!(
++        crate::native::control_token::Gate::from_env(),
++        crate::native::control_token::Gate::Open
++    ) {
++        return Err(format!(
++            "inspect is disabled while {} is set",
++            crate::native::control_token::ENV
++        ));
++    }
+     let mgr = state.browser.as_ref().ok_or("Browser not launched")?;
+ 
+     // Shut down any existing inspect server so we always target the current page
+diff --git a/cli/src/native/control_token.rs b/cli/src/native/control_token.rs
+new file mode 100644
+index 0000000..fd15a01
+--- /dev/null
++++ b/cli/src/native/control_token.rs
+@@ -0,0 +1,1445 @@
++// Murage patch (MURAGE-CONTROL-TOKEN): a per-launch control token for the loopback listeners.
++//
++// Threat boundary. Kept out: other OS accounts, and any loopback client (a web page that can reach
++// 127.0.0.1 included) that does not hold the token. The token reaches the engine only through the
++// environment (AGENT_BROWSER_CONTROL_TOKEN), never argv. Out of scope: same-account processes with
++// debug rights (they can read the token from the process environment) and the Chromium CDP port
++// itself (pipe mode is a separate item).
++//
++// Stream port (every platform): `Authorization: Bearer <token>` on the WebSocket handshake and on
++// every HTTP request except OPTIONS.
++// Windows daemon TCP: the token never goes over the wire. A mutual challenge-response proves both
++// sides hold it, then every line in both directions is a MAC-framed message with a counter, so a
++// process that squats the port and relays the handshake can neither inject nor alter a command.
++//
++// Every comparison is constant time (`subtle`). Missing or malformed configuration refuses: a
++// guarded listener never starts without a valid token.
++
++use hmac::{Hmac, Mac};
++use sha2::{Digest, Sha256};
++use std::io::{BufRead, BufReader, Read, Write};
++use std::time::Duration;
++use subtle::ConstantTimeEq;
++use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
++
++pub const ENV: &str = "AGENT_BROWSER_CONTROL_TOKEN";
++
++// Rev B: one absolute deadline per phase and a hard cap on every line a daemon connection can make
++// us hold. A deadline is computed once and never refreshed by progress; every read and write spends
++// what is left of it (see `Deadline`).
++/// Handshake phase, daemon and client.
++pub const HANDSHAKE_BUDGET: Duration = Duration::from_secs(5);
++/// Daemon: one wait for a command frame (and each reply write).
++pub const FRAME_BUDGET: Duration = Duration::from_secs(30);
++/// Hello, proof and auth lines.
++pub const HANDSHAKE_LINE_MAX: usize = 4096;
++/// Payload of one client-to-daemon command.
++pub const COMMAND_PAYLOAD_MAX: usize = 16 * 1024 * 1024;
++/// Payload of one daemon-to-client reply (screenshots and network bodies are base64 inside it).
++pub const REPLY_PAYLOAD_MAX: usize = 128 * 1024 * 1024;
++/// `ab1 ` + 16 hex + space + 64 hex + space.
++pub const FRAME_PREFIX_LEN: usize = 86;
++
++/// The longest framed line (prefix, payload, newline) for a payload cap.
++pub const fn frame_line_max(payload_max: usize) -> usize {
++    FRAME_PREFIX_LEN + payload_max + 1
++}
++
++type HmacSha256 = Hmac<Sha256>;
++
++/// 32 random bytes, kept both raw (HMAC key) and as the hex string clients present.
++#[derive(Clone, PartialEq, Eq)]
++pub struct Token {
++    raw: [u8; 32],
++    hex: String,
++}
++
++impl std::fmt::Debug for Token {
++    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
++        f.write_str("Token(..)")
++    }
++}
++
++impl Token {
++    /// Exactly 64 hex characters, else None.
++    pub fn from_hex(value: &str) -> Option<Token> {
++        if value.len() != 64 {
++            return None;
++        }
++        let bytes = hex::decode(value).ok()?;
++        let raw: [u8; 32] = bytes.try_into().ok()?;
++        Some(Token {
++            raw,
++            hex: value.to_ascii_lowercase(),
++        })
++    }
++
++    pub fn as_hex(&self) -> &str {
++        &self.hex
++    }
++}
++
++/// What a guarded listener enforces.
++#[derive(Clone, Debug, PartialEq, Eq)]
++pub enum Gate {
++    /// No token required. Only produced by `from_env` in `cfg(test)` builds when the env is unset,
++    /// and by tests that ask for it explicitly.
++    Open,
++    /// The token every client must hold.
++    Token(Token),
++    /// No valid token is configured: nothing is accepted, and a guarded listener does not start.
++    Refuse,
++}
++
++impl Gate {
++    pub fn from_env() -> Gate {
++        Gate::from_value(std::env::var_os(ENV).as_deref(), cfg!(test))
++    }
++
++    /// `value` is what the environment holds (None: unset). `open_when_unset` is true only in
++    /// test builds, so the engine's own pre-existing tests keep running without a token; a
++    /// production build refuses when unset. A present value that is not exactly 64 hex characters
++    /// (non-UTF-8 included) always refuses.
++    pub fn from_value(value: Option<&std::ffi::OsStr>, open_when_unset: bool) -> Gate {
++        match value {
++            Some(value) => match value.to_str().and_then(Token::from_hex) {
++                Some(token) => Gate::Token(token),
++                None => Gate::Refuse,
++            },
++            None if open_when_unset => Gate::Open,
++            None => Gate::Refuse,
++        }
++    }
++
++    /// Is a bearer value (the part after `Bearer `) acceptable?
++    pub fn allows_bearer(&self, presented: Option<&str>) -> bool {
++        match self {
++            Gate::Open => true,
++            Gate::Refuse => false,
++            Gate::Token(token) => match presented {
++                // Hash both sides first: the comparison length never depends on what was presented.
++                Some(value) => {
++                    let a = Sha256::digest(value.as_bytes());
++                    let b = Sha256::digest(token.hex.as_bytes());
++                    a.as_slice().ct_eq(b.as_slice()).into()
++                }
++                None => {
++                    // Same work as a real comparison, so absent and wrong look alike.
++                    let a = Sha256::digest(b"");
++                    let b = Sha256::digest(token.hex.as_bytes());
++                    let _: bool = a.as_slice().ct_eq(b.as_slice()).into();
++                    false
++                }
++            },
++        }
++    }
++
++    /// The error a guarded listener reports when it cannot start.
++    pub fn start_error(&self) -> Option<String> {
++        match self {
++            Gate::Refuse => Some(format!(
++                "{ENV} is missing or malformed (it must be 64 hex characters); the control listener was not started"
++            )),
++            _ => None,
++        }
++    }
++}
++
++/// `Authorization: Bearer <token>` header value to the token part.
++pub fn bearer_token(header_value: &str) -> Option<&str> {
++    let (scheme, rest) = header_value.trim().split_once(' ')?;
++    if scheme.eq_ignore_ascii_case("bearer") {
++        Some(rest.trim())
++    } else {
++        None
++    }
++}
++
++/// First header of that name in a raw HTTP head (request line first).
++pub fn header_value<'a>(head: &'a str, name: &str) -> Option<&'a str> {
++    // Headers end at the first empty line: nothing in a body is a header.
++    let headers = head.split("\r\n\r\n").next().unwrap_or("");
++    headers.split("\r\n").skip(1).find_map(|line| {
++        let (key, value) = line.split_once(':')?;
++        if key.trim().eq_ignore_ascii_case(name) {
++            Some(value.trim())
++        } else {
++            None
++        }
++    })
++}
++
++fn mac(key: &[u8], parts: &[&[u8]]) -> [u8; 32] {
++    let mut m = <HmacSha256 as Mac>::new_from_slice(key).expect("HMAC accepts any key length");
++    for part in parts {
++        m.update(part);
++    }
++    m.finalize().into_bytes().into()
++}
++
++fn mac_matches(expected: &[u8; 32], presented_hex: &str) -> bool {
++    match hex::decode(presented_hex) {
++        Ok(bytes) if bytes.len() == 32 => expected.as_slice().ct_eq(&bytes).into(),
++        _ => {
++            let _: bool = expected.as_slice().ct_eq(&[0u8; 32]).into();
++            false
++        }
++    }
++}
++
++fn random_hex() -> Result<String, ()> {
++    let mut bytes = [0u8; 16];
++    getrandom::getrandom(&mut bytes).map_err(|_| ())?;
++    Ok(hex::encode(bytes))
++}
++
++fn is_nonce(value: &str) -> bool {
++    value.len() == 32 && value.bytes().all(is_lower_hex)
++}
++
++/// A failure to open or seal one frame. Nothing is parsed before the MAC has passed.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum FrameError {
++    /// Not an `ab1` frame (prefix grammar, fixed-width hex, newline placement).
++    Grammar,
++    BadMac,
++    /// Not exactly the next counter (repeat, skip, overflow).
++    Counter,
++    /// Authentic but not UTF-8.
++    Utf8,
++    /// A payload that could not be sealed (embedded newline) or a counter that is spent.
++    Seal,
++}
++
++/// Strict lowercase-hex decoder for a fixed-width field: no sign, no whitespace, no uppercase.
++fn decode_hex_fixed<const N: usize>(field: &[u8]) -> Option<[u8; N]> {
++    if field.len() != N * 2 {
++        return None;
++    }
++    fn nibble(b: u8) -> Option<u8> {
++        match b {
++            b'0'..=b'9' => Some(b - b'0'),
++            b'a'..=b'f' => Some(b - b'a' + 10),
++            _ => None,
++        }
++    }
++    let mut out = [0u8; N];
++    for (i, pair) in field.chunks_exact(2).enumerate() {
++        out[i] = (nibble(pair[0])? << 4) | nibble(pair[1])?;
++    }
++    Some(out)
++}
++
++fn is_lower_hex(b: u8) -> bool {
++    matches!(b, b'0'..=b'9' | b'a'..=b'f')
++}
++
++/// Is `b` allowed at byte `pos` of the 86-byte frame prefix?
++fn prefix_byte_ok(pos: usize, b: u8) -> bool {
++    match pos {
++        0 => b == b'a',
++        1 => b == b'b',
++        2 => b == b'1',
++        3 => b == b' ',
++        4..=19 => is_lower_hex(b),
++        20 => b == b' ',
++        21..=84 => is_lower_hex(b),
++        85 => b == b' ',
++        _ => true,
++    }
++}
++
++/// One authenticated connection. Post-handshake wire line, both directions:
++/// `ab1 <n: 16 lowercase hex> <mac: 64 lowercase hex> <payload, no newline>\n`
++/// with `mac = HMAC-SHA256(K, "ab1" || dir || n as 8 big-endian bytes || payload)`.
++pub struct Session {
++    key: [u8; 32],
++    send_dir: u8,
++    recv_dir: u8,
++    send_n: u64,
++    recv_n: u64,
++}
++
++impl Session {
++    fn new(key: [u8; 32], client_side: bool) -> Session {
++        Session {
++            key,
++            send_dir: if client_side { b'c' } else { b's' },
++            recv_dir: if client_side { b's' } else { b'c' },
++            send_n: 0,
++            recv_n: 0,
++        }
++    }
++
++    /// The whole wire line (newline included) for one message.
++    pub fn seal(&mut self, payload: &str) -> Result<Vec<u8>, FrameError> {
++        if payload.as_bytes().contains(&b'\n') {
++            return Err(FrameError::Seal);
++        }
++        let n = self.send_n;
++        let next = n.checked_add(1).ok_or(FrameError::Seal)?;
++        let tag = mac(
++            &self.key,
++            &[b"ab1", &[self.send_dir], &n.to_be_bytes(), payload.as_bytes()],
++        );
++        let line = format!("ab1 {:016x} {} {}\n", n, hex::encode(tag), payload);
++        self.send_n = next;
++        Ok(line.into_bytes())
++    }
++
++    /// The message inside one wire line (newline included), in this order and no other:
++    /// (1) grammar, (2) strict hex decode, (3) MAC over the raw payload bytes, constant time,
++    /// (4) the counter is exactly the next one, (5) only now UTF-8. State advances only on success.
++    pub fn open(&mut self, line: &[u8]) -> Result<String, FrameError> {
++        // (1) grammar
++        if line.len() <= FRAME_PREFIX_LEN || line[line.len() - 1] != b'\n' {
++            return Err(FrameError::Grammar);
++        }
++        if !line[..FRAME_PREFIX_LEN]
++            .iter()
++            .enumerate()
++            .all(|(i, &b)| prefix_byte_ok(i, b))
++        {
++            return Err(FrameError::Grammar);
++        }
++        let payload = &line[FRAME_PREFIX_LEN..line.len() - 1];
++        if payload.contains(&b'\n') {
++            return Err(FrameError::Grammar);
++        }
++        // (2) decode
++        let n_bytes: [u8; 8] = decode_hex_fixed(&line[4..20]).ok_or(FrameError::Grammar)?;
++        let presented: [u8; 32] = decode_hex_fixed(&line[21..85]).ok_or(FrameError::Grammar)?;
++        // (3) MAC
++        let expected = mac(
++            &self.key,
++            &[b"ab1", &[self.recv_dir], &n_bytes, payload],
++        );
++        if !bool::from(expected.as_slice().ct_eq(presented.as_slice())) {
++            return Err(FrameError::BadMac);
++        }
++        // (4) counter
++        let n = u64::from_be_bytes(n_bytes);
++        if n != self.recv_n {
++            return Err(FrameError::Counter);
++        }
++        let next = self.recv_n.checked_add(1).ok_or(FrameError::Counter)?;
++        // (5) UTF-8
++        let message = std::str::from_utf8(payload).map_err(|_| FrameError::Utf8)?;
++        self.recv_n = next;
++        Ok(message.to_string())
++    }
++
++    /// Test adapters, shared by name with the tests that ran against the previous frame format.
++    #[cfg(test)]
++    pub fn open_bytes(&mut self, line: &[u8]) -> Result<String, FrameError> {
++        self.open(line)
++    }
++
++    #[cfg(test)]
++    pub fn seal_bytes(&mut self, payload: &str) -> Vec<u8> {
++        self.seal(payload).expect("seal")
++    }
++}
++
++// ---- deadlines, bounded line reading, bounded writing ----
++
++/// An absolute point in time, computed once. Tokio is built without `test-util`, so there is no
++/// paused clock: timing tests run on real time with short injected budgets.
++#[derive(Clone, Copy, Debug)]
++pub struct Deadline(tokio::time::Instant);
++
++impl Deadline {
++    pub fn after(budget: Duration) -> Deadline {
++        Deadline(tokio::time::Instant::now() + budget)
++    }
++
++    pub fn at(&self) -> tokio::time::Instant {
++        self.0
++    }
++
++    /// What is left, or `TimedOut` when it is zero or past (std refuses a zero socket timeout).
++    pub fn remaining(&self) -> Result<Duration, ReadError> {
++        let now = tokio::time::Instant::now();
++        if now >= self.0 {
++            Err(ReadError::TimedOut)
++        } else {
++            Ok(self.0 - now)
++        }
++    }
++}
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum ReadError {
++    TimedOut,
++    TooLong,
++    Closed,
++    BadFrame,
++    Io(std::io::ErrorKind),
++}
++
++/// Socket timeouts, so a blocking reader or writer can spend only what is left of a deadline.
++pub trait Timed {
++    fn set_read_timeout(&self, dur: Option<Duration>) -> std::io::Result<()>;
++    fn set_write_timeout(&self, dur: Option<Duration>) -> std::io::Result<()>;
++}
++
++impl Timed for std::net::TcpStream {
++    fn set_read_timeout(&self, dur: Option<Duration>) -> std::io::Result<()> {
++        std::net::TcpStream::set_read_timeout(self, dur)
++    }
++    fn set_write_timeout(&self, dur: Option<Duration>) -> std::io::Result<()> {
++        std::net::TcpStream::set_write_timeout(self, dur)
++    }
++}
++
++impl<T: Timed + ?Sized> Timed for &mut T {
++    fn set_read_timeout(&self, dur: Option<Duration>) -> std::io::Result<()> {
++        (**self).set_read_timeout(dur)
++    }
++    fn set_write_timeout(&self, dur: Option<Duration>) -> std::io::Result<()> {
++        (**self).set_write_timeout(dur)
++    }
++}
++
++/// What kind of line a reader expects.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum Grammar {
++    /// Any bytes up to a newline; end of input before the newline is `Closed`.
++    Line,
++    /// As `Line`, but a final unterminated line at end of input is returned (the plain Unix
++    /// socket's upstream behaviour).
++    LineOrEof,
++    /// An `ab1` frame: each of the first 86 bytes is checked as it arrives.
++    Framed,
++}
++
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub enum Step {
++    NeedMore(usize),
++    Done(usize),
++    Reject(ReadError, usize),
++}
++
++/// The pure core of every bounded line read. It copies bytes up to and including the first
++/// newline, never lets `buf` exceed `max` (the cap counts the whole line, prefix and newline
++/// included), and grows only with bytes that actually arrived.
++pub struct LineAccumulator {
++    buf: Vec<u8>,
++    max: usize,
++    grammar: Grammar,
++}
++
++impl LineAccumulator {
++    pub fn new(max: usize, grammar: Grammar) -> LineAccumulator {
++        LineAccumulator {
++            buf: Vec::new(),
++            max: max.max(1),
++            grammar,
++        }
++    }
++
++    pub fn partial(&self) -> &[u8] {
++        &self.buf
++    }
++
++    pub fn into_bytes(self) -> Vec<u8> {
++        self.buf
++    }
++
++    pub fn feed(&mut self, available: &[u8]) -> Step {
++        let mut used = 0usize;
++        while used < available.len() {
++            let pos = self.buf.len();
++            if self.grammar == Grammar::Framed && pos < FRAME_PREFIX_LEN {
++                let b = available[used];
++                used += 1;
++                if !prefix_byte_ok(pos, b) {
++                    return Step::Reject(ReadError::BadFrame, used);
++                }
++                self.buf.push(b);
++                if self.buf.len() >= self.max {
++                    return Step::Reject(ReadError::TooLong, used);
++                }
++                continue;
++            }
++            // `pos < max` always holds here: reaching the cap without a newline returns below.
++            let room = self.max - pos;
++            let end = used + room.min(available.len() - used);
++            let window = &available[used..end];
++            match window.iter().position(|&b| b == b'\n') {
++                Some(i) => {
++                    self.buf.extend_from_slice(&window[..=i]);
++                    used += i + 1;
++                    return Step::Done(used);
++                }
++                None => {
++                    self.buf.extend_from_slice(window);
++                    used += window.len();
++                    if self.buf.len() >= self.max {
++                        return Step::Reject(ReadError::TooLong, used);
++                    }
++                }
++            }
++        }
++        Step::NeedMore(used)
++    }
++}
++
++/// Async bounded line read. With a deadline every wait is `timeout_at` (absolute by construction).
++pub async fn read_line_by<R: AsyncBufRead + Unpin>(
++    reader: &mut R,
++    max: usize,
++    grammar: Grammar,
++    deadline: Option<Deadline>,
++) -> Result<Vec<u8>, ReadError> {
++    let mut acc = LineAccumulator::new(max, grammar);
++    loop {
++        let step = {
++            let filled = match deadline {
++                Some(d) => {
++                    d.remaining()?;
++                    match tokio::time::timeout_at(d.at(), reader.fill_buf()).await {
++                        Ok(result) => result,
++                        Err(_) => return Err(ReadError::TimedOut),
++                    }
++                }
++                None => reader.fill_buf().await,
++            };
++            let available = filled.map_err(|e| ReadError::Io(e.kind()))?;
++            if available.is_empty() {
++                return if grammar == Grammar::LineOrEof && !acc.partial().is_empty() {
++                    Ok(acc.into_bytes())
++                } else {
++                    Err(ReadError::Closed)
++                };
++            }
++            acc.feed(available)
++        };
++        match step {
++            Step::NeedMore(n) => reader.consume(n),
++            Step::Done(n) => {
++                reader.consume(n);
++                return Ok(acc.into_bytes());
++            }
++            Step::Reject(e, n) => {
++                reader.consume(n);
++                return Err(e);
++            }
++        }
++    }
++}
++
++/// Blocking bounded line read: before every `fill_buf` the socket timeout is set to what is left
++/// of the deadline, so a peer that drips bytes cannot hold the caller past it.
++pub fn read_line_by_blocking<S: Read + Timed>(
++    reader: &mut BufReader<S>,
++    max: usize,
++    grammar: Grammar,
++    deadline: Deadline,
++) -> Result<Vec<u8>, ReadError> {
++    let mut acc = LineAccumulator::new(max, grammar);
++    loop {
++        let left = deadline.remaining()?;
++        reader
++            .get_ref()
++            .set_read_timeout(Some(left))
++            .map_err(|e| ReadError::Io(e.kind()))?;
++        let step = {
++            let available = match reader.fill_buf() {
++                Ok(a) => a,
++                Err(e) => match e.kind() {
++                    std::io::ErrorKind::Interrupted => continue,
++                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => {
++                        return Err(ReadError::TimedOut)
++                    }
++                    kind => return Err(ReadError::Io(kind)),
++                },
++            };
++            if available.is_empty() {
++                return if grammar == Grammar::LineOrEof && !acc.partial().is_empty() {
++                    Ok(acc.into_bytes())
++                } else {
++                    Err(ReadError::Closed)
++                };
++            }
++            acc.feed(available)
++        };
++        match step {
++            Step::NeedMore(n) => reader.consume(n),
++            Step::Done(n) => {
++                reader.consume(n);
++                return Ok(acc.into_bytes());
++            }
++            Step::Reject(e, n) => {
++                reader.consume(n);
++                return Err(e);
++            }
++        }
++    }
++}
++
++/// Blocking write of the whole buffer under one deadline: a loop of single `write` calls, each
++/// preceded by the remaining-time timeout (std `write_all` would give every inner write the full one).
++pub fn write_all_by<S: Write + Timed>(
++    stream: &mut S,
++    mut buf: &[u8],
++    deadline: Deadline,
++) -> Result<(), ReadError> {
++    while !buf.is_empty() {
++        let left = deadline.remaining()?;
++        stream
++            .set_write_timeout(Some(left))
++            .map_err(|e| ReadError::Io(e.kind()))?;
++        match stream.write(buf) {
++            Ok(0) => return Err(ReadError::Closed),
++            Ok(n) => buf = &buf[n..],
++            Err(e) => match e.kind() {
++                std::io::ErrorKind::Interrupted => continue,
++                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut => {
++                    return Err(ReadError::TimedOut)
++                }
++                kind => return Err(ReadError::Io(kind)),
++            },
++        }
++    }
++    Ok(())
++}
++
++/// Async write of the whole buffer under one absolute deadline.
++pub async fn write_all_async_by<W: AsyncWrite + Unpin>(
++    writer: &mut W,
++    buf: &[u8],
++    deadline: Deadline,
++) -> Result<(), ReadError> {
++    let write = async {
++        writer.write_all(buf).await?;
++        writer.flush().await
++    };
++    deadline.remaining()?;
++    match tokio::time::timeout_at(deadline.at(), write).await {
++        Ok(result) => result.map_err(|e| ReadError::Io(e.kind())),
++        Err(_) => Err(ReadError::TimedOut),
++    }
++}
++
++/// Socket timeout for one command's reply. Ordinary commands get a 30s floor. Commands carrying an
++/// operation timeout (the wait family, which parse_command stamps with AGENT_BROWSER_DEFAULT_TIMEOUT
++/// when no explicit --timeout is given) get that timeout plus margin, so the daemon can report a
++/// proper operation timeout instead of the client giving up at 30s and the retry loop re-sending the
++/// whole long-running command.
++///
++/// The env var is deliberately NOT consulted here. Reading it would apply a long wait budget to
++/// every command, so a genuinely hung daemon on a simple `url`/`title`/`snapshot` call would take the
++/// full budget to surface instead of 30s. Only commands that actually carry a `timeout` field get the
++/// extended budget, and that field is set client-side per invocation.
++pub fn reply_budget(cmd: &serde_json::Value) -> Duration {
++    let mut op_ms = cmd.get("timeout").and_then(|v| v.as_u64()).unwrap_or(0);
++    if cmd.get("action").and_then(serde_json::Value::as_str) == Some("mousemove") {
++        op_ms = op_ms.max(
++            cmd.get("duration")
++                .and_then(serde_json::Value::as_u64)
++                .unwrap_or(0),
++        );
++    }
++    Duration::from_millis(op_ms.saturating_add(10_000).max(30_000))
++}
++
++// ---- handshake state machine (pure; the I/O wrappers below are thin) ----
++
++pub struct ClientPending {
++    cn: String,
++}
++
++pub struct ServerPending {
++    cn: String,
++    sn: String,
++}
++
++/// Client step 1: the hello line to send.
++pub fn client_hello() -> Result<(String, ClientPending), ()> {
++    let cn = random_hex()?;
++    let line = serde_json::json!({ "hello": cn }).to_string();
++    Ok((line, ClientPending { cn }))
++}
++
++/// Client step 2: check the server's proof BEFORE sending anything else; on success the auth line
++/// to send and the session.
++pub fn client_finish(
++    token: &Token,
++    pending: &ClientPending,
++    server_line: &str,
++) -> Result<(String, Session), ()> {
++    let value: serde_json::Value = serde_json::from_str(server_line.trim()).map_err(|_| ())?;
++    let proof = value.get("proof").and_then(|v| v.as_str()).ok_or(())?;
++    let sn = value.get("nonce").and_then(|v| v.as_str()).ok_or(())?;
++    if !is_nonce(sn) {
++        return Err(());
++    }
++    let expected = mac(&token.raw, &[b"srv", pending.cn.as_bytes()]);
++    if !mac_matches(&expected, proof) {
++        return Err(());
++    }
++    let auth = mac(&token.raw, &[b"cli", sn.as_bytes(), pending.cn.as_bytes()]);
++    let key = mac(&token.raw, &[b"key", pending.cn.as_bytes(), sn.as_bytes()]);
++    Ok((
++        serde_json::json!({ "auth": hex::encode(auth) }).to_string(),
++        Session::new(key, true),
++    ))
++}
++
++/// Server step 1: answer a hello with the proof and a fresh nonce.
++pub fn server_reply(token: &Token, hello_line: &str) -> Result<(String, ServerPending), ()> {
++    let value: serde_json::Value = serde_json::from_str(hello_line.trim()).map_err(|_| ())?;
++    let cn = value.get("hello").and_then(|v| v.as_str()).ok_or(())?;
++    if !is_nonce(cn) {
++        return Err(());
++    }
++    let sn = random_hex()?;
++    let proof = mac(&token.raw, &[b"srv", cn.as_bytes()]);
++    let line = serde_json::json!({ "proof": hex::encode(proof), "nonce": sn }).to_string();
++    Ok((
++        line,
++        ServerPending {
++            cn: cn.to_string(),
++            sn,
++        },
++    ))
++}
++
++/// Server step 2: the client's auth line decides.
++pub fn server_finish(
++    token: &Token,
++    pending: &ServerPending,
++    auth_line: &str,
++) -> Result<Session, ()> {
++    let value: serde_json::Value = serde_json::from_str(auth_line.trim()).map_err(|_| ())?;
++    let presented = value.get("auth").and_then(|v| v.as_str()).ok_or(())?;
++    let expected = mac(
++        &token.raw,
++        &[b"cli", pending.sn.as_bytes(), pending.cn.as_bytes()],
++    );
++    if !mac_matches(&expected, presented) {
++        return Err(());
++    }
++    let key = mac(
++        &token.raw,
++        &[b"key", pending.cn.as_bytes(), pending.sn.as_bytes()],
++    );
++    Ok(Session::new(key, false))
++}
++
++/// Why a blocking handshake read or write failed, as the CLI reports it.
++pub fn handshake_error_text(e: ReadError) -> String {
++    match e {
++        ReadError::TimedOut => {
++            "control_handshake_timeout: the daemon handshake timed out".to_string()
++        }
++        ReadError::TooLong => {
++            "control_frame_too_large: a daemon handshake line exceeded its limit".to_string()
++        }
++        ReadError::Closed => "Daemon closed the connection during the handshake".to_string(),
++        ReadError::BadFrame => {
++            "control_token_mismatch: the daemon sent an invalid handshake line".to_string()
++        }
++        ReadError::Io(kind) => format!("Failed to talk to the daemon during the handshake: {kind}"),
++    }
++}
++
++/// Daemon side of the Windows TCP handshake. Nothing is read as a command before this succeeds.
++/// `deadline` is taken in the accept loop the moment `accept()` returns, so scheduling delay counts.
++pub async fn server_handshake_by<R, W>(
++    reader: &mut R,
++    writer: &mut W,
++    token: &Token,
++    deadline: Deadline,
++) -> Result<Session, ReadError>
++where
++    R: AsyncBufRead + Unpin,
++    W: AsyncWrite + Unpin,
++{
++    let hello = read_line_by(reader, HANDSHAKE_LINE_MAX, Grammar::Line, Some(deadline)).await?;
++    let hello = String::from_utf8(hello).map_err(|_| ReadError::BadFrame)?;
++    let (reply, pending) = server_reply(token, &hello).map_err(|_| ReadError::BadFrame)?;
++    write_all_async_by(writer, format!("{reply}\n").as_bytes(), deadline).await?;
++    let auth = read_line_by(reader, HANDSHAKE_LINE_MAX, Grammar::Line, Some(deadline)).await?;
++    let auth = String::from_utf8(auth).map_err(|_| ReadError::BadFrame)?;
++    server_finish(token, &pending, &auth).map_err(|_| ReadError::BadFrame)
++}
++
++/// `server_handshake_by` with a deadline built on entry (tests; production passes the accept-loop one).
++pub async fn server_handshake<R, W>(
++    reader: &mut R,
++    writer: &mut W,
++    token: &Token,
++) -> Result<Session, ReadError>
++where
++    R: AsyncBufRead + Unpin,
++    W: AsyncWrite + Unpin,
++{
++    server_handshake_by(reader, writer, token, Deadline::after(HANDSHAKE_BUDGET)).await
++}
++
++/// Async client side (the stream port's `/api/command` forwarding). `deadline` is taken the moment
++/// `connect` returns and covers every handshake read and write.
++pub async fn client_handshake_async_by<R, W>(
++    reader: &mut R,
++    writer: &mut W,
++    token: &Token,
++    deadline: Deadline,
++) -> Result<Session, ReadError>
++where
++    R: AsyncBufRead + Unpin,
++    W: AsyncWrite + Unpin,
++{
++    let (hello, pending) = client_hello().map_err(|_| ReadError::BadFrame)?;
++    write_all_async_by(writer, format!("{hello}\n").as_bytes(), deadline).await?;
++    let reply = read_line_by(reader, HANDSHAKE_LINE_MAX, Grammar::Line, Some(deadline)).await?;
++    let reply = String::from_utf8(reply).map_err(|_| ReadError::BadFrame)?;
++    let (auth, session) =
++        client_finish(token, &pending, &reply).map_err(|_| ReadError::BadFrame)?;
++    write_all_async_by(writer, format!("{auth}\n").as_bytes(), deadline).await?;
++    Ok(session)
++}
++
++pub async fn client_handshake_async<R, W>(
++    reader: &mut R,
++    writer: &mut W,
++    token: &Token,
++) -> Result<Session, ReadError>
++where
++    R: AsyncBufRead + Unpin,
++    W: AsyncWrite + Unpin,
++{
++    client_handshake_async_by(reader, writer, token, Deadline::after(HANDSHAKE_BUDGET)).await
++}
++
++/// Blocking client side (the CLI). The stream is only written to after the server's proof checks.
++/// The caller keeps the one `BufReader` for the whole connection, so the framed reply is read from
++/// the same buffer as the handshake reply.
++pub fn client_handshake_blocking_by<S: Read + Write + Timed>(
++    reader: &mut BufReader<S>,
++    token: &Token,
++    deadline: Deadline,
++) -> Result<Session, String> {
++    let (hello, pending) = client_hello().map_err(|_| "Failed to start handshake".to_string())?;
++    write_all_by(reader.get_mut(), format!("{hello}\n").as_bytes(), deadline)
++        .map_err(handshake_error_text)?;
++    let reply = read_line_by_blocking(reader, HANDSHAKE_LINE_MAX, Grammar::Line, deadline)
++        .map_err(handshake_error_text)?;
++    let reply = String::from_utf8(reply).map_err(|_| "Invalid handshake reply".to_string())?;
++    let (auth, session) = client_finish(token, &pending, &reply).map_err(|_| {
++        "control_token_mismatch: the daemon did not prove the control token".to_string()
++    })?;
++    write_all_by(reader.get_mut(), format!("{auth}\n").as_bytes(), deadline)
++        .map_err(handshake_error_text)?;
++    Ok(session)
++}
++
++/// `client_handshake_blocking_by` over a bare stream with a deadline built on entry.
++pub fn client_handshake_blocking<S: Read + Write + Timed>(
++    stream: &mut S,
++    token: &Token,
++) -> Result<Session, String> {
++    let deadline = Deadline::after(HANDSHAKE_BUDGET);
++    let mut reader = BufReader::new(stream);
++    client_handshake_blocking_by(&mut reader, token, deadline)
++}
++
++/// Unix: the socket directory must belong to this user and be closed to group and other.
++#[cfg(unix)]
++pub fn check_private_dir(dir: &std::path::Path) -> Result<(), String> {
++    use std::os::unix::fs::MetadataExt;
++    let meta = std::fs::symlink_metadata(dir)
++        .map_err(|e| format!("Socket directory {} is not readable: {}", dir.display(), e))?;
++    if !meta.is_dir() {
++        return Err(format!("{} is not a directory", dir.display()));
++    }
++    // SAFETY: geteuid has no preconditions.
++    let euid = unsafe { libc::geteuid() };
++    if meta.uid() != euid {
++        return Err(format!(
++            "Socket directory {} is not owned by this user",
++            dir.display()
++        ));
++    }
++    if meta.mode() & 0o077 != 0 {
++        return Err(format!(
++            "Socket directory {} must not be accessible to group or other (mode {:o})",
++            dir.display(),
++            meta.mode() & 0o7777
++        ));
++    }
++    Ok(())
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++    use std::time::Duration;
++    use tokio::io::AsyncReadExt;
++
++    const GOOD: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
++    const OTHER: &str = "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100";
++
++    fn token(hex: &str) -> Token {
++        Token::from_hex(hex).unwrap()
++    }
++
++    #[test]
++    fn token_must_be_exactly_64_hex() {
++        assert!(Token::from_hex(GOOD).is_some());
++        for bad in ["", "abc", &GOOD[..63], &format!("{GOOD}0"), &GOOD.replace('0', "g")] {
++            assert!(Token::from_hex(bad).is_none(), "{bad}");
++        }
++    }
++
++    #[test]
++    fn bearer_right_wrong_truncated_empty_absent() {
++        let gate = Gate::Token(token(GOOD));
++        assert!(gate.allows_bearer(Some(GOOD)));
++        assert!(!gate.allows_bearer(Some(OTHER)));
++        assert!(!gate.allows_bearer(Some(&GOOD[..63])));
++        assert!(!gate.allows_bearer(Some(&format!("{GOOD}0"))));
++        assert!(!gate.allows_bearer(Some("")));
++        assert!(!gate.allows_bearer(None));
++        // one hex digit off
++        let mut near = GOOD.to_string();
++        near.replace_range(63..64, "0");
++        assert!(!gate.allows_bearer(Some(&near)));
++    }
++
++    #[test]
++    fn refuse_accepts_nothing_and_open_accepts_anything() {
++        assert!(!Gate::Refuse.allows_bearer(Some(GOOD)));
++        assert!(!Gate::Refuse.allows_bearer(None));
++        assert!(Gate::Open.allows_bearer(None));
++        assert!(Gate::Refuse.start_error().is_some());
++        assert!(Gate::Open.start_error().is_none());
++    }
++
++    // No test sets the real environment variable: other tests start servers through `from_env` in
++    // parallel, so the decision is tested on `from_value`, the pure function `from_env` calls.
++    #[test]
++    fn from_value_refuses_unset_in_production_and_malformed_always() {
++        use std::ffi::OsStr;
++        assert_eq!(Gate::from_value(None, false), Gate::Refuse);
++        assert_eq!(Gate::from_value(None, true), Gate::Open);
++        for bad in ["", "zz", &GOOD[..63]] {
++            assert_eq!(Gate::from_value(Some(OsStr::new(bad)), true), Gate::Refuse);
++        }
++        assert_eq!(
++            Gate::from_value(Some(OsStr::new(GOOD)), false),
++            Gate::Token(token(GOOD))
++        );
++        #[cfg(unix)]
++        {
++            use std::os::unix::ffi::OsStrExt;
++            let junk = OsStr::from_bytes(&[0xff, 0xfe, 0x41]);
++            assert_eq!(Gate::from_value(Some(junk), true), Gate::Refuse);
++        }
++    }
++
++    #[test]
++    fn a_header_in_the_body_is_not_a_header() {
++        let head = format!("POST /api/command HTTP/1.1\r\nHost: x\r\n\r\nAuthorization: Bearer {GOOD}\r\n\r\n");
++        assert_eq!(header_value(&head, "authorization"), None);
++    }
++
++    #[test]
++    fn bearer_and_header_parsing() {
++        assert_eq!(bearer_token("Bearer abc"), Some("abc"));
++        assert_eq!(bearer_token("bearer   abc "), Some("abc"));
++        assert_eq!(bearer_token("Basic abc"), None);
++        assert_eq!(bearer_token("abc"), None);
++        let head = "GET / HTTP/1.1\r\nHost: x\r\nauthorization: Bearer t\r\n\r\n";
++        assert_eq!(header_value(head, "Authorization"), Some("Bearer t"));
++        assert_eq!(header_value(head, "Missing"), None);
++    }
++
++    fn handshake_pair(server: &Token, client: &Token) -> (Result<Session, ()>, Result<Session, ()>) {
++        let (hello, cp) = client_hello().unwrap();
++        let sr = server_reply(server, &hello);
++        let (reply, sp) = match sr {
++            Ok(v) => v,
++            Err(()) => return (Err(()), Err(())),
++        };
++        match client_finish(client, &cp, &reply) {
++            Err(()) => (Err(()), Err(())),
++            Ok((auth, csession)) => (server_finish(server, &sp, &auth), Ok(csession)),
++        }
++    }
++
++    #[test]
++    fn handshake_different_token_fails_on_the_client_before_it_would_send_auth() {
++        let (s, c) = handshake_pair(&token(GOOD), &token(OTHER));
++        assert!(s.is_err() && c.is_err());
++    }
++
++    #[test]
++    fn a_server_that_does_not_know_the_token_cannot_make_a_client_send_auth() {
++        let (hello, cp) = client_hello().unwrap();
++        let _ = hello;
++        let forged = serde_json::json!({ "proof": "00".repeat(32), "nonce": "a".repeat(32) }).to_string();
++        assert!(client_finish(&token(GOOD), &cp, &forged).is_err());
++    }
++
++    #[test]
++    fn server_rejects_a_bad_hello_and_a_bad_auth() {
++        let t = token(GOOD);
++        assert!(server_reply(&t, "not json").is_err());
++        assert!(server_reply(&t, "{\"hello\":\"short\"}").is_err());
++        assert!(server_reply(&t, "{\"nothello\":1}").is_err());
++        let (_, sp) = server_reply(&t, &format!("{{\"hello\":\"{}\"}}", "a".repeat(32))).unwrap();
++        assert!(server_finish(&t, &sp, "{\"auth\":\"00\"}").is_err());
++        assert!(server_finish(&t, &sp, "{}").is_err());
++    }
++
++    #[tokio::test]
++    async fn async_handshake_over_a_duplex_pipe() {
++        let (a, b) = tokio::io::duplex(4096);
++        let (ar, mut aw) = tokio::io::split(a);
++        let (br, mut bw) = tokio::io::split(b);
++        let mut ar = tokio::io::BufReader::new(ar);
++        let mut br = tokio::io::BufReader::new(br);
++        let t = token(GOOD);
++        let server = server_handshake(&mut br, &mut bw, &t);
++        let client = client_handshake_async(&mut ar, &mut aw, &t);
++        let (s, c) = tokio::join!(server, client);
++        assert!(s.is_ok() && c.is_ok());
++    }
++
++    #[tokio::test]
++    async fn async_handshake_with_the_wrong_token_fails_both_sides() {
++        let (a, b) = tokio::io::duplex(4096);
++        let (ar, mut aw) = tokio::io::split(a);
++        let (br, mut bw) = tokio::io::split(b);
++        let mut ar = tokio::io::BufReader::new(ar);
++        let mut br = tokio::io::BufReader::new(br);
++        let (st, ct) = (token(GOOD), token(OTHER));
++        let server = server_handshake(&mut br, &mut bw, &st);
++        let client = async {
++            let r = client_handshake_async(&mut ar, &mut aw, &ct).await;
++            drop(aw);
++            r
++        };
++        let (s, c) = tokio::join!(server, client);
++        assert!(s.is_err() && c.is_err());
++    }
++
++    #[tokio::test]
++    async fn a_squatting_server_gets_no_auth_and_learns_nothing() {
++        // A fake server that does not know the token answers the hello with a made-up proof. The client must
++        // refuse it and send nothing more.
++        let (client_end, server_end) = tokio::io::duplex(4096);
++        let (cr, mut cw) = tokio::io::split(client_end);
++        let mut cr = tokio::io::BufReader::new(cr);
++        let (sr, mut sw) = tokio::io::split(server_end);
++        let mut sr = tokio::io::BufReader::new(sr);
++        let fake = tokio::spawn(async move {
++            let mut hello = String::new();
++            sr.read_line(&mut hello).await.unwrap();
++            let forged = serde_json::json!({ "proof": "11".repeat(32), "nonce": "b".repeat(32) });
++            sw.write_all(format!("{forged}\n").as_bytes()).await.unwrap();
++            // Whatever else arrives before the client hangs up is what the squatter learned.
++            let mut rest = String::new();
++            let _ = sr.read_to_string(&mut rest).await;
++            rest
++        });
++        let t = token(GOOD);
++        assert!(client_handshake_async(&mut cr, &mut cw, &t).await.is_err());
++        drop(cw);
++        drop(cr);
++        let learned = fake.await.unwrap();
++        assert!(learned.is_empty(), "the client sent {learned:?} to a server that failed the proof");
++    }
++
++    #[cfg(unix)]
++    #[test]
++    fn private_dir_check() {
++        use std::os::unix::fs::PermissionsExt;
++        let dir = tempfile::tempdir().unwrap();
++        let sub = dir.path().join("s");
++        std::fs::create_dir(&sub).unwrap();
++        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o700)).unwrap();
++        assert!(check_private_dir(&sub).is_ok());
++        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o750)).unwrap();
++        assert!(check_private_dir(&sub).is_err());
++        std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o707)).unwrap();
++        assert!(check_private_dir(&sub).is_err());
++        assert!(check_private_dir(&dir.path().join("missing")).is_err());
++    }
++
++    // ---- rev B tests: textually identical on 1ccca49 + the test-only shim and on rev B ----
++
++    /// A peer that never finishes a proof line: it hands over ONE byte per read, after sleeping
++    /// min(its current read timeout, 4.9 s); a sleep cut short by the timeout is `TimedOut`.
++    struct DripPeer {
++        cur: std::cell::Cell<Duration>,
++        start: std::time::Instant,
++        /// (time since construction, value) of every timeout the code under test set.
++        sets: std::cell::RefCell<Vec<(Duration, Duration)>>,
++    }
++
++    impl DripPeer {
++        fn new(initial_read_timeout: Duration) -> DripPeer {
++            DripPeer {
++                cur: std::cell::Cell::new(initial_read_timeout),
++                start: std::time::Instant::now(),
++                sets: std::cell::RefCell::new(Vec::new()),
++            }
++        }
++    }
++
++    impl Timed for DripPeer {
++        fn set_read_timeout(&self, dur: Option<Duration>) -> std::io::Result<()> {
++            // `None` (no timeout at all) is recorded as a day: it can never satisfy "no more than the time left".
++            let value = dur.unwrap_or(Duration::from_secs(86_400));
++            self.cur.set(value);
++            self.sets.borrow_mut().push((self.start.elapsed(), value));
++            Ok(())
++        }
++        fn set_write_timeout(&self, _dur: Option<Duration>) -> std::io::Result<()> {
++            Ok(())
++        }
++    }
++
++    impl std::io::Read for DripPeer {
++        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
++            let current = self.cur.get();
++            let cap = Duration::from_millis(4900);
++            if current <= cap {
++                std::thread::sleep(current);
++                return Err(std::io::Error::from(std::io::ErrorKind::TimedOut));
++            }
++            std::thread::sleep(cap);
++            buf[0] = b'a';
++            Ok(1)
++        }
++    }
++
++    impl std::io::Write for DripPeer {
++        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
++            Ok(b.len())
++        }
++        fn flush(&mut self) -> std::io::Result<()> {
++            Ok(())
++        }
++    }
++
++    #[test]
++    fn slow_peer_drip_fails_at_the_handshake_deadline() {
++        // The caller (send_command_once) has already set a 5 s read timeout before the handshake.
++        let mut peer = DripPeer::new(Duration::from_secs(5));
++        let started = std::time::Instant::now();
++        let result = client_handshake_blocking(&mut peer, &token(GOOD));
++        let elapsed = started.elapsed();
++        let err = result.err().expect("a dripping peer must fail the handshake");
++        let lower = err.to_lowercase();
++        assert!(lower.contains("timed out") || lower.contains("timeout"), "{err}");
++        assert!(
++            elapsed >= Duration::from_millis(5000) && elapsed <= Duration::from_millis(5300),
++            "the handshake must end at its 5 s deadline, took {elapsed:?}"
++        );
++        let mut previous = Duration::MAX;
++        for (at, value) in peer.sets.borrow().iter() {
++            assert!(*value <= previous, "timeouts must not grow: {value:?} after {previous:?}");
++            previous = *value;
++            let left = Duration::from_secs(5).saturating_sub(*at) + Duration::from_millis(50);
++            assert!(*value <= left, "timeout {value:?} set at {at:?} exceeds the time left ({left:?})");
++        }
++    }
++
++    #[test]
++    fn item2_negative_counter_is_refused_without_panic() {
++        let key = [7u8; 32];
++        let mut server = Session::new(key, false);
++        for line in negative_counter_frames(&key, b'c') {
++            assert!(
++                server.open_bytes(&line).is_err(),
++                "a negative or signed counter must be refused: {:?}",
++                String::from_utf8_lossy(&line)
++            );
++        }
++        // Control: the peer's real frame for n = 0 still opens, so no state advanced.
++        let mut client = Session::new(key, true);
++        let real = client.seal_bytes("x");
++        assert_eq!(server.open_bytes(&real).unwrap(), "x");
++    }
++
++    /// Rev B frames: a 16-character counter field that is a sign plus 15 zeros, MAC'd as n = 0.
++    fn negative_counter_frames(key: &[u8; 32], dir: u8) -> Vec<Vec<u8>> {
++        let tag = hex::encode(mac(key, &[b"ab1", &[dir], &0u64.to_be_bytes(), b"x"]));
++        ["+", "-"]
++            .iter()
++            .map(|sign| format!("ab1 {sign}000000000000000 {tag} x\n").into_bytes())
++            .collect()
++    }
++
++    // ---- rev B: ported and new tests ----
++
++    struct Endless;
++    impl std::io::Read for Endless {
++        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
++            buf[0] = b'a';
++            Ok(1)
++        }
++    }
++    impl std::io::Write for Endless {
++        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
++            Ok(b.len())
++        }
++        fn flush(&mut self) -> std::io::Result<()> {
++            Ok(())
++        }
++    }
++    impl Timed for Endless {
++        fn set_read_timeout(&self, _dur: Option<Duration>) -> std::io::Result<()> {
++            Ok(())
++        }
++        fn set_write_timeout(&self, _dur: Option<Duration>) -> std::io::Result<()> {
++            Ok(())
++        }
++    }
++
++    #[test]
++    fn the_blocking_client_gives_up_on_a_peer_that_never_finishes_a_line() {
++        // Never a newline: bounded by the line limit, not by the peer's patience.
++        let err = client_handshake_blocking(&mut Endless, &token(GOOD)).err().unwrap();
++        assert!(err.contains("control_frame_too_large"), "{err}");
++    }
++
++    #[test]
++    fn handshake_same_token_works_and_frames_round_trip() {
++        let (s, c) = handshake_pair(&token(GOOD), &token(GOOD));
++        let (mut s, mut c) = (s.unwrap(), c.unwrap());
++        let wire = c.seal_bytes("{\"action\":\"x\"}");
++        assert_eq!(s.open_bytes(&wire).unwrap(), "{\"action\":\"x\"}");
++        let back = s.seal_bytes("{\"success\":true}");
++        assert_eq!(c.open_bytes(&back).unwrap(), "{\"success\":true}");
++    }
++
++    #[test]
++    fn frames_reject_replay_skip_tamper_wrong_direction_and_unframed() {
++        let (s, c) = handshake_pair(&token(GOOD), &token(GOOD));
++        let (mut s, mut c) = (s.unwrap(), c.unwrap());
++        let first = c.seal_bytes("one");
++        let second = c.seal_bytes("two");
++        // skipped counter: line 1 (second) before line 0
++        assert_eq!(s.open_bytes(&second), Err(FrameError::Counter));
++        assert_eq!(s.open_bytes(&first).unwrap(), "one");
++        // replay of line 0
++        assert_eq!(s.open_bytes(&first), Err(FrameError::Counter));
++        assert_eq!(s.open_bytes(&second).unwrap(), "two");
++        // tampered message; the real frame still opens afterwards (no state advanced)
++        let third = c.seal_bytes("three");
++        let tampered = String::from_utf8(third.clone()).unwrap().replace("three", "THREE");
++        assert_eq!(s.open_bytes(tampered.as_bytes()), Err(FrameError::BadMac));
++        assert_eq!(s.open_bytes(&third).unwrap(), "three");
++        // an unframed command line, and a legacy JSON frame
++        assert_eq!(s.open_bytes(b"{\"id\":\"1\",\"action\":\"close\"}\n"), Err(FrameError::Grammar));
++        assert_eq!(s.open_bytes(b"garbage\n"), Err(FrameError::Grammar));
++        // a client's own line reflected back to it is the wrong direction
++        let (s2, c2) = handshake_pair(&token(GOOD), &token(GOOD));
++        let (_s2, mut c2) = (s2.unwrap(), c2.unwrap());
++        let mine = c2.seal_bytes("x");
++        assert_eq!(c2.open_bytes(&mine), Err(FrameError::BadMac));
++    }
++
++    #[test]
++    fn ab1_frame_round_trips_and_legacy_json_is_refused() {
++        let (s, c) = handshake_pair(&token(GOOD), &token(GOOD));
++        let (mut s, mut c) = (s.unwrap(), c.unwrap());
++        let wire = c.seal_bytes("hello");
++        assert!(wire.starts_with(b"ab1 0000000000000000 "));
++        assert_eq!(wire.len(), FRAME_PREFIX_LEN + "hello".len() + 1);
++        assert_eq!(*wire.last().unwrap(), b'\n');
++        // The 1ccca49 JSON frame, with a MAC that is otherwise valid for the same message.
++        let tag = hex::encode(mac(&s.key, &[&[b'c'], &0u64.to_be_bytes(), b"hello"]));
++        let legacy = format!("{{\"n\":0,\"m\":\"hello\",\"mac\":\"{tag}\"}}\n");
++        assert_eq!(s.open_bytes(legacy.as_bytes()), Err(FrameError::Grammar));
++        assert_eq!(s.open_bytes(&wire).unwrap(), "hello");
++        // A payload with a newline cannot be sealed.
++        assert_eq!(c.seal("a\nb"), Err(FrameError::Seal));
++    }
++
++    #[test]
++    fn counter_field_decoder_is_strict() {
++        assert_eq!(decode_hex_fixed::<8>(b"0000000000000001"), Some(1u64.to_be_bytes()));
++        assert_eq!(decode_hex_fixed::<8>(b"ffffffffffffffff"), Some([0xff; 8]));
++        for bad in [
++            &b"-000000000000001"[..],
++            b"+000000000000001",
++            b"000000000000000A",
++            b"000000000000001",
++            b"00000000000000001",
++            b" 000000000000001",
++            b"0x00000000000001",
++            b"0000000000000 01",
++            b"",
++        ] {
++            assert_eq!(decode_hex_fixed::<8>(bad), None, "{:?}", String::from_utf8_lossy(bad));
++        }
++    }
++
++    #[test]
++    fn line_accumulator_cap_is_exact() {
++        // A line of exactly `max` bytes ending in a newline is accepted.
++        let mut ok = LineAccumulator::new(10, Grammar::Line);
++        assert_eq!(ok.feed(b"123456789\n"), Step::Done(10));
++        assert_eq!(ok.into_bytes(), b"123456789\n");
++        // `max` bytes without a newline is TooLong, and the cap is hit before the rest is taken.
++        let mut long = LineAccumulator::new(10, Grammar::Line);
++        assert_eq!(long.feed(b"1234567890"), Step::Reject(ReadError::TooLong, 10));
++        assert_eq!(long.partial().len(), 10);
++        // Across feeds: 6 + 4 non-newline bytes hit it on the second.
++        let mut split = LineAccumulator::new(10, Grammar::Line);
++        assert_eq!(split.feed(b"123456"), Step::NeedMore(6));
++        assert_eq!(split.feed(b"7890xx"), Step::Reject(ReadError::TooLong, 4));
++        // A newline at the 11th byte is too late.
++        let mut late = LineAccumulator::new(10, Grammar::Line);
++        assert_eq!(late.feed(b"1234567890\n"), Step::Reject(ReadError::TooLong, 10));
++        // Bytes after the newline are left for the next line.
++        let mut two = LineAccumulator::new(10, Grammar::Line);
++        assert_eq!(two.feed(b"ab\ncd\n"), Step::Done(3));
++    }
++
++    #[tokio::test]
++    async fn line_reader_stops_reading_at_the_cap() {
++        // The wrapper stops asking for bytes once the accumulator rejects.
++        let data = vec![b'a'; 100_000];
++        let mut reader = tokio::io::BufReader::with_capacity(1024, &data[..]);
++        let err = read_line_by(&mut reader, 5000, Grammar::Line, None).await.unwrap_err();
++        assert_eq!(err, ReadError::TooLong);
++        let mut rest = Vec::new();
++        tokio::io::AsyncReadExt::read_to_end(&mut reader, &mut rest).await.unwrap();
++        assert!(rest.len() >= 100_000 - 5000 - 1024, "read far past the cap: {}", 100_000 - rest.len());
++    }
++
++    fn valid_prefix() -> Vec<u8> {
++        format!("ab1 {} {} ", "0".repeat(16), "1".repeat(64)).into_bytes()
++    }
++
++    #[test]
++    fn framed_grammar_rejects_at_the_first_wrong_byte() {
++        let prefix = valid_prefix();
++        assert_eq!(prefix.len(), FRAME_PREFIX_LEN);
++        for pos in 0..FRAME_PREFIX_LEN {
++            let mut bad = prefix.clone();
++            bad[pos] = b'X';
++            bad.extend_from_slice(b"payload\n");
++            let mut acc = LineAccumulator::new(frame_line_max(1024), Grammar::Framed);
++            assert_eq!(
++                acc.feed(&bad),
++                Step::Reject(ReadError::BadFrame, pos + 1),
++                "position {pos}"
++            );
++        }
++        // Uppercase hex, a sign and a newline inside the prefix are each wrong where they appear.
++        for (pos, byte) in [(4usize, b'A'), (4, b'-'), (4, b'+'), (30, b'F'), (10, b'\n')] {
++            let mut bad = prefix.clone();
++            bad[pos] = byte;
++            let mut acc = LineAccumulator::new(frame_line_max(1024), Grammar::Framed);
++            assert_eq!(acc.feed(&bad), Step::Reject(ReadError::BadFrame, pos + 1));
++        }
++        // The valid prefix is accepted and a payload then follows.
++        let mut good = prefix;
++        good.extend_from_slice(b"payload\n");
++        let mut acc = LineAccumulator::new(frame_line_max(1024), Grammar::Framed);
++        assert_eq!(acc.feed(&good), Step::Done(FRAME_PREFIX_LEN + 8));
++    }
++
++    #[test]
++    fn mac_is_checked_before_utf8_and_json() {
++        let key = [9u8; 32];
++        let mut server = Session::new(key, false);
++        // Valid grammar, wrong MAC, payload that is neither UTF-8 nor JSON.
++        let mut wrong = valid_prefix();
++        wrong.extend_from_slice(&[0xff, 0xfe, b'{']);
++        wrong.push(b'\n');
++        assert_eq!(server.open(&wrong), Err(FrameError::BadMac));
++        // The right MAC over the same bytes gets as far as UTF-8 (and does not advance the counter).
++        let payload: &[u8] = &[0xff, 0xfe, b'{'];
++        let tag = hex::encode(mac(&key, &[b"ab1", &[b'c'], &0u64.to_be_bytes(), payload]));
++        let mut authentic = format!("ab1 {:016x} {tag} ", 0u64).into_bytes();
++        authentic.extend_from_slice(payload);
++        authentic.push(b'\n');
++        assert_eq!(server.open(&authentic), Err(FrameError::Utf8));
++        let mut client = Session::new(key, true);
++        let real = client.seal_bytes("x");
++        assert_eq!(server.open(&real).unwrap(), "x");
++    }
++
++    #[test]
++    fn counters_are_refused_beyond_u64() {
++        let key = [3u8; 32];
++        let mut client = Session::new(key, true);
++        client.send_n = u64::MAX;
++        assert_eq!(client.seal("x"), Err(FrameError::Seal));
++        // A frame for n = u64::MAX opens once, then the receiver's counter cannot advance.
++        let mut server = Session::new(key, false);
++        server.recv_n = u64::MAX;
++        let tag = hex::encode(mac(&key, &[b"ab1", &[b'c'], &u64::MAX.to_be_bytes(), b"x"]));
++        let line = format!("ab1 ffffffffffffffff {tag} x\n");
++        assert_eq!(server.open(line.as_bytes()), Err(FrameError::Counter));
++    }
++
++    #[tokio::test]
++    async fn server_handshake_drip_fails_at_the_deadline() {
++        // A peer that sends one byte every 250 ms, never a newline, must not hold the handshake past
++        // its single absolute deadline (injected as 600 ms).
++        let (client, server) = tokio::io::duplex(4096);
++        let (sr, mut sw) = tokio::io::split(server);
++        let mut sr = tokio::io::BufReader::new(sr);
++        let (_cr, mut cw) = tokio::io::split(client);
++        let drip = tokio::spawn(async move {
++            for byte in b"{\"hello\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaa".iter() {
++                if cw.write_all(&[*byte]).await.is_err() {
++                    return;
++                }
++                tokio::time::sleep(Duration::from_millis(250)).await;
++            }
++        });
++        let started = std::time::Instant::now();
++        let t = token(GOOD);
++        let result =
++            server_handshake_by(&mut sr, &mut sw, &t, Deadline::after(Duration::from_millis(600))).await;
++        let elapsed = started.elapsed();
++        drip.abort();
++        assert_eq!(result.err(), Some(ReadError::TimedOut));
++        assert!(
++            elapsed >= Duration::from_millis(550) && elapsed <= Duration::from_millis(700),
++            "took {elapsed:?}"
++        );
++    }
++
++    #[test]
++    fn known_answers_shared_with_the_murage_client() {
++        // Computed with `openssl dgst -sha256 -mac HMAC` and Python's hmac module, independent of
++        // this code. Murage's browser-control-token.test.ts checks the same values.
++        let t = token(GOOD);
++        let cn = "a".repeat(32);
++        let sn = "b".repeat(32);
++        assert_eq!(
++            hex::encode(mac(&t.raw, &[b"srv", cn.as_bytes()])),
++            "1d791b794e71a4c99475f1f8a2cba691875b5f96123dc6f5624274adbd72915f"
++        );
++        assert_eq!(
++            hex::encode(mac(&t.raw, &[b"cli", sn.as_bytes(), cn.as_bytes()])),
++            "486e08f1ce516bc3d10d8b5617d314f6220f8098cd01e29bddad53dbca574e08"
++        );
++        let key = mac(&t.raw, &[b"key", cn.as_bytes(), sn.as_bytes()]);
++        assert_eq!(
++            hex::encode(key),
++            "22bae8d134ae0fab1650bc7641f5fbb1cc40828cf6489b8ee51b5893b48ac618"
++        );
++        let mut client = Session::new(key, true);
++        assert_eq!(
++            client.seal("x").unwrap(),
++            b"ab1 0000000000000000 116e1abbf08ddbe595cb837441176d8ff233d0550f5d507686b0eb3b9d9a3653 x\n"
++        );
++        // A frame built by the other implementation's server side is read by this client.
++        let from_server =
++            b"ab1 0000000000000000 3aaac339e05b1cf23d894043ac8b7656defa95675f7914384316e8185895934f y\n";
++        assert_eq!(client.open(from_server).unwrap(), "y");
++    }
++}
+diff --git a/cli/src/native/daemon.rs b/cli/src/native/daemon.rs
+index 28689d2..d9d6bca 100644
+--- a/cli/src/native/daemon.rs
++++ b/cli/src/native/daemon.rs
+@@ -7,7 +7,7 @@ use std::process;
+ use std::sync::Arc;
+ use std::time::Duration;
+ 
+-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
++use tokio::io::{AsyncWriteExt, BufReader};
+ use tokio::signal;
+ use tokio::sync::{Notify, RwLock};
+ 
+@@ -16,6 +16,7 @@ use super::actions::{
+     maybe_autosave_restore_state, DaemonState,
+ };
+ use super::cdp::client::CdpClient;
++use super::control_token::{self, Token};
+ use super::state;
+ use super::stream::{IdleActivity, StreamServer};
+ use crate::connection::INTERNAL_DAEMON_SHUTDOWN_ACTION;
+@@ -230,8 +231,34 @@ async fn run_socket_server(
+ 
+     let idle_timeout_ms = idle_timeout.map(|t| t.ms);
+ 
++    // Murage patch: when a control token is configured, the Unix socket is only as private as its
++    // directory, so the directory must be this user's and closed to group and other, and a
++    // malformed token refuses to start. With no token configured nothing changes.
++    match control_token::Gate::from_env() {
++        control_token::Gate::Token(_) => {
++            if let Some(dir) = socket_path.parent() {
++                control_token::check_private_dir(dir)?;
++            }
++        }
++        control_token::Gate::Refuse if env::var_os(control_token::ENV).is_some() => {
++            return Err(format!(
++                "{} is malformed (it must be 64 hex characters)",
++                control_token::ENV
++            ));
++        }
++        _ => {}
++    }
++
+     let listener =
+         UnixListener::bind(socket_path).map_err(|e| format!("Failed to bind socket: {}", e))?;
++    if matches!(
++        control_token::Gate::from_env(),
++        control_token::Gate::Token(_)
++    ) {
++        use std::os::unix::fs::PermissionsExt;
++        fs::set_permissions(socket_path, fs::Permissions::from_mode(0o600))
++            .map_err(|e| format!("Failed to restrict socket: {}", e))?;
++    }
+ 
+     let stream_file: Option<PathBuf> = if stream_server.is_some() {
+         let dir = socket_path.parent().unwrap_or(std::path::Path::new("."));
+@@ -266,8 +293,20 @@ async fn run_socket_server(
+                         let idle_activity = idle_activity.clone();
+                         let sf = stream_file.clone();
+                         let cn = close_notify.clone();
++                        let hs_deadline =
++                            control_token::Deadline::after(control_token::HANDSHAKE_BUDGET);
+                         tokio::spawn(async move {
+-                            handle_connection(stream, state, idle_activity, sf, cn).await;
++                            handle_connection(
++                                stream,
++                                state,
++                                idle_activity,
++                                sf,
++                                cn,
++                                None,
++                                hs_deadline,
++                                control_token::FRAME_BUDGET,
++                            )
++                            .await;
+                         });
+                     }
+                     Err(e) => {
+@@ -370,6 +409,17 @@ async fn run_socket_server(
+ 
+     let idle_timeout_ms = idle_timeout.map(|t| t.ms);
+ 
++    // Murage patch: the TCP port is guarded by the control token (mutual challenge-response and
++    // MAC-framed messages). With no valid token the port is never bound and no .port file is written.
++    let control_token = match control_token::Gate::from_env() {
++        control_token::Gate::Token(token) => token,
++        other => {
++            return Err(other
++                .start_error()
++                .unwrap_or_else(|| format!("{} is required", control_token::ENV)))
++        }
++    };
++
+     let preferred_port = get_port_for_session(session);
+     // Try the hash-derived port first; if it is blocked (e.g. Windows Hyper-V
+     // excluded port range), fall back to an OS-assigned ephemeral port.
+@@ -420,8 +470,22 @@ async fn run_socket_server(
+                         let idle_activity = idle_activity.clone();
+                         let sf = stream_file.clone();
+                         let cn = close_notify.clone();
++                        let token = control_token.clone();
++                        // Taken the moment accept() returns: scheduling delay counts against it.
++                        let hs_deadline =
++                            control_token::Deadline::after(control_token::HANDSHAKE_BUDGET);
+                         tokio::spawn(async move {
+-                            handle_connection(stream, state, idle_activity, sf, cn).await;
++                            handle_connection(
++                                stream,
++                                state,
++                                idle_activity,
++                                sf,
++                                cn,
++                                Some(token),
++                                hs_deadline,
++                                control_token::FRAME_BUDGET,
++                            )
++                            .await;
+                         });
+                     }
+                     Err(e) => {
+@@ -500,84 +564,175 @@ async fn run_socket_server(
+     Ok(())
+ }
+ 
++/// `hs_deadline` is taken in the accept loop the moment `accept()` returns (scheduling delay counts
++/// against it); `frame_budget` is the wait for each command frame and each reply write on a
++/// connection that holds the control token. The plain Unix socket keeps upstream timing and gains
++/// only the command-line cap.
++#[allow(clippy::too_many_arguments)]
+ async fn handle_connection<S>(
+     stream: S,
+     state: std::sync::Arc<tokio::sync::Mutex<DaemonState>>,
+     idle_activity: Arc<IdleActivity>,
+     stream_file_cleanup: Option<PathBuf>,
+     close_notify: Arc<Notify>,
++    control: Option<Token>,
++    hs_deadline: control_token::Deadline,
++    frame_budget: Duration,
+ ) where
+     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+ {
+     let (reader, mut writer) = tokio::io::split(stream);
+     let mut buf_reader = BufReader::new(reader);
+-    let mut line = String::new();
++
++    // Murage patch: a connection that must hold the control token (the Windows TCP port) proves it
++    // both ways first; nothing is read as a command, and the idle clock is untouched, before that.
++    let mut session = match control {
++        Some(token) => {
++            match control_token::server_handshake_by(
++                &mut buf_reader,
++                &mut writer,
++                &token,
++                hs_deadline,
++            )
++            .await
++            {
++                Ok(session) => Some(session),
++                Err(_) => return,
++            }
++        }
++        None => None,
++    };
+ 
+     loop {
+-        line.clear();
+-        match buf_reader.read_line(&mut line).await {
+-            Ok(0) => break,
+-            Ok(_) => {
+-                let trimmed = line.trim();
+-                if trimmed.is_empty() {
+-                    continue;
+-                }
++        // One bounded line per command. On an authenticated connection it is an `ab1` frame whose
++        // 86-byte prefix is checked as it arrives, under one absolute frame deadline taken when we
++        // start waiting; on the plain Unix socket it is a line of at most COMMAND_PAYLOAD_MAX bytes.
++        let line = match session.as_ref() {
++            Some(_) => {
++                control_token::read_line_by(
++                    &mut buf_reader,
++                    control_token::frame_line_max(control_token::COMMAND_PAYLOAD_MAX),
++                    control_token::Grammar::Framed,
++                    Some(control_token::Deadline::after(frame_budget)),
++                )
++                .await
++            }
++            None => {
++                control_token::read_line_by(
++                    &mut buf_reader,
++                    control_token::COMMAND_PAYLOAD_MAX + 1,
++                    control_token::Grammar::LineOrEof,
++                    None,
++                )
++                .await
++            }
++        };
++        let line = match line {
++            Ok(line) => line,
++            Err(_) => break,
++        };
+ 
+-                if looks_like_http(trimmed) {
+-                    break;
+-                }
++        // On an authenticated connection every line is an authentic framed message (the MAC is
++        // checked before anything is parsed); an unframed, replayed or altered line ends the connection.
++        let message: String = match session.as_mut() {
++            Some(session) => match session.open(&line) {
++                Ok(message) => message,
++                Err(_) => break,
++            },
++            None => match String::from_utf8(line) {
++                Ok(message) => message,
++                Err(_) => break,
++            },
++        };
++        let trimmed = message.trim();
++        if trimmed.is_empty() {
++            continue;
++        }
+ 
+-                let cmd: Value = match serde_json::from_str(trimmed) {
+-                    Ok(v) => v,
+-                    Err(e) => {
+-                        let err = serde_json::json!({
+-                            "success": false,
+-                            "error": format!("Invalid JSON: {}", e),
+-                        });
+-                        let mut resp = serde_json::to_string(&err).unwrap_or_default();
+-                        resp.push('\n');
+-                        let _ = writer.write_all(resp.as_bytes()).await;
+-                        continue;
+-                    }
+-                };
+-
+-                idle_activity.mark();
+-
+-                let action = cmd
+-                    .get("action")
+-                    .and_then(|v| v.as_str())
+-                    .unwrap_or_default()
+-                    .to_string();
+-
+-                let response = {
+-                    let mut s = state.lock().await;
+-                    let response = execute_command(&cmd, &mut s).await;
+-                    // Refresh while the state lock is still held. An idle
+-                    // timer waiting on this command will observe the updated
+-                    // clock as soon as it acquires the lock.
+-                    idle_activity.mark();
+-                    response
+-                };
+-
+-                let mut resp = serde_json::to_string(&response).unwrap_or_default();
+-                resp.push('\n');
+-                if writer.write_all(resp.as_bytes()).await.is_err() {
++        if session.is_none() && looks_like_http(trimmed) {
++            break;
++        }
++
++        let cmd: Value = match serde_json::from_str(trimmed) {
++            Ok(v) => v,
++            Err(e) => {
++                let err = serde_json::json!({
++                    "success": false,
++                    "error": format!("Invalid JSON: {}", e),
++                });
++                let resp = serde_json::to_string(&err).unwrap_or_default();
++                if write_reply(&mut writer, session.as_mut(), resp, frame_budget)
++                    .await
++                    .is_err()
++                {
+                     break;
+                 }
++                continue;
++            }
++        };
+ 
+-                if close_completed_response(&action, &response) {
+-                    if let Some(ref path) = stream_file_cleanup {
+-                        let _ = fs::remove_file(path);
+-                    }
+-                    // Signal the daemon loop to exit gracefully instead of
+-                    // calling process::exit(), which skips destructors and
+-                    // can leave Chrome processes orphaned (issue #1113).
+-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+-                    close_notify.notify_one();
+-                    return;
+-                }
++        idle_activity.mark();
++
++        let action = cmd
++            .get("action")
++            .and_then(|v| v.as_str())
++            .unwrap_or_default()
++            .to_string();
++
++        let response = {
++            let mut s = state.lock().await;
++            let response = execute_command(&cmd, &mut s).await;
++            // Refresh while the state lock is still held. An idle
++            // timer waiting on this command will observe the updated
++            // clock as soon as it acquires the lock.
++            idle_activity.mark();
++            response
++        };
++
++        let resp = serde_json::to_string(&response).unwrap_or_default();
++        if write_reply(&mut writer, session.as_mut(), resp, frame_budget)
++            .await
++            .is_err()
++        {
++            break;
++        }
++
++        if close_completed_response(&action, &response) {
++            if let Some(ref path) = stream_file_cleanup {
++                let _ = fs::remove_file(path);
+             }
+-            Err(_) => break,
++            // Signal the daemon loop to exit gracefully instead of
++            // calling process::exit(), which skips destructors and
++            // can leave Chrome processes orphaned (issue #1113).
++            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
++            close_notify.notify_one();
++            return;
++        }
++    }
++}
++
++/// One reply line. Framed (and bounded by `now + frame_budget`) on an authenticated connection;
++/// plain and unbounded on the Unix socket, as upstream.
++async fn write_reply<W: tokio::io::AsyncWrite + Unpin>(
++    writer: &mut W,
++    session: Option<&mut control_token::Session>,
++    mut resp: String,
++    frame_budget: Duration,
++) -> Result<(), ()> {
++    match session {
++        Some(session) => {
++            let wire = session.seal(&resp).map_err(|_| ())?;
++            control_token::write_all_async_by(
++                writer,
++                &wire,
++                control_token::Deadline::after(frame_budget),
++            )
++            .await
++            .map_err(|_| ())
++        }
++        None => {
++            resp.push('\n');
++            writer.write_all(resp.as_bytes()).await.map_err(|_| ())
+         }
+     }
+ }
+@@ -970,3 +1125,308 @@ mod tests {
+         }
+     }
+ }
++
++// Murage patch tests: a connection that must hold the control token (the Windows TCP port).
++#[cfg(test)]
++mod control_tests {
++    use super::*;
++    use crate::native::control_token::{client_handshake_async, Token, COMMAND_PAYLOAD_MAX};
++    use tokio::io::AsyncBufReadExt;
++    use tokio::io::AsyncReadExt;
++
++    const TOKEN: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
++    const OTHER: &str = "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100";
++
++    struct Rig {
++        client: tokio::io::DuplexStream,
++        idle: Arc<IdleActivity>,
++        task: tokio::task::JoinHandle<()>,
++    }
++
++    fn rig() -> Rig {
++        rig_with(control_token::FRAME_BUDGET)
++    }
++
++    fn rig_with(frame_budget: Duration) -> Rig {
++        let (client, server) = tokio::io::duplex(65536);
++        let idle = Arc::new(IdleActivity::new());
++        let state = Arc::new(tokio::sync::Mutex::new(DaemonState::new()));
++        let task = tokio::spawn(handle_connection(
++            server,
++            state,
++            idle.clone(),
++            None,
++            Arc::new(Notify::new()),
++            Some(Token::from_hex(TOKEN).unwrap()),
++            control_token::Deadline::after(control_token::HANDSHAKE_BUDGET),
++            frame_budget,
++        ));
++        Rig { client, idle, task }
++    }
++
++    #[tokio::test]
++    async fn tokenless_command_is_never_executed_and_never_marks_activity() {
++        let mut rig = rig();
++        tokio::time::sleep(Duration::from_millis(80)).await;
++        rig.client
++            .write_all(b"{\"id\":\"1\",\"action\":\"close\"}\n")
++            .await
++            .unwrap();
++        // The daemon hangs up without a reply of any kind.
++        let mut out = Vec::new();
++        tokio::time::timeout(Duration::from_secs(6), rig.client.read_to_end(&mut out))
++            .await
++            .expect("daemon closed the connection")
++            .unwrap();
++        assert!(out.is_empty(), "no reply: {:?}", String::from_utf8_lossy(&out));
++        rig.task.await.unwrap();
++        assert!(rig.idle.elapsed() >= Duration::from_millis(80));
++    }
++
++    #[tokio::test]
++    async fn wrong_token_client_is_refused() {
++        let rig = rig();
++        let (reader, mut writer) = tokio::io::split(rig.client);
++        let mut reader = BufReader::new(reader);
++        let wrong = Token::from_hex(OTHER).unwrap();
++        // The client checks the daemon's proof first and refuses a daemon that does not know its token.
++        assert!(client_handshake_async(&mut reader, &mut writer, &wrong)
++            .await
++            .is_err());
++        drop(writer);
++        drop(reader);
++        rig.task.await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn right_token_runs_a_framed_command_and_replies_framed() {
++        let rig = rig();
++        let (reader, mut writer) = tokio::io::split(rig.client);
++        let mut reader = BufReader::new(reader);
++        let token = Token::from_hex(TOKEN).unwrap();
++        let mut session = client_handshake_async(&mut reader, &mut writer, &token)
++            .await
++            .expect("handshake");
++        // Age the idle clock first: only an authenticated command may reset it.
++        tokio::time::sleep(Duration::from_millis(400)).await;
++        assert!(rig.idle.elapsed() >= Duration::from_millis(400));
++        let line = session.seal_bytes("{\"id\":\"7\",\"action\":\"no_such_action_for_the_test\"}");
++        writer.write_all(&line).await.unwrap();
++        let mut reply = String::new();
++        tokio::time::timeout(Duration::from_secs(6), reader.read_line(&mut reply))
++            .await
++            .expect("reply")
++            .unwrap();
++        let message = session.open(reply.as_bytes()).expect("an authentic framed reply");
++        let value: Value = serde_json::from_str(&message).unwrap();
++        assert_eq!(value.get("id").and_then(|v| v.as_str()), Some("7"));
++        assert!(
++            rig.idle.elapsed() < Duration::from_millis(250),
++            "the authenticated command must mark activity"
++        );
++        drop(writer);
++        drop(reader);
++        rig.task.await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn an_unframed_line_after_the_handshake_ends_the_connection_unexecuted() {
++        let rig = rig();
++        let (reader, mut writer) = tokio::io::split(rig.client);
++        let mut reader = BufReader::new(reader);
++        let token = Token::from_hex(TOKEN).unwrap();
++        let _session = client_handshake_async(&mut reader, &mut writer, &token)
++            .await
++            .expect("handshake");
++        // What a relaying squatter would try: a bare command line on an authenticated connection.
++        writer
++            .write_all(b"{\"id\":\"9\",\"action\":\"close\"}\n")
++            .await
++            .unwrap();
++        let mut rest = Vec::new();
++        tokio::time::timeout(Duration::from_secs(6), reader.read_to_end(&mut rest))
++            .await
++            .expect("closed")
++            .unwrap();
++        assert!(rest.is_empty());
++        rig.task.await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn a_replayed_framed_line_ends_the_connection() {
++        let rig = rig();
++        let (reader, mut writer) = tokio::io::split(rig.client);
++        let mut reader = BufReader::new(reader);
++        let token = Token::from_hex(TOKEN).unwrap();
++        let mut session = client_handshake_async(&mut reader, &mut writer, &token)
++            .await
++            .expect("handshake");
++        let line = session.seal_bytes("{\"id\":\"1\",\"action\":\"no_such_action_for_the_test\"}");
++        let twice = [line.clone(), line].concat();
++        writer.write_all(&twice).await.unwrap();
++        let mut first = String::new();
++        reader.read_line(&mut first).await.unwrap();
++        assert!(session.open(first.as_bytes()).is_ok());
++        let mut rest = Vec::new();
++        tokio::time::timeout(Duration::from_secs(6), reader.read_to_end(&mut rest))
++            .await
++            .expect("closed on the replay")
++            .unwrap();
++        assert!(rest.is_empty());
++        rig.task.await.unwrap();
++    }
++
++    // ---- rev B tests: textually identical on 1ccca49 + the test-only shim and on rev B ----
++
++    #[tokio::test]
++    async fn oversized_unterminated_frame_after_relayed_handshake_is_cut_off() {
++        // The daemon BufReader and the rig's duplex buffer may hold bytes the daemon never consumed.
++        const BUFREADER_CAP: usize = 8192;
++        const DUPLEX_CAP: usize = 65536;
++        let rig = rig();
++        tokio::time::sleep(Duration::from_millis(80)).await;
++        let (reader, mut writer) = tokio::io::split(rig.client);
++        let mut reader = BufReader::new(reader);
++        let token = Token::from_hex(TOKEN).unwrap();
++        // A real handshake, standing in for one a squatter relayed.
++        let _session = client_handshake_async(&mut reader, &mut writer, &token)
++            .await
++            .expect("handshake");
++        let prefix = format!("ab1 {} {} ", "0".repeat(16), "0".repeat(64));
++        assert_eq!(prefix.len(), 86);
++        let chunk = vec![b'a'; 65536];
++        let mut remaining = COMMAND_PAYLOAD_MAX + 1024 * 1024;
++        let mut accepted = 0usize;
++        let mut write_failed = false;
++        let guard = tokio::time::timeout(Duration::from_secs(20), async {
++            if writer.write_all(prefix.as_bytes()).await.is_err() {
++                write_failed = true;
++                return;
++            }
++            accepted += prefix.len();
++            while remaining > 0 {
++                let n = remaining.min(chunk.len());
++                if writer.write_all(&chunk[..n]).await.is_err() {
++                    write_failed = true;
++                    return;
++                }
++                accepted += n;
++                remaining -= n;
++            }
++        })
++        .await;
++        assert!(guard.is_ok(), "the daemon stopped reading but kept the connection open");
++        assert!(write_failed, "the daemon accepted {accepted} bytes of one unterminated line");
++        let limit = 86 + COMMAND_PAYLOAD_MAX + 1 + BUFREADER_CAP + DUPLEX_CAP;
++        assert!(accepted <= limit, "accepted {accepted} bytes, more than {limit}");
++        tokio::time::timeout(Duration::from_secs(2), rig.task)
++            .await
++            .expect("the connection task must end after the cut-off")
++            .unwrap();
++        assert!(rig.idle.elapsed() >= Duration::from_millis(80), "nothing may mark activity");
++    }
++
++    #[tokio::test]
++    async fn negative_counter_closes_the_connection_before_the_line_ends() {
++        // Only the start of a frame is ever sent, no newline, and the connection is held open.
++        for partial in [&b"ab1 -"[..], &b"{\"n\":-1,"[..]] {
++            let rig = rig();
++            let (reader, mut writer) = tokio::io::split(rig.client);
++            let mut reader = BufReader::new(reader);
++            let token = Token::from_hex(TOKEN).unwrap();
++            let _session = client_handshake_async(&mut reader, &mut writer, &token)
++                .await
++                .expect("handshake");
++            writer.write_all(partial).await.unwrap();
++            let mut rest = Vec::new();
++            let closed =
++                tokio::time::timeout(Duration::from_millis(500), reader.read_to_end(&mut rest)).await;
++            assert!(
++                closed.is_ok(),
++                "the daemon kept waiting for a newline after {:?}",
++                String::from_utf8_lossy(partial)
++            );
++            assert!(rest.is_empty());
++            drop(writer);
++            drop(reader);
++            rig.task.await.unwrap();
++        }
++    }
++
++    // ---- rev B: new daemon tests ----
++
++    #[tokio::test]
++    async fn daemon_frame_drip_fails_at_the_frame_deadline() {
++        // A peer that completes a real handshake and then sends one byte every 250 ms of a frame that
++        // never ends must not hold the connection past the frame deadline (injected as 600 ms).
++        let rig = rig_with(Duration::from_millis(600));
++        let (reader, mut writer) = tokio::io::split(rig.client);
++        let mut reader = BufReader::new(reader);
++        let token = Token::from_hex(TOKEN).unwrap();
++        let _session = client_handshake_async(&mut reader, &mut writer, &token)
++            .await
++            .expect("handshake");
++        let started = std::time::Instant::now();
++        let prefix = format!("ab1 {} {} ", "0".repeat(16), "0".repeat(64)).into_bytes();
++        let drip = tokio::spawn(async move {
++            for byte in prefix.iter().cycle().take(40) {
++                if writer.write_all(&[*byte]).await.is_err() {
++                    return;
++                }
++                tokio::time::sleep(Duration::from_millis(250)).await;
++            }
++        });
++        let mut rest = Vec::new();
++        tokio::time::timeout(Duration::from_secs(4), reader.read_to_end(&mut rest))
++            .await
++            .expect("the daemon must close at the frame deadline, not wait for the drip to end")
++            .unwrap();
++        let elapsed = started.elapsed();
++        drip.abort();
++        assert!(rest.is_empty());
++        assert!(
++            elapsed >= Duration::from_millis(500) && elapsed <= Duration::from_millis(700),
++            "closed after {elapsed:?}"
++        );
++        rig.task.await.unwrap();
++    }
++
++    #[tokio::test]
++    async fn plain_unix_command_line_over_the_cap_is_cut_off() {
++        // The plain socket keeps upstream timing but gains the line cap.
++        let (client, server) = tokio::io::duplex(65536);
++        let idle = Arc::new(IdleActivity::new());
++        let state = Arc::new(tokio::sync::Mutex::new(DaemonState::new()));
++        let task = tokio::spawn(handle_connection(
++            server,
++            state,
++            idle.clone(),
++            None,
++            Arc::new(Notify::new()),
++            None,
++            control_token::Deadline::after(control_token::HANDSHAKE_BUDGET),
++            control_token::FRAME_BUDGET,
++        ));
++        let (_reader, mut writer) = tokio::io::split(client);
++        let chunk = vec![b'a'; 65536];
++        let mut remaining = COMMAND_PAYLOAD_MAX + 1024 * 1024;
++        let mut write_failed = false;
++        let guard = tokio::time::timeout(Duration::from_secs(20), async {
++            while remaining > 0 {
++                let n = remaining.min(chunk.len());
++                if writer.write_all(&chunk[..n]).await.is_err() {
++                    write_failed = true;
++                    return;
++                }
++                remaining -= n;
++            }
++        })
++        .await;
++        assert!(guard.is_ok());
++        assert!(write_failed, "the plain socket accepted an unbounded line");
++        tokio::time::timeout(Duration::from_secs(2), task)
++            .await
++            .expect("the connection task must end")
++            .unwrap();
++    }
++}
+diff --git a/cli/src/native/mod.rs b/cli/src/native/mod.rs
+index abdc7ef..133a164 100644
+--- a/cli/src/native/mod.rs
++++ b/cli/src/native/mod.rs
+@@ -9,6 +9,8 @@ pub mod browser;
+ #[allow(dead_code)]
+ pub mod cdp;
+ #[allow(dead_code)]
++pub mod control_token;
++#[allow(dead_code)]
+ pub mod cookies;
+ #[allow(dead_code)]
+ pub mod daemon;
+diff --git a/cli/src/native/stream/control_tests.rs b/cli/src/native/stream/control_tests.rs
+new file mode 100644
+index 0000000..a9711fa
+--- /dev/null
++++ b/cli/src/native/stream/control_tests.rs
+@@ -0,0 +1,198 @@
++// Murage patch tests: the stream port refuses every client that does not hold the control token.
++
++use super::*;
++use crate::native::control_token::{Gate, Token};
++use futures_util::StreamExt;
++use tokio::io::{AsyncReadExt, AsyncWriteExt};
++use tokio_tungstenite::tungstenite::client::IntoClientRequest;
++use tokio_tungstenite::tungstenite::Message;
++
++const TOKEN: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
++const OTHER: &str = "ffeeddccbbaa99887766554433221100ffeeddccbbaa99887766554433221100";
++
++async fn gated_server() -> StreamServer {
++    let (server, _slot) = StreamServer::start_without_client_with_gate(
++        0,
++        "ctl".to_string(),
++        true,
++        Arc::new(IdleActivity::new()),
++        Gate::Token(Token::from_hex(TOKEN).unwrap()),
++    )
++    .await
++    .expect("server start");
++    server
++}
++
++async fn raw(port: u16, request: &[u8]) -> String {
++    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", port))
++        .await
++        .expect("connect");
++    stream.write_all(request).await.expect("write");
++    let mut out = Vec::new();
++    let _ = tokio::time::timeout(Duration::from_secs(8), stream.read_to_end(&mut out)).await;
++    String::from_utf8_lossy(&out).to_string()
++}
++
++fn status_line(response: &str) -> &str {
++    response.lines().next().unwrap_or("")
++}
++
++async fn ws(
++    port: u16,
++    bearer: Option<&str>,
++) -> Result<
++    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
++    tokio_tungstenite::tungstenite::Error,
++> {
++    let mut request = format!("ws://127.0.0.1:{port}/")
++        .into_client_request()
++        .unwrap();
++    if let Some(token) = bearer {
++        request
++            .headers_mut()
++            .insert("authorization", format!("Bearer {token}").parse().unwrap());
++    }
++    tokio_tungstenite::connect_async(request)
++        .await
++        .map(|(socket, _)| socket)
++}
++
++fn refused_with_401<T>(result: Result<T, tokio_tungstenite::tungstenite::Error>) -> bool {
++    matches!(
++        result,
++        Err(tokio_tungstenite::tungstenite::Error::Http(response)) if response.status().as_u16() == 401
++    )
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++async fn tokenless_websocket_is_refused_before_any_frame() {
++    let server = gated_server().await;
++    server.broadcast_frame(r#"{"type":"frame","data":"secret"}"#);
++    assert!(refused_with_401(ws(server.port(), None).await));
++    server.shutdown().await;
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++async fn wrong_token_websocket_is_refused() {
++    let server = gated_server().await;
++    assert!(refused_with_401(ws(server.port(), Some(OTHER)).await));
++    assert!(refused_with_401(
++        ws(server.port(), Some(&TOKEN[..63])).await
++    ));
++    assert!(refused_with_401(ws(server.port(), Some("")).await));
++    server.shutdown().await;
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++async fn right_token_websocket_is_accepted_and_frames_flow() {
++    let server = gated_server().await;
++    server.broadcast_frame(r#"{"type":"frame","data":"fresh"}"#);
++    let mut socket = ws(server.port(), Some(TOKEN)).await.expect("accepted");
++    let mut saw_frame = false;
++    for _ in 0..10 {
++        let message = tokio::time::timeout(Duration::from_secs(5), socket.next())
++            .await
++            .expect("timed out")
++            .expect("ended")
++            .expect("ws error");
++        if let Message::Text(text) = message {
++            let parsed: Value = serde_json::from_str(&text).unwrap();
++            if parsed.get("type").and_then(|v| v.as_str()) == Some("frame") {
++                assert_eq!(parsed.get("data").and_then(|v| v.as_str()), Some("fresh"));
++                saw_frame = true;
++                break;
++            }
++        }
++    }
++    assert!(saw_frame);
++    server.shutdown().await;
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++async fn tokenless_http_is_refused_on_every_route() {
++    let server = gated_server().await;
++    let port = server.port();
++    for request in [
++        "GET /api/status HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".to_string(),
++        "GET /api/tabs HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".to_string(),
++        "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n".to_string(),
++        format!(
++            "POST /api/command HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: 20\r\n\r\n{{\"action\":\"close\"}}  "
++        ),
++    ] {
++        let response = raw(port, request.as_bytes()).await;
++        assert!(status_line(&response).contains("401"), "{request}\n=> {response}");
++        assert!(!response.contains("Access-Control-Allow-Origin"));
++    }
++    // A wrong token is the same refusal.
++    let wrong = format!("GET /api/status HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {OTHER}\r\n\r\n");
++    assert!(status_line(&raw(port, wrong.as_bytes()).await).contains("401"));
++    // A non-bearer scheme is not a token either.
++    let basic = format!("GET /api/status HTTP/1.1\r\nHost: x\r\nAuthorization: Basic {TOKEN}\r\n\r\n");
++    assert!(status_line(&raw(port, basic.as_bytes()).await).contains("401"));
++    server.shutdown().await;
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++async fn an_authorization_line_in_the_body_does_not_authenticate() {
++    let server = gated_server().await;
++    let body = format!("Authorization: Bearer {TOKEN}\r\n\r\n");
++    let request = format!(
++        "POST /api/command HTTP/1.1\r\nHost: x\r\nContent-Length: {}\r\n\r\n{body}",
++        body.len()
++    );
++    assert!(status_line(&raw(server.port(), request.as_bytes()).await).contains("401"));
++    server.shutdown().await;
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++async fn right_token_http_is_served_and_options_still_answers() {
++    let server = gated_server().await;
++    let port = server.port();
++    let ok = format!("GET /api/status HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer {TOKEN}\r\nConnection: close\r\n\r\n");
++    assert!(status_line(&raw(port, ok.as_bytes()).await).contains("200"));
++    let options = "OPTIONS /api/status HTTP/1.1\r\nHost: x\r\n\r\n";
++    assert!(status_line(&raw(port, options.as_bytes()).await).contains("204"));
++    server.shutdown().await;
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++async fn a_head_split_across_writes_is_still_read_whole() {
++    let server = gated_server().await;
++    let mut stream = tokio::net::TcpStream::connect(("127.0.0.1", server.port()))
++        .await
++        .unwrap();
++    stream.write_all(b"GET /api/status HTTP/1.1\r\nHost: x\r\n").await.unwrap();
++    tokio::time::sleep(Duration::from_millis(150)).await;
++    stream
++        .write_all(format!("Authorization: Bearer {TOKEN}\r\nConnection: close\r\n\r\n").as_bytes())
++        .await
++        .unwrap();
++    let mut out = Vec::new();
++    let _ = tokio::time::timeout(Duration::from_secs(8), stream.read_to_end(&mut out)).await;
++    assert!(String::from_utf8_lossy(&out).starts_with("HTTP/1.1 200"));
++    server.shutdown().await;
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
++async fn an_oversized_head_is_refused_not_trusted() {
++    let server = gated_server().await;
++    let mut head = format!("GET /api/status HTTP/1.1\r\nHost: x\r\nX-Pad: {}", "a".repeat(9000));
++    head.push_str(&format!("\r\nAuthorization: Bearer {TOKEN}\r\n\r\n"));
++    let response = raw(server.port(), head.as_bytes()).await;
++    assert!(status_line(&response).contains("400"), "{response}");
++    server.shutdown().await;
++}
++
++#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
++async fn no_valid_token_means_no_listener() {
++    let result = StreamServer::start_without_client_with_gate(
++        0,
++        "ctl-refuse".to_string(),
++        true,
++        Arc::new(IdleActivity::new()),
++        Gate::Refuse,
++    )
++    .await;
++    assert!(result.is_err());
++}
+diff --git a/cli/src/native/stream/dashboard.rs b/cli/src/native/stream/dashboard.rs
+index fbe3c69..cebb191 100644
+--- a/cli/src/native/stream/dashboard.rs
++++ b/cli/src/native/stream/dashboard.rs
+@@ -613,6 +613,18 @@ async fn proxy_session_stream(mut stream: tokio::net::TcpStream, port: u16) {
+ }
+ 
+ pub async fn run_dashboard_server(port: u16) {
++    // Murage patch: the dashboard is a second loopback listener that proxies to every session's
++    // stream port and cannot present a per-session bearer; it does not run under a control token.
++    if !matches!(
++        crate::native::control_token::Gate::from_env(),
++        crate::native::control_token::Gate::Open
++    ) {
++        eprintln!(
++            "The dashboard is disabled while {} is set",
++            crate::native::control_token::ENV
++        );
++        return;
++    }
+     let ipv4_addr = (Ipv4Addr::LOCALHOST, port);
+     let ipv4_listener = match TcpListener::bind(ipv4_addr).await {
+         Ok(l) => l,
+diff --git a/cli/src/native/stream/http.rs b/cli/src/native/stream/http.rs
+index 394677d..221b5ff 100644
+--- a/cli/src/native/stream/http.rs
++++ b/cli/src/native/stream/http.rs
+@@ -405,8 +405,7 @@ pub(super) async fn relay_command_to_daemon(
+         cmd["id"] = json!(id);
+     }
+ 
+-    let mut json_str = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+-    json_str.push('\n');
++    let json_str = serde_json::to_string(&cmd).map_err(|e| e.to_string())?;
+ 
+     #[cfg(unix)]
+     let stream = {
+@@ -424,20 +423,120 @@ pub(super) async fn relay_command_to_daemon(
+             .map_err(|e| format!("Failed to connect to daemon: {}", e))?
+     };
+ 
+-    let (reader, mut writer) = tokio::io::split(stream);
+-
+-    writer
+-        .write_all(json_str.as_bytes())
+-        .await
+-        .map_err(|e| format!("Failed to send command: {}", e))?;
++    // Murage patch: the Windows daemon port proves the control token both ways before any command
++    // (control_token.rs); the Unix socket is guarded by its private directory. Only the choice of
++    // gate is platform-specific: `relay_exchange` is compiled and tested on every platform.
++    #[cfg(windows)]
++    let control: Option<crate::native::control_token::Token> = {
++        use crate::native::control_token::Gate;
++        match Gate::from_env() {
++            Gate::Token(token) => Some(token),
++            Gate::Open => None,
++            Gate::Refuse => return Err("control_token_missing".to_string()),
++        }
++    };
++    #[cfg(not(windows))]
++    let control: Option<crate::native::control_token::Token> = None;
++
++    let (reader, writer) = tokio::io::split(stream);
++    relay_exchange(
++        reader,
++        writer,
++        json_str,
++        control.as_ref(),
++        crate::native::control_token::HANDSHAKE_BUDGET,
++        crate::native::control_token::reply_budget(&cmd),
++    )
++    .await
++}
+ 
++/// One command over one daemon connection, every read and write bounded by one of two absolute
++/// deadlines (handshake from entry, then reply taken once just before the command is written) and
++/// every line capped, exactly as the CLI's `exchange`.
++async fn relay_exchange<R, W>(
++    reader: R,
++    mut writer: W,
++    json_str: String,
++    control: Option<&crate::native::control_token::Token>,
++    hs_budget: std::time::Duration,
++    reply_budget: std::time::Duration,
++) -> Result<String, String>
++where
++    R: tokio::io::AsyncRead + Unpin,
++    W: tokio::io::AsyncWrite + Unpin,
++{
++    use crate::native::control_token as ct;
++
++    let d_hs = ct::Deadline::after(hs_budget);
+     let mut buf_reader = tokio::io::BufReader::new(reader);
+-    let mut response_line = String::new();
+-    tokio::io::AsyncBufReadExt::read_line(&mut buf_reader, &mut response_line)
++    let mut session = match control {
++        Some(token) => Some(
++            ct::client_handshake_async_by(&mut buf_reader, &mut writer, token, d_hs)
++                .await
++                .map_err(ct::handshake_error_text)?,
++        ),
++        None => None,
++    };
++
++    let d_reply = ct::Deadline::after(reply_budget);
++    let wire = match session.as_mut() {
++        Some(s) => s
++            .seal(&json_str)
++            .map_err(|_| "control_frame_invalid: the command could not be framed".to_string())?,
++        None => {
++            let mut line = json_str.into_bytes();
++            line.push(b'\n');
++            line
++        }
++    };
++    ct::write_all_async_by(&mut writer, &wire, d_reply)
+         .await
+-        .map_err(|e| format!("Failed to read response: {}", e))?;
++        .map_err(|e| match e {
++            ct::ReadError::TimedOut => {
++                "Failed to send command: control_reply_timeout: the reply deadline passed"
++                    .to_string()
++            }
++            other => format!("Failed to send command: {:?}", other),
++        })?;
++
++    let framed = session.is_some();
++    let (max, grammar) = if framed {
++        (
++            ct::frame_line_max(ct::REPLY_PAYLOAD_MAX),
++            ct::Grammar::Framed,
++        )
++    } else {
++        (ct::REPLY_PAYLOAD_MAX + 1, ct::Grammar::LineOrEof)
++    };
++    let line = match ct::read_line_by(&mut buf_reader, max, grammar, Some(d_reply)).await {
++        Ok(line) => line,
++        // A plain connection that closes without a reply is an empty reply, as upstream.
++        Err(ct::ReadError::Closed) if !framed => Vec::new(),
++        Err(ct::ReadError::TimedOut) => {
++            return Err(
++                "Failed to read response: control_reply_timeout: the reply deadline passed"
++                    .to_string(),
++            )
++        }
++        Err(ct::ReadError::TooLong) => {
++            return Err(
++                "control_frame_too_large: the daemon's reply exceeded the size limit".to_string(),
++            )
++        }
++        Err(ct::ReadError::Io(kind)) => return Err(format!("Failed to read response: {}", kind)),
++        Err(_) => {
++            return Err("control_token_mismatch: the daemon's reply was not authentic".to_string())
++        }
++    };
++
++    let text = match session.as_mut() {
++        Some(s) => s.open(&line).map_err(|_| {
++            "control_token_mismatch: the daemon's reply was not authentic".to_string()
++        })?,
++        None => String::from_utf8(line).map_err(|e| format!("Failed to read response: {}", e))?,
++    };
+ 
+-    Ok(response_line.trim().to_string())
++    Ok(text.trim().to_string())
+ }
+ 
+ pub(super) fn serve_embedded_file(url_path: &str) -> (&'static str, &'static str, Vec<u8>) {
+@@ -712,4 +811,115 @@ mod tests {
+             .unwrap();
+         assert!(relayed.contains(r#""action":"tabs""#), "{relayed}");
+     }
++
++    // ---- Murage patch: the /api/command forwarder's bounded exchange, against a fake daemon ----
++
++    mod relay_exchange_tests {
++        use super::*;
++        use crate::native::control_token::{
++            server_handshake, Token, FRAME_PREFIX_LEN, REPLY_PAYLOAD_MAX,
++        };
++        use std::sync::atomic::{AtomicUsize, Ordering};
++        use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
++
++        const GOOD: &str = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
++        const BUFREADER_CAP: usize = 8192;
++        const DUPLEX_CAP: usize = 65536;
++
++        fn prefix() -> Vec<u8> {
++            format!("ab1 {} {} ", "0".repeat(16), "0".repeat(64)).into_bytes()
++        }
++
++        #[tokio::test]
++        async fn forward_exchange_refuses_an_oversized_unterminated_reply() {
++            let token = Token::from_hex(GOOD).unwrap();
++            let (client, daemon) = tokio::io::duplex(DUPLEX_CAP);
++            let sent = std::sync::Arc::new(AtomicUsize::new(0));
++            let counter = sent.clone();
++            let daemon_token = token.clone();
++            let daemon_task = tokio::spawn(async move {
++                let (dr, mut dw) = tokio::io::split(daemon);
++                let mut dr = BufReader::new(dr);
++                let _session = server_handshake(&mut dr, &mut dw, &daemon_token).await.unwrap();
++                let mut command = String::new();
++                dr.read_line(&mut command).await.unwrap();
++                let head = prefix();
++                dw.write_all(&head).await.unwrap();
++                counter.fetch_add(head.len(), Ordering::SeqCst);
++                let chunk = vec![b'a'; 65536];
++                let mut left = REPLY_PAYLOAD_MAX + 1024 * 1024;
++                while left > 0 {
++                    let n = left.min(chunk.len());
++                    if dw.write_all(&chunk[..n]).await.is_err() {
++                        break;
++                    }
++                    counter.fetch_add(n, Ordering::SeqCst);
++                    left -= n;
++                }
++            });
++            let (cr, cw) = tokio::io::split(client);
++            let err = relay_exchange(
++                cr,
++                cw,
++                "{\"id\":\"1\",\"action\":\"x\"}".to_string(),
++                Some(&token),
++                std::time::Duration::from_secs(5),
++                std::time::Duration::from_secs(60),
++            )
++            .await
++            .err()
++            .expect("an oversized reply is an error, never a truncated success");
++            assert!(err.contains("control_frame_too_large"), "{err}");
++            tokio::time::timeout(std::time::Duration::from_secs(5), daemon_task)
++                .await
++                .expect("the daemon side must see the connection close")
++                .unwrap();
++            let accepted = sent.load(Ordering::SeqCst);
++            assert!(
++                accepted <= FRAME_PREFIX_LEN + REPLY_PAYLOAD_MAX + 1 + BUFREADER_CAP + DUPLEX_CAP,
++                "the daemon side was allowed to send {accepted} bytes"
++            );
++        }
++
++        #[tokio::test]
++        async fn forward_exchange_reply_drip_fails_at_the_reply_deadline() {
++            let token = Token::from_hex(GOOD).unwrap();
++            let (client, daemon) = tokio::io::duplex(DUPLEX_CAP);
++            let daemon_token = token.clone();
++            let daemon_task = tokio::spawn(async move {
++                let (dr, mut dw) = tokio::io::split(daemon);
++                let mut dr = BufReader::new(dr);
++                let _session = server_handshake(&mut dr, &mut dw, &daemon_token).await.unwrap();
++                let mut command = String::new();
++                dr.read_line(&mut command).await.unwrap();
++                for byte in prefix() {
++                    if dw.write_all(&[byte]).await.is_err() {
++                        return;
++                    }
++                    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
++                }
++            });
++            let (cr, cw) = tokio::io::split(client);
++            let started = std::time::Instant::now();
++            let err = relay_exchange(
++                cr,
++                cw,
++                "{\"id\":\"1\",\"action\":\"x\"}".to_string(),
++                Some(&token),
++                std::time::Duration::from_secs(5),
++                std::time::Duration::from_millis(600),
++            )
++            .await
++            .err()
++            .unwrap();
++            let elapsed = started.elapsed();
++            assert!(err.contains("control_reply_timeout"), "{err}");
++            assert!(
++                elapsed >= std::time::Duration::from_millis(550)
++                    && elapsed <= std::time::Duration::from_millis(700),
++                "took {elapsed:?}"
++            );
++            daemon_task.abort();
++        }
++    }
+ }
+diff --git a/cli/src/native/stream/mod.rs b/cli/src/native/stream/mod.rs
+index dea9606..433ca23 100644
+--- a/cli/src/native/stream/mod.rs
++++ b/cli/src/native/stream/mod.rs
+@@ -5,6 +5,9 @@ mod discovery;
+ mod http;
+ mod websocket;
+ 
++#[cfg(test)]
++mod control_tests;
++
+ pub use cdp_loop::{ack_screencast_frame, start_screencast, stop_screencast};
+ pub use dashboard::{
+     is_valid_dashboard_access_token, normalize_dashboard_allowed_origins, run_dashboard_server,
+@@ -18,6 +21,7 @@ use tokio::net::TcpListener;
+ use tokio::sync::{broadcast, watch, Mutex, Notify, RwLock};
+ 
+ use super::cdp::client::CdpClient;
++use super::control_token::Gate;
+ 
+ /// Screencast encoding for the live stream, from `AGENT_BROWSER_STREAM_*`.
+ ///
+@@ -213,8 +217,15 @@ impl StreamServer {
+     ) -> Result<Self, String> {
+         let client_slot = Arc::new(RwLock::new(Some(client)));
+         let idle_activity = Arc::new(IdleActivity::new());
+-        let (server, _) =
+-            Self::start_inner(preferred_port, client_slot, session_id, true, idle_activity).await?;
++        let (server, _) = Self::start_inner(
++            preferred_port,
++            client_slot,
++            session_id,
++            true,
++            idle_activity,
++            Gate::from_env(),
++        )
++        .await?;
+         Ok(server)
+     }
+ 
+@@ -230,6 +241,25 @@ impl StreamServer {
+         session_id: String,
+         allow_port_fallback: bool,
+         idle_activity: Arc<IdleActivity>,
++    ) -> Result<(Self, Arc<RwLock<Option<Arc<CdpClient>>>>), String> {
++        Self::start_without_client_with_gate(
++            preferred_port,
++            session_id,
++            allow_port_fallback,
++            idle_activity,
++            Gate::from_env(),
++        )
++        .await
++    }
++
++    /// `start_without_client` with an explicit control gate (Murage patch). Production callers go
++    /// through `start_without_client`, which reads AGENT_BROWSER_CONTROL_TOKEN.
++    pub async fn start_without_client_with_gate(
++        preferred_port: u16,
++        session_id: String,
++        allow_port_fallback: bool,
++        idle_activity: Arc<IdleActivity>,
++        gate: Gate,
+     ) -> Result<(Self, Arc<RwLock<Option<Arc<CdpClient>>>>), String> {
+         let client_slot = Arc::new(RwLock::new(None::<Arc<CdpClient>>));
+         Self::start_inner(
+@@ -238,6 +268,7 @@ impl StreamServer {
+             session_id,
+             allow_port_fallback,
+             idle_activity,
++            gate,
+         )
+         .await
+     }
+@@ -311,7 +342,13 @@ impl StreamServer {
+         session_id: String,
+         allow_port_fallback: bool,
+         idle_activity: Arc<IdleActivity>,
++        gate: Gate,
+     ) -> Result<(Self, Arc<RwLock<Option<Arc<CdpClient>>>>), String> {
++        // Murage patch: no valid control token configured, no listener (nothing is bound or advertised).
++        if let Some(error) = gate.start_error() {
++            return Err(error);
++        }
++        let gate = Arc::new(gate);
+         let addr = format!("127.0.0.1:{}", preferred_port);
+         let listener = match TcpListener::bind(&addr).await {
+             Ok(l) => l,
+@@ -376,6 +413,7 @@ impl StreamServer {
+                 recording_clone,
+                 accept_shutdown_rx,
+                 session_name_clone,
++                gate,
+             )
+             .await;
+         });
+diff --git a/cli/src/native/stream/websocket.rs b/cli/src/native/stream/websocket.rs
+index fbcc601..6acc7ef 100644
+--- a/cli/src/native/stream/websocket.rs
++++ b/cli/src/native/stream/websocket.rs
+@@ -12,6 +12,7 @@ use tokio_tungstenite::tungstenite::Message;
+ use tokio_tungstenite::WebSocketStream;
+ 
+ use crate::native::cdp::client::CdpClient;
++use crate::native::control_token::{bearer_token, header_value, Gate};
+ 
+ use super::http::handle_http_request;
+ use super::{is_allowed_origin, timestamp_ms, IdleActivity, StreamFrame};
+@@ -142,6 +143,7 @@ pub(super) async fn accept_loop(
+     recording: Arc<Mutex<bool>>,
+     mut shutdown_rx: watch::Receiver<bool>,
+     session_name: String,
++    gate: Arc<Gate>,
+ ) {
+     let session_name: Arc<str> = Arc::from(session_name);
+     // Invariant: every per-connection task is owned here, never detached, so
+@@ -177,6 +179,7 @@ pub(super) async fn accept_loop(
+                 let rec = recording.clone();
+                 let shutdown_rx = shutdown_rx.clone();
+                 let sn = session_name.clone();
++                let gate = gate.clone();
+ 
+                 connections.spawn(async move {
+                     handle_connection(
+@@ -197,6 +200,7 @@ pub(super) async fn accept_loop(
+                         rec,
+                         shutdown_rx,
+                         sn,
++                        gate,
+                     )
+                     .await;
+                 });
+@@ -206,6 +210,49 @@ pub(super) async fn accept_loop(
+     connections.shutdown().await;
+ }
+ 
++/// Largest request head read before a request is refused (Murage patch).
++const HEAD_MAX: usize = 8192;
++/// Longest a client may take to deliver a complete request head (Murage patch).
++const HEAD_DEADLINE: Duration = Duration::from_secs(5);
++
++/// Peek (consume nothing) until the request head is complete. A head that is not complete within
++/// the deadline, or does not fit, is None. `peek` returns at once with bytes already seen, so a
++/// short sleep (not the peek) is what keeps this from spinning.
++async fn peek_head(stream: &TcpStream, buf: &mut [u8; HEAD_MAX]) -> Option<usize> {
++    tokio::time::timeout(HEAD_DEADLINE, async {
++        loop {
++            let n = stream.peek(&mut buf[..]).await.ok()?;
++            if n == 0 {
++                return None;
++            }
++            if buf[..n].windows(4).any(|w| w == b"\r\n\r\n") {
++                return Some(n);
++            }
++            if n == HEAD_MAX {
++                return None;
++            }
++            tokio::time::sleep(Duration::from_millis(10)).await;
++        }
++    })
++    .await
++    .ok()
++    .flatten()
++}
++
++/// A bare refusal: no CORS headers, no body, connection closed.
++pub(super) async fn refuse_http(mut stream: TcpStream, status: &str) {
++    use tokio::io::AsyncWriteExt;
++    let extra = if status.starts_with("401") {
++        "WWW-Authenticate: Bearer\r\n"
++    } else {
++        ""
++    };
++    let response =
++        format!("HTTP/1.1 {status}\r\n{extra}Content-Length: 0\r\nConnection: close\r\n\r\n");
++    let _ = stream.write_all(response.as_bytes()).await;
++    let _ = stream.shutdown().await;
++}
++
+ fn is_websocket_upgrade(request: &str) -> bool {
+     request.lines().any(|line| {
+         if let Some((name, value)) = line.split_once(':') {
+@@ -237,14 +284,29 @@ async fn handle_connection(
+     recording: Arc<Mutex<bool>>,
+     shutdown_rx: watch::Receiver<bool>,
+     session_name: Arc<str>,
++    gate: Arc<Gate>,
+ ) {
+-    let mut buf = [0u8; 4096];
+-    let n = match stream.peek(&mut buf).await {
+-        Ok(n) => n,
+-        Err(_) => return,
++    let mut buf = [0u8; HEAD_MAX];
++    let n = match peek_head(&stream, &mut buf).await {
++        Some(n) => n,
++        None => {
++            refuse_http(stream, "400 Bad Request").await;
++            return;
++        }
+     };
+     let request = String::from_utf8_lossy(&buf[..n]);
+ 
++    // Murage patch: every request except an OPTIONS preflight (which runs no handler) needs the
++    // control token. The WebSocket handshake is checked again on the parsed request below.
++    let is_options = request.split_whitespace().next() == Some("OPTIONS");
++    if !is_options {
++        let presented = header_value(&request, "authorization").and_then(bearer_token);
++        if !gate.allows_bearer(presented) {
++            refuse_http(stream, "401 Unauthorized").await;
++            return;
++        }
++    }
++
+     if is_websocket_upgrade(&request) {
+         let frame_rx = frame_tx.subscribe();
+         let initial_config = config_from_upgrade(&request);
+@@ -266,6 +328,7 @@ async fn handle_connection(
+             last_engine,
+             recording,
+             shutdown_rx,
++            gate,
+         )
+         .await;
+     } else {
+@@ -296,10 +359,27 @@ async fn handle_ws_client(
+     last_engine: Arc<RwLock<String>>,
+     recording: Arc<Mutex<bool>>,
+     mut shutdown_rx: watch::Receiver<bool>,
++    gate: Arc<Gate>,
+ ) {
+     let callback =
+         |req: &tokio_tungstenite::tungstenite::handshake::server::Request,
+          resp: tokio_tungstenite::tungstenite::handshake::server::Response| {
++            // Murage patch: the control token is checked on the parsed handshake, before the
++            // Origin check, so nothing (no frame, no input) is served without it.
++            let presented = req
++                .headers()
++                .get("authorization")
++                .and_then(|v| v.to_str().ok())
++                .and_then(bearer_token);
++            if !gate.allows_bearer(presented) {
++                let mut reject =
++                    tokio_tungstenite::tungstenite::handshake::server::ErrorResponse::new(Some(
++                        "Unauthorized".to_string(),
++                    ));
++                *reject.status_mut() =
++                    tokio_tungstenite::tungstenite::http::StatusCode::UNAUTHORIZED;
++                return Err(reject);
++            }
+             let origin = req
+                 .headers()
+                 .get("origin")

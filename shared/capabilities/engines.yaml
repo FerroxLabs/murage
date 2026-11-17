@@ -149,11 +149,11 @@ entries:
       - Use Grok Imagine for image generation
       - Generate pictures with my xAI key
     answer: >
-      Yes. With an xAI key added under Models & engines, open Settings, then Tools, then Image
+      Yes. With an xAI key added under Models & engines, open Settings, then Search, images and dictation, then Image
       generation, pick the xAI connection and choose Grok Imagine Image 2.0. A bot can then make and
       edit images with it.
     limits: Choose the Grok Imagine model yourself, because xAI has no default image model.
-    settings_path: Settings → Tools → Image generation
+    settings_path: Settings → Search, images and dictation → Image generation
     platforms: [mac, windows, linux]
     engines: [all]
     anchors:
@@ -192,13 +192,13 @@ entries:
       - Will an update change my saved model?
       - Does Murage bundle Codex?
     answer: >
-      For new choices, Claude Code recommends Claude Sonnet 5.5. Codex's offline fallback
+      For new choices, Claude Code recommends Claude Sonnet 5.5, and Murage's Claude model list includes Claude Fable 5.2 (whether your Claude Code version accepts it is separate). Codex's offline fallback
       recommends GPT-6.1 Sol, supported by Cloud home’s pinned Codex 0.162.1 and Codex 0.167.0.
       A live Codex catalog or configured
       Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol,
       stay as they are. The picker marks the current catalog recommendation.
     limits: >
-      Desktop Murage bundles Fuigo; install or update Claude Code and Codex separately.
+      Desktop Murage bundles Fuigo 1.0.43; install or update Claude Code and Codex separately.
       Cloud home includes Claude Code and Codex.
       Describe your model from the turn’s engine
       facts, not these recommendations.
@@ -208,10 +208,12 @@ entries:
     anchors:
       - settings-card:models/engines
       - 'file:server/drivers/claude.ts#default: "claude-sonnet-5-5"'
+      - 'file:server/drivers/claude.ts#id: "claude-fable-5-2"'
+      - 'file:scripts/prepare-fuigo.mjs#export const FUIGO_VERSION = "1.0.43"'
       - 'file:server/drivers/codex-catalog.ts#default: "gpt-6.1-sol"'
       - file:server/default-engine.ts#export function defaultModel
       - file:server/capabilities-primer.ts#const modelId =
-    verified: 1.0.18
+    verified: 1.0.19
     doc: providers#default-models-and-saved-choices
 
   - id: engines.muse-code

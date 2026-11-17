@@ -1,5 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { browserOwnerId } from "./browser-owner-api.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { UnifiedBrowserController } from "./browser-control.ts";
@@ -167,3 +169,37 @@ describe("a protected browser explains itself",()=>{
   });
 });
 
+
+describe("persisted person hold migration", () => {
+  for (const cloudHome of [false, true]) for (const kind of ["desktop", "companion", "unknown"]) it(`migrates ${kind} with cloudHome=${cloudHome} without ending a hold`, async () => {
+    const f = fixture(); const realm = "fixture-realm";
+    const legacy = createHash("sha256").update(`${realm}:${kind}`).digest("hex").slice(0,32);
+    writeFileSync(f.stateFile, JSON.stringify([["shared", {generation:7,held:true,owner:legacy,protectedDocument:true}]]));
+    const controller = new UnifiedBrowserController({stateFile:f.stateFile,createNative:()=>f.native,ownerMigration:{realm,cloudHome}});
+    const migrated = kind === "desktop" || (!cloudHome && kind === "companion");
+    expect(JSON.parse(readFileSync(f.stateFile,"utf8"))[0][1]).toMatchObject({held:true,owner:migrated?browserOwnerId(realm):legacy});
+    controller.register("shared",f.spec);
+    expect(controller.status("shared")).toMatchObject({held:true,protectedDocument:true,owner:migrated?browserOwnerId(realm):legacy});
+    if (!migrated) {
+      await expect(controller.release("shared",browserOwnerId(realm),8,0)).rejects.toThrow();
+      await controller.reclaim("shared",browserOwnerId(realm));
+    }
+    const status = controller.status("shared");
+    await expect(controller.release("shared",browserOwnerId(realm),status.generation,(status.control ?? 0)-1)).rejects.toThrow();
+    await controller.release("shared",browserOwnerId(realm),status.generation,status.control);
+    expect(controller.status("shared").held).toBe(false);
+    await controller.close();
+  });
+});
+
+it("never times out a person's hold, even after a year without a view", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  try {
+    await f.controller.take("shared", "owner");
+    f.disconnect();
+    await vi.advanceTimersByTimeAsync(365 * 24 * 60 * 60 * 1000);
+    expect(f.controller.status("shared").held).toBe(true);
+    await expect(f.controller.dispatch("shared", "tools/call", {name:"agent_browser_snapshot"}, () => true)).rejects.toMatchObject({code:"browser_held"});
+  } finally { await f.controller.close(); vi.useRealTimers(); }
+});

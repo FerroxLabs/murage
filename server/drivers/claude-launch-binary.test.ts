@@ -1,3 +1,4 @@
+import { admittedFixtureInstance } from "../testing/mcp-admission-fixture.ts";
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
@@ -102,7 +103,7 @@ vi.mock("../procs.ts", async (original) => {
 describe.skipIf(process.platform === "win32")("the Claude turn binary", () => {
   it("is the claude Murage probed, not the first one on the owner's shell PATH", async () => {
     const { probedLog, shellLog } = twoBinaries();
-    instance = await ClaudeDriver.create({ instanceId: "claude-launch", displayName: "Claude", environment: {}, enabled: true, config: { cli: "claude", permissionMode: "acceptEdits" } });
+    instance = await admittedFixtureInstance(ClaudeDriver.create({ instanceId: "claude-launch", displayName: "Claude", environment: {}, enabled: true, config: { cli: "claude", permissionMode: "acceptEdits" } }));
     recorder = recordEvents(instance.adapter);
     await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-claude-launch", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
@@ -124,7 +125,7 @@ describe.skipIf(process.platform === "win32")("the Claude turn binary", () => {
     resetClaudeVersionGate();
     // A machine with a real one on Murage's own PATH would run it: nothing to prove there.
     if (cliFile(BIN, { PATH: augmentedPath() })) ctx.skip();
-    instance = await ClaudeDriver.create({ instanceId: "claude-launch", displayName: "Claude", environment: {}, enabled: true, config: { cli: "claude", permissionMode: "acceptEdits" } });
+    instance = await admittedFixtureInstance(ClaudeDriver.create({ instanceId: "claude-launch", displayName: "Claude", environment: {}, enabled: true, config: { cli: "claude", permissionMode: "acceptEdits" } }));
     recorder = recordEvents(instance.adapter);
     const outcome = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-claude-missing", text: "hi" }).then(
       () => recorder!.until((e) => e.type === "turn.completed").then((e) => JSON.stringify(e)),

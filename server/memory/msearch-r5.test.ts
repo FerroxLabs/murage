@@ -10,6 +10,7 @@
 //
 // "Refused only by a full read" below means a record the cheap statement cannot refuse: an owner statement whose ancestor was
 // forgotten. (A record with no evidence, or a forgotten one, is not eligible at all.)
+import { closeSealed, openTestIndex, put, workerTick } from "./testing/open-index.ts";
 import v8 from "node:v8";
 import vm from "node:vm";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
@@ -22,7 +23,8 @@ import { InternalCapabilities } from "../internal-capabilities.ts";
 import { eligibleLimits, MemoryEligibility } from "./eligibility.ts";
 import { MemoryIndex, type IndexedMemory } from "./index.ts";
 import { closeMemoryIndexReader, lexicalPage, lexicalPageSliced } from "./index-reader.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import * as readableModule from "./readable.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 const { readableMemoryRecord } = readableModule;
@@ -72,13 +74,13 @@ function deniedByRead(id: string, scope: string, text = TEXT, status = "indexed"
   addRecord(id, scope, text, "owner-statement", status);
   db.prepare("INSERT INTO memory_derivations VALUES('p-middle',1,?,1)").run(id);
 }
-function world(records: IndexedMemory[], vectors: Record<string, number[]> = {}) {
+async function world(records: IndexedMemory[], vectors: Record<string, number[]> = {}) {
   closeMemoryIndexReader(); clearMemorySearchCache();
   for (const suffix of ["", "-wal", "-shm"]) rmSync(`${INDEX_PATH()}${suffix}`, { force: true });
-  const index = new MemoryIndex(INDEX_PATH());
+  const index = await openTestIndex(INDEX_PATH());
   index.prepareModel("model");
-  index.upsert(records);
-  for (const record of records) if (vectors[record.id]) index.vector(record, "model", 0, vectors[record.id]);
+  await seedRows(index, records);
+  for (const record of records) if (vectors[record.id]) await index.vector(record, "model", 0, vectors[record.id]);
   return index;
 }
 function helper(index: MemoryIndex, vector: number[] | null): MemorySearchBridge {
@@ -127,7 +129,7 @@ describe("P1: authorization never holds the event loop", () => {
     expect(monitor.stop()).toBeGreaterThanOrEqual(75);
   });
 
-  it("the hold monitor counts a 150 ms synchronous block even when stopped before its first tick", () => {
+  it("the hold monitor counts a 150 ms synchronous block even when stopped before its first tick", async () => {
     const monitor = loopHoldMonitor();
     try {
       holdThread(150);
@@ -141,7 +143,7 @@ describe("P1: authorization never holds the event loop", () => {
     readable("kept", scope);
     const records = [entry("kept", scope, TEXT)];
     bulk(() => { for (let n = 0; n < 1000; n++) { const id = `a-denied-${String(n).padStart(4, "0")}`; deniedByRead(id, scope); records.push(entry(id, scope, TEXT)); } });
-    world(records).close();
+    (await world(records)).close();
     // ids sort ahead of the readable one, so every refused candidate is read before it is reached
     const longest: number[] = [];
     for (let run = 0; run < 5; run++) {
@@ -171,11 +173,11 @@ describe("P1: authorization never holds the event loop", () => {
   it("100,000 mostly refused records (99,990 only a full read refuses) leave the loop free: longest stall under 50 ms, the search answers what it can inside its limit", { tags: ["perf-budget"], timeout: 300_000 }, async () => {
     const scope = ensureScope("bot", "a");
     // the fixture is built in its own function so none of it stays referenced while the search is measured
-    (() => {
+    (async () => {
       const records: IndexedMemory[] = [];
       for (let n = 0; n < 10; n++) { const id = `z-kept-${n}`; readable(id, scope); records.push(entry(id, scope, TEXT)); }
       bulk(() => { for (let n = 0; n < 99_990; n++) { const id = `a-denied-${String(n).padStart(6, "0")}`; deniedByRead(id, scope); records.push(entry(id, scope, TEXT)); } });
-      world(records).close();
+      (await world(records)).close();
     })();
     await new Promise(resolve => setTimeout(resolve, 500)); collectGarbage();
     const monitor = loopHoldMonitor();
@@ -234,7 +236,7 @@ describe("P1: authorization never holds the event loop", () => {
     readable("kept", scope); readable("withdrawn", scope);
     const records = ["kept", "withdrawn"].map(id => entry(id, scope, TEXT));
     for (let n = 0; n < 300; n++) { const id = `a-denied-${String(n).padStart(4, "0")}`; deniedByRead(id, scope); records.push(entry(id, scope, TEXT)); }
-    world(records).close();
+    (await world(records)).close();
     let forgotten = false;
     // the first release of the loop (setImmediate) forgets a record that has already been accepted
     const original = globalThis.setImmediate;
@@ -263,7 +265,7 @@ describe("P1: coverage, paging and cursors do not depend on how many refused rec
       readable("kept", scope);
       const records = [entry("kept", scope, TEXT)];
       bulk(() => { for (let n = 0; n < count; n++) { const id = `denied-${String(n).padStart(5, "0")}`; deniedByRead(id, scope, "x"); records.push(entry(id, scope, "x")); } });
-      const index = world(records, vectors);
+      const index = await world(records, vectors);
       const answer = await searchMemory(QUERY, accessOf(), helper(index, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
       index.close();
       expect(answer.hits.map(hit => hit.id)).toEqual(["kept"]);
@@ -280,7 +282,7 @@ describe("P1: coverage, paging and cursors do not depend on how many refused rec
     bulk(() => { for (let n = 0; n < 1100; n++) { const id = `a-denied-${String(n).padStart(5, "0")}`; deniedByRead(id, scope, "x"); records.push(entry(id, scope, "x")); } });
     readable("zz-waiting", scope, `${TEXT} waiting for its vector`);
     records.push(entry("zz-waiting", scope, `${TEXT} waiting for its vector`));
-    const index = world(records, vectors);
+    const index = await world(records, vectors);
     const answer = await searchMemory(QUERY, accessOf(), helper(index, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
     index.close();
     expect(answer.coverageComplete).toBe(false);
@@ -293,7 +295,7 @@ describe("P1: coverage, paging and cursors do not depend on how many refused rec
     const records = [entry("0-kept", scope, "quiet quay notes about the boats")];
     const vector: Record<string, number[]> = { "0-kept": [0.6, 0.8] };
     bulk(() => { for (let n = 0; n < 1500; n++) { const id = `a-denied-${String(n).padStart(4, "0")}`; deniedByRead(id, scope, "x"); records.push(entry(id, scope, "x")); vector[id] = [1, 0]; } });
-    const index = world(records, vector);
+    const index = await world(records, vector);
     const answer = await searchMemory(QUERY, accessOf(), helper(index, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
     index.close();
     expect(answer.hits.map(hit => hit.id)).toEqual(["0-kept"]);
@@ -310,7 +312,7 @@ describe("P1: coverage, paging and cursors do not depend on how many refused rec
     const vector: Record<string, number[]> = { "0-kept": [0.6, 0.8] };
     bulk(() => { for (let n = 0; n < 1500; n++) { const id = `a-denied-${String(n).padStart(4, "0")}`; deniedByRead(id, scope, "x"); records.push(entry(id, scope, "x")); vector[id] = [1, 0]; } });
     readable("z-last", scope, "quiet quay notes about the boats"); records.push(entry("z-last", scope, "quiet quay notes about the boats")); vector["z-last"] = [0.6, 0.8];
-    const index = world(records, vector);
+    const index = await world(records, vector);
     const answer = await searchMemory(QUERY, accessOf(), helper(index, [1, 0]), { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
     index.close();
     expect(answer.degradedReason).toBe("semantic-capacity-paged");
@@ -321,7 +323,7 @@ describe("P1: coverage, paging and cursors do not depend on how many refused rec
   it("1,500 pending projections the reader may not read leave coverage as it was; one it may read changes it", async () => {
     const scope = ensureScope("bot", "a");
     readable("kept", scope);
-    world([entry("kept", scope, TEXT)]).close();
+    (await world([entry("kept", scope, TEXT)])).close();
     bulk(() => { for (let n = 0; n < 1500; n++) deniedByRead(`pending-denied-${String(n).padStart(4, "0")}`, scope, TEXT, "pending"); });
     const quiet = await searchMemory(QUERY, accessOf(), failing, { allowance: LineageAllowance.tool(1_000_000_000), caller: "tool", limit: 20 });
     expect(quiet.coverageComplete).toBe(true);
@@ -336,8 +338,8 @@ describe("P1: equal ranks order exactly by (rank, id, version) across pages", ()
   const ids = Array.from({ length: 6000 }, (_, n) => `d-${String(n).padStart(4, "0")}`);
   const same = "harbour lantern notes for the Friday review";
 
-  it("6,000 identical documents written in descending id order page disjointly and in id order", () => {
-    const index = world([...ids].reverse().map(id => entry(id, "s", same)));
+  it("6,000 identical documents written in descending id order page disjointly and in id order", async () => {
+    const index = await world([...ids].reverse().map(id => entry(id, "s", same)));
     const seen: string[] = [];
     for (let offset = 0; ; offset += 50) {
       const page = lexicalPage(QUERY, ["s"], 50, offset)!;
@@ -350,8 +352,8 @@ describe("P1: equal ranks order exactly by (rank, id, version) across pages", ()
     expect(helperList).toEqual(ids.slice(0, 1000));
   }, 120_000);
 
-  it("pages that straddle the old 4,096-row extension are the same rows as one page read from the start", () => {
-    const index = world([...ids].reverse().map(id => entry(id, "s", same)));
+  it("pages that straddle the old 4,096-row extension are the same rows as one page read from the start", async () => {
+    const index = await world([...ids].reverse().map(id => entry(id, "s", same)));
     for (const offset of [4000, 4050, 4090, 4096, 5950]) {
       expect(lexicalPage(QUERY, ["s"], 50, offset)!.hits.map(hit => hit.id)).toEqual(ids.slice(offset, offset + 50));
     }
@@ -360,7 +362,7 @@ describe("P1: equal ranks order exactly by (rank, id, version) across pages", ()
 
   it("the sliced read the search uses answers exactly what the one-statement read answers, and releases the loop between slices", async () => {
     // Exact for every page while the matches fit what a recall of common words reads (since 1.0.2 that is the newest 4,000).
-    const index = world([...ids.slice(0, 3000)].reverse().map(id => entry(id, "s", same)));
+    const index = await world([...ids.slice(0, 3000)].reverse().map(id => entry(id, "s", same)));
     let yields = 0;
     // a fast clock (7 ms for every 20 reads), so the scan releases the loop whatever the machine
     const originalNow = performance.now.bind(performance);
@@ -379,43 +381,46 @@ describe("P1: equal ranks order exactly by (rank, id, version) across pages", ()
 });
 
 describe("P2: a merge a walk's deletion owes is written with the deletion", () => {
-  const seed = (index: MemoryIndex) => index.upsert([1, 2, 3, 4, 5, 6].map(version => ({ id: "checkpoint:t", version, scopeId: "s", text: `Working evidence: version ${version}`, deleted: false })));
+  const seed = async (index: MemoryIndex) => await put(index, [1, 2, 3, 4, 5, 6].map(version => ({ id: "checkpoint:t", version, scopeId: "s", text: `Working evidence: version ${version}`, deleted: false })));
 
-  it("a walk that stops below the merge threshold still owes its merge after a restart", () => {
+  it("a walk that stops below the merge threshold still owes its merge after a restart", async () => {
     const root = mkdtempSync(join(tmpdir(), "memory-walk-owed-")), path = join(root, "index.db");
     try {
-      const first = new MemoryIndex(path);
-      seed(first);
-      const step = first.purgeRolledCheckpoints({ maxExamined: 2 });
+      const first = await openTestIndex(path);
+      await seed(first);
+      const step = await first.purgeRolledCheckpoints({ maxExamined: 2 });
       expect(step.removed).toBe(2);
       expect(step.done).toBe(false);
       first.close(); // the app stops mid-walk, below the threshold: nothing had started merging
-      const second = new MemoryIndex(path);
+      const second = await openTestIndex(path);
       expect(second.maintenanceOwed()).toBe(true);
       let steps = 0;
-      while (!second.purgeRolledCheckpoints().done) if (++steps > 10_000) throw new Error("the stepped maintenance did not finish");
+      while (!(await second.purgeRolledCheckpoints()).done) if (++steps > 10_000) throw new Error("the stepped maintenance did not finish");
       expect(second.maintenanceOwed()).toBe(false);
       second.close();
-      const third = new MemoryIndex(path);
+      const third = await openTestIndex(path);
       expect(third.maintenanceOwed()).toBe(false);
       third.close();
     } finally { removeTempDirSync(root); }
   });
 
-  it("a removal whose merge could not run still owes it after a restart, and a removal that merged owes nothing", () => {
+  it("a removal whose merge could not run still owes it after a restart, and a removal that merged owes nothing", async () => {
     const root = mkdtempSync(join(tmpdir(), "memory-remove-owed-")), path = join(root, "index.db");
     try {
-      const index = new MemoryIndex(path);
-      index.upsert([entry("p-1", "s", "continuity note one"), entry("p-2", "s", "continuity note two")]);
+      const index = await openTestIndex(path);
+      await put(index, [entry("p-1", "s", "continuity note one"), entry("p-2", "s", "continuity note two")]);
       const raw = (index as unknown as { db: { exec(sql: string): void } }).db, exec = raw.exec.bind(raw);
       raw.exec = (sql: string) => { if (sql.includes("'optimize'")) throw new Error("disk full"); exec(sql); };
-      expect(index.purgeRecords(["p-1"])).toBeGreaterThan(0);
+      expect(await index.purgeRecords(["p-1"])).toBeGreaterThan(0);
       index.close();
-      const second = new MemoryIndex(path);
+      const second = await openTestIndex(path);
       expect(second.maintenanceOwed()).toBe(true);
-      expect(second.purgeRecords(["p-2"])).toBeGreaterThan(0); // merges now
-      second.close();
-      const third = new MemoryIndex(path);
+      expect(await second.purgeRecords(["p-2"])).toBeGreaterThan(0);
+      expect(second.maintenanceOwed()).toBe(true); // R3: purgeRecords never optimizes inline
+      for (let step = 0; step < 1000 && second.maintenanceOwed(); step++) await workerTick(second);
+      expect(second.maintenanceOwed()).toBe(false);
+      await closeSealed(second);
+      const third = await openTestIndex(path);
       expect(third.maintenanceOwed()).toBe(false);
       third.close();
     } finally { removeTempDirSync(root); }
@@ -424,7 +429,7 @@ describe("P2: a merge a walk's deletion owes is written with the deletion", () =
 
 describe("P2: the recent fallback visits every reachable scope, then authorizes and selects across all of them", () => {
   for (const [crowded, other] of [["bot", "conversation"], ["conversation", "bot"]] as const) {
-    it(`${crowded} scope's 300 unrelated unindexed rows do not hide ${other} scope's match`, () => {
+    it(`${crowded} scope's 300 unrelated unindexed rows do not hide ${other} scope's match`, async () => {
       const owner = (kind: string) => ensureScope(kind as "bot", kind === "bot" ? "a" : "thread-a");
       const busy = owner(crowded), quiet = owner(other);
       bulk(() => {
@@ -446,3 +451,19 @@ describe("P2: the recent fallback visits every reachable scope, then authorizes 
     expect(answer.recentFallback).toBe(true);
   });
 });
+
+/** Seed in small groups, servicing the checked writer before the next group. */
+async function seedRows(index: MemoryIndex, rows: Parameters<MemoryIndex["applyBatch"]>[0]) {
+  for (let at = 0; at < rows.length;) {
+    await index.sealAndTruncate();
+    for (let steps = 0; index.segmentCount() > 48; steps++) {
+      if (steps === 5000 || index.stopInfo()) throw new Error("fixture segment gate did not clear");
+      const step = await index.maintenanceStep();
+      if (step.drain) await index.sealAndTruncate();
+    }
+    // Each inserted row can flush a segment. Leave the next gate check between batches.
+    const count = Math.min(16, 49 - index.segmentCount());
+    await put(index, rows.slice(at, at + count));
+    at += count;
+  }
+}

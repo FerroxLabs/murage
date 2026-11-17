@@ -63,7 +63,9 @@ describe("interface font", () => {
 
   it("is stamped before the first paint and offered in Settings", () => {
     expect(readFileSync(join(here, "..", "main.tsx"), "utf8")).toContain("applyFont(readFont());");
-    const settings = readFileSync(join(here, "..", "components", "SettingsModal.tsx"), "utf8");
-    expect(settings).toContain("<SkinPicker />\n                    <FontRow />");
+    const registry = readFileSync(join(here, "..", "components", "settings", "page-registry.tsx"), "utf8");
+    expect(registry).toContain('general: () => import("./pages/GeneralPage")');
+    const settings = readFileSync(join(here, "..", "components", "settings", "pages", "GeneralPage.tsx"), "utf8");
+    expect(settings).toMatch(/<SkinPicker \/>\s*<FontRow \/>/);
   });
 });

@@ -5,7 +5,11 @@ const recoveryMessage = state => (state.context?.returnRevoked ? state.context?.
 function render(state) {
   current = state;
   document.documentElement.dataset.skin = state.context?.skin === "light" ? "light" : "dark";
-  byId("page-heading").textContent=(state.context?.backupMode||state.context?.updatePause)?"Backup mode":"Restore or recover Murage";
+  byId("page-heading").textContent=(state.context?.backupMode||state.context?.updatePause)?"Backup mode":state.context?.oneTimeStep?"Murage is finishing a one-time step":"Restore or recover Murage";
+  byId("one-time-step").hidden=!state.context?.oneTimeStep;
+  byId("retry-startup").hidden=!!state.context?.oneTimeStep;
+  byId("legacy-recovery").hidden=false;
+  byId("activation-section").hidden=false;
   byId("encrypted-backup").hidden=!state.encryptedAvailable;
   byId("reason").textContent = state.context?.reason || "Murage needs your attention before it can start. Your data is kept as it is.";
   byId("location").textContent = state.context?.dataDirectory || "Murage can't see its data folder right now.";
@@ -45,14 +49,14 @@ function render(state) {
     const action = button.dataset.action;
     const unavailable = state.allowedActions && !state.allowedActions.includes(action);
     if (state.context?.updatePause) button.hidden = unavailable;
-    if(action==="retry")button.textContent=(state.context?.backupMode||state.context?.updatePause)?"Return to workspace":"Retry startup";
+    if(action==="retry")button.textContent=(state.context?.backupMode||state.context?.updatePause)?"Return to workspace":state.context?.oneTimeStep?"Open Murage again":"Retry startup";
     const separate = ["choose-separate-backup", "restore-separate"].includes(action);
     button.disabled = unavailable || pending || state.busy || (action === "capture-separate" ? !state.captureAvailable : separate ? !state.separateAvailable : !state.available && !["retry","diagnostics"].includes(action)) ||
       (action.includes("encrypted")&&!state.encryptedAvailable)||(action==="restore-encrypted-new"&&!state.selection?.encrypted)||
       (action === "restore" && (!state.selection || state.selection.separate)) || (action === "restore-separate" && !state.selection?.separate) || (action === "activate" && !state.review);
   }
-  if (state.context?.updatePause) {
-    byId("page-heading").textContent = "Murage";
+  if (state.context?.updatePause) byId("page-heading").textContent = "Murage";
+  if (state.context?.oneTimeStep || state.context?.updatePause) {
     for (const id of ["encrypted-backup","preview","separate-recovery","capture-recovery","activation-review","legacy-recovery","activation-section"]) byId(id).hidden=true;
   }
   if (pending || state.busy) byId("status").textContent = state.context?.updatePause ? state.context.updateMessages?.["update-wait"] : "Working on it. A large backup can take several minutes.";

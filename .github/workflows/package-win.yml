@@ -24,14 +24,168 @@ on:
         type: string
 
 jobs:
-  package:
-    name: NSIS installer
+  windows-preparation:
+    name: Credential-free Windows inputs and tools
     runs-on: windows-latest
     timeout-minutes: 90
+    env:
+      MURAGE_WINDOWS_SIGNING_PREPARATION: ${{ vars.WINDOWS_SIGNING_PREPARATION_FILE }}
+      MURAGE_WINDOWS_SIGNING_PREPARATION_SHA256: ${{ vars.WINDOWS_SIGNING_PREPARATION_SHA256 }}
+      MURAGE_BUILD_COMMIT: ${{ inputs.ref || github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
+      - name: Restore the pinned tool download cache
+        # Primary source for age, restic, cloudflared and the other pinned helpers: served by the
+        # Actions cache, not github.com release hosting. Files are named by their pinned sha256 and
+        # re-verified on every use (scripts/download-retry.mjs), so a stale or bad entry is discarded.
+        id: tools-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/package-tool-cache
+          key: package-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/prepare-cloudflared.mjs', 'shared/backup-age-pins.mjs', 'shared/backup-restic-pin.mjs', 'shared/windows-backup-tools.mjs', 'scripts/prepare-cua.mjs', 'scripts/build-murage-cage.mjs') }}-restore
+          restore-keys: |
+            package-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/prepare-cloudflared.mjs', 'shared/backup-age-pins.mjs', 'shared/backup-restic-pin.mjs', 'shared/windows-backup-tools.mjs', 'scripts/prepare-cua.mjs', 'scripts/build-murage-cage.mjs') }}-
+            package-tools-${{ runner.os }}-${{ runner.arch }}-
+      - name: Point the packagers at the tool download cache
+        shell: bash
+        run: |
+          echo "MURAGE_PACKAGE_DOWNLOAD_CACHE=${{ runner.temp }}/package-tool-cache" >> "$GITHUB_ENV"
+          # Authenticated github.com downloads are not in the anonymous (throttled/timing-out) pool.
+          echo "MURAGE_PACKAGE_GITHUB_TOKEN=${{ github.token }}" >> "$GITHUB_ENV"
+      - name: Restore the Electron and electron-builder toolchain cache
+        # electron zips, NSIS and winCodeSign come from github.com; serve them from the Actions cache.
+        id: electron-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/electron
+            ~/.cache/electron-builder
+            ~/Library/Caches/electron
+            ~/Library/Caches/electron-builder
+            ~/AppData/Local/electron/Cache
+            ~/AppData/Local/electron-builder/Cache
+          key: electron-toolchain-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: electron-toolchain-${{ runner.os }}-${{ runner.arch }}-
+      - uses: pnpm/action-setup@ff378ebe6b225b0680b81c1ad4498ae0d1d3a5e3 # v6.0.10
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Node headers for the engine-exclusion addon
+        # The hosted Windows Node has no include/node folder; scripts/build-engine-exclusion.mjs needs node_api.h. Fetch the headers
+        # of the running Node and check them against the published SHASUMS256.txt.
+        shell: bash
+        run: |
+          v=$(node -p process.version)
+          dir="$(cygpath -u "$RUNNER_TEMP")/node-headers"; mkdir -p "$dir"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "https://nodejs.org/dist/$v/node-$v-headers.tar.gz" -o "$dir/h.tgz"
+          curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 "https://nodejs.org/dist/$v/SHASUMS256.txt" -o "$dir/sums"
+          (cd "$dir" && want=$(grep " node-$v-headers.tar.gz\$" sums | cut -d' ' -f1) && echo "$want  h.tgz" | sha256sum -c - && tar xzf h.tgz)
+          echo "NODE_HEADERS_DIR=$(cygpath -w "$dir/node-$v/include/node")" >> "$GITHUB_ENV"
+      # Murage for Chrome: the store item ID and public key when the owner has
+      # set them (plan 2.3); until then this build carries no extension identity.
+      - name: Murage for Chrome identity, when set
+        shell: bash
+        run: node scripts/release-guard.mjs browser-extension-optional extensions/murage-browser/release.json >> "$GITHUB_ENV"
+      # the packaged app ships compiled JS, so a stale dist/ or dist-server/
+      # would ride along unsigned-for and unsealed (the 0.1.15 "damaged"
+      # incident) — a fresh checkout is clean, but be explicit
+      - name: clean build outputs
+        shell: bash
+        run: rm -rf dist dist-server release
+      - name: Pinned native Python for GEPA
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13.15'
+          architecture: x64
+          check-latest: false
+      # Signing producer: win-sac-sign; reviewed source receipts and pinned native checker: MAIN.
+      - name: Prepare pinned Azure signing provider without credentials
+        shell: pwsh
+        env:
+          MURAGE_WINDOWS_SIGNING_ACTION: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82
+        run: |
+          node scripts/windows-signing-provider.mjs "$env:RUNNER_TEMP/windows-signing-provider"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build credential-free application inputs and reviewed native producers
+        shell: pwsh
+        run: |
+          pnpm prepare:backup-windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm package:prepare
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pnpm build:backup-helper
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node scripts/windows-signing-prepare.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Transfer declared preparation inputs for independent controller authorization
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-signing-inputs-${{ github.run_attempt }}
+          path: ${{ vars.WINDOWS_SIGNING_PREPARATION_OUTPUT }}
+          if-no-files-found: error
+          retention-days: 7
+
+  # Job/driver consumer: win-sac-sign; image admission, boundary service, reviewers and controller transport producer: MAIN.
+  windows-signing:
+    name: Protected Windows signing driver
+    needs: [windows-preparation]
+    environment: windows-signing
+    runs-on: ${{ fromJSON(vars.WINDOWS_SIGNING_RUNNER_LABELS) }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: windows-signing-inputs-${{ github.run_attempt }}
+          path: incoming
+      - name: Require the controller-enrolled static launch pin
+        shell: '"C:\Program Files\MurageSigning\pwsh\pwsh.exe" -NoProfile -NonInteractive -File {0}'
+        env:
+          MURAGE_WINDOWS_SIGNING_LAUNCH_SHA256: ${{ vars.WINDOWS_SIGNING_LAUNCH_SHA256 }}
+        run: |
+          if ($env:MURAGE_WINDOWS_SIGNING_LAUNCH_SHA256 -cnotmatch '^[a-f0-9]{64}$') { throw 'Missing controller-enrolled launch pin' }
+      # The patched runner hands credentials to the boundary service. It must never execute this body as a stock credential-bearing ScriptHandler.
+      - name: Run the sealed signing driver
+        shell: '"C:\Program Files\MurageSigning\pwsh\pwsh.exe" -NoProfile -NonInteractive -File {0}'
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+        run: |
+          & 'C:\Program Files\MurageSigning\node\node.exe' 'C:\Program Files\MurageSigning\driver\windows-signing-driver.mjs'
+          exit $LASTEXITCODE
+      - name: Transfer only controller-authenticated signed output
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-signing-output-${{ github.run_attempt }}
+          path: ${{ vars.WINDOWS_SIGNING_OUTPUT_DIRECTORY }}
+          if-no-files-found: error
+          retention-days: 7
+
+  package:
+    name: Qualify the exact signed NSIS installer
+    needs: [windows-signing]
+    runs-on: windows-latest
+    timeout-minutes: 90
+    # Producer: MAIN; consumer: win-sac-sign. No package-neighbor digest discovery.
+    env:
+      MURAGE_WINDOWS_SIGNING_AUTHORITY_SHA256: ${{ vars.WINDOWS_SIGNING_AUTHORITY_SHA256 }}
+      MURAGE_WINDOWS_TRUST_CHECKER: ${{ vars.WINDOWS_TRUST_CHECKER }}
+      MURAGE_WINDOWS_TRUST_CHECKER_SHA256: ${{ vars.WINDOWS_TRUST_CHECKER_SHA256 }}
+      MURAGE_WINDOWS_PE_SOURCE_RECEIPT: ${{ runner.temp }}/windows-pe-sources.json
+      MURAGE_WINDOWS_PE_SOURCE_RECEIPT_SHA256: ${{ vars.WINDOWS_PE_SOURCE_RECEIPT_SHA256 }}
+      MURAGE_WINDOWS_SAC_RELEASE_METADATA: ${{ github.workspace }}/signing/windows-sac-release.json
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
       - name: Restore the pinned tool download cache
         # Primary source for age, restic, cloudflared and the other pinned helpers: served by the
         # Actions cache, not github.com release hosting. Files are named by their pinned sha256 and
@@ -99,56 +253,64 @@ jobs:
           architecture: x64
           check-latest: false
       - name: Build unsigned pinned GEPA worker
-        shell: pwsh
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           python -I native/gepa/build-windows.py "$env:RUNNER_TEMP/gepa-windows"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Sign GEPA native images before freezing their manifest
-        uses: Azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82 # v2
+          node native/gepa/create-manifest.mjs "$pwd/dist-native/gepa/win32-x64" win32-x64 "$env:RUNNER_TEMP/gepa-source-metadata.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $inputMetadata = Get-Content -Raw -LiteralPath "$env:RUNNER_TEMP/gepa-source-metadata.json" | ConvertFrom-Json
+          "MURAGE_WINDOWS_GEPA_SOURCE_MANIFEST_SHA256=$($inputMetadata.extraMetadata.murageGepaManifests.'win32-x64')" >> $env:GITHUB_ENV
+          "MURAGE_BUILD_COMMIT=$(git rev-parse HEAD)" >> $env:GITHUB_ENV
+      - name: Download this attempt's signed output for credential-free qualification
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
         with:
-          azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
-          endpoint: https://eus.codesigning.azure.net
-          signing-account-name: ferrox-labs-signing
-          certificate-profile-name: ferroxlabs
-          files-folder: ${{ github.workspace }}/dist-native/gepa/win32-x64
-          files-folder-filter: exe,dll,pyd
-          files-folder-recurse: true
-          file-digest: SHA256
-          timestamp-digest: SHA256
-          exclude-azure-cli-credential: true
-          timeout: 300
+          name: windows-signing-output-${{ github.run_attempt }}
+          path: .
+      - name: Sign GEPA native images before freezing their manifest — verify the driver receipt
+        shell: pwsh
+        run: |
+          # The obsolete node scripts/windows-gepa-ci.mjs entry refuses. These are checks of the real driver graph.
+          $env:VERSION = node -p "require('./package.json').version"
+          node scripts/windows-signing-qualify.mjs sign
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Verify signed GEPA runtime and freeze trusted metadata
-        shell: pwsh
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
-          ./native/gepa/verify-windows.ps1 -Bundle "$pwd/dist-native/gepa/win32-x64" -Receipt "$pwd/qualification-evidence/gepa-windows-signatures.json"
-          & "$env:RUNNER_TEMP/gepa-windows/venv/Scripts/python.exe" -I native/gepa/offline-fixture.py -- "$pwd/dist-native/gepa/win32-x64/gepa-worker.exe"
+          $env:VERSION = node -p "require('./package.json').version"
+          node scripts/windows-signing-qualify.mjs freeze
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node native/gepa/create-manifest.mjs "$pwd/dist-native/gepa/win32-x64" win32-x64 "$pwd/qualification-evidence/gepa-package-metadata.json"
+          $bundle = "$pwd/release/win-unpacked/resources/gepa-worker"
+          $projection = "$pwd/signing/gepa-projection.json"
+          $projectionHash = node scripts/windows-signing-qualify.mjs gepa-sha256
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Package (Azure Trusted Signing)
-        shell: pwsh
+          New-Item -ItemType Directory -Path qualification-evidence -Force | Out-Null
+          Copy-Item -LiteralPath signing/gepa-package-metadata.json -Destination qualification-evidence/gepa-package-metadata.json
+          ./native/gepa/verify-windows.ps1 -Bundle $bundle -Receipt "$env:RUNNER_TEMP/gepa-windows-signatures.json" -SigningManifest $projection -ExpectedSha256 $projectionHash
+          & "$env:RUNNER_TEMP/gepa-windows/venv/Scripts/python.exe" -I native/gepa/offline-fixture.py -- "$bundle/gepa-worker.exe"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package (Azure Trusted Signing) — verify the protected driver's completion
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
-          $metadata = Get-Content -Raw -LiteralPath qualification-evidence/gepa-package-metadata.json | ConvertFrom-Json
-          $hash = $metadata.extraMetadata.murageGepaManifests.'win32-x64'
-          if ($hash -notmatch '^[a-f0-9]{64}$') { throw 'Missing trusted GEPA manifest hash' }
-          $log = Join-Path $env:RUNNER_TEMP 'package-win.log'
-          pnpm package:win "--config.extraMetadata.murageGepaManifests.win32-x64=$hash" 2>&1 | Tee-Object -FilePath $log
-          $code = $LASTEXITCODE
-          # One retry when electron-builder's own toolchain download (electron zip, nsis, winCodeSign) hit a 5xx or network error.
-          if ($code -ne 0 -and (Select-String -Path $log -Pattern 'Response code 5\d\d|status code 5\d\d|HTTP 5\d\d|ETIMEDOUT|ECONNRESET|socket hang up|EAI_AGAIN' -Quiet)) {
-            Write-Host '::warning::package:win hit a transient download failure; retrying once in 45s'
-            Start-Sleep -Seconds 45
-            pnpm package:win "--config.extraMetadata.murageGepaManifests.win32-x64=$hash"
-            $code = $LASTEXITCODE
-          }
-          exit $code
-        env:
-          NODE_OPTIONS: --max-old-space-size=6144
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          $env:VERSION = node -p "require('./package.json').version"
+          node scripts/windows-signing-qualify.mjs package
+          exit $LASTEXITCODE
+      - name: "Gate: final Windows SAC PE inventory"
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$(node -p 'require(process.env.MURAGE_WINDOWS_SAC_RELEASE_METADATA).manifestSha256')"
+          node scripts/windows-sac-inventory.mjs release/win-unpacked qualification-evidence/SAC-INVENTORY.md "$expected"
+      - name: Upload Windows SAC inventory
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: windows-sac-inventory
+          path: |
+            qualification-evidence/SAC-INVENTORY.md
+            release/SAC-INVENTORY.md
+          if-no-files-found: warn
+
       # The FINAL packaged build.json, not a pre-build directory (handoff 9):
       # release mode, the store identity, no development ID, and the x64 helper.
       - name: Murage for Chrome identity in the packaged app
@@ -166,7 +328,7 @@ jobs:
           echo "commit:  $(git rev-parse HEAD)"
           ls -lh release/*.exe release/*.yml 2>/dev/null || true
       - name: Record installer identity and verify publisher
-        shell: pwsh
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           $installers = @(Get-ChildItem -LiteralPath release -Filter 'Murage-*-setup.exe' -File)
           if ($installers.Count -ne 1) { throw 'Expected exactly one versioned Murage installer' }
@@ -310,6 +472,50 @@ jobs:
           path: ${{ runner.temp }}/package-tool-cache
           key: package-tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/prepare-cloudflared.mjs', 'shared/backup-age-pins.mjs', 'shared/backup-restic-pin.mjs', 'shared/windows-backup-tools.mjs', 'scripts/prepare-cua.mjs', 'scripts/build-murage-cage.mjs') }}-${{ steps.tool-sig.outputs.sig }}
 
+  # SAC collector producer and enforcing Windows image admission owner: MAIN; evidence validator consumer: win-sac-sign.
+  windows-sac-qualification:
+    name: Enforcing SAC qualification as a standard user
+    needs: [package, stduser]
+    runs-on: ${{ fromJSON(vars.WINDOWS_SAC_RUNNER_LABELS) }}
+    environment: windows-sac-qualification
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: windows-installer
+          path: qualified-assets
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: windows-signing-output-${{ github.run_attempt }}
+          path: signing-output
+      - name: Run the enrolled standard-user SAC collector on the exact qualified bytes
+        shell: pwsh
+        env:
+          MURAGE_WINDOWS_SAC_COLLECTOR: ${{ vars.WINDOWS_SAC_COLLECTOR }}
+          MURAGE_WINDOWS_SAC_COLLECTOR_SHA256: ${{ vars.WINDOWS_SAC_COLLECTOR_SHA256 }}
+          SOURCE_SHA: ${{ inputs.ref || github.sha }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $collector = $env:MURAGE_WINDOWS_SAC_COLLECTOR
+          if (-not [IO.Path]::IsPathFullyQualified($collector) -or $env:MURAGE_WINDOWS_SAC_COLLECTOR_SHA256 -cnotmatch '^[a-f0-9]{64}$') { throw 'SAC collector enrollment required' }
+          if ((Get-FileHash -Algorithm SHA256 -LiteralPath $collector).Hash.ToLowerInvariant() -cne $env:MURAGE_WINDOWS_SAC_COLLECTOR_SHA256) { throw 'SAC collector hash mismatch' }
+          & $collector --assets "$pwd/qualified-assets" --signing-output "$pwd/signing-output" --source $env:SOURCE_SHA --output "$env:RUNNER_TEMP/windows-sac-proof"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain controller-authenticated candidate, SAC proof and diagnostics
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: windows-sac-proof-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/windows-sac-proof/
+          if-no-files-found: error
+          retention-days: 7
+
   # Release rule: the Windows build must install and start as a STANDARD
   # (non-admin) user. Runs after the packaging job in the same run, on a
   # GitHub-hosted runner only, against that run's windows-installer artifact.
@@ -328,9 +534,14 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
-          sparse-checkout: ci
+          sparse-checkout: |
+            ci
+            .github/actions/windows-ci-tools
+            scripts
+      - uses: ./.github/actions/windows-ci-tools
+        if: runner.os == 'Windows'
       - name: Download the installer artifact
-        shell: pwsh
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
@@ -345,7 +556,7 @@ jobs:
           "installer=$($exe[0].Name) sha256=$((Get-FileHash C:\inst\setup.exe).Hash) sig=$($sig.Status)"
           if ($sig.Status -ne 'Valid') { throw 'installer signature not Valid' }
       - name: Create the standard user (password never printed)
-        shell: pwsh
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           $chars = [char[]]([char]'a'..[char]'z' + [char]'A'..[char]'Z' + [char]'0'..[char]'9')
           $bytes = [byte[]]::new(24); [Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
@@ -368,7 +579,7 @@ jobs:
           "node=$((Get-Command node).Source)"
           "NODE_EXE=$((Get-Command node).Source)" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - name: Run the check as the standard user
-        shell: pwsh
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           $sec = ConvertTo-SecureString $env:STD_PW -AsPlainText -Force
           $cred = [pscredential]::new($env:STD_USER, $sec)
@@ -391,7 +602,7 @@ jobs:
           if ($p.ExitCode -ne 0) { throw "standard-user check failed, exit $($p.ExitCode)" }
       - name: Clean up the user
         if: always()
-        shell: pwsh
+        shell: pwsh -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |
           $prof = if ($env:STD_PROFILE) { $env:STD_PROFILE } else { 'C:\Users\mrgstd' }
           Get-Process | Where-Object { $_.Path -like "$prof\*" } | Stop-Process -Force -ErrorAction SilentlyContinue

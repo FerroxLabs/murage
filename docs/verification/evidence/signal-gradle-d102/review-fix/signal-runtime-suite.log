@@ -1,0 +1,11 @@
+
+ RUN  v4.1.12 /repo
+
+ ✓ scripts/signal-runtime.test.mjs (152 tests | 6 skipped) 8652ms
+   ✓ T-GRADLE-STRICT: production execution and key retrieval fail closed with fake inputs  1007ms
+   ✓ T-PIN: bundled startup shares the staging digest without checkout files or CLI side effects  621ms
+
+ Test Files  1 passed (1)
+      Tests  146 passed | 6 skipped (152)
+   Start at  09:06:54
+   Duration  9.07s (transform 621ms, setup 0ms, import 306ms, tests 8.65s, environment 0ms)

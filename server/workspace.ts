@@ -9,7 +9,8 @@ import { executionStore, partitionRoots, threadPartition, isHomePartition, type 
 // memory/ holds topic files the bot reads on demand with its ordinary
 // file tools. Plain markdown on purpose — the user can open, edit, or
 // delete anything the bot believes.
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, renameSync, statSync, unlinkSync, writeFileSync, type Stats } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readdirSync, readSync, renameSync, statSync, unlinkSync, type Stats } from "node:fs";
 import { dirname, join } from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 
@@ -94,7 +95,8 @@ export function selectFileWorkspace(dataDir: string, store: Pick<Store, "bots" |
   const partition = threadPartition(bot, threadId);
   const selection = (root: string): FileWorkspaceSelection => ({ root, managed: artifactWorkspaceIdentity(root) === artifactWorkspaceIdentity(managedRoot) });
   const tasks: Array<{ threadId: string; cwd?: string | null; resumeCursors?: Record<string, unknown>; localOutputs?: true }> = bot.tasks ?? [{ threadId: bot.threadId, resumeCursors: bot.resumeCursors }];
-  const task = tasks.find(item => item.threadId === threadId);
+  const indexed = store as Partial<Store>;
+  const task = bot.tasks && indexed.taskByThread ? indexed.taskByThread(botId, threadId) : tasks.find(item => item.threadId === threadId);
   if (bot.partitionedAt !== undefined && !isHomePartition(partition)) {
     const room = store.groups.find(item => item.memberIds.includes(botId) && (item.threadId === threadId || item.tasks?.some(t => t.threadId === threadId)));
     const pinned = task ? task.cwd : room?.tasks?.find(t => t.threadId === threadId)?.pinnedCwd ?? room?.pinnedCwd ?? room?.cwd;

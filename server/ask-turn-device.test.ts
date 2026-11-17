@@ -429,3 +429,10 @@ describe("index.ts wiring", () => {
     expect(source).toMatch(/sendStore\.blockedByEarlier\(threadId, row\.seq\) \|\| queuedStartPending\(threadId\)/);
   });
 });
+
+
+it("a queued owner's spend hold keeps the batch for recovery after the limit rises", async () => {
+  const failed: unknown[] = [];
+  expect(await runQueuedStart({ start: async () => { throw { status: 409, code: "spend_limit" }; }, occupied: () => false, onFail: error => failed.push(error) })).toBe(START_REQUEUE);
+  expect(failed).toEqual([]);
+});

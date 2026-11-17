@@ -11,6 +11,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { browserBundlePaths, browserBundleSpec } from "../server/browser-bundle-release.ts";
 import { executableTarget } from "./prepare-cloudflared.mjs";
 import { safeWipeSync } from "../server/testing/safe-wipe.mjs";
+import { fetchBuildInput } from "./fetch-build-input.mjs";
 
 export const BROWSER_LICENSE_FILES = [
   "agent-browser-LICENSE.txt", "LICENSE-axe-core.txt", "LICENSE-axe-core-THIRD-PARTY.txt", "README.md",
@@ -119,7 +120,7 @@ export async function releaseBytes(asset, cacheDirectory) {
       // in place, and this build's deletes go through safeWipeSync.
     }
   }
-  const response = await fetch(asset.url, { signal: AbortSignal.timeout(600_000), redirect: "follow" });
+  const response = await fetchBuildInput(asset.url, { sha256: asset.sha256, bytes: asset.bytes, timeoutMs: 600_000 });
   if (!response.ok) throw new Error(`Could not download ${asset.asset}: HTTP ${response.status}`);
   const parts = [];
   let size = 0;
