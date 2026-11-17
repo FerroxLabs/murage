@@ -1,0 +1,57 @@
+✔ public release checker requires 257 rows and three real-wipe controls (19.980239ms)
+✔ public checker rejects refusals and holds even with zero cards (5.367754ms)
+✖ strict public release cannot judge an unknown outcome as a successful zero-card run (4.759656ms)
+✔ a shape witness cannot turn unavailable original release rows into a pass (3.663442ms)
+✔ all 257 real-log rows and three wipe controls are mandatory (9.189765ms)
+✔ one non-wipe card, refusal, silent deny or missing input kills replay (9.437901ms)
+✔ every positive wipe control must actually card, not refuse or run (2.893239ms)
+✔ replay receipts bind exact corpus bytes and never call a missing corpus a pass (2.661238ms)
+✖ explicit card/refusal counts cannot be hidden behind a RUN kind or a single wipe label (1.50335ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 7
+ℹ fail 2
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 103.393748
+
+✖ failing tests:
+
+test at scripts/nolim-replay/release-ruling.node-test.mjs:22:1
+✖ strict public release cannot judge an unknown outcome as a successful zero-card run (4.759656ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  'PASS' !== 'FAIL'
+  
+      at TestContext.<anonymous> (file:///work/scripts/nolim-replay/release-ruling.node-test.mjs:23:54)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'PASS',
+    expected: 'FAIL',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at scripts/nolim-replay/ruling.node-test.mjs:51:1
+✖ explicit card/refusal counts cannot be hidden behind a RUN kind or a single wipe label (1.50335ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  'PASS' !== 'FAIL'
+  
+      at TestContext.<anonymous> (file:///work/scripts/nolim-replay/ruling.node-test.mjs:54:12)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'PASS',
+    expected: 'FAIL',
+    operator: 'strictEqual',
+    diff: 'simple'
+  }

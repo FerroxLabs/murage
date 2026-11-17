@@ -12,7 +12,9 @@ toolchain requirements separate. Never describe an unpublished candidate as the
 latest public release. README review is required for every release.
 
 For a normal release, run **Actions → Prepare next release → Run workflow**
-and choose a patch, minor, or custom version. It opens a tiny version-bump PR;
+and choose a patch, minor, or custom version. It opens or reuses a tiny
+version-bump PR on `release/prep-<version>` and explicitly dispatches `ci.yml`
+on that branch (GitHub-token commits do not start push CI);
 merging that PR automatically starts **Release** and assembles a draft from the
 exact merge commit. Review and publish the draft when it is ready.
 
@@ -52,7 +54,24 @@ stop the workflow. A missing published tag is checked against authenticated
 draft listings too. Prepare next release inspects an existing version branch:
 its package version must match, and its open PR is reused if present. If the
 branch exists without an open PR, the workflow creates the missing PR without
-rewriting or pushing that branch.
+rewriting or pushing that branch. A mismatched version or API failure stops
+preparation. The `release-version-patch` artifact is retained on the preparation
+run for review: download and unzip it to inspect `release-version.patch`. The
+`open-pr` job performs the branch/PR handoff automatically; reviewers review
+and merge the linked PR. Do not apply the patch again to an existing PR.
+
+Preparation uses only `GITHUB_TOKEN`. Only Release's `assemble` job may mutate
+releases or release assets through an API, `gh release`, or electron-builder
+publishing, and only that job may use `RELEASES_PAT`. Other jobs may call release
+APIs only with GET, using `GITHUB_TOKEN` or no token and `contents: read`.
+After the Signal prerequisite and version checks, `assemble` creates, verifies
+and deletes a uniquely named
+throwaway draft to prove token write access, then checks the candidate version
+is still available. The read-only `preflight` job observes successful completion
+of that probe in the same workflow run attempt before any platform build starts.
+A failed probe stops builds. `assemble` then waits for successful `stage`, which
+depends on CI and every platform job. No installer upload happens before that
+barrier. Both waits are bounded and API failures stop the run.
 
 ## Draft assembly and publication boundaries
 
@@ -70,9 +89,11 @@ Publication waits for GitHub's own digest of every asset. GitHub computes
 digests asynchronously, so the proof step polls for up to a minute. A wrong
 name, an unfinished upload or a mismatched digest fails at once. If any digest
 is still missing after the wait, the release is **held**: the proof step fails,
-Publish does not run, and the draft is left untouched. To resume without
-rebuilding, re-run the failed assemble job (the build artifacts are reused and
-retained uploads are kept), or verify the retained draft directly with
+Publish does not run, and the draft is left untouched. To resume through
+Actions, select **Re-run all jobs**. The probe, staging,
+review record and artifacts are bound to one run attempt; rerunning only
+`assemble` cannot consume a previous attempt's stage result. Existing matching
+release uploads are still retained. To verify the retained draft directly, use
 `node scripts/release-digests.mjs verify <version> <release-id> <assets-dir>`.
 `scripts/release-guard.mjs publish` repeats the check right before it flips the
 draft. Publishing from the GitHub UI skips this check, so verify first.
@@ -104,8 +125,9 @@ release appears without a source commit.
 
 `app-update.yml` is baked into every packaged desktop app and is the only
 thing that tells an installed copy where its updates come from. It is written
-from `electron-builder.yml`'s `publish` block, which must stay
-`owner: FerroxLabs` / `repo: murage-releases`. Changing it strands every
+by `scripts/offline-update-metadata.mjs`, with `owner: FerroxLabs` /
+`repo: murage-releases`. Both builder configurations keep `publish: null`;
+packaging cannot upload a release. Changing it strands every
 already-installed user with no error anywhere, so the mac, Windows, and Ubuntu
 jobs each assert both halves on the packaged bytes, and
 `scripts/verify-linux-package.mjs` re-checks them inside the `.deb` and the
@@ -133,9 +155,11 @@ commit: a scoped run alone is refused, and a red full run stays red until that
 run is re-run or a new full run passes. A run re-run with `gh run rerun <id>
 --failed` counts once it goes green. A push to main starts CI and Release
 together, so a run still in progress is waited for (up to 4 hours; the builds
-run beside it and only the draft job waits on the verdict); no run at all is
+run beside it after the token probe, and staging waits on the verdict); no run at all is
 refused after a ten minute grace; a failed, cancelled or skipped one is refused
-straight away. Re-run the failed CI jobs on the commit and re-run the release to
+straight away. The workflow has no Actions-write cancellation job; a CI failure
+blocks staging and upload but does not cancel builds already running. Re-run
+the failed CI jobs on the commit and re-run all jobs of the release to
 continue.
 
 The same gate needs the latest nightly green. CI's Vitest shards leave out
@@ -247,10 +271,11 @@ Check a download with
 
 ### Build-provenance attestation
 
-The Linux job attests the `.deb`, the `.AppImage` and `SHA256SUMS-ubuntu-x64.txt`
-with `actions/attest-build-provenance` (pinned by full commit SHA, v4.2.2). Check a
-download with `gh attestation verify Murage.AppImage --repo FerroxLabs/murage`. The
-macOS and Windows jobs are not attested yet, and cosign is not used.
+Release jobs do not create GitHub provenance attestations: the exact write-job
+allowlist does not grant Linux `id-token: write` or `attestations: write`.
+Platform signing, checksum signatures, package verification and release-asset
+digest checks remain required. Do not expect `gh attestation verify` to find an
+attestation for these builds.
 
 ### Local fallback
 
@@ -272,3 +297,91 @@ bundled Codex version from a catalog comment. Record CLI model-support evidence 
 default, preserve saved choices, and keep a live catalog authoritative. The
 [1.0.18 model-default qualification](verification/model-defaults.md) records the
 public-package evidence and verification limits for this change.
+
+## Windows signing orchestration and extraction
+
+Implementation and validators: win-sac-sign. Static enrollment, controller keys,
+cloud adapters, protected runner admission and Windows collectors: MAIN. Existing
+Azure signing identity and protected-environment approval: secure administration.
+
+Preparation executes only the raw-input producers in the authenticated full
+schema-3 plan. Its receipts retain that full parent digest; late app, backup and
+NSIS inputs resolve from this driver's frozen events. `producer-bindings.json`
+binds each late output to an absolute output and working directory, explicit
+credential-free environment, input files and enrolled tools. Its
+`nsisResources.root` must select the static `nsis-resources` tree. The driver
+copies and signs that tree's declared PE images before embedding, and copies the
+enrolled elevation helper before app preflight. Neither operation edits the
+sealed original tools.
+
+The static authority also enrolls an `extractor` tree containing `bundle.json`.
+That lock pins the complete client, bootstrap, verifier and configuration file
+set, the existing separate run-authorization and extraction-result keys, distinct
+extraction and VM-control OIDC audiences and subjects, and the fixed Windows VM
+recipe. The Linux bootstrap's capability is memory-only, single-use, nonce-bound and
+installer-bound; its Unix socket is `0600`. Controller adapters must enforce the
+fresh OS disk, standard account, per-user silent install, disabled launch and
+guest networking, controller-only collection, expiry and destruction contract.
+The controller hashes opaque installer/archive streams; it does not unpack them.
+
+Extraction archives contain `installed/` and `transient/` namespaces. The Linux
+client verifies the independent result signature, nonce, original build identity,
+publication identity and archive digest before bounded materialization. Every
+transient image must match a frozen signing record. Promotion additionally checks
+the candidate's authenticated `transientFiles` set and `uninstaller` mapping
+(`retainedPath`, `installedPath`, `sha256`). Both staging and publication perform
+fresh extraction of their actual installer bytes.
+
+`records.json` retains the complete source/final records. The candidate's
+`signing.records` descriptor pins it; each record must match its graph event.
+The authenticated signature capture is JSON `{schema:1, files:[...]}`, with each
+record's canonical path, final `sha256`, `leafCertificateSha256`, current native
+trust status, embedded-signature flag, publisher and timestamp flag. Promotion
+checks the file/leaf pair and the common signed/preserved publisher policy.
+
+After ZIP, ASAR, installed-payload and unchanged-tree checks, the driver writes its
+complete receipt and metadata. MAIN's controller collects the output and signs
+`signing/output.json` with the run-authorization key. That envelope contains the
+full build `identity`, `receipt` descriptor/configuration/coverage and exact
+`files` set under `release/` and `signing/`, excluding the envelope itself and
+`signing/authority.json`. Qualification verifies that set against the protected
+authority digest before running the existing package gates. Retained images use
+`signing/retained/<canonical record path>`.
+
+For a direct authenticated publication resume, `MURAGE_WINDOWS_BUILD_RUN_ID` and
+`MURAGE_WINDOWS_BUILD_RUN_ATTEMPT` select the original build identity;
+`GITHUB_RUN_ID` and `GITHUB_RUN_ATTEMPT` identify the current publication. They do
+not relax Actions' existing same-attempt staging barrier. The supplied
+receipt-write-failure mutant is in
+`scripts/fixtures/windows-producer-mutants.json`.
+
+The checked-in authority remains unenrolled. Portable tests and synthetic
+controller/native doubles do not qualify real Windows trust, VM cleanup or SAC.
+Production credentials stay blocked until the ruled Windows witnesses and
+enforcing standard-user SAC proof exist.
+
+The WIN-SAC collector ruling D2(1) permits exactly version `1.0.19`. Signing admission
+checks the authenticated source tree's `package.json`; promotion rejects other
+versions. The candidate-producing build precedes immutable witness enrollment;
+`locked-build` is a separate witness rebuild and never rewrites enrolled inputs.
+The native collector validation core and build/enrollment scripts are under
+`infra/windows-signing/collector/`. Its measurement adapters are incomplete and
+both collection entries refuse execution. See [MAIN's runbook](../RUN-ON-WINDOWS.md)
+and [reserved decisions](../QUESTIONS-FOR-MAIN.md); this is not a runnable Windows
+qualification deployment.
+
+S4 proof additionally binds `tokenOpen` to `OpenProcessToken`, requested access
+`40` (`TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY`), `succeeded:false`, and identical
+`process`/`tokenOwner` objects containing numeric `pid` and decimal-string
+`creationTime`. `successProcess` and `witnessProcess` use distinct PID/creation-time
+pairs. Failure and success process `imageSha256` values match the installed
+`Murage.exe`; `jobStarted` and `engineSpawned` are false and `refusalCode` is `EPOWER`.
+The protected producer must authenticate real observations of the signed installed
+candidate. No injection mechanism or continuous SAC adapter is accepted yet.
+
+The remaining real-host checks have an executable
+[witness pack contract](../scripts/windows-signing-witness/README.md). MAIN runs it
+on the existing tagged Windows box with its sealed collector and independently
+selected enrollment digest. It requires all 21 cases and cleanup, retains captures
+outside the checkout, and leaves release HOLD in place. Pack validation does not
+replace authenticated SAC evidence or either promotion gate.

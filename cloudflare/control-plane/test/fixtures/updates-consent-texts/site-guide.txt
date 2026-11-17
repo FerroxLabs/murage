@@ -1,0 +1,2 @@
+# muragesite c8e6ce21612c73a563690e016a78202f6ef84660 apps/web/app/[locale]/(marketing)/_lib/murage/setup-guide.action.ts:13 (GUIDE_NEWS_CONSENT, source guide)
+const GUIDE_NEWS_CONSENT = 'Also email me occasional Murage news';

@@ -1,3 +1,5 @@
+import { LearningConsentNotice } from "./LearningConsentNotice";
+import { BotReviewSheet } from './BotReviewSheet';
 import { useSlashSkills } from "@/lib/use-slash-skills";
 import { CallMeWhenDone } from "./CallMeWhenDone";
 import { track } from "@/lib/analytics";
@@ -53,8 +55,7 @@ import {
   slashSkillMatches,
 } from "@/lib/composer-commands";
 import { openFirstRun } from "@/lib/first-run";
-import { engineCommandPick, engineCommandsNote, matchEngineCommands } from "@/lib/engine-commands-menu";
-import type { EngineCommand, EngineCommandsView } from "../../shared/engine-commands";
+import { engineCommandPick, engineCommandsNote, matchEngineCommands, selectedCommandSend, commandLabel, type DisplayCommand, type DisplayCommandsView } from "@/lib/engine-commands-menu";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { FullAccessWarning } from "./FullAccessWarning";
 import { noLimitsTermsPending } from "./NoLimitsTermsPrompt";
@@ -97,6 +98,11 @@ import { ComposerPlusMenu } from "./ComposerPlusMenu";
 import { PushToTalk, browserPushToTalkFacts } from "./PushToTalk";
 import {
   cleanupEnabled,
+  CLEANUP_NOTICE,
+  requestCleanupNotice,
+  cleanupNoticePending,
+  subscribeCleanupNotice,
+  markCleanupNoticeShown,
   undoCleanup,
   undoOffered,
   type CleanupUndo,
@@ -139,7 +145,7 @@ type MentionChoice = { id: string; name: string; bot?: Bot };
 type SlashEntry =
   | { kind: "murage"; command: ComposerSlashCommand }
   | { kind: "skill"; skill: SlashSkill }
-  | { kind: "engine"; command: EngineCommand };
+  | { kind: "engine"; command: DisplayCommand };
 
 const GOAL_COMMAND: ComposerSlashCommand = {
   id: "goal",
@@ -234,6 +240,7 @@ function PermissionModeSelector({ bot, onSetMode, routine }: {
  * same one, so the engine notes, the desktop-only levels and Refresh
  * permissions read the same on both. */
 // The confirm card opens from a pick most conversations never make, so it stays off the first paint.
+const SpendPauseChunk = retryableLazy(() => import("./SpendPauseCard").then(module => ({ default: module.ComposerSpendPause })));
 const LevelConfirmChunk = retryableLazy(() => import("@/components/approval/LevelConfirmCard").then((module) => ({ default: module.LevelConfirmDialog })));
 // The answer panel loads with the first card that waits; the chat card's own
 // line and the words it reads (src/lib/pending-approval.ts) are the first paint.
@@ -292,6 +299,15 @@ function PermissionLevelMenu({ bot, routine, onPick, onDone }: {
 }
 
 /** Renders the editable message composer and its pending attachments. */
+/** The level chip of the composer that owns `from`: the nearest ancestor holding one, so a second composer is never focused. */
+function levelChipNear(from: HTMLElement | null): HTMLElement | null {
+  for (let node = from?.parentElement ?? null; node; node = node.parentElement) {
+    const chip = node.querySelector<HTMLElement>('[data-coach="level-chip"]');
+    if (chip) return chip;
+  }
+  return null;
+}
+
 export function Composer({
   bot,
   group,
@@ -337,7 +353,8 @@ export function Composer({
   // Held also covers this tab's press from the click until it is refused or its journal is written (lib/drafts.ts
   // reservation): typing, attachments, reply and mode are blocked, so what is sent is what was shown.
   const draftHeld = useSyncExternalStore(subscribeDraftHeld, () => isDraftHeld(draftId0), () => false);
-  const sendPending = sendingId !== null || draftHeld;
+  const [commandSending, setCommandSending] = useState(false);
+  const sendPending = sendingId !== null || draftHeld || commandSending;
   const { capabilities } = useDesktopCapabilities();
   // Unified target: a 1:1 bot thread or a room. In a room the @ picker
   // offers members plus @everyone; explicit mentions override the room's
@@ -568,6 +585,20 @@ export function Composer({
   // tap puts the raw words back. Offered only while the box still holds what
   // clean-up wrote (undoOffered), so it never overwrites later typing.
   const [cleanupUndo, setCleanupUndo] = useState<CleanupUndo | null>(null);
+  const [showCleanupNotice, setShowCleanupNotice] = useState(cleanupNoticePending);
+  const cleanupNoticeRef = useRef<HTMLParagraphElement>(null);
+  const onCleanupStart = () => setShowCleanupNotice(requestCleanupNotice());
+  useEffect(() => {
+    const resumeNotice = () => {
+      if (cleanupNoticePending()) setShowCleanupNotice(true);
+    };
+    const unsubscribe = subscribeCleanupNotice(resumeNotice);
+    resumeNotice();
+    return unsubscribe;
+  }, []);
+  useEffect(() => {
+    if (showCleanupNotice && cleanupNoticeRef.current?.isConnected) markCleanupNoticeShown();
+  }, [showCleanupNotice, bot?.staged]);
 
   // image paste is offered only when every bot that will actually answer
   // can open one. sendGroup routes to mentions, else the room default —
@@ -627,16 +658,18 @@ export function Composer({
   const slashActive = Boolean(slash && slash.start !== dismissedSlashAt);
   const engineBotId = group ? undefined : bot?.id;
   const engineInstanceId = group ? undefined : bot?.modelSelection.instanceId;
-  const [engineCommands, setEngineCommands] = useState<{ key: string; view: EngineCommandsView } | null>(null);
+  const [selectedEngineCommand, setSelectedEngineCommand] = useState<{ command: DisplayCommand; threadId: string; botId: string; instanceId?: string } | null>(null);
+  const commandSendId = useRef<{ handle: string; args: string; sendId: string } | null>(null);
+  const [engineCommands, setEngineCommands] = useState<{ key: string; view: DisplayCommandsView } | null>(null);
   useEffect(() => {
     if (!slashActive || !engineBotId) return;
     const key = `${engineBotId}:${engineInstanceId ?? ""}`;
     let cancelled = false;
     api(`/api/bots/${engineBotId}/engine-commands`)
-      .then((view: EngineCommandsView) => { if (!cancelled) setEngineCommands({ key, view }); })
+      .then((view: DisplayCommandsView) => { if (!cancelled) setEngineCommands({ key, view }); })
       .catch(() => { /* no engine group: Murage's own commands still work */ });
     return () => { cancelled = true; };
-  }, [slashActive, engineBotId, engineInstanceId]);
+  }, [slashActive, engineBotId, engineInstanceId, state.connected]);
   const engineView = engineBotId && engineCommands?.key === `${engineBotId}:${engineInstanceId ?? ""}` ? engineCommands.view : null;
   const engineCandidates = useMemo(
     () => (slashActive && slash && engineView?.status === "ready" ? matchEngineCommands(engineView.commands, slash.query) : []),
@@ -646,7 +679,7 @@ export function Composer({
   // A one-to-one chat also lists the bot's enabled skills; a room's members each have their own, so a room keeps to the commands above.
   const botSkills = useSlashSkills(group ? undefined : bot?.id, slashActive);
   const skillCandidates = useMemo(
-    () => (slash ? skillSlashRows(botSkills, new Set((engineView?.status === "ready" ? engineView.commands : []).map((command) => command.name))).filter((skill) => slashSkillMatches(skill, slash.query)) : []),
+    () => (slash ? skillSlashRows(botSkills, new Set((engineView?.status === "ready" ? engineView.commands : []).map((command) => commandLabel(command)))).filter((skill) => slashSkillMatches(skill, slash.query)) : []),
     [slash, botSkills, engineView],
   );
   const slashEntries: SlashEntry[] = [
@@ -695,15 +728,34 @@ export function Composer({
       ?.scrollIntoView({ block: "nearest" });
   }, [highlight, mentionPickerOpen]);
 
-  // one line at rest, then grow with the draft — hard cap at six lines
-  useEffect(() => {
+  // one line at rest, then grow with the draft; capped at six lines of text (the CSS max-height, which also carries the compact box's 96px, is the other bound)
+  const fitField = useCallback(() => {
     const el = inputRef.current;
     if (!el) return;
-    const line = parseFloat(getComputedStyle(el).lineHeight) || 24;
-    const cap = line * 6;
+    const cs = getComputedStyle(el);
+    const line = parseFloat(cs.lineHeight) || 24;
+    const cssMax = parseFloat(cs.maxHeight);
+    const cap = Math.min(line * 6 + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0), Number.isFinite(cssMax) ? cssMax : Infinity);
     el.style.height = "auto";
     el.style.height = `${Math.min(el.scrollHeight, cap)}px`;
-  }, [text]);
+  }, []);
+  // also when the phone layout flips (rotation across 768px) or the field's width changes: the same words wrap differently
+  useEffect(() => { fitField(); }, [text, phoneComposer, compact, fitField]);
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    let width = el.clientWidth;
+    let frame = 0;
+    // fitField resizes the observed field itself, so it runs next frame, never inside the observer's own delivery (that raises "ResizeObserver loop")
+    const watch = new ResizeObserver(() => {
+      if (el.clientWidth === width) return;
+      width = el.clientWidth;
+      if (frame) cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => { frame = 0; fitField(); });
+    });
+    watch.observe(el);
+    return () => { watch.disconnect(); if (frame) cancelAnimationFrame(frame); };
+  }, [fitField, phoneComposer, compact]);
 
   const pickMention = (peer: MentionChoice) => {
     if (!mention) return;
@@ -740,35 +792,48 @@ export function Composer({
     });
   };
 
-  // An engine command goes to the bot's engine as typed. One that takes
-  // input is left in the draft for the owner to finish; one that takes none
-  // is sent now, unless the draft already holds more after it.
-  const pickEngineCommand = (command: EngineCommand) => {
-    if (!slash || !bot) return;
+  const sendSelectedEngineCommand = (command: DisplayCommand, draft: string) => {
+    if (compact || !bot || !engineBotId || !threadId || commandSending) return;
+    const body = selectedCommandSend(command, draft, newSendId());
+    if (!body) return;
+    const held = commandSendId.current;
+    if (held?.handle === body.commandHandle && held.args === body.args) body.sendId = held.sendId;
+    else commandSendId.current = { handle: body.commandHandle, args: body.args, sendId: body.sendId };
+    setCommandSending(true);
+    dispatch({ type: "sendEngineCommand", botId: bot.id, threadId, ...body, text: draft,
+      onSent: () => {
+        setCommandSending(false); setSelectedEngineCommand(null); commandSendId.current = null;
+        editText(""); setCaret(0); setDismissedSlashAt(null); onSent?.();
+      },
+      onError: (error) => {
+        setCommandSending(false);
+        // A stale list is never retried as ordinary text. Fetch the fresh safe
+        // view; retain the draft so the owner can choose again.
+        if (error && typeof error === "object" && "status" in error && error.status === 409) {
+          void api(`/api/bots/${engineBotId}/engine-commands`)
+            .then((view: DisplayCommandsView) => setEngineCommands({ key: `${engineBotId}:${engineInstanceId ?? ""}`, view }))
+            .catch(() => {
+              // The send refusal is already shown by the store. A failed refresh
+              // must drop the stale handles so they cannot be offered again.
+              setEngineCommands(null);
+            });
+        }
+      },
+    });
+  };
+
+  const pickEngineCommand = (command: DisplayCommand) => {
+    if (!slash || !bot || !threadId) return;
     const pick = engineCommandPick(command);
-    if (pick.kind === "send" && !text.slice(slash.end).trim() && !locked) {
-      const sent = pick.text;
-      dispatch({
-        type: "send",
-        botId: bot.id,
-        text: sent,
-        sendId: newSendId(),
-        threadId,
-        onError: () => {
-          editText(sent);
-          return false;
-        },
-      });
-      track("message_sent", { driver: bot.modelSelection?.instanceId, queued: busy && !canSteer, engineCommand: true });
-      editText("");
-      setCaret(0);
-      setDismissedSlashAt(null);
-      return;
-    }
-    const next = replaceComposerSlashTrigger(text, slash, pick.text.trimEnd() + " ");
+    const next = replaceComposerSlashTrigger(text, slash, pick.text.trimEnd() + (pick.kind === "insert" ? " " : ""));
     editText(next.text);
+    setSelectedEngineCommand({ command, threadId, botId: bot.id, instanceId: engineInstanceId });
     setCaret(next.caret);
     setDismissedSlashAt(slash.start);
+    if (pick.kind === "send" && !text.slice(slash.end).trim() && !locked) {
+      sendSelectedEngineCommand(command, next.text);
+      return;
+    }
     requestAnimationFrame(() => {
       inputRef.current?.focus();
       inputRef.current?.setSelectionRange(next.caret, next.caret);
@@ -925,7 +990,17 @@ export function Composer({
     }
   };
   const send = () => {
-    if (locked || sendingRef.current || isDraftHeld(draftId)) return;
+    if (locked || sendingRef.current || isDraftHeld(draftId) || commandSending) return;
+    if (selectedEngineCommand && selectedCommandSend(selectedEngineCommand.command, text, "")) {
+      if (selectedEngineCommand.threadId !== threadId || selectedEngineCommand.botId !== bot?.id || selectedEngineCommand.instanceId !== engineInstanceId) {
+        dispatch({ type: "error", message: "Choose the command again for this conversation." });
+        return;
+      }
+      sendSelectedEngineCommand(selectedEngineCommand.command, text);
+      return;
+    }
+    // Editing away the selected command deliberately returns to owner text.
+    if (selectedEngineCommand) setSelectedEngineCommand(null);
     // WHAT HAS TO BE SETTLED BEFORE A DRAFT IS COMPOSED.
     //
     // A pasted Flux Router key must never reach the transcript, and an image
@@ -1135,6 +1210,7 @@ export function Composer({
         write: (next) => editTextRef.current(next),
         read: () => readComposerDraft(draftIdRef.current).text,
         target: () => targetRef.current,
+        onCleanupStart,
         applyCleanup: (next, undo) => {
           setCleanupUndo(undo);
           editTextRef.current(next);
@@ -1221,13 +1297,24 @@ export function Composer({
       return;
     }
     setSpeechError(null);
+    setShowCleanupNotice(false);
     dictationPress(draftId, text.trim());
   };
 
+  if (bot?.staged) return bot.staged.reason === 'turn-open'
+    ? <p className="p-4 text-sm text-ink-secondary">{bot.name} starts when this reply finishes.</p>
+    : <BotReviewSheet botIds={[bot.id]} />;
   return (
     <div data-composer className="pointer-events-none relative px-5 pb-3" data-composer-compact={compact ? "" : undefined}>
+      <LearningConsentNotice />
+      {bot && <div className="pointer-events-auto mb-2 empty:hidden"><LazyBoundary inline onRetry={SpendPauseChunk.retry}><Suspense fallback={null}><SpendPauseChunk.Component model={bot.modelSelection.model} connectionId={bot.modelSelection.connectionId} onOpenUsage={() => dispatch({ type: "toggleAppSettings", open: true, section: "usage" })} /></Suspense></LazyBoundary></div>}
       {/* No fill or hairline on this wrapper — those were the black frame
           in the pill's top corners. The dock overlays the transcript. */}
+      {showCleanupNotice && (
+        <p ref={cleanupNoticeRef} data-cleanup-notice role="status" className="pointer-events-auto mb-2 text-[12px] text-ink-secondary">
+          {CLEANUP_NOTICE}
+        </p>
+      )}
       {cleanupUndo && undoOffered(cleanupUndo, text) && (
         <div className="pointer-events-auto mb-2 flex w-full items-center gap-2 rounded-lg border border-hairline/60 bg-raised px-3 py-2 text-[12px] text-ink-secondary">
           <span className="min-w-0 flex-1">Dictation cleaned up.</span>
@@ -1311,9 +1398,9 @@ export function Composer({
                   {section.note && <div className="px-3 py-2.5 text-xs text-ink-secondary">{section.note}</div>}
                   {section.entries.map((entry) => {
                     const index = slashEntries.indexOf(entry);
-                    const label = entry.kind === "murage" ? entry.command.label : entry.kind === "skill" ? `/${entry.skill.name}` : `/${entry.command.name}`;
+                    const label = entry.kind === "murage" ? entry.command.label : entry.kind === "skill" ? `/${entry.skill.name}` : `/${commandLabel(entry.command)}`;
                     const description = entry.kind === "murage" ? entry.command.description : entry.kind === "skill" ? entry.skill.description : entry.command.description ?? entry.command.hint;
-                    const rowId = entry.kind === "murage" ? entry.command.id : entry.kind === "skill" ? entry.skill.name : entry.command.name;
+                    const rowId = entry.kind === "murage" ? entry.command.id : entry.kind === "skill" ? entry.skill.name : entry.command.handle;
                     return (
                       <button
                         key={`${entry.kind}:${rowId}`}
@@ -1464,23 +1551,32 @@ export function Composer({
               the textarea it came out of and above the controls row — not
               inside that row, and not at the far end of a transcript the
               user has scrolled away from. */}
-          <div className={phoneComposer ? "w-full" : "contents"}>
+          <div className={phoneComposer ? "w-full empty:hidden" : "contents"}>
           <QueuedComposerMessages
             items={shownQueued}
             phone={phoneComposer}
             onCancel={cancelQueued}
-            onResend={(item) => {
-              // The same send id, words, reply, mode and responder: the server treats it as the new attempt.
-              const again = state.pendingQueued[threadId]?.find((entry) => entry.queueId === item.queueId);
-              const sendId = again?.sendId;
-              if (!again?.refused || !sendId) return;
-              // the chip is the one recovery surface for these words: no restored draft or retry item keeps a second copy
-              releaseRecoveredSend(sendId, { includeFrozen: true });
-              // Each press mints its own action token, and presents the stop token the chip carries now: a retry of an earlier press cannot.
-              const press = { resend: true as const, actionId: crypto.randomUUID(), ...(again.refused.restoreGen ? { restoreGen: again.refused.restoreGen } : {}), ...(again.refused.stopGen ? { stopGen: again.refused.stopGen } : {}) };
-              if (group) dispatch({ type: "sendGroup", groupId: group.id, text: again.text, sendId, ...press, threadId, mode: again.refused.mode ?? "chat", ...(again.refused.replyToId ? { replyToId: again.refused.replyToId } : {}), ...(again.refused.responderId ? { responderId: again.refused.responderId } : {}) });
-              else if (bot) dispatch({ type: "send", botId: bot.id, text: again.text, sendId, ...press, threadId, ...(again.refused.replyToId ? { replyToId: again.refused.replyToId } : {}) });
-            }}
+            onResend={state.config?.sendActionContract === 1 ? (item) => {
+              const again = state.pendingQueued[threadId]?.find(entry => entry.queueId === item.queueId);
+              const target = again?.refused;
+              if (!again?.sendId || !target) return;
+              if (!target.attemptId || typeof target.receiptRevision !== "number" || typeof target.bindingEpoch !== "number") {
+                // A chip saved before receipt activation retains its legacy action.
+                const sendId = again.sendId;
+                releaseRecoveredSend(sendId, { includeFrozen: true });
+                const press = { resend: true as const, actionId: crypto.randomUUID(), ...(target.restoreGen ? { restoreGen: target.restoreGen } : {}), ...(target.stopGen ? { stopGen: target.stopGen } : {}) };
+                if (group) dispatch({ type: "sendGroup", groupId: group.id, text: again.text, sendId, ...press, threadId, mode: target.mode ?? "chat", ...(target.replyToId ? { replyToId: target.replyToId } : {}), ...(target.responderId ? { responderId: target.responderId } : {}) });
+                else if (bot) dispatch({ type: "send", botId: bot.id, text: again.text, sendId, ...press, threadId, ...(target.replyToId ? { replyToId: target.replyToId } : {}) });
+                return;
+              }
+              dispatch({ type: "resendSend", kind: group ? "group" : "bot", subjectId: group?.id ?? bot!.id, text: again.text,
+                action: { contract: 1, actionId: crypto.randomUUID(), replacementSendId: crypto.randomUUID(),
+                  threadId, sendId: again.sendId, attemptId: target.attemptId, receiptRevision: target.receiptRevision,
+                  bindingEpoch: target.bindingEpoch, kind: "resend", confirmDuplicate: false,
+                  ...(target.restoreGen ? { restoreGen: target.restoreGen } : {}), ...(target.stopGen ? { stopGen: target.stopGen } : {}),
+                },
+              });
+            } : undefined}
           />
           </div>
           <input
@@ -1645,7 +1741,7 @@ export function Composer({
           aria-label={`Message ${group ? group.name : (bot?.name ?? "")}`}
           aria-invalid={sendNotice ? true : undefined}
           aria-describedby={sendNotice ? sendNoticeId : undefined}
-            className={cn(compact ? "max-h-24" : "max-h-[9rem]", "min-h-6 w-full resize-none overflow-y-auto bg-transparent px-2 pb-0.5 pt-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none", phoneComposer && "w-auto min-w-0 flex-1 basis-[8rem]", approval && "hidden")}
+            className={cn(compact ? "max-h-24" : "max-h-[9rem]", "min-h-6 w-full resize-none overflow-y-auto bg-transparent px-2 pb-0.5 pt-1 text-[15px] leading-6 text-ink placeholder:text-ink-secondary focus:outline-none", phoneComposer && "w-auto min-w-0 flex-1 basis-[8rem]", approval && "hidden", phoneComposer && !compact && "keep-font-size min-h-11 max-h-[calc(9rem+20px)] self-center py-[10px] text-[16px]")}
           />
           {/* One controls row: chips on the left, send and dictation on the
               right, sharing a baseline at every composer height. */}
@@ -1775,6 +1871,7 @@ export function Composer({
               nativeDictation: capabilities.dictation.available,
               fluxConfigured: Boolean(state.config?.flux?.configured),
             })}
+            onCleanupStart={onCleanupStart}
             cleanup={cleanupEnabled() ? { botId: bot?.id, groupId: group?.id } : undefined}
             onTranscript={(said, raw) => {
               // trimEnd, not trim: the utterance joins the draft with one
@@ -1845,7 +1942,7 @@ export function Composer({
         }}
       />
       {levelConfirm && autoBot && (
-        <LazyBoundary inline onRetry={LevelConfirmChunk.retry} onDismiss={() => setLevelConfirm(null)}>
+        <LazyBoundary inline onRetry={LevelConfirmChunk.retry} onDismiss={() => { setLevelConfirm(null); requestAnimationFrame(() => (levelChipNear(inputRef.current) ?? inputRef.current)?.focus()); }}>
           <Suspense fallback={null}>
             <LevelConfirmChunk.Component
               bot={autoBot.name}

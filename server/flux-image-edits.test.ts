@@ -11,6 +11,7 @@ import { closeDatabase, database } from "./database.ts";
 import { DATA_DIR } from "./config.ts";
 import { describeArtifact } from "./artifacts.ts";
 import { managedImageOutputPath } from "./output-publication.ts";
+import { serviceDecisionFixture } from "./testing/service-decision-fixture.ts";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII=", "base64");
 const reference = { bytes: png, mime: "image/png" as const };
@@ -26,7 +27,8 @@ function fixture() {
 it("B16 serializes one/four scoped references over real local HTTP after approval and publishes one PNG with charged cost", async () => {
  for (const count of [1, 4]) {
   const f = fixture(), store = new Store(() => ({ instanceId: "b16", model: "fixture" })), bot = store.createBot();
-  const controller = new AbortController(), actor = { botId: bot.id, threadId: bot.threadId, generation: randomUUID(), signal: controller.signal, assertActive: () => {} };
+  const controller = new AbortController(), identity = { botId: bot.id, threadId: bot.threadId, generation: randomUUID() };
+  const actor = { ...identity, authority: serviceDecisionFixture(store, identity), signal: controller.signal, assertActive: () => {} };
   const uploads = Array.from({ length: count }, (_, i) => saveImage(Buffer.concat([png, Buffer.from([i])]), "image/png"));
   store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "Edit these", attachments: uploads.map(item => ({ kind: "image", path: item.path, mime: item.mime })) });
   const refs = (await imageReferences(store, bot.threadId, uploads.map(item => basename(item.path)), () => {}));
@@ -149,7 +151,8 @@ it("B16 accepts exactly 4 x 5 MiB and 2 x 10 MiB references over real local HTTP
 it("B16 publishes the exact byte-distinct Flux edit output as a registered artifact whose sha256 matches the provider bytes", async () => {
  const provided = Buffer.concat([png, Buffer.from("B16 provider output")]);
  const f = fixture(), store = new Store(() => ({ instanceId: "b16-fidelity", model: "fixture" })), bot = store.createBot();
- const actor = { botId: bot.id, threadId: bot.threadId, generation: randomUUID(), signal: new AbortController().signal, assertActive: () => {} };
+ const identity = { botId: bot.id, threadId: bot.threadId, generation: randomUUID() };
+ const actor = { ...identity, authority: serviceDecisionFixture(store, identity), signal: new AbortController().signal, assertActive: () => {} };
  const upload = saveImage(Buffer.concat([png, Buffer.from([9])]), "image/png");
  store.appendMessage(bot.threadId, { role: "user", kind: "text", text: "Edit this", attachments: [{ kind: "image", path: upload.path, mime: upload.mime }] });
  const refs = (await imageReferences(store, bot.threadId, [basename(upload.path)], () => {}));
@@ -168,6 +171,6 @@ it("B16 publishes the exact byte-distinct Flux edit output as a registered artif
  expect(result.artifact.artifactId).toEqual(expect.any(String));
  const access = { owner: true, scopes: [{ botId: bot.id, botName: bot.name, threadId: bot.threadId, workspaceRoot: managedImageOutputPath(DATA_DIR, bot.id, bot.threadId), managedOutput: true }] };
  expect(describeArtifact(database(), join(DATA_DIR, "artifact-files"), result.artifact.artifactId!, access)).toMatchObject({ kind: "image", producer: "image-operation", threadId: bot.threadId, sha256: createHash("sha256").update(provided).digest("hex") });
- expect(store.messagesFor(bot.threadId).find(message => message.id === card.id)?.card?.answered).toBe("allow");
+ expect(store.messagesFor(bot.threadId).find(message => message.id === card.id)?.card?.answered).toBe("Allowed");
  expect((database().prepare("SELECT state FROM image_operations WHERE generation=?").get(actor.generation) as { state: string } | undefined)?.state).toBe("published");
 });

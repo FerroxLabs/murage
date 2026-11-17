@@ -1,3 +1,4 @@
+import { DeepSeekAgentDriver } from "./acp/deepseek.ts";
 // Built-in driver registration — upstream builtInDrivers.ts: a static
 // array, nothing more. Adding a driver = write drivers/<x>.ts, append.
 import type { AnyProviderDriver } from "../contracts.ts";
@@ -49,5 +50,6 @@ export const BUILT_IN_DRIVERS: readonly AnyProviderDriver[] = [
   BoxAgentDriver,
   MinimaxDriver,
   // The person's own GitHub Copilot CLI: after every existing engine, never a default.
+  DeepSeekAgentDriver,
   CopilotAgentDriver,
 ];

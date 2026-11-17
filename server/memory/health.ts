@@ -1,3 +1,4 @@
+import { checkpointDebtCount } from "./checkpoint-debt.ts";
 import { BACKGROUND_BUSY_MS, database, isDatabaseBusy, transaction } from "../database.ts";
 import { ensureScope } from "./policy.ts";
 import { memoryState } from "./repository.ts";
@@ -138,6 +139,7 @@ export function memoryHealth(extractorInstanceId:string|null){
     : !extractorInstanceId ? "not-configured" : learning.ceiling.input===0||learning.ceiling.output===0||learning.callsPerMinute===0 ? "budget-limited" : "configured";
   return {
     asOf,
+    checkpointPending:checkpointDebtCount(db)>0,
     captured:{sources:counts.captured,lastAt:counts.lastAt},
     processed:{sources:counts.processed,lastAt:Math.max(observed?.processedAt??0,pending.processedAt??0)||null},
     retrieved:{queries:(observed?.queries??0)+(observed?pending.queries:0),hits:(observed?.hits??0)+(observed?pending.hits:0),lastAt:Math.max(observed?.lastAt??0,observed?pending.lastAt??0:0)||null,available:Boolean(observed)},

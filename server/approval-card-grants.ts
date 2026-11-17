@@ -1,3 +1,4 @@
+import { openApprovals } from "./decision/index.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -14,7 +15,7 @@
 // rows shared/fold-scopes.ts offers for that class: no stop:pay "always", no
 // bot-level key on a routine's card, none on a guard, unread, always-ask or
 // unattended card, no `local-computer:` program key.
-import { approvalKey, type AutoVerdict } from "./auto-approve.ts";
+import { approvalKey, noLimitsFacts, type AutoVerdict } from "./auto-approve.ts";
 import type { GrantCall } from "../shared/app-action-grant.ts";
 import type { ApprovalGrantRequest } from "../shared/approval-grant-request.ts";
 import { foldScopes, type CardClass, type CardKeyField, type CardKeys } from "../shared/fold-scopes.ts";
@@ -76,6 +77,8 @@ export function cardClassFor(input: CardGrantInput, keys: CardKeys): CardClass {
     ...(input.approvalScope ? { scope: input.approvalScope } : {}),
     ...(input.origin ? { origin: input.origin } : {}),
     ...readerRuleOf(input),
+    // NOLIM R7 (F4): the finalizer's N2 class and initiator, written once at open, never recomputed from card text
+    ...((facts) => facts ? { noLimits: facts } : {})(noLimitsFacts(input.verdict as AutoVerdict | null | undefined)),
     keys: fields,
   };
 }
@@ -148,4 +151,10 @@ export function approvalCardGrants(input: CardGrantInput): CardGrants {
 function withoutRoutineOffer(request: ApprovalGrantRequest): ApprovalGrantRequest | undefined {
   const { routine: _routine, ...rest } = request;
   return rest.rows.length ? rest : undefined;
+}
+
+/** Approve-all starts from durable open records; a row or copied class alone
+ * cannot supply an authority reference. Existing grant selection stays pure. */
+export function openGrantApprovals(threadId?:string) {
+  return openApprovals(threadId).filter(record=>record.state==='open'&&record.why!=='question');
 }

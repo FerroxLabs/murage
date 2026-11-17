@@ -33,6 +33,16 @@ export function workerSentence(code: string | null | undefined): string {
   }
 }
 
+/** What Settings says under search status while the memory index is checked (a reset waits or runs: MEMORY_INDEX_CHECKING) or at the
+ * scale freeze (MEMORY_INDEX_SCALE_FREEZE). Neither is an error and neither is shown as one; any other note says nothing here. */
+export function indexNoteSentence(note: string | null | undefined): { title?: string; body: string } | null {
+  switch ((note ?? "").trim()) {
+    case "MEMORY_INDEX_CHECKING": return { body: w("indexChecking") };
+    case "MEMORY_INDEX_SCALE_FREEZE": return { title: w("scaleFreezeTitle"), body: w("scaleFreezeBody") };
+    default: return null;
+  }
+}
+
 /** Why the optional search model did not finish. */
 export function modelSentence(error: string | null | undefined): string {
   return plainOrFallback(error, w("modelFailed"));

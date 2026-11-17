@@ -15,7 +15,8 @@
 //     on a timer;
 //   - the harness purges it when an account is disconnected or signed out.
 import { createHash, randomUUID } from "node:crypto";
-import { chmodSync, closeSync, constants as fsConstants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync, writeSync } from "node:fs";
+import { writeSync } from "./counted-fs.ts";
+import { chmodSync, closeSync, constants as fsConstants, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 
 export const CACHE_MAX_BYTES = 4 * 1024 * 1024;

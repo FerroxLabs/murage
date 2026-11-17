@@ -23,7 +23,7 @@ describe.skipIf(!home)("Hermes upgrade pin, live", () => {
     expect(pins).toEqual([{ instanceId: "hermes", profile: sticky, origin: "sticky" }]);
     const argv = hermesSpawnArgs({ profile: sticky }, env);
     expect(argv.slice(0, 2)).toEqual(["-p", sticky]);
-    const answer = execFileSync("hermes", [...argv.slice(0, 2), "-z", "Reply with only your profile or role name from your SOUL, one line."], { env, encoding: "utf8", timeout: 240_000 });
+    const answer = execFileSync("hermes", [...argv.slice(0, 2), "-z", "Reply with only your profile or role name from your SOUL, one line."], { windowsHide: true, env, encoding: "utf8", timeout: 240_000 });
     console.log(`live answer: ${answer.trim().slice(-300)}`);
     expect(answer.trim().length).toBeGreaterThan(0);
   }, 300_000);

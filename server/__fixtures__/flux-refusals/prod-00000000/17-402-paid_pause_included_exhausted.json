@@ -1,0 +1,60 @@
+{
+ "status": 402,
+ "headers": {
+  "date": "<HTTP-date>",
+  "server": "uvicorn",
+  "x-flux-alias": "deepseek-v4-flash",
+  "content-type": "application/json",
+  "x-frame-options": "DENY",
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-content-type-options": "nosniff",
+  "connection": "close",
+  "content-length": "<n>",
+  "x-flux-hold-reason": "credit_exhausted"
+ },
+ "body": {
+  "error": {
+   "message": "You've used your $20 plan allowance for this month, so requests are paused until 1 December (UTC). To keep going now, allow overage and set a monthly cap at https://fluxrouter.ai/home/billing",
+   "type": "None",
+   "param": "None",
+   "code": "402"
+  }
+ },
+ "endpoint": "/v1/chat/completions",
+ "per_endpoint": {
+  "/v1/messages": {
+   "status": 402,
+   "headers": {
+    "content-length": "261",
+    "content-type": "application/json"
+   },
+   "body": {
+    "type": "error",
+    "error": {
+     "type": "invalid_request_error",
+     "message": "You've used your $20 plan allowance for this month, so requests are paused until 1 December (UTC). To keep going now, allow overage and set a monthly cap at https://fluxrouter.ai/home/billing"
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  },
+  "/v1/responses": {
+   "status": 402,
+   "headers": {
+    "content-length": "260",
+    "content-type": "application/json"
+   },
+   "body": {
+    "error": {
+     "message": "You've used your $20 plan allowance for this month, so requests are paused until 1 December (UTC). To keep going now, allow overage and set a monthly cap at https://fluxrouter.ai/home/billing",
+     "type": "api_error",
+     "param": null,
+     "code": "402"
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  }
+ },
+ "notes": "Builder/Scale plan allowance used up (fixture_build_reference=true in prod). X-Flux-Hold-Reason: credit_exhausted on chat only. Resume date only inside the message text. The overage-cap variant says 'You've reached your $N overage cap ...'."
+}

@@ -1,7 +1,7 @@
 // What the connected-apps catalog is called, and what it is never called.
 //
 // Two defects the owner hit in the same week:
-//   - The catalog was described as "hundreds of apps". It is 500+ apps, and
+//   - The catalog was described as "hundreds of apps". The live count comes from the catalog, and
 //     the claim was written out by hand in several places, one of which was a
 //     first-run panel that is on its way out.
 //   - The company behind the catalog was named on screen. Nobody bought it,
@@ -38,8 +38,9 @@ function visibleWords(source: string): string[] {
 const SURFACES = ["./ConnectedAppsLock.tsx", "./PluginsPanel.tsx", "./ApiKeys.tsx"] as const;
 
 describe("the connected-apps catalog", () => {
-  it("is 500+ apps, named by the apps people know", () => {
-    expect(APPS_CLAIM).toBe("500+ apps, including Gmail, Slack, Notion and GitHub");
+  it("names the apps people know before the live count loads", () => {
+    // MAIN RULING 2026-11-14 copy-consist: count-free fallback, live catalog count kept.
+    expect(APPS_CLAIM).toBe("apps, including Gmail, Slack, Notion and GitHub");
     // The panel's own headline sentence uses the constant, not a copy of it.
     expect(read("./PluginsPanel.tsx")).toContain('t("ux.lcopyb.connected.subtitleDesktop", { apps: appsClaimFor(catalog?.total, APPS_CLAIM) })');
     expect(en["ux.lcopyb.connected.subtitleDesktop"]).toBe("One Flux Router key connects {apps}. You can add your own connected tools too.");

@@ -40,3 +40,13 @@ The owner authorized at most US$10 in new charges and 64 native model turns acro
 The owner deferred sustained stress qualification and approved normal-use verification based on observed usage. The final isolated normal-use profile passed:20updates,40recalls,two current-revision fact checks and complete drainage within224ms. Retrieval quality, native owner UI, focused regressions and current packaged worker/server/MCP/signature checks passed. See `.planning/memory-evidence/NORMAL-USE-ACCEPTANCE.md` for the exact workload, evidence and limitations.
 
 Current artifact is macOSarm64 `private.memory.3`, includingFuigo1.0.7; identity and checksums are in `.planning/memory-evidence/p11-memory3-artifact-identity.json`. It is privately packaged, not published/notarized/installed. Liveprofile migration was not performed. Stress failures are retained as deferred capacity findings; other native engine/MCP/answer-matrix and native platform coverage remains unverified. Normal-use acceptance does not establish whole-program parity.
+
+
+Custom ACP host configuration: when the custom command uses an OpenAI-compatible
+or Anthropic-compatible endpoint, set its real `OPENAI_BASE_URL` or
+`ANTHROPIC_BASE_URL` in the instance environment. Murage checks the final launch environment. A non-Flux address
+permits the ordinary ACP turn; a Flux or undeclared address still requires a
+supported memory-header carrier when Murage has a Flux key. Without a Flux
+key, an ordinary custom command remains usable; an explicit Flux destination
+still needs the carrier. The custom command must actually use the
+configured endpoint.

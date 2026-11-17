@@ -84,14 +84,14 @@ function write102Copy(db: DatabaseSync, thread: string, id: string, revoke: numb
   return lsn;
 }
 
-it("T1 Astra's path through the real downgrade: a 1.0.2 copy folded under an active bulk's older row reads checking after the re-upgrade", () => {
+it("T1 Astra's path through the real downgrade: a 1.0.2 copy folded under an active bulk's older row reads checking after the re-upgrade", async () => {
   let db = database();
   reply(db, "T", "early", 15, 14);
   db.prepare("UPDATE memory_lsn SET next=30 WHERE id=1").run();
   job(db, 4, "bulk", 20, "active", "flow", '{"kind":"bulk","cause":"u2"}');
   db.prepare("INSERT INTO memory_deny_pending(thread_id,since_lsn,revoke_id) VALUES('*',10,4),('T',12,4)").run();
   closeDatabase();
-  downgradeInstallationMemorySchema(DATA_DIR, 10);
+  await downgradeInstallationMemorySchema(DATA_DIR, 10);
   const raw = new DatabaseSync(join(DATA_DIR, "messages.db"));
   expect(version(raw)).toBe(10);
   write102Copy(raw, "T", "copy", 4); // turn 30, line 31: after bulk 4's cap of 20

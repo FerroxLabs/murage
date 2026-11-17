@@ -202,10 +202,15 @@ const sendJson = (res: ServerResponse, status: number, body: unknown): void => {
 
 /** What the log keeps of a pairing failure nobody planned for: its kind and
  *  code, never its message. */
-const pairingFailureLabel = (error: unknown): string => {
+const PAIRING_ERROR_NAMES = new Set(["Error", "TypeError", "RangeError", "SyntaxError", "AbortError", "SystemError"]);
+export const pairingFailureLabel = (error: unknown): string => {
   if (!(error instanceof Error)) return typeof error;
+  // A fixed list of names and Node's code shapes only (U1 L1): an error's name
+  // and code are settable by whatever threw it, and a key-shaped one such as
+  // `ghp_...` or `AKIA...` must never reach a log line.
+  const name = PAIRING_ERROR_NAMES.has(error.name) ? error.name : "Error";
   const code = (error as { code?: unknown }).code;
-  return typeof code === "string" && /^[A-Z0-9_]{1,40}$/.test(code) ? `${error.name} ${code}` : error.name;
+  return typeof code === "string" && /^(?:ERR_[A-Z0-9_]{1,36}|E[A-Z]{2,15})$/.test(code) ? `${name} ${code}` : name;
 };
 
 /** Reduce live endpoint metadata to the same tiny public shape returned at

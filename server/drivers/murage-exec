@@ -44,10 +44,16 @@ fi
 args=()
 cwd=""
 shell=""
+murage_exec_guard=""
+murage_exec_path=""
 while IFS= read -r -d '' pair; do
   case "$pair" in
     MURAGE_EXEC_CWD=*) cwd="${pair#MURAGE_EXEC_CWD=}"; continue ;;
     MURAGE_EXEC_SHELL=*) shell="${pair#MURAGE_EXEC_SHELL=}"; continue ;;
+  esac
+  case "$pair" in
+    MURAGE_WIPE_GUARD=*) murage_exec_guard="${pair#*=}" ;;
+    PATH=*) murage_exec_path="${pair#*=}" ;;
   esac
   if [[ ! "$pair" =~ ^[A-Za-z_][^=]*= ]]; then
     echo "murage-exec: the turn environment could not be read" >&2
@@ -69,17 +75,42 @@ case "$(uname -s 2>/dev/null)" in
     for i in "${!args[@]}"; do
       case "${args[$i]}" in
         [Pp][Aa][Tt][Hh]=*) args[$i]="PATH=$(cygpath -u -p "${args[$i]#*=}")" || exit 126 ;;
+        MURAGE_WIPE_GUARD=*) args[$i]="MURAGE_WIPE_GUARD=$(cygpath -u "${args[$i]#*=}")" || exit 126 ;;
       esac
     done
     ;;
 esac
+# The guarded command uses a non-login shell and resets PATH AFTER shell
+# startup. Even /etc/zshenv (read despite zsh -f) cannot move a tool ahead
+# of the turn's shim. The command remains data until the selected shell
+# evaluates it; no interpolation into the bootstrap. Below No limits the
+# original shell invocation stays byte-for-byte the same.
+murage_exec_shell_args=()
+if [ -n "$murage_exec_guard" ]; then
+  murage_exec_safe_kept=()
+  for pair in "${murage_exec_kept[@]}"; do
+    case "$pair" in PATH=*|MURAGE_WIPE_GUARD=*) continue ;; esac
+    murage_exec_safe_kept+=("$pair")
+  done
+  murage_exec_kept=("${murage_exec_safe_kept[@]}")
+  for pair in "${args[@]}"; do
+    case "$pair" in PATH=*) murage_exec_path="${pair#*=}" ;; esac
+  done
+  case "${shell##*/}" in
+    bash|bash.exe) murage_exec_shell_args=(--noprofile --norc) ;;
+    zsh|zsh.exe) murage_exec_shell_args=(-f) ;;
+  esac
+  # Preserve the command's normal $0 and empty positional parameters.
+  murage_exec_command=$1
+  set -- 'export PATH="$1"; eval "$2"' "$shell" "$murage_exec_path" "set --; $murage_exec_command"
+fi
 # `env` below is found through this process's PATH. A turn whose handed PATH is empty or lacks /usr/bin (a login shell that
 # set none, as on a stock Ubuntu) would otherwise fail every command and every MCP server with "env: not found". Only
 # this script's own PATH is widened, and only when `env` is not on it; both execs run `env -i`, so no command sees it.
 if ! command -v env >/dev/null 2>&1; then PATH="/usr/bin:/bin${PATH:+:$PATH}"; fi
 cd -- "$cwd" || exit 126
 if [ "${#murage_exec_kept[@]}" -eq 0 ]; then
-  exec env -i "${args[@]}" "$shell" -c "$1"
+  exec env -i "${args[@]}" "$shell" "${murage_exec_shell_args[@]}" -c "$@"
 fi
 # An MCP server: its values must not appear in any process's arguments. The turn's map and then the server's own
 # values (last, so they win over the turn's) go NUL-separated through descriptor 3 (written by this shell's builtin
@@ -97,9 +128,22 @@ for pair in "${args[@]}"; do
   if [[ "${pair%%=*}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then murage_exec_names+=("$pair"); else murage_exec_others+=("$pair"); fi
 done
 exec 3< <(printf '%s\0' "${murage_exec_names[@]}" "${murage_exec_kept[@]}")
+murage_exec_writer=$!
+# Keep the writer's parent until it has been reaped. Execing this shell into
+# the server would hand that server an unknown child, which can remain a
+# zombie and keep Claude's process group present after the session closes.
+(
 exec env -i "${murage_exec_others[@]}" "$BASH" --norc -c 'unset SHLVL PWD OLDPWD
 while IFS= read -r -d "" murage_exec_pair <&3; do export "$murage_exec_pair" 2>/dev/null || :; done
 exec 3<&-
 unset murage_exec_pair
-case "${0##*/}" in bash|bash.exe) exec "$0" --norc -c "$1" ;; esac
-exec "$0" -c "$1"' "$shell" "$1"
+case "${0##*/}" in
+  bash|bash.exe) exec "$0" --norc -c "$@" ;;
+  zsh|zsh.exe) if [ -n "${MURAGE_WIPE_GUARD-}" ]; then exec "$0" -f -c "$@"; fi ;;
+esac
+exec "$0" -c "$@"' "$shell" "$@"
+)
+murage_exec_status=$?
+exec 3<&-
+wait "$murage_exec_writer"
+exit "$murage_exec_status"

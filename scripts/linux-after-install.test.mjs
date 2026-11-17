@@ -295,9 +295,18 @@ describe.skipIf(process.platform !== "linux")("Linux DEB upgrade hook", () => {
   });
 
   it("resolves the test root before applying the temporary-directory boundary", () => {
-    const escaped = path.join(fs.realpathSync(os.tmpdir()), "..", path.relative("/", root));
-    const result = runHook(escaped);
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("must stay under /tmp");
+    const temporaryRoot = fs.realpathSync(os.tmpdir());
+    const { appRoot } = fixture();
+    const alias = path.join(appRoot, "outside");
+    fs.symlinkSync(root, alias, "dir");
+    // MAIN RULING INT-CONFLICT-DEFAULT ee4462be6e / 69586260b8: retain traversal and symlink refusal witnesses.
+    for (const escaped of [
+      `${temporaryRoot}${path.sep}${path.relative(temporaryRoot, root)}`,
+      path.join(appRoot, "..", path.basename(appRoot), "outside"),
+    ]) {
+      const result = runHook(escaped);
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("must stay under /tmp");
+    }
   });
 });

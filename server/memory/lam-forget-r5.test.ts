@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Learn about me, Round 5 (designs/LAM-FORGET-R5.md): a kept line is forgotten by the shipped record forget, and its words are gone
 // from the Forget commit on, even when the inline run stops and the job is left for the runner.
+import { prepareRecallContextSync } from "./recall-view.ts";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -27,7 +28,7 @@ afterEach(() => { Object.assign(INLINE_REVOCATION, inline); delete ownerListHook
 
 type Answer = { record: { id: string; version: number; text: string; state: string } };
 function fixture() {
-  const roster = { bots: [{ id: "bot", threadId: "thread" }], groups: [] } as unknown as MemoryRoster;
+  const roster = { memoryRosterRevision: 1, bots: [{ id: "bot", threadId: "thread" }], groups: [] } as unknown as MemoryRoster;
   reconcileMemoryRoster(roster); setMemoryMode("active");
   const owner = ownerMemoryTicket();
   const act = (body: Record<string, unknown>) => memoryOwnerRoute("/api/memory/action", body, owner, roster);
@@ -35,6 +36,7 @@ function fixture() {
   const registry = new InternalCapabilities(); registry.begin("bot", "thread", "generation");
   const access = () => {
     const token = registry.mint({ botId: "bot", threadId: "thread", generation: "generation", depth: 99, kind: "memory", skillAuthoring: false });
+    prepareRecallContextSync("bot", "thread", roster);
     return memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
   };
   const readable = (id: string) => { try { return typeof readableMemoryRecord(id, 1, access(), { allowance: LineageAllowance.tool() }) !== "string"; } catch { return false; } };
@@ -124,18 +126,24 @@ describe("Learn about me R5: Forget of a kept line", () => {
       for (let version = 2; version <= 65; version++) insertMemoryRecord(db, { id: kept.id, version, scopeId: scope, kind: "fact", text: `LAMR5-FIVE wording ${version}`, assertion: "owner-statement", state: version === 65 ? "active" : "superseded", validFrom: Date.now(), createdAt: Date.now() + version });
     });
     type Page = { records: Array<{ id: string; version: number; text: string }>; nextCursor?: string };
-    /** Every page of the owner list (and of a search when `query` is given): the rows of the kept line. */
+    /** Every page of the owner list (and of a search when `query` is given): the rows of the kept line. The memory screen lists current
+     * memories by default and the replaced wordings under `state: "superseded"` (MEMORY-UI-BUILD-SPEC r3 1.1: `state` keeps its meaning,
+     * default `active`, `superseded` = Replaced), so both are read: between them they hold every version the old list showed. */
     const shown = async (query?: string) => {
-      const rows: Page["records"] = []; let cursor: string | undefined;
-      for (let page = 0; page < 10; page++) {
-        const answer = await f.act({ action: "list", ...(query ? { query } : {}), ...(cursor ? { cursor } : {}) }) as Page;
-        rows.push(...answer.records.filter(row => row.id === kept.id));
-        if (!answer.nextCursor) break; cursor = answer.nextCursor;
+      const rows: Page["records"] = [];
+      for (const state of [undefined, "superseded"]) {
+        let cursor: string | undefined;
+        for (let page = 0; page < 10; page++) {
+          const answer = await f.act({ action: "list", ...(query ? { query } : {}), ...(state ? { state } : {}), ...(cursor ? { cursor } : {}) }) as Page;
+          rows.push(...answer.records.filter(row => row.id === kept.id));
+          if (!answer.nextCursor) break; cursor = answer.nextCursor;
+        }
       }
       return rows;
     };
     const before = await shown();
     expect(before.some(row => row.version === 1 && row.text.includes("LAMR5-FIVE"))).toBe(true);
+    expect(before.some(row => row.version === 65 && row.text.includes("LAMR5-FIVE"))).toBe(true);
     Object.assign(INLINE_REVOCATION, { rows: 0, ms: 0 });
     await f.act({ action: "forget", kind: "record", id: kept.id });
     expect(f.jobRows()).toBeGreaterThan(0);

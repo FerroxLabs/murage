@@ -1,10 +1,12 @@
+// MAIN RULING RULINGS-1019-RECALL-1116 R7-5.
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { mkdirSync } from "node:fs";
 import { beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
-import { assertMemoryAccess, ensureScope, memoryAccess, persistMemoryRoster, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { assertMemoryAccess, ensureScope, persistMemoryRoster, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { correctMemory, ownerMemoryTicket, pinMemory, saveMemoryCandidate, renameMemoryTeam } from "./authority.ts";
 import { buildMemoryBundle, assertMemoryBundle } from "./bundle.ts";
 import { memoryState } from "./repository.ts";
@@ -38,8 +40,13 @@ it("separates private, room and team scopes even at deep delegation", () => {
 });
 it("checks current membership on every read and invalidates generations", () => {
   const f = fixture("room-thread");
-  f.roster.groups[0].memberIds = ["b"];
-  expect(() => assertMemoryAccess(f.access)).toThrow("MEMORY_SCOPE_DENIED");
+  const next = structuredClone(f.roster); next.groups[0].memberIds = ["b"];
+  persistMemoryRoster(next, () => { f.roster.groups = next.groups; });
+  expect(() => assertMemoryAccess(f.access)).toThrow("MEMORY_CONTEXT_REVOKED");
+  const freshRegistry = new InternalCapabilities();
+  const generation = freshRegistry.begin("a", "room-thread");
+  const token = freshRegistry.mint({botId:"a",threadId:"room-thread",generation,depth:100,kind:"memory",skillAuthoring:false});
+  expect(() => assertMemoryAccess(memoryAccess(freshRegistry, freshRegistry.resolve(`Bearer ${token}`)!, () => f.roster))).toThrow("MEMORY_SCOPE_DENIED");
   f.registry.revokeThread("room-thread");
   expect(() => assertMemoryAccess(f.access)).toThrow("MEMORY_UNAUTHORIZED");
 });

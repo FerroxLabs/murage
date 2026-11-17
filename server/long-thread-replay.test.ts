@@ -1,3 +1,5 @@
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
+import { startLiveSession } from './memory/testing/live-session-fixture.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -20,9 +22,11 @@ thawAfterEach(() => thawRootSetWritesForTest(false));
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database, transaction } from "./database.ts";
 import { InternalCapabilities } from "./internal-capabilities.ts";
-import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { reconcileMemoryRoster, type MemoryRoster } from "./memory/policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "./testing/recall-access-fixture.ts";
 import * as disclosures from "./memory/disclosures.ts";
-import { retainedSessionInvalid } from "./memory/dispatch.ts";
+import { MemoryDispatchReceipt, retainedSessionInvalid } from "./memory/dispatch.ts";
+import { buildMemoryBundle } from "./memory/bundle.ts";
 import { THREAD_RECEIPT_LIMIT, outputRootsFor, recordSessionRoots } from "./memory/replay-lineage.ts";
 import { LineageAllowance } from "./memory/lineage-allowance.ts";
 import { insertMessage } from "./message-db.ts";
@@ -50,7 +54,7 @@ function longThread(receipts: number) {
   // 1.0.2: once any line row exists a replayed line with no row reads "checking"; a real replay holds only stored lines
   // (reply-1 was made inside the turn that held receipt old-1, so it rests on it: the production writer, DESIGN-WRITETIME 2.2)
   messages.forEach((m, i) => (m.id === "reply-1" ? writtenWithReceipts("dax-direct", "dax", ["old-1"], () => insertMessage("dax-direct", { ...(m as any), at: i + 2 }), () => "reply-1") : insertMessage("dax-direct", { ...(m as any), at: i + 2 })));
-  return { a, messages };
+  return { a: access(), messages };
 }
 
 it(`a direct chat past ${THREAD_RECEIPT_LIMIT} receipts still runs: owner words replay, a reply made with memory and a copy do not`, () => {
@@ -96,8 +100,9 @@ it("a 5000-message thread with 3000 receipts replays its recent lines in full an
 // session is linked to every receipt of that session, so the receipts' output
 // lists grow with the square of the turn count. A check that charged every
 // listed id ran its budget out and withheld every bot line.
-function oneSession(turns: number) {
+function oneSession(turns: number, live = false) {
   const a = access();
+  if (live) { startLiveSession(a, "driver", "s1"); startLiveSession(a, "driver", "s2"); }
   const insert = database().prepare(`INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at)
     VALUES(?,'dax-direct','driver','s1','[]','[]',?,?,?,0,'delivered',?)`);
   // The fixture rows go in one transaction: as one commit each they cost a
@@ -109,7 +114,7 @@ function oneSession(turns: number) {
     insert.run(`s-${k}`, JSON.stringify(outputs), a.policyRevision, a.deletionEpoch, Date.now() + k);
   }
   database().exec("COMMIT");
-  recordSessionRoots("dax-direct", "driver", "s1", outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
+  if (!live) recordSessionRoots("dax-direct", "driver", "s1", outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
   database().prepare("INSERT OR IGNORE INTO memory_session_lineage(thread_id,driver_instance,native_session,first_lsn,last_lsn,door_epoch) SELECT ?,?,?,0,0,value FROM memory_lineage_lsn_meta WHERE key='reader_door_epoch'").run("dax-direct", "driver", "s1"); // a 1.0.3 fresh start stamped it (S6 rule 26)
   database().prepare("INSERT OR IGNORE INTO memory_session_lineage(thread_id,driver_instance,native_session,first_lsn,last_lsn,door_epoch) SELECT ?,?,?,0,0,value FROM memory_lineage_lsn_meta WHERE key='reader_door_epoch'").run("dax-direct", "driver", "s2"); // a 1.0.3 fresh start stamped it (S6 rule 26)
   const messages = Array.from({ length: turns * 2 }, (_, i) => text(`m${i + 1}`, (i + 1) % 2 ? "user" : "bot"));
@@ -154,8 +159,13 @@ it("a 300-turn tool-heavy session (five outputs a turn) replays and checks recal
   expect(replayMs).toBeLessThan(5000);
 });
 
-it("a retained session that holds a withheld line is not resumed; one that holds none is", () => {
-  const { a, messages } = oneSession(50);
+it("a retained session that holds a withheld line is not resumed; one that holds none is", async () => {
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild): accept the real first frame before the original fifty receipt rows.
+  const live = access(), confirmation = startLiveSession(live, 'driver', 's1');
+  const birth = new MemoryDispatchReceipt(await buildMemoryBundle('', live, { search: async () => ({ hits: [], vectorRows: 0 }) }, { allowance: LineageAllowance.tool() }), live, 'driver');
+  birth.sessionStarted('s1', true, confirmation); birth.accepted();
+  const { a, messages } = oneSession(50, true);
+  expect(database().prepare("SELECT bundle_id FROM memory_disclosures WHERE bundle_id LIKE 's-%' ORDER BY rowid").all().map(row => row.bundle_id)).toEqual(Array.from({ length: 50 }, (_, i) => `s-${i + 1}`));
   const kept = disclosures.filterDirectReplay(LineageAllowance.tool(), "dax-direct", messages, a, NONE).replayed;
   const whyOff: { reason?: string } = {};
   expect(retainedSessionInvalid(LineageAllowance.tool(), "dax-direct", "driver", "s1", whyOff), JSON.stringify(whyOff)).toBe(false);
@@ -177,6 +187,7 @@ it("the direct turn replays through filterDirectReplay and resets a retained ses
   expect(direct).toContain("filterDirectReplay(allowance,threadId,activeMessages,access,skipTranscript,replayOptions)");
   expect(direct).toMatch(/needsReplay=!resumeCursor \|\| revoked/);
   // the retained session is checked under this turn's allowance (the session id argument's spelling is not the point)
-  expect(direct).toMatch(/if \(resumeCursor && retainedSessionInvalid\(allowance, threadId, instanceId, [^,]+, offWhy\b/);
+  // MAIN RULING INT-CONFLICT-DEFAULT a0a7856460 84f97983e8: the same retained-session check also receives its current reader and admits the additional pack-forced reset.
+  expect(direct).toMatch(/if \(resumeCursor && \(packNeedsFreshSession \|\| offProof\?\.kind==='fresh'\)/);
   expect(direct).toContain("MEMORY_SESSION_RESET_UNAVAILABLE");
 });

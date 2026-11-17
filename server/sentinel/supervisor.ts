@@ -1,3 +1,4 @@
+import { withHideInherit } from "../../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -14,13 +15,14 @@
 // scheduler took over, an update, or a newer `murage start`) on two scans in a row, it stops. Two in a row, so a
 // registration attempt that writes a revision and puts the old one back within a cycle never stops it. No pid files.
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
-import { createHash } from "node:crypto";
+import {observeChildIo, type ChildIoReading} from "./io-child-receipts.ts";
+import { createHash, randomUUID } from "node:crypto";
 import { HEALTH_LIMITS } from "../../shared/health-protocol.mjs";
 
 /** Environment names a scanner process may see. Nothing else is passed on or kept. */
 export const ENV_ALLOWLIST: readonly string[] = Object.freeze([
   "HOME", "USERPROFILE", "LOCALAPPDATA", "XDG_STATE_HOME", "TMPDIR", "TEMP", "TMP", "SystemRoot", "SYSTEMROOT", "WINDIR", "LANG", "TZ",
-  "ELECTRON_RUN_AS_NODE", "MURAGE_SENTINEL_CHILD",
+  "ELECTRON_RUN_AS_NODE", "MURAGE_SENTINEL_CHILD", "MURAGE_IO_GENERATION", "MURAGE_RESOURCES_PATH", "OMB_RESOURCES_PATH", "MURAGE_PACKAGED",
 ]);
 export const CHILD_FLAG = "MURAGE_SENTINEL_CHILD";
 
@@ -48,16 +50,18 @@ export const EXIT = Object.freeze({
 
 export interface ChildSpec { execPath: string; args: readonly string[]; env: Record<string, string> }
 export type SpawnChild = (spec: ChildSpec) => ChildProcess;
-export const defaultSpawn: SpawnChild = spec => spawn(spec.execPath, [...spec.args], { env: spec.env, stdio: "ignore", windowsHide: true, detached: false } satisfies SpawnOptions);
+export const defaultSpawn: SpawnChild = spec => spawn(spec.execPath, [...spec.args], withHideInherit({ env: spec.env, stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true, detached: false } satisfies SpawnOptions));
 
 export interface ChildResult { code: number | null; signal: NodeJS.Signals | null; timedOut: boolean; spawnFailed: boolean }
 
 /** Runs one child scan and kills it at the wall deadline. Never rejects. */
-export function runChildScan(spec: ChildSpec, options: { deadlineMs?: number; spawnChild?: SpawnChild } = {}): Promise<ChildResult> {
+export function runChildScan(spec: ChildSpec, options: { deadlineMs?: number; spawnChild?: SpawnChild; onIo?:(reading:ChildIoReading)=>void; onIoUnknown?:()=>void } = {}): Promise<ChildResult> {
   const deadline = options.deadlineMs ?? HEALTH_LIMITS.scanWallMs;
   return new Promise(resolve => {
     let child: ChildProcess;
-    try { child = (options.spawnChild ?? defaultSpawn)(spec); }
+    const generation=randomUUID();
+    try { child = (options.spawnChild ?? defaultSpawn)({...spec,env:{...spec.env,MURAGE_IO_GENERATION:generation}});
+      observeChildIo(child,generation,options); }
     catch { resolve({ code: null, signal: null, timedOut: false, spawnFailed: true }); return; }
     let timedOut = false;
     let settled = false;
@@ -76,6 +80,8 @@ export interface WatchOptions {
   spec: ChildSpec;
   installationId: string;
   onResult?: (result: ChildResult, at: number) => void;
+  /** Outer file-receipt admission wraps every writable cycle. */
+  runCycle?: () => Promise<ChildResult>;
   /** Called for a failed attempt (the supervisor records it for S10). */
   onFailure?: (at: number) => void;
   spawnChild?: SpawnChild;
@@ -129,7 +135,7 @@ export class WatchSupervisor {
     }
     if (!owned) { this.schedule(); return; }
     const now = this.options.now ?? Date.now;
-    this.running = runChildScan(this.options.spec, { ...(this.options.deadlineMs !== undefined ? { deadlineMs: this.options.deadlineMs } : {}), ...(this.options.spawnChild ? { spawnChild: this.options.spawnChild } : {}) })
+    this.running = (this.options.runCycle ? this.options.runCycle() : runChildScan(this.options.spec, { ...(this.options.deadlineMs !== undefined ? { deadlineMs: this.options.deadlineMs } : {}), ...(this.options.spawnChild ? { spawnChild: this.options.spawnChild } : {}) }))
       .then(result => {
         const at = now();
         if (isFailedAttempt(result)) this.options.onFailure?.(at);

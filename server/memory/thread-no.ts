@@ -8,15 +8,16 @@
 // No cache: a number read inside a transaction that later rolls back would name no row (and the next thread could take it), so every
 // lookup is one primary-key or unique-index seek, prepared once per connection.
 import type { DatabaseSync, StatementSync } from "node:sqlite";
+import { accountedPrepare } from "./release-budget.ts";
 
 const statements = new WeakMap<DatabaseSync, { byId: StatementSync; byNo: StatementSync; take: StatementSync }>();
 function prepared(db: DatabaseSync) {
   let held = statements.get(db);
   if (!held) {
     held = {
-      byId: db.prepare("SELECT no FROM memory_thread_no WHERE thread_id=?"),
-      byNo: db.prepare("SELECT thread_id FROM memory_thread_no WHERE no=?"),
-      take: db.prepare("INSERT INTO memory_thread_no(thread_id,no) VALUES(?,(SELECT coalesce(max(no),0)+1 FROM memory_thread_no)) RETURNING no"),
+      byId: accountedPrepare(db, "SELECT no FROM memory_thread_no WHERE thread_id=?"),
+      byNo: accountedPrepare(db, "SELECT thread_id FROM memory_thread_no WHERE no=?"),
+      take: accountedPrepare(db, "INSERT INTO memory_thread_no(thread_id,no) VALUES(?,(SELECT coalesce(max(no),0)+1 FROM memory_thread_no)) RETURNING no"),
     };
     statements.set(db, held);
   }

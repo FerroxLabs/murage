@@ -445,7 +445,7 @@ describe("the status line the Chief opens with", () => {
   });
 
   it("promises to do it now only where it can", () => {
-    expect(chiefLead(READY)).toMatch(/I will do it now/);
+    expect(chiefLead(READY)).toMatch(/I start with the first one now/);
     expect(chiefLead(BLANK)).toMatch(/before anything happens/);
     expect(chiefLead(BLANK)).not.toMatch(/I will do it now/);
   });

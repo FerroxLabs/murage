@@ -1,3 +1,7 @@
+import { NoLimitsFollowers } from "./NoLimitsFollowers";
+import { ModelRouteRow } from "./ModelRouteRow";
+import { BrowserChoice } from './BrowserChoice';
+import { BrowserExtensionPanel } from './BrowserExtensionPanel';
 import { ChevronDown, ChevronLeft, FolderOpen, X } from "lucide-react";
 import { notebookLastWrittenLine } from "../lib/notebook-last-written";
 import { Suspense, useEffect, useState } from "react";
@@ -34,7 +38,7 @@ import { noLimitsTermsPending, useAcceptNoLimitsTerms } from "./NoLimitsTermsPro
 import { BotPermissionDefault } from "./BotPermissionDefault";
 import { BotImageApproval } from "./BotImageApproval";
 import { RememberedApprovals } from "./RememberedApprovals";
-import { defaultModeStep, permissionModeOf, PEER_CONTACT_LABEL, peerContactHint, type PermissionMode } from "@/lib/permission-mode";
+import { defaultModeStep, permissionModeOf, ownerBotPermissions, PEER_CONTACT_LABEL, peerContactHint, type PermissionMode } from "@/lib/permission-mode";
 import { useLevelChange } from "./approval/use-level-change";
 import { VoiceSettings } from "./VoiceSettings";
 import { BotCallsSettings } from "./BotCallsSettings";
@@ -44,6 +48,7 @@ import { BotAccessSettings } from "./BotAccessSettings";
 import { PhoneAccessCard } from "./PhoneAccessCard";
 import { PhoneForBotsRow } from "./PhoneForBotsRow";
 import { BotEmailAccessLine, BotEmailSectionHost } from "./BotEmailSettings";
+import { BotFreshStartAction } from "./BotFreshStartAction";
 import { MemoryLauncher } from "./MemoryLauncher";
 import { ContinuityBlock } from "./ContinuityBlock";
 import { activeSettingsRole, settingsRoleLabel, type BotSettingsSection } from "./bot-settings-sections";
@@ -53,6 +58,7 @@ import { useOlderTasks } from "@/lib/use-ensure-task";
 import { useBotSettingsDraft, useBotSettingsNavigation } from "./bot-settings-drafts";
 import { LazyBoundary, retryableLazy } from "./LazyBoundary";
 import { notebookCanSave, notebookSaveBody } from "./notebook-save";
+import { SettingsAskLine } from "./SettingsAskLine";
 
 // Bot settings > Teams loads on first open (SPEC-X 13.1): the owner's
 // sharing routes are desktop only, and none of it belongs in first paint.
@@ -66,7 +72,7 @@ export function SettingsSection({ id, active, children }: { id: BotSettingsSecti
   const shown = active === undefined || active === id;
   const [seen, setSeen] = useState(shown);
   if (shown && !seen) setSeen(true);
-  return <section hidden={!shown} data-settings-section={id} className="space-y-4">{seen ? children : null}</section>;
+  return <section hidden={!shown} data-settings-section={id} className="space-y-4">{seen ? <>{children}<SettingsAskLine /></> : null}</section>;
 }
 
 function Field({
@@ -407,7 +413,8 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
   const [localAutoWarning, setLocalAutoWarning] = useState<"auto" | "local" | null>(null);
   const [fullAccessWarning, setFullAccessWarning] = useState<{ level: "full" | "unlimited" } | null>(null);
   const hostPlatform = localAutoHostPlatform(capabilities, { harness: state.config?.harness });
-  const levelChange = useLevelChange({ bot, desktop, drivesComputer: autoMountsThisComputer({ platform: hostPlatform, computer: bot.computer }) });
+  const permissionBot = ownerBotPermissions(bot, state.bots, state.config?.newBots?.permissionLevel);
+  const levelChange = useLevelChange({ bot: permissionBot, desktop, drivesComputer: autoMountsThisComputer({ platform: hostPlatform, computer: bot.computer }) });
   const [reviewingTerms, setReviewingTerms] = useState(false);
   const acceptTerms = useAcceptNoLimitsTerms();
   const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
@@ -461,7 +468,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
   // conversations apply asks for. The platform is the harness's own
   // (announced on /api/config), not this browser's UA.
   const chooseDefaultMode = (mode: PermissionMode) => {
-    const current = permissionModeOf(bot);
+    const current = permissionModeOf(permissionBot);
     const termsPending = noLimitsTermsPending(state.config);
     if (mode !== current) {
       // New No limits terms are read in No limits' own warning, which accepts them: the confirm card does not.
@@ -470,7 +477,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
       else void levelChange.pick(mode);
       return;
     }
-    const step = defaultModeStep(bot, mode, false, termsPending);
+    const step = defaultModeStep(permissionBot, mode, false, termsPending);
     if (step.kind === "full-warning") setFullAccessWarning({ level: "full" });
     else if (step.kind === "no-limits-warning") setFullAccessWarning({ level: "unlimited" });
   };
@@ -651,6 +658,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
 
 
           <SettingsSection id="permissions" active={section}>
+          {desktop === true && <NoLimitsFollowers />}
           <div id="bot-setting-can-talk" data-setting="bot.permissions.can-talk" className="empty:hidden"><CanTalkToControl bot={bot} /></div>
           <div id="bot-setting-peers" data-setting="bot.permissions.peers" className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div>
@@ -658,7 +666,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
                 {PEER_CONTACT_LABEL}
               </div>
               <div className="mt-0.5 text-[13px] text-ink-secondary">
-                {peerContactHint(bot)}
+                {peerContactHint(permissionBot)}
               </div>
             </div>
             <Switch
@@ -729,10 +737,12 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
               className="disabled:cursor-not-allowed"
             />
           </div>
+          <BrowserChoice bot={bot}>{choose=>bot.browserMode==='chrome-extension'?<BrowserExtensionPanel bot={bot} onChoose={choose}/>:null}</BrowserChoice>
 
           </SettingsSection>
           <SettingsSection id="model" active={section}>
           <div id="bot-setting-model" data-setting="bot.model.model" className="rounded-xl bg-card p-4">
+            <ModelRouteRow engine={engine} manage={() => dispatch({ type: "toggleAppSettings", open: true, section: "models", anchor: "engines-heading" })} className="mb-3" />
             <ModelPicker
               bot={bot}
               contained
@@ -792,6 +802,9 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           {desktop === true && (
           <div id="bot-setting-computer" data-setting="bot.access.computer" className="rounded-xl bg-card p-4">
             <div className="text-[15px] font-medium text-ink">{t("settings.bot.computer.title")}</div>
+            {(!bot.computer || bot.computer === "local") && state.botComputerNotices?.[bot.id] && (
+              <p role="status" className="mt-2 text-[13px] text-ink-secondary">{state.botComputerNotices[bot.id]}</p>
+            )}
             <div className="mt-0.5 text-[13px] text-ink-secondary">
               {bot.computer ? t("settings.bot.computer.note") : t("settings.bot.computer.noteAuto")}
             </div>
@@ -876,6 +889,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           </section>
           {desktop === true && <ContinuityBlock key={`continuity-${bot.id}`} bot={bot} />}
           <MemoryCard key={bot.id} bot={bot} />
+          <BotFreshStartAction bot={bot} active={section === undefined || section === "memory"} />
           </SettingsSection>
 
 
@@ -902,7 +916,7 @@ export function SettingsPanel({ bot, section, embedded = false }: { bot: Bot; se
           <div id="bot-setting-level" data-setting="bot.permissions.level" className="empty:hidden"><BotPermissionDefault
             botId={bot.id}
             botName={bot.name}
-            bot={bot}
+            bot={permissionBot}
             change={levelChange}
             onThisComputer={bot.computer === "local"}
             desktop={desktop}

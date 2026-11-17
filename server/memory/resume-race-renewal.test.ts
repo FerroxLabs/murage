@@ -1,3 +1,10 @@
+import { stampFreshSession } from './testing/writetime-fixture.ts';
+import { appendMessage } from '../message-db.ts';
+import { writeLineage } from './lineage-write.ts';
+import { receiptLineageRef } from './disclosures.ts';
+import ts from 'typescript';
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
+import { startLiveSession } from './testing/live-session-fixture.ts';
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
@@ -30,9 +37,9 @@ import { buildMemoryBundleAfterReset, MemoryDispatchReceipt, resumedSessionInval
 import { claimMemoryJob, publishMemoryWork } from "./jobs.ts";
 import { LineageAllowance, setLineageTimeBudgetForTest } from "./lineage-allowance.ts";
 import { resetLineageWarmForTest } from "./lineage-warm.ts";
-import { memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { setMemoryMode } from "./repository.ts";
-import { stampFreshSession } from "./testing/writetime-fixture.ts";
 import { storeAnchorMessage } from "./testing/anchor-message.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 // this test models a 1.0.1-shaped session (legacy root-set rows) for the read-time judge, as resume-after-recall.test.ts does
@@ -73,9 +80,10 @@ afterEach(() => { setLineageTimeBudgetForTest(undefined); slow.armed = false; })
 
 /** The conversation as a restart finds it: the owner's line u1 (the thread's checkpoint rests on it), and the bot's reply-1, made in
  * session s1 from a record resting on thread "older"'s message m1. */
-async function conversation(): Promise<{ checkpoint: { id: string; version: number } }> {
+async function conversation(live = false): Promise<{ checkpoint: { id: string; version: number } }> {
   const db = database();
-  storeAnchorMessage(db, "chat", "u1", "Please keep the gate code handy.", "user", 1);
+  if(live) appendMessage('chat',{id:'u1',role:'user',kind:'text',text:'Please keep the gate code handy.',at:1});
+  else storeAnchorMessage(db, 'chat', 'u1', 'Please keep the gate code handy.', 'user', 1);
   captureSource(db, { id: "message:chat:u1", threadId: "chat", messageId: "u1", kind: "text", speaker: "owner", outcome: "recorded", text: "Please keep the gate code handy." });
   const work = claimMemoryJob("resume-race-fixture");
   if (!work) throw new Error("no capture job");
@@ -83,17 +91,26 @@ async function conversation(): Promise<{ checkpoint: { id: string; version: numb
   const result = refreshMemoryCheckpoint(work.id);
   if (result.status !== "updated") throw new Error("no checkpoint published");
   const text = "The alarm code is 4812.";
-  storeAnchorMessage(db, "older", "m1", text, "user", 2);
+  if(live) appendMessage('older',{id:'m1',role:'user',kind:'text',text,at:2});
+  else storeAnchorMessage(db, 'older', 'm1', text, 'user', 2);
   captureSource(db, { id: "message:older:m1", threadId: "older", messageId: "m1", kind: "text", speaker: "owner", outcome: "recorded", text });
   const turn = access();
-  const record = saveMemoryCandidate(text, [{ sourceId: "message:older:m1", revision: 1, startByte: 0, endByte: Buffer.byteLength(text) }], "k", turn);
+  const sourceRevision = Number(db.prepare("SELECT revision FROM memory_sources WHERE id='message:older:m1'").get()!.revision);
+  const record = saveMemoryCandidate(text, [{ sourceId: "message:older:m1", revision: sourceRevision, startByte: 0, endByte: Buffer.byteLength(text) }], "k", turn);
   db.prepare("UPDATE memory_records SET state='active' WHERE id=?").run(record);
   const receipt = new MemoryDispatchReceipt(await buildMemoryBundle("", turn, empty, { allowance: LineageAllowance.tool() }), turn, "engine");
-  receipt.sessionStarted("s1");
-  stampFreshSession(db, "chat", "engine", "s1");
-  receipt.noteLookup([{ id: record, version: 1, evidence: [{ sourceId: "message:older:m1", revision: 1 }] }], turn);
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild): only the granted healthy-retention witness acquires this live checkpoint.
+  if(live) {
+    const confirmation = startLiveSession(turn, "engine", "s1");
+    receipt.sessionStarted("s1", true, confirmation);
+  } else {
+    receipt.sessionStarted("s1");
+    stampFreshSession(db, 'chat', 'engine', 's1');
+  }
+  receipt.noteLookup([{ id: record, version: 1, evidence: [{ sourceId: "message:older:m1", revision: sourceRevision }] }], turn);
   receipt.accepted();
-  storeAnchorMessage(db, "chat", "reply-1", "Noted: the alarm code is 4812.", "bot", 3);
+  storeAnchorMessage(db, 'chat', 'reply-1', 'Noted: the alarm code is 4812.', 'bot', 3);
+  if(live) writeLineage(db,{threadId:'chat',messageId:'reply-1',author:'generated'},{refs:[receipt.bundle.bundleId,`${receipt.bundle.bundleId}:lookup`].map(id=>receiptLineageRef(db,id)!)});
   receipt.output("reply-1");
   return { checkpoint: { id: result.checkpointId, version: result.version } };
 }
@@ -142,7 +159,7 @@ it("the reset turn after a restart has the full replay and the memory block, tho
 });
 
 it("a clean session keeps its cursor when recall spent the turn's lineage time: the second look finishes the check", async () => {
-  await conversation();
+  await conversation(true);
   restart();
   const turn = await firstTurnAfterRestart();
   expect(slow.held, "the recall's record read was held").toBe(1);
@@ -205,12 +222,22 @@ it("index.ts renews at each reset decision, right after the reset is noted, and 
     "noteContinuationReset(threadId,instanceId,reason);",
     "noteContinuationReset(threadId,instanceId,`after-recall ${lateWhy.reason??\"check-failed\"}`);",
     "noteContinuationReset(threadId, instanceId, `memory-${memoryState().mode} ${offWhy.reason ?? \"check-failed\"}`);",
-    "if(roomLastResort||sessionBad||(retained&&(retained.disclosed||outputRootsBad(allowance,retained.roots)))){",
+    "noteContinuationReset(threadId,instance.instanceId,`room-memory-${memoryState().mode} ${reason}`);",
   ];
+  // MAIN RULING 1115-RECALL-R7 (GrokBuild): inspect the current reset statements without counting comment bytes.
+  const ast = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true);
   for (const site of sites) {
     const at = source.indexOf(site);
     expect(at, site).toBeGreaterThan(0);
-    expect(source.slice(at, at + 420), site).toMatch(/allowance\.renew\(\)/);
+    let statement: ts.ExpressionStatement | undefined;
+    const walk = (node: ts.Node) => { if (ts.isExpressionStatement(node) && node.getStart(ast) === at) statement = node; ts.forEachChild(node, walk); };
+    walk(ast);
+    expect(statement, site).toBeDefined();
+    const block = statement!.parent;
+    expect(ts.isBlock(block), site).toBe(true);
+    const siblings = (block as ts.Block).statements;
+    const next = siblings.slice(siblings.indexOf(statement!) + 1).find(node => !['recallRecoveryResetDecided = true;', 'afterRecallReset=true;'].includes(node.getText(ast)));
+    expect(next?.getText(ast), site).toMatch(/^(?:allowance\.renew\(\);|if\s*\(allowance\.renew\(\)\))/);
   }
   expect(source.split("allowance.renew()").length - 1).toBe(4);
   // the after-recall reset redoes the replay filtered on the spent allowance

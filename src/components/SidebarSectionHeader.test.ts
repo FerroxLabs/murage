@@ -61,6 +61,7 @@ describe("SidebarSectionHeader", () => {
     expect(html).not.toContain(">5<");
     // Working turns instead of holding a coloured dot, and never numbers itself.
     expect(html).toContain("animate-spin");
+    expect(html).toContain("text-accent");
     expect(html).not.toContain("bg-success");
     expect(html).not.toContain(">3<");
     // …and all three still reach a screen reader.

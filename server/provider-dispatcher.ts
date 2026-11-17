@@ -9,7 +9,8 @@
 // dropped. Silence is judged by the thread's watch, whose stop aborts the
 // request; each caller keeps its own ceiling where it has one. Image POSTs
 // use imageDispatcher below: the same clocks, a fresh connection each time.
-import { Agent, EnvHttpProxyAgent, type Dispatcher } from "undici";
+import { Agent, Client, EnvHttpProxyAgent, buildConnector, type Dispatcher } from "undici";
+import type { Socket } from "node:net";
 
 const NO_TRANSPORT_CLOCK = { headersTimeout: 0, bodyTimeout: 0 } as const;
 let direct: Agent | undefined;
@@ -42,7 +43,47 @@ export function isLocalTarget(target: string | URL | undefined): boolean {
   return a === 127 || a === 10 || a === 0 || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31) || (a === 169 && b === 254) || (a === 100 && b >= 64 && b <= 127);
 }
 
-export function providerDispatcher(target?: string | URL): Dispatcher {
+/** The callback must validate and enqueue synchronously under its writer owner.
+ * It is invoked on a connected TCP/TLS socket, after DNS, tunnelling and TLS,
+ * for every actual HTTP write. A fetch invocation is only preparation. */
+export type ProviderWriteFence = <T>(wire: string | Uint8Array, write: () => T) => T;
+
+function fencedProviderDispatcher(target: string | URL | undefined, release: ProviderWriteFence): Dispatcher {
+  const factory: NonNullable<import("undici").Agent.Options["factory"]> = (origin, options) => {
+    const opts = options as import("undici").Client.Options;
+    // ProxyAgent supplies its tunnel connector to this factory. Wrapping that
+    // connector fences the origin socket, not the proxy's CONNECT handshake.
+    const connect = typeof opts.connect === "function" ? opts.connect : buildConnector(opts.connect ?? {});
+    return new Client(origin, { ...opts, ...NO_TRANSPORT_CLOCK, pipelining: 0,
+      connect: (address, callback) => connect(address, (error, socket) => {
+        if (error) { callback(error, null); return; }
+        const write = socket.write;
+        socket.write = ((wire: string | Uint8Array, ...args: unknown[]) => {
+          try {
+            const bytes = typeof wire === "string" ? Buffer.from(wire, typeof args[0] === "string" ? args[0] as BufferEncoding : "utf8") : wire;
+            return release(bytes, () => Reflect.apply(write, socket, [wire, ...args]));
+          } catch (failure) {
+            // Do not throw through an asynchronous connector callback. No
+            // bytes entered the socket; undici observes its original error.
+            const reason = failure instanceof Error ? failure : new Error("PROVIDER_WRITE_REFUSED");
+            const done = args.at(-1);
+            if (typeof done === "function") queueMicrotask(() => done(reason));
+            socket.destroy(reason);
+            return false;
+          }
+        }) as Socket["write"];
+        callback(null, socket);
+      }),
+    });
+  };
+  const options = { ...NO_TRANSPORT_CLOCK, pipelining: 0, connections: 1, factory };
+  return envProxyOn() && !isLocalTarget(target) ? new EnvHttpProxyAgent(options) : new Agent(options);
+}
+
+export function providerDispatcher(target?: string | URL, release?: ProviderWriteFence): Dispatcher {
+  // A consuming dispatcher belongs to this request alone. Never share its
+  // captured generation or socket with a later turn.
+  if (release) return fencedProviderDispatcher(target, release);
   if (envProxyOn() && !isLocalTarget(target)) return (viaEnvProxy ??= new EnvHttpProxyAgent(NO_TRANSPORT_CLOCK));
   return (direct ??= new Agent(NO_TRANSPORT_CLOCK));
 }

@@ -3,8 +3,19 @@ import type { UnifiedBrowserController } from "./browser-control.ts";
 /** The server derives all three fields from authenticated launch/companion
  * authority and current bot configuration, never from a browser request body. */
 export type BrowserOwnerAuthority = { owner: string; profileKey: string; active: () => boolean; canReclaim?: boolean };
-export function browserOwnerId(launchKind: "desktop" | "companion", realm: string): string {
-  return createHash("sha256").update(`${realm}:${launchKind}`).digest("hex").slice(0, 32);
+export function browserOwnerId(realmOrKind: string, legacyRealm?: string): string {
+  return createHash("sha256").update(`${legacyRealm ?? realmOrKind}:owner`).digest("hex").slice(0, 32);
+}
+/** Inputs are server authentication results, never fields in a request body.
+ * Cloud browser scopes do not acquire browser-control authority through the
+ * broader desktop surface or companion read gates. */
+export function browserOwnerPrincipal(proof: { realm: string; cloudHome: boolean; desktop: boolean; companion: boolean; scope?: string }): { owner: string; canReclaim: boolean } | null {
+  if (proof.cloudHome ? proof.scope !== "owner-desktop" && proof.scope !== "owner-phone" : !proof.desktop && !proof.companion) return null;
+  return { owner: browserOwnerId(proof.realm), canReclaim: proof.cloudHome ? proof.scope === "owner-desktop" : proof.desktop };
+}
+export function migrateBrowserOwner(owner: unknown, realm: string, cloudHome: boolean): unknown {
+  const legacy = (kind: string) => createHash("sha256").update(`${realm}:${kind}`).digest("hex").slice(0, 32);
+  return owner === legacy("desktop") || (!cloudHome && owner === legacy("companion")) ? browserOwnerId(realm) : owner;
 }
 export async function browserOwnerRequest(controller: UnifiedBrowserController, authority: BrowserOwnerAuthority | null, method: string, body: Record<string, unknown> = {}, frameGeneration?: number) {
   // Distinct `code` from the door's own 401 two lines up in server/index.ts
@@ -40,4 +51,18 @@ export async function browserOwnerRequest(controller: UnifiedBrowserController, 
     default: throw Object.assign(new Error("Unknown browser action"), { status: 400 });
   }
   valid(); const status = controller.status(profileKey); return { ...status, owned: status.owner === owner, canReclaim: authority!.canReclaim === true };
+}
+
+/** A Cloud home's owner browsers each hold on their own: the hold is bound to the device, so one device's control never
+ * opens the page for another device that merely carries a live door proof. */
+export function cloudBrowserOwnerId(realm: string, deviceId: string): string {
+  return browserOwnerId("companion", `${realm}:cloud-device:${deviceId}`);
+}
+export interface CloudHoldDevice { id: string; scope: string; factor: "passkey" | "remembered-owner" | null; factorExpiresAt?: number }
+/** Releases the holds of Cloud devices that are no longer a live owner browser (revoked, demoted to chat only, factor expired).
+ * Desktop and phone holds are never touched. Returns how many holds were handed back. */
+export function releaseDeadCloudHolds(controller: Pick<UnifiedBrowserController, "releaseHeldWhere">, realm: string, devices: readonly CloudHoldDevice[], now = Date.now()): number {
+  const live = new Set(devices.filter(d => d.scope === "browser" && d.factor !== null && (d.factorExpiresAt === undefined || d.factorExpiresAt > now)).map(d => cloudBrowserOwnerId(realm, d.id)));
+  const kept = new Set([browserOwnerId("desktop", realm), browserOwnerId("companion", realm)]);
+  return controller.releaseHeldWhere(owner => !kept.has(owner) && !live.has(owner));
 }

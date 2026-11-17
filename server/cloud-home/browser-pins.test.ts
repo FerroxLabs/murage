@@ -32,5 +32,7 @@ it("resolves linux-arm64 browser assets for homes only, from the arm64 pins", ()
   expect(spec.chrome).toMatchObject({ version: CLOUD_BROWSER_PINS.chromeVersion, bytes: arm.chromeBytes, sha256: arm.chromeSha256, executableSha256: arm.chromeExecutableSha256, executable: "chrome/chrome-headless-shell-linux-arm64/chrome-headless-shell" });
   expect(spec.chrome.url).toBe(`https://storage.googleapis.com/chrome-for-testing-public/${CLOUD_BROWSER_PINS.chromeVersion}/linux-arm64/chrome-headless-shell-linux-arm64.zip`);
   expect(resolveAgentBrowserReleaseAsset("linux", "arm64")).toMatchObject({ sha256: arm.agentSha256 });
-  expect(arm.agentUrl).toContain(`/v${CLOUD_BROWSER_PINS.agentVersion}/`);
+  // The omb.2 vendor builds live on a release tagged browser-engine-v<agentVersion>.
+  expect(arm.agentUrl).toContain(`-v${CLOUD_BROWSER_PINS.agentVersion}/`);
+  expect(CLOUD_BROWSER_PINS.agentUrl).toContain(`-v${CLOUD_BROWSER_PINS.agentVersion}/`);
 });

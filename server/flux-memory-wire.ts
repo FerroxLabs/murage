@@ -23,9 +23,10 @@ export const FLUX_CODEX_PROVIDER_NOINJECT = "flux-noinject";
 
 /** The fixed headers of each codex table. Never depend on settings: a settings change picks another table. */
 export const FLUX_CODEX_TABLE_HEADERS: Readonly<Record<string, Record<string, string>>> = {
-  [FLUX_CODEX_PROVIDER_BASE]: { [FLUX_MEMORY_APP_HEADER]: FLUX_MEMORY_APP },
+  // every table says capture off: Flux never captures a proxied request implicitly (flux-memory-headers.ts decisionOf)
+  [FLUX_CODEX_PROVIDER_BASE]: { [FLUX_MEMORY_APP_HEADER]: FLUX_MEMORY_APP, [FLUX_MEMORY_CAPTURE_HEADER]: "off" },
   [FLUX_CODEX_PROVIDER_OFF]: { [FLUX_MEMORY_APP_HEADER]: FLUX_MEMORY_APP, [FLUX_MEMORY_CAPTURE_HEADER]: "off", [FLUX_MEMORY_INJECT_HEADER]: "off" },
-  [FLUX_CODEX_PROVIDER_NOINJECT]: { [FLUX_MEMORY_APP_HEADER]: FLUX_MEMORY_APP, [FLUX_MEMORY_INJECT_HEADER]: "off" },
+  [FLUX_CODEX_PROVIDER_NOINJECT]: { [FLUX_MEMORY_APP_HEADER]: FLUX_MEMORY_APP, [FLUX_MEMORY_CAPTURE_HEADER]: "off", [FLUX_MEMORY_INJECT_HEADER]: "off" },
 };
 
 /** `-c` argv declaring `http_headers` on one codex provider table. */

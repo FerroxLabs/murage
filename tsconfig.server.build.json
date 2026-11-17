@@ -5,7 +5,8 @@
     "outDir": "dist-server",
     "rewriteRelativeImportExtensions": true,
     "declaration": false,
-    "sourceMap": false
+    "sourceMap": false,
+    "rootDir": "."
   },
   "exclude": [
     "server/**/*.test.ts",

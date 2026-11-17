@@ -22,6 +22,7 @@ import { denyLookup, lineageLive, memoryLookup } from "./deny-read.ts";
 import { memoryRefKey, type LineageVerdict } from "./lineage-types.ts";
 import { inheritEdge } from "./revoke-commit.ts";
 import { insertMemoryRecord } from "./record-write.ts";
+import { sanitizeDisplayTextUnit } from "../transcript-page.ts";
 import { redactSecretsInText } from "../redact.ts";
 import { ensureScope } from "./policy.ts";
 import { memoryState } from "./repository.ts";
@@ -52,8 +53,12 @@ function completedSource(jobId:string){
   if(database().prepare("SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?)").get(row.id,row.revision))throw new Error("MEMORY_SOURCE_UNAVAILABLE");
   return row;
 }
-function checkpointEvidence(handle:Handle,scopeId:string,pending?:{checking:boolean}){
+function checkpointEvidence(handle:Handle,scopeId:string,pending?:{checking:boolean},maxPayloadBytes?:number){
   const db=database();
+  if(maxPayloadBytes!==undefined){
+    const size=db.prepare('SELECT octet_length(payload) AS bytes FROM memory_source_versions WHERE source_id=? AND revision=?').get(handle.sourceId,handle.revision);
+    if(Number(size?.bytes)>maxPayloadBytes){if(pending)pending.checking=true;return null;}
+  }
   const source=db.prepare(`SELECT s.*,substr(CAST(json_extract(v.payload,'$.text') AS BLOB),?,?) AS excerpt
     FROM memory_sources s JOIN memory_source_versions v ON v.source_id=s.id AND v.revision=s.revision
     WHERE s.id=? AND s.revision=? AND s.state='active' AND s.scope_id=?
@@ -79,20 +84,76 @@ function checkpointEvidence(handle:Handle,scopeId:string,pending?:{checking:bool
  * Maintains at most four direct original-source references; never summarizes an
  * earlier summary, deletes source evidence, promotes authority, or writes pins.
  */
-export function refreshMemoryCheckpoint(completedJobId:string){ return heldStep("memory.checkpoint", () => refreshMemoryCheckpointUnheld(completedJobId)); }
-function refreshMemoryCheckpointUnheld(completedJobId:string){
+export function refreshMemoryCheckpoint(completedJobId:string,options:{maxPayloadBytes?:number}={}){ return heldStep("memory.checkpoint", () => refreshMemoryCheckpointUnheld(completedJobId,options.maxPayloadBytes)); }
+function refreshMemoryCheckpointUnheld(completedJobId:string,maxPayloadBytes?:number):
+  {status:'deferred';reason:string;checkpointId?:undefined;version?:undefined}|{status:'updated'|'unchanged';checkpointId:string;version:number;reason?:undefined}{
   // its evidence is judged inside the transaction: the lineage verdict cache can serve there once it is current
   prepareLineageCache();
   return transaction(db=>{
+    if(!['capture','active'].includes(memoryState().mode))throw new Error('MEMORY_DISABLED');
+    if(maxPayloadBytes!==undefined){
+      const size=db.prepare('SELECT octet_length(v.payload) AS bytes FROM memory_jobs j JOIN memory_source_versions v ON v.source_id=j.source_id AND v.revision=j.source_revision WHERE j.id=?').get(completedJobId);
+      if(Number(size?.bytes)>maxPayloadBytes)return {status:'deferred' as const,reason:'evidence-checking'};
+    }
     const source=completedSource(completedJobId);
-    if(!source.thread_id)return {status:"deferred" as const,reason:"source-has-no-thread"};
-    const id=threadCheckpointId(String(source.scope_id),String(source.thread_id));
-    const previous=db.prepare("SELECT * FROM memory_records WHERE id=? ORDER BY version DESC LIMIT 1").get(id);
-    if(previous?.owner_pinned===1||previous?.assertion==="owner-statement")return {status:"deferred" as const,reason:"owner-controlled-checkpoint"};
+    const publishedResult=<T extends {status:'updated'|'unchanged'}>(result:T)=>{
+      db.prepare('DELETE FROM memory_scope_bindings WHERE id=?').run('checkpoint-debt:'+completedJobId);
+      return result;
+    };
+    const noCheckpoint=(reason:string)=>{
+      db.prepare("UPDATE memory_scope_bindings SET subject_id='checkpoint-disposition',state='revoked',intent=json_set(intent,'$.disposition',?) WHERE id=? AND subject_type='system' AND subject_id='checkpoint-pending'")
+        .run(reason,'checkpoint-debt:'+completedJobId);
+      return {status:'deferred' as const,reason};
+    };
+    if(!source.thread_id)return noCheckpoint('source-has-no-thread');
+    const family=threadCheckpointId(String(source.scope_id),String(source.thread_id));
+    db.prepare('INSERT OR IGNORE INTO memory_checkpoint_heads(family_id,scope_id,thread_id) VALUES(?,?,?)').run(family,source.scope_id,source.thread_id);
+    const head=db.prepare('SELECT * FROM memory_checkpoint_heads WHERE family_id=?').get(family)!;
+    // A head move is a derived selection delta, never an authoritative record
+    // edit or a P3c change. Maintenance removes the retired candidate by key.
+    const retireCandidate=()=>{
+      if(!head.record_id)return;
+      db.prepare("INSERT INTO memory_recall_changes(kind,object_id,version) VALUES('record',?,?)").run(head.record_id,head.record_version);
+      db.prepare("UPDATE memory_projection_receipts SET lexical_status='pending-archive' WHERE record_id=? AND record_version=? AND lexical_status NOT IN ('delete-pending','deleted')").run(head.record_id,head.record_version);
+    };
+    if(head.state==='archived')return noCheckpoint('owner-archived-checkpoint');
+    if(maxPayloadBytes!==undefined&&head.record_id){
+      const record=db.prepare('SELECT version,octet_length(text) AS bytes FROM memory_records WHERE id=? ORDER BY version DESC LIMIT 1').get(head.record_id);
+      const version=record?.version??head.record_version;
+      const member=db.prepare('SELECT octet_length(handles) AS bytes FROM memory_checkpoint_members WHERE record_id=? AND record_version=?').get(head.record_id,version);
+      if(Number(record?.bytes)>maxPayloadBytes||Number(member?.bytes)>maxPayloadBytes)return {status:'deferred' as const,reason:'evidence-checking'};
+      const count=member?db.prepare('SELECT json_array_length(handles) AS n FROM memory_checkpoint_members WHERE record_id=? AND record_version=?').get(head.record_id,version)
+        :db.prepare('SELECT count(*) AS n FROM (SELECT 1 FROM memory_evidence WHERE record_id=? AND record_version=? LIMIT 5)').get(head.record_id,version);
+      if(Number(count?.n)>4)return {status:'deferred' as const,reason:'evidence-checking'};
+    }
+    const published=db.prepare('SELECT record_id,record_version FROM memory_checkpoint_publications WHERE family_id=? AND job_id=?').get(family,completedJobId);
+    if(published){
+      // MAIN RULING recall-k: idempotency is identity, never authority. A retry
+      // rechecks the exact publication without retargeting or moving a newer head.
+      const record=db.prepare('SELECT scope_id,state FROM memory_records WHERE id=? AND version=?').get(published.record_id,published.record_version);
+      const ref={kind:'record' as const,id:String(published.record_id),version:Number(published.record_version),scopeId:String(record?.scope_id??source.scope_id)};
+      const state=record?.state==='active'?memoryLookup(db,[ref],{audience:null}).get(memoryRefKey(ref))?.state??'checking':'withheld';
+      const pending={checking:state==='checking'};
+      const handles=db.prepare('SELECT source_id AS sourceId,source_revision AS revision,start_byte AS startByte,end_byte AS endByte FROM memory_evidence WHERE record_id=? AND record_version=? ORDER BY source_id LIMIT 5').all(published.record_id,published.record_version) as unknown as Handle[];
+      let current=state==='shown'&&handles.length>0&&handles.length<=4;
+      if(current)for(const handle of handles)if(!checkpointEvidence(handle,ref.scopeId,pending,maxPayloadBytes))current=false;
+      if(!current){
+        if(!pending.checking){
+          const cleared=db.prepare('UPDATE memory_checkpoint_heads SET record_id=NULL,record_version=NULL WHERE family_id=? AND record_id=? AND record_version=?').run(family,published.record_id,published.record_version);
+          if(cleared.changes)retireCandidate();
+        }
+        return pending.checking?{status:'deferred' as const,reason:'evidence-checking'}:noCheckpoint('published-evidence-unavailable');
+      }
+      return publishedResult({status:'unchanged' as const,checkpointId:ref.id,version:ref.version});
+    }
+    const previous=head.record_id?db.prepare('SELECT * FROM memory_records WHERE id=? ORDER BY version DESC LIMIT 1').get(head.record_id):undefined;
+    const previousId=previous?String(previous.id):'';
+    if(previous?.owner_pinned===1||previous?.assertion==="owner-statement")return noCheckpoint('owner-controlled-checkpoint');
     // Notes the owner forgot are not carried into the next ones: their quotes
     // stay in the room, not in memory (forget.ts, N2).
-    const forgotten=previous&&db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(id,previous.version);
-    const handles:Handle[]=previous&&!forgotten?db.prepare("SELECT source_id AS sourceId,source_revision AS revision,start_byte AS startByte,end_byte AS endByte FROM memory_evidence WHERE record_id=? AND record_version=?").all(id,previous.version) as unknown as Handle[]:[];
+    const forgotten=previous&&db.prepare("SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?)").get(previousId,previous.version);
+    const priorHandles=previous&&!forgotten?db.prepare('SELECT handles FROM memory_checkpoint_members WHERE record_id=? AND record_version=?').get(previousId,previous.version):undefined;
+    const handles:Handle[]=priorHandles?JSON.parse(String(priorHandles.handles)):previous&&!forgotten?db.prepare("SELECT source_id AS sourceId,source_revision AS revision,start_byte AS startByte,end_byte AS endByte FROM memory_evidence WHERE record_id=? AND record_version=? ORDER BY source_id").all(previousId,previous.version) as unknown as Handle[]:[];
     if(source.kind!=="turn" && Number(source.bytes)>0){
       const raw=db.prepare("SELECT substr(CAST(json_extract(payload,'$.text') AS BLOB),1,96) AS bytes FROM memory_source_versions WHERE source_id=? AND revision=?").get(source.id,source.revision)!.bytes as Uint8Array;
       let length=raw.length;
@@ -102,32 +163,37 @@ function refreshMemoryCheckpointUnheld(completedJobId:string){
     const seen=new Set<string>(),items=[],pending={checking:false};
     for(const handle of handles){
       if(seen.has(handle.sourceId))continue;seen.add(handle.sourceId);
-      const item=checkpointEvidence(handle,String(source.scope_id),pending);if(item)items.push(item);
+      if(db.prepare('SELECT 1 FROM memory_checkpoint_exclusions WHERE family_id=? AND source_id=? AND source_revision=?').get(family,handle.sourceId,handle.revision))continue;
+      const item=checkpointEvidence(handle,String(source.scope_id),pending,maxPayloadBytes);if(item)items.push(item);
       if(items.length===4)break;
     }
     // Evidence still being checked (a revoke's pending window, 1.0.2 write-time) is neither shown nor withheld: the checkpoint is left as it
     // is, not rolled over fewer items or archived, and the caller tries again once the window has drained (worker-controller.ts).
     if(pending.checking)return {status:"deferred" as const,reason:"evidence-checking"};
     if(!items.length){
-      if(previous?.state==="active"){
-        db.prepare("UPDATE memory_records SET state='archived',valid_to=? WHERE id=? AND version=?").run(Date.now(),id,previous.version);
-        db.prepare("UPDATE memory_projection_receipts SET lexical_status='pending-archive' WHERE record_id=? AND record_version=?").run(id,previous.version);
-        db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
-      }
-      return {status:"deferred" as const,reason:"no-current-completed-evidence"};
+      db.prepare('UPDATE memory_checkpoint_heads SET record_id=NULL,record_version=NULL WHERE family_id=?').run(family);
+      retireCandidate();
+      return noCheckpoint('no-current-completed-evidence');
     }
     // Built from raw payload excerpts: redacted here so the unchanged test below compares it with the stored (redacted) text.
-    const text=redactSecretsInText("Working evidence; statements are not fulfilled commitments.\n"+items.map(item=>`${item.speaker==='owner'?'Owner statement':item.speaker==='tool'?'Observed tool outcome':'Assistant hypothesis'} (${item.outcome}): ${JSON.stringify(item.text)}`).join("\n"));
-    const previousHandles=previous?db.prepare("SELECT source_id AS sourceId,source_revision AS revision,start_byte AS startByte,end_byte AS endByte FROM memory_evidence WHERE record_id=? AND record_version=? ORDER BY source_id").all(id,previous.version):[];
-    const ordered=items.map(item=>item.handle).sort((a,b)=>a.sourceId.localeCompare(b.sourceId));
-    if(previous?.state==="active"&&previous.text===text&&JSON.stringify(previousHandles)===JSON.stringify(ordered))return {status:"unchanged" as const,checkpointId:id,version:Number(previous.version)};
-    const version=previous?Number(previous.version)+1:1;
-    if(previous){db.prepare("UPDATE memory_records SET state='archived',valid_to=? WHERE id=? AND version=? AND owner_pinned=0").run(Date.now(),id,previous.version);db.prepare("UPDATE memory_projection_receipts SET lexical_status='pending-archive' WHERE record_id=? AND record_version=?").run(id,previous.version);}
+    const safeEvidence = sanitizeDisplayTextUnit(items.map(item => item.text));
+    const text=redactSecretsInText("Working evidence; statements are not fulfilled commitments.\n"+items.map((item,index)=>`${item.speaker==='owner'?'Owner statement':item.speaker==='tool'?'Observed tool outcome':'Assistant hypothesis'} (${item.outcome}): ${JSON.stringify(safeEvidence[index])}`).join("\n"));
+    const ordered=items.map(item=>item.handle);
+    const previousHandles=previous?db.prepare('SELECT handles FROM memory_checkpoint_members WHERE record_id=? AND record_version=?').get(previousId,previous.version):undefined;
+    if(previous?.state==='active'&&previous.text===text&&previousHandles?.handles===JSON.stringify(ordered)){
+      db.prepare('INSERT INTO memory_checkpoint_publications VALUES(?,?,?,?)').run(family,completedJobId,previousId,previous.version);
+      return publishedResult({status:'unchanged' as const,checkpointId:previousId,version:Number(previous.version)});
+    }
+    const sequence=Number(head.sequence)+1,id=`${family}:${sequence}`,version=1;
     insertMemoryRecord(db,{id,version,scopeId:String(source.scope_id),kind:"checkpoint",text,assertion:"assistant-inference",state:"active",validFrom:Date.now(),createdAt:Date.now()});
     for(const item of items){db.prepare("INSERT INTO memory_evidence VALUES(?,?,?,?,?,?)").run(id,version,item.handle.sourceId,item.handle.revision,item.handle.startByte,item.handle.endByte);inheritEdge(db,{kind:"record",id,version},{kind:"source",id:item.handle.sourceId});}
     db.prepare("INSERT INTO memory_projection_receipts VALUES(?,?,0,'pending','pending',NULL)").run(id,version);
+    db.prepare('INSERT INTO memory_checkpoint_members VALUES(?,?,?,?,?)').run(family,sequence,id,version,JSON.stringify(ordered));
+    db.prepare('INSERT INTO memory_checkpoint_publications VALUES(?,?,?,?)').run(family,completedJobId,id,version);
+    db.prepare("UPDATE memory_checkpoint_heads SET sequence=?,record_id=?,record_version=?,state='active' WHERE family_id=?").run(sequence,id,version,family);
+    retireCandidate();
     db.exec("UPDATE memory_meta SET data_revision=data_revision+1");
-    return {status:"updated" as const,checkpointId:id,version};
+    return publishedResult({status:"updated" as const,checkpointId:id,version});
   });
 }
 
@@ -453,8 +519,12 @@ async function consolidateSource(completedJobId:string,extractor:TextOnlyExtract
   // At SLICE_CALL_GUARD calls the remaining candidates are left unjudged (never support) and the slice commits.
   if(result.status==="complete")for(const candidate of result.candidates){
     let prior:Record<string,unknown>[]=[];
-    if(candidate.subject&&candidate.predicate&&candidate.update&&source!.speaker==="owner")prior=db.prepare(`SELECT r.id,r.version,r.text FROM memory_records r JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version
-        WHERE r.scope_id=? AND r.state='active' AND r.owner_pinned=0 AND d.entities=? AND r.kind='fact' AND d.partition!='identity' ORDER BY r.created_at DESC LIMIT 2`).all(source!.scope_id,JSON.stringify([candidate.subject,candidate.predicate]));
+    // B2 (spec r3 2.4): a forgotten fact stays active with no words until its job; the owner saying it again is a new record, never a
+    // correction under the forgotten id (no reader would show it). The tombstone probe (an index prefix) runs only on the rows that already
+    // match the subject, so it adds nothing per record of the scope (a correlated probe in the scan cost +60% at 200,000 records).
+    if(candidate.subject&&candidate.predicate&&candidate.update&&source!.speaker==="owner")prior=db.prepare(`WITH matched AS MATERIALIZED (SELECT r.id,r.version,r.text,r.created_at FROM memory_records r JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version
+        WHERE r.scope_id=? AND r.state='active' AND r.owner_pinned=0 AND d.entities=? AND r.kind='fact' AND d.partition!='identity')
+        SELECT m.id,m.version,m.text FROM matched m WHERE NOT EXISTS(SELECT 1 FROM memory_tombstones t WHERE t.target_type='record' AND t.target_id=m.id) ORDER BY m.created_at DESC LIMIT 2`).all(source!.scope_id,JSON.stringify([candidate.subject,candidate.predicate]));
     const correcting=prior.length===1&&prior[0]!.text!==candidate.text;
     const needsSupport=Boolean(candidate.claimType&&candidate.claimType!=="inference"&&candidate.text!==candidate.quote);
     if(!correcting&&!needsSupport)continue;
@@ -492,7 +562,7 @@ async function consolidateSource(completedJobId:string,extractor:TextOnlyExtract
       if((counted.extractionAttempts??0)>=SLICE_ATTEMPT_LIMIT&&length)return skipSlice(db,source!,counted,length!,persist,"failure" in result?result.failure:undefined);
       const nextRetry=("retryAfter" in result?result.retryAfter:undefined)??retryAfter(reason);
       persist(source!.scope_id,{...counted,status:"deferred",reason,retryAfter:nextRetry,updatedAt:Date.now()});
-      return {status:"deferred" as const,reason,candidateIds:[],cursor:state!.cursor,candidateCount:state!.candidateCount,retryAfter:nextRetry};
+      return {status:"deferred" as const,reason,candidateIds:[],cursor:state!.cursor,candidateCount:state!.candidateCount,retryAfter:nextRetry,...("waitingFor" in result?{waitingFor:result.waitingFor}:{})};
     }
     const candidateIds:string[]=[];let added=0;
     for(const candidate of result.candidates){
@@ -520,7 +590,9 @@ async function consolidateSource(completedJobId:string,extractor:TextOnlyExtract
           recordLearningEvent(db,{kind:"superseded",scopeId:String(source!.scope_id),recordId:candidateId,recordVersion:1,priorId:prior.id,priorVersion:prior.version,sourceId:String(source!.id),sourceRevision:Number(source!.revision),botId:learningSourceBot(String(source!.thread_id))?.id,connection:options.connection});
           enqueueProcedureCorrectionReview(db,candidateId,1);
         }else if(active&&candidate.subject&&candidate.predicate){
-          const conflict=db.prepare(`SELECT r.id FROM memory_records r JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version WHERE r.scope_id=? AND r.state='active' AND r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND r.id!=? AND r.text!=? AND d.entities=? LIMIT 1`).get(source!.scope_id,candidateId,candidate.text,JSON.stringify([candidate.subject,candidate.predicate]));
+          // a forgotten claim (active with no words until its job) is not a conflict (B2, spec r3 2.4); probed only on subject matches
+          const conflict=db.prepare(`WITH matched AS MATERIALIZED (SELECT r.id FROM memory_records r JOIN memory_record_details d ON d.record_id=r.id AND d.record_version=r.version WHERE r.scope_id=? AND r.state='active' AND r.kind NOT IN ${PIP_ALL_KINDS_SQL} AND r.id!=? AND r.text!=? AND d.entities=?)
+            SELECT m.id FROM matched m WHERE NOT EXISTS(SELECT 1 FROM memory_tombstones t WHERE t.target_type='record' AND t.target_id=m.id) LIMIT 1`).get(source!.scope_id,candidateId,candidate.text,JSON.stringify([candidate.subject,candidate.predicate]));
           if(conflict)db.prepare("UPDATE memory_record_details SET claim_status='disputed' WHERE record_id=? AND record_version=1").run(candidateId);
         }
         if(!active&&support.has(candidate)&&!db.prepare("SELECT 1 FROM memory_record_details WHERE record_id=? AND confidence_basis IS NOT NULL").get(candidateId))db.prepare("UPDATE memory_record_details SET confidence_basis=? WHERE record_id=? AND record_version=1").run(support.get(candidate)!.reason,candidateId);

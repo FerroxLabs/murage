@@ -18,7 +18,13 @@ import { expect, type Page } from "@playwright/test";
 export async function chiefHasSpoken(app: Page): Promise<void> {
   const question = app.getByText(/Tell me what to call you and I will get the rest ready/i);
   const log = app.getByTestId("chat-scroll");
+  const welcome = app.getByRole("button", { name: /Get started/i });
   await expect(async () => {
+    // The welcome overlays the mounted thread and may arrive after its first poll.
+    if (await welcome.isVisible()) {
+      await welcome.click();
+      await expect(welcome).toBeHidden();
+    }
     // Same gesture as a reader's: a wheel up (which releases bottom-follow), then to the top.
     await log.evaluate((el) => {
       el.dispatchEvent(new WheelEvent("wheel", { deltaY: -400, bubbles: true }));

@@ -13,3 +13,12 @@
 "Ask a bot" = "询问机器人";
 "Open my chat" = "打开我的聊天";
 "From" = "来自";
+"Send to %@ as you" = "以你的身份发送给%@";
+"Send this to %@ as you?" = "以你的身份将此内容发送给%@？";
+"Confirm in Murage" = "在Murage中确认";
+"Sent to %@ without your recent chat." = "已发送给%@，但未附带你最近的聊天。";
+"Sent to %@." = "已发送给%@。";
+"Sent to %@ without your recent chat (it waited too long)." = "已发送给%@，但未附带你最近的聊天（等待时间过长）。";
+"Sent to %@. Pair this phone again to include your recent chat." = "已发送给%@。请重新配对此手机，以包含你最近的聊天。";
+"Pair this phone again so %@ can see your recent chat when you send from it." = "请重新配对这部手机，这样你从这里发送时，%@ 就能看到你最近的聊天。";
+"Couldn't reach your computer. Check it's on and try again." = "无法连接到你的电脑。请确认它已开机，然后重试。";

@@ -90,6 +90,8 @@ export interface BotGrantDeps {
   roomHas: (threadId: string, botId: string) => boolean;
   /** the bot's direct thread a request names (throws with a status, as requestedDirectBot does) */
   directThread: (botId: string, requested: unknown) => string;
+  /** the stored request id a displayed card handle names on this thread (anything else comes back unchanged) */
+  storedRequest?: (threadId: string, requestId: string) => string;
   /** the open card for this request on this thread; in a room, only one this bot raised */
   pendingCard: (threadId: string, requestId: string, roomBotId?: string) => GrantCard | undefined;
   routineName: (routineId: string) => string | undefined;
@@ -132,8 +134,9 @@ export async function botAlwaysAllowSave(deps: BotGrantDeps, botId: string, requ
   }
   // AMEND-13 Rule 81: the decision names its pending request; the server
   // rereads THAT card and never searches for some card holding the key.
-  const requestId = typeof body.requestId === "string" ? body.requestId : "";
-  if (!requestId) return { status: 400, body: { error: "requestId required" } };
+  const askedId = typeof body.requestId === "string" ? body.requestId : "";
+  if (!askedId) return { status: 400, body: { error: "requestId required" } };
+  const requestId = deps.storedRequest ? deps.storedRequest(cardThread, askedId) : askedId;
   const pending = deps.pendingCard(cardThread, requestId, roomThread ? botId : undefined);
   // Rule 78c: a card's whole action set, or the one key it offered
   const grantKeys = !pending ? undefined

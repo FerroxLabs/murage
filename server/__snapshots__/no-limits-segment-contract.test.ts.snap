@@ -1,0 +1,99 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`contract cwd: owner > 'unknown-cd-ordinary' > Full access snapshot 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; cd "$x"; touch config",
+    "fullAccessOrigin": "owner",
+    "outsideRead": null,
+    "ownerStarted": true,
+  },
+}
+`;
+
+exports[`contract cwd: owner > 'unknown-cd-protected' > Full access snapshot 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/etc",
+    "commandText": "if; cd "$x"; touch config",
+    "fullAccessOrigin": "owner",
+    "outsideRead": null,
+    "ownerStarted": true,
+  },
+}
+`;
+
+exports[`contract cwd: routine > 'unknown-cd-ordinary' > Full access snapshot 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/work",
+    "commandText": "if; cd "$x"; touch config",
+    "fullAccessOrigin": "routine",
+    "outsideRead": null,
+    "ownerStarted": false,
+    "routineLevel": true,
+  },
+}
+`;
+
+exports[`contract cwd: routine > 'unknown-cd-protected' > Full access snapshot 1`] = `
+{
+  "action": {
+    "approve": null,
+    "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+    "reader": "held",
+    "reason": "tokenizer",
+    "rule": "unreadable",
+    "source": "always-ask",
+  },
+  "finalized": {
+    "approve": null,
+    "source": "unread-call",
+  },
+  "inputs": {
+    "commandCwd": "/etc",
+    "commandText": "if; cd "$x"; touch config",
+    "fullAccessOrigin": "routine",
+    "outsideRead": null,
+    "ownerStarted": false,
+    "routineLevel": true,
+  },
+}
+`;
