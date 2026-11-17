@@ -4,6 +4,7 @@
 // INVALID_RESTORE_MESSAGE through 1.0.8. These tests walk every card kind the
 // product writes or reads, prove the validator accepts each real writer's
 // output, and run one such card through capture, restore and review.
+import { openFixtureApproval } from "./testing/approval-card.ts";
 import { mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -17,6 +18,7 @@ import { mcpEnableCard } from "./mcp-bot-cards.ts";
 import { trustCardView } from "./email/cards.ts";
 import type { WebhookRequestCardData } from "../shared/routine-request.ts";
 import type { RoutineRunCardData } from "../shared/routine-run.ts";
+import { OWN_WRITE_COPY, type OwnWriteCardData } from "../shared/own-write-card.ts";
 import { mcpEntryRev, type StoredMcpServer, type StoredRemoteMcpServer } from "./mcp-registry.ts";
 import { backupFixture } from "./testing/backup-fixture.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
@@ -53,7 +55,11 @@ const row = (id: string, card: unknown) => ({ id, at: 1, role: "bot", kind: "opt
 function writtenCards(): Record<string, unknown[]> {
   const fresh = mcpEnableCard("acme", stdio, mcpEntryRev("acme", stdio), bot);
   const linked = mcpEnableCard("linked", remote, mcpEntryRev("linked", remote), bot);
+  // own-write: the card OwnWriteHolds.project stores (server/index.ts), open and settled, with the writer data ownWriteCard builds
+  const ownWriter = (state: OwnWriteCardData["state"]): OwnWriteCardData => ({ version: 1, holdId: "hold-1", stateRevision: 1, state, tool: "memory_write", bodyHash: "2".repeat(64), ref: "Remember this", detail: "{}" });
+  const ownCard = (state: OwnWriteCardData["state"], answered: boolean) => ({ kind: "own-write", requestId: "own-hold-1", title: OWN_WRITE_COPY.title, subtitle: "Remember this", writer: ownWriter(state), options: [OWN_WRITE_COPY.allow, OWN_WRITE_COPY.deny], ...(answered ? { answered: state } : {}) });
   return {
+    "own-write": [ownCard("waiting", false), ownCard("applied", true), ownCard("declined", true), { ...ownCard("unknown", true), writer: { ...ownWriter("unknown"), restored: true } }],
     mcpEnable: [
       fresh, linked,
       { ...fresh, dismissed: true, mcpEnable: { ...fresh.mcpEnable, error: "This card is out of date." } },
@@ -139,7 +145,7 @@ it("an unknown card kind or an unknown mcpEnable field is still refused", () => 
 it("an installation holding a Turn on card backs up, restores and opens for review with the card intact", async () => {
   const f = backupFixture(); roots.push(f.parent);
   const card = mcpEnableCard("acme", stdio, mcpEntryRev("acme", stdio), bot);
-  const message = { ...row("turn-on", card), at: 2, parentId: "message" };
+  const message = openFixtureApproval(f.db, "thread", { ...row("turn-on", card), at: 2, parentId: "message" });
   f.db.prepare("INSERT INTO messages(thread_id,id,at,role,kind,text,json) VALUES(?,?,?,?,?,?,?)").run("thread", "turn-on", 2, "bot", "options", null, JSON.stringify(message));
   f.db.exec("UPDATE thread_state SET active_leaf_id='turn-on'");
   f.db.exec("PRAGMA wal_checkpoint(TRUNCATE)");

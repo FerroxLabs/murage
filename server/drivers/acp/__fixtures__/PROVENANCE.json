@@ -1,0 +1,135 @@
+{
+  "binary": {
+    "name": "fuigo-1.0.41-linux-x86_64",
+    "version": "fuigo 1.0.41 (b6d508fbff3e)",
+    "sha256": "12c9b952ee9c9561e4ef36ed18973f3af2a443817f5dc928e89bee38dddddc07",
+    "source": "https://registry.npmjs.org/@fuigo/linux-x64/-/linux-x64-1.0.41.tgz",
+    "pin": "FUIGO-1041-PIN.md"
+  },
+  "body_sources": {
+    "status": "PROVISIONAL: FluxMain production cross-check and live commit unavailable",
+    "S1": {
+      "file": "/tmp/fixture-root/keylimits-fin/master/src/rate_limits.py",
+      "line": 1270,
+      "sha256": "ce88819b43820cb7a5ed5dab82c7a6a29e52f187cd60c138899c5e8707b8b2f9"
+    },
+    "S2": {
+      "version": "1.92.2",
+      "files": [
+        "litellm-exceptions.py:441,484",
+        "litellm-proxy-server.py:1338-1348"
+      ],
+      "wrapper": "source-derived; production match unverified"
+    },
+    "S3": {
+      "kind": "controlled plain busy response; not production capture"
+    },
+    "S4": {
+      "file": "/tmp/fixture-root/keylimits-fin/master/src/gateway.py",
+      "line": 11967,
+      "sha256": "7db917b80f072f22d0fcfde227d56d42773ef45158e1c808461c820b59c8f679"
+    }
+  },
+  "command": "docker run --rm --network none --cpus 2 --name bfix-busyloop-capture -v /work/build/busyloop-capture:/cap -w /cap node:22-bookworm bash run-capture.sh <scenario> <repeat>",
+  "image_note": "node:22-bookworm includes Python for http.server; slim image does not",
+  "scripts": {
+    "run-capture.sh": "6c42dd5dc170017909c7edf621ed64bac68c60e4ce09b0532a837e477e7c17c5",
+    "capture.py": "18249690a4d018a2cea1cf726effd49f3426995fc887796a948f9a144c060bdc",
+    "prepare-bodies.py": "4a1ee77631390b61638fd0a0c245af5e0544e4642971e6d4482145b922195161"
+  },
+  "utc": "2026-11-10T18:49:19.578835+00:00",
+  "host": "Ubuntu-2404-noble-amd64-base",
+  "files": {
+    "fuigo-1.0.41-free-cap-S1-1.jsonl": "e75edb121828cdfa663f7592d60f648afb478b548d5d66d1b85d77638d74c35a",
+    "fuigo-1.0.41-free-cap-S1-2.jsonl": "3c26b1f330e9910e16043821e0db64d3a20784e5fdb8e9e63a3ca43002928e4d",
+    "fuigo-1.0.41-free-cap-S2-1.jsonl": "4ef7a20b101b84cbedad39e92ed2e31bdd8a1b25b68b6fc0acb628087bf9359e",
+    "fuigo-1.0.41-free-cap-S2-2.jsonl": "493d1b3cfa64eaef7d4e54baa4541100b21b28d8a65aa7b9db2f3239e6fea158",
+    "fuigo-1.0.41-free-cap-S3-1.jsonl": "dfc3f6cd7ddd371152b531ca850c0be91bdc0aa8091b382b364f1a545a237c33",
+    "fuigo-1.0.41-free-cap-S3-2.jsonl": "710e74a5b88fa516dfe00e01d50128265bab01c557f8dae076e790248e02ae2e",
+    "fuigo-1.0.41-free-cap-S4-1.jsonl": "f03475a11758cd3ca82b6138da1658ae5615cd9e1ce8d23b27bcfb6b39781d0e",
+    "fuigo-1.0.41-free-cap-S4-2.jsonl": "e8479bb44cbebf3d54321b1a9aec6e67949dedaf98807094dafffc550979986a"
+  },
+  "bodies": {
+    "S1.json": "5599beec803a6541d93da429bb6e90540deb10aa6017e62fa5b5ddc0ce5e02e3",
+    "S2.json": "786e6dd642259f7ed97b3e69263e22eb915f7bdd2e1f2ff921d5e3013a38d8d1",
+    "S3.json": "1e80cb8f42f9cbfc72a57b6caadcaf6f3928b12ac341c48f015b7ae9850e910f",
+    "S4.json": "2ab45a66e248174e227ebe92493181ef7c0882c6577a2fb839a5d42b6e9a9aae"
+  },
+  "masker": {
+    "implementation": "shared/key-extract.ts maskKey",
+    "scope": "exact dummy-key replacement only; no broader rewrite of captured bytes",
+    "dummy_key_found_in_frames": false
+  },
+  "repeats": {
+    "S1": [
+      {
+        "terminal_sha256": "7d0e839bcb8fbd575172e70bc3d5cbdfb23114dde7c10bcdfbccc3d8caf93aa5",
+        "post_count": 3,
+        "retry_notices": [
+          "retrying",
+          "exhausted"
+        ]
+      },
+      {
+        "terminal_sha256": "7d0e839bcb8fbd575172e70bc3d5cbdfb23114dde7c10bcdfbccc3d8caf93aa5",
+        "post_count": 3,
+        "retry_notices": [
+          "retrying",
+          "exhausted"
+        ]
+      }
+    ],
+    "S2": [
+      {
+        "terminal_sha256": "a1ab4afffb61d8d7c3dd900f7192d70dbaa366c9ae317b6ab9755a7c1fc5169e",
+        "post_count": 3,
+        "retry_notices": [
+          "retrying",
+          "exhausted"
+        ]
+      },
+      {
+        "terminal_sha256": "a1ab4afffb61d8d7c3dd900f7192d70dbaa366c9ae317b6ab9755a7c1fc5169e",
+        "post_count": 3,
+        "retry_notices": [
+          "retrying",
+          "exhausted"
+        ]
+      }
+    ],
+    "S3": [
+      {
+        "terminal_sha256": "6956c67b811825958301d6f58bd094651cf0f2d5bfbe7bbca115af2c0c248b4e",
+        "post_count": 3,
+        "retry_notices": [
+          "retrying",
+          "exhausted"
+        ]
+      },
+      {
+        "terminal_sha256": "6956c67b811825958301d6f58bd094651cf0f2d5bfbe7bbca115af2c0c248b4e",
+        "post_count": 3,
+        "retry_notices": [
+          "retrying",
+          "exhausted"
+        ]
+      }
+    ],
+    "S4": [
+      {
+        "terminal_sha256": "422c5be0b45cf0d36beb2147fbecdf2fc7e33e6c85a022a25616dd7c54da1ebf",
+        "post_count": 2,
+        "retry_notices": [
+          "failed"
+        ]
+      },
+      {
+        "terminal_sha256": "422c5be0b45cf0d36beb2147fbecdf2fc7e33e6c85a022a25616dd7c54da1ebf",
+        "post_count": 2,
+        "retry_notices": [
+          "failed"
+        ]
+      }
+    ]
+  }
+}

@@ -26,6 +26,7 @@ const tick = (ms = 5) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 function fakeHarness(fake, entries) {
   const held = new Map();
+  const health = new Map();
   const pushes = [];
   const origin = (url) => new URL(url).origin;
   const listing = () => Object.entries(entries).map(([name, entry]) => entry.kind === "stdio"
@@ -38,6 +39,11 @@ function fakeHarness(fake, entries) {
       const entry = entries[target[1]];
       if (!entry) return { status: 404, body: { error: "MCP server not found." } };
       return { status: 200, body: { url: entry.url, ...(entry.local ? { local: entry.local } : {}), ...(entry.scopeHint ? { scopeHint: entry.scopeHint } : {}) } };
+    }
+    const healthRoute = /^\/api\/mcp\/servers\/([a-z][a-z0-9_-]*)\/health$/.exec(route);
+    if (healthRoute && method === "PUT") {
+      health.set(healthRoute[1], structuredClone(body));
+      return { status: 200, body: { ok: true } };
     }
     const secrets = /^\/api\/mcp\/servers\/([a-z][a-z0-9_-]*)\/secrets$/.exec(route);
     if (secrets) {
@@ -62,7 +68,7 @@ function fakeHarness(fake, entries) {
     }
     return { status: 404, body: { error: "no such route" } };
   }
-  return { commit, held, pushes, entries };
+  return { commit, held, pushes, entries, health };
 }
 
 /** The whole main-side service over an in-memory credentials.bin. */
@@ -476,6 +482,8 @@ test("a 401 from the token endpoint that is neither invalid_grant nor invalid_cl
     fake.options.refreshMode = "invalid-grant";
     assert.equal(await h.service.refresh("comfy"), false);
     assert.equal(h.doc("comfy").oauth.refreshToken, undefined, "invalid_grant still ends the grant");
+    assert.equal(h.doc("comfy").needsReconnect, true);
+    assert.equal(h.server.health.get("comfy").needsReconnect, true);
   } finally { await fake.close(); }
 });
 
@@ -505,6 +513,8 @@ test("invalid_client stops the retry timer, drops the client registration, keeps
     assert.equal(pending.size, 0, "no retry timer is left running for that server");
     const stored = h.doc("comfy").oauth;
     assert.equal(stored.clientId, undefined, "the rejected client registration is dropped");
+    assert.equal(h.doc("comfy").needsReconnect, true);
+    assert.equal(h.server.health.get("comfy").needsReconnect, true);
     assert.equal(stored.clientSecret, undefined);
     assert.equal(stored.refreshToken, undefined, "the refresh token belonged to the dead client");
     assert.equal(stored.accessToken, before.accessToken, "the access token is kept until it expires");
@@ -513,7 +523,7 @@ test("invalid_client stops the retry timer, drops the client registration, keeps
     const posts = refreshPosts;
     assert.equal(await h.service.refresh("comfy"), false);
     assert.equal(refreshPosts, posts, "nothing posts to the token endpoint again");
-    assert.equal(pending.size, 0);
+    assert.equal(pending.size, 1, "the known access-token expiry still needs a timer, even though no token refresh will run");
     mode = "pass";
     assert.deepEqual(await h.service.signIn("comfy"), { ok: true });
     assert.equal(registrations, 2, "the next sign-in registers a new client");
@@ -878,4 +888,36 @@ test("messages carry no secret and follow the copy rules; modules never touch fi
     assert.doesNotMatch(source, /console\.(log|error|warn)/, `${file}: logs only through the injected logger`);
     assert.doesNotMatch(source, /\bfetch\(/, `${file}: every request goes through the guarded client`);
   }
+});
+
+
+test("P1-1 an idle access token without refresh is expired on schedule and resume", async () => {
+  const { createRefresher } = await import("./mcp-signin/refresher.mjs");
+  let now = 1000, doc = { oauth: { accessToken: "fixture", expiresAt: 61000 }, savedAt: 1 };
+  const timers = [], pushes = [];
+  const r = createRefresher({ now: () => now, read: () => doc,
+    update: async (_name, derive) => { const next = derive(doc); if (next) doc = next; return next; },
+    push: async name => pushes.push(name), setTimeout: (fn, delay) => { const timer = { fn, delay }; timers.push(timer); return timer; }, clearTimeout() {} });
+  r.schedule("idle");
+  assert.equal(timers.length, 1, "known expiry must arm a timer even without a refresh token");
+  assert.equal(timers[0].delay, 60000, "do not expire a still-usable token early");
+  now = 61001; timers[0].fn(); await r.settle("idle");
+  assert.equal(doc.needsReconnect, true); assert.deepEqual(pushes, ["idle"]);
+  doc = { oauth: { accessToken: "fixture-new", expiresAt: now - 1 }, savedAt: 2 };
+  r.resume("idle"); await r.settle("idle");
+  assert.equal(doc.needsReconnect, true); assert.equal(pushes.length, 2); r.dispose();
+});
+
+test("P1-1 an idle MCP grant with no expiry is probed on a bounded schedule", async () => {
+  const { createRefresher } = await import("./mcp-signin/refresher.mjs");
+  let doc = { oauth: { accessToken: "fixture" }, savedAt: 1 }, probes = 0;
+  const timers = [];
+  const r = createRefresher({ read: () => doc, now: () => 1,
+    probe: async () => { probes++; return 401; },
+    update: async (_name, derive) => { const next = derive(doc); if (next) doc = next; return next; }, push: async () => {},
+    setTimeout: (fn, delay) => { const timer = { fn, delay }; timers.push(timer); return timer; }, clearTimeout() {} });
+  r.schedule("idle");
+  assert.equal(timers[0]?.delay, 300000);
+  timers[0].fn(); await r.settle("idle");
+  assert.equal(probes, 1); assert.equal(doc.needsReconnect, true); r.dispose();
 });

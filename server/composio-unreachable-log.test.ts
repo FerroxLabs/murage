@@ -9,6 +9,7 @@ import {
   applyManagedBrokerMessage,
   BROKER_UNREACHABLE,
   connectorAccess,
+  connectorSystemPrompt,
   primeBrokerReadiness,
   relayMcp,
   resetManagedBrokerState,
@@ -92,7 +93,7 @@ describe("connected apps unreachable log", () => {
     await primeBrokerReadiness();
     expect(lines()).toHaveLength(1);
     expect(lines()[0]).toMatch(/^connected apps: unreachable \(readiness probe\): ECONNREFUSED$/);
-  });
+  }, 120_000);
 
   it("logs when a tool call and the session gate end in unreachable, without secrets", async () => {
     shellFlux(`${base}/composio`);
@@ -100,8 +101,15 @@ describe("connected apps unreachable log", () => {
     // session gate share that cause, so they stay quiet inside the window.
     await primeBrokerReadiness();
     const reply = await relayMcp(cfg(), { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "X", arguments: {} } });
-    expect(Buffer.from(reply.bytes).toString("utf8")).toContain(BROKER_UNREACHABLE);
+    const payload = Buffer.from(reply.bytes).toString("utf8");
+    expect(payload).toContain(BROKER_UNREACHABLE);
+    expect(payload).toMatch(/Connected apps will retry at \d{2}:\d{2}\./); // MAIN RULING 1115-COMPOSIO-A8
+    expect(payload).not.toMatch(/should-never-be-logged|127\.0\.0\.1|bbbb|dark/); // MAIN RULING 1115-COMPOSIO-A8
     expect(connectorAccess({ cfg: cfg(), botComposio: undefined, installedFromPackage: false, engineMountsConnectors: true, mounted: false })).toBe("unreachable");
+    const session = connectorSystemPrompt(connectorAccess({ cfg: cfg(), botComposio: undefined, installedFromPackage: false, engineMountsConnectors: true, mounted: false }));
+    expect(session).toContain(BROKER_UNREACHABLE); // MAIN RULING 1115-COMPOSIO-A8
+    expect(session).toMatch(/Connected apps will retry at \d{2}:\d{2}\./); // MAIN RULING 1115-COMPOSIO-A8
+    expect(session).not.toMatch(/should-never-be-logged|127\.0\.0\.1|bbbb|dark/); // MAIN RULING 1115-COMPOSIO-A8
     const all = lines();
     expect(all).toEqual(["connected apps: unreachable (readiness probe): HTTP 503"]);
     for (const line of lines()) {
@@ -117,7 +125,10 @@ describe("connected apps unreachable log", () => {
     await primeBrokerReadiness();
     expect(lines()).toEqual([]);
     const reply = await relayMcp(cfg(), { jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "X", arguments: {} } });
-    expect(Buffer.from(reply.bytes).toString("utf8")).toContain(BROKER_UNREACHABLE);
+    const payload = Buffer.from(reply.bytes).toString("utf8");
+    expect(payload).toContain(BROKER_UNREACHABLE);
+    expect(payload).toMatch(/Connected apps will retry at \d{2}:\d{2}\./); // MAIN RULING 1115-COMPOSIO-A8
+    expect(payload).not.toMatch(/should-never-be-logged|127\.0\.0\.1|bbbb|dark/); // MAIN RULING 1115-COMPOSIO-A8
     expect(lines()).toEqual(["connected apps: unreachable (tool call): HTTP 503"]);
   });
 

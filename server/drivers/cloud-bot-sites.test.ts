@@ -23,6 +23,9 @@ vi.mock("../procs.ts", async (importOriginal) => {
   };
 });
 
+// the CLI version probe is not what these tests are about: "claude-fixture" answers no --version (as claude-reflection.test.ts does)
+vi.mock("./claude-guards.ts", async (original) => ({ ...await original<typeof import("./claude-guards.ts")>(), requireClaudeCliVersion: async () => {} }));
+
 import type { ProviderInstance } from "../contracts.ts";
 import { ABSENT_PINS, valuePins } from "../../shared/arg-vocabulary.ts";
 import { TURN_BOT, TURN_MARKER } from "../cloud-home/turn-process.ts";

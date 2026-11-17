@@ -1,3 +1,4 @@
+// control migration: real bound proxy ingress; existing assertions retained.
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -5,7 +6,8 @@
 // says so (MURAGE_NEEDS_OWNER_NOW=1, never on a proposal turn); it forwards the line to /api/internal/needs-owner-now and
 // answers "Noted." whatever the harness says, so the model never learns whether a call follows.
 import { afterEach, describe, expect, it } from "vitest";
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnBoundProxy } from "../testing/bound-proxy-fixture.ts";
 import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -24,7 +26,7 @@ async function start(env: Record<string, string>, status: number) {
   });
   await new Promise<void>(r => stub.listen(0, "127.0.0.1", () => r()));
   const port = (stub.address() as { port: number }).port;
-  const child = spawn(process.execPath, [PROXY], { env: { ...process.env, MURAGE_HARNESS_URL: `http://127.0.0.1:${port}`, MURAGE_BOT_ID: "scout", MURAGE_THREAD_ID: "t1",
+  const child = await spawnBoundProxy("agents", process.execPath, [PROXY], { env: { ...process.env, MURAGE_HARNESS_URL: `http://127.0.0.1:${port}`, MURAGE_BOT_ID: "scout", MURAGE_THREAD_ID: "t1",
     MURAGE_COMMS_TOKEN: "tok-bc109", MURAGE_TURN_DEPTH: "0", ...env }, stdio: ["pipe", "pipe", "inherit"] });
   open.push({ child, stub });
   const pending = new Map<number, (m: { result?: { tools?: Array<{ name: string }>; content?: Array<{ text: string }>; isError?: boolean } }) => void>();

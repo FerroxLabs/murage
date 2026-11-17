@@ -1,3 +1,7 @@
+import "../shared/win-hide-child-process.mjs";
+import {exitWithChildIoReceipt} from "./io-child-receipts.ts";
+import { createMcpCatalogWriter, type McpRequest } from "./mcp-listed.ts";
+import { proxyFetch, proxyTransportLost } from "./proxy-turn-release.ts";
 // computer-proxy — a minimal MCP stdio server the claude CLI spawns
 // (agentcal's permission-proxy pattern, dedicated entry file so there is
 // no argv-dispatch fork-bomb hazard). It gives the agent its bot's cloud
@@ -67,7 +71,16 @@ const CONTROL_POLL_MS = Math.max(Number(process.env.MURAGE_CONTROL_POLL_MS) || 1
 const CONTROL_WAIT_MS = Math.max(Number(process.env.MURAGE_CONTROL_WAIT_MS) || 600_000, 100);
 // The cache must never outlive the poll cadence, or a hand-back would be
 // seen a stale cache-window late.
-const control = createControlClient({ cacheMs: Math.min(750, CONTROL_POLL_MS) });
+const control = createControlClient({ cacheMs: Math.min(750, CONTROL_POLL_MS), fetchImpl: async (...args) => {
+  const response = await proxyFetch("computer", ...args);
+  if (response.status === 401 || response.status === 403) {
+    proxyTransportLost("computer"); throw new Error("MEMORY_CONTEXT_REVOKED");
+  }
+  // An unavailable control service still refuses the action through the
+  // control client. Its fixed refusal may cross the ordinary release gate;
+  // availability alone does not revoke the mounted turn's authority.
+  return response;
+} });
 
 // computer_exec's long commands (box-exec.ts). The proxy tells the harness
 // while a command is printing or working, since a tool call in flight emits
@@ -92,13 +105,13 @@ const activity = (() => {
   let silenceMs = DEFAULT_TURN_SILENCE_MS;
   let lastSent = 0;
   let trailing: ReturnType<typeof setTimeout> | null = null;
-  const post = async () => {
-    if (!url) return;
+  const post = async (): Promise<boolean> => {
+    if (!url) return true;
     if (trailing) clearTimeout(trailing);
     trailing = null;
     lastSent = Date.now();
     try {
-      const res = await fetch(url, {
+      const res = await proxyFetch("computer", url, {
         method: "POST",
         headers: { authorization: `Bearer ${controlToken()}`, "content-type": "application/json" },
         body: "{}",
@@ -106,9 +119,13 @@ const activity = (() => {
       });
       const body: any = res.ok ? await res.json().catch(() => null) : null;
       const limit = Number(body?.silenceMs);
-      if (Number.isFinite(limit) && limit >= 1_000) silenceMs = limit;
+      if (!res.ok || !Number.isFinite(limit) || limit < 1_000) {
+        proxyTransportLost("computer"); return false;
+      }
+      silenceMs = limit;
+      return true;
     } catch {
-      /* the harness keeps its own watch; the last known limit stands */
+      proxyTransportLost("computer"); return false;
     }
   };
   return {
@@ -189,16 +206,30 @@ interface RunOut {
  * 409 machine_not_running. Wake it and carry on rather than handing the
  * agent a cryptic failure it can only guess at. */
 const WAKE_BUDGET_MS = Math.max(Number(process.env.MURAGEBOX_WAKE_BUDGET_MS) || BOX_LAZY_WAKE_BUDGET_MS, 100);
+/** A body that fails to parse is malformed upstream (null); a body read cut
+ * short by the caller's own cancellation is cancellation and must propagate. */
+async function readBoxJson(res: Response, signal?: AbortSignal): Promise<any> {
+  try { return await res.json(); }
+  catch (error) {
+    if (signal?.aborted && signal.reason?.name !== "TimeoutError") throw error;
+    return null;
+  }
+}
 async function resumeBox(signal?: AbortSignal): Promise<boolean> {
   const auth = { authorization: `Bearer ${token()}`, "content-type": "application/json" };
   const bounded = () => (signal ? AbortSignal.any([signal, AbortSignal.timeout(10_000)]) : AbortSignal.timeout(10_000));
-  await fetch(`${BOX_API}/boxes/${boxId}/resume`, { method: "POST", headers: auth, signal: bounded() }).catch(() => null);
+  const resumed = await proxyFetch("computer", `${BOX_API}/boxes/${boxId}/resume`, { method: "POST", headers: auth, signal: bounded() });
+  if (resumed.status >= 500) { proxyTransportLost("computer"); throw new Error("MEMORY_CONTEXT_REVOKED"); }
+  if (!resumed.ok) return false;
   const deadline = Date.now() + WAKE_BUDGET_MS;
   while (Date.now() < deadline && !signal?.aborted) {
     await new Promise((r) => setTimeout(r, 2000));
-    const res = await fetch(`${BOX_API}/boxes/${boxId}`, { headers: auth, signal: bounded() }).catch(() => null);
-    const body: any = await res?.json().catch(() => null);
+    const res = await proxyFetch("computer", `${BOX_API}/boxes/${boxId}`, { headers: auth, signal: bounded() });
+    const body: any = await readBoxJson(res, signal);
     const state = body?.box?.state;
+    if (res.status >= 500 || !body || typeof body !== "object" || Array.isArray(body)
+      || res.ok && typeof state !== "string") { proxyTransportLost("computer"); throw new Error("MEMORY_CONTEXT_REVOKED"); }
+    if (!res.ok) return false;
     if (state && ["idle", "ready", "running"].includes(state)) return true;
     if (state === "error") return false;
   }
@@ -222,13 +253,16 @@ async function runOnBox(command: string, timeoutMs = 60_000, allowWake = true, s
     "/bin/bash -c",
     shellQuote(command),
   ].join(" ");
-  const res = await fetch(`${BOX_API}/boxes/${boxId}/commands`, {
+  const res = await proxyFetch("computer", `${BOX_API}/boxes/${boxId}/commands`, {
     method: "POST",
     headers: { authorization: `Bearer ${token()}`, "content-type": "application/json" },
     body: JSON.stringify({ command: isolatedCommand }),
     signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
   });
-  const body: any = await res.json().catch(() => null);
+  const body: any = await readBoxJson(res, signal);
+  if (res.status >= 500 || !body || typeof body !== "object" || Array.isArray(body)) {
+    proxyTransportLost("computer"); throw new Error("MEMORY_CONTEXT_REVOKED");
+  }
   if (res.status === 409 && allowWake) {
     const code = body?.code ?? body?.error?.code ?? "";
     if (/machine_not_running|box_starting|not_running|starting/i.test(String(code))) {
@@ -382,7 +416,7 @@ function wholeImage(bytes: Buffer, expectedBytes?: number): boolean {
 async function fetchFrame(expectedBytes?: number): Promise<string | null> {
   const auth = { authorization: `Bearer ${token()}` };
   try {
-    const res = await fetch(
+    const res = await proxyFetch("computer",
       `${BOX_API}/boxes/${boxId}/artifacts?path=${encodeURIComponent(SHOT_PATH)}`,
       { headers: auth, signal: AbortSignal.timeout(30_000) },
     );
@@ -394,7 +428,7 @@ async function fetchFrame(expectedBytes?: number): Promise<string | null> {
     /* fall through to the files API */
   }
   try {
-    const res = await fetch(
+    const res = await proxyFetch("computer",
       `${BOX_API}/boxes/${boxId}/files?path=${encodeURIComponent(SHOT_PATH)}&encoding=base64`,
       { headers: auth, signal: AbortSignal.timeout(30_000) },
     );
@@ -492,17 +526,20 @@ async function frameFrom(out: RunOut): Promise<Frame | null> {
   return { data: fetched, mime: "image/jpeg", hash, geometry };
 }
 
-const send = (obj: unknown): void => {
-  process.stdout.write(JSON.stringify(obj) + "\n");
+const catalog = createMcpCatalogWriter(process.env, process.stdout, "computer");
+/** Where one call's answer goes: the id it echoes and the handle of THAT request (delivery belongs to the handle, never to the id). */
+interface Reply { readonly id: unknown; readonly req: McpRequest }
+const send = (to: Reply, obj: Record<string, unknown>): void => {
+  void to.req.respond({ jsonrpc: "2.0", id: to.id, ...obj }).catch(() => { process.exitCode = 1; process.stdin.destroy(); });
 };
-const text = (id: unknown, t: string, isError = false): void =>
-  send({ jsonrpc: "2.0", id, result: { content: [{ type: "text", text: t }], isError: isError || undefined } });
+const text = (id: Reply, t: string, isError = false): void =>
+  send(id, { result: { content: [{ type: "text", text: t }], isError: isError || undefined } });
 
 /** An action result: the text plus the frame the action produced. When
  * the pixels are byte-identical to the frame the model just saw, the
  * image is dropped — it already has it, and it costs ~1.2k tokens. */
 function observed(
-  id: unknown,
+  id: Reply,
   note: string,
   frame: Frame | null,
   crop: CropRegion | null = null,
@@ -522,9 +559,7 @@ function observed(
       : " No new image is attached.";
     return text(id, `${note}\n(the screen is identical to the frame you already have.${guidance})`, isError);
   }
-  send({
-    jsonrpc: "2.0",
-    id,
+  send(id, {
     result: {
       content: [
         { type: "text", text: note },
@@ -821,7 +856,7 @@ function actionShell(a: any): string | { error: string } {
 /** The whole point: one round trip carries geometry, the actions, the
  * settle, the capture and the frame bytes. */
 async function actAndObserve(
-  id: unknown,
+  id: Reply,
   actions: any[],
   note: string,
   args: any,
@@ -871,7 +906,7 @@ async function actAndObserve(
 }
 
 async function semanticActAndObserve(
-  id: unknown,
+  id: Reply,
   action: "click" | "fill",
   ref: string,
   value: string | undefined,
@@ -914,7 +949,7 @@ async function semanticActAndObserve(
 /** A call that was already running when a person took control must not hand its
  * captured screen to the model: the frame can show whatever they opened.
  * True when the result was replaced by a text-only answer. */
-async function frameWithheld(id: unknown, note: string): Promise<boolean> {
+async function frameWithheld(id: Reply, note: string): Promise<boolean> {
   if (!control.configured) return false;
   const driving = await control.state(true);
   if (!driving.held && driving.available) return false;
@@ -933,7 +968,7 @@ async function frameWithheld(id: unknown, note: string): Promise<boolean> {
  * told when they finish, and the two that read nothing from the screen. */
 const OPEN_WHILE_DRIVEN = new Set(["computer_request_help", "computer_status", "observation_metrics"]);
 
-async function call(id: unknown, name: string, args: any, signal: AbortSignal = new AbortController().signal) {
+async function call(id: Reply, name: string, args: any, signal: AbortSignal = new AbortController().signal) {
   if (!OPEN_WHILE_DRIVEN.has(name)) {
     const driving = await control.state(true);
     if (driving.held) return text(id, CONTROL_REFUSAL, true);
@@ -945,6 +980,7 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
       return text(id, "nobody can be paged for this computer right now: carry on carefully", true);
     }
     const initial = await control.state(true);
+    if (!initial.available) return text(id, CONTROL_UNAVAILABLE_PLAIN, true);
     // If the person is already driving, don't clobber whatever plea they
     // are reading — just wait for the hand-back.
     const requestId = initial.held ? null : await control.requestHelp(String(args?.reason ?? ""));
@@ -956,6 +992,7 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
     while (Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, CONTROL_POLL_MS));
       const state = await control.state(true);
+      if (!state.available) return text(id, CONTROL_UNAVAILABLE_PLAIN, true);
       if (state.held) sawHold = true;
       if (!state.held && !state.helpOpen) {
         return text(
@@ -1120,7 +1157,7 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
     observations.noteAction();
     // Runs until it finishes, goes silent (no output, no processor use) for
     // the owner's silence limit, or is stopped: never on a fixed clock.
-    await activity.refresh();
+    if (!await activity.refresh()) return;
     let job = "";
     const running = runBoxExec(command, execDeps, EXEC_OPTIONS, signal, (id) => (job = id));
     activeExecs.add(running);
@@ -1128,7 +1165,7 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
     // the result is delivered below; the record goes after it
     if (outcome.kind === "done" || outcome.kind === "silent") queueMicrotask(() => void cleanupBoxJob(execDeps, job));
     // MCP: a request the client cancelled gets no response
-    if (outcome.kind === "stopped" || signal.aborted) return;
+    if (outcome.kind === "stopped" || signal.aborted) { id.req.cancel(); return; }
     if (outcome.kind === "failed") return text(id, `the command could not be run to the end: ${outcome.detail}`, true);
     const dropped = `${outcome.kind === "done" && outcome.abandoned ? "(the command was stopped because this tool lost track of it for too long)\n" : ""}${outcome.dropped ? "(later output was omitted to keep the computer's disk free)\n" : ""}`;
     const shown = (output: string, max: number) => engineStderrRedacted(output, Buffer.byteLength(output) >= ENGINE_STDERR_CAPTURE_CHARS).slice(-max);
@@ -1244,11 +1281,11 @@ async function call(id: unknown, name: string, args: any, signal: AbortSignal = 
   return text(id, `unknown tool ${name}`, true);
 }
 
-async function handle(msg: any) {
+async function handle(msg: any, req: McpRequest) {
+  await req.published;
+  const to: Reply = { id: msg.id, req };
   if (msg.method === "initialize") {
-    return send({
-      jsonrpc: "2.0",
-      id: msg.id,
+    return send(to, {
       result: {
         protocolVersion: msg.params?.protocolVersion ?? "2024-11-05",
         capabilities: { tools: {} },
@@ -1256,19 +1293,19 @@ async function handle(msg: any) {
       },
     });
   }
-  if (msg.method === "tools/list") return send({ jsonrpc: "2.0", id: msg.id, result: { tools: TOOLS } });
+  if (msg.method === "tools/list") return send(to, { result: { tools: TOOLS } });
   if (msg.method === "tools/call") {
-    if (closing) return text(msg.id, "the computer tools are closing: this call was not run", true);
+    if (closing) return text(to, "the computer tools are closing: this call was not run", true);
     const withdrawn = new AbortController();
     const key = JSON.stringify(msg.id);
     inFlight.set(key, withdrawn);
     try {
-      return await call(msg.id, msg.params?.name, msg.params?.arguments ?? {}, withdrawn.signal);
+      return await call(to, msg.params?.name, msg.params?.arguments ?? {}, withdrawn.signal);
     } catch (e) {
       const error = e instanceof Error ? e : new Error(String(e));
       const timedOut = error.name === "TimeoutError" || /timed?\s*out|timeout/i.test(error.message);
       return text(
-        msg.id,
+        to,
         timedOut
           ? "computer tool timed out. The action may or may not have completed; take a screenshot to inspect the current state before retrying it."
           : `computer tool failed: ${error.message}`,
@@ -1286,7 +1323,7 @@ async function handle(msg: any) {
   }
   if (String(msg.method ?? "").startsWith("notifications/")) return;
   if (msg.id != null) {
-    send({ jsonrpc: "2.0", id: msg.id, error: { code: -32601, message: `method not found: ${msg.method}` } });
+    send(to, { error: { code: -32601, message: `method not found: ${msg.method}` } });
   }
 }
 
@@ -1299,7 +1336,12 @@ process.stdin.on("data", (chunk) => {
     buf = buf.slice(nl + 1);
     if (!line.trim()) continue;
     try {
-      void handle(JSON.parse(line));
+      const msg = JSON.parse(line);
+      const req = catalog.observeRequest(msg);
+      void handle(msg, req).catch(() => {
+        // A request answers once even when its handler throws (the handle drops a second answer).
+        if (msg && typeof msg === "object" && msg.id !== undefined) send({ id: msg.id, req }, { error: { code: -32603, message: "Computer proxy error" } });
+      });
     } catch {
       /* ignore malformed lines */
     }
@@ -1318,7 +1360,7 @@ async function close(): Promise<void> {
   // engine's grace before it kills outright
   for (const withdrawn of inFlight.values()) withdrawn.abort();
   await Promise.race([Promise.allSettled(activeExecs), new Promise((r) => setTimeout(r, 2_500))]);
-  process.exit(0);
+  await exitWithChildIoReceipt(0);
 }
 process.stdin.on("end", () => void close());
 process.on("SIGTERM", () => void close());

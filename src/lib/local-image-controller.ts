@@ -151,3 +151,14 @@ export class LocalImageController {
     ++this.operation; this.releaseGeneration?.(); this.releaseGeneration = undefined; this.owner.terminal = true; this.remove(); this.cancelDiscovery?.(); this.unsubscribe(); this.unwatch(); this.saveAction?.dispose(); this.releaseLightbox?.(); this.view = { ...this.view, saving: false, state: 'disposed' };
   }
 }
+/** Tells the controller when its placeholder is near the screen. Without an IntersectionObserver the picture is simply wanted
+ * (it used to wait forever), and a print asks for every picture on the page, because print never scrolls. Returns the cleanup. */
+export interface VisibilityEnv { IntersectionObserver?: typeof IntersectionObserver; addEventListener: (type: 'beforeprint', listener: () => void) => void; removeEventListener: (type: 'beforeprint', listener: () => void) => void }
+export function watchLocalImageVisibility(root: Element | null, target: { visibility(visible: boolean): void }, env: VisibilityEnv): () => void {
+  const onPrint = () => target.visibility(true);
+  env.addEventListener('beforeprint', onPrint);
+  let observer: IntersectionObserver | undefined;
+  if (env.IntersectionObserver && root) { observer = new env.IntersectionObserver(entries => { for (const entry of entries) target.visibility(entry.isIntersecting); }, { rootMargin: '100% 0px' }); observer.observe(root); }
+  else target.visibility(true);
+  return () => { observer?.disconnect(); env.removeEventListener('beforeprint', onPrint); };
+}

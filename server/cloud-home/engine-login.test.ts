@@ -5,7 +5,7 @@ import { connect, type AddressInfo } from "node:net";
 import WebSocket from "ws";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { setCloudIdentity } from "../cloud-request-identity.ts";
-import { createEngineLoginRelay, type EngineLoginEngine, type EngineLoginExtra, type EngineLoginOptions } from "./engine-login.ts";
+import { createEngineLoginRelay, launcherEngineName, type EngineLoginEngine, type EngineLoginExtra, type EngineLoginOptions } from "./engine-login.ts";
 
 let server: Server, port: number, logs: string[], launches: Array<{ engine: string; action: string; extra: EngineLoginExtra; pid?: number }>, scope = "owner-desktop";
 async function start(options: EngineLoginOptions = {}) {
@@ -13,7 +13,7 @@ async function start(options: EngineLoginOptions = {}) {
   const mine: string[] = []; logs = mine; launches = [];
   const relay = createEngineLoginRelay({ log: line => mine.push(line), killGraceMs: 200, ...options,
     spawnLauncher: options.spawnLauncher ?? ((engine: EngineLoginEngine, action, extra) => {
-      const child = spawn("/bin/cat", [], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
+      const child = spawn("/bin/cat", [], { windowsHide: true, detached: true, stdio: ["pipe", "pipe", "pipe"] });
       launches.push({ engine, action, extra, pid: child.pid }); return child;
     }) });
   server = createServer((_req, res) => { res.writeHead(404); res.end(); });
@@ -99,7 +99,7 @@ describe("engine login relay", () => {
     expect(logs.filter(line => line.startsWith("engine-login end"))[0]).toContain("reason=total-timeout");
   });
   it("ends the session when the launcher exits first", async () => {
-    await start({ spawnLauncher: () => spawn("/bin/sh", ["-c", "exit 3"], { detached: true, stdio: ["pipe", "pipe", "pipe"] }) });
+    await start({ spawnLauncher: () => spawn("/bin/sh", ["-c", "exit 3"], { windowsHide: true, detached: true, stdio: ["pipe", "pipe", "pipe"] }) });
     const ws = await open(); expect(await closed(ws)).toBe(1000);
     await settled("codex", 0);
     expect(logs.filter(line => line.startsWith("engine-login end"))).toEqual([expect.stringContaining("exit=3")]);
@@ -130,7 +130,7 @@ describe("engine login relay", () => {
   });
   it("a failed spawn frees the slot and closes the socket", async () => {
     let fail = true;
-    await start({ spawnLauncher: () => { if (fail) throw new Error("no sudo"); return spawn("/bin/cat", [], { detached: true, stdio: ["pipe", "pipe", "pipe"] }); } });
+    await start({ spawnLauncher: () => { if (fail) throw new Error("no sudo"); return spawn("/bin/cat", [], { windowsHide: true, detached: true, stdio: ["pipe", "pipe", "pipe"] }); } });
     const ws = await open("codex"); expect(await closed(ws)).toBe(1011);
     fail = false;
     const again = await open("codex"); again.close(); await closed(again);
@@ -138,6 +138,14 @@ describe("engine login relay", () => {
   it("does not take other paths", async () => {
     await start();
     await expect(new Promise((resolve, reject) => { const ws = new WebSocket(`ws://127.0.0.1:${port}/api/engine-login/pi`); ws.once("open", resolve); ws.once("error", reject); })).rejects.toBeTruthy();
+  });
+  it("takes the antigravityAgent sign-in per bot and hands the launcher its short engine name", async () => {
+    await start();
+    const before = ended("antigravityAgent"); const ws = await open("antigravityAgent", "?action=login&bot=atlas"); const done = closed(ws); ws.close(); await done;
+    await settled("antigravityAgent", before);
+    expect(launches.map(item => `${item.engine}:${item.action}`)).toContain("antigravityAgent:login");
+    expect(launcherEngineName("antigravityAgent")).toBe("antigravity");
+    expect(launcherEngineName("grokAgent")).toBe("grokAgent");
   });
   it("takes grokAgent and kimiAgent sign-ins and sign-outs (Kimi's sign-out is the launcher's own)", async () => {
     await start();
@@ -154,7 +162,7 @@ describe("engine login relay", () => {
   });
   it("requires a bot for a per-bot login, forwards it in the launcher request and refuses a bad one", async () => {
     await start();
-    for (const engine of ["codex", "grokAgent", "kimiAgent", "opencodeGo"]) await expect(open(engine, "?action=login")).rejects.toMatchObject({ status: 400 });
+    for (const engine of ["codex", "antigravityAgent", "grokAgent", "kimiAgent", "opencodeGo"]) await expect(open(engine, "?action=login")).rejects.toMatchObject({ status: 400 });
     await expect(open("codex", "?action=login&bot=../x")).rejects.toMatchObject({ status: 400 });
     await expect(open("codex", `?action=login&bot=${"a".repeat(65)}`)).rejects.toMatchObject({ status: 400 });
     expect(launches).toEqual([]);
@@ -162,11 +170,16 @@ describe("engine login relay", () => {
     expect(launches[0]).toMatchObject({ engine: "codex", action: "login", extra: { bot: "atlas-1" } });
     expect(launches[0]!.extra).not.toHaveProperty("secret");
   });
-  it("takes Claude's engine-wide login without a bot and refuses one", async () => {
+  it("takes Claude's home-wide login without a bot, and with a bot as that bot's own sign-in (the override), and its sign-out either way", async () => {
     await start();
-    await expect(open("claudeAgent", "?action=login&bot=atlas")).rejects.toMatchObject({ status: 400 });
-    const ws = await open("claudeAgent", "?action=login"); const done = closed(ws); ws.close(); await done;
+    let before = ended("claudeAgent");
+    const home = await open("claudeAgent", "?action=login"); const homeDone = closed(home); home.close(); await homeDone; await settled("claudeAgent", before); before++;
     expect(launches[0]).toMatchObject({ engine: "claudeAgent", action: "login", extra: {} });
+    const own = await open("claudeAgent", "?action=login&bot=atlas"); const ownDone = closed(own); own.close(); await ownDone; await settled("claudeAgent", before); before++;
+    expect(launches[1]).toMatchObject({ engine: "claudeAgent", action: "login", extra: { bot: "atlas" } });
+    const back = await open("claudeAgent", "?action=logout&bot=atlas"); const backDone = closed(back); back.close(); await backDone;
+    expect(launches[2]).toMatchObject({ engine: "claudeAgent", action: "logout", extra: { bot: "atlas" } });
+    await expect(open("claudeAgent", "?action=login&bot=../x")).rejects.toMatchObject({ status: 400 });
   });
   it("takes opencodeGo sign-in with a bot and logout with or without one", async () => {
     await start();
@@ -222,5 +235,26 @@ describe("engine login relay", () => {
       expect(launches[0]).toMatchObject({ engine: "opencodeGo", action: "enroll-key", extra: { provider: "opencode-go", secret } });
       const done = closed(ws); ws.close(); await done;
     });
+  });
+});
+
+describe("engine login relay: idle limits by engine (Antigravity waits on the owner, 10 minutes; the rest keep 2)", () => {
+  it("the shipped limits are 2 minutes for every engine and 10 minutes for Antigravity", async () => {
+    const { ENGINE_LOGIN_LIMITS } = await import("./engine-login.ts");
+    expect(ENGINE_LOGIN_LIMITS.idleMs).toBe(120_000);
+    expect(ENGINE_LOGIN_LIMITS.agyIdleMs).toBe(600_000);
+  });
+  it("Antigravity is not cut at the usual idle limit and is cut at its own; another engine is cut at the usual one", async () => {
+    await start({ limits: { idleMs: 150, agyIdleMs: 700 } });
+    const agy = await open("antigravityAgent", "?action=login&bot=atlas");
+    const agyEnd = closed(agy); let agyOpen = true; void agyEnd.then(() => { agyOpen = false; });
+    await new Promise(resolve => setTimeout(resolve, 400));
+    expect(agyOpen).toBe(true);
+    expect(await agyEnd).toBe(1001);
+    await new Promise(resolve => server.close(resolve)); server.closeAllConnections();
+    await start({ limits: { idleMs: 150, agyIdleMs: 700 } });
+    const started = Date.now(); const other = await open("codex");
+    expect(await closed(other)).toBe(1001);
+    expect(Date.now() - started).toBeLessThan(600);
   });
 });

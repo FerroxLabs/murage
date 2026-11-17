@@ -1,4 +1,5 @@
-import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs";
+import { copyFileSync } from "./counted-fs.ts";
+import { existsSync, lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 /** Per-turn Fuigo logs worth keeping: a turn that failed or retried. */

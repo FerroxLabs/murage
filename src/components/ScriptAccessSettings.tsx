@@ -56,10 +56,10 @@ export function ScriptAccessSettings({ bots }: { bots: ReadonlyArray<{ id: strin
   });
 
   return (
-    <section aria-labelledby="script-access-heading" className="mt-6 space-y-3 border-t border-hairline/50 pt-5">
+    <section aria-labelledby="script-access-title" className="mt-6 space-y-3 border-t border-hairline/50 pt-5">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h3 id="script-access-heading" className="text-[15px] font-medium text-ink">Scripts and other apps</h3>
+          <h3 id="script-access-title" className="text-[15px] font-medium text-ink">Scripts and other apps</h3>
           <p className="mt-1 text-[12.5px] text-ink-secondary">Let a script or an outside agent talk to one bot of your choice. It reaches that bot and nothing else.</p>
         </div>
         <button

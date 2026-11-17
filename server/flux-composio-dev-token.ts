@@ -22,28 +22,28 @@
 // Never inside the packaged app: an embedded harness receives its token from
 // main.mjs, and the env override `MURAGE_FLUX_COMPOSIO_BROKER_TOKEN` always
 // wins so QA can pin one by hand.
-import { fluxFetch } from "./flux-memory-headers.ts";
 import { existsSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
 
 import {
-  ensureFluxComposioBrokerToken,
   FLUX_BROKER_TOKEN,
   type FluxComposioTokenFields,
 } from "../electron/flux-composio-token.mjs";
+import { applyComposioCredentialResult, applyComposioCustodyDelta } from "../electron/managed-composio.mjs";
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
-import { FLUX_RETRY_MAX_MS, fluxRetryDelayMs } from "./flux-key-health.ts";
 import { fluxKey } from "./flux-config.ts";
+import { localComposioAuthority, configureComposioTokenCustody, resetComposioLifecycleForTests } from "./composio-lifecycle.ts";
 
 export const DEV_FLUX_TOKEN_FILE = "flux-composio-broker-token.json";
 export const DEV_FLUX_TOKEN_LABEL = "murage-dev-harness";
-/** After a failed attempt (network, 5xx, 429) wait this long before another. */
+/** First nominal delay for a transient token failure; subsequent failures double. */
 export const DEV_FLUX_TOKEN_RETRY_MS = 60_000;
 export const DEV_FLUX_TOKEN_RATE_LIMIT_RETRY_MS = 60 * 60_000;
 
 const documentSchema = z.object({
+  composioPendingRevocations: z.string().optional(),
   fluxComposioBrokerToken: z.string().regex(FLUX_BROKER_TOKEN).optional(),
   fluxComposioBrokerTokenExpiresAt: z.string().optional(),
   fluxComposioBrokerTokenKeyFingerprint: z.string().optional(),
@@ -52,7 +52,7 @@ const documentSchema = z.object({
   fluxComposioTokenRefusedKeyFingerprint: z.string().optional(),
 }).strict();
 
-export type DevFluxTokenDocument = FluxComposioTokenFields;
+export type DevFluxTokenDocument = FluxComposioTokenFields & { composioPendingRevocations?: string };
 
 /** Only the plain dev harness. `parentPort` is supplied by exactly one
  * runtime — an Electron utility process — and `MURAGE_DESKTOP_PARENT` is how
@@ -81,16 +81,21 @@ export function readDevFluxTokenDocument(): DevFluxTokenDocument {
 }
 
 function writeDevFluxTokenDocument(document: DevFluxTokenDocument): void {
-  cached = document;
-  if (!document.fluxComposioBrokerToken && !document.fluxComposioTokenError) {
+  if (!document.fluxComposioBrokerToken && !document.fluxComposioTokenError && (!document.composioPendingRevocations || document.composioPendingRevocations === "[]")) {
     try {
       unlinkSync(tokenPath());
-    } catch {
-      // nothing to forget
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") { cached = null; throw error; }
     }
-    return;
+    cached = document; return;
   }
-  writeFileAtomic(tokenPath(), JSON.stringify(document, null, 2), { mode: 0o600 });
+  try { writeFileAtomic(tokenPath(), JSON.stringify(document, null, 2), { mode: 0o600 }); cached = document; }
+  catch (error) { cached = null; throw error; }
+}
+
+function readDurableDevDocument(): DevFluxTokenDocument {
+  try { return documentSchema.parse(JSON.parse(readFileSync(tokenPath(), "utf8"))); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return {}; throw new Error("credential_recovery_failed"); }
 }
 
 /** Forget the stored token document (tests; a workspace reset). */
@@ -109,25 +114,11 @@ export interface DevFluxTokenOptions {
   env?: NodeJS.ProcessEnv;
 }
 
-let nextAttemptAt = 0;
-// Consecutive failed attempts, and forced re-mints after a rejected token. Both
-// back off 1 minute, doubling, to 1 hour (fluxRetryDelayMs), so a token Flux
-// keeps refusing is not re-presented on every connector request.
-let failureCount = 0;
-let forcedStreak = 0;
-let nextForceAt = 0;
-let lastForcedAt = 0;
 let inFlight: Promise<DevFluxTokenDocument> | null = null;
-
-/** Reset the retry clock and the in-memory copy (tests; a data-dir change). */
+/** Explicit fixture/workspace reset, never a key-change admission override. */
 export function resetDevFluxTokenState(): void {
-  nextAttemptAt = 0;
-  failureCount = 0;
-  forcedStreak = 0;
-  nextForceAt = 0;
-  lastForcedAt = 0;
-  inFlight = null;
-  cached = null;
+  resetComposioLifecycleForTests();
+  inFlight = null; cached = null;
 }
 
 /** Whether a mint is running right now; a turn never waits on one. */
@@ -152,65 +143,30 @@ export async function ensureDevFluxBrokerToken(options: DevFluxTokenOptions): Pr
   const current = readDevFluxTokenDocument();
   if (!devFluxTokenApplies(options.fluxBrokerUrl, env)) return current;
   if (inFlight) return inFlight;
-  const now = options.now ?? Date.now();
   const key = fluxKey(env) ?? "";
-  // `ensureFluxComposioBrokerToken` returns the same document when the token
-  // is healthy, so the cheap no-network case is the common one. The retry
-  // clock only gates attempts that would go to the network.
   if (!key && !current.fluxComposioBrokerToken && !current.fluxComposioTokenError) return current;
-  if (options.force) {
-    if (now - lastForcedAt > FLUX_RETRY_MAX_MS) forcedStreak = 0;
-    if (now < nextForceAt) return current;
-    forcedStreak += 1;
-    lastForcedAt = now;
-    nextForceAt = now + fluxRetryDelayMs(forcedStreak);
-  } else if (now < nextAttemptAt) return current;
-  inFlight = (async () => {
-    let rateLimited = false;
-    let attempted = false;
-    const baseFetch = options.fetchImpl ?? globalThis.fetch;
-    const fetchImpl: typeof fetch = (input, init) => {
-      attempted = true;
-      // Flux Memory: a broker call is background work, never an owner turn.
-      return fluxFetch("composio-broker", input as string | URL, init, baseFetch);
-    };
-    const before = current.fluxComposioBrokerToken;
-    let next: DevFluxTokenDocument = current;
-    try {
-      next = await ensureFluxComposioBrokerToken({
-        fluxBrokerUrl: options.fluxBrokerUrl,
-        credentials: current,
-        fluxKey: key,
-        fetchImpl,
-        log: options.log,
-        now,
-        force: options.force,
-        rejectedTokenFingerprint: options.rejectedTokenFingerprint,
-        onRateLimited: () => { rateLimited = true; },
-        label: DEV_FLUX_TOKEN_LABEL,
-      });
-    } catch (error) {
-      options.log?.(`dev connected-apps token failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    // A network attempt that produced no new token (unreachable, 5xx, or a
-    // declined code the panel now shows) waits before the next one, so a
-    // declined key is not re-presented on every connector route.
-    if (rateLimited) {
-      failureCount += 1;
-      nextAttemptAt = now + DEV_FLUX_TOKEN_RATE_LIMIT_RETRY_MS;
-    } else if (attempted && next.fluxComposioBrokerToken === before) {
-      failureCount += 1;
-      nextAttemptAt = now + fluxRetryDelayMs(failureCount);
-    } else {
-      failureCount = 0;
-      nextAttemptAt = 0;
-    }
-    try {
-      writeDevFluxTokenDocument(next);
-    } catch (error) {
-      options.log?.(`dev connected-apps token could not be stored: ${error instanceof Error ? error.message : String(error)}`);
-    }
-    return next;
-  })().finally(() => { inFlight = null; });
+  configureComposioTokenCustody({
+    get: () => ({ ...readDevFluxTokenDocument(), fluxApiKey: fluxKey(env) ?? "" }),
+    readDurable: async () => ({ ...readDurableDevDocument(), fluxApiKey: fluxKey(env) ?? "" }),
+    save: async (next, snapshot, delta) => {
+      // This writer is synchronous through atomic rename; credentials and
+      // identity deltas derive from the current disk document in that writer.
+      const current = { ...readDurableDevDocument(), fluxApiKey: fluxKey(env) ?? "" };
+      if (delta) {
+        const queue = applyComposioCustodyDelta(current.composioPendingRevocations, JSON.parse(String(next.composioPendingRevocations)), delta);
+        const { fluxApiKey: _key, ...document } = current;
+        writeDevFluxTokenDocument({ ...document, composioPendingRevocations: JSON.stringify(queue) }); return true;
+      }
+      const result = applyComposioCredentialResult(current, snapshot, next);
+      const clean = documentSchema.parse(Object.fromEntries(Object.entries(result.credentials).filter(([field]) => field !== "fluxApiKey")));
+      writeDevFluxTokenDocument(clean);
+      return result.applied;
+    },
+  });
+  const authority = localComposioAuthority({ fetchImpl: options.fetchImpl, configuration: { fluxBrokerUrl: options.fluxBrokerUrl, label: DEV_FLUX_TOKEN_LABEL }, ...(options.now === undefined ? {} : { now: () => options.now! }) });
+  inFlight = authority.request({ operation: options.force ? "reconnect" : "refresh", force: options.force,
+    rejectedTokenFingerprint: options.rejectedTokenFingerprint }).then(() => readDevFluxTokenDocument())
+    .catch(error => { options.log?.(`Connected apps token could not be stored: ${error instanceof Error ? error.message : String(error)}`); return readDevFluxTokenDocument(); })
+    .finally(() => { inFlight = null; });
   return inFlight;
 }

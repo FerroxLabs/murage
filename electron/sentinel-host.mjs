@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -31,7 +32,7 @@
 // owner API reads for the host's view: { version: 1, installationId, at, registration, mechanism, heartbeat,
 // heartbeatAt, rootState }.
 import { execFile, spawn as spawnProcess } from "node:child_process";
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -66,7 +67,7 @@ export function scannerEnvironment(env = process.env) {
 export function defaultProbe({ executable, platform = process.platform, env = process.env, timeoutMs = 20_000 }) {
   return (descriptorPath, entry) => new Promise(resolve => {
     const args = [entry, descriptorPath, "--check-install", ...(platform === "linux" ? [APPRUN_NO_SANDBOX] : [])];
-    execFile(executable, args, { env: scannerEnvironment(env), timeout: timeoutMs, windowsHide: true, shell: false, maxBuffer: 64 * 1024 }, error => {
+    execFile(executable, [...args], withHideInherit({ env: { ...scannerEnvironment(env), ...(env.MURAGE_RESOURCES_PATH ? { MURAGE_RESOURCES_PATH: env.MURAGE_RESOURCES_PATH } : {}) }, timeout: timeoutMs, windowsHide: true, shell: false, maxBuffer: 64 * 1024 }), error => {
       if (!error) { resolve(0); return; }
       resolve(typeof error.code === "number" && !error.killed ? error.code : null);
     });
@@ -74,11 +75,18 @@ export function defaultProbe({ executable, platform = process.platform, env = pr
 }
 
 /** Starts the independent `--watch` supervisor, detached so it outlives this app. Answers its pid or null. */
-export function defaultSpawnWatcher({ executable, platform = process.platform, env = process.env }) {
+export function defaultSpawnWatcher({ executable, platform = process.platform, env = process.env, onIoEvent = () => {}, onChild }) {
   return (descriptorPath, entry) => {
     try {
-      const child = spawnProcess(executable, [entry, descriptorPath, "--watch", ...(platform === "linux" ? [APPRUN_NO_SANDBOX] : [])], { detached: true, stdio: "ignore", windowsHide: true, shell: false, env: scannerEnvironment(env) });
-      child.on("error", () => {});
+      const generation = randomUUID();
+      const child = spawnProcess(executable, [entry, descriptorPath, "--watch", ...(platform === "linux" ? [APPRUN_NO_SANDBOX] : [])], withHideInherit({ detached: true, stdio: ["ignore", "ignore", "ignore", "ipc"], windowsHide: true, shell: false, env: { ...scannerEnvironment(env), MURAGE_IO_GENERATION: generation, ...(env.MURAGE_RESOURCES_PATH ? { MURAGE_RESOURCES_PATH: env.MURAGE_RESOURCES_PATH } : {}) } }));
+      onIoEvent({ type: "launch", generation });
+      child.on("message", message => { if (message?.type === "io") onIoEvent({ type: "sample", generation, message }); });
+      child.on("exit", (code, signal) => onIoEvent({ type: "exit", generation, code, signal }));
+      child.on("error", () => onIoEvent({ type: "exit", generation, code: 1, signal: null }));
+      const accept = event => { if (event?.type === "ack" && event.generation === generation && child.connected) child.send(event.message); };
+      onChild?.({ accept });
+      child.channel?.unref();
       child.unref();
       return child.pid ?? null;
     } catch { return null; }
@@ -133,6 +141,13 @@ export function createSentinelHost(options) {
   let bindingChain = Promise.resolve(null);
   let watcherPid = null;
   let fallbackRemoved = false;
+  let ioLaunch = null, ioSample = null, ioControl = null;
+  const onIoEvent = event => {
+    if (event.type === "launch") { ioLaunch = event; ioSample = null; }
+    if (event.type === "sample") ioSample = event;
+    options.onIoEvent?.(event);
+    if (event.type === "exit") { ioLaunch = null; ioSample = null; }
+  };
   let timers = [];
   let busy = null;
   let pagesShown = 0;
@@ -182,6 +197,12 @@ export function createSentinelHost(options) {
   }
 
   const host = {
+    replayIo() {
+      if (!ioLaunch) { options.onIoEvent?.({ type: "uncovered" }); return; }
+      options.onIoEvent?.(ioLaunch);
+      if (ioSample) options.onIoEvent?.(ioSample);
+    },
+    acceptIo(event) { ioControl?.accept(event); },
     get installationId() { return installationId; },
     get outputRoot() { return outputRoot; },
     get rootState() { return publisher?.state ?? "absent"; },
@@ -259,7 +280,7 @@ export function createSentinelHost(options) {
         const executable = options.executable;
         const deps = {
           platform, uid: options.uid ?? process.getuid?.() ?? -1, installationId, installationRoot, outputRoot, executable, entrySource: entrySource(),
-          provider: providerNow, boundary, now,
+          provider: providerNow, boundary, now, legacyWritersDrained: options.legacyWritersDrained === true,
           probe: options.probe ?? defaultProbe({ executable, platform, env }),
         };
         const before = registration.revision;
@@ -281,7 +302,7 @@ export function createSentinelHost(options) {
       const descriptorPath = p.join(outputRoot, boundary.DESCRIPTOR_FILE);
       const loaded = boundary.loadDescriptor(descriptorPath, { platform });
       if (!loaded.ok) return result;
-      const spawnWatcher = options.spawnWatcher ?? defaultSpawnWatcher({ executable: options.executable, platform, env });
+      const spawnWatcher = options.spawnWatcher ?? defaultSpawnWatcher({ executable: options.executable, platform, env, onIoEvent, onChild: control => { ioControl = control; } });
       let mechanism = "supervisor";
       let created = true;
       if (platform === "linux") {

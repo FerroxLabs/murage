@@ -28,3 +28,10 @@ test("compiler failure or missing output never reports a successful build", () =
   let calls = 0; const failed = fixture({ exec: () => { if (++calls === 1) return "C:\\VS"; throw Error("compiler failed"); } }); assert.throws(failed.run, /compiler failed/);
   const absent = fixture({ exists: file => !file.endsWith("murage-backup-age.exe") }); assert.throws(absent.run, /did not produce/);
 });
+test("freezes the signed age digest in a forced compiler header, with no command interpolation", () => {
+  const writes = [], digest = "a".repeat(64), f = fixture({ ageDigest: digest, write: (...args) => writes.push(args) });
+  f.run();
+  assert.deepEqual(writes, [["C:\\fixture root\\dist-native\\backup-tools\\win32-x64\\signed-age-pin.h", `#define MURAGE_AGE_DIGEST "${digest}"\n`]]);
+  assert.match(f.calls[1][1][3], /\/FI"dist-native\\backup-tools\\win32-x64\\signed-age-pin.h"/);
+  const invalid = fixture({ ageDigest: "bad&command" }); assert.throws(invalid.run, /Invalid signed age digest/); assert.equal(invalid.calls.length, 0);
+});

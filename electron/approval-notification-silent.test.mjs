@@ -4,10 +4,11 @@ import { EventEmitter } from "node:events";
 import { describe, expect, it } from "vitest";
 
 import { APPROVAL_SOUND, approvalOptions, approvalPayload, createApprovalNotifications } from "./approval-notification.mjs";
+import { approvalNotificationFixture } from "../server/testing/approval-notification-fixture.ts";
 
 // Upstream OpenMausBot #1274: a computer that muted notification sounds keeps
 // the approval banner but not the chime.
-const payload = { botId: "bot", threadId: "task", requestId: "request", messageId: "card", title: "Approval", body: "Review" };
+const { payload } = approvalNotificationFixture({ botId: "bot", threadId: "task", requestId: "request", messageId: "card", title: "Approval", body: "Review" });
 
 describe("muted approval banners", () => {
   it("accepts only a boolean silent flag", () => {

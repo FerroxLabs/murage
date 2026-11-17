@@ -61,7 +61,8 @@ it("the composer refuses every edit of the draft, text and attachments, from the
   expect(edit("editText")).toContain("if (isDraftHeld(draftId)) return;");
   expect(edit("editAttachments")).toContain("if (isDraftHeld(draftId)) return;");
   expect(composer).not.toContain("pressingRef");
-  expect(composer).toContain("const sendPending = sendingId !== null || draftHeld;");
+  // MAIN RULING INT-CONFLICT-DEFAULT 57be7667087 / 99bcb86fa9d: engine commands hold the controls too.
+  expect(composer).toContain("const sendPending = sendingId !== null || draftHeld || commandSending;");
   // B1: a press refused as held or changed puts the focus back in the box
   expect(send).toContain('else if (begun.reason === "held" || begun.reason === "changed") refocusInput();');
   // the attach button, the goal chip, the reply strip and the attachment chips are read-only too

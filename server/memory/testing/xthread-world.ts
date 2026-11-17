@@ -11,6 +11,7 @@ import { appendMessage, closeMessageDb } from "../../message-db.ts";
 import type { Message } from "../../store.ts";
 import { InternalCapabilities } from "../../internal-capabilities.ts";
 import { linkHumanBinding, observeVerifiedHuman, resolveHumanBinding, bindHumanThread, type HumanPrincipal } from "../../human-principals.ts";
+import { prepareRecallContextSync, maintainRecallViewSlice, recallAuthorityEpoch } from "../recall-view.ts";
 import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryAccess, type MemoryRoster } from "../policy.ts";
 import { bindMemoryScope, ownerMemoryTicket } from "../authority.ts";
 import { setMemoryCaptureRoster } from "../capture-scope.ts";
@@ -26,6 +27,7 @@ export const SECRET = "The side gate code is GATE-7731.";
 export const QUERY = "side gate code";
 
 export const roster: MemoryRoster = {
+  memoryRosterRevision: 1,
   bots: [
     { id: "finch", threadId: "finch-direct", section: "Ops", tasks: [{ threadId: "t1" }, { threadId: "t2" }, { threadId: "t3" }, { threadId: "finch-group" }] },
     { id: "dax", threadId: "dax-direct", section: "Ops", tasks: [{ threadId: "dax-helper" }] },
@@ -39,10 +41,18 @@ export const roster: MemoryRoster = {
 /** The newest line of each thread, so a line is appended as an answer to the one before it (two bot lines with one parent are a
  * regenerate, which revokes the older one). */
 const heads = new Map<string, string>();
+const readers = new Map<string,{bot:string;thread:string;notOwner:boolean;epoch:number}>();
+function settleReaders() {
+  const epoch=recallAuthorityEpoch(database());
+  for(const reader of readers.values())if(reader.epoch!==epoch) {
+    prepareRecallContextSync(reader.bot,reader.thread,roster,reader.notOwner);reader.epoch=recallAuthorityEpoch(database());
+  }
+}
 /** Appends `message` after the thread's newest line. */
 export function append(thread: string, message: Message): void {
   appendMessage(thread, { ...message, ...(heads.has(thread) && message.parentId === undefined ? { parentId: heads.get(thread) } : {}) });
   heads.set(thread, message.id);
+  settleReaders();
 }
 /** A person's question and the bot's reply `id` (text `text`, default its id). */
 export function exchange(thread: string, id: string, text = id): void {
@@ -51,7 +61,7 @@ export function exchange(thread: string, id: string, text = id): void {
 }
 
 export function resetWorld(): void {
-  heads.clear();
+  heads.clear();readers.clear();
   closeMessageDb(); closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   setMemoryCaptureRoster(() => roster);
   reconcileMemoryRoster(roster);
@@ -59,10 +69,15 @@ export function resetWorld(): void {
 }
 
 export function access(botId: string, thread: string, options: { notOwnerAudience?: boolean; human?: HumanPrincipal } = {}): MemoryAccess {
-  reconcileMemoryRoster(roster);
+  reconcileMemoryRoster(roster,{unlessUnchanged:true});
+  settleReaders();
   const registry = new InternalCapabilities(); registry.begin(botId, thread, "g", options.human);
   const token = registry.mint({ botId, threadId: thread, generation: "g", depth: 0, kind: "memory", skillAuthoring: false, ...(options.notOwnerAudience ? { notOwnerAudience: true as const } : {}), ...(options.human ? { humanPrincipal: options.human } : {}) });
-  return memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
+  prepareRecallContextSync(botId, thread, roster, options.notOwnerAudience === true);
+  const access = memoryAccess(registry, registry.resolve(`Bearer ${token}`)!, () => roster);
+  while (!maintainRecallViewSlice(access.view)) { /* Fixture preparation before the reader is measured. */ }
+  readers.set(JSON.stringify([botId,thread,options.notOwnerAudience===true]),{bot:botId,thread,notOwner:options.notOwnerAudience===true,epoch:recallAuthorityEpoch(database())});
+  return access;
 }
 
 /** A channel person (a verified sender linked as a person, not the owner). */

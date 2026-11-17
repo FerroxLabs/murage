@@ -128,7 +128,7 @@ public final class WorkspaceBook {
         if (origin.serialized().equals(active)) active = null;
     }
 
-    /** The MagicDNS machine name: {@code example-mac} from {@code example-mac.tail….ts.net}. */
+    /** The MagicDNS machine name: {@code test-laptop-pro} from {@code test-laptop-pro.tail….ts.net}. */
     public static String defaultName(WorkspaceOrigin origin) {
         int dot = origin.host.indexOf('.');
         return dot > 0 ? origin.host.substring(0, dot) : origin.host;

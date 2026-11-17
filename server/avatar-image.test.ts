@@ -183,7 +183,7 @@ describe("which provider draws the avatar", () => {
 
   it("falls back to the user's own OpenAI key when Flux says this account may not", async () => {
     // 402 premium_locked: the image capability is entitled to paid, cleared
-    // accounts only (images_route.py). Somebody who was generating avatars
+    // accounts only (the Flux router's image route). Somebody who was generating avatars
     // yesterday on their own OpenAI key must not lose that by adding Flux.
     const fetchMock = vi.fn<typeof fetch>(async (url) =>
       String(url).includes("fluxrouter")

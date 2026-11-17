@@ -1,3 +1,12 @@
+import { fixtureEngineFence } from "../../testing/mcp-admission-fixture.ts";
+import { fencedTurnInput } from "../engine-input.ts";
+import { buildPrompt, noneRef, promptPart } from "../../memory/prompt-parts.ts";
+
+function steerFence(threadId: string, text: string) {
+  return fencedTurnInput({ threadId, prompt: buildPrompt(undefined, [promptPart(text, [noneRef("owner-turn")])]) },
+    fixtureEngineFence(threadId)).beforeSubmit;
+}
+
 import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Copyright 2026 Ferrox Labs
@@ -84,7 +93,7 @@ describe("Grok Build pictures and mid-turn messages", () => {
   it("puts a message into the running turn with _x.ai/interject, never _fuigo/interject, and waits for its fallback turn", async () => {
     const home = ownerHome();
     const { adapter, dump, release, turnId } = await heldTurn(home, "t-grok-steer", "fallback");
-    expect(await adapter.steer!("t-grok-steer", "also check the totals")).toBe("delivered");
+    expect(await adapter.steer!("t-grok-steer", "also check the totals", steerFence("t-grok-steer", "also check the totals"))).toBe("delivered");
     expect(methods(dump)).toContain("_x.ai/interject");
     expect(methods(dump)).not.toContain("_fuigo/interject");
     release();
@@ -100,8 +109,8 @@ describe("Grok Build pictures and mid-turn messages", () => {
   it("a grok that answers method-not-found is rejected (the caller queues the line) and never asked again", async () => {
     const home = ownerHome();
     const { adapter, dump, release } = await heldTurn(home, "t-grok-old");
-    expect(await adapter.steer!("t-grok-old", "first")).toBe("rejected");
-    expect(await adapter.steer!("t-grok-old", "second")).toBe("rejected");
+    expect(await adapter.steer!("t-grok-old", "first", steerFence("t-grok-old", "first"))).toBe("rejected");
+    expect(await adapter.steer!("t-grok-old", "second", steerFence("t-grok-old", "second"))).toBe("rejected");
     expect(methods(dump).filter((m) => m === "_x.ai/interject")).toHaveLength(1);
     release();
   }, 30_000);

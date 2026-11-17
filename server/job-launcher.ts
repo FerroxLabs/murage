@@ -1,3 +1,6 @@
+import "../shared/win-hide-child-process.mjs";
+import {exitWithChildIoReceipt} from "./io-child-receipts.ts";
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -17,7 +20,8 @@
 //                   not start. EOF on fd 0 before a frame: exit 0, nothing started.
 //   exit            the CLI's exit code (1 for a signal), so the server's child object reports the engine's own result.
 import { spawn } from "node:child_process";
-import { readSync, writeSync } from "node:fs";
+import { writeSync } from "./counted-fs.ts";
+import { readSync } from "node:fs";
 
 const readExact = (count: number): Buffer | null => {
   const out = Buffer.alloc(count);
@@ -57,20 +61,23 @@ const main = (): void => {
   const args = separator >= 0 ? process.argv.slice(separator + 2) : [];
   if (!command) { report({ error: { code: "EINVAL", syscall: "spawn", path: "" } }); process.exit(127); }
   const lengthLine = readLine();
-  if (lengthLine === null) process.exit(0); // the server closed stdin without a frame: nothing to start
+  if (lengthLine === null) { void exitWithChildIoReceipt(0); return; } // the server closed stdin without a frame: nothing to start
   const length = Number(lengthLine);
   if (!Number.isInteger(length) || length <= 0 || length > 64 * 1024 * 1024) { report({ error: { code: "EINVAL", syscall: "spawn", path: command } }); process.exit(127); }
   const frame = readExact(length);
-  if (frame === null) process.exit(0);
+  if (frame === null) { void exitWithChildIoReceipt(0); return; }
   let env: Record<string, string> = {};
   let cwd: string | undefined;
+  let proxyIpc = false;
   try {
-    const parsed = JSON.parse(frame.toString("utf8")) as { env?: Record<string, string>; cwd?: string };
+    const parsed = JSON.parse(frame.toString("utf8")) as { env?: Record<string, string>; cwd?: string; proxyIpc?: boolean };
     env = parsed.env && typeof parsed.env === "object" ? parsed.env : {};
+    proxyIpc = parsed.proxyIpc === true;
+    if (proxyIpc && (!process.connected || !process.send)) throw new Error("MISSING_PROXY_IPC");
     cwd = typeof parsed.cwd === "string" && parsed.cwd ? parsed.cwd : undefined;
   } catch { report({ error: { code: "EINVAL", syscall: "spawn", path: command } }); process.exit(127); }
   let child: ReturnType<typeof spawn>;
-  try { child = spawn(command, args, { stdio: "inherit", env, cwd, windowsHide: true }); }
+  try { child = spawn(command, [...args], withHideInherit({ stdio: proxyIpc ? ["inherit", "inherit", "inherit", "ipc"] : "inherit", env, cwd, windowsHide: true })); }
   catch (error) {
     // Node refuses some launches before any process exists (a .cmd or .bat without a shell: EINVAL). Reported like any other
     // spawn failure, so the server's child gets its `error` event instead of a silent exit.
@@ -78,13 +85,35 @@ const main = (): void => {
     report({ error: { code: failure.code ?? "ESPAWN", syscall: "spawn", path: failure.path ?? command } });
     process.exit(127);
   }
+  if (proxyIpc) {
+    // The launcher and proxy are already inside the same no-breakaway job.
+    // A channel failure ends the launcher; the server's supervisor seals it.
+    const lost = () => process.exit(1);
+    process.on("disconnect", lost);
+    // Node closes IPC before reporting an ordinary child exit. The channel
+    // is unusable immediately; keep only a bounded wait for that exit report
+    // so a successful process does not become an invented exit code 1.
+    child.on("disconnect", () => {
+      if (child.exitCode !== null || child.signalCode !== null) return;
+      const timer = setTimeout(lost, 50);
+      child.once("exit", () => clearTimeout(timer));
+    });
+    process.on("message", message => {
+      if (!child.connected || message === null) return lost();
+      child.send!(message, error => { if (error) lost(); });
+    });
+    child.on("message", message => {
+      if (!process.connected) return lost();
+      process.send!(message, error => { if (error) lost(); });
+    });
+  }
   child.on("error", (error: NodeJS.ErrnoException) => {
     // Node's syscall field carries the path ("spawn /x/cli"); the report keeps the bare syscall and the path apart.
     report({ error: { code: error.code ?? "ESPAWN", syscall: "spawn", path: error.path ?? command } });
     process.exit(127);
   });
   child.on("spawn", () => report({ pid: child.pid }));
-  child.on("exit", (code, signal) => { process.exit(code ?? (signal ? 1 : 0)); });
+  child.on("exit", (code, signal) => { void exitWithChildIoReceipt(code ?? (signal ? 1 : 0)); });
 };
 
 main();

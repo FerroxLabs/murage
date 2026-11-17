@@ -24,6 +24,30 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
 import { FAKE_FLUX_BROKER_INSTRUMENTATION } from "./testing/fake-flux-broker.ts";
+import { withTurnSecrets } from "./testing/fixture-dump.ts";
+
+// A supervised owner mount must run, even when the fake engine only records its config.
+const OWNER_TOOLS_STUB = `import { createInterface } from 'node:readline';
+createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  const result = request.method === 'initialize'
+    ? { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'owner-tools-fixture', version: '1' } }
+    : request.method === 'tools/list' ? { tools: [] } : {};
+  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + String.fromCharCode(10));
+});`;
+
+// Discovery reaches the native protocol; keep the real browser controller and authority.
+const NATIVE_BROWSER_STUB = `export function createNativeBrowser() {
+  return {
+    request: async method => {
+      if (method !== 'tools/list') throw new Error('Browser fixture only lists tools');
+      return { tools: [{ name: 'agent_browser_snapshot', inputSchema: { type: 'object', properties: {} } }] };
+    },
+    protected: async () => false, resetStream() {}, input() {}, command: async () => '',
+    connect: async () => 'fixture-stream', close: async () => {},
+  };
+}`;
 
 const posixOnly = describe.skipIf(process.platform === "win32");
 const MENTION = "__fixture_mention_teammates__";
@@ -40,8 +64,15 @@ const idle = async (id: string) => { const state = await groupState(id); return 
 const messages = async (threadId: string) => (await api("GET", `/api/threads/${threadId}/messages?limit=200`)).body.messages as any[];
 const openRequests = async (groupId: string) => (await api("GET", `/api/groups/${groupId}/requests?open=1`)).body.requests as any[];
 type Turn = { servers: string[]; botId: string | null; threadId: string | null; depth: string | null; skillAuthoring: string | null; prompt: string };
-const logFile = () => join(fixture.info.dataDir, "turns.jsonl");
-const turns = (): Turn[] => existsSync(logFile()) ? readFileSync(logFile(), "utf8").trim().split("\n").filter(Boolean).map((line) => JSON.parse(line)) : [];
+const logFile = () => fixture.fixtureDumpLogPath;
+// Read the admitted mount captured beside the shim, with this turn's credential snapshot.
+const turns = (): Turn[] => existsSync(logFile()) ? readFileSync(logFile(), "utf8").trim().split("\n").filter(Boolean).map((line): Turn => {
+  const dump = withTurnSecrets(JSON.parse(line));
+  const servers = dump.mcpConfig?.mcpServers ?? {}, agents = servers.agents?.env ?? {};
+  return { servers: Object.keys(servers).sort(), botId: agents.MURAGE_BOT_ID ?? null, threadId: agents.MURAGE_THREAD_ID ?? null,
+    depth: agents.MURAGE_TURN_DEPTH ?? null, skillAuthoring: agents.MURAGE_SKILL_AUTHORING_ENABLED ?? null,
+    prompt: typeof dump.prompt === "string" ? dump.prompt : JSON.stringify(dump.prompt) };
+}) : [];
 const gate = () => join(fixture.info.dataDir, "hold-gate");
 const seen = () => join(fixture.info.dataDir, "hold-seen");
 const refreshProof = async () => {
@@ -88,6 +119,7 @@ posixOnly("a queued room turn runs as the turn it was queued for", () => {
   beforeAll(async () => {
     fixture = await launchVerificationServer(process.env, undefined, {
       portRange: { from: 49_000, span: 900 },
+      dumpLog: true,
       instrumentationSource: `
       ${FAKE_FLUX_BROKER_INSTRUMENTATION}
       const fs=await import('node:fs');const path=await import('node:path');
@@ -97,6 +129,7 @@ posixOnly("a queued room turn runs as the turn it was queued for", () => {
       process.env.MURAGE_AGENT_BROWSER_PATH=process.execPath;
       const { registerHooks } = await import('node:module');
       registerHooks({ load(url, context, nextLoad) {
+        if(url.endsWith('/browser-native-relay.ts'))return {format:'module',shortCircuit:true,source:${JSON.stringify(NATIVE_BROWSER_STUB)}};
         if(!url.endsWith('/browser-engine.ts'))return nextLoad(url, context);
         const source=fs.readFileSync(new URL(url),'utf8');
         const start=source.indexOf('export async function verifyAgentBrowserBinary(');
@@ -111,14 +144,16 @@ posixOnly("a queued room turn runs as the turn it was queued for", () => {
       // the skill recorder is on, so a turn's skill-authoring switch shows
       cfg.features={...(cfg.features??{}),browser:true,skillRecorder:true};
       cfg.instances.verification.environment={
-        FAKE_CLAUDE_DUMP_LOG:path.join(data,'turns.jsonl'),
+        FAKE_CLAUDE_DUMP_EACH_TURN:'1',
         FAKE_CLAUDE_MENTION_MARKER:${JSON.stringify(MENTION)},
         FAKE_CLAUDE_MENTION_REPLY:'@Second and @Lead, over to you.',
         FAKE_CLAUDE_HOLD_MARKER:${JSON.stringify(HOLD)},
         FAKE_CLAUDE_HOLD_GATE:path.join(data,'hold-gate'),
         FAKE_CLAUDE_HOLD_SEEN:path.join(data,'hold-seen'),
       };
-      cfg.mcpServers={'owner-tools':{command:'owner-tools-fixture',args:['--serve'],env:{OWNER_TOOLS_FIXTURE:'1'}}};
+      const ownerService=path.join(process.env.MURAGE_DATA_DIR,'owner-tools.mjs');
+      fs.writeFileSync(ownerService,${JSON.stringify(OWNER_TOOLS_STUB)});
+      cfg.mcpServers={'owner-tools':{command:process.execPath,args:[ownerService],env:{OWNER_TOOLS_FIXTURE:'1'}}};
       fs.writeFileSync(file,JSON.stringify(cfg));
       // A room named "Legacy" reads as a channel from before the turn engine
       // (no mentionChain field), so the boot marks it and the one-hop

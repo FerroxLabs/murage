@@ -96,6 +96,13 @@ async function reachTheJobs(): Promise<void> {
     const view = await harness("GET", "/api/setup");
     if (!stepOf(view, step)?.done) await harness("POST", "/api/setup/skip", { step });
   }
+  const { bots } = await harness("GET", "/api/bots");
+  if (bots.some((bot: any) => bot.messages?.some((message: any) => message.card?.setup?.key === "detect:move-grok"))) {
+    await harness("POST", "/api/setup/card", { key: "detect:move-grok", action: "settle" });
+  }
+  for (const key of ["flux:notify", "chat:hire"]) {
+    await harness("POST", "/api/setup/card", { key, action: "settle" });
+  }
   if (stepOf(await harness("GET", "/api/setup"), "chat").done) {
     await harness("POST", "/api/setup/reopen", { step: "chat" });
   }
@@ -113,6 +120,7 @@ test.use({
     await page.addInitScript(() => {
       try {
         window.localStorage.setItem("murage-email-gate", "skipped");
+        window.localStorage.setItem("help.seen.chat.level-chip", "1");
       } catch {
         /* storage blocked — the gate just renders */
       }
@@ -129,7 +137,7 @@ test.describe("every screen a customer can land on", () => {
       await chiefHasSpoken(app);
       await reachTheJobs();
       await app.reload();
-      await expect(app.getByRole("button", { name: new RegExp(JOBS[0], "i") })).toBeVisible();
+      await expect(app.getByRole("checkbox", { name: new RegExp(JOBS[0], "i") })).toBeVisible();
       await screenIsUsable(app, `${size.name} · the Chief's question`);
     });
   }
@@ -140,9 +148,10 @@ test.describe("every screen a customer can land on", () => {
       await reachTheJobs();
       await app.reload();
 
-      const row = app.getByRole("button", { name: new RegExp(job, "i") });
+      const row = app.getByRole("checkbox", { name: new RegExp(job, "i") });
       await expect(row, `${job}: the row must arrive pressable`).toBeEnabled();
-      await row.click();
+      for (const title of JOBS) await app.getByRole("checkbox", { name: new RegExp(title, "i") }).setChecked(title === job);
+      await app.getByRole("button", { name: "Set up these 1", exact: true }).click();
 
       // Whatever it asks for next — a connection, some typing, or the work
       // itself — the customer must be able to read it and act on it.
@@ -230,7 +239,7 @@ test.describe("the production build, which is what a customer installs", () => {
       await chiefHasSpoken(app);
       await reachTheJobs();
       await app.goto(`${HARNESS_URL}/`);
-      await expect(app.getByRole("button", { name: new RegExp(JOBS[0], "i") })).toBeVisible();
+      await expect(app.getByRole("checkbox", { name: new RegExp(JOBS[0], "i") })).toBeVisible();
       await screenIsUsable(app, `production ${size.name} · the Chief's question`);
     });
   }

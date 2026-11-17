@@ -1,7 +1,8 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // Behaviour adapted from OpenMausBot #2387 (Apache-2.0).
-import { spawn } from "node:child_process";
+import { once } from "node:events";
+import { spawnBoundProxy } from "./testing/bound-proxy-fixture.ts";
 import { mkdtempSync } from "node:fs";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -20,8 +21,11 @@ it.skipIf(process.platform === "win32")("keeps non-ASCII text intact when a read
   const content = "é".repeat(50_000) + "日本語";
   const reply = "ü".repeat(2_000) + "✓";
   let asked: any;
+  let server!: ReturnType<typeof createServer>;
+  let connection: Socket | undefined;
   const brokerSeen = new Promise<Socket>((resolve) => {
-    const server = createServer((conn) => {
+    server = createServer((conn) => {
+      connection = conn;
       let buf = "";
       conn.setEncoding("utf8");
       conn.on("data", (chunk) => {
@@ -34,7 +38,7 @@ it.skipIf(process.platform === "win32")("keeps non-ASCII text intact when a read
     server.listen(sock);
   });
   await wait(100);
-  const child = spawn(process.execPath, [proxy, sock], { stdio: ["pipe", "pipe", "ignore"] });
+  const child = await spawnBoundProxy("permission", process.execPath, [proxy, sock], { windowsHide: true });
   try {
     const request = Buffer.from(JSON.stringify({
       jsonrpc: "2.0", id: 1, method: "tools/call",
@@ -61,7 +65,11 @@ it.skipIf(process.platform === "win32")("keeps non-ASCII text intact when a read
     const response = await answered;
     expect(JSON.parse(response.result.content[0].text).message).toBe(reply);
   } finally {
+    const closed = once(child, "close");
     child.kill();
+    await closed;
+    connection?.destroy();
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     removeTempDirSync(dir);
   }
 }, 30_000);

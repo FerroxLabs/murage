@@ -19,7 +19,8 @@
 // local tree does not have, it is written to a cache only after surviving
 // parseTeamCatalog, and it can never make the library empty — which is the
 // failure the old MAX_CATALOG_ENTRIES ceiling caused once already.
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
+import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 
 import { DATA_DIR } from "./config.ts";

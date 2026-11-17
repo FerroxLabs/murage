@@ -1,0 +1,3593 @@
+[
+  {
+    "index": 0,
+    "id": "C-FAIL-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 1,
+    "id": "C-FAIL-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 2,
+    "id": "C-OR-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 3,
+    "id": "C-OR-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 4,
+    "id": "C-AND-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 5,
+    "id": "C-AND-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 6,
+    "id": "C-WRAP-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 7,
+    "id": "C-WRAP-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 8,
+    "id": "C-WRAP-OWN-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 9,
+    "id": "C-WRAP-OWN-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 10,
+    "id": "C-SUB-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 11,
+    "id": "C-SUB-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 12,
+    "id": "C-OVF-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 13,
+    "id": "C-OVF-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 14,
+    "id": "C-S1-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 15,
+    "id": "C-S1-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 16,
+    "id": "CAP-SEG-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 17,
+    "id": "CAP-SEG-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 18,
+    "id": "CAP-LEN-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 19,
+    "id": "CAP-LEN-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 20,
+    "id": "CAP-DEPTH-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 21,
+    "id": "CAP-DEPTH-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 22,
+    "id": "CAP-WORD-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "unreadable",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 23,
+    "id": "CAP-WORD-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "unreadable",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 24,
+    "id": "E-RAW-PREFIX-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 25,
+    "id": "E-RAW-PREFIX-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 26,
+    "id": "E-RAW-SUFFIX-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 27,
+    "id": "E-RAW-SUFFIX-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 28,
+    "id": "E-RAW-BOUND-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 29,
+    "id": "E-RAW-BOUND-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 30,
+    "id": "E-FIND-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 31,
+    "id": "E-FIND-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 32,
+    "id": "E-FIND+-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 33,
+    "id": "E-FIND+-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 34,
+    "id": "E-FIND-PLUS-OPERAND-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 35,
+    "id": "E-FIND-PLUS-OPERAND-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 36,
+    "id": "E-EXECDIR-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 37,
+    "id": "E-EXECDIR-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 38,
+    "id": "E-OK-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 39,
+    "id": "E-OK-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 40,
+    "id": "E-OKDIR-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 41,
+    "id": "E-OKDIR-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 42,
+    "id": "E-TOCMD-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 43,
+    "id": "E-TOCMD-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 44,
+    "id": "E-CKPT-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 45,
+    "id": "E-CKPT-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 46,
+    "id": "E-PROG-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 47,
+    "id": "E-PROG-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 48,
+    "id": "E-RSH-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 49,
+    "id": "E-RSH-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 50,
+    "id": "E-TRAP-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 51,
+    "id": "E-TRAP-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 52,
+    "id": "E-SU-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 53,
+    "id": "E-SU-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 54,
+    "id": "E-S1-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 55,
+    "id": "E-S1-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 56,
+    "id": "P-a-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 57,
+    "id": "P-a-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 58,
+    "id": "P-b-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 59,
+    "id": "P-b-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 60,
+    "id": "P-b-empty-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 61,
+    "id": "P-b-empty-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 62,
+    "id": "P-c-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 63,
+    "id": "P-c-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 64,
+    "id": "P-d-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 65,
+    "id": "P-d-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 66,
+    "id": "P-e-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 67,
+    "id": "P-e-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 68,
+    "id": "P-f-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 69,
+    "id": "P-f-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 70,
+    "id": "P-chgrp-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 71,
+    "id": "P-chgrp-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 72,
+    "id": "P-g-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 73,
+    "id": "P-g-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 74,
+    "id": "M-SED-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 75,
+    "id": "M-SED-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 76,
+    "id": "L5-STDIN-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 77,
+    "id": "L5-STDIN-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 78,
+    "id": "L5-QUEUE-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 79,
+    "id": "L5-QUEUE-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 80,
+    "id": "L5-FD0-LAST-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 81,
+    "id": "L5-FD0-LAST-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 82,
+    "id": "L5-EVAL",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 83,
+    "id": "L5-C",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 84,
+    "id": "L5-SCRIPT",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 85,
+    "id": "L5-FD3",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 86,
+    "id": "L5-REPLACED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 87,
+    "id": "L5-ESCAPE",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 88,
+    "id": "P-REF-READ",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 89,
+    "id": "E-FIND-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 90,
+    "id": "M-ROOT-ORDINARY",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 91,
+    "id": "OVERFLOW-UNREACHED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "unreadable",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 92,
+    "id": "M-ROOT-UNUSED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 93,
+    "id": "M-ROOT-USED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 94,
+    "id": "E-RAW-NO-REENTRY",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 95,
+    "id": "H2-PHYSICAL-0",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 96,
+    "id": "H2-PHYSICAL-1",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 97,
+    "id": "H2-PHYSICAL-2",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 98,
+    "id": "H2-PHYSICAL-3",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 99,
+    "id": "H2-PHYSICAL-4",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 100,
+    "id": "H2-PHYSICAL-5",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 101,
+    "id": "H2-PHYSICAL-6",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 102,
+    "id": "H2-PHYSICAL-7",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 103,
+    "id": "H2-PHYSICAL-8",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 104,
+    "id": "H2-PHYSICAL-unknown-prefix",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 105,
+    "id": "H2-PHYSICAL-unknown-prefix-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 106,
+    "id": "H2-PHYSICAL-pwsh",
+    "verdict": {
+      "approve": "auto-approved PowerShell (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 107,
+    "id": "H2-PHYSICAL-pwsh-RUN",
+    "verdict": {
+      "approve": "auto-approved PowerShell (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 108,
+    "id": "H1-OWNER-RAW-TARGETS",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 109,
+    "id": "H2-PHYSICAL-PROGRAM-ROOT-hosts",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 110,
+    "id": "H2-PHYSICAL-PROGRAM-ROOT-notes",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 111,
+    "id": "A1-a-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 112,
+    "id": "A1-a-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 113,
+    "id": "A1-b-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 114,
+    "id": "A1-b-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 115,
+    "id": "A1-c-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 116,
+    "id": "A1-c-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 117,
+    "id": "A1-d-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 118,
+    "id": "A1-d-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 119,
+    "id": "A1-e-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 120,
+    "id": "A1-e-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 121,
+    "id": "A1-f-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 122,
+    "id": "A1-f-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 123,
+    "id": "A1-g-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 124,
+    "id": "A1-g-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 125,
+    "id": "A1-h-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 126,
+    "id": "A1-h-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 127,
+    "id": "A2-a-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 128,
+    "id": "A2-a-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 129,
+    "id": "A2-b-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 130,
+    "id": "A2-b-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 131,
+    "id": "A2-c-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 132,
+    "id": "A2-c-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 133,
+    "id": "A2-d-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 134,
+    "id": "A2-d-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 135,
+    "id": "A2-e-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 136,
+    "id": "A2-e-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 137,
+    "id": "A2-f-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 138,
+    "id": "A2-f-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 139,
+    "id": "A2-g-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 140,
+    "id": "A2-g-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 141,
+    "id": "A2-h-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 142,
+    "id": "A2-h-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 143,
+    "id": "A2-i-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 144,
+    "id": "A2-i-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 145,
+    "id": "cpio-cwd-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 146,
+    "id": "cpio-cwd-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 147,
+    "id": "A3-a-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 148,
+    "id": "A3-a-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 149,
+    "id": "A3-b-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 150,
+    "id": "A3-b-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 151,
+    "id": "A3-c-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 152,
+    "id": "A3-c-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 153,
+    "id": "A3-d-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 154,
+    "id": "A3-d-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 155,
+    "id": "A3-e-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 156,
+    "id": "A3-e-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 157,
+    "id": "A3-f-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 158,
+    "id": "A3-f-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 159,
+    "id": "A4-a-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 160,
+    "id": "A4-a-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 161,
+    "id": "A4-b-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 162,
+    "id": "A4-b-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 163,
+    "id": "A4-c-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 164,
+    "id": "A4-c-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 165,
+    "id": "process-subst-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 166,
+    "id": "process-subst-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 167,
+    "id": "command-subst-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 168,
+    "id": "command-subst-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 169,
+    "id": "env-S-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 170,
+    "id": "env-S-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 171,
+    "id": "sudo-u-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 172,
+    "id": "sudo-u-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 173,
+    "id": "compressor-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 174,
+    "id": "compressor-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 175,
+    "id": "round3-word-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 176,
+    "id": "round3-word-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 177,
+    "id": "round3-body-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 178,
+    "id": "round3-body-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 179,
+    "id": "round3-list-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 180,
+    "id": "round3-list-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 181,
+    "id": "round2-word-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 182,
+    "id": "round2-word-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 183,
+    "id": "round2-body-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 184,
+    "id": "round2-body-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "value-path",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 185,
+    "id": "round4-opaque-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 186,
+    "id": "round4-opaque-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 187,
+    "id": "cwd-relative-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 188,
+    "id": "cwd-relative-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 189,
+    "id": "cwd-subshell-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 190,
+    "id": "cwd-subshell-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 191,
+    "id": "cwd-wrapper-RED",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 192,
+    "id": "cwd-wrapper-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 193,
+    "id": "read-0",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 194,
+    "id": "read-1",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 195,
+    "id": "read-2",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 196,
+    "id": "read-3",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 197,
+    "id": "read-4",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 198,
+    "id": "read-5",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 199,
+    "id": "read-6",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 200,
+    "id": "read-7",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 201,
+    "id": "read-8",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 202,
+    "id": "read-9",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 203,
+    "id": "read-10",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 204,
+    "id": "read-11",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 205,
+    "id": "read-12",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 206,
+    "id": "read-13",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 207,
+    "id": "read-14",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 208,
+    "id": "read-15",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 209,
+    "id": "read-16",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 210,
+    "id": "read-17",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 211,
+    "id": "read-18",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 212,
+    "id": "read-19",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 213,
+    "id": "read-20",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 214,
+    "id": "S1-Q-0",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 215,
+    "id": "S1-Q-1",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 216,
+    "id": "S1-Q-2",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 217,
+    "id": "S1-Q-3",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 218,
+    "id": "S1-Q-4",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 219,
+    "id": "S1-Q-5",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 220,
+    "id": "S1-Q-6",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 221,
+    "id": "S1-Q-7",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 222,
+    "id": "S1-Q-8",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 223,
+    "id": "S1-Q-9",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 224,
+    "id": "S1-Q-10",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 225,
+    "id": "S1-Q-11",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 226,
+    "id": "S1-Q-12",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 227,
+    "id": "S1-Q-13",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 228,
+    "id": "S1-Q-14",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 229,
+    "id": "S1-Q-15",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 230,
+    "id": "S1-Q-16",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 231,
+    "id": "AR-0",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 232,
+    "id": "AR-1",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 233,
+    "id": "AR-2",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 234,
+    "id": "AR-3",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 235,
+    "id": "AR-4",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 236,
+    "id": "AR-5",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 237,
+    "id": "AR-6",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 238,
+    "id": "AR-7",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 239,
+    "id": "AR-8",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 240,
+    "id": "AR-9",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 241,
+    "id": "AR-10",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 242,
+    "id": "AR-11",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 243,
+    "id": "AR-12",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 244,
+    "id": "AR-13",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 245,
+    "id": "AR-14",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 246,
+    "id": "AR-15",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 247,
+    "id": "AR-16",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 248,
+    "id": "AR-17",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 249,
+    "id": "AR-18",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 250,
+    "id": "AR-19",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 251,
+    "id": "AR-20",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 252,
+    "id": "AR-21",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 253,
+    "id": "AR-22",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 254,
+    "id": "AR-23",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 255,
+    "id": "AR-24",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 256,
+    "id": "AR-25",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 257,
+    "id": "AR-26",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 258,
+    "id": "AR-27",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 259,
+    "id": "AR-28",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 260,
+    "id": "AR-29",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 261,
+    "id": "AR-30",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 262,
+    "id": "AR-31",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 263,
+    "id": "AR-32",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 264,
+    "id": "AR-33",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 265,
+    "id": "AR-34",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 266,
+    "id": "AR-35",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 267,
+    "id": "AR-36",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 268,
+    "id": "AR-37",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 269,
+    "id": "AR-38",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 270,
+    "id": "AR-39",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 271,
+    "id": "AR-40",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 272,
+    "id": "AR-41",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 273,
+    "id": "AR-42",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 274,
+    "id": "AR-43",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 275,
+    "id": "AR-44",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 276,
+    "id": "AR-45",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 277,
+    "id": "AR-46",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 278,
+    "id": "AR-47",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 279,
+    "id": "AR-48",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 280,
+    "id": "AR-49",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 281,
+    "id": "AR-50",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 282,
+    "id": "AR-51",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 283,
+    "id": "AR-52",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 284,
+    "id": "AR-53",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 285,
+    "id": "AR-54",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 286,
+    "id": "AR-55",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 287,
+    "id": "AR-56",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 288,
+    "id": "AR-57",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 289,
+    "id": "AR-58",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 290,
+    "id": "AR-59",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 291,
+    "id": "AR-60",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 292,
+    "id": "AR-61",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 293,
+    "id": "AR-62",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 294,
+    "id": "AR-63",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 295,
+    "id": "AR-64",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 296,
+    "id": "AR-65",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 297,
+    "id": "AR-66",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 298,
+    "id": "AR-67",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 299,
+    "id": "AR-68",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 300,
+    "id": "AR-69",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 301,
+    "id": "AR-70",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 302,
+    "id": "AR-71",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 303,
+    "id": "AR-72",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 304,
+    "id": "AR-73",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 305,
+    "id": "AR-74",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  },
+  {
+    "index": 306,
+    "id": "AR-75",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 307,
+    "id": "AR-76",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 308,
+    "id": "AR-77",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 309,
+    "id": "AR-78",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 310,
+    "id": "C-S1",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 311,
+    "id": "C-S1-RUN",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 312,
+    "id": "CAP-LEN-true",
+    "verdict": {
+      "approve": null,
+      "source": "sensitive-guard",
+      "rule": "\\.ssh[\\\\/]|id_rsa|id_ed25519|authorized_keys"
+    }
+  },
+  {
+    "index": 313,
+    "id": "E-S1-true",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 314,
+    "id": "P-g-true",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 315,
+    "id": "CAP-LEN-false",
+    "verdict": {
+      "approve": "auto-approved Bash (full access)",
+      "source": "full-access"
+    }
+  },
+  {
+    "index": 316,
+    "id": "E-S1-false",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 317,
+    "id": "P-g-false",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "unreadable",
+      "reason": "tokenizer",
+      "note": "Murage could not read this command well enough to tell what it would touch, so it asks you first. Murage always asks before a command like this, at every access level.",
+      "reader": "held"
+    }
+  },
+  {
+    "index": 318,
+    "id": "FA-CPIO",
+    "verdict": {
+      "approve": null,
+      "source": "always-ask",
+      "rule": "protected-path",
+      "reason": "protected-path",
+      "note": "This points a program Murage does not know as read-only at a folder your computer needs to run. Murage always asks before a command like this, at every access level."
+    }
+  }
+]

@@ -63,7 +63,8 @@ const createBot = async (name: string, instanceId: string, grant: Record<string,
   const created = await api("POST", "/api/bots", { name, modelSelection: { instanceId, model: "ask-1" } });
   expect(created.status).toBe(201);
   const bot = created.body.bot as { id: string; threadId: string };
-  if (grant) expect((await api("PATCH", `/api/bots/${bot.id}`, { phoneApps: grant })).status).toBe(200);
+  // MAIN RULING INT-CONFLICT-DEFAULT 21ebb09024 / c33d9c2544: lifecycle fixtures choose Auto; Ask waits for its own-write review before offering a job.
+  if (grant) expect((await api("PATCH", `/api/bots/${bot.id}`, { autoApprove: true, computer: "off", phoneApps: grant })).status).toBe(200);
   return bot;
 };
 const send = (bot: { id: string; threadId: string }, text: string, extra: Record<string, string> | null = headers) =>
@@ -183,9 +184,13 @@ posixOnly("phone tools flag-on end to end (S23)", () => {
     ` });
     mkdirSync(askDir(), { recursive: true });
     await connect();
+    // Exercise phone grants, jobs and withholding independently of recall's cold-view recovery.
+    expect((await api("POST", "/api/memory/action", { action: "configure", mode: "off" })).status).toBe(200);
     expect((await api("PATCH", "/api/config", { features: { phoneTools: true } })).status).toBe(200);
     registration = JSON.parse(readFileSync(join(SERVER_DIR, "..", "apps", "mobile", "contract", "phone-jobs.json"), "utf8")).registration.valid;
     await enrolBinding();
+    // Every independently selected scenario starts with a registered fixture phone.
+    expect((await phone("PUT", "/api/phones/self", registration)).status).toBe(200);
   }, 120000);
   afterAll(async () => { await fixture?.close(); if (dir) await removeTempDir(dir); });
 
@@ -315,7 +320,7 @@ posixOnly("phone tools flag-on end to end (S23)", () => {
     expect((await send(card1, "limit with no backup")).status).toBe(202);
     const live1 = await cardOf(card1.threadId);
     await idle(card1.id);
-    expect((await api("POST", `/api/threads/${card1.threadId}/respond`, { requestId: live1.requestId, behavior: "answer", message: live1.options.find((o: string) => /^Backup x9a/.test(o)) })).status).toBe(200);
+    expect((await api("POST", `/api/threads/${card1.threadId}/respond`, { requestHandle: live1.requestHandle, behavior: "answer", limitOptionIndex: live1.options.findIndex((o: string) => /^Backup x9a/.test(o)) })).status).toBe(200);
     await expect.poll(() => minted(card1.threadId).length, { timeout: 30000 }).toBe(2);
     await idle(card1.id);
     const card2 = await createBot("F4 card restart", "src-x9b");
@@ -325,7 +330,7 @@ posixOnly("phone tools flag-on end to end (S23)", () => {
     await idle(card2.id);
     await fixture.restart();
     await connect();
-    expect((await api("POST", `/api/threads/${card2.threadId}/respond`, { requestId: live2.requestId, behavior: "answer", message: live2.options.find((o: string) => /^Backup x9b/.test(o)) })).status).toBe(200);
+    expect((await api("POST", `/api/threads/${card2.threadId}/respond`, { requestHandle: live2.requestHandle, behavior: "answer", limitOptionIndex: live2.options.findIndex((o: string) => /^Backup x9b/.test(o)) })).status).toBe(200);
     await expect.poll(() => turns(card2.threadId).length, { timeout: 30000 }).toBe(2);
     expect(minted(card2.threadId)).toHaveLength(1);
     expect(turns(card2.threadId)[1].system).toContain(PHONE_COPY.withheld);

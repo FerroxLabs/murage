@@ -80,7 +80,8 @@ async function measured(store: Store): Promise<{ activeMs: number; wallMs: numbe
 }
 
 describe("100,000 eligible expired holds under FULL", () => {
-  it("1,000 outer commits, a page per turn, units within budget, activeMs within the calibrated bound, everything cleaned after reopening", { tags: ["perf-budget"], timeout: 600_000 }, async () => {
+  // Harness timeout only: it covers the seed phase (seed(100_000) alone took 745 s on r3, 509 s in all on the build host), not the measured window. Every assertion below is unchanged.
+  it("1,000 outer commits, a page per turn, units within budget, activeMs within the calibrated bound, everything cleaned after reopening", { tags: ["perf-budget"], timeout: 1_500_000 }, async () => {
     const calibrate = async (): Promise<number> => {
       fresh();
       const { store } = seed(10_000);

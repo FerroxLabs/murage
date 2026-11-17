@@ -55,6 +55,7 @@ describe.skipIf(process.platform === "win32")("an ACP driver's checked engine fi
   const support = (): AcpSupport => ({
     driverKind: "launchExecutableTest",
     displayName: "Launch Executable Test",
+    fluxReach: () => "elsewhere" as const, // U05: a fixture engine that never reaches Flux
     models: { default: "m-one", options: [{ id: "m-one", label: "One" }] },
     defaultCli: MISSING,
     nativeSource: "launchexe.acp",

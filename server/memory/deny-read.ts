@@ -1,3 +1,4 @@
+import { assertRecallView, recallViewHasScope } from './recall-view.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -14,12 +15,16 @@
 // non-owner, a footprint set that cannot be read, and any error in the lookup. There is no path where an unknown shows a line. Owner and
 // person lines are judged only by their own flag, their source's tombstone and the thread deny: they never wait.
 import type { DatabaseSync, StatementSync } from "node:sqlite";
+import { livePassLookup } from "./eligibility-pass.ts";
 import { DENIED_SOURCE } from "./deny.ts";
 import { threadNo } from "./thread-no.ts";
 import { murageAnchor, murageAnchorOf } from "../murage-anchor.ts";
 import { FOOTPRINT_STAR, memoryRefKey, PENDING_ALL_SCOPES, PENDING_ALL_THREADS, worstVerdict, type BuiltPrompt, type CheckingReason, type DenyReason, type LineageReader, type LineageRef,
   type LinePage, type LineageVerdict, type MemoryRef, type PageLine, type SessionKey } from "./lineage-types.ts";
 import { AUDIENCE_COALESCED } from "./lineage-types.ts";
+import { normalizeRetainedRefs, prefixLineJudge } from "./retained-refs.ts";
+import { accountedPrepare, chargeReleaseWork } from "./release-budget.ts";
+import { createHash } from "node:crypto";
 
 const SHOWN: LineageVerdict = Object.freeze({ state: "shown" });
 const withheld = (reason: DenyReason): LineageVerdict => ({ state: "withheld", reason });
@@ -52,14 +57,14 @@ function prepared(db: DatabaseSync, sql: string): StatementSync {
   let byText = statementCache.get(db);
   if (!byText) { byText = new Map(); statementCache.set(db, byText); }
   let statement = byText.get(sql);
-  if (!statement) { statement = db.prepare(sql); byText.set(sql, statement); }
+  if (!statement) { statement = accountedPrepare(db, sql); byText.set(sql, statement); }
   meter.statements++; meter.sql.add(sql);
   return statement;
 }
 type Row = Record<string, unknown>;
 function one(db: DatabaseSync, sql: string, ...args: Array<string | number | null>): Row | undefined {
   const row = prepared(db, sql).get(...args) as Row | undefined;
-  if (row) meter.rows++;
+  if (row) { meter.rows++; }
   return row;
 }
 function all(db: DatabaseSync, sql: string, ...args: Array<string | number | null>): Row[] {
@@ -68,6 +73,12 @@ function all(db: DatabaseSync, sql: string, ...args: Array<string | number | nul
   return rows;
 }
 const num = (value: unknown): number | null => (value === null || value === undefined ? null : Number(value));
+
+function rawMarks(db: DatabaseSync, sql: string, args: Array<string | number>, content: boolean, skipCoalesced = false): Row[] {
+  const rows = all(db, `${sql} LIMIT ?`, ...args, RANGE_READ_LIMIT + 1);
+  if (rows.length > RANGE_READ_LIMIT) throw new Error("MEMORY_MARK_READ_LIMIT");
+  return content ? rows.filter(row => (!skipCoalesced || Number(row.revoke_id) !== AUDIENCE_COALESCED) && !audienceOnly(db, row.revoke_id)) : rows;
+}
 
 // ---- shared facts (each a seek or two) ----
 
@@ -80,14 +91,30 @@ function threadDenied(db: DatabaseSync, threadId: string): boolean {
 const NOT_AUDIENCE_ONLY = "revoke_id NOT IN (SELECT revoke_id FROM memory_revoke_audience)";
 /** A memory mark under the coalesced audience row (AUDIENCE_COALESCED) is audience-only too: a late edge's child under it is marked with
  * that id at its write (revoke-commit.ts inheritMarks). */
-const NOT_AUDIENCE_MEMORY = `${NOT_AUDIENCE_ONLY} AND revoke_id<>${AUDIENCE_COALESCED}`;
 /** The lowest since_lsn of any pending revoke covering this thread (its own rows and the `*` rows), or null. Two seeks on the primary key.
  * A content reader skips audience-only revokes, and receipt flips not yet committed (those are audience-only too). */
+/** Read raw indexed candidates before audience filtering. Overflow stays held;
+ * a LIMIT after the audience predicate could examine the entire backlog. */
+function rawPending(db: DatabaseSync, table: "memory_deny_pending" | "memory_deny_pending_scope", key: string | null): Row[] {
+  const column = table === "memory_deny_pending" ? "thread_id" : "scope_id";
+  return all(db, `WITH raw AS MATERIALIZED (SELECT since_lsn,revoke_id FROM ${table}${key === null ? "" : ` WHERE ${column}=?`} LIMIT ?) SELECT raw.*,j.started_lsn AS c,j.state AS st,EXISTS(SELECT 1 FROM memory_revoke_audience a WHERE a.revoke_id=raw.revoke_id) AS audience_only FROM raw LEFT JOIN memory_revoke_jobs j ON j.revoke_id=raw.revoke_id`, ...(key === null ? [] : [key]), PENDING_READ_LIMIT + 1);
+}
+function audienceOnly(db: DatabaseSync, revoke: unknown): boolean {
+  return Boolean(one(db, "SELECT 1 AS x FROM memory_revoke_audience WHERE revoke_id=?", Number(revoke)));
+}
+function pendingLow(_db: DatabaseSync, rows: Row[], content: boolean): number | null {
+  if (rows.length > PENDING_READ_LIMIT) return 0;
+  let low: number | null = null;
+  for (const row of rows) {
+    if (content && Number(row.audience_only)) continue;
+    const since = Number(row.since_lsn);
+    low = low === null ? since : Math.min(low, since);
+  }
+  return low;
+}
 function pendingSince(db: DatabaseSync, threadId: string, content: boolean): number | null {
-  const skip = content ? ` AND ${NOT_AUDIENCE_ONLY}` : "";
-  const own = num(one(db, `SELECT since_lsn FROM memory_deny_pending WHERE thread_id=?${skip} ORDER BY since_lsn LIMIT 1`, threadId)?.since_lsn);
-  const every = num(one(db, `SELECT since_lsn FROM memory_deny_pending WHERE thread_id=?${skip} ORDER BY since_lsn LIMIT 1`, PENDING_ALL_THREADS)?.since_lsn);
-  // a receipt some path turned 'revoked' and the marker has not committed yet (receipt-outputs.ts): its lines from its first output on
+  const own = pendingLow(db, rawPending(db, "memory_deny_pending", threadId), content);
+  const every = pendingLow(db, rawPending(db, "memory_deny_pending", PENDING_ALL_THREADS), content);
   const no = content ? null : threadNo(db, threadId);
   const flipped = no === null ? null : num(one(db, "SELECT first_lsn FROM memory_receipt_flips WHERE thread_no=? ORDER BY first_lsn LIMIT 1", no)?.first_lsn);
   return [own, every, flipped].reduce<number | null>((low, value) => value === null ? low : low === null ? value : Math.min(low, value), null);
@@ -103,12 +130,16 @@ const PENDING_READ_LIMIT = 256;
  * No cap (fail closed): a bulk still seeding, a row with no job, a hold written after the commit (since past the cap: an inherit hold for a
  * derived post-commit line), a receipt flip not committed yet, and more rows than PENDING_READ_LIMIT. */
 function pendingWindows(db: DatabaseSync, threadId: string, content: boolean): PendingWindow[] {
-  const skip = content ? ` AND p.${NOT_AUDIENCE_ONLY}` : "";
-  const rows = all(db, `SELECT p.since_lsn AS s,j.started_lsn AS c,j.state AS st FROM memory_deny_pending p LEFT JOIN memory_revoke_jobs j ON j.revoke_id=p.revoke_id WHERE p.thread_id IN (?,?)${skip} ORDER BY p.since_lsn LIMIT ?`, threadId, PENDING_ALL_THREADS, PENDING_READ_LIMIT + 1);
-  const windows: PendingWindow[] = rows.length > PENDING_READ_LIMIT ? [{ since: Number(rows[0]!.s), cap: Infinity }] : rows.map(row => {
-    const since = Number(row.s), cap = num(row.c);
-    return { since, cap: cap === null || row.st === "seeding" || since > cap ? Infinity : cap };
-  });
+  const windows: PendingWindow[] = [];
+  for (const key of new Set([threadId, PENDING_ALL_THREADS])) {
+    const rows = rawPending(db, "memory_deny_pending", key);
+    if (rows.length > PENDING_READ_LIMIT) { windows.push({ since: 0, cap: Infinity }); continue; }
+    for (const row of rows) {
+      if (content && Number(row.audience_only)) continue;
+      const since = Number(row.since_lsn), cap = num(row.c);
+      windows.push({ since, cap: cap === null || row.st === "seeding" || since > cap ? Infinity : cap });
+    }
+  }
   const no = content ? null : threadNo(db, threadId);
   const flipped = no === null ? null : num(one(db, "SELECT first_lsn FROM memory_receipt_flips WHERE thread_no=? ORDER BY first_lsn LIMIT 1", no)?.first_lsn);
   if (flipped !== null) windows.push({ since: flipped, cap: Infinity });
@@ -157,8 +188,7 @@ function footprintVerdict(db: DatabaseSync, footprint: number | null, reader: Li
   const kept = memo.get(footprint);
   if (kept) return kept;
   const members = footprintMembers(db, footprint);
-  const scopes = new Set(audience.scopeIds);
-  const verdict = !members ? checking("lookup-error") : [...members].every(scope => scopes.has(scope)) ? SHOWN : withheld("footprint");
+  const verdict = !members ? checking("lookup-error") : [...members].every(scope => lineageAudienceHasScope(db,audience,scope)) ? SHOWN : withheld("footprint");
   memo.set(footprint, verdict);
   return verdict;
 }
@@ -190,6 +220,7 @@ function lookupPage(db: DatabaseSync, threadId: string, lines: readonly PageLine
   for (let at = 0; at < ids.length; at += BATCH) {
     const slice = ids.slice(at, at + BATCH), json = JSON.stringify(slice), sourceIds = JSON.stringify(slice.map(id => `${prefix}${id}`));
     for (const row of all(db, "SELECT id,role,json_extract(json,'$.withheldFromBots') AS w FROM messages WHERE thread_id=? AND id IN (SELECT value FROM json_each(?))", threadId, json)) {
+    chargeReleaseWork();
       const flag = row.w;
       // "checking" is never a stored verdict: a row left flagged "checking" on disk (1.0.2, an earlier 1.0.3 process) is read as no note and
       // judged live on its marks and windows below (REPLY-WITHHELD-CONTRACT R2). It once read itself back as "checking" for good (rehearsal 4).
@@ -199,18 +230,22 @@ function lookupPage(db: DatabaseSync, threadId: string, lines: readonly PageLine
     for (const row of all(db, `SELECT s.id FROM memory_sources s WHERE s.id IN (SELECT value FROM json_each(?)) AND (s.state='deleted' OR ${DENIED_SOURCE("s")})`, sourceIds)) forgotten.add(String(row.id).slice(prefix.length));
     for (const row of all(db, "SELECT DISTINCT target_id FROM memory_tombstones WHERE target_type='source' AND target_id IN (SELECT value FROM json_each(?))", sourceIds)) forgotten.add(String(row.target_id).slice(prefix.length));
     // (a generated line is one with a turn_lsn: owner and person lines have none)
-    if (no !== null) for (const row of all(db, "SELECT message_id,lsn,turn_lsn,mem_lsn,footprint FROM memory_line_lineage WHERE thread_no=? AND message_id IN (SELECT value FROM json_each(?))", no, json))
+    // The primary key starts with thread_no too, but would scan that thread's
+    // entire lineage for each page. Require the (thread_no,message_id) seeks.
+    if (no !== null) for (const row of all(db, "SELECT message_id,lsn,turn_lsn,mem_lsn,footprint FROM memory_line_lineage INDEXED BY memory_line_lineage_msg WHERE thread_no=? AND message_id IN (SELECT value FROM json_each(?))", no, json))
       lineage.set(String(row.message_id), { lsn: Number(row.lsn), generated: row.turn_lsn !== null && row.turn_lsn !== undefined, turnLsn: num(row.turn_lsn), memLsn: num(row.mem_lsn), footprint: num(row.footprint) });
   }
   const callerFlag = new Map<string, boolean>();
   const callerAuthor = new Map<string, PageLine["author"]>();
   for (const line of lines) {
+    chargeReleaseWork();
     if (line.withheldFromBots) callerFlag.set(line.messageId, true);
     // the strictest author any entry gives: generated over person over owner
     if (callerAuthor.get(line.messageId) !== "generated") callerAuthor.set(line.messageId, line.author === "generated" ? "generated" : callerAuthor.get(line.messageId) ?? line.author);
   }
   const generatedIds: string[] = [];
   for (const id of ids) {
+    chargeReleaseWork();
     const row = stored.get(id), lin = lineage.get(id);
     if (!row) { out.set(id, withheld("tombstone")); continue; }            // gone: its conversation or the line was deleted
     if (reader.ownFlag !== false && (row.flagged || callerFlag.get(id))) { out.set(id, withheld("own-flag")); continue; }
@@ -228,12 +263,15 @@ function lookupPage(db: DatabaseSync, threadId: string, lines: readonly PageLine
   const withRows = generatedIds.filter(id => lineage.has(id));
   const denied = new Set<number>();
   let ranges: Array<{ from: number; until: number }> = [], overRanges = false;
+  let unknownRangesFrom: number | null = null;
   if (withRows.length) {
     const lsns = withRows.map(id => lineage.get(id)!.lsn);
     for (let at = 0; at < lsns.length; at += BATCH)
-      for (const row of all(db, `SELECT DISTINCT lsn FROM memory_deny_line WHERE thread_id=? AND lsn IN (SELECT value FROM json_each(?))${content ? ` AND ${NOT_AUDIENCE_ONLY}` : ""}`, threadId, JSON.stringify(lsns.slice(at, at + BATCH)))) denied.add(Number(row.lsn));
+      for (const row of rawMarks(db, "SELECT lsn,revoke_id FROM memory_deny_line WHERE thread_id=? AND lsn IN (SELECT value FROM json_each(?))", [threadId, JSON.stringify(lsns.slice(at, at + BATCH))], content)) denied.add(Number(row.lsn));
     const top = Math.max(...lsns);
-    const rows = all(db, `SELECT from_lsn,until_turn_lsn FROM memory_deny_range WHERE thread_id=? AND from_lsn<?${content ? ` AND revoke_id<>${AUDIENCE_COALESCED} AND ${NOT_AUDIENCE_ONLY}` : ""} ORDER BY from_lsn LIMIT ?`, threadId, top, RANGE_READ_LIMIT + 1);
+    const raw = all(db, "SELECT from_lsn,until_turn_lsn,revoke_id FROM memory_deny_range WHERE thread_id=? AND from_lsn<? ORDER BY from_lsn LIMIT ?", threadId, top, RANGE_READ_LIMIT + 1);
+    const rows = content ? raw.filter(row => Number(row.revoke_id) !== AUDIENCE_COALESCED && !audienceOnly(db, row.revoke_id)) : raw;
+    if (raw.length > RANGE_READ_LIMIT && rows.length <= RANGE_READ_LIMIT) unknownRangesFrom = Number(raw[0]!.from_lsn);
     overRanges = rows.length > RANGE_READ_LIMIT;
     ranges = rows.map(row => ({ from: Number(row.from_lsn), until: Number(row.until_turn_lsn) }));
   }
@@ -242,6 +280,7 @@ function lookupPage(db: DatabaseSync, threadId: string, lines: readonly PageLine
   const mark = audience && !skipPolicyWatermark && withRows.some(id => lineage.get(id)!.memLsn !== null) ? watermark(db) : null;
   const footprints = new Map<number, LineageVerdict>();
   for (const id of generatedIds) {
+    chargeReleaseWork();
     const lin = lineage.get(id);
     if (!lin) { out.set(id, checking("no-lineage")); continue; }
     let verdict: LineageVerdict = SHOWN;
@@ -251,6 +290,7 @@ function lookupPage(db: DatabaseSync, threadId: string, lines: readonly PageLine
       const turnLsn = lin.turnLsn ?? 0;
       if (overRanges ? ranges[0]!.from < lin.lsn : ranges.some(range => range.from < lin.lsn && turnLsn < range.until)) verdict = withheld("deny-range");
     }
+    if (verdict.state === "shown" && unknownRangesFrom !== null && unknownRangesFrom < lin.lsn) verdict = checking("lookup-error");
     if (verdict.state === "shown" && mark !== null && lin.memLsn !== null && lin.memLsn < mark) verdict = withheld("watermark");
     if (verdict.state === "shown") verdict = footprintVerdict(db, lin.footprint, reader, footprints);
     if (verdict.state !== "withheld") {
@@ -272,7 +312,7 @@ function hasCreatedLsn(db: DatabaseSync, table: string): boolean {
   if (!tables) { tables = new Map(); createdColumn.set(db, tables); }
   let has = tables.get(table);
   if (has === undefined) {
-    has = (db.prepare(`PRAGMA table_info(${table})`).all() as Row[]).some(column => column.name === "created_lsn");
+    has = (accountedPrepare(db, `PRAGMA table_info(${table})`).all() as Row[]).some(column => column.name === "created_lsn");
     tables.set(table, has);
   }
   return has;
@@ -303,18 +343,18 @@ function scopeDenied(db: DatabaseSync, scopeId: string, memo: MemoryMemo): boole
 function memoryPendingSince(db: DatabaseSync, scopeId: string | null, memo: MemoryMemo): number | null {
   // the window of a revoke whose flow is not proven narrower: memory_deny_pending('*') and memory_deny_pending_scope('*') (all scopes)
   if (memo.every === undefined) {
-    const threads = num(one(db, `SELECT since_lsn FROM memory_deny_pending WHERE thread_id=? AND ${NOT_AUDIENCE_ONLY} ORDER BY since_lsn LIMIT 1`, PENDING_ALL_THREADS)?.since_lsn);
-    const scopes = num(one(db, `SELECT since_lsn FROM memory_deny_pending_scope WHERE scope_id=? AND ${NOT_AUDIENCE_ONLY} ORDER BY since_lsn LIMIT 1`, PENDING_ALL_SCOPES)?.since_lsn);
+    const threads = pendingLow(db, rawPending(db, "memory_deny_pending", PENDING_ALL_THREADS), true);
+    const scopes = pendingLow(db, rawPending(db, "memory_deny_pending_scope", PENDING_ALL_SCOPES), true);
     memo.every = threads === null ? scopes : scopes === null ? threads : Math.min(threads, scopes);
   }
   let scoped: number | null;
   if (scopeId === null) {
     // an object with no scope (a Murage object: a note, a card, a summary, a skill, a file; or a ref whose scope is not known) is reached
     // through carries from threads and scopes alike: while ANY revoke is pending it reads "checking" (fail closed, never a guess)
-    if (memo.anyScope === undefined) memo.anyScope = Boolean(one(db, `SELECT 1 AS x FROM memory_deny_pending_scope WHERE ${NOT_AUDIENCE_ONLY} LIMIT 1`)) || Boolean(one(db, `SELECT 1 AS x FROM memory_deny_pending WHERE ${NOT_AUDIENCE_ONLY} LIMIT 1`));
+    if (memo.anyScope === undefined) memo.anyScope = pendingLow(db, rawPending(db, "memory_deny_pending_scope", null), true) !== null || pendingLow(db, rawPending(db, "memory_deny_pending", null), true) !== null;
     scoped = memo.anyScope ? 0 : null;
   } else if (memo.scopes.has(scopeId)) scoped = memo.scopes.get(scopeId)!;
-  else { scoped = num(one(db, `SELECT since_lsn FROM memory_deny_pending_scope WHERE scope_id=? AND ${NOT_AUDIENCE_ONLY} ORDER BY since_lsn LIMIT 1`, scopeId)?.since_lsn); memo.scopes.set(scopeId, scoped); }
+  else { scoped = pendingLow(db, rawPending(db, "memory_deny_pending_scope", scopeId), true); memo.scopes.set(scopeId, scoped); }
   return scoped === null ? memo.every : memo.every === null ? scoped : Math.min(scoped, memo.every);
 }
 
@@ -362,22 +402,24 @@ function sourceCreated(db: DatabaseSync, id: string, version: number): number | 
   return stamp && stamp.c !== null && stamp.c !== undefined ? num(stamp.c) : sourceUnstampedBound(db);
 }
 
-function memoryVerdict(db: DatabaseSync, ref: MemoryRef, memo: MemoryMemo): LineageVerdict {
+function memoryVerdict(db: DatabaseSync, ref: MemoryRef, memo: MemoryMemo, preparedWindow = false): LineageVerdict {
   const version = ref.version ?? 0;
   const batched = ref.kind === "record" && version ? memo.records.get(memoryRefKey(ref)) : undefined;
   if (batched !== undefined) {
     if (batched === null) return withheld("tombstone");
+    if (Number(batched.marked) === -1) return checking("lookup-error");
     if (Number(batched.marked)) return withheld("deny-memory");
     if (Number(batched.tomb)) return withheld("tombstone");
     const anchored = recordAnchorVerdict(db, ref.id, version, memo);
     if (anchored) return anchored;
-    return memoryScopeVerdict(db, String(batched.scope_id), () => Number(batched.stamped) ? num(batched.stamp) : recordUnstampedBound(db, memo), memo);
+    return memoryScopeVerdict(db, String(batched.scope_id), () => Number(batched.stamped) ? num(batched.stamp) : recordUnstampedBound(db, memo), memo, preparedWindow);
   }
   // a versioned source read by batchSources: the same facts as the seeks below, decided by the same steps
   const fact = ref.kind === "source" && version ? memo.sources.get(memoryRefKey(ref)) : undefined;
+  if (fact && Number(fact.marked) === -1) return checking("lookup-error");
   const marked = fact ? Number(fact.marked) : version
-    ? one(db, `SELECT 1 AS x FROM memory_deny_memory WHERE kind=? AND id=? AND version IN (0,?) AND ${NOT_AUDIENCE_MEMORY} LIMIT 1`, ref.kind, ref.id, version)
-    : one(db, `SELECT 1 AS x FROM memory_deny_memory WHERE kind=? AND id=? AND ${NOT_AUDIENCE_MEMORY} LIMIT 1`, ref.kind, ref.id);
+    ? rawMarks(db, "SELECT revoke_id FROM memory_deny_memory WHERE kind=? AND id=? AND version IN (0,?)", [ref.kind, ref.id, version], true, true).length
+    : rawMarks(db, "SELECT revoke_id FROM memory_deny_memory WHERE kind=? AND id=?", [ref.kind, ref.id], true, true).length;
   if (marked) return withheld("deny-memory");
   let scopeId: string | null = ref.scopeId ?? null, created: () => number | null = () => null;
   if (ref.kind === "record") {
@@ -417,6 +459,7 @@ function memoryVerdict(db: DatabaseSync, ref: MemoryRef, memo: MemoryMemo): Line
     if (revokeInFlight(db, memo)) {
       const citing = all(db, "SELECT record_id,record_version FROM memory_evidence_by_source WHERE source_id=? LIMIT ?", ref.id, SUPPORT_FAN_IN + 1);
       for (const cite of citing.slice(0, SUPPORT_FAN_IN)) {
+    chargeReleaseWork();
         // only a forget takes the record's supporting sources with it (forget.ts, memory-revocation.ts 'forgotten-supporting-source'):
         // an archive, a correction or a derived mark does not
         if (one(db, "SELECT 1 AS x FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?) AND reason='owner-forget' LIMIT 1", String(cite.record_id), Number(cite.record_version))) return withheld("tombstone");
@@ -430,7 +473,7 @@ function memoryVerdict(db: DatabaseSync, ref: MemoryRef, memo: MemoryMemo): Line
     const lesson = num(row.created_lsn);
     created = () => lesson;
   }
-  return memoryScopeVerdict(db, scopeId, created, memo);
+  return memoryScopeVerdict(db, scopeId, created, memo, preparedWindow);
 }
 /** One step of the rule 23 walk, one statement per record: the records it was derived from (memory_derivations_child, columns a and b are
  * parent_id and parent_version), then the distinct anchors its evidence cites (columns a and b are thread_id and message_id; many
@@ -445,7 +488,7 @@ const PARENT_STEP = "SELECT 'parent' AS t, parent_id AS a, parent_version AS b F
 const messagesTable = new WeakSet<DatabaseSync>();
 function hasMessages(db: DatabaseSync): boolean {
   if (messagesTable.has(db)) return true;
-  const has = Boolean(db.prepare("SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='messages'").get());
+  const has = Boolean(accountedPrepare(db, "SELECT 1 AS x FROM sqlite_master WHERE type='table' AND name='messages'").get());
   if (has) messagesTable.add(db);
   return has;
 }
@@ -472,6 +515,7 @@ function recordAnchorVerdict(db: DatabaseSync, id: string, version: number, memo
     for (const row of step) if (row.t === "anchor") anchors.set(`${String(row.a)}\u0000${String(row.b)}`, [row.a as string | null, String(row.b)]);
     if ([...anchors.values()].some(([threadId, messageId]) => murageAnchor(db, threadId, messageId))) { verdict = withheld("murage-anchor"); break; }
     for (const parent of step) {
+    chargeReleaseWork();
       if (parent.t !== "parent") continue;
       const key = `${String(parent.a)}\u0000${Number(parent.b)}`;
       if (visited.has(key)) continue;
@@ -492,6 +536,7 @@ function receiptAnchorVerdict(db: DatabaseSync, bundleId: string): LineageVerdic
   if (!Array.isArray(records) || !Array.isArray(sources)) return checking("lookup-error");
   if (records.length + sources.length > RECEIPT_ANCHORS) return checking("pending");
   for (const source of sources) {
+    chargeReleaseWork();
     const sourceId = (source as { id?: unknown } | null)?.id;
     if (typeof sourceId !== "string") return checking("lookup-error");
     const anchor = one(db, "SELECT thread_id,message_id FROM memory_sources WHERE id=?", sourceId);
@@ -499,6 +544,7 @@ function receiptAnchorVerdict(db: DatabaseSync, bundleId: string): LineageVerdic
   }
   const memo: MemoryMemo = { scopes: new Map(), denied: new Map(), records: new Map(), sources: new Map(), anchored: new Map() };
   for (const record of records) {
+    chargeReleaseWork();
     const recordId = (record as { id?: unknown } | null)?.id, recordVersion = (record as { version?: unknown } | null)?.version;
     if (typeof recordId !== "string" || typeof recordVersion !== "number") return checking("lookup-error");
     const verdict = recordAnchorVerdict(db, recordId, recordVersion, memo);
@@ -508,8 +554,9 @@ function receiptAnchorVerdict(db: DatabaseSync, bundleId: string): LineageVerdic
 }
 /** The scope's deny row, then the pending window: "checking" when since <= the created lsn (unknown = checking). The created lsn is read
  * only when a window covers the scope. */
-function memoryScopeVerdict(db: DatabaseSync, scopeId: string | null, createdLsn: () => number | null, memo: MemoryMemo): LineageVerdict {
+function memoryScopeVerdict(db: DatabaseSync, scopeId: string | null, createdLsn: () => number | null, memo: MemoryMemo, preparedWindow = false): LineageVerdict {
   if (scopeId !== null && scopeDenied(db, scopeId, memo)) return withheld("scope-deny");
+  if (preparedWindow) return SHOWN;
   const since = memoryPendingSince(db, scopeId, memo);
   if (since === null) return SHOWN;
   const created = createdLsn();
@@ -519,12 +566,12 @@ function memoryScopeVerdict(db: DatabaseSync, scopeId: string | null, createdLsn
 /** Reads every versioned record ref in one statement: a primary-key seek, one deny_memory seek, one tombstone seek and one stamp seek
  * (memory_record_lsn, the version's created lsn) per ref. */
 function batchRecords(db: DatabaseSync, refs: readonly MemoryRef[], memo: MemoryMemo): void {
-  const wanted = [...new Map(refs.filter(ref => ref.kind === "record" && ref.version).map(ref => [memoryRefKey(ref), ref])).values()];
+  const wanted = [...new Map(refs.filter(ref => ref.kind === "record" && ref.version && !memo.records.has(memoryRefKey(ref))).map(ref => [memoryRefKey(ref), ref])).values()];
   for (let at = 0; at < wanted.length; at += BATCH) {
     const slice = wanted.slice(at, at + BATCH);
     for (const ref of slice) memo.records.set(memoryRefKey(ref), null);
     const rows = all(db, `SELECT r.id,r.version,r.scope_id,l.created_lsn AS stamp,l.id IS NOT NULL AS stamped,
-        EXISTS (SELECT 1 FROM memory_deny_memory dm WHERE dm.kind='record' AND dm.id=r.id AND dm.version IN (0,r.version) AND dm.${NOT_AUDIENCE_ONLY} AND dm.revoke_id<>${AUDIENCE_COALESCED}) AS marked,
+        (WITH candidates AS MATERIALIZED (SELECT revoke_id FROM memory_deny_memory WHERE kind='record' AND id=r.id AND version IN (0,r.version) LIMIT 257) SELECT CASE WHEN count(*)>256 THEN -1 ELSE coalesce(max(${NOT_AUDIENCE_ONLY} AND revoke_id<>${AUDIENCE_COALESCED}),0) END FROM candidates) AS marked,
         EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type='record' AND t.target_id=r.id AND (t.revision IS NULL OR t.revision=r.version)) AS tomb
       FROM json_each(?) j JOIN memory_records r ON r.id=json_extract(j.value,'$[0]') AND r.version=json_extract(j.value,'$[1]')
       LEFT JOIN memory_record_lsn l ON l.id=r.id AND l.version=r.version`, JSON.stringify(slice.map(ref => [ref.id, ref.version])));
@@ -540,15 +587,14 @@ function batchRecords(db: DatabaseSync, refs: readonly MemoryRef[], memo: Memory
  * check stay their own seeks. The work follows the refs, never the history. */
 const SOURCE_BATCH = `SELECT j.key AS i, s.id,s.scope_id,s.state,s.kind,s.content_hash,s.thread_id,s.message_id,
     CASE WHEN s.id IS NULL THEN 0 ELSE ${DENIED_SOURCE("s")} END AS denied,
-    EXISTS (SELECT 1 FROM memory_deny_memory dm WHERE dm.kind='source' AND dm.id=json_extract(j.value,'$[0]') AND dm.version IN (0,json_extract(j.value,'$[1]'))
-      AND dm.${NOT_AUDIENCE_ONLY} AND dm.revoke_id<>${AUDIENCE_COALESCED}) AS marked,
+    (WITH candidates AS MATERIALIZED (SELECT revoke_id FROM memory_deny_memory WHERE kind='source' AND id=json_extract(j.value,'$[0]') AND version IN (0,json_extract(j.value,'$[1]')) LIMIT 257) SELECT CASE WHEN count(*)>256 THEN -1 ELSE coalesce(max(${NOT_AUDIENCE_ONLY} AND revoke_id<>${AUDIENCE_COALESCED}),0) END FROM candidates) AS marked,
     EXISTS (SELECT 1 FROM memory_tombstones t WHERE t.target_type='source' AND t.target_id=json_extract(j.value,'$[0]') AND (t.revision IS NULL OR t.revision=json_extract(j.value,'$[1]'))) AS tomb,
     l.created_lsn AS stamp, m.id IS NOT NULL AS anchor_found, m.json AS anchor_json
   FROM json_each(?) j LEFT JOIN memory_sources s ON s.id=json_extract(j.value,'$[0]')
   LEFT JOIN memory_source_lsn l ON l.source_id=s.id AND l.revision=json_extract(j.value,'$[1]')
   LEFT JOIN messages m ON m.thread_id=s.thread_id AND m.id=s.message_id`;
 function batchSources(db: DatabaseSync, refs: readonly MemoryRef[], memo: MemoryMemo): void {
-  const wanted = [...new Map(refs.filter(ref => ref.kind === "source" && ref.version).map(ref => [memoryRefKey(ref), ref])).values()];
+  const wanted = [...new Map(refs.filter(ref => ref.kind === "source" && ref.version && !memo.sources.has(memoryRefKey(ref))).map(ref => [memoryRefKey(ref), ref])).values()];
   for (let at = 0; at < wanted.length; at += BATCH) {
     const slice = wanted.slice(at, at + BATCH);
     const rows = all(db, SOURCE_BATCH, JSON.stringify(slice.map(ref => [ref.id, ref.version])));
@@ -558,23 +604,28 @@ function batchSources(db: DatabaseSync, refs: readonly MemoryRef[], memo: Memory
 
 /** The verdict for memory objects (records, sources, lessons, claims), keyed by memoryRefKey. */
 export function memoryLookup(db: DatabaseSync, refs: readonly MemoryRef[], reader: LineageReader): Map<string, LineageVerdict> {
-  return lookupMemory(db, refs, reader, true);
+  return memoryLookupWithWindow(db, refs, reader);
 }
 /** The reference path: every source ref read on its own, which batchSources must answer the same as (deny-read-source-batch.test.ts).
  *  It shares no state with memoryLookup, so nothing a caller of it does can leave the product reading one source at a time. */
 export function memoryLookupEachSource(db: DatabaseSync, refs: readonly MemoryRef[], reader: LineageReader): Map<string, LineageVerdict> {
   return lookupMemory(db, refs, reader, false);
 }
-function lookupMemory(db: DatabaseSync, refs: readonly MemoryRef[], reader: LineageReader, batched: boolean): Map<string, LineageVerdict> {
+function memoryLookupWithWindow(db: DatabaseSync, refs: readonly MemoryRef[], reader: LineageReader, preparedKeys?: ReadonlySet<string>): Map<string, LineageVerdict> {
+  return lookupMemory(db, refs, reader, true, preparedKeys);
+}
+function lookupMemory(db: DatabaseSync, refs: readonly MemoryRef[], reader: LineageReader, batched: boolean, preparedKeys?: ReadonlySet<string>): Map<string, LineageVerdict> {
   void reader; // a memory object's own facts and marks are the same for every reader; scope access is the caller's assertMemoryAccess
   const out = new Map<string, LineageVerdict>();
-  const memo: MemoryMemo = { scopes: new Map(), denied: new Map(), records: new Map(), sources: new Map(), anchored: new Map() };
+  const fresh = (): MemoryMemo => ({ scopes: new Map(), denied: new Map(), records: new Map(), sources: new Map(), anchored: new Map() });
+  const memo = batched ? livePassLookup(db, lookupMemory, fresh) : fresh();
   try { batchRecords(db, refs, memo); } catch { memo.records.clear(); } // each ref is then read on its own, and an error there is "checking"
   if (batched) { try { batchSources(db, refs, memo); } catch { memo.sources.clear(); } } // likewise (a file with no messages table)
   for (const ref of refs) {
+    chargeReleaseWork();
     const key = memoryRefKey(ref);
     if (out.has(key)) continue;
-    try { out.set(key, memoryVerdict(db, ref, memo)); }
+    try { out.set(key, memoryVerdict(db, ref, memo, preparedKeys?.has(key) === true)); }
     catch { out.set(key, checking("lookup-error")); }
   }
   return out;
@@ -614,23 +665,30 @@ export function sessionLookup(db: DatabaseSync, session: SessionKey, reader: Lin
   try {
     const { threadId, driverInstance, nativeSession } = session;
     if (threadDenied(db, threadId)) return withheld("thread-deny");
-    if (one(db, `SELECT 1 AS x FROM memory_deny_session WHERE thread_id=? AND driver_instance=? AND native_session=?${content ? ` AND ${NOT_AUDIENCE_ONLY}` : ""} LIMIT 1`, threadId, driverInstance, nativeSession)) return withheld("deny-session");
+    if (rawMarks(db, "SELECT revoke_id FROM memory_deny_session WHERE thread_id=? AND driver_instance=? AND native_session=?", [threadId, driverInstance, nativeSession], content).length) return withheld("deny-session");
     // memory-revocation.ts FORGOTTEN_SESSION_SET: a forget ended a source of this thread while the session was retained
     // (a file whose root sets were handed back has no such table: deny_session holds what a forget marked since the backfill)
     if (sessionRootSet(db, session) === "rs-forgotten") return withheld("session-forgotten");
     // memorySessionRevoked, in O(1): revisions and epochs only grow, so the session's oldest receipt is stale exactly when any is; a revoked
     // receipt among the newest few is read directly, an older one has its deny_session mark or its thread's pending row
+    // A known revoked audience receipt is the specific denial even when the
+    // same policy withdrawal also advanced its watermark. Keep the bounded
+    // receipt peek and the content reader's existing watermark check.
+    if (!content && all(db, "SELECT state FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? ORDER BY rowid DESC LIMIT ?", threadId, driverInstance, nativeSession, SESSION_RECEIPT_PEEK)
+      .some(row => row.state === "revoked")) return withheld("deny-session");
     const meta = one(db, "SELECT policy_revision,deletion_epoch FROM memory_meta WHERE id=1");
     const oldest = one(db, "SELECT policy_revision,deletion_epoch FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? ORDER BY rowid LIMIT 1", threadId, driverInstance, nativeSession);
     if (oldest && (!meta || oldest.policy_revision !== meta.policy_revision || oldest.deletion_epoch !== meta.deletion_epoch)) return withheld("watermark");
-    if (!content && all(db, "SELECT state FROM memory_disclosures WHERE thread_id=? AND driver_instance=? AND native_session=? ORDER BY rowid DESC LIMIT ?", threadId, driverInstance, nativeSession, SESSION_RECEIPT_PEEK)
-      .some(row => row.state === "revoked")) return withheld("deny-session");
-    const row = one(db, "SELECT last_lsn FROM memory_session_lineage WHERE thread_id=? AND driver_instance=? AND native_session=?", threadId, driverInstance, nativeSession);
+    const row = one(db, "SELECT first_lsn,last_lsn FROM memory_session_lineage WHERE thread_id=? AND driver_instance=? AND native_session=?", threadId, driverInstance, nativeSession);
     if (!row) return checking("no-lineage");
     if (!threadReady(db, threadId)) return checking("thread-not-ready");
     // an audience reader's session resets on any revoke it rests on, audience-only ones included (the RC reset it on a revoked receipt)
-    const since = pendingSince(db, threadId, content);
-    if (since !== null && since <= Number(row.last_lsn)) return checking("pending");
+    // A session built after a revoke's commit was fenced against it. Old global
+    // windows cannot reset that fresh session; inherited post-commit holds, unknown
+    // jobs and seeding windows keep their uncapped fail-closed behavior.
+    const first = num(row.first_lsn), last = Number(row.last_lsn);
+    if (first === null || !Number.isFinite(first) || !Number.isFinite(last)) return checking("no-lineage");
+    if (pendingWindows(db, threadId, content).some(window => window.since <= last && first < window.cap)) return checking("pending");
     return SHOWN;
   } catch { return checking("lookup-error"); }
 }
@@ -638,9 +696,10 @@ export function sessionLookup(db: DatabaseSync, session: SessionKey, reader: Lin
 // ---- refs (steer quotes, tool texts, prompt parts) and the send fence ----
 
 /** The strictest verdict over a list of refs (steer quotes, tool texts, prompt parts). An empty list or only `none` refs is shown. A prefix
- * ref (a thread read wholesale) is judged on the thread: deleted, not ready, or pending at or before its head. Its lines were each judged by
- * the reader that rendered them (denyLookup); marks inside the prefix are theirs, not the prefix's. */
-export function refsLookup(db: DatabaseSync, refs: readonly LineageRef[], reader: LineageReader): LineageVerdict {
+ * ref checks deleted/readiness facts and its unlisted retained span (held); a fresh fully listed prefix has none.
+ * Listed lines are re-judged by the reader that rendered them, including each pending window's turn cap. Legacy prefixes keep the wholesale rule. */
+export function refsLookup(db: DatabaseSync, refs: readonly LineageRef[], reader: LineageReader, _retained = false,
+  prepared?: import("./lineage-types.ts").PreparedWindow): LineageVerdict {
   let worst: LineageVerdict = SHOWN;
   try {
     const lines = new Map<string, string[]>();
@@ -649,23 +708,28 @@ export function refsLookup(db: DatabaseSync, refs: readonly LineageRef[], reader
     // since they were rendered under it (1.0.4 audit 01-B2: a content recheck let a stale transcript through once the revoke's pending rows were tidied)
     const audienceShown = new Map<string, Set<string>>();
     const memory: MemoryRef[] = [];
-    for (const ref of refs) {
+    for (const ref of normalizeRetainedRefs(refs, chargeReleaseWork)) {
+      chargeReleaseWork();
       // a replayed line of the prompt's own thread tagged `judge: "content"` (an owner audience) is judged by content, as a prefix's shown lines
       // are (below); every other line, an untagged replay included, for the reader
       if (ref.kind === "line" && (ref.judge === "content" || ref.copyOfShown || reader.audience === null)) { const set = shownLines.get(ref.threadId) ?? new Set<string>(); set.add(ref.messageId); shownLines.set(ref.threadId, set); }
       else if (ref.kind === "line") { const list = lines.get(ref.threadId) ?? []; list.push(ref.messageId); lines.set(ref.threadId, list); }
       else if (ref.kind === "memory") memory.push(ref.ref);
       else if (ref.kind === "prefix") {
-        worst = worstVerdict(worst, prefixVerdict(db, ref.threadId, ref.headLsn, reader.audience === null || ref.content === true));
+        worst = worstVerdict(worst, prefixVerdict(db, ref, reader.audience === null || ref.content === true));
         if (ref.shown?.length) {
-          const target = reader.audience === null || ref.content === true ? shownLines : audienceShown;
-          const set = target.get(ref.threadId) ?? new Set<string>(); for (const id of ref.shown) set.add(id); target.set(ref.threadId, set);
+          for (const id of ref.shown) {
+    chargeReleaseWork();
+            const target = reader.audience === null || prefixLineJudge(ref, id) === "content" ? shownLines : audienceShown;
+            const set = target.get(ref.threadId) ?? new Set<string>(); set.add(id); target.set(ref.threadId, set);
+          }
         }
       }
       else if (ref.kind === "receipt") worst = worstVerdict(worst, receiptVerdict(db, ref, reader));
       if (worst.state === "withheld") return worst;
     }
     for (const [threadId, ids] of lines) {
+    chargeReleaseWork();
       for (const verdict of lookupPage(db, threadId, ids.map(messageId => ({ messageId, author: "generated" as const })), reader, true).values()) worst = worstVerdict(worst, verdict);
       if (worst.state === "withheld") return worst;
     }
@@ -673,28 +737,80 @@ export function refsLookup(db: DatabaseSync, refs: readonly LineageRef[], reader
     // own chat reads content; the reader-relative rules, watermark and footprint, were applied then): a mark, a pending revoke, a flag, a
     // forgotten source or a deleted conversation.
     for (const [threadId, ids] of shownLines) {
-      for (const verdict of lookupPage(db, threadId, [...ids].map(messageId => ({ messageId, author: "generated" as const })), contentReader(reader), true).values()) worst = worstVerdict(worst, verdict);
+    chargeReleaseWork();
+      for (const verdict of lookupPage(db, threadId, [...ids].map(messageId => ({ messageId, author: "generated" as const })), contentReader(reader), true).values()) {
+    chargeReleaseWork();
+        worst = worstVerdict(worst, verdict);
+      }
       if (worst.state === "withheld") return worst;
     }
     for (const [threadId, ids] of audienceShown) {
+    chargeReleaseWork();
       for (const verdict of lookupPage(db, threadId, [...ids].map(messageId => ({ messageId, author: "generated" as const })), reader, true).values()) worst = worstVerdict(worst, verdict);
       if (worst.state === "withheld") return worst;
     }
-    for (const verdict of memoryLookup(db, memory, reader).values()) worst = worstVerdict(worst, verdict);
+    const preparedKeys = prepared?.reader === reader && prepared.generation === denyGeneration(db)
+      && prepared.identity !== null && prepared.identity === preparedWindowIdentity(db) ? prepared.memoryKeys : undefined;
+    // The exception is only inside the scope-window check. Anchor traversal,
+    // supporting-source uncertainty and all content denials still refuse.
+    for (const verdict of memoryLookupWithWindow(db, memory, reader, preparedKeys).values()) worst = worstVerdict(worst, verdict);
     return worst;
   } catch { return worstVerdict(worst, checking("lookup-error")); }
 }
-function prefixVerdict(db: DatabaseSync, threadId: string, headLsn: number | undefined, content: boolean): LineageVerdict {
+
+/** Exact pending rows, not merely deny_generation: marking may change a
+ * window without moving that counter. Never scan beyond a fixed bound.
+ * Every column is aliased: a compound SELECT's ORDER BY only matches result
+ * column names, and an unaliased p.revoke_id threw on every prepare. */
+export function preparedWindowIdentity(db: DatabaseSync): string | null {
+  const rows = all(db, `SELECT 't' AS k,p.thread_id AS id,p.since_lsn AS since_lsn,p.revoke_id AS revoke_id,j.started_lsn AS started_lsn,j.state AS state,
+      EXISTS(SELECT 1 FROM memory_revoke_audience a WHERE a.revoke_id=p.revoke_id) AS audience
+    FROM memory_deny_pending p LEFT JOIN memory_revoke_jobs j ON j.revoke_id=p.revoke_id
+    UNION ALL SELECT 's' AS k,p.scope_id AS id,p.since_lsn AS since_lsn,p.revoke_id AS revoke_id,j.started_lsn AS started_lsn,j.state AS state,
+      EXISTS(SELECT 1 FROM memory_revoke_audience a WHERE a.revoke_id=p.revoke_id) AS audience
+    FROM memory_deny_pending_scope p LEFT JOIN memory_revoke_jobs j ON j.revoke_id=p.revoke_id
+    ORDER BY k,id,since_lsn,revoke_id LIMIT 513`);
+  // Above the bound there is no identity to compare, and so no prepared exception: every ref is then judged strictly (a pending window
+  // refuses it). Throwing here refused every send in every chat once more than 512 pending rows piled up anywhere in the file.
+  if (rows.length > 512) return null;
+  return JSON.stringify(rows);
+}
+
+export function prepareWindowMemory(db: DatabaseSync, refs: readonly LineageRef[], prepared: import("./lineage-types.ts").PreparedWindow): void {
+  if (!prepared.open || prepared.generation !== denyGeneration(db) || prepared.identity === null || prepared.identity !== preparedWindowIdentity(db)) return;
+  for (const ref of refs) {
+    if (ref.kind !== "memory" || prepared.memoryKeys.size >= 512) continue;
+    const value = ref.ref;
+    // Missing/dynamic objects cannot acquire the prepared exception.
+    const known = value.kind === "record" && value.version !== undefined
+      ? one(db, "SELECT 1 FROM memory_records WHERE id=? AND version=? AND state='active'", value.id, value.version)
+      : value.kind === "source" && value.version !== undefined
+        ? one(db, "SELECT 1 FROM memory_sources WHERE id=? AND revision=? AND state='active'", value.id, value.version) : undefined;
+    if (known) prepared.memoryKeys.add(memoryRefKey(value));
+  }
+}
+function prefixVerdict(db: DatabaseSync, ref: Extract<LineageRef, { kind: "prefix" }>, content: boolean): LineageVerdict {
+  const { threadId } = ref;
+  const bound = ref.held === undefined ? ref.headLsn : ref.held;
   if (threadDenied(db, threadId)) return withheld("thread-deny");
   if (!threadReady(db, threadId)) return checking("thread-not-ready");
+  if (bound === null) return SHOWN;
+  // A retained session's first prompt was fenced at its head. Apply the same
+  // commit cap as sessionLookup; listed lines are still judged independently.
+  // Without both bounds the legacy wholesale rule below remains fail closed.
+  if (ref.heldFrom !== undefined && bound !== undefined) {
+    if (!Number.isSafeInteger(ref.heldFrom) || !Number.isSafeInteger(bound) || ref.heldFrom > bound) return checking("no-lineage");
+    return pendingWindows(db, threadId, content).some(window => window.since <= bound && ref.heldFrom! < window.cap) ? checking("pending") : SHOWN;
+  }
   const since = pendingSince(db, threadId, content);
-  if (since !== null && (headLsn === undefined || since <= headLsn)) return checking("pending");
+  if (since !== null && (bound === undefined || since <= bound)) return checking("pending");
   return SHOWN;
 }
 function receiptVerdict(db: DatabaseSync, ref: Extract<LineageRef, { kind: "receipt" }>, reader: LineageReader): LineageVerdict {
   const row = one(db, "SELECT d.state,d.policy_revision,d.deletion_epoch,m.policy_revision AS p,m.deletion_epoch AS e FROM memory_disclosures d, memory_meta m WHERE m.id=1 AND d.bundle_id=?", ref.bundleId);
   if (!row) return checking("lookup-error");
   if (row.state === "revoked") return withheld("deny-memory");
+  if (reader.audience === null) return contentReceiptVerdict(db, ref.bundleId, reader);
   const anchored = receiptAnchorVerdict(db, ref.bundleId);
   if (anchored) return anchored;
   const audience = reader.audience;
@@ -702,11 +818,59 @@ function receiptVerdict(db: DatabaseSync, ref: Extract<LineageRef, { kind: "rece
     if (row.policy_revision !== row.p || row.deletion_epoch !== row.e || ref.lsn < watermark(db)) return withheld("watermark");
     if (!audience.owner) {
       if (ref.scopeIds.length > 32) return checking("footprint-wide");
-      const scopes = new Set(audience.scopeIds);
-      if (!ref.scopeIds.every(scope => scopes.has(scope))) return withheld("footprint");
+      if (!ref.scopeIds.every(scope => lineageAudienceHasScope(db,audience,scope))) return withheld("footprint");
     }
   }
-  return SHOWN;
+  // an audience receipt keeps its content dependencies too (AUDIENCE r3.1 2.5(c)): a later-denied record, a deleted or revised source, a pending scope
+  return contentReceiptVerdict(db, ref.bundleId, reader);
+}
+
+/** Ordinary direct owners ignore audience flips, but never the receipt's content dependencies. */
+function contentReceiptVerdict(db: DatabaseSync, bundleId: string, reader: LineageReader): LineageVerdict {
+  const row = one(db, "SELECT thread_id,record_versions,source_versions FROM memory_disclosures WHERE bundle_id=?", bundleId);
+  if (!row) return checking("lookup-error");
+  let records: unknown, sources: unknown;
+  try { records = JSON.parse(String(row.record_versions)); sources = JSON.parse(String(row.source_versions)); }
+  catch { return checking("lookup-error"); }
+  if (!Array.isArray(records) || !Array.isArray(sources)) return checking("lookup-error");
+  // A bounded receipt walk that cannot fit remains pending, as the anchor
+  // reader does; malformed receipt data is a separate lookup failure.
+  if (records.length + sources.length > RECEIPT_ANCHORS) return checking("pending");
+  // The Murage-voice floor applies at every cited revision. Resolve that
+  // bounded anchor verdict before a stale revision can replace its reason.
+  const anchored = receiptAnchorVerdict(db, bundleId);
+  if (anchored) return anchored;
+  const refs: MemoryRef[] = [];
+  for (const record of records) {
+    chargeReleaseWork();
+    if (!record || typeof record.id !== "string" || !Number.isSafeInteger(record.version) || record.version < 1) return checking("lookup-error");
+    const current = one(db, "SELECT state,kind,scope_id,owner_pinned FROM memory_records WHERE id=? AND version=?", record.id, record.version);
+    if (!current) return withheld("deny-memory");
+    const checkpointId = `checkpoint:${createHash("sha256").update(JSON.stringify([String(current.scope_id), String(row.thread_id)])).digest("hex")}`;
+    const superseded = current.kind === "checkpoint" && current.state === "archived" && current.owner_pinned !== 1 && record.id === checkpointId
+      && Boolean(one(db, "SELECT 1 FROM memory_records WHERE id=? AND version>? AND state='active' ORDER BY version DESC LIMIT 1", record.id, record.version));
+    if (current.state !== "active" && !superseded) return withheld("deny-memory");
+    if (one(db, "SELECT 1 FROM memory_deny WHERE kind='scope' AND id=?", String(current.scope_id))
+      || one(db, "SELECT 1 FROM memory_tombstones WHERE target_type='record' AND target_id=? AND (revision IS NULL OR revision=?) LIMIT 1", record.id, record.version)) return withheld("deny-memory");
+    refs.push({ kind: "record", id: record.id, version: record.version, scopeId: String(current.scope_id) });
+  }
+  for (const source of sources) {
+    chargeReleaseWork();
+    if (!source || typeof source.id !== "string" || !Number.isSafeInteger(source.revision) || source.revision < 1) return checking("lookup-error");
+    const current = one(db, `SELECT s.state,s.revision,s.thread_id,s.message_id,${DENIED_SOURCE("s")} AS denied FROM memory_sources s WHERE s.id=?`, source.id);
+    if (!current || current.state !== "active" || current.revision !== source.revision || current.denied
+      || one(db, "SELECT 1 FROM memory_tombstones WHERE target_type='source' AND target_id=? AND (revision IS NULL OR revision=?) LIMIT 1", source.id, source.revision)) return withheld("deny-memory");
+    // A receipt preserves the source anchor's content obligations even when
+    // the stored speaker is human. Audience-only marks still do not deny content.
+    if (current.thread_id !== null && current.message_id !== null && one(db,
+      `SELECT 1 FROM memory_thread_no t JOIN memory_line_lineage l ON l.thread_no=t.no
+       JOIN memory_deny_line d ON d.thread_id=t.thread_id AND d.lsn=l.lsn
+       WHERE t.thread_id=? AND l.message_id=? AND ${NOT_AUDIENCE_ONLY} LIMIT 1`, String(current.thread_id), String(current.message_id))) return withheld("deny-line");
+    refs.push({ kind: "source", id: source.id, version: source.revision });
+  }
+  let worst: LineageVerdict = SHOWN;
+  for (const verdict of memoryLookup(db, refs, reader).values()) worst = worstVerdict(worst, verdict);
+  return worst;
 }
 
 /** The send fence (driver submission and steer): shown when deny_generation has not moved since the prompt was built, or when it moved
@@ -741,18 +905,18 @@ export function generationUnchanged(db: DatabaseSync, built: BuiltPrompt, now: n
 }
 /** The send fence when deny_generation has not moved since the prompt was built. The generation moves at a revoke's commit and at its last
  * mark, not at each mark between: a memory object a running walk denied (a card, a note, a lesson the prompt names) is withheld at once, so
- * its refs are asked again here (seeks per ref). Only a denial refuses: a ref reading "checking" was known to be under a window when the
- * prompt was built, and that window is what the build already withheld around (Astra audit P1 4). */
+ * its refs are asked again here (seeks per ref). Pending windows already accounted for at build remain safe, but a failed/overflowing
+ * permanent-mark lookup proves nothing, even with an unchanged generation. */
 export function fenceUnchanged(db: DatabaseSync, built: BuiltPrompt, reader: LineageReader): LineageVerdict {
   const memory = built.parts.flatMap(part => part.lineageOf.flatMap(ref => ref.kind === "memory" ? [ref.ref] : []));
   if (!memory.length) return SHOWN;
-  for (const verdict of memoryLookup(db, memory, contentReader(reader)).values()) if (verdict.state === "withheld") return verdict;
+  for (const verdict of memoryLookup(db, memory, contentReader(reader)).values()) if (verdict.state === "withheld" || (verdict.state === "checking" && verdict.reason === "lookup-error")) return verdict;
   return SHOWN;
 }
 
 /** memory_lineage_lsn_meta.deny_generation (bumped by every revoke commit and every final marker slice). -1 when it cannot be read. */
 export function denyGeneration(db: DatabaseSync): number {
-  try { return Number(db.prepare("SELECT value FROM memory_lineage_lsn_meta WHERE key='deny_generation'").get()?.value ?? -1); }
+  try { return Number(accountedPrepare(db, "SELECT value FROM memory_lineage_lsn_meta WHERE key='deny_generation'").get()?.value ?? -1); }
   catch { return -1; }
 }
 
@@ -761,6 +925,172 @@ export function denyGeneration(db: DatabaseSync): number {
  * the read-time judge as the only line judge. An lsn alone proves nothing here: a policy or epoch bump, a receipt flip or a capture takes
  * one (the v10 triggers) with no line written. One seek. TRANSITIONAL: S6 deletes the read-time judge and this gate with it. */
 export function lineageLive(db: DatabaseSync): boolean {
-  try { return Boolean(db.prepare("SELECT 1 AS x FROM memory_line_lineage LIMIT 1").get()); }
+  try { return Boolean(accountedPrepare(db, "SELECT 1 AS x FROM memory_line_lineage LIMIT 1").get()); }
   catch { return false; }
+}
+
+// Direct settlement uses separate raw readers: the ordinary readers above keep their
+// existing behavior. Limits apply before filtering, JSON parsing or deduplication.
+export class SettleReadLimit extends Error {
+  readonly why: "work" | "time" | "pending-rows" | "ids";
+  constructor(why: "work" | "time" | "pending-rows" | "ids") { super(`SETTLE_READ_${why}`); this.why = why; }
+}
+export const SETTLE_CLASSIFY_MS = 25;
+export class SettleReadBudget {
+  remaining = 4096;
+  private bytes = 1024 * 1024;
+  private readonly started = performance.now();
+  check(): void { if (performance.now() - this.started >= SETTLE_CLASSIFY_MS) throw new SettleReadLimit("time"); }
+  charge(n = 1): void { this.check(); if (n > this.remaining) throw new SettleReadLimit("work"); this.remaining -= n; }
+  one(db: DatabaseSync, sql: string, ...args: Array<string | number | null>): Row | undefined {
+    this.charge(); const row = one(db, sql, ...args); this.check(); return row;
+  }
+  /** SQL must end in LIMIT ? and have an indexed prefix, with no filtering or joins. Numeric projections only. */
+  rows(db: DatabaseSync, sql: string, ...args: Array<string | number | null>): Row[] {
+    this.check(); const rows = all(db, sql, ...args, this.remaining + 1); this.charge(rows.length); return rows;
+  }
+  /** Point-read text only after its byte size has been admitted, before SQLite copies it into JS. */
+  text(db: DatabaseSync, column: string, from: string, ...args: Array<string | number | null>): string | null {
+    const size = this.one(db, `SELECT length(CAST(${column} AS BLOB)) AS bytes FROM ${from}`, ...args)?.bytes;
+    if (size === null || size === undefined) return null;
+    const n = Number(size);
+    if (n > 65536 || n > this.bytes) throw new SettleReadLimit("work");
+    this.bytes -= n;
+    // Recheck in the copying statement as well: a different connection may have changed the value.
+    const row = this.one(db, `SELECT CASE WHEN length(CAST(${column} AS BLOB))<=? THEN ${column} ELSE NULL END AS value FROM ${from}`, n, ...args);
+    if (typeof row?.value !== "string") throw new SettleReadLimit("work");
+    return row.value;
+  }
+}
+export interface OwnPendingRow { threadId: string; since: number; revokeId: number; cap: number }
+export function readOwnPending(db: DatabaseSync, threadId: string, work: SettleReadBudget): OwnPendingRow[] {
+  work.check();
+  const seek = (thread: string) => all(db, "SELECT since_lsn,revoke_id FROM memory_deny_pending WHERE thread_id=? ORDER BY since_lsn,revoke_id LIMIT 257", thread);
+  const own = seek(threadId); work.check(); const wildcard = seek(PENDING_ALL_THREADS); work.check();
+  if (own.length === 257 || wildcard.length === 257 || own.length + wildcard.length > 256) throw new SettleReadLimit("pending-rows");
+  const out: OwnPendingRow[] = [];
+  for (const [thread, rows] of [[threadId, own], [PENDING_ALL_THREADS, wildcard]] as const) for (const row of rows) {
+    const revokeId = Number(row.revoke_id), since = Number(row.since_lsn);
+    if (!Number.isSafeInteger(revokeId) || !Number.isSafeInteger(since)) throw new Error("SETTLE_PENDING_POSITION");
+    if (work.one(db, "SELECT 1 FROM memory_revoke_audience WHERE revoke_id=?", revokeId)) continue;
+    const job = work.one(db, "SELECT started_lsn,state='seeding' AS seeding FROM memory_revoke_jobs WHERE revoke_id=?", revokeId);
+    const cap = num(job?.started_lsn);
+    out.push({ threadId: thread, since, revokeId, cap: cap === null || job?.seeding || since > cap ? Infinity : cap });
+  }
+  return out;
+}
+function ownTombstones(db: DatabaseSync, id: string, work: SettleReadBudget): Row[] {
+  return work.rows(db, "SELECT revision FROM memory_tombstones WHERE target_type='source' AND target_id=? ORDER BY revision LIMIT ?", id);
+}
+function ownSource(db: DatabaseSync, id: string, work: SettleReadBudget): { gone: boolean; brought: boolean; revision: number } | null {
+  const row = work.one(db, "SELECT state='deleted' AS deleted,kind='bring-in' AS brought,revision FROM memory_sources WHERE id=?", id);
+  if (!row) return null;
+  const thread = work.text(db, "thread_id", "memory_sources WHERE id=?", id);
+  const scope = work.text(db, "scope_id", "memory_sources WHERE id=?", id);
+  const denied = (kind: string, key: string | null) => key !== null && !!work.one(db, "SELECT 1 FROM memory_deny WHERE kind=? AND id=?", kind, key);
+  const gone = !!row.deleted || denied("thread", thread) || denied("scope", scope);
+  return { gone, brought: !!row.brought, revision: Number(row.revision) };
+}
+function ownForgotten(db: DatabaseSync, id: string, work: SettleReadBudget): boolean {
+  const tombs = ownTombstones(db, id, work);
+  const source = ownSource(db, id, work);
+  if (tombs.length || source?.gone) return true;
+  if (!source) return false;
+  // Branch-change pending applies only to the source, not to a bring-in origin.
+  const thread = work.text(db, "thread_id", "memory_sources WHERE id=?", id);
+  if (thread !== null && work.one(db, "SELECT 1 FROM branch_change WHERE thread_id=?", thread)) return true;
+  if (!source.brought) return false;
+  const payload = work.text(db, "payload", "memory_source_versions WHERE source_id=? AND revision=?", id, source.revision);
+  if (payload === null) return false;
+  const origins: unknown = JSON.parse(payload)?.broughtFrom?.sources;
+  if (origins === undefined) return false;
+  // json_each emits one missing-origin row for JSON null, but none for an absent path.
+  if (origins === null) { work.charge(); return true; }
+  // json_each also accepts objects; account for their raw values before walking them.
+  const values: unknown[] = [];
+  if (typeof origins === "object") {
+    for (const key in origins) {
+      if (!Object.hasOwn(origins, key)) continue;
+      work.charge(); values.push((origins as Record<string, unknown>)[key]);
+    }
+  } else { work.charge(); values.push(origins); }
+  for (const value of values) {
+    work.check();
+    const origin = value as { id?: unknown; revision?: unknown } | null;
+    if (typeof origin?.id !== "string") throw new Error("SETTLE_ORIGIN_SHAPE");
+    const from = ownSource(db, origin.id, work);
+    if (!from || from.gone) return true;
+    const tombstones = ownTombstones(db, origin.id, work);
+    const revision = typeof origin.revision === "boolean" ? Number(origin.revision)
+      : typeof origin.revision === "string" && /^[\t\n\v\f\r ]*[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?[\t\n\v\f\r ]*$/.test(origin.revision) ? Number(origin.revision) : origin.revision;
+    if (tombstones.some(row => row.revision === null || row.revision === revision)) return true;
+  }
+  return false;
+}
+export interface OwnLineVerdicts {
+  verdicts: Map<string, LineageVerdict>;
+  lsns: Map<string, number>;
+  prefix: LineageVerdict;
+  pending: OwnPendingRow[];
+}
+/** Content-only equivalent of lookupPage(infer=true) plus the prefix verdict.
+ * An incomplete raw read throws SettleReadLimit; it must never be interpreted as clearance. */
+export function ownLineVerdicts(db: DatabaseSync, threadId: string, messageIds: readonly string[], reader: LineageReader,
+  headLsn: number, work = new SettleReadBudget(), pending = readOwnPending(db, threadId, work)): OwnLineVerdicts {
+  if (messageIds.length > 512) throw new SettleReadLimit("ids");
+  if (reader.audience !== null) throw new Error("SETTLE_CONTENT_READER_REQUIRED");
+  work.check();
+  const verdicts = new Map<string, LineageVerdict>(), lsns = new Map<string, number>();
+  const denied = !!work.one(db, "SELECT 1 FROM memory_deny WHERE kind='thread' AND id=?", threadId);
+  const certificate = work.one(db, "SELECT ready FROM memory_lineage_cert WHERE id=1");
+  const readyRow = work.one(db, "SELECT ready FROM memory_lineage_thread_ready WHERE thread_id=?", threadId);
+  const ready = Number(certificate?.ready ?? 0) === 1 && (!readyRow || Number(readyRow.ready) === 1);
+  const prefix = denied ? withheld("thread-deny") : !ready ? checking("thread-not-ready") : pending.some(row => row.since <= headLsn) ? checking("pending") : SHOWN;
+  const no = num(work.one(db, "SELECT no FROM memory_thread_no WHERE thread_id=?", threadId)?.no);
+  const generated = new Map<string, LineageRow>();
+  for (const id of new Set(messageIds)) {
+    work.check();
+    if (denied) { verdicts.set(id, withheld("thread-deny")); continue; }
+    const row = work.one(db, "SELECT role='user' AS human FROM messages WHERE thread_id=? AND id=?", threadId, id);
+    if (!row) { verdicts.set(id, withheld("tombstone")); continue; }
+    const json = work.text(db, "json", "messages WHERE thread_id=? AND id=?", threadId, id);
+    const flag: unknown = json === null ? null : JSON.parse(json)?.withheldFromBots;
+    const flagged = flag !== "checking" && flag !== null && flag !== undefined && flag !== false && flag !== 0 && flag !== "false";
+    if (reader.ownFlag !== false && flagged) { verdicts.set(id, withheld("own-flag")); continue; }
+    if (ownForgotten(db, `message:${threadId}:${id}`, work)) { verdicts.set(id, withheld("tombstone")); continue; }
+    const lin = no === null ? undefined : work.one(db, "SELECT lsn,turn_lsn FROM memory_line_lineage WHERE thread_no=? AND message_id=?", no, id);
+    if (lin) {
+      if (!Number.isSafeInteger(lin.lsn) || (lin.turn_lsn !== null && !Number.isSafeInteger(lin.turn_lsn))) throw new Error("SETTLE_LINE_POSITION");
+      lsns.set(id, Number(lin.lsn));
+    }
+    if (row.human && (lin?.turn_lsn === null || lin?.turn_lsn === undefined)) { verdicts.set(id, SHOWN); continue; }
+    if (!lin) { verdicts.set(id, checking("no-lineage")); continue; }
+    generated.set(id, { lsn: Number(lin.lsn), turnLsn: num(lin.turn_lsn), generated: true, memLsn: null, footprint: null });
+  }
+  const content = (row: Row) => !work.one(db, "SELECT 1 FROM memory_revoke_audience WHERE revoke_id=?", Number(row.revoke_id));
+  let ranges: Row[] = [];
+  if (generated.size) {
+    const top = Math.max(...[...generated.values()].map(lin => lin.lsn));
+    // Read all raw rows before audience filtering, even if the legacy reader would collapse at 257 content ranges.
+    ranges = work.rows(db, "SELECT from_lsn,until_turn_lsn,revoke_id FROM memory_deny_range WHERE thread_id=? AND from_lsn<? ORDER BY from_lsn,revoke_id LIMIT ?", threadId, top)
+      .filter(row => Number(row.revoke_id) !== AUDIENCE_COALESCED && content(row));
+  }
+  for (const [id, lin] of generated) {
+    const marks = work.rows(db, "SELECT revoke_id FROM memory_deny_line WHERE thread_id=? AND lsn=? ORDER BY revoke_id LIMIT ?", threadId, lin.lsn);
+    let verdict = marks.some(content) ? withheld("deny-line") : SHOWN;
+    if (verdict.state === "shown" && (ranges.length > RANGE_READ_LIMIT ? Number(ranges[0]!.from_lsn) < lin.lsn : ranges.some(row => Number(row.from_lsn) < lin.lsn && (lin.turnLsn ?? 0) < Number(row.until_turn_lsn)))) verdict = withheld("deny-range");
+    if (verdict.state !== "withheld") {
+      if (!ready) verdict = checking("thread-not-ready");
+      else if (pending.some(row => row.since <= lin.lsn && (lin.turnLsn ?? 0) < row.cap)) verdict = checking("pending");
+    }
+    verdicts.set(id, verdict);
+  }
+  work.check();
+  return { verdicts, lsns, prefix, pending };
+}
+
+/** A bounded footprint supplies the probes. The reader's complete membership is never copied. */
+function lineageAudienceHasScope(db: DatabaseSync,audience: import('./lineage-types.ts').LineageAudience,scope: string): boolean {
+  if(audience.view){assertRecallView(db,audience.view);return recallViewHasScope(db,audience.view,scope,audience.recallOnly!==true,audience.personOnly===true);}
+  return audience.scopeIds.includes(scope);
 }

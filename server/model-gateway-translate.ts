@@ -124,12 +124,23 @@ export function chatToResponses(body: Json): { request: Json; wantStream: boolea
 export function createSseParser(onEvent: (data: Json) => void): { push(chunk: string): void; end(): void } {
   let buffer = "";
   const flush = (block: string) => {
+    if (Buffer.byteLength(block) > 1024 * 1024) throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
     const data = block.split(/\r?\n/).filter(line => line.startsWith("data:")).map(line => line.slice(5).replace(/^ /, "")).join("\n");
     if (!data || data === "[DONE]") return;
-    try { const parsed = JSON.parse(data); if (record(parsed)) onEvent(parsed); } catch { /* a keep-alive or a torn frame */ }
+    let parsed: unknown;
+    try { parsed = JSON.parse(data); } catch { return; /* a keep-alive or a torn frame */ }
+    // Consumer failures, including a final-writer refusal, must stop the reader.
+    if (record(parsed)) onEvent(parsed);
   };
   return {
     push(chunk) {
+      if (Buffer.byteLength(chunk) > 1024 * 1024) throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
+      const tail = buffer.slice(-3), prefix = buffer.slice(0, buffer.length - tail.length);
+      const incoming = tail + chunk;
+      const boundary = incoming.search(/\r?\n\r?\n/);
+      if (Buffer.byteLength(prefix) + Buffer.byteLength(boundary < 0 ? incoming : incoming.slice(0, boundary)) > 1024 * 1024) {
+        throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
+      }
       buffer += chunk;
       let index: number;
       while ((index = buffer.search(/\r?\n\r?\n/)) >= 0) {
@@ -137,6 +148,7 @@ export function createSseParser(onEvent: (data: Json) => void): { push(chunk: st
         buffer = buffer.slice(buffer.slice(index).match(/^\r?\n\r?\n/)![0].length + index);
         flush(block);
       }
+      if (Buffer.byteLength(buffer) > 1024 * 1024) throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
     },
     end() { if (buffer.trim()) flush(buffer); buffer = ""; },
   };
@@ -196,9 +208,12 @@ export function createChatStreamTranslator(model: string, id: string, created: n
 
 /** Collect a whole Responses stream into the final response object. */
 export function collectResponse(events: Json[]): Json {
+  let bytes = 0;
   const items: Json[] = [];
   let completed: Json | null = null;
   for (const event of events) {
+    bytes += Buffer.byteLength(JSON.stringify(event));
+    if (bytes > 8 * 1024 * 1024) throw Object.assign(new Error("MEMORY_CONTEXT_REVOKED"), { code: "MEMORY_CONTEXT_REVOKED" });
     if (event.type === "response.output_item.done" && record(event.item)) items.push(event.item);
     else if ((event.type === "response.completed" || event.type === "response.incomplete") && record(event.response)) completed = event.response;
     else if (event.type === "response.failed" || event.type === "error") throw failure(event);

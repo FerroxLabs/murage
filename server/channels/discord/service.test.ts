@@ -73,3 +73,15 @@ it("receipt failure stops intake; revoke still cancels runs if saving fails",asy
   await f.emit(f.raw("must not enqueue"));expect(f.service.status()).toMatchObject({state:"blocked",enabled:false,error:"intake-failed"});expect(f.enqueue).not.toHaveBeenCalled();
   const connection=join(folder,"connection.json");renameSync(connection,connection+".original");mkdirSync(connection);await expect(f.service.revoke()).rejects.toThrow("needs recovery");expect(f.revokeRuns).toHaveBeenCalledTimes(1);
 });
+
+it("Cloud refuses raw sign-in codes before Discord persistence or enqueue", async () => {
+  vi.stubEnv("MURAGE_CLOUD_ROLE", "home");
+  try {
+    const f = fixture(); await f.pair();
+    const code = "4/fixtureCodeSecret0123456789";
+    await f.emit(f.raw(code));
+    expect(f.enqueue).not.toHaveBeenCalled();
+    for (const file of readdirSync(join(f.dir, "channels/discord"))) expect(readFileSync(join(f.dir, "channels/discord", file), "utf8")).not.toContain(code);
+    expect(f.sendText).toHaveBeenCalledWith(expect.objectContaining({ text: "That looks like a sign-in code. Paste it in the sign-in dialog, not here." }));
+  } finally { vi.unstubAllEnvs(); }
+});

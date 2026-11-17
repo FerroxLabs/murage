@@ -142,6 +142,22 @@ describe("R8-02: a request's ending is a kept status, never a parsed note", () =
 });
 
 describe("R8-03: a refusal before the asked bot's turn began", () => {
+  it("redacts both refusal fields before handing them to any store", () => {
+    // MAIN RULING 1115-C4D2-GROK C1: no raw refusal reaches even an append-only store.
+    const secret = ["sk", "live", "fixture".repeat(4)].join("-");
+    const why = `Choose another level in settings (${secret})`;
+    const appended: Array<Omit<Message, "id" | "at">> = [];
+    const store = { appendMessage(_threadId: string, message: Omit<Message, "id" | "at">): Message {
+      appended.push(message); return { ...message, id: "refusal", at: 1 };
+    } };
+    recordRefusedStart(store, "fixture-thread", why);
+    const captured = appended[0];
+    expect(captured?.tool?.name).toContain("Choose another level in settings");
+    expect(captured?.tool?.errorDetails).toContain("Choose another level in settings");
+    expect(captured?.tool?.name).not.toContain(secret);
+    expect(captured?.tool?.errorDetails).not.toContain(secret);
+    expect(JSON.stringify(captured)).not.toContain(secret);
+  });
   it("is written in full in that bot's own conversation, with secrets redacted", () => {
     const store = new Store(selection);
     const target = store.createBot({ name: "Target" }, { seedMessages: false });

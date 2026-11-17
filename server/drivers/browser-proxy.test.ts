@@ -1,7 +1,9 @@
+// control migration: real bound proxy ingress; existing assertions retained.
 // The browser proxy end to end: spawn it the way a driver's mcpServers entry
 // does, point it at a stub of the Electron browser host, and read what a
 // model would read.
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { spawnBoundProxy } from "../testing/bound-proxy-fixture.ts";
 import { createServer, type Server } from "node:http";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -86,7 +88,8 @@ beforeAll(async () => {
   });
   await new Promise<void>((resolve) => stub.listen(0, "127.0.0.1", resolve));
   stubPort = (stub.address() as { port: number }).port;
-  child = spawn(process.execPath, ["--experimental-strip-types", PROXY], {
+  child = await spawnBoundProxy("browser", process.execPath, ["--experimental-strip-types", PROXY], {
+      fixtureLifetime: "suite",
     env: {
       ...process.env,
       MURAGE_BROWSER_URL: `http://127.0.0.1:${stubPort}`,
@@ -215,7 +218,7 @@ describe("browser MCP proxy", () => {
     ]);
     expect(text(waited)).toContain("More of the page is off-screen: 900px below");
     const read = await callTool("browser_read", {});
-    expect(text(read)).toBe("Cart: https://shop.example/cart\n\nCart\n\n2 items · $80");
+    expect(JSON.parse(text(read))).toMatchObject({ url: "https://shop.example/cart", text: "Cart\n\n2 items · $80", eof: true, next_offset: null });
     const bad = await callTool("browser_select_option", { ref: "b2" });
     expect(bad.result.isError).toBe(true);
     const emptyWait = await callTool("browser_wait_for", {});

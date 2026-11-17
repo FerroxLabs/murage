@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { beginRead, beginWrite, endWrite, undoWrite } from "./write-tx.ts";
+import { afterCommit } from "./tx-scope.ts";
 import { scopedTx } from "./tx-scope.ts";
 import { cardRequestIsReview } from "./project-card-executor.ts";
 import { roomRequest } from "./room-requests.ts";
@@ -37,6 +38,7 @@ const cardPatchSchema = z.object({ expectedRevision: revision, action: z.enum(["
 const columnsSchema = z.object({ expectedRevision: revision, columns: z.array(z.object({ id: id.optional(), title: z.string().trim().min(1).max(40), state: states, position: z.number().finite() }).strict()).max(12) }).strict();
 
 export interface ProjectRouteInput {
+  workRootsCommitted?: (id:string,paths:readonly string[])=>void;
   botName?: (id: string) => string;
   origin?: "desktop" | "companion" | "unproven";
   method: string;
@@ -186,6 +188,7 @@ export function handleProjectRoute(db: DatabaseSync, input: ProjectRouteInput): 
         try {
           const roots = canonicalProjectRoots(body.roots,{dataDir:DATA_DIR}).map(root => ({...root,label:root.label ?? "Work folder",addedAt:now}));
           db.prepare("UPDATE project_settings SET work_roots=?,revision=revision+1,updated_at=? WHERE group_id=?").run(JSON.stringify(roots),now,groupId);
+          afterCommit(()=>input.workRootsCommitted?.(groupId,roots.map(root=>root.path)));
         } catch (cause) { return error(400,cause instanceof Error ? cause.message : "Choose a work folder."); }
       } else db.prepare("UPDATE project_settings SET work_profile=?,revision=revision+1,updated_at=? WHERE group_id=?").run(body.workProfile,now,groupId);
       records.insertProjectActivity(db,{groupId,kind:action === "work-roots" ? "work_roots" : "settings",actor:"owner",at:now,detail:{field:action}});

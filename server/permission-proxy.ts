@@ -1,3 +1,6 @@
+import "../shared/win-hide-child-process.mjs";
+import {exitWithChildIoReceipt} from "./io-child-receipts.ts";
+import { sendProxyFrame, proxyTransportLost, reserveProxyUpstream } from "./proxy-turn-release.ts";
 // permission-proxy — the MCP stdio server the claude CLI spawns for
 // --permission-prompt-tool (ported from agentcal's runPermissionProxy;
 // dedicated entry file, so there is no argv-dispatch fork-bomb hazard).
@@ -11,8 +14,10 @@
 //               human's words come back verbatim.
 //
 // stdout is the MCP channel — never console.log here.
+import { permissionAllowReply } from "./permission-reply.ts";
 import { connect, Socket } from "node:net";
 import { randomUUID } from "node:crypto";
+import { writeSync } from "node:fs";
 import { BROKER_UNAVAILABLE_NOTE, brokerPathAccepted, brokerPathFromArgv } from "./permission-pipe.ts";
 
 const socketPath = brokerPathFromArgv(process.argv[2] ?? "");
@@ -23,16 +28,21 @@ const waiting = new Map<string, (msg: any) => void>();
 const accepted = brokerPathAccepted(socketPath);
 const conn = accepted ? connect(socketPath) : new Socket();
 if (!accepted) {
-  process.stderr.write(`murage permission proxy: refusing the broker path ${JSON.stringify(socketPath)} (not a Murage permission socket); every ask is denied\n`);
+  // The supervisor may stop this process as soon as the terminal IPC notice
+  // arrives. Finish this bounded count first; async stderr and IPC have no
+  // cross-pipe flush ordering. A closed diagnostic pipe never prevents seal.
+  try { writeSync(2, "permission refusals=1\n"); } catch { /* counts only */ }
+  proxyTransportLost("permission");
   conn.destroy();
 }
 
 interface AllowPermissionResult {
   behavior: "allow";
-  updatedInput: object;
+  updatedInput?: object;
   updatedPermissions?: object[];
 }
 const dead = () => {
+  proxyTransportLost("permission");
   for (const resolve of waiting.values()) {
     resolve({ behavior: "deny", message: BROKER_UNAVAILABLE_NOTE });
   }
@@ -44,23 +54,31 @@ const dead = () => {
 // that will never answer.
 const CONNECT_DEADLINE_MS = 10_000;
 const connectTimer = !accepted ? undefined : setTimeout(() => {
-  process.stderr.write(`murage-permissions: the permission broker at ${socketPath || "(no socket path)"} did not accept a connection within ${CONNECT_DEADLINE_MS / 1000} s\n`);
+  proxyTransportLost("permission");
+  process.stderr.write("permission timeouts=1\n");
   process.exit(1);
 }, CONNECT_DEADLINE_MS);
 connectTimer?.unref();
 conn.once("connect", () => clearTimeout(connectTimer));
-conn.on("error", (error: Error & { code?: string }) => {
+conn.on("error", () => {
+  proxyTransportLost("permission");
   clearTimeout(connectTimer);
-  process.stderr.write(`murage permission proxy: cannot reach the broker at ${JSON.stringify(socketPath)} (${error.code ?? error.message}); every ask is denied\n`);
+  process.stderr.write("permission failures=1\n");
   dead();
 });
 conn.on("close", dead);
 
 // Decode as a stream: a multi-byte character split across two reads must not
 // become U+FFFD in an approved write (adapted from OpenMausBot #2387).
-conn.setEncoding("utf8");
+const brokerDecoder = new TextDecoder();
+let brokerReads = Promise.resolve();
 let connBuf = "";
-conn.on("data", (chunk) => {
+conn.on("data", (raw: Buffer) => {
+  conn.pause();
+  brokerReads = brokerReads.then(async () => {
+  await reserveProxyUpstream("permission", raw.byteLength);
+  const chunk = brokerDecoder.decode(raw, { stream: true });
+  if (Buffer.byteLength(connBuf) + Buffer.byteLength(chunk) > 8 * 1024 * 1024) { dead(); conn.destroy(); return; }
   connBuf += chunk;
   let nl;
   while ((nl = connBuf.indexOf("\n")) !== -1) {
@@ -70,16 +88,18 @@ conn.on("data", (chunk) => {
     try {
       msg = JSON.parse(line);
     } catch {
-      continue;
+      dead(); conn.destroy(); return;
     }
-    if (msg.t === "answer") {
+    if (msg?.t === "answer" && typeof msg.id === "string" && waiting.has(msg.id)) {
       waiting.get(msg.id)?.(msg);
       waiting.delete(msg.id);
-    }
+    } else { dead(); conn.destroy(); return; }
   }
+  conn.resume();
+  }).catch(() => { dead(); conn.destroy(); });
 });
 
-const send = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
+const send = (obj: unknown) => sendProxyFrame("permission", obj);
 
 const TOOLS = [
   {
@@ -114,7 +134,7 @@ const TOOLS = [
   },
 ];
 
-async function handle(msg: any) {
+export async function handle(msg: any) {
   if (msg.method === "initialize") {
     return send({
       jsonrpc: "2.0",
@@ -179,7 +199,9 @@ async function handle(msg: any) {
         if (!judged || typeof judged !== "object" || Array.isArray(judged)) {
           return send({ jsonrpc: "2.0", id: msg.id, result: { content: [{ type: "text", text: JSON.stringify({ behavior: "deny", message: "Murage: the call carried no input to judge" }) }] } });
         }
-        const result: AllowPermissionResult = { behavior: "allow", updatedInput: judged };
+        // Managed settings can retain a low MCP cap. Echoing an unchanged Write
+        // can turn an allow into a persisted-output notice instead of permission.
+        const result: AllowPermissionResult = permissionAllowReply(args.input, judged);
         if (answer.always && suggestions) result.updatedPermissions = suggestions;
         text = JSON.stringify(result);
       } else {
@@ -210,4 +232,4 @@ process.stdin.on("data", (chunk) => {
     }
   }
 });
-process.stdin.on("end", () => process.exit(0));
+process.stdin.on("end", () => void exitWithChildIoReceipt(0));

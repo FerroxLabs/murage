@@ -5,6 +5,7 @@
 // errors clear per subsystem at the end of the next clean unit, a held write lock is neither an error nor an
 // attempt, quitting spends no attempt, and a turn between its slot and its send keeps the worker off the main thread.
 import { mkdirSync } from "node:fs";
+import { settleFixtureIndexGrant } from "./testing/helper-permits.ts";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -42,7 +43,12 @@ beforeEach(() => {
   vi.spyOn(performance, "now").mockImplementation(() => Date.now());
   controller = new MemoryWorkerController();
   internals = controller as unknown as Internals;
-  internals.child = { kill() {}, on() {}, send: (message: any) => { sent.push(message); } };
+  internals.child = { kill() {}, on() {}, send: (message: any) => {
+    sent.push(message);
+    // This stand-in performs no index writes. Return its unused byte permit
+    // independently of the result acknowledgement controlled by each test.
+    settleFixtureIndexGrant(message, event => internals.onWorkerMessage(internals.child, event));
+  } };
   internals.ready = true;
 });
 afterEach(async () => { try { other?.close(); } catch { /* closed */ } await controller.stop().catch(() => {}); vi.useRealTimers(); vi.restoreAllMocks(); setObserveSink(); });

@@ -1,0 +1,183 @@
+SCANNER FIXTURE HIT RATE 27/27 (100%)
+✔ p11c 1: cleanup removes the fixed wrapper before any bounded snapshot diff (0.940018ms)
+✔ p11c 2: reviewer snapshot helper >300s has one job owner for every Node native (0.336913ms)
+✔ p11c 3: scanner flags every reviewer form recursively, including test/check/mutate (836.172813ms)
+✖ p11c 3: complete Windows tree passes exact-path ownership scanner (750.349398ms)
+✔ p11c 4: four additional real source mutants exist (0.408613ms)
+✔ p11c 3: owner basenames elsewhere are never allowlisted (491.609551ms)
+✔ p11d: crev4 exact parenthesized multiline CIM input is rejected (617.232512ms)
+ℹ tests 7
+ℹ suites 0
+ℹ pass 6
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2164.381761
+
+✖ failing tests:
+
+test at scripts/windows/p11c.node-test.mjs:41:1
+✖ p11c 3: complete Windows tree passes exact-path ownership scanner (750.349398ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+  + [
+  +   {
+  +     file: 'admission-policy-check.ps1',
+  +     line: 4,
+  +     rule: 'dynamic Add-Type compilation'
+  +   },
+  +   {
+  +     file: 'admission-policy-check.ps1',
+  +     line: 7,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'build-fixture-update.ps1',
+  +     line: 35,
+  +     rule: 'unowned native or dynamic PowerShell command'
+  +   },
+  +   {
+  +     file: 'console-observer.ps1',
+  +     line: 2,
+  +     rule: 'dynamic Add-Type compilation'
+  +   },
+  +   {
+  +     file: 'console-observer.ps1',
+  +     line: 69,
+  +     rule: 'dynamic Add-Type compilation'
+  +   },
+  +   {
+  +     file: 'dry-check.ps1',
+  +     line: 76,
+  +     rule: 'dynamic Add-Type compilation'
+  +   },
+  +   {
+  +     file: 'dry-check.ps1',
+  +     line: 82,
+  +     rule: 'dynamic Add-Type compilation'
+  +   },
+  +   {
+  +     file: 'gate-task-helper.ps1',
+  +     line: 30,
+  +     rule: 'dynamic Add-Type compilation'
+  +   },
+  +   {
+  +     file: 'native-broker.ps1',
+  +     line: 11,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'ownership.ps1',
+  +     line: 16,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'ownership.ps1',
+  +     line: 27,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'ownership.ps1',
+  +     line: 31,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'ownership.ps1',
+  +     line: 80,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'ownership.ps1',
+  +     line: 82,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'ownership.ps1',
+  +     line: 84,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'ownership.ps1',
+  +     line: 86,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'ownership.ps1',
+  +     line: 86,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'ownership.ps1',
+  +     line: 87,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'ownership.ps1',
+  +     line: 88,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'ownership.ps1',
+  +     line: 92,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'ownership.ps1',
+  +     line: 93,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'ownership.ps1',
+  +     line: 187,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'p11c-check.ps1',
+  +     line: 44,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'p11c-check.ps1',
+  +     line: 44,
+  +     rule: 'dynamic code or native process creation'
+  +   },
+  +   {
+  +     file: 'safety-check.ps1',
+  +     line: 7,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'safety-check.ps1',
+  +     line: 27,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'safety-check.ps1',
+  +     line: 27,
+  +     rule: 'dynamic code or native process creation'
+  +   },
+  +   {
+  +     file: 'safety-check.ps1',
+  +     line: 30,
+  +     rule: 'dynamic PowerShell invocation'
+  +   },
+  +   {
+  +     file: 'setup-gate-user.ps1',
+  +     line: 13,
+  +     rule: 'dynamic Add-Type compilation'
+  +   }
+  + ]
+  - []
+  
+      at TestContext.<anonymous> (file:///work/scripts/windows/p11c.node-test.mjs:44:9)
+      at async Test.run (node:internal/test_runner/test:1409:7)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: [ { line: 4, rule: 'dynamic Add-Type compilation', file: 'admission-policy-check.ps1' }, { line: 7, rule: 'dynamic PowerShell invocation', file: 'admission-policy-check.ps1' }, { line: 35, rule: 'unowned native or dynamic PowerShell command', file: 'build-fixture-update.ps1' }, { line: 2, rule: 'dynamic Add-Type compilation', file: 'console-observer.ps1' }, { line: 69, rule: 'dynamic Add-Type compilation', file: 'console-observer.ps1' }, { line: 76, rule: 'dynamic Add-Type compilation', file: 'dry-check.ps1' }, { line: 82, rule: 'dynamic Add-Type compilation', file: 'dry-check.ps1' }, { line: 30, rule: 'dynamic Add-Type compilation', file: 'gate-task-helper.ps1' }, { line: 11, rule: 'dynamic PowerShell invocation', file: 'native-broker.ps1' }, { line: 16, rule: 'dynamic PowerShell invocation', file: 'ownership.ps1' }, { line: 27, rule: 'dynamic PowerShell invocation', file: 'ownership.ps1' }, { line: 31, rule: 'dynamic PowerShell invocation', file: 'ownership.ps1' }, { line: 80, rule: 'dynamic PowerShell invocation', file: 'ownership.ps1' }, { line: 82, rule: 'dynamic PowerShell invocation', file: 'ownership.ps1' }, { line: 84, rule: 'dynamic PowerShell invocation', file: 'ownership.ps1' }, { line: 86, rule: 'dynamic PowerShell invocation', file: 'ownership.ps1' }, { line: 86, rule: 'dynamic PowerShell invocation', file: 'ownership.ps1' }, { line: 87, rule: 'dynamic PowerShell invocation', file: 'ownership.ps1' }, { line: 88, rule: 'dynamic PowerShell invocation', file: 'ownership.ps1' }, { line: 92, rule: 'dynamic PowerShell invocation', file: 'ownership.ps1' }, { line: 93, rule: 'dynamic PowerShell invocation', file: 'ownership.ps1' }, { line: 187, rule: 'dynamic PowerShell invocation', file: 'ownership.ps1' }, { line: 44, rule: 'dynamic PowerShell invocation', file: 'p11c-check.ps1' }, { line: 44, rule: 'dynamic code or native process creation', file: 'p11c-check.ps1' }, { line: 7, rule: 'dynamic PowerShell invocation', file: 'safety-check.ps1' }, { line: 27, rule: 'dynamic PowerShell invocation', file: 'safety-check.ps1' }, { line: 27, rule: 'dynamic code or native process creation', file: 'safety-check.ps1' }, { line: 30, rule: 'dynamic PowerShell invocation', file: 'safety-check.ps1' }, { line: 13, rule: 'dynamic Add-Type compilation', file: 'setup-gate-user.ps1' } ],
+    expected: [],
+    operator: 'deepStrictEqual',
+    diff: 'simple'
+  }

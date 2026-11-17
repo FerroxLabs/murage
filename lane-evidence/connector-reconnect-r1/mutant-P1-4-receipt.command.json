@@ -1,0 +1,1 @@
+["node", "--import", "./server/testing/safe-wipe-preload.mjs", "--test", "--test-name-pattern=receipt requires show confirmation", "electron/attention-delivery.node-test.mjs"]
