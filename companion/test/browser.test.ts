@@ -1116,7 +1116,9 @@ describe("stream upgrade", () => {
       expect(await refusal(ws)).toMatch(/403/);
       const logged = spy.mock.calls.map((c) => c.join(" ")).join("\n");
       expect(logged).toContain("[door-refused]");
-      expect(logged).toContain("ticket=redacted");
+      // COMPANION-CHATS-1019: diagnostics now omit every query, including masked tickets.
+      expect(logged).toContain('"url":"/api/voice/stream"');
+      expect(logged).not.toContain("ticket=");
       expect(logged).not.toContain("SECRETTICKET");
       expect(logged).not.toContain("Sable");
     } finally {

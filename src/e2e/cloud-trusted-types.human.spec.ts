@@ -14,7 +14,7 @@
 import { test, expect, type Page } from "@playwright/test";
 import { build } from "vite";
 import react from "@vitejs/plugin-react";
-import tailwindcss from "@tailwindcss/vite";
+import tailwindcss from "./scoped-tailwind";
 import { createServer, type Server } from "node:http";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -59,6 +59,7 @@ function watch(page: Page) {
   const violations: string[] = [];
   page.on("pageerror", error => problems.push(`pageerror: ${error.message}`));
   page.on("console", message => { if (message.type() === "error") problems.push(`console: ${message.text()}`); });
+  void page.addInitScript(() => { try { localStorage.setItem("help.seen.chat.level-chip", "1"); } catch { /* storage blocked */ } });
   void page.addInitScript(() => {
     document.addEventListener("securitypolicyviolation", event => {
       (window as unknown as { __violations: string[] }).__violations ??= [];

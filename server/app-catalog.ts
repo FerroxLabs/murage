@@ -24,6 +24,8 @@
 // and hands this module a CatalogBackend, so the own-key-wins rule stays in
 // one place and this module never sees a credential.
 import { mkdirSync, readFileSync, statSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { catalogIdentity, catalogWords, collapseCatalogCards, type CatalogCardIdentity, type IdentifiedCatalogCard } from "../shared/catalog-card-identity.ts";
 import { join } from "node:path";
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
@@ -31,7 +33,7 @@ import { DATA_DIR } from "./config.ts";
 export type SignIn = "managed" | "own" | "none";
 
 /** One app as the panel and the connect card need it. Slim on purpose. */
-export interface CatalogApp {
+export interface CatalogApp extends CatalogCardIdentity {
   slug: string;
   label: string;
   /** at most 90 characters, never naming the connection service */
@@ -99,7 +101,8 @@ export const CURATED: ReadonlyArray<CatalogApp> = Object.freeze([
 export const CURATED_SLUGS = CURATED.map((card) => card.slug);
 
 export const APP_CATALOG_CACHE_FILE = "connected-apps-catalog.json";
-const CACHE_VERSION = 1;
+// Version 1 kept only a shortened blurb and cannot establish full identity.
+const CACHE_VERSION = 2;
 /** A complete catalog younger than this is served without asking again. */
 export const CATALOG_FRESH_MS = 6 * 60 * 60_000;
 /** One budget for a whole walk of the vendor's raw pages (today's broker and
@@ -138,10 +141,16 @@ export function slimApp(raw: unknown): CatalogApp | null {
   const meta = t.meta && typeof t.meta === "object" ? t.meta : {};
   const slug = String(t.slug ?? t.key ?? t.name ?? "").trim().toLowerCase();
   if (!SLUG.test(slug)) return null;
-  const label = String(t.name ?? t.label ?? t.slug ?? "").replace(/\s+/g, " ").replace(/\s*—\s*/g, " - ").trim().slice(0, 80) || slug;
+  const fullLabel = String(t.name ?? t.label ?? t.slug ?? "");
+  const label = fullLabel.replace(/\s+/g, " ").replace(/\s*—\s*/g, " - ").trim().slice(0, 80) || slug;
   // the connection service's own toolkit is plumbing, not an app
   if (SERVICE_NAME.test(slug) || SERVICE_NAME.test(label)) return null;
-  const rawBlurb = String(t.blurb ?? meta.description ?? t.description ?? "").replace(/\s+/g, " ").trim().replace(/\s*—\s*/g, ", ");
+  const fullDescription = String(t.description ?? meta.description ?? t.blurb ?? "");
+  const duplicateKey = typeof t.duplicateKey === "string" && /^[a-f0-9]{64}$/.test(t.duplicateKey)
+    ? t.duplicateKey : createHash("sha256").update(JSON.stringify([catalogWords(fullLabel), catalogWords(fullDescription)])).digest("hex");
+  const active = t.active ?? t.is_active ?? meta.active ?? meta.is_active;
+  const toolCount = t.toolCount ?? t.tools_count ?? t.tool_count ?? meta.tools_count ?? meta.tool_count;
+  const rawBlurb = fullDescription.replace(/\s+/g, " ").trim().replace(/\s*—\s*/g, ", ");
   const rawLogo = t.logo ?? meta.logo;
   const noAuth = t.no_auth === true || t.noAuth === true;
   let signIn: SignIn | undefined;
@@ -153,6 +162,9 @@ export function slimApp(raw: unknown): CatalogApp | null {
   return {
     slug,
     label,
+    duplicateKey,
+    ...(typeof active === "boolean" ? { active } : typeof t.status === "string" ? { active: t.status.toLowerCase() === "active" } : {}),
+    ...(typeof toolCount === "number" && Number.isSafeInteger(toolCount) && toolCount >= 0 ? { toolCount } : {}),
     // product copy never names the connection service, even in an app's
     // own description
     blurb: SERVICE_NAME.test(rawBlurb) || OFF_COPY.test(rawBlurb) ? "" : rawBlurb.slice(0, 90),
@@ -227,7 +239,7 @@ function contractOf(cacheKey: string): 1 | 2 | undefined {
 function noteContract(cacheKey: string, value: 1 | 2) {
   contracts.set(cacheKey, { value, at: Date.now() });
 }
-let byName: { snapshot: Snapshot; apps: CatalogApp[] } | null = null;
+let byName: { snapshot: Snapshot; keepKey: string; apps: CatalogApp[] } | null = null;
 
 function cachePath() {
   return join(DATA_DIR, APP_CATALOG_CACHE_FILE);
@@ -300,6 +312,7 @@ export function resetAppCatalogState(options: { disk?: boolean } = {}) {
   diskMisses.clear();
   generations.clear();
   byName = null;
+  servicePages.clear();
   refreshes.clear();
   failures.clear();
   generation = 0;
@@ -487,24 +500,57 @@ export interface CatalogView {
   savedAt: number | null;
 }
 
-function featuredFrom(apps: ReadonlyArray<CatalogApp>): CatalogApp[] {
+// ── one card per real app ─────────────────────────────────────────────
+// The vendor sometimes lists one app under two slugs (POLYMARKET and
+// polymarket_us: same name, same words). Cards with the same name AND the same
+// description (whitespace and case ignored) are one app to the person. A slug
+// they hold a connection on is never hidden: connected ones win the card.
+// src/lib/app-catalog.ts holds the same rule for lists the panel assembles.
+
+let connectedSource: () => ReadonlySet<string> | null = () => new Set();
+/** Null means inventory is unknown, so no candidate may be discarded. */
+export function setConnectedSlugsSource(source: (() => ReadonlySet<string> | null) | null) {
+  connectedSource = source ?? (() => new Set());
+}
+const connectedNow = (): ReadonlySet<string> | null => {
+  try { return connectedSource(); }
+  catch {
+    console.warn("[connectors] catalog inventory unavailable; preserving aliases");
+    return null;
+  }
+};
+
+export function collapseDuplicates<T extends IdentifiedCatalogCard>(apps: ReadonlyArray<T>, keep: ReadonlySet<string> | null = new Set()): T[] {
+  return collapseCatalogCards(apps, keep);
+}
+
+function featuredFrom(all: ReadonlyArray<CatalogApp>, keep: ReadonlySet<string> | null = new Set()): CatalogApp[] {
+  const apps = collapseDuplicates(all, keep);
   const seen = new Set<string>();
   const out: CatalogApp[] = [];
-  const known = new Map(apps.map((app) => [app.slug, app]));
-  // The common apps lead in their own order (Gmail first), then the most
-  // used ones the curated set does not already hold.
+  const raw = new Map(all.map(app => [app.slug, app]));
+  const known = new Map(apps.map(app => [app.slug, app]));
   for (const curated of CURATED) {
-    seen.add(curated.slug);
-    // the live card when the catalog has it: its logo and its own words
-    const live = known.get(curated.slug);
-    out.push(live ? { ...live, domain: live.domain ?? curated.domain } : { ...curated });
+    // A curated slug may have lost to its connected alias. Use that live
+    // winner rather than recreating the discarded slug with fallback words.
+    const original = raw.get(curated.slug);
+    const live = known.get(curated.slug) ?? (original ? apps.find(app => catalogIdentity(app) === catalogIdentity(original)) : undefined);
+    const card = live ? { ...live, domain: live.domain ?? curated.domain } : { ...curated };
+    if (!seen.has(card.slug)) { seen.add(card.slug); out.push(card); }
   }
   for (const app of apps.slice(0, FEATURED_TOP)) {
     if (seen.has(app.slug)) continue;
     seen.add(app.slug);
     out.push(app);
   }
-  return out;
+  // Include every surviving alias of a featured app, even one outside the
+  // top-N slice: unknown inventory preserves candidates, and two connected
+  // aliases must both remain visible after inventory is known.
+  const identities = new Set(out.map(catalogIdentity));
+  for (const app of apps) if (!seen.has(app.slug) && identities.has(catalogIdentity(app))) {
+    seen.add(app.slug); out.push(app);
+  }
+  return collapseDuplicates(out, keep);
 }
 
 function viewOf(snapshot: Snapshot, fresh: boolean, revalidating: boolean, reason?: CatalogFallbackReason, detail?: CatalogFallbackDetail): CatalogView {
@@ -513,7 +559,7 @@ function viewOf(snapshot: Snapshot, fresh: boolean, revalidating: boolean, reaso
     ...(reason ? { reason } : {}),
     ...(detail ? { detail } : {}),
     cards: snapshot.apps,
-    featured: featuredFrom(snapshot.apps),
+    featured: featuredFrom(snapshot.apps, connectedNow()),
     total: snapshot.total,
     serviceSearch: snapshot.contract === 2,
     revalidating,
@@ -681,6 +727,38 @@ async function serviceQuery(backend: CatalogBackend, query: URLSearchParams, sig
   }
 }
 
+/** Gather the bounded complete result before choosing winners or slicing.
+ * Vendor pages are slug pages; app identity may span any two of them. */
+async function servicePool(backend: CatalogBackend, query: URLSearchParams, signal?: AbortSignal): ReturnType<typeof serviceQuery> {
+  const deadline = AbortSignal.timeout(WALK_BUDGET_MS);
+  const bounded = signal ? AbortSignal.any([signal, deadline]) : deadline;
+  const pool = new Map<string, CatalogApp>();
+  const cursors = new Set<string>();
+  let records = 0;
+  for (let page = 0; page < MAX_WALK_PAGES; page++) {
+    const answer = await serviceQuery(backend, query, bounded);
+    if (!answer.ok) return answer;
+    records += Array.isArray(answer.json.items) ? answer.json.items.length : 0;
+    if (records > MAX_APPS) return { ok: false, reason: "incomplete" };
+    for (const app of answer.apps) pool.set(app.slug, app);
+    const next = answer.json.next_cursor;
+    if (next === null || next === undefined || next === "") {
+      const total = Number(answer.json.total_items);
+      if (Number.isSafeInteger(total) && total > records) return { ok: false, reason: "incomplete" };
+      return { ...answer, apps: [...pool.values()] };
+    }
+    if (typeof next !== "string" || !CURSOR.test(next) || cursors.has(next) || records >= MAX_APPS) return { ok: false, reason: "incomplete" };
+    cursors.add(next);
+    query.set("cursor", next);
+  }
+  return { ok: false, reason: "incomplete" };
+}
+
+// Only complete service page candidates are retained, never connection-based
+// winners. Subsequent pages reselect with the current inventory. A new browse,
+// identity change or a short expiry checks the service again.
+const servicePages = new Map<string, { identity: string; at: number; apps: CatalogApp[] }>();
+
 /** Search the whole catalog: the service when it searches (contract 2),
  * otherwise what is held on this computer. */
 export async function searchCatalog(backend: CatalogBackend | null, query: string, options: { limit?: number; signal?: AbortSignal } = {}): Promise<CatalogPage> {
@@ -689,10 +767,10 @@ export async function searchCatalog(backend: CatalogBackend | null, query: strin
   if (!q) return { items: [], nextCursor: null, total: 0, source: "local" };
   let reason: CatalogFallbackReason | undefined;
   if (backend && backend.kind === "broker" && contractOf(backend.cacheKey) !== 1) {
-    const answer = await serviceQuery(backend, new URLSearchParams({ search: q, limit: String(limit) }), options.signal);
+    const answer = await servicePool(backend, new URLSearchParams({ search: q, limit: String(WALK_PAGE) }), options.signal);
     if (answer.ok) {
-      const total = Number(answer.json.total_items);
-      return { items: answer.apps.slice(0, limit), nextCursor: null, total: Number.isSafeInteger(total) ? total : answer.apps.length, source: "service" };
+      const apps = collapseDuplicates(answer.apps, connectedNow());
+      return { items: apps.slice(0, limit), nextCursor: null, total: apps.length, source: "service" };
     }
     if (!answer.legacy) {
       reason = answer.reason;
@@ -701,7 +779,7 @@ export async function searchCatalog(backend: CatalogBackend | null, query: strin
   }
   const held = backend ? snapshotFor(backend.cacheKey) : null;
   if (!held && backend) void refresh(backend).catch(() => {});
-  const pool: CatalogApp[] = held ? held.apps : [...CURATED];
+  const pool: CatalogApp[] = collapseDuplicates(held ? held.apps : [...CURATED], connectedNow());
   const { items, total } = searchLocal(pool, q, limit);
   return {
     items,
@@ -713,16 +791,18 @@ export async function searchCatalog(backend: CatalogBackend | null, query: strin
 }
 
 function alphabetical(snapshot: Snapshot): CatalogApp[] {
-  if (byName?.snapshot === snapshot) return byName.apps;
-  const apps = [...snapshot.apps].sort((a, b) => a.label.localeCompare(b.label, "en", { sensitivity: "base" }) || a.slug.localeCompare(b.slug));
-  byName = { snapshot, apps };
+  const keep = connectedNow();
+  const keepKey = keep === null ? "unknown" : [...keep].sort().join(",");
+  if (byName?.snapshot === snapshot && byName.keepKey === keepKey) return byName.apps;
+  const apps = collapseDuplicates(snapshot.apps, keep).sort((a, b) => a.label.localeCompare(b.label, "en", { sensitivity: "base" }) || a.slug.localeCompare(b.slug));
+  byName = { snapshot, keepKey, apps };
   return apps;
 }
 
 /** One page of "All apps", A to Z. Served from the held catalog when there
  * is one (no network), otherwise from the service's own paging (contract 2),
  * otherwise the curated set with the reason. Cursors are opaque to the
- * panel: `o:<offset>` for held pages, `s:<service cursor>` for the service. */
+ * panel: `o:<offset>` for held pages, `s:d<offset>` for service candidates. */
 export async function catalogPage(backend: CatalogBackend | null, options: { cursor?: string | null; limit?: number; signal?: AbortSignal } = {}): Promise<CatalogPage> {
   const limit = Math.max(1, Math.min(MAX_PAGE, options.limit ?? MAX_PAGE));
   const cursor = options.cursor ?? "";
@@ -735,14 +815,20 @@ export async function catalogPage(backend: CatalogBackend | null, options: { cur
     return { items, nextCursor: next, total: apps.length, source: "local" };
   }
   if (backend && backend.kind === "broker" && contractOf(backend.cacheKey) !== 1) {
-    const query = new URLSearchParams({ limit: String(limit), sort: "name" });
-    const serviceCursor = cursor.startsWith("s:") ? cursor.slice(2) : "";
-    if (serviceCursor && CURSOR.test(serviceCursor)) query.set("cursor", serviceCursor);
-    const answer = await serviceQuery(backend, query, options.signal);
+    const offset = /^s:d\d{1,6}$/.test(cursor) ? Number(cursor.slice(3)) : 0;
+    const previous = servicePages.get(backend.cacheKey);
+    // When a held copy appears mid-scroll, keep checking the service so its
+    // failure still falls back through the established local-page contract.
+    const reusable = offset > 0 && !held && previous?.identity === backend.identity && backend.current() === backend.identity && Date.now() - previous.at < 30_000;
+    const answer = reusable
+      ? { ok: true as const, json: {}, apps: previous.apps }
+      : await servicePool(backend, new URLSearchParams({ limit: String(WALK_PAGE), sort: "name" }), options.signal);
     if (answer.ok) {
-      const next = typeof answer.json.next_cursor === "string" && CURSOR.test(answer.json.next_cursor) ? `s:${answer.json.next_cursor}` : null;
-      const total = Number(answer.json.total_items);
-      return { items: answer.apps.slice(0, limit), nextCursor: next, total: Number.isSafeInteger(total) ? total : null, source: "service" };
+      servicePages.set(backend.cacheKey, { identity: backend.identity, at: Date.now(), apps: answer.apps });
+      while (servicePages.size > 4) servicePages.delete(servicePages.keys().next().value!);
+      const apps = collapseDuplicates(answer.apps, connectedNow());
+      const next = offset + limit < apps.length ? `s:d${offset + limit}` : null;
+      return { items: apps.slice(offset, offset + limit), nextCursor: next, total: apps.length, source: "service" };
     }
     if (!answer.legacy) logFallback(answer.reason, " while paging");
     if (held) {

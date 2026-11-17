@@ -1,3 +1,4 @@
+import {serviceThreadNoLimits} from './service-no-limits.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -26,6 +27,8 @@ export type DecideEntry = "initial" | "escalation";
 export interface DecideWorld {
   /** The owner's one quiet-hours setting (shared/notification-preferences.ts quietHoursActive). */
   quietHours(now: number): boolean;
+  /** Host predicate for a saved bot level when the originating turn has ended. */
+  noLimits?(intent: CallIntent): boolean;
   /** A voice source for this bot's calls (Flux or a voice provider). */
   voiceReady(botId: string): boolean;
   /** At least one device that can ring: a desktop window, or a phone whose "Rings for calls" is on. */
@@ -84,20 +87,21 @@ export function evaluate(db: DatabaseSync, intent: CallIntent, entry: DecideEntr
   steps.push({ check: "gates", result: "ok" });
   // 3. live: a ring holds the slot, or any session is live (the sweep runs first, 5.7)
   if (callIsLive(db, now)) return text([...steps, { check: "live", result: "on_call" }]);
+  const noLimits=world.noLimits?.(intent)??serviceThreadNoLimits(intent.threadId,intent.botId);
   // 4. cooldown (other intents of this rule)
-  if (count(db, "SELECT COUNT(*) AS n FROM (SELECT 1 FROM bot_calls WHERE rule_id=? AND id<>? AND rang_at > ? LIMIT 1)", intent.ruleId, intent.id, now - CALL_COOLDOWN.rangMs) > 0
+  if (!noLimits && (count(db, "SELECT COUNT(*) AS n FROM (SELECT 1 FROM bot_calls WHERE rule_id=? AND id<>? AND rang_at > ? LIMIT 1)", intent.ruleId, intent.id, now - CALL_COOLDOWN.rangMs) > 0
     || count(db, `SELECT COUNT(*) AS n FROM (SELECT 1 FROM bot_calls WHERE rule_id=? AND id<>? AND created_at > ? AND outcome IN ('declined','text_instead') AND ended_at > ? LIMIT 1)`,
-      intent.ruleId, intent.id, now - CALL_COOLDOWN.declinedMs - 2 * HOUR, now - CALL_COOLDOWN.declinedMs) > 0)
+      intent.ruleId, intent.id, now - CALL_COOLDOWN.declinedMs - 2 * HOUR, now - CALL_COOLDOWN.declinedMs) > 0))
     return text([...steps, { check: "cooldown", result: "cooling" }]);
   // 5. caps by rang_at; timed calls are exempt from the bot and owner caps but still counted
   const timed = rule.kind === "timed";
-  if (!timed) {
+  if (!timed && !noLimits) {
     if (atLeast(db, "bot_id=? AND rang_at > ?", [intent.botId, now - HOUR], CALL_CAPS.botHour)) return text([...steps, { check: "cap", result: "bot_hour", detail: String(CALL_CAPS.botHour) }]);
     if (atLeast(db, "bot_id=? AND rang_at > ?", [intent.botId, now - DAY], CALL_CAPS.botDay)) return text([...steps, { check: "cap", result: "bot_day", detail: String(CALL_CAPS.botDay) }]);
     if (atLeast(db, "rang_at > ?", [now - HOUR], CALL_CAPS.ownerHour)) return text([...steps, { check: "cap", result: "owner_hour", detail: String(CALL_CAPS.ownerHour) }]);
     if (atLeast(db, "rang_at > ?", [now - DAY], CALL_CAPS.ownerDay)) return text([...steps, { check: "cap", result: "owner_day", detail: String(CALL_CAPS.ownerDay) }]);
   }
-  if (rule.tier === "B" && atLeast(db, "rule_id=? AND rang_at > ?", [intent.ruleId, now - DAY], CALL_CAPS.tierBRuleDay)) return text([...steps, { check: "cap", result: "tier_b_day", detail: String(CALL_CAPS.tierBRuleDay) }]);
+  if (!noLimits && rule.tier === "B" && atLeast(db, "rule_id=? AND rang_at > ?", [intent.ruleId, now - DAY], CALL_CAPS.tierBRuleDay)) return text([...steps, { check: "cap", result: "tier_b_day", detail: String(CALL_CAPS.tierBRuleDay) }]);
   steps.push({ check: "caps", result: "ok" });
   // 6. how (initial only): message first goes to waiting; escalation never returns there
   if (entry === "initial" && (rule.how === "text_first" || rule.tier === "B")) {

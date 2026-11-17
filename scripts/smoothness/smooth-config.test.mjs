@@ -1,3 +1,4 @@
+import { ENGINES, prerequisites, probeEngine, realEngineResult } from "./real-engine.mjs";
 import { scrubCore, safeAccounting } from "./scrub-accounting.mjs";
 import { firstSendRecorder, allEldWindows } from "./smooth-config.mjs";
 // Copyright 2026 Ferrox Labs
@@ -1330,7 +1331,7 @@ describe("transcript reading", () => {
 describe("approval levels", () => {
   it("builds the PATCH that the server's full-access contract accepts", () => {
     expect(levelPatch("ask")).toEqual({ autoApprove: false });
-    expect(levelPatch("auto", "linux")).toEqual({ autoApprove: true, fullAccess: false });
+    expect(levelPatch("auto", "linux")).toEqual({ autoApprove: true, fullAccess: false, acknowledgeLocalAuto: true });
     expect(levelPatch("full")).toMatchObject({ fullAccess: true, acknowledgeFullAccess: true });
     expect(levelPatch("unlimited")).toMatchObject({ noLimits: true, acknowledgeNoLimits: true, fullAccess: true, autoApprove: true });
     expect(() => levelPatch("root")).toThrow();
@@ -1385,8 +1386,8 @@ describe("the server tree without /proc (macOS ps, Windows Win32_Process)", () =
     expect(isMainModule(pathToFileURL(p).href, undefined)).toBe(false);
     expect(`file://${p}` === pathToFileURL(p).href).toBe(false); // the old compare failed on a space too
   });
-  it("sends the local Auto warning only where Auto mounts this computer", () => {
-    expect(levelPatch("auto", "linux")).toEqual({ autoApprove: true, fullAccess: false });
+  it("acknowledges local Auto on Linux, macOS and Windows", () => {
+    expect(levelPatch("auto", "linux")).toEqual({ autoApprove: true, fullAccess: false, acknowledgeLocalAuto: true });
     expect(levelPatch("auto", "darwin")).toEqual({ autoApprove: true, fullAccess: false, acknowledgeLocalAuto: true });
     expect(levelPatch("full", "win32")).toMatchObject({ acknowledgeFullAccess: true, acknowledgeLocalAuto: true });
     expect(levelPatch("unlimited", "darwin")).toMatchObject({ acknowledgeNoLimits: true, acknowledgeLocalAuto: true });
@@ -2085,53 +2086,83 @@ describe("rig v3 telemetry: reads high, never low, an unreadable tick is never a
     const budgets = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "budgets.json"), "utf8"));
     const row = id => budgets.rows.find(r => r.id === id);
     const res = verdict => ({ telemetryMode: { mode: "mac-wholebox-cpu+leg-user-rss" }, ...(verdict ? { env: { engineExclusion: { verdict } } } : {}), scenarios: { idle: { ioBudget: 0 } }, all: { ioWrite: { mb: 5, lines: 2, peak: 3 } } });
-    // the four disk-write rows are report-only in 1.0.18 (IO-AMP moved to 1.0.19, Sean 11-08): unknown bytes are shown, never a fail
+    // 1.0.19: unknown OS bytes cannot satisfy a hard disk-write gate.
     for (const id of ["S9.io", "ALL.ioMB", "ALL.io", "ALL.ioPeak"]) {
-      expect(judgeRow(row(id), res("absent")), id).toMatchObject({ pass: true, value: null, osBytesUnknown: true, reportOnly: true, gatesIn: "gates in 1.0.19 (IO-AMP, Sean 11-08)" });
-      expect(judgeRow(row(id), res(undefined)), id).toMatchObject({ pass: true, osBytesUnknown: true, reportOnly: true });
+      expect(judgeRow(row(id), res("absent")), id).toMatchObject({ pass: false, value: null, osBytesUnknown: true });
+      expect(judgeRow(row(id), res(undefined)), id).toMatchObject({ pass: false, osBytesUnknown: true });
       expect(judgeRow(row(id), res("ok")).osBytesUnknown, id).toBeUndefined();
     }
     expect(judgeRow(row("S9.io"), res("ok"))).toMatchObject({ pass: true, value: 0 });
-    expect(judgeRow(row("ALL.ioMB"), { ...res("ok"), all: { ioWrite: { mb: 90 } } })).toMatchObject({ pass: true, reportOnly: true, wouldPass: false, value: 90 });
+    expect(judgeRow(row("ALL.ioMB"), { ...res("ok"), all: { ioWrite: { mb: 90 } } })).toMatchObject({ pass: false, value: 90 });
     expect(judgeRow(row("S9.io"), { ...res("absent"), telemetryMode: { mode: "linux-cgroup" } })).toMatchObject({ pass: true });
     expect(table(judge(budgets, res("absent")), "t").split("\n").filter(x => x.includes("not measured: osBytes unknown")).length).toBeGreaterThan(0);
   });
+  it.each([
+    ["ALL.io", "all.ioWrite.lines", 8],
+    ["ALL.ioPeak", "all.ioWrite.peak", 60],
+    ["ALL.ioMB", "all.ioWrite.mb", 80],
+    ["S9.io", "scenarios.idle.ioBudget", 0],
+  ])("1.0.19 %s is HARD at its unchanged bound on Linux and measured Mac legs", (id, path, limit) => {
+    const budgets = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "budgets.json"), "utf8"));
+    const row = budgets.rows.find(r => r.id === id);
+    expect(row).toMatchObject({ op: "<=", value: limit, path, osBytesSensitive: true });
+    for (const mode of ["linux-cgroup", "mac-wholebox-cpu+leg-user-rss"]) for (const load of [false, true]) {
+      const result = value => {
+        const r = { env: { engineExclusion: { verdict: "ok" } }, telemetryMode: { mode }, load };
+        const keys = path.split("."); let parent = r;
+        for (const key of keys.slice(0, -1)) parent = parent[key] ??= {};
+        parent[keys.at(-1)] = value;
+        return r;
+      };
+      expect(judgeRow(row, result(limit)), `${id} at bound ${mode} load=${load}`).toMatchObject({ pass: true, value: limit });
+      const over = judgeRow(row, result(limit + 1));
+      expect(over, `${id} over bound must fail ${mode} load=${load}`).toMatchObject({ pass: false, value: limit + 1 });
+      expect(row.reportOnly, `${id} cannot be report-only`).toBe(false);
+      expect(row.gatesIn, `${id} must gate this release`).toBeUndefined();
+      const judged = judge({ ...budgets, rows: [row] }, result(limit + 1));
+      expect(judged.pass).toBe(false);
+      expect(table(judged, "t")).toContain("FAIL");
+      const verdict = verdictOf({ tree: "t", idle: judged, loaded: load ? judged : null });
+      expect(verdict.rows[load ? id + "@load" : id]).toMatchObject({ pass: false });
+    }
+  });
+  // Historical test titles remain stable IDs; 1.0.19 now enforces these rows.
   it("ALL.io is report-only in 1.0.18 with the bound kept at 8 and the marker (gates in 1.0.19)", () => {
     const budgets = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "budgets.json"), "utf8"));
     const row = budgets.rows.find(r => r.id === "ALL.io");
-    expect(row).toMatchObject({ op: "<=", value: 8, reportOnly: true, gatesIn: "gates in 1.0.19 (IO-AMP, Sean 11-08)" });
+    expect(row).toMatchObject({ op: "<=", value: 8, reportOnly: false });
     const res = lines => ({ env: { engineExclusion: { verdict: "ok" } }, telemetryMode: { mode: "mac-wholebox-cpu+leg-user-rss" }, all: { ioWrite: { lines } } });
-    expect(judgeRow(row, res(8))).toMatchObject({ pass: true, reportOnly: true, wouldPass: true, gatesIn: "gates in 1.0.19 (IO-AMP, Sean 11-08)" });
-    expect(judgeRow(row, res(9))).toMatchObject({ pass: true, reportOnly: true, wouldPass: false, gatesIn: "gates in 1.0.19 (IO-AMP, Sean 11-08)" });
+    expect(judgeRow(row, res(8))).toMatchObject({ pass: true });
+    expect(judgeRow(row, res(9))).toMatchObject({ pass: false });
   });
   it("ALL.ioPeak is report-only in 1.0.18 with the bound kept at 60 MB/min and the marker (gates in 1.0.19)", () => {
     const budgets = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "budgets.json"), "utf8"));
     const row = budgets.rows.find(r => r.id === "ALL.ioPeak");
-    expect(row).toMatchObject({ op: "<=", value: 60, path: "all.ioWrite.peak", reportOnly: true, gatesIn: "gates in 1.0.19 (IO-AMP, Sean 11-08)" });
+    expect(row).toMatchObject({ op: "<=", value: 60, path: "all.ioWrite.peak", reportOnly: false });
     const res = peak => ({ env: { engineExclusion: { verdict: "ok" } }, telemetryMode: { mode: "mac-wholebox-cpu+leg-user-rss" }, all: { ioWrite: { peak } } });
-    expect(judgeRow(row, res(60))).toMatchObject({ pass: true, reportOnly: true, wouldPass: true, gatesIn: "gates in 1.0.19 (IO-AMP, Sean 11-08)" });
-    expect(judgeRow(row, res(70.9))).toMatchObject({ pass: true, reportOnly: true, wouldPass: false, value: 70.9, gatesIn: "gates in 1.0.19 (IO-AMP, Sean 11-08)" });
+    expect(judgeRow(row, res(60))).toMatchObject({ pass: true });
+    expect(judgeRow(row, res(70.9))).toMatchObject({ pass: false, value: 70.9 });
   });
   it("the report-only io rows carry the 1.0.19 marker in the table and the verdict JSON; every other io row still gates", () => {
     const budgets = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "budgets.json"), "utf8"));
-    expect(budgets.rows.filter(r => r.reportOnly === true && /^(ALL|S9)\.io/.test(r.id)).map(r => r.id).sort()).toEqual(["ALL.io", "ALL.ioMB", "ALL.ioPeak", "S9.io"]);
-    expect(budgets.rows.filter(r => r.gatesIn).map(r => r.id).sort()).toEqual(["ALL.io", "ALL.ioMB", "ALL.ioPeak", "S9.io"]);
-    expect(budgets.rows.filter(r => r.reportOnly === true && !r.macOnly).map(r => r.id).sort()).toEqual(["ALL.io", "ALL.ioMB", "ALL.ioPeak", "S9.io"]);
+    expect(budgets.rows.filter(r => r.reportOnly === true && /^(ALL|S9)\.io/.test(r.id)).map(r => r.id).sort()).toEqual([]);
+    expect(budgets.rows.filter(r => r.gatesIn).map(r => r.id).sort()).toEqual([]);
+    expect(budgets.rows.filter(r => r.reportOnly === true && !r.macOnly).map(r => r.id).sort()).toEqual([]);
     for (const id of ["S9.cpu", "S9.rss", "ALL.eld", "ALL.eld250"]) expect(budgets.rows.find(r => r.id === id).reportOnly, id).toBeUndefined();
     for (const id of ["ALL.io", "ALL.ioMB", "ALL.ioPeak", "S9.io"]) expect(budgets.rows.find(r => r.id === id).value, id).toBe({ "ALL.io": 8, "ALL.ioMB": 80, "ALL.ioPeak": 60, "S9.io": 0 }[id]);
     const res = { env: { engineExclusion: { verdict: "ok" } }, telemetryMode: { mode: "linux-cgroup" }, scenarios: { idle: { ioBudget: 1 } }, all: { ioWrite: { mb: 127, lines: 12, peak: 70 } } };
     const j = judge(budgets, res);
-    expect(table(j, "t").split("\n").filter(x => x.includes("gates in 1.0.19 (IO-AMP, Sean 11-08)")).length).toBe(4);
+    expect(table(j, "t").split("\n").filter(x => x.includes("gates in 1.0.19 (IO-AMP, Sean 11-08)")).length).toBe(0);
     const v = verdictOf({ tree: "t", idle: j, loaded: null });
-    for (const id of ["ALL.io", "ALL.ioMB", "ALL.ioPeak", "S9.io"]) expect(v.rows[id], id).toMatchObject({ pass: true, reportOnly: true, gatesIn: "gates in 1.0.19 (IO-AMP, Sean 11-08)" });
-    // the loaded run carries the same marker: an over-bound loaded value is never an unqualified pass (Astra 905f77eee Medium)
+    for (const id of ["ALL.io", "ALL.ioMB", "ALL.ioPeak", "S9.io"]) expect(v.rows[id], id).toMatchObject({ pass: false });
+    // Loaded and idle runs enforce the same bound.
     const vl = verdictOf({ tree: "t", idle: j, loaded: judge(budgets, { ...res, load: true }) });
-    for (const id of ["ALL.io", "ALL.ioMB", "ALL.ioPeak", "S9.io"]) expect(vl.rows[id + "@load"], id).toMatchObject({ pass: true, reportOnly: true, gatesIn: "gates in 1.0.19 (IO-AMP, Sean 11-08)" });
+    for (const id of ["ALL.io", "ALL.ioMB", "ALL.ioPeak", "S9.io"]) expect(vl.rows[id + "@load"], id).toMatchObject({ pass: false });
     expect(vl.rows["S9.cpu@load"]?.reportOnly).toBeUndefined();
   });
   it("the four gatesIn rows are decided before every other branch: a null or absent value, an invalid scenario or unknown bytes never fail them, idle and loaded, and every gating row still fails", () => {
     const budgets = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "budgets.json"), "utf8"));
-    const four = ["ALL.io", "ALL.ioMB", "ALL.ioPeak", "S9.io"], MARK = "gates in 1.0.19 (IO-AMP, Sean 11-08)";
+    const four = ["ALL.io", "ALL.ioMB", "ALL.ioPeak", "S9.io"];
     const shapes = {
       "ioBudget null (a >3 s idle poll gap) and all.ioWrite absent": { env: { engineExclusion: { verdict: "ok" } }, telemetryMode: { mode: "linux-cgroup" }, scenarios: { idle: { ioBudget: null } }, all: {} },
       "no scenarios and no all": { telemetryMode: { mode: "linux-cgroup" } },
@@ -2140,16 +2171,53 @@ describe("rig v3 telemetry: reads high, never low, an unreadable tick is never a
     };
     for (const [name, res] of Object.entries(shapes)) for (const loaded of [false, true]) {
       const j = judge(budgets, loaded ? { ...res, load: true } : res);
-      for (const id of four) expect(j.rows.find(r => r.id === id), `${name} ${loaded ? "loaded" : "idle"} ${id}`).toMatchObject({ pass: true, reportOnly: true, gatesIn: MARK });
+      for (const id of four) expect(j.rows.find(r => r.id === id), `${name} ${loaded ? "loaded" : "idle"} ${id}`).toMatchObject({ pass: false });
       const v = verdictOf({ tree: "t", idle: judge(budgets, res), loaded: loaded ? j : null });
-      for (const id of four) expect(v.rows[loaded ? id + "@load" : id], `${name} ${id} verdict`).toMatchObject({ pass: true, reportOnly: true, gatesIn: MARK });
+      for (const id of four) expect(v.rows[loaded ? id + "@load" : id], `${name} ${id} verdict`).toMatchObject({ pass: false });
       expect(j.rows.filter(r => !four.includes(r.id) && r.reportOnly !== true).every(r => r.pass === true || r.pass === false)).toBe(true);
     }
     const invalid = judge(budgets, shapes["idle scenario invalid"]);
     expect(invalid.rows.find(r => r.id === "S9.cpu")).toMatchObject({ pass: false, invalid: "poll gap" });
-    expect(invalid.rows.find(r => r.id === "S9.io")).toMatchObject({ pass: true, value: null, invalid: "poll gap", gatesIn: MARK });
+    expect(invalid.rows.find(r => r.id === "S9.io")).toMatchObject({ pass: false, value: null, invalid: "poll gap" });
     expect(invalid.pass).toBe(false);
     expect(judge(budgets, shapes["ioBudget null (a >3 s idle poll gap) and all.ioWrite absent"]).rows.find(r => r.id === "S9.cpu").pass).toBe(false);
+  });
+  it("Windows disk gates require a known write-meter receipt even when all recorded counters are zero", () => {
+    const budgets = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "budgets.json"), "utf8"));
+    const four = ["S9.io", "ALL.io", "ALL.ioMB", "ALL.ioPeak"];
+    for (const load of [false, true]) for (const proof of [undefined, "unknown"]) {
+      const result = { load, telemetryMode: { mode: "win-wholebox-cpu+leg-user-rss" },
+        env: { engineExclusion: { verdict: "ok" }, ...(proof === undefined ? {} : { writeMeter: { verdict: proof } }) },
+        scenarios: { idle: { ioBudget: 0 } }, all: { ioWrite: { lines: 0, mb: 0, peak: 0 } } };
+      const measured = judge(budgets, result);
+      const verdict = verdictOf({ tree: "t", idle: measured, loaded: load ? measured : null });
+      for (const id of four) {
+        expect(measured.rows.find(row => row.id === id), `${id} load=${load} proof=${proof}`).toMatchObject({ pass: false, value: null, osBytesUnknown: true });
+        expect(verdict.rows[load ? `${id}@load` : id]).toMatchObject({ pass: false, osBytesUnknown: true });
+        const known = { ...result, env: { ...result.env, writeMeter: { verdict: "ok" } } };
+        expect(judgeRow(budgets.rows.find(row => row.id === id), known).pass).toBe(true);
+      }
+    }
+  });
+  it("all four hard disk rows fail on missing, invalid or unknown measurements in idle and loaded verdicts", () => {
+    const budgets = JSON.parse(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "budgets.json"), "utf8"));
+    const four = ["ALL.io", "ALL.ioMB", "ALL.ioPeak", "S9.io"];
+    const shapes = {
+      "ioBudget null and all.ioWrite absent": { telemetryMode: { mode: "linux-cgroup" }, scenarios: { idle: { ioBudget: null } }, all: {} },
+      "no scenarios and no all": { telemetryMode: { mode: "linux-cgroup" } },
+      "idle scenario invalid": { telemetryMode: { mode: "linux-cgroup" }, scenarios: { idle: { ioBudget: 0, invalid: "poll gap" } }, all: { ioWrite: { mb: 500, lines: 50, peak: 900 } } },
+      "Mac unknown bytes despite zero counters": { telemetryMode: { mode: "mac-wholebox-cpu+leg-user-rss" }, scenarios: { idle: { ioBudget: 0 } }, all: { ioWrite: { mb: 0, lines: 0, peak: 0 } } },
+    };
+    for (const [name, res] of Object.entries(shapes)) for (const load of [false, true]) {
+      const j = judge(budgets, { ...res, load });
+      for (const id of four) expect(j.rows.find(r => r.id === id), `${name} load=${load} ${id}`).toMatchObject({ pass: false });
+      const v = verdictOf({ tree: "t", idle: judge(budgets, res), loaded: load ? j : null });
+      for (const id of four) expect(v.rows[load ? id + "@load" : id], `${name} ${id} verdict`).toMatchObject({ pass: false });
+    }
+    const invalid = judge(budgets, shapes["idle scenario invalid"]);
+    expect(invalid.rows.find(r => r.id === "S9.cpu")).toMatchObject({ pass: false, invalid: "poll gap" });
+    expect(invalid.rows.find(r => r.id === "S9.io")).toMatchObject({ pass: false, value: null, invalid: "poll gap" });
+    expect(invalid.pass).toBe(false);
   });
   it("the verdict JSON rows carry the busyAtStart and osBytesUnknown markers", () => {
     const v = verdictOf({ tree: "t", idle: { pass: false, rows: [{ id: "A", value: null, pass: false, busyAtStart: true }, { id: "B", value: null, pass: false, osBytesUnknown: true }, { id: "C", value: 1, pass: true }] }, loaded: null });
@@ -2541,5 +2609,173 @@ describe("S9 CPU row per OS (Sean 11-08): macOS judges the Murage tree, the whol
     expect(judgeRow(cpu, { ...lin, scenarios: { idle: { cpu: { p90: 0.1 } } } })).toMatchObject({ pass: true, value: 0.1 });
     expect(judgeRow(tree, lin)).toMatchObject({ pass: true, notApplicable: true });
     expect(judgeRow(cpu, { scenarios: { idle: { cpu: { p90: 0.4 } } } }).pass).toBe(false); // no telemetry mode (Windows shape): judged
+  });
+});
+
+// RIG v5.10: run against the v5.9 setter first; fixture transports are private and in memory.
+describe("rig v5.10 level setup", () => {
+  it.each(["linux", "darwin", "win32"])("acknowledges every elevated local level on %s", platform => {
+    for (const level of ["auto", "full", "unlimited"]) expect(levelPatch(level, platform).acknowledgeLocalAuto).toBe(true);
+  });
+  it.each(["ask", "auto", "full", "unlimited"])("reads the measured conversation after setting %s", async level => {
+    const { levelFixture } = await import("./level-fixture.mjs");
+    const f = levelFixture();
+    const result = await f.set(level);
+    expect(result.status).toBe(200);
+    expect(f.events.at(-1)).toMatchObject({ stage: "readback", path: "/api/bots/fixture-bot/tasks/measured-thread" });
+    expect(f.results.levelChanges.at(-1)).toMatchObject({ threadId: "measured-thread", requested: level, measured: level });
+    const patch = f.events.find(e => e.stage === "patch");
+    if (level !== "ask") expect(patch.body.acknowledgeLocalAuto).toBe(true);
+    if (["full", "unlimited"].includes(level)) {
+      const targetLevel = level === "unlimited" ? "no-limits" : level;
+      expect(f.events.find(e => e.stage === "preview").body).toEqual({ scope: "open", targetLevel });
+      expect(patch.body).toMatchObject({ settingsScope: "defaults", previewId: "preview", ifRev: 4 });
+      expect(f.events.find(e => e.stage === "apply").body).toEqual({ scope: "open", rosterId: "roster", targetLevel, afterRev: 5 });
+    }
+    expect(f.exitCode()).toBe(0);
+  });
+  it.each(["ask", "auto", "full", "unlimited"])("a failed %s PATCH cannot reach readback", async level => {
+    const { levelFixture } = await import("./level-fixture.mjs");
+    const f = levelFixture({ failAt: "patch" });
+    await expect(f.set(level)).rejects.toThrow("patch HTTP 400");
+    expect(f.events.at(-1).stage).toBe("patch");
+    expect(f.results.legFailed).toBe(true);
+  });
+  it.each([199, 300, 400, 409, 500])("aborts on non-2xx %s at every setup stage", async status => {
+    const { levelFixture } = await import("./level-fixture.mjs");
+    for (const failAt of ["preview", "patch", "apply", "readback"]) {
+      const f = levelFixture({ failAt, status });
+      await expect(f.set("unlimited")).rejects.toThrow();
+      expect(f.events.at(-1).stage).toBe(failAt);
+      expect(f.results).toMatchObject({ legFailed: true, levelChangeFailed: true });
+      expect(f.exitCode()).toBe(1);
+      expect(f.writes.at(-1).legFailed).toBe(true);
+    }
+  });
+  it.each([201, 202, 299])("accepts readable 2xx %s responses", async successStatus => {
+    const { levelFixture } = await import("./level-fixture.mjs");
+    const f = levelFixture({ successStatus });
+    await expect(f.set("unlimited")).resolves.toMatchObject({ status: successStatus });
+    expect(f.events.at(-1).stage).toBe("readback");
+  });
+  it("rejects a stale, absent, malformed or wrong measured task even after successful writes", async () => {
+    const { levelFixture } = await import("./level-fixture.mjs");
+    for (const options of [{ readLevel: "ask" }, { readTask: null }, { readTask: {} }, { readTask: { threadId: "other", autoApprove: true, fullAccess: true, noLimits: true } }, { readTask: { threadId: "measured-thread", autoApprove: "yes" } }]) {
+      const f = levelFixture(options);
+      await expect(f.set("unlimited")).rejects.toThrow();
+      expect(f.results.legFailed).toBe(true);
+    }
+    const f = levelFixture({ eligible: false, readLevel: "ask" });
+    await expect(f.set("unlimited")).rejects.toThrow();
+    expect(f.events.some(e => e.stage === "apply")).toBe(false);
+  });
+  it.each(["routineBurst", "trust", "autoEveryday", "askEveryday"])("%s aborts before measurement and prevents later scenarios", async name => {
+    const { levelFixture } = await import("./level-fixture.mjs");
+    for (const failAt of (name.endsWith("Everyday") ? ["patch", "readback"] : ["preview", "patch", "apply", "readback"])) {
+      const f = levelFixture({ failAt });
+      await f.runScenario("fixture", () => f.runLeg(name));
+      let laterRan = false;
+      await f.runScenario("later", async () => { laterRan = true; });
+      expect(f.events.some(e => e.stage === "measure")).toBe(false);
+      expect(f.results).toMatchObject({ legFailed: true, levelChangeFailed: true });
+      expect(f.events.some(e => e.stage === "stop")).toBe(true);
+      expect(laterRan).toBe(false);
+      expect(f.results.scenarios.later.invalid).toBeTruthy();
+    }
+  });
+  it.each(["routineBurst", "trust", "autoEveryday", "askEveryday"])("%s reads the measured thread before its first measurement", async name => {
+    const { levelFixture } = await import("./level-fixture.mjs");
+    const f = levelFixture();
+    await expect(f.runLeg(name)).rejects.toThrow("fixture reached measurement");
+    const read = f.events.findIndex(e => e.stage === "readback");
+    expect(read).toBeGreaterThanOrEqual(0);
+    expect(read).toBeLessThan(f.events.findIndex(e => e.stage === "measure"));
+    expect(f.events[read].path).toBe("/api/bots/fixture-bot/tasks/measured-thread");
+    expect(f.results.legFailed).not.toBe(true);
+  });
+});
+
+describe("nightly real-engine evidence", () => {
+  it("reports every absent binary and auth prerequisite without running a login", () => {
+    for (const engine of ENGINES) expect(prerequisites(engine, { HOME: '/isolated', PATH: '/bin' }, { exists: () => false, executable: () => false })).toHaveLength(2);
+    expect(prerequisites('gemini', { GEMINI_API_KEY: 'present', PATH: '/bin' }, { exists: () => false, executable: () => true })).toEqual([]);
+    expect(prerequisites('codex', { OPENAI_API_KEY: 'present', PATH: '/bin' }, { exists: () => false, executable: () => true })).toHaveLength(1);
+  });
+  it("the real CLI emits durable NOT-RUN and exits nonzero on a bare runner", () => {
+    const home = mkdtempSync(join(tmpdir(), "smooth-preflight-"));
+    for (const engine of ENGINES) {
+      const child = spawnSync(process.execPath, [new URL('./real-engine.mjs', import.meta.url).pathname, engine, '--preflight'], {
+        encoding: 'utf8', env: { PATH: '', HOME: home, SMOOTH_OUT: home, GITHUB_SHA: 'a'.repeat(40) },
+      });
+      expect(child.status).toBe(1);
+      expect(child.stdout).toContain(`REAL-ENGINE: NOT RUN (${engine}:`);
+      const verdict = JSON.parse(readFileSync(join(home, `real-engine-${engine}.json`), 'utf8'));
+      expect(verdict.status).toBe('NOT-RUN');
+      expect(verdict.missing).toHaveLength(2);
+    }
+  });
+  const fixture = (over = {}) => {
+    let finish, turns = 0;
+    const seen = [];
+    const adapter = {
+      makeBot: async () => ({ id: 'fixture', threadId: 'owned' }),
+      setLevel: async () => ({ status: 200 }),
+      turn: async () => ++turns === 1 ? new Promise(resolve => { finish = resolve; }) : { outcome: 'turn.completed' },
+      openCards: async () => [{ card: { requestHandle: 'p.approval', tool: 'shell' } }],
+      respond: async (_bot, answer) => {
+        expect(answer).toEqual({ threadId: 'owned', requestHandle: 'p.approval', action: 'allow' });
+        seen.push('card'); return { status: 200 };
+      },
+      send: async () => { seen.push('steer'); return { status: 202, json: { steered: true } }; },
+      busy: async () => true,
+      stop: async () => { seen.push('stop'); finish({ outcome: 'turn.completed', stopReason: 'cancelled' }); return { settled: true, ms: 30 }; },
+      messages: async () => [{ role: 'user', text: 'After the command, include STEER_ACK in your reply.', steered: true }, { role: 'bot', text: 'RECOVERED' }],
+      wait: async check => ({ ok: Boolean(await check()) }),
+      ...over,
+    };
+    return { adapter, seen };
+  };
+  it("requires a real response after the observed card, steer and Stop", async () => {
+    const { adapter, seen } = fixture();
+    expect(await probeEngine(adapter)).toEqual({ cards: 1, steers: 1, stopped: 1, stopMs: 30, completed: 1 });
+    expect(seen).toEqual(['card', 'steer', 'stop']);
+  });
+  it("refuses an absent card, rejected answer, queued steer, missing transcript and failed Stop", async () => {
+    for (const over of [
+      { openCards: async () => [] }, { respond: async () => ({ status: 403 }) },
+      { send: async () => ({ status: 202, json: { queued: true } }) },
+      { messages: async () => [] }, { stop: async () => ({ settled: false }) },
+      { busy: async () => false },
+    ]) await expect(probeEngine(fixture(over).adapter)).rejects.toThrow();
+  });
+  it("does not count normal completion as Stop or accept a missing recovery reply", async () => {
+    const f = fixture();
+    const stop = f.adapter.stop;
+    f.adapter.stop = async bot => { const result = await stop(bot); return result; };
+    const turn = f.adapter.turn;
+    let calls = 0;
+    f.adapter.turn = async (...args) => {
+      const result = await turn(...args);
+      if (++calls === 1) return { ...result, stopReason: null };
+      return result;
+    };
+    await expect(probeEngine(f.adapter)).rejects.toThrow('Stop outcome');
+    const g = fixture();
+    g.adapter.messages = async () => [{ role: 'user', text: 'After the command, include STEER_ACK in your reply.', steered: true }];
+    await expect(probeEngine(g.adapter)).rejects.toThrow('reply');
+  });
+  it("a missing, fake, source, wrong-SHA, incomplete, slow, or NOT-RUN leg cannot pass", () => {
+    const sha = 'a'.repeat(40), engine = 'fuigo';
+    const budgets = JSON.parse(readFileSync(new URL('./budgets.json', import.meta.url), 'utf8'));
+    const result = { engines: 'real', mode: 'packaged', tree: sha, rigVersion: '5.10', phase: 'finished', preflight: { ok: true },
+      all: { serverExits: 0 }, scenarios: { boot: { healthy: { p90: 100 } }, realEngine: { engine, cards: 1, steers: 1, stopped: 1, stopMs: 50, completed: 1 } } };
+    const check = r => realEngineResult(r, budgets, { sha, engine }).status;
+    expect(check(result)).toBe('PASS');
+    for (const patch of [{ engines: 'fake' }, { mode: 'source' }, { tree: 'b'.repeat(40) }, { preflight: {} }, { phase: 'cleanup' },
+      { scenarios: {} }, { legFailed: true }]) expect(check({ ...result, ...patch })).toBe('FAIL');
+    for (const patch of [{ cards: 0 }, { steers: 0 }, { stopped: 0 }, { stopMs: 10001 }, { completed: 0 }, { engine: 'claude' }]) {
+      expect(check({ ...result, scenarios: { ...result.scenarios, realEngine: { ...result.scenarios.realEngine, ...patch } } })).toBe('FAIL');
+    }
+    expect(check({ ...result, scenarios: { ...result.scenarios, realEngine: { engine, status: 'NOT-RUN' } } })).toBe('NOT-RUN');
   });
 });

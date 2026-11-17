@@ -16,7 +16,6 @@ describe("attempt boundary (A1, U-17)", () => {
     expect(isPreAcceptFailure(unsent)).toBe(true);
 
     const refused = createAttemptBoundary();
-    refused.markInFlight();
     refused.markRefused();
     expect(refused.submission).toBe("refused");
     expect(isPreAcceptFailure(refused)).toBe(true);
@@ -196,4 +195,14 @@ describe("computeBackoff", () => {
       expect(high).toBeLessThanOrEqual(base * 1.25 + 1);
     }
   });
+});
+
+// R1: once the actual writer was entered, failure is unknown acceptance.
+it("does not refund a possibly written attempt when the writer throws", () => {
+  const boundary = createAttemptBoundary();
+  const native = new Error("possibly written");
+  const write = () => { boundary.markInFlight(); throw native; };
+  try { write(); } catch (error) { expect(error).toBe(native); boundary.markRefused(); }
+  expect(boundary.submission).toBe("in-flight");
+  expect(isPreAcceptFailure(boundary)).toBe(false);
 });

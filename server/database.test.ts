@@ -12,9 +12,11 @@ import { ioBudget } from "./io-budget.ts";
 import { resetObserveWindows, setObserveSink } from "./observe.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
+const admissionRead=Reflect.get(ioBudget,"read") as ()=>{at:number;fsWriteBlocks:number;cpuMicros:number};
+// Lock waits are exercised in an active minute; the final-five-second refusal has its own admission fixture.
 let lines: string[], other: DatabaseSync | null = null;
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); lines = []; resetObserveWindows(); setObserveSink(line => lines.push(line)); });
-afterEach(() => { holdWritersForIndexBuild(false); try { other?.exec("ROLLBACK"); } catch { /* none open */ } try { other?.close(); } catch { /* closed */ } other = null; closeDatabase(); setObserveSink(); });
+beforeEach(() => { Reflect.set(ioBudget,"read",()=>({...admissionRead(),at:0}));ioBudget.resetAdmissionForFixture();closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); lines = []; resetObserveWindows(); setObserveSink(line => lines.push(line)); });
+afterEach(() => { holdWritersForIndexBuild(false); try { other?.exec("ROLLBACK"); } catch { /* none open */ } try { other?.close(); } catch { /* closed */ } other = null; closeDatabase(); setObserveSink();Reflect.set(ioBudget,"read",admissionRead);ioBudget.resetAdmissionForFixture(); });
 const holdWriteLock = () => { other = new DatabaseSync(join(DATA_DIR, "messages.db")); other.exec("PRAGMA busy_timeout=0; BEGIN IMMEDIATE"); };
 const timed = (run: () => unknown): { ms: number; error: unknown } => {
   const started = performance.now();

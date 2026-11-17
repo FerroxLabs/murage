@@ -149,11 +149,11 @@ entries:
       - Use Grok Imagine for image generation
       - Generate pictures with my xAI key
     answer: >
-      Yes. With an xAI key added under Models & engines, open Settings, then Tools, then Image
+      Yes. With an xAI key added under Models & engines, open Settings, then Search, images and dictation, then Image
       generation, pick the xAI connection and choose Grok Imagine Image 2.0. A bot can then make and
       edit images with it.
     limits: Choose the Grok Imagine model yourself, because xAI has no default image model.
-    settings_path: Settings → Tools → Image generation
+    settings_path: Settings → Search, images and dictation → Image generation
     platforms: [mac, windows, linux]
     engines: [all]
     anchors:
@@ -198,7 +198,7 @@ entries:
       Codex default takes precedence. Saved choices, including Claude Sonnet 5 and GPT-5.6 Sol,
       stay as they are. The picker marks the current catalog recommendation.
     limits: >
-      Desktop Murage bundles Fuigo; install or update Claude Code and Codex separately.
+      Desktop Murage bundles Fuigo 1.0.43; install or update Claude Code and Codex separately.
       Cloud home includes Claude Code and Codex.
       Describe your model from the turn’s engine
       facts, not these recommendations.

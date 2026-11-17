@@ -89,7 +89,7 @@ posixOnly("deny by default on a running server", () => {
   });
 
   it("a bot's shell gets the sentence for /api/decisions; the same curl without its credential learns nothing", () => {
-    const shell = (script: string) => spawnSync("sh", ["-c", script], { encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin", MURAGE_HARNESS_URL: fixture.info.url, MURAGE_COMMS_TOKEN: botToken } });
+    const shell = (script: string) => spawnSync("sh", ["-c", script], { windowsHide: true, encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin", MURAGE_HARNESS_URL: fixture.info.url, MURAGE_COMMS_TOKEN: botToken } });
     const withToken = shell('curl -s -w "\\n%{http_code}" -H "Authorization: Bearer $MURAGE_COMMS_TOKEN" "$MURAGE_HARNESS_URL/api/decisions"');
     expect(withToken.status, withToken.stderr).toBe(0);
     const [body, code] = withToken.stdout.trim().split("\n");
@@ -318,7 +318,7 @@ posixOnly("deny by default on a running server", () => {
       expect(await call("GET", path, { ...bare, authorization: `Bearer ${botToken}` }), `${path} bot`).toMatchObject({ status: 404, body: { error: "no such route" } });
     }
     // a bot's shell with no credential, as curl
-    const shell = spawnSync("sh", ["-c", 'curl -s -w "\\n%{http_code}" "$MURAGE_HARNESS_URL/api/bots"'], { encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin", MURAGE_HARNESS_URL: fixture.info.url } });
+    const shell = spawnSync("sh", ["-c", 'curl -s -w "\\n%{http_code}" "$MURAGE_HARNESS_URL/api/bots"'], { windowsHide: true, encoding: "utf8", env: { PATH: process.env.PATH ?? "/usr/bin:/bin", MURAGE_HARNESS_URL: fixture.info.url } });
     expect(shell.stdout.trim().split("\n").pop()).toBe("404");
     // the door header is not owner proof: it still cannot reach a companion-class route
     expect((await call("GET", "/api/inbox", { ...bare, ...door })).status).toBe(404);
@@ -337,6 +337,26 @@ posixOnly("deny by default on a running server", () => {
     expect(await call("GET", "/api/decisions", phone)).toEqual({ status: 403, body: { error: DESKTOP_ONLY_SENTENCE } });
     // The desktop itself is never refused.
     expect((await call("GET", "/api/decisions", desktop)).status).toBe(200);
+  });
+
+  it("serves only learning usage to the proved phone and refuses other callers and writes", async () => {
+    const path = "/api/memory/learning-usage";
+    const phone = { ...bare, "x-murage-companion": "1", "x-murage-companion-token": COMPANION_TOKEN };
+    const full = await call("GET", "/api/memory/status", desktop);
+    expect(full.status).toBe(200);
+    const { learning } = full.body as { learning: { ceiling: unknown; connection: { label: string; source: string } } };
+    expect(await call("GET", path, phone)).toEqual({ status: 200, body: { learning: {
+      ceiling: learning.ceiling, connection: { label: learning.connection.label, source: learning.connection.source },
+    } } });
+    expect((await call("GET", path, desktop)).status).toBe(200);
+    for (const headers of [bare, { ...bare, ...door }, { ...bare, "x-murage-companion": "1" }]) {
+      expect((await call("GET", path, headers)).status).toBe(404);
+    }
+    expect((await call("GET", path, { ...bare, authorization: `Bearer ${botToken}` })).status).toBe(403);
+    expect((await call("GET", "/api/memory/status", phone)).status).toBe(403);
+    expect((await call("POST", "/api/memory/action", phone)).status).toBe(403);
+    expect((await call("POST", path, phone)).status).toBe(403);
+    expect((await call("POST", path, desktop)).status).toBe(404);
   });
 
   // 1.0.3 R1.10 (L7): the Storage attachment list answers the desktop only.

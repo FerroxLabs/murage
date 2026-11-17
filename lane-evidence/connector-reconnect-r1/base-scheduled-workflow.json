@@ -1,0 +1,10 @@
+[
+  {
+    "fixture": {
+      "url": "http://127.0.0.1:20541",
+      "pid": 53,
+      "dataDir": "/tmp/murage-verify-data-82YTXR",
+      "logPath": "/tmp/murage-verification-evidence/server-1794367909041-44.log"
+    }
+  }
+]

@@ -48,6 +48,8 @@ name = "MiniMax M3 4bit (oMLX)"
         { id: "grok-4.7", label: "Grok 4.7", contextWindow: 500_000 },
         { id: "grok-4.6", label: "Grok 4.6" },
         { id: "grok-4.5", label: "Grok 4.5" },
+        // MAIN RULING 1114-MODELS-FRESH: published Grok Build model.
+        { id: "grok-build-0.1", label: "Grok Build 0.1", contextWindow: 256_000 },
         { id: "ollama-ornith-35b-bf16", label: "ornith:35b-bf16 (Ollama)", custom: true },
         { id: "omlx-minimax-m3", label: "MiniMax M3 4bit (oMLX)", custom: true },
       ],
@@ -66,8 +68,10 @@ name = "nope"
 name = "OK"
 `);
     const catalog = readGrokModelCatalog({ HOME: home });
-    expect(catalog.default).toBe("grok-4.6");
-    expect(catalog.options.map((o) => o.id)).toEqual(["grok-4.7", "grok-4.6", "grok-4.5", "ok-model"]);
+    // MAIN RULING 1114-MODELS-FRESH: xAI recommends Grok 4.7 for code.
+    expect(catalog.default).toBe("grok-4.7");
+    // MAIN RULING 1114-MODELS-FRESH: published Grok Build model joins fallback.
+    expect(catalog.options.map((o) => o.id)).toEqual(["grok-4.7", "grok-4.6", "grok-4.5", "grok-build-0.1", "ok-model"]);
   });
 
   it("honors GROK_HOME over HOME", () => {
@@ -90,7 +94,8 @@ default = "grok-4.5"
 [model.ok-model]
 name = "OK"
 `);
-    expect(readGrokModelCatalog({ HOME: home }).default).toBe("grok-4.6");
+    // MAIN RULING 1114-MODELS-FRESH: xAI recommends Grok 4.7 for code.
+    expect(readGrokModelCatalog({ HOME: home }).default).toBe("grok-4.7");
   });
 });
 

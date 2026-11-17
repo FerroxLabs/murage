@@ -1,3 +1,4 @@
+import { Worker } from "node:worker_threads";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { spawn } from "node:child_process";
@@ -428,7 +429,7 @@ describe("ConversationDeletions", () => {
       const db = new DatabaseSync(${JSON.stringify(index)});
       db.exec("BEGIN IMMEDIATE"); console.log("locked");
       Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 800);
-      db.exec("COMMIT"); db.close();`], { stdio: ["ignore", "pipe", "inherit"] });
+      db.exec("COMMIT"); db.close();`], { windowsHide: true, stdio: ["ignore", "pipe", "inherit"] });
     await new Promise<void>((resolve) => writer.stdout!.once("data", () => resolve()));
     const started = Date.now();
     expect(scrubSearch(index, ["gone-1"], []).changed).toBe(true);
@@ -594,7 +595,7 @@ describe("engine history off the main thread", () => {
     touch(join(claudeHome, "projects", desk.replace(/[^a-zA-Z0-9]/g, "-"), "s1.jsonl"), `${JSON.stringify({ type: "user", cwd: desk })}\n`);
     const silent = join(dir, "silent-worker.mjs");
     writeFileSync(silent, 'import { parentPort } from "node:worker_threads"; parentPort.once("message", () => { setInterval(() => {}, 1000); });\n');
-    engineHistoryTestHooks.workerPath = silent;
+    engineHistoryTestHooks.createWorker = () => new Worker(silent);
     engineHistoryTestHooks.onWorker = (worker) => { setTimeout(() => { void worker.terminate(); }, 100); };
     const deletions = new ConversationDeletions({ dataDir: data, database: () => db });
     const { report } = await runConversationDeletion(deletions, { threadIds: [THREAD], engineHomes: [{ engine: "claude", home: claudeHome }] }, () => true);
@@ -612,7 +613,7 @@ describe("engine history off the main thread", () => {
     const claudeHome = fresh("claude"), desk = join(fresh("data"), "workspaces", BOT, "threads", THREAD);
     const project = join(claudeHome, "projects", desk.replace(/[^a-zA-Z0-9]/g, "-"));
     touch(join(project, "s1.jsonl"), `${JSON.stringify({ type: "user", cwd: desk })}\n`);
-    const result = await runEngineHistoryOffThread({ homes: [{ engine: "claude", home: claudeHome }], folders: [desk], memoryFolders: [], sessions: {} }, { workerPath: join(fresh("nowhere"), "missing-worker.mjs"), createWorker: () => { throw new Error("no thread"); } });
+    const result = await runEngineHistoryOffThread({ homes: [{ engine: "claude", home: claudeHome }], folders: [desk], memoryFolders: [], sessions: {} }, { createWorker: () => { throw new Error("no thread"); } });
     expect(result.failed).toEqual([claudeHome]);
     expect(result.homeReasons).toEqual({ [`claude\0${claudeHome}`]: "worker-unavailable" });
     expect(existsSync(project)).toBe(true);

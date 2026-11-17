@@ -1,7 +1,9 @@
-import { useId, useState } from "react";
+import { useId, useState, type ReactNode } from "react";
+import { EngineSignInAgain, signInAgainCopy, signInAgainEnv, signInAgainPlan } from "@/components/cloud/EngineSignInAgain";
 import { AlertTriangle, ArrowUpRight, RefreshCw, Settings2 } from "lucide-react";
-import { PROVIDER_SAID_MAX, providerErrorPresentation, providerSaidNote, XAI_BILLING_PAGE, type ProviderErrorInfo } from "../../shared/provider-error";
+import { cloudEngineAccountCopy, cloudEngineSignInCopy, FLUX_NOT_READY_COPY, PROVIDER_SAID_MAX, providerErrorPresentation, providerSaidNote, XAI_BILLING_PAGE, type ProviderErrorInfo } from "../../shared/provider-error";
 import { serviceIdentity, type ServiceIdentity } from "../../shared/provider-service";
+import { isCloudHome } from "@/lib/cloud-workspace";
 import { t } from "@/lib/i18n";
 import { namedProviderVariant, providerErrorCategory, providerErrorTitle, type ProviderErrorCategory } from "@/lib/error-preview";
 import { DiagnosticDetails,type IncidentMessageSelection } from "./DiagnosticDetails";
@@ -33,10 +35,31 @@ export function providerErrorLead(info: ProviderErrorInfo, service: ServiceIdent
   return { kind: "settings" };
 }
 
+/** A Cloud home, a Flux turn refused with a 402, 401 or 403 (or one of the home's own Flux lines, passed as `copy`): that line and nothing else. No provider settings, no key or
+ * billing advice, no status number, no technical details (the server's own details name the status and the engine). */
+export const FLUX_REFUSAL_STATUSES: readonly number[] = [401, 402, 403];
+export function FluxNotReadyCard({ onRetry, retryLabel, copy = FLUX_NOT_READY_COPY, extra }: { onRetry?: () => void; retryLabel?: string; copy?: string; /** The sign-in again button, for the customer's own engine. */ extra?: ReactNode }) {
+  const focus = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus";
+  return <div className="flex justify-start">
+    <section role="alert" data-flux-not-ready className="w-full max-w-[42rem] rounded-xl border border-danger/30 bg-card p-4 text-ink shadow-sm sm:p-5">
+      <p className="text-[14px] leading-relaxed">{copy}</p>
+      {extra}
+      {onRetry && <div className="mt-3"><button type="button" onClick={onRetry}
+        className={"inline-flex min-h-11 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-[13px] font-medium text-ink-secondary hover:bg-raised hover:text-ink " + focus}>
+        <RefreshCw size={14} aria-hidden="true" /> {retryLabel ?? t("providerError.retry")}
+      </button></div>}
+    </section>
+  </div>;
+}
+
 /** Structured provider errors use reviewed copy, never backend HTML/JSON or
  * a URL supplied in an error message. Retry remains an explicit user action. */
-export function ProviderErrorCard({ info, details, diagnostic, turnId, incident, onRetry, retryLabel, onOpenProviderSettings, fuigoWall, botName }: {
+export function ProviderErrorCard({ info, details, diagnostic, turnId, incident, onRetry, retryLabel, onOpenProviderSettings, fuigoWall, botName, engineName, signInAgain }: {
   info: ProviderErrorInfo;
+  /** The engine this bot runs on, for the Cloud sign-in line. */
+  engineName?: string;
+  /** Cloud: the bot and engine kind, so a 401 or 403 from the customer's own engine carries a sign-in button. */
+  signInAgain?: { bot: { id: string; name: string }; engine: string };
   details?: string;
   diagnostic?: unknown; turnId?: string; incident?:IncidentMessageSelection;
   onRetry?: () => void;
@@ -47,8 +70,19 @@ export function ProviderErrorCard({ info, details, diagnostic, turnId, incident,
   botName?: string;
 }) {
   const titleId = useId();
+  // Hooks first, so the Cloud early return below never skips one (rules of hooks).
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState("");
+  if (isCloudHome() && FLUX_REFUSAL_STATUSES.includes(info.httpStatus)) {
+    // The Flux line only when the failing turn went through Flux; the customer's own engine sign-in gets a line naming that engine.
+    if (info.provider === "flux-router") return <FluxNotReadyCard onRetry={onRetry} retryLabel={retryLabel} />;
+    const own = info.httpStatus !== 402;
+    const label = engineName?.trim() || "engine";
+    const button = own && signInAgain ? <EngineSignInAgain bot={signInAgain.bot} engine={signInAgain.engine} label={label} /> : undefined;
+    // A line that says "sign in again" only where the page has a button for it; else the plain place to go, or just the news.
+    const ownCopy = signInAgain ? signInAgainCopy(signInAgainPlan(signInAgain.engine, signInAgainEnv()), label, cloudEngineSignInCopy(engineName)) : cloudEngineSignInCopy(engineName);
+    return <FluxNotReadyCard onRetry={onRetry} retryLabel={retryLabel} copy={own ? ownCopy : cloudEngineAccountCopy(engineName)} extra={button} />;
+  }
   const service = serviceIdentity(info);
   const variant = service ? namedProviderVariant(info, service) : undefined;
   // The same category and heading the sidebar preview uses (lib/error-preview.ts).

@@ -102,7 +102,8 @@ api.runtime.onMessage.addListener((message, sender, respond) => {
   }).then(result => respond({ result }), error => respond({ error: error.code ?? 'extension_error' }));
   return true;
 });
-for (const event of [api.webNavigation.onCommitted, api.webNavigation.onHistoryStateUpdated, api.webNavigation.onReferenceFragmentUpdated]) event.addListener(details => { void ready.then(() => runtime.navigation(details)); });
+api.webNavigation.onCommitted.addListener(details => { void ready.then(() => runtime.navigation(details)); });
+for (const event of [api.webNavigation.onHistoryStateUpdated, api.webNavigation.onReferenceFragmentUpdated]) event.addListener(details => { void ready.then(() => runtime.navigation(details, true)); });
 api.downloads.onCreated.addListener(item => { void ready.then(() => runtime.downloadCreated(item)); });
 // A download Murage could not remove while it was still being written is removed once it finishes.
 api.downloads.onChanged?.addListener(delta => { void ready.then(() => runtime.downloadChanged(delta)); });

@@ -1,3 +1,4 @@
+import { withHideInherit } from "../shared/win-hide-child-process.mjs";
 // `tailscale serve`, as the desktop app drives it.
 //
 // The browser door works without any of this: bound to the tailnet address it
@@ -70,14 +71,14 @@ const runTailscale = (cli, args, timeoutMs) =>
   new Promise((resolve) => {
     execFile(
       cli,
-      args,
-      {
+      [...args],
+      withHideInherit({
         timeout: Math.max(250, timeoutMs),
         // SIGTERM is a request; the budget is only worth what enforces it.
         killSignal: "SIGKILL",
         maxBuffer: 16 * 1024 * 1024,
         env: { ...process.env, PATH: searchPath() },
-      },
+      }),
       (error, stdout, stderr) => {
         resolve({
           ok: !error,

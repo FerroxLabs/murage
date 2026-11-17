@@ -1,13 +1,17 @@
+import { ChatMcpDescendants } from "../chat-mcp-client.ts";
+import * as relayApi from "../cli-mount-relay.ts";
 import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createAcpDriver } from "./core.ts";
 import { fuigoMemoryAllowOnce, newFuigoMemoryAlias } from "./fuigo-memory-permission.ts";
-import { recordEvents } from "../../testing/events.ts";
+import { recordAdmittedEvents } from "../../testing/admitted-events.ts";
+import { acpMountConfiguration } from "../../testing/acp-mount-configuration.ts";
+import { SPAWNED_PROXIES } from "../../proxy-paths.ts";
 import { NATIVE_DIR } from "../../config.ts";
 import type { ProviderInstance, SendTurnInput } from "../../contracts.ts";
 import { removeTempDirSync } from "../../testing/cleanup.ts";
@@ -57,12 +61,12 @@ async function fixture(scenario: string, tool = "memory_search", wrapped = false
 `;
     cli=join(root,"wrapped-memory-peer.mjs");writeFileSync(cli,source.replace(anchor,envelope+anchor));
   }
-  const driver = createAcpDriver({ driverKind: scenario === "other-engine" ? "other-fixture" : "fuigoAgent", displayName: "Memory wire fixture", defaultCli: process.execPath,
+  const driver = createAcpDriver({ driverKind: scenario === "other-engine" ? "other-fixture" : "fuigoAgent", fluxReach: () => "elsewhere" as const, displayName: "Memory wire fixture", defaultCli: process.execPath,
     nativeSource: "fuigo.acp", models: { default: "fixture", options: [{ id: "fixture", label: "Fixture" }] }, loginNote: "unused", isAuthenticated: () => true, pickAuthMethod: () => null, authFailure: "continue",
-    spawnArgs: () => [cli, scenario, dump, tool], transformEnv: env => { env.HOME = home; env.USERPROFILE = home; env.FUIGO_HOME = home; } });
+    spawnArgs: () => [cli, scenario, dump, tool, new URL("../../testing/fake-mcp-client.mjs", import.meta.url).href], transformEnv: env => { env.HOME = home; env.USERPROFILE = home; env.FUIGO_HOME = home; } });
   const instance = await driver.create({ instanceId: "memory-wire", displayName: "Memory wire", environment: {}, enabled: true, config: { cli: process.execPath, fullAuto: false } }); instances.push(instance);
-  const recorder = recordEvents(instance.adapter), threadId = `memory-${basename(root)}`;
-  const memory = { command: process.execPath, args: ["unused-fixture-proxy"], env: { MURAGE_MEMORY_TOKEN: "synthetic-memory-capability" } };
+  const recorder = recordAdmittedEvents(instance.adapter), threadId = `memory-${basename(root)}`;
+  const memory = { command: process.execPath, args: [fileURLToPath(new URL("../../testing/fake-idle-mcp.mjs", import.meta.url))], env: { MURAGE_MEMORY_TOKEN: "synthetic-memory-capability" } };
   const turn: SendTurnInput = { threadId, text: "Use scoped memory", cwd: root, ...(scenario === "no-integration" ? {} : { integrations: { memory } }),
     ...scenario.startsWith("load") ? { resumeCursor: "old-session" } : {},
     ...scenario === "routed" ? { providerRoute: { connectionId: "fixture", preset: "openai", protocol: "openai", baseUrl: "http://127.0.0.1:49999/v1", apiKey: "synthetic-unused-key", model: "fixture", revision: "1" } as const } : {} };
@@ -75,7 +79,10 @@ it.each(names)(`${wrapped?"wrapped ":""}native Fuigo allows only this injected m
   await f.recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
   const observed = JSON.parse(readFileSync(f.dump, "utf8"))[0];
   expect(observed.alias).toMatch(/^murage-memory-[a-f0-9]{20}$/);
-  expect(observed.definitions[0].servers[0]).toEqual({ name: observed.alias, command: f.memory.command, args: f.memory.args, env: [{ name: "MURAGE_MEMORY_TOKEN", value: "synthetic-memory-capability" }] });
+  // MAIN RULING INT-CONFLICT-DEFAULT 8f8f4e945fb eb01447e7d: retain the exact producer configuration; native engines receive only the server-owned relay shim.
+  expect(acpMountConfiguration(f.turn, observed.alias)[0]).toEqual({ name: observed.alias, command: f.memory.command, args: f.memory.args, env: [{ name: "MURAGE_MEMORY_TOKEN", value: "synthetic-memory-capability" }] });
+  expect(observed.definitions[0].servers[0]).toMatchObject({ name: observed.alias, command: process.execPath, args: [SPAWNED_PROXIES.cliMountShim, "--server", observed.alias] });
+  expect(JSON.stringify(observed.definitions)).not.toContain("synthetic-memory-capability");
   expect(observed.decisions).toEqual([{ outcome: { outcome: "selected", optionId: "once" } }]);
   expect(f.recorder.events.some(event => event.type === "request.opened")).toBe(false);
   expect(readFileSync(join(f.home, "config.toml"), "utf8")).toBe("# unchanged native settings\n");
@@ -103,9 +110,32 @@ it(`${wrapped?"wrapped ":""}refuses a permission request for another session wit
 });
 
 it(`${wrapped?"wrapped ":""}a resumed turn gets a fresh alias and cannot reuse the preceding turn's automatic permission`, async () => {
-  const f = await fixture("two-turns", "memory_search", wrapped), first = await f.instance.adapter.sendTurn(f.turn);
-  await f.recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId);
-  const second = await f.instance.adapter.sendTurn({ cwd: fixtureBotFolder(), ...f.turn, resumeCursor: "memory-fixture-session" });
+  const f = await fixture("two-turns", "memory_search", wrapped);
+  let confirm!: (value: true) => void;
+  const confirmation = new Promise<true>(resolve => { confirm = resolve; });
+  let entered!: () => void;
+  const stopping = new Promise<void>(resolve => { entered = resolve; });
+  const actualStop = ChatMcpDescendants.prototype.stop;
+  const stop = vi.spyOn(ChatMcpDescendants.prototype, "stop").mockImplementation(async function (this: ChatMcpDescendants) {
+    const result = await actualStop.call(this);
+    entered(); await confirmation;
+    return result;
+  });
+  const wait = vi.spyOn(relayApi, "relayHoldReleased");
+  let next: ReturnType<typeof f.instance.adapter.sendTurn>;
+  try {
+    const first = await f.instance.adapter.sendTurn(f.turn);
+    await f.recorder.until(event => event.type === "turn.completed" && event.turnId === first.turnId);
+    await stopping;
+    expect(() => relayApi.assertRelayAvailable(f.turn)).toThrow("MOUNT_RELAY_STOP_UNCONFIRMED");
+    const priorWaits = wait.mock.calls.length;
+    next = f.instance.adapter.sendTurn({ cwd: fixtureBotFolder(), ...f.turn, resumeCursor: "memory-fixture-session" });
+    void next.catch(() => {});
+    await expect.poll(() => wait.mock.calls.length).toBeGreaterThan(priorWaits);
+    expect(JSON.parse(readFileSync(f.dump, "utf8"))).toHaveLength(1);
+    expect(f.recorder.events.filter(event => event.type === "turn.started")).toHaveLength(1);
+  } finally { stop.mockRestore(); wait.mockRestore(); confirm(true); }
+  const second = await next!;
   const opened = await f.recorder.until(event => event.type === "request.opened" && event.turnId === second.turnId);
   if (opened.type !== "request.opened" || typeof opened.requestId !== "string") throw Error("missing request");
   await f.instance.adapter.respondToRequest(f.threadId, opened.requestId, { behavior: "deny" });
@@ -125,15 +155,28 @@ it(`${wrapped?"wrapped ":""}uses the same fresh alias through session/load then 
 });
 
 it.each(["after-result", "after-cancel"])(`${wrapped?"wrapped ":""}never automatically grants a request %s`, async scenario => {
-  const f = await fixture(scenario, "memory_search", wrapped), sent = await f.instance.adapter.sendTurn(f.turn);
-  if (scenario === "after-cancel") { await f.recorder.until(event => event.type === "content.delta"); await f.instance.adapter.interruptTurn(f.threadId, sent.turnId); }
-  await f.recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
-  await f.instance.dispose();
-  const wire = readFileSync(join(NATIVE_DIR, `${f.threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+  const f = await fixture(scenario, "memory_search", wrapped);
+  const readWire = () => readFileSync(join(NATIVE_DIR, `${f.threadId}.ndjson`), "utf8").split("\n").filter(Boolean).map(line => JSON.parse(line));
+  // Stop sends session/cancel and then, in the same turn of the event loop, kills the engine tree once every mount child's
+  // descendant probe is ready. The late request the peer sends on cancel must be read before that kill, so the kill is held
+  // (after Stop only) until the adapter has logged the request as received; a request never read keeps this held and fails the
+  // poll below, so the first assertion still proves the request was observed.
+  let cancelSent = false;
+  const actualReady = ChatMcpDescendants.prototype.ready;
+  const ready = vi.spyOn(ChatMcpDescendants.prototype, "ready").mockImplementation(async function (this: ChatMcpDescendants) {
+    if (cancelSent) await expect.poll(() => readWire().some(item => item.dir === "in" && item.msg?.id === "memory-permission")).toBe(true);
+    return actualReady.call(this);
+  });
+  try {
+    const sent = await f.instance.adapter.sendTurn(f.turn);
+    if (scenario === "after-cancel") { await f.recorder.until(event => event.type === "content.delta"); cancelSent = true; await f.instance.adapter.interruptTurn(f.threadId, sent.turnId); }
+    await f.recorder.until(event => event.type === "turn.completed" && event.turnId === sent.turnId);
+    await f.instance.dispose();
+  } finally { ready.mockRestore(); }
+  const wire = readWire();
   expect(wire.some(item => item.dir === "in" && item.msg?.id === "memory-permission")).toBe(true);
   expect(wire.some(item => item.dir === "out" && item.msg?.id === "memory-permission" && item.msg?.result?.outcome?.optionId === "once")).toBe(false);
 });
-
 }
 
 it("allows the three thread tools once under the rotated alias and refuses a wrong alias or missing _meta", () => {

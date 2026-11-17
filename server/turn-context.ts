@@ -4,7 +4,11 @@
 // bot's model mid-thread), and an update appended outside the provider's own
 // turn. The first two coincide today but are distinct markers on purpose:
 // rewound also invalidates OTHER instances' cursors, fresh does not.
+import { createHash } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
+import { MESSAGE_ONLY_NOTE, NO_HUMAN_NOTE } from "./memory/fence-recovery.ts";
 import type { BotRow } from "./bot-read.ts";
+import { assertSendReplayProof, type SendReplayProof } from "./memory/replay-lineage.ts";
 
 /** Which engine wrote an assistant line: the provider instance id and the
  * name the model picker shows for it. Absent on user lines and on lines from
@@ -25,6 +29,11 @@ export interface TranscriptEntry {
 }
 
 export interface TurnContextInput {
+  /** PROVISIONAL INTERFACE: I carries the shared selector's F3 proof through
+   * direct/rebuild/native paths, and rechecks it at every provider write. */
+  replayProof?: SendReplayProof;
+  /** Proof recorded when the retained session was positively started fresh. */
+  retainedReplayProof?: SendReplayProof;
   /** the user's new message */
   text: string;
   /** settled text turns on the active branch, oldest first, capped upstream */
@@ -68,7 +77,10 @@ export interface TurnContextInput {
 export const TRANSCRIPT_REPLAY_DRIVER_KINDS: readonly string[] = ["grok", "minimax", "openai-compat"];
 
 export function replaysTranscriptNatively(driverKind: string): boolean {
-  return TRANSCRIPT_REPLAY_DRIVER_KINDS.includes(driverKind);
+  // Muse also renders the supplied transcript on every turn so that replies
+  // delivered between native turns are present. Keep inline replay out of its
+  // text on fresh sessions, rewinds, memory refreshes and external updates.
+  return driverKind === "museCode" || TRANSCRIPT_REPLAY_DRIVER_KINDS.includes(driverKind);
 }
 
 /** Does this engine need the thread replayed to it? True when a DIFFERENT
@@ -96,6 +108,44 @@ export function engineIsFresh(input: {
   if (recorded !== undefined) return recorded !== instanceId || resumeCursors[instanceId] === undefined;
   const cursorIds = Object.keys(resumeCursors);
   return !(cursorIds.length === 1 && cursorIds[0] === instanceId);
+}
+
+/** Dispatches that went out message-only (a memory recovery's last rebuild, or
+ * a first rebuild whose replay the selective gate dropped), keyed by the
+ * running turn's lineage. The session such a dispatch starts holds only that
+ * one message: its cursor is never published, so the next turn finds no
+ * session and takes the fresh path with the authorized replay. */
+const messageOnlyDispatches = new WeakSet<object>();
+export function markMessageOnlyDispatch(lineage: object | undefined): void {
+  if (lineage) messageOnlyDispatches.add(lineage);
+}
+export function isMessageOnlyDispatch(lineage: object | undefined): boolean {
+  return lineage !== undefined && messageOnlyDispatches.has(lineage);
+}
+
+/** Heal only a provable legacy tier-two session. Every read is an indexed seek
+ * into that session's starting turn; no transcript or all-session scan. Tier-one
+ * notes also describe healthy replays, so they never justify a reset. */
+export function isLegacyMessageOnlySession(db: DatabaseSync, threadId: string, instanceId: string, nativeSession: string): boolean {
+  const session = db.prepare("SELECT first_lsn FROM memory_session_lineage WHERE thread_id=? AND driver_instance=? AND native_session=?").get(threadId, instanceId, nativeSession);
+  if (!session) return false;
+  const thread = db.prepare("SELECT no FROM memory_thread_no WHERE thread_id=?").get(threadId);
+  if (!thread) return false;
+  // The direct recovery note is keyed by the triggering input, whose row was
+  // present when the session's first prompt was built. Resolve one lineage row
+  // before joining messages: a deleted row must not walk back through history.
+  const input = db.prepare("SELECT m.id,m.role FROM memory_line_lineage l JOIN messages m ON m.thread_id=? AND m.id=l.message_id WHERE l.thread_no=? AND l.lsn=(SELECT lsn FROM memory_line_lineage WHERE thread_no=? AND lsn<=? ORDER BY lsn DESC LIMIT 1)").get(threadId, thread.no, thread.no, session.first_lsn);
+  if (!input || input.role !== "user") return false;
+  const id = `memory-note-${createHash("sha256").update(threadId + "\0" + String(input.id)).digest("hex")}`;
+  const noteRow = db.prepare("SELECT json FROM messages WHERE thread_id=? AND id=?").get(threadId, id);
+  if (!noteRow) return false;
+  const note = JSON.parse(String(noteRow.json));
+  if (note.role !== "bot" || note.kind !== "activity" || note.murageLine !== true || note.memoryNote !== "without-memory"
+    || !note.turnId || (note.tool?.name !== MESSAGE_ONLY_NOTE && note.tool?.name !== NO_HUMAN_NOTE)) return false;
+  // A note for another provider turn on the same input cannot identify this
+  // cursor. Bind it to the first lineage row of the session's starting turn.
+  const generated = db.prepare("SELECT json_extract(m.json,'$.turnId') AS turn_id FROM memory_line_lineage l JOIN messages m ON m.thread_id=? AND m.id=l.message_id WHERE l.thread_no=? AND l.lsn=(SELECT lsn FROM memory_line_lineage WHERE thread_no=? AND turn_lsn=? ORDER BY lsn LIMIT 1)").get(threadId, thread.no, thread.no, session.first_lsn);
+  return generated !== undefined && generated.turn_id === note.turnId;
 }
 
 const REWOUND_PREAMBLE =
@@ -139,9 +189,21 @@ export function runHeaders(transcript: readonly TranscriptEntry[], currentInstan
 
 /** The transcript as a driver that replays natively receives it: no engine
  * object, the run header riding on the first reply of its run. */
-export function transcriptForDriver(transcript: readonly TranscriptEntry[], currentInstanceId?: string): Array<{ role: "user" | "assistant"; text: string; header?: string }> {
+export function transcriptForDriver(transcript: readonly TranscriptEntry[], currentInstanceId?: string, replayProof?: SendReplayProof): Array<{ id?: string; role: "user" | "assistant"; text: string; header?: string }> {
+  transcript = checkedTranscript(transcript, replayProof);
   const headers = runHeaders(transcript, currentInstanceId);
-  return transcript.map((m, i) => ({ role: m.role, text: m.text, ...(headers[i] ? { header: headers[i] } : {}) }));
+  return transcript.map((m, i) => ({ ...(m.id ? { id: m.id } : {}), role: m.role, text: m.text, ...(headers[i] ? { header: headers[i] } : {}) }));
+}
+
+function checkedTranscript(transcript: readonly TranscriptEntry[], proof?: SendReplayProof): TranscriptEntry[] {
+  if (!proof) return [...transcript]; // legacy callers, migrated by Slice I
+  assertSendReplayProof(proof);
+  const candidates = new Set(proof.messageIds);
+  return transcript.filter(entry => {
+    const id = entry.id ?? entry.source.id;
+    if (!candidates.has(id)) throw new Error("SEND_REPLAY_UNPROVEN_LINE");
+    return !proof.excludedIds.has(id);
+  });
 }
 
 /** Shared by native messages, inline history and session recovery. */
@@ -178,10 +240,22 @@ export function buildTurnContext(input: TurnContextInput): {
   /** false when the native session must not be resumed */
   resume: boolean;
 } {
-  const { text, transcript, rewound, fresh, externallyUpdated, replaysNatively, memoryRefreshed, currentInstanceId, omitted, omittedMore } = input;
+  const { text, rewound, fresh, externallyUpdated, replaysNatively, memoryRefreshed, currentInstanceId, omitted, omittedMore } = input;
+  const transcript = checkedTranscript(input.transcript, input.replayProof);
+  let replayReset = false;
+  if (input.replayProof) {
+    const retained = input.retainedReplayProof;
+    replayReset = !retained && input.replayProof.epochs.some(([, revision]) => revision !== 0);
+    if (retained) {
+      try {
+        assertSendReplayProof(retained);
+        replayReset = retained.threadId !== input.replayProof.threadId || JSON.stringify(retained.epochs) !== JSON.stringify(input.replayProof.epochs);
+      } catch { replayReset = true; }
+    }
+  }
   const notice = omittedNotice(omitted, omittedMore);
   const restarted = input.sessionRestarted === true && fresh && !rewound && !memoryRefreshed && !externallyUpdated;
-  const resume = !rewound && !fresh && !externallyUpdated && !memoryRefreshed;
+  const resume = !rewound && !fresh && !externallyUpdated && !memoryRefreshed && !replayReset;
   const replay = !resume && !replaysNatively && (transcript.length > 0 || Boolean(notice));
   if (!replay) return { turnText: replaysNatively && (transcript.length > 0 || Boolean(notice)) ? `${replayMetadata(omitted, restarted, omittedMore)}\n\n${text}` : text, resume };
   const headers = runHeaders(transcript, currentInstanceId);

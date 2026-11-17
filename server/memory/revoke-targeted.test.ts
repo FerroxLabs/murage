@@ -1,3 +1,5 @@
+// MAIN RULING 1115-RECALL-R7 (GrokBuild)
+import { startLiveSession } from './testing/live-session-fixture.ts';
 // A record-level change (approve, correct, archive, pin, learning undo) ended
 // every warm session on the machine: each writer revoked every disclosure and
 // bumped policy_revision, which every receipt is compared against. Now it ends
@@ -11,18 +13,18 @@ import { DATA_DIR } from "../config.ts";
 import { closeDatabase, database } from "../database.ts";
 import { stopWalMaintenance } from "../wal-maintenance.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { ensureScope, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { buildMemoryBundle, hydrateMemoryRecord } from "./bundle.ts";
 import { MemoryDispatchReceipt, memoryContinuationChanged } from "./dispatch.ts";
-import { bindMemoryDisclosureSession, continuationMemoryRevoked, deliverMemoryDisclosure, noteMemoryLookup, prepareMemoryDisclosure } from "./disclosures.ts";
+import { continuationMemoryRevoked, noteMemoryLookup, prepareMemoryDisclosure } from "./disclosures.ts";
 import { approveMemory, correctMemory, ownerMemoryTicket, pinMemory, renameMemoryTeam } from "./authority.ts";
 import { archiveMemoryRecord } from "./retention.ts";
 import { forgetMemory } from "./forget.ts";
 import type { MemorySearchBridge } from "./search.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
-import { stampFreshSession } from "./testing/writetime-fixture.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
-import { storeAnchorMessage } from "./testing/anchor-message.ts";
+import { storeLiveAnchor as storeAnchorMessage } from "./testing/live-session-fixture.ts";
 // 1.0.2: this test models a 1.0.1 file (legacy root-set rows) for the read-time judge, which still decides legacy data until S6.
 thawBeforeEach(() => thawRootSetWritesForTest(true));
 thawAfterEach(() => thawRootSetWritesForTest(false));
@@ -63,10 +65,9 @@ async function world() {
   const a=access();
   const bundle=await buildMemoryBundle("anything",a,empty, {allowance: LineageAllowance.tool()});
   expect(bundle.recordVersions.map(r=>r.id)).toEqual(["shown"]);
-  prepareMemoryDisclosure(bundle,a,"claude");
-  bindMemoryDisclosureSession(bundle.bundleId,"session-1");
-  stampFreshSession(database(),"private","claude","session-1"); // stamped as a 1.0.3 fresh start leaves it (S6 rule 26)
-  deliverMemoryDisclosure(bundle.bundleId,a);
+  const receipt = new MemoryDispatchReceipt(bundle,a,'claude');
+  const confirmation = startLiveSession(a,'claude','session-1');
+  receipt.sessionStarted('session-1',true,confirmation); receipt.accepted();
   const state=()=>String(database().prepare("SELECT state FROM memory_disclosures WHERE bundle_id=?").get(bundle.bundleId)!.state);
   const revoked=()=>({result:continuationMemoryRevoked(LineageAllowance.tool(), "private","claude","session-1",access())});
   return {state,revoked,ticket:ownerMemoryTicket(),access,frame:bundle.bundleId};

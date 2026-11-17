@@ -51,8 +51,8 @@ function model(over: Partial<LocalModelView> = {}): LocalModelView {
 function server(over: Partial<LocalServerView> = {}): LocalServerView {
   return {
     id: "srv_abcdefgh",
-    name: "seanbeast",
-    label: "llama.cpp on seanbeast",
+    name: "fixture-server",
+    label: "llama.cpp on fixture-server",
     kind: "llamacpp",
     address: "http://127.0.0.1:8080/v1",
     source: "added",

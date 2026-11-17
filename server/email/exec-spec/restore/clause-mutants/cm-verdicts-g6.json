@@ -1,0 +1,68 @@
+{
+ "restoreJobProtocol#81": {
+  "verdict": "KILLED",
+  "witness": "cm-restoreJobProtocol-88-reabort-restamps-journal"
+ },
+ "keepEndsActive#1": {
+  "verdict": "EQUIVALENT",
+  "kind": "COMBINED",
+  "separating": "sep-keepEndsActive-1-half-keep-step-null",
+  "by": "environmentWellFormed",
+  "byLine": 2517,
+  "argument": "Line 1104: a Keep's succeededAtStep and succeededAtMs are written together (moves.ts line 207; line 951 and the step invariant at line 2517 reject a half-written pair), so succeededAtStep === null iff succeededAtMs === null and the neighbouring operand skips the same records."
+ },
+ "keepEndsActive#2": {
+  "verdict": "EQUIVALENT",
+  "kind": "COMBINED",
+  "separating": "sep-keepEndsActive-2-half-keep-ms-null",
+  "by": "environmentWellFormed",
+  "byLine": 2517,
+  "argument": "Line 1104: same pairing fact as #1 (moves.ts line 207, invariants line 951 and 2496): succeededAtMs === null iff succeededAtStep === null, so the first operand already skips every such record."
+ },
+ "keepEndsActive#19": {
+  "verdict": "EQUIVALENT",
+  "kind": "NULL",
+  "argument": "Line 1120: closingSinceMs is null only for an inbox that never closed, and fakeflux writes closingSinceMs and closingSinceStep together (fakeflux.ts lines 44, 64, 74, 90), so this clause and its twin on closingSinceStep are equivalent: each alone filters exactly the active inboxes the other filters."
+ },
+ "keepEndsActive#20": {
+  "verdict": "EQUIVALENT",
+  "kind": "NULL",
+  "argument": "Line 1120: closingSinceStep is null only for an inbox that never closed, and fakeflux writes closingSinceMs and closingSinceStep together (fakeflux.ts lines 44, 64, 74, 90), so this clause and its twin on closingSinceMs are equivalent: each alone filters exactly the active inboxes the other filters."
+ },
+ "keepEndsActive#15": {
+  "verdict": "KILLED",
+  "witness": "cm-keepEndsActive-15-keep-succeeds-after-delete-closing"
+ },
+ "heldInputDrains#1": {
+  "verdict": "KILLED",
+  "witness": "cm-heldInputDrains-1-no-window-no-verdict"
+ },
+ "heldInputDrains#2": {
+  "verdict": "KILLED",
+  "witness": "cm-heldInputDrains-2-open-to-open-step-no-end"
+ },
+ "heldInputDrains#3": {
+  "verdict": "KILLED",
+  "witness": "cm-heldInputDrains-7-fault-judges-nothing"
+ },
+ "heldInputDrains#4": {
+  "verdict": "KILLED",
+  "witness": "cm-heldInputDrains-8-new-window-judges-nothing"
+ },
+ "heldInputDrains#5": {
+  "verdict": "KILLED",
+  "witness": "cm-heldInputDrains-9-later-event-not-held"
+ },
+ "heldInputDrains#7": {
+  "verdict": "KILLED",
+  "witness": "cm-heldInputDrains-11-later-answer-not-held"
+ },
+ "heldInputDrains#8": {
+  "verdict": "KILLED",
+  "witness": "cm-heldInputDrains-13-held-answer-taken-in-time"
+ },
+ "heldInputDrains#10": {
+  "verdict": "KILLED",
+  "witness": "cm-heldInputDrains-15-held-answer-never-taken"
+ }
+}

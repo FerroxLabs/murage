@@ -5,10 +5,13 @@
 // predicate decides the listing and writes the generation-bound record (email-turns.ts); every call is checked again against that record
 // and current state. A call that fails gets EMAIL_UNAVAILABLE and Murage never calls Flux.
 import type { BindingState } from "./email-store.ts";
+import type { DelegationOrigin } from "../delegations.ts";
 import { emailTurns, type EmailToolMode, type EmailTurnKind, type EmailTurnRecord } from "./email-turns.ts";
 import { EMAIL_SEND_TOOL_NAMES, type EmailToolName } from "../drivers/email-tool-schemas.ts";
 
 /** A direct call that fails the predicate (3.1). */
+export const EMAIL_OFF = "Email is off. Turn it on in Settings > Bot email.";
+export const EMAIL_DISCONNECTED = "Email is disconnected. Turn it on in Settings > Bot email.";
 export const EMAIL_UNAVAILABLE = "Email is not available in this conversation.";
 /** Primer lines for an owner turn where the tools are absent (3.2 engine matrix). */
 export const EMAIL_ENGINE_ABSENT = "This bot's engine cannot use Murage's email tools.";
@@ -30,6 +33,8 @@ type BotShape = { id: string; threadId: string; draftOnly?: boolean; tasks?: Rea
 export interface EmailMountInput {
   /** the capability probe said enabled: true */
   enabled: boolean;
+  /** Verified live decision policy, supplied by EmailRuntime, never tool input. */
+  noLimits?: boolean;
   binding: BindingState | null | undefined;
   driverKind: string;
   /** the engine mounts the agents server on this turn */
@@ -46,6 +51,8 @@ export interface EmailMountInput {
   sharedWorkRun?: unknown;
   /** the turn is a hand-off's run (index.ts passes whether its options carry one; the run itself never leaves the dispatch's start) */
   handoffTurn?: boolean;
+  /** Server-read hand-off authority and effective dispatched attendance, never tool arguments. */
+  handoff?: { id: string; origin: DelegationOrigin; ownerRooted: boolean; attended: boolean };
   askerWake?: boolean;
   cardContinuation?: boolean;
   automationThread: boolean;
@@ -63,10 +70,15 @@ function ownThread(bot: BotShape, threadId: string): boolean {
   return threadId === bot.threadId || (bot.tasks ?? []).some(task => task.threadId === threadId && !task.channelProjectDesk && !task.sharedWork);
 }
 
-/** The owner's own turn: never a contact, a channel or webhook trigger, a project card run, shared work, or an asked or delegated turn at
- *  any depth. A direct turn needs a proven owner origin; a routine run needs the schedule or manual trigger. */
+/** The owner's direct or routine turn, or a server-proven owner-rooted hand-off at depth one. */
 function ownerTurn(input: EmailMountInput): EmailTurnKind | null {
   if (!input.surfacesForOwner || !input.directOwnerAudience || input.notOwnerAudience === true || input.chainNotOwner) return null;
+  if (input.handoffTurn && input.handoff?.origin === "owner" && input.handoff.ownerRooted === true
+    && input.commsDepth === 1 && input.chainRootThreadId
+    && !input.askerWake && !input.cardContinuation && !input.projectCardRun && !input.sharedWorkRun
+    && input.automationSource === undefined && !input.automationThread && ownThread(input.bot, input.threadId)) {
+    return { kind: "delegated", handoffId: input.handoff.id, rootThreadId: input.chainRootThreadId, attended: input.handoff.attended === true };
+  }
   if (input.chainRootThreadId || (input.commsDepth ?? 0) !== 0 || input.handoffTurn || input.askerWake || input.cardContinuation) return null;
   if (input.projectCardRun || input.sharedWorkRun || !ownThread(input.bot, input.threadId)) return null;
   if (input.automationSource === undefined) {
@@ -79,17 +91,18 @@ function ownerTurn(input: EmailMountInput): EmailTurnKind | null {
 
 /** The mount predicate (3.1, 3.2). */
 export function emailMounts(input: EmailMountInput): EmailMountVerdict {
-  if (!input.enabled || !input.binding || !EMAIL_MOUNT_STATES.has(input.binding)) return { mounted: false, line: null };
-  const turn = ownerTurn(input);
-  if (input.bot.draftOnly) return { mounted: false, line: turn ? EMAIL_DRAFT_ONLY_ABSENT : null };
+  if (!input.enabled || !input.binding || !EMAIL_MOUNT_STATES.has(input.binding)) return { mounted: false, line: input.noLimits ? EMAIL_OFF : null };
+  const turn: EmailTurnKind | null = input.noLimits ? { kind: "no-limits" } : ownerTurn(input);
+  if (!input.noLimits && input.bot.draftOnly) return { mounted: false, line: turn ? EMAIL_DRAFT_ONLY_ABSENT : null };
   if (!input.agentsMcp) return { mounted: false, line: turn ? EMAIL_ENGINE_ABSENT : null };
   if (!turn) return { mounted: false, line: null };
-  return { mounted: true, turn, mode: EMAIL_SEND_ENGINES.has(input.driverKind) ? "send" : "read" };
+  return { mounted: true, turn, mode: input.noLimits || EMAIL_SEND_ENGINES.has(input.driverKind) ? (turn.kind === "delegated" ? "delegated" : "send") : "read" };
 }
 
 /** Current state the call check reads, handed in by the wiring (index.ts) or a test. */
 export interface EmailCallLive {
   enabled(): boolean;
+  noLimits?(): boolean;
   binding(botId: string): BindingState | null | undefined;
   bot(botId: string): BotShape | undefined;
   /** ownerSurfacesByThread.get(threadId) */
@@ -100,6 +113,10 @@ export interface EmailCallLive {
   ownerThread(threadId: string, origin?: "desktop" | "companion"): boolean;
   /** a room or project card request is bound to this generation (turnRequestByGeneration) */
   boundRequest(generation: string): boolean;
+  /** The recorded generation is current, its watch matches this hand-off, and its row is started on this destination. */
+  handoffLive?(generation: string, handoffId: string): boolean;
+  /** Read pending_delegations.owner_rooted now; a missing row or an unreadable value is not authority. */
+  ownerRooted?(handoffId: string): boolean;
 }
 
 export type EmailCallVerdict = { ok: true; record: EmailTurnRecord } | { ok: false; line: string };
@@ -109,15 +126,24 @@ export function authorizeEmailCall(claim: { botId: string; threadId: string; gen
   const no: EmailCallVerdict = { ok: false, line: EMAIL_UNAVAILABLE };
   try {
     if (!live.enabled()) return no;
+    if (live.noLimits?.() === true) {
+      const binding = live.binding(claim.botId);
+      if (!binding || !EMAIL_MOUNT_STATES.has(binding) || live.bot(claim.botId)?.id !== claim.botId) return no;
+      return { ok: true, record: { botId: claim.botId, threadId: claim.threadId, mode: "send", kind: "no-limits" } };
+    }
     const record = emailTurns.get(claim.generation);
-    if (!record || record.botId !== claim.botId || record.threadId !== claim.threadId) return no;
-    if ((EMAIL_SEND_TOOL_NAMES as readonly string[]).includes(tool) && record.mode !== "send") return no;
+    if (!record || record.kind === "no-limits" || record.botId !== claim.botId || record.threadId !== claim.threadId) return no;
+    if (tool === "email_trust_offer" && (record.kind === "delegated" || record.mode === "delegated")) return no;
+    if ((EMAIL_SEND_TOOL_NAMES as readonly string[]).includes(tool) && record.mode !== "send" && record.mode !== "delegated") return no;
     if (live.boundRequest(claim.generation)) return no;
     const binding = live.binding(record.botId);
     if (!binding || !EMAIL_MOUNT_STATES.has(binding)) return no;
     const bot = live.bot(record.botId);
     if (!bot || bot.draftOnly || !ownThread(bot, record.threadId)) return no;
     if (live.notOwnerAudience(record.threadId)) return no;
+    if (record.kind === "delegated") {
+      if (live.handoffLive?.(claim.generation, record.handoffId) !== true || live.ownerRooted?.(record.handoffId) !== true) return no;
+    }
     if (record.kind === "direct") {
       if (live.ownerSurface(record.threadId) !== true || !live.ownerThread(record.threadId, record.origin)) return no;
     } else if (!live.ownerThread(record.threadId)) return no;

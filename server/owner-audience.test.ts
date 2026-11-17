@@ -11,7 +11,11 @@ import { emailPrimer, phonePrimer } from "./capabilities-primer.ts";
 import { mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import ts from "typescript";
-import { beforeEach, describe, expect, it } from "vitest";
+import vm from "node:vm";
+import { IndependentThreadRuns, MAX_CONCURRENT_BOT_THREADS } from "./independent-thread-runs.ts";
+import { LimitTurns } from "./limit-continuation.ts";
+import { wiring } from "./decision-wiring/fixture.ts";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { released } from "./testing/released.ts";
 import { saveAboutMe } from "./about-me.ts";
 import { DATA_DIR } from "./config.ts";
@@ -257,6 +261,62 @@ describe("every registered owner-only surface", () => {
   // 1.0.2 R1 review (Astra H): an ask or delegation started for a not-owner turn carries that bit itself, and it decides every owner-only
   // surface of the turn it starts (About me and the notebook, the session it resumes), whatever the per-thread record reads. And a start that
   // is refused because the thread is already working never records its audience over the running turn's.
+  // MAIN RULING 1115-SOURCE-PINS B: execute the entire spend-to-admission region,
+  // using the real Store, busy predicate and run registry. Both waits resolve
+  // in the same tick; unrelated synchronous routing services are fixtures.
+  it.each([true, false])("simultaneous starts preserve the admitted audience (first owner=%s)", async firstOwner => {
+    const source = readFileSync(join(ROOT, "server", "index.ts"), "utf8");
+    const fn = source.indexOf("async function startTurnAdmitting(");
+    const from = source.indexOf("  const turnSpendKey = ", fn);
+    const admitAt = source.indexOf("  const run=directRuns.admit(", from);
+    const end = source.indexOf("\n", admitAt);
+    expect(fn).toBeGreaterThan(-1);
+    expect(from).toBeGreaterThan(fn);
+    expect(admitAt).toBeGreaterThan(from);
+    const section = source.slice(from, end);
+    const js = ts.transpileModule(`globalThis.section = async function (bot, text, opts, surfacesForOwner) {\n${section}\nreturn run;\n};`, { compilerOptions: { target: ts.ScriptTarget.ES2023, module: ts.ModuleKind.None } }).outputText;
+    const { store, bot } = world();
+    const directRuns = new IndependentThreadRuns<typeof bot>();
+    const admit = vi.spyOn(directRuns, "admit");
+    const audience = new Map<string, boolean>();
+    const writes = vi.spyOn(audience, "set");
+    const releases: Array<() => void> = [];
+    const { directThreadBusy } = wiring(["directThreadBusy"], { store, directRuns });
+    const context: Record<string, unknown> = {
+      Error, Object, Boolean, Set, Map, Promise, structuredClone, process: { platform: "fixture" },
+      rebuildOf: undefined, botId: bot.id, threadId: bot.threadId, humanIsOwner: true, directOwnerAudience: true,
+      profile: bot, store, directRuns, directThreadBusy, MAX_CONCURRENT_BOT_THREADS,
+      spendKeyForSelection: () => "fixture-key",
+      spendGate: { admitStart: () => new Promise(resolve => { releases.push(() => resolve({ ok: true })); }) },
+      SpendGateRefusal: class extends Error {}, activeGroupTurnForBot: () => false, isOwnerOrigin: () => true,
+      ownerSurfacesByThread: audience, unattendedMarkAction: () => "keep",
+      admittedRoutineCeilings: new Map(), routinePeerSources: new Map(), conversationCeilings: new Map(),
+      routineConversationMode: () => null, routinePeerSource: () => undefined, draftOnlySenderInChain: () => false,
+      isUnattended: () => false, isCloudHome: () => false,
+      turnRouting: () => ({ instance: { instanceId: "fixture", driverKind: "codex", models: {}, adapter: { capabilities: {} } } }),
+      openTurnLineage: () => ({}), database, memberTurnId: () => "fixture-turn", promoteLineageThread: () => {},
+      staleModelReplacement: () => null, activeProviderSelections: new Map(), fluxSelectionRefusal: () => null,
+      engineCommandForTurn: () => null, turnSelection: {}, codexDefaultLine: undefined, routineOrigin: false,
+      limitTurns: new LimitTurns(), engineNameOf: () => "Fixture",
+    };
+    vm.createContext(context);
+    vm.runInContext(js, context);
+    const start = context.section as (routingBot: typeof bot, text: string, opts: object, surfaces: boolean) => Promise<unknown>;
+    const run = (surfaces: boolean) => start(structuredClone(bot), "fixture turn", { origin: "desktop", notOwnerAudience: !surfaces, userMessage: { id: "source" } }, surfaces);
+    const first = run(firstOwner), second = run(!firstOwner);
+    expect(releases).toHaveLength(2);
+    // No yield between these resolutions: both contenders resume together.
+    releases.forEach(release => release());
+    const results = await Promise.allSettled([first, second]);
+    expect(results[0].status, results[0].status === "rejected" ? String(results[0].reason?.stack ?? results[0].reason) : undefined).toBe("fulfilled");
+    expect(results[1]).toMatchObject({ status: "rejected", reason: { code: "thread_busy" } });
+    expect(admit).toHaveBeenCalledOnce();
+    expect(directRuns.forBot(bot.id)).toHaveLength(1);
+    expect(directRuns.get(bot.threadId)).toBe((results[0] as PromiseFulfilledResult<unknown>).value);
+    expect(writes).toHaveBeenCalledExactlyOnceWith(bot.threadId, firstOwner);
+    expect(audience.get(bot.threadId)).toBe(firstOwner);
+  });
+
   it("an explicit not-owner start decides its owner-only surfaces, and a refused start leaves the running turn's audience alone", () => {
     const source = readFileSync(join(ROOT, "server", "index.ts"), "utf8");
     const start = source.indexOf("async function startTurnAdmitting(");
@@ -283,6 +343,13 @@ describe("every registered owner-only surface", () => {
     expect(writes[0]).toBeGreaterThan(limit);
     // and nothing from the busy refusal through admission can wait (an await would let another start in between)
     expect(body.slice(busy)).not.toMatch(/\bawait\b/);
+    // Cooperative replay starts after both the claim and the visible busy mark. A wait API must not settle a starting turn as idle.
+    const claimAt = whole.indexOf("directRuns.admit(");
+    const busyAt = whole.indexOf('store.setTaskActivity(bot.id, threadId, "working")');
+    const replayAt = whole.indexOf("const replayInputs = await");
+    expect(busyAt).toBeGreaterThan(claimAt);
+    expect(replayAt).toBeGreaterThan(busyAt);
+    expect(whole.slice(claimAt, busyAt)).not.toMatch(/\bawait\b/);
     // with that value false the standing context carries no About me
     saveAboutMe("ABOUT_ME_CANARY I run a candle shop");
     const bot = { id: "b1", name: "B" } as Parameters<typeof standingContextParts>[0];

@@ -1,3 +1,4 @@
+// MAIN RULING RULINGS-1019-RECALL-1116 R7-9.
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -20,18 +21,24 @@ import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { DATA_DIR } from "../config.ts";
-import { closeDatabase, database } from "../database.ts";
+import { closeDatabase, database, transaction } from "../database.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { InternalCapabilities } from "../internal-capabilities.ts";
 import { continuationMemoryRevoked, filterDirectReplay, resetSessionHolds } from "./disclosures.ts";
 import * as LW from "./lineage-warm.ts";
 import { LineageAllowance } from "./lineage-allowance.ts";
-import { ensureScope, memoryAccess, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { assertMemoryAccess, ensureScope, reconcileMemoryRoster, type MemoryRoster } from "./policy.ts";
+import { fixtureMemoryAccess as memoryAccess } from "../testing/recall-access-fixture.ts";
 import { forgetKeptLineageForTest, lineageCacheCounts, outputRootsFor, recordSessionRoots, thawRootSetWritesForTest } from "./replay-lineage.ts";
 import { setMemoryMode } from "./repository.ts";
 import { rootSetWork } from "./root-set-handles.ts";
 import { chainStore } from "./schema.ts";
-import { stampFreshSession } from "./testing/writetime-fixture.ts";
+import { FreshReplaySessionConfirmation } from "./fresh-replay-session.ts";
+import { captureSendReplayProof } from "./replay-lineage.ts";
+import { openTurnLineage, closeTurnLineage, writeLineage } from "./lineage-write.ts";
+import { startFreshSession } from "./session-incarnation.ts";
+import { noteSessionFrame } from "./session-proof-schema.ts";
+import { initializeFreshSessionProof } from "./session-proof.ts";
 
 const roster: MemoryRoster = { bots: [{ id: "bot", threadId: "chat", tasks: [{ threadId: "older" }] }], groups: [] };
 const A = "chat", B = "older", driver = "engine", session = "S";
@@ -95,21 +102,42 @@ function chain(thread: string, prefix: string, n: number): string[] {
   database().prepare("INSERT INTO memory_output_roots(thread_id,message_id,set_id) VALUES(?,?,?)").run(thread, `${prefix}${n - 1}`, sets[n - 1]!);
   return sets;
 }
-/** The retained session S of A: one sound receipt listing the newest reply, its lineage row and its 1.0.3 door stamp. */
-function sessionOf(thread: string, nativeSession: string, listing: string[]): void {
-  const db = database();
-  db.prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,?,?,'[]','[]',?,(SELECT policy_revision FROM memory_meta),(SELECT deletion_epoch FROM memory_meta),0,'delivered',9)")
-    .run(`rc-${thread}-${nativeSession}`, thread, driver, nativeSession, JSON.stringify(listing));
-  recordSessionRoots(thread, driver, nativeSession, outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
-  stampFreshSession(db, thread, driver, nativeSession);
-}
 function fixture(): void {
   database();
   database().exec("BEGIN");
   chain(A, "a", 3);
   chain(B, "b", 3);
-  sessionOf(A, session, ["a2"]);
   database().exec("COMMIT");
+  const db = database(), who = access(A);
+  for (const row of db.prepare("SELECT id FROM messages WHERE thread_id=?").all(A)) {
+    writeLineage(db, { threadId: A, messageId: String(row.id), author: "owner" }, {});
+  }
+  const turn = openTurnLineage(db, { threadId: A, turnId: "fixture-live-turn" });
+  const { key } = transaction(tx => startFreshSession(tx, A, driver, session, turn));
+  closeTurnLineage(turn);
+  const confirmation = new FreshReplaySessionConfirmation(captureSendReplayProof(A, []), driver, () => assertMemoryAccess(who), { generation: who.generation });
+  confirmation.sessionStarted("fixture-live-turn", key, true);
+  confirmation.engineWritten(); confirmation.accepted("fixture-live-turn");
+  noteSessionFrame(db, key, false);
+  initializeFreshSessionProof(key, who, () => {
+    noteSessionFrame(db, key, true);
+    db.prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,?,?,'[]','[]',?,(SELECT policy_revision FROM memory_meta),(SELECT deletion_epoch FROM memory_meta),0,'delivered',9)")
+      .run(`rc-${A}-${session}`, A, driver, session, JSON.stringify(["a2"]));
+    recordSessionRoots(A, driver, session, outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
+  }, { fresh: true, confirmation });
+}
+function liveOther(native: string): void {
+  const db = database(), who = access(A);
+  const turn = openTurnLineage(db, { threadId: A, turnId: `fixture-live-${native}` });
+  const { key } = transaction(tx => startFreshSession(tx, A, driver, native, turn));
+  closeTurnLineage(turn);
+  noteSessionFrame(db, key, false);
+  initializeFreshSessionProof(key, who, () => {
+    noteSessionFrame(db, key, true);
+    db.prepare("INSERT INTO memory_disclosures(bundle_id,thread_id,driver_instance,native_session,record_versions,source_versions,output_message_ids,policy_revision,deletion_epoch,token_count,state,created_at) VALUES(?,?,?,?,'[]','[]',?,(SELECT policy_revision FROM memory_meta),(SELECT deletion_epoch FROM memory_meta),0,'delivered',9)")
+      .run(`rc-${A}-${native}`, A, driver, native, JSON.stringify([]));
+    recordSessionRoots(A, driver, native, outputRootsFor(LineageAllowance.tool(1_000_000_000), []));
+  }, { fresh: true });
 }
 function settle(limit = 100_000): void {
   LW.bumpLineageWarm(A); LW.kickLineageWarm();
@@ -154,9 +182,7 @@ describe("T12 REAL-ENTRY / T10(n4), (n5), (n): a thread that reads warm has its 
   it("T10(n4) hold eviction: 512 other sessions' holds evict A's hold; A is not warm until the re-confirm rebuilds it, then the probe is hit-only", () => {
     const clean = warmA();
     // SESSION_HOLDS_MAX 512 (DI:127): 512 other sessions of A each pass and keep a hold; the oldest, A's S, is evicted at DI:193
-    database().exec("BEGIN");
-    for (let index = 0; index < 512; index++) sessionOf(A, `other-${index}`, []);
-    database().exec("COMMIT");
+    for (let index = 0; index < 512; index++) liveOther(`other-${index}`);
     for (let index = 0; index < 512; index++) expect(continuationMemoryRevoked(LineageAllowance.tool(), A, driver, `other-${index}`, access())).toBe(false);
     oracle(A, clean, "hold eviction (512 sessions)");
     settle();
@@ -225,4 +251,14 @@ describe("T12 REAL-ENTRY / T10(n4), (n5), (n): a thread that reads warm has its 
     expect(covered("after-settle").verdict).toBe("match");
     oracle(A, clean, "unrelated member DELETE, no handles used, after the re-confirm", "p", false);
   });
+});
+
+it("R7 live first frames retain nonempty reader checkpoints for A and independent sessions", () => {
+  fixture();
+  liveOther("additional-live");
+  for (const native of [session, "additional-live"]) {
+    const row = database().prepare("SELECT up_to FROM memory_session_checks WHERE thread_id=? AND driver_instance=? AND native_session=?").get(A,driver,native);
+    expect(Number(row?.up_to)).toBeGreaterThan(0);
+    expect(continuationMemoryRevoked(LineageAllowance.tool(), A, driver, native, access())).toBe(false);
+  }
 });

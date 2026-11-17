@@ -3,7 +3,8 @@ import { DatabaseSync } from "node:sqlite";
 import { expect, it } from "vitest";
 
 const oldSQL = "SELECT DISTINCT s.owner_key FROM memory_records r JOIN memory_scopes s ON s.id=r.scope_id WHERE s.kind='conversation' AND (r.id,r.version) IN (SELECT value->>0,value->>1 FROM json_each(?))";
-const sql = readFileSync(new URL('./disclosures.ts', import.meta.url), 'utf8').match(/prepare\("(SELECT DISTINCT s.owner_key[^"]+)"\)/)![1];
+// 2fe571bb91 records every cited notebook, including bot scopes, for scoped deletion.
+const sql = readFileSync(new URL('./disclosures.ts', import.meta.url), 'utf8').match(/prepare\("(SELECT DISTINCT s.id,s.kind,s.owner_key[^"]+)"\)/)![1];
 const schema = readFileSync(new URL('./schema.ts', import.meta.url), 'utf8');
 
 it('keeps the exact dependency set, including missing ancestry, and visits only cited scopes at tenfold history', () => {
@@ -26,12 +27,16 @@ it('keeps the exact dependency set, including missing ancestry, and visits only 
       const cases = [[], [['missing',1]], [['r0-0',3]], [['r0-0',2]], [['orphan-record',1]], [['bot-record',1]], [['r0-0',1],['r0-0',1],['r1-0',1],['bot-record',1],['missing',1]]];
       for (const pairs of cases) {
         const args = JSON.stringify(pairs);
-        const owners = (q: string) => db.prepare(q).all(args).map(r=>r.owner_key).sort();
+        const owners = (q: string) => db.prepare(q).all(args).filter(r => r.kind === undefined || r.kind === 'conversation').map(r=>r.owner_key).sort();
         expect(owners(sql)).toEqual(owners(oldSQL));
+        // Keep the widened dependency set exact too, including non-conversation notebooks.
+        const expected = db.prepare("SELECT DISTINCT s.id,s.kind,s.owner_key FROM memory_records r JOIN memory_scopes s ON s.id=r.scope_id WHERE (r.id,r.version) IN (SELECT value->>0,value->>1 FROM json_each(?))").all(args);
+        const sorted = (rows: typeof expected) => rows.map(row => JSON.stringify(row)).sort();
+        expect(sorted(db.prepare(sql).all(args))).toEqual(sorted(expected));
       }
       let count=0;
       db.function('visited_scope',(_id)=>{count++;return 1;});
-      const measured=sql+' AND visited_scope(s.id)';
+      const measured=sql+' WHERE visited_scope(s.id)';
       const args=JSON.stringify([['r0-0',1]]);
       const plan=(q:string)=>db.prepare('EXPLAIN QUERY PLAN '+q).all(args).map(r=>String(r.detail));
       expect(plan(measured)).toEqual(plan(sql));

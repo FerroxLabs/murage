@@ -29,6 +29,7 @@ interface Run { child: ChildProcess; stdout: () => string; report: () => string;
 function launch(command: string, args: string[]): Run {
   base = mkdtempSync(join(tmpdir(), "job-launcher-"));
   const child = spawn(process.execPath, [LAUNCHER, "--", command, ...args], {
+    windowsHide: true,
     cwd: base,
     // what procs.ts gives the launcher on Windows; PATH added only so this host's node can load its type stripper
     env: { ...launcherEnvironment(process.env), PATH: process.env.PATH ?? "" },
@@ -90,14 +91,14 @@ describe("job launcher", () => {
       writeFileSync(preload, `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran");`);
       const turnEnv = { ...process.env, NODE_OPTIONS: `--require ${preload}` };
       // control: Node honours the option when it is in the launcher's own environment
-      const control = spawn(process.execPath, [LAUNCHER, "--", process.execPath, "-e", "0"], { cwd: dir, env: turnEnv, stdio: ["pipe", "ignore", "ignore", "pipe"] });
+      const control = spawn(process.execPath, [LAUNCHER, "--", process.execPath, "-e", "0"], { windowsHide: true, cwd: dir, env: turnEnv, stdio: ["pipe", "ignore", "ignore", "pipe"] });
       children.push(control);
       control.stdin!.end();
       await new Promise<void>((resolve) => control.once("exit", () => resolve()));
       expect(existsSync(marker)).toBe(true);
       // the real launch: the turn's environment only reaches the CLI through the frame
       const { unlinkSync } = await import("node:fs"); unlinkSync(marker);
-      const real = spawn(process.execPath, [LAUNCHER, "--", process.execPath, "-e", "0"], { cwd: dir, env: { ...launcherEnvironment(turnEnv), PATH: process.env.PATH ?? "" }, stdio: ["pipe", "ignore", "ignore", "pipe"] });
+      const real = spawn(process.execPath, [LAUNCHER, "--", process.execPath, "-e", "0"], { windowsHide: true, cwd: dir, env: { ...launcherEnvironment(turnEnv), PATH: process.env.PATH ?? "" }, stdio: ["pipe", "ignore", "ignore", "pipe"] });
       children.push(real);
       real.stdin!.end();
       await new Promise<void>((resolve) => real.once("exit", () => resolve()));
@@ -112,4 +113,32 @@ describe("job launcher", () => {
     expect(run.stdout()).toBe("");
     expect(run.report()).toBe("");
   });
+});
+
+// S1: prove the real launcher transports the server's acknowledgements and
+// child control messages, not merely a proxyIpc property in a JSON frame.
+it("admitted proxy IPC survives the real launcher without consuming prompt bytes", async () => {
+  base = mkdtempSync(join(tmpdir(), "job-launcher-ipc-"));
+  const script = `if (!process.send) { process.stdout.write('missing-ipc'); process.exit(9); }
+    process.on('message', message => { process.stdout.write(JSON.stringify(message)); process.exit(0); });
+    process.send({type:'fixture-ready'});`;
+  const child = spawn(process.execPath, [LAUNCHER, "--", process.execPath, "-e", script], {
+    cwd: base, env: { ...launcherEnvironment(process.env), PATH: process.env.PATH ?? "" },
+    stdio: ["pipe", "pipe", "pipe", "pipe", "ipc"],
+  });
+  children.push(child);
+  let output = "", report = "", ready = 0;
+  child.stdout!.on("data", chunk => { output += String(chunk); }); child.stderr!.resume();
+  (child.stdio[3] as NodeJS.ReadableStream).on("data", chunk => { report += String(chunk); });
+  const ack = { type: "turn-release-ack", instanceId: "fixture", sequence: 1 };
+  child.on("message", message => { expect(message).toEqual({ type: "fixture-ready" }); ready++; child.send!(ack); });
+  const exited = new Promise<number | null>(resolve => child.once("close", code => resolve(code)));
+  const body = Buffer.from(JSON.stringify({ env: { PATH: process.env.PATH ?? "", MURAGE_RELEASE_INSTANCE: "fixture" }, cwd: base, proxyIpc: true }));
+  child.stdin!.write(Buffer.concat([Buffer.from(`${body.length}\n`), body]));
+  const timeout = setTimeout(() => child.kill("SIGKILL"), 3_000);
+  try {
+    expect(await exited).toBe(0);
+    expect(ready).toBe(1); expect(JSON.parse(output)).toEqual(ack);
+    expect(JSON.parse(report)).toMatchObject({ pid: expect.any(Number) });
+  } finally { clearTimeout(timeout); }
 });

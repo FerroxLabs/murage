@@ -1,0 +1,68 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "muragemain-copyrev",
+    "account": "claude opus 5.5, MurageMain copy review"
+  },
+  "author": "J5b r8 home builder (Claude Sonnet)",
+  "date": "2026-11-11",
+  "base": "a350bc5318",
+  "scope": "J5b customer line, events waiting; reviewers.json entry",
+  "strings": {
+    "en:cloud.eventsWaiting": {
+      "text": "Some activity updates are waiting to be saved; nothing to do",
+      "en": "Some activity updates are waiting to be saved; nothing to do",
+      "verdict": "pass",
+      "note": "Plain, no blame, says no action needed."
+    },
+    "de:cloud.eventsWaiting": {
+      "text": "Einige Aktivitätsmeldungen warten darauf, gespeichert zu werden; du musst nichts tun",
+      "en": "Some activity updates are waiting to be saved; nothing to do",
+      "verdict": "pass",
+      "note": "Accurate; Aktivitätsmeldungen fits. Form of address must match pack (C1)."
+    },
+    "es:cloud.eventsWaiting": {
+      "text": "Algunas actualizaciones de actividad esperan a ser guardadas; no tienes que hacer nada",
+      "en": "Some activity updates are waiting to be saved; nothing to do",
+      "verdict": "pass",
+      "note": "Accurate and natural. Form of address must match pack (C1)."
+    },
+    "fr:cloud.eventsWaiting": {
+      "text": "Certaines mises à jour d'activité attendent d'être enregistrées ; rien à faire",
+      "en": "Some activity updates are waiting to be saved; nothing to do",
+      "verdict": "pass",
+      "note": "Accurate; French spacing before semicolon must be a no-break space (C2)."
+    },
+    "hi:cloud.eventsWaiting": {
+      "text": "कुछ गतिविधि अपडेट सहेजे जाने की प्रतीक्षा में हैं; आपको कुछ करने की ज़रूरत नहीं है",
+      "en": "Some activity updates are waiting to be saved; nothing to do",
+      "verdict": "pass",
+      "note": "Accurate, polite aapko form, reassuring."
+    },
+    "ja:cloud.eventsWaiting": {
+      "text": "一部のアクティビティ更新は保存待ちです。操作は必要ありません",
+      "en": "Some activity updates are waiting to be saved; nothing to do",
+      "verdict": "pass",
+      "note": "Natural; 保存待ち and 操作は必要ありません read well. Sentence break instead of semicolon is correct for Japanese."
+    },
+    "pt-br:cloud.eventsWaiting": {
+      "text": "Algumas atualizações de atividade estão aguardando para serem salvas; nada a fazer",
+      "en": "Some activity updates are waiting to be saved; nothing to do",
+      "verdict": "pass",
+      "note": "Accurate; nada a fazer is natural in UI copy."
+    },
+    "zh:cloud.eventsWaiting": {
+      "text": "部分活动更新正在等待保存；无需任何操作",
+      "en": "Some activity updates are waiting to be saved; nothing to do",
+      "verdict": "pass",
+      "note": "Accurate; full-width semicolon correct; 无需任何操作 reads well."
+    }
+  },
+  "files": {
+    "reviewers.json": {
+      "text": "{\n  \"version\": 1,\n  \"reviewers\": [\n    {\n      \"kind\": \"agent\",\n      \"name\": \"sol\",\n      \"account\": \"gpt-6.1-sol read-only, codex acct2 and acct6\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"claude-copyrev\",\n      \"account\": \"claude sonnet 5.5, copy-review seat for MurageMain\"\n    },\n    {\n      \"kind\": \"agent\",\n      \"name\": \"muragemain-copyrev\",\n      \"account\": \"claude opus 5.5, MurageMain copy review\"\n    }\n  ]\n}\n",
+      "verdict": "pass"
+    }
+  }
+}

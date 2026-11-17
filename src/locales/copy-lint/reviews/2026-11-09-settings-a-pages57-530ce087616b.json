@@ -1,0 +1,175 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "SETPAGES-A2",
+  "date": "2026-11-09",
+  "base": "070edae98",
+  "scope": "settings pages 5 to 7: Memory upkeep heading, AssemblyAI key pointer",
+  "strings": {
+    "en:settings.l2.upkeep": {
+      "text": "Memory upkeep",
+      "en": "Memory upkeep",
+      "verdict": "pass"
+    },
+    "en:settings.l4.voiceKey.where": {
+      "text": "Add your AssemblyAI key under Skills, next to Teach a skill, to turn transcription on.",
+      "en": "Add your AssemblyAI key under Skills, next to Teach a skill, to turn transcription on.",
+      "verdict": "pass"
+    },
+    "en:settings.l4.voiceKey.change": {
+      "text": "The AssemblyAI key lives under Skills, next to Teach a skill.",
+      "en": "The AssemblyAI key lives under Skills, next to Teach a skill.",
+      "verdict": "pass"
+    },
+    "en:settings.l4.voiceKey.open": {
+      "text": "Open Skills",
+      "en": "Open Skills",
+      "verdict": "pass"
+    },
+    "de:settings.l2.upkeep": {
+      "text": "Gedächtnispflege",
+      "en": "Memory upkeep",
+      "verdict": "pass"
+    },
+    "de:settings.l4.voiceKey.where": {
+      "text": "Füge deinen AssemblyAI-Schlüssel unter Fähigkeiten hinzu, neben „Fähigkeit beibringen“, um die Transkription zu aktivieren.",
+      "en": "Add your AssemblyAI key under Skills, next to Teach a skill, to turn transcription on.",
+      "verdict": "pass"
+    },
+    "de:settings.l4.voiceKey.change": {
+      "text": "Der AssemblyAI-Schlüssel steht unter Fähigkeiten, neben „Fähigkeit beibringen“.",
+      "en": "The AssemblyAI key lives under Skills, next to Teach a skill.",
+      "verdict": "pass"
+    },
+    "de:settings.l4.voiceKey.open": {
+      "text": "Fähigkeiten öffnen",
+      "en": "Open Skills",
+      "verdict": "pass"
+    },
+    "es:settings.l2.upkeep": {
+      "text": "Mantenimiento de la memoria",
+      "en": "Memory upkeep",
+      "verdict": "pass"
+    },
+    "es:settings.l4.voiceKey.where": {
+      "text": "Añade tu clave de AssemblyAI en Habilidades, junto a «Enseñar una habilidad», para activar la transcripción.",
+      "en": "Add your AssemblyAI key under Skills, next to Teach a skill, to turn transcription on.",
+      "verdict": "pass"
+    },
+    "es:settings.l4.voiceKey.change": {
+      "text": "La clave de AssemblyAI está en Habilidades, junto a «Enseñar una habilidad».",
+      "en": "The AssemblyAI key lives under Skills, next to Teach a skill.",
+      "verdict": "pass"
+    },
+    "es:settings.l4.voiceKey.open": {
+      "text": "Abrir Habilidades",
+      "en": "Open Skills",
+      "verdict": "pass"
+    },
+    "fr:settings.l2.upkeep": {
+      "text": "Entretien de la mémoire",
+      "en": "Memory upkeep",
+      "verdict": "pass"
+    },
+    "fr:settings.l4.voiceKey.where": {
+      "text": "Ajoute ta clé AssemblyAI dans Compétences, à côté de « Enseigner une compétence », pour activer la transcription.",
+      "en": "Add your AssemblyAI key under Skills, next to Teach a skill, to turn transcription on.",
+      "verdict": "pass"
+    },
+    "fr:settings.l4.voiceKey.change": {
+      "text": "La clé AssemblyAI se trouve dans Compétences, à côté de « Enseigner une compétence ».",
+      "en": "The AssemblyAI key lives under Skills, next to Teach a skill.",
+      "verdict": "pass"
+    },
+    "fr:settings.l4.voiceKey.open": {
+      "text": "Ouvrir Compétences",
+      "en": "Open Skills",
+      "verdict": "pass"
+    },
+    "hi:settings.l2.upkeep": {
+      "text": "मेमोरी की देखरेख",
+      "en": "Memory upkeep",
+      "verdict": "pass"
+    },
+    "hi:settings.l4.voiceKey.where": {
+      "text": "ट्रांसक्रिप्शन चालू करने के लिए अपनी AssemblyAI कुंजी स्किल में, “स्किल सिखाएँ” के बगल में जोड़ें।",
+      "en": "Add your AssemblyAI key under Skills, next to Teach a skill, to turn transcription on.",
+      "verdict": "pass"
+    },
+    "hi:settings.l4.voiceKey.change": {
+      "text": "AssemblyAI कुंजी स्किल में है, “स्किल सिखाएँ” के बगल में।",
+      "en": "The AssemblyAI key lives under Skills, next to Teach a skill.",
+      "verdict": "pass"
+    },
+    "hi:settings.l4.voiceKey.open": {
+      "text": "स्किल खोलें",
+      "en": "Open Skills",
+      "verdict": "pass"
+    },
+    "ja:settings.l2.upkeep": {
+      "text": "メモリのメンテナンス",
+      "en": "Memory upkeep",
+      "verdict": "pass"
+    },
+    "ja:settings.l4.voiceKey.where": {
+      "text": "文字起こしをオンにするには、スキルの「スキルを教える」の隣で AssemblyAI のキーを追加してください。",
+      "en": "Add your AssemblyAI key under Skills, next to Teach a skill, to turn transcription on.",
+      "verdict": "pass"
+    },
+    "ja:settings.l4.voiceKey.change": {
+      "text": "AssemblyAI のキーは、スキルの「スキルを教える」の隣にあります。",
+      "en": "The AssemblyAI key lives under Skills, next to Teach a skill.",
+      "verdict": "pass"
+    },
+    "ja:settings.l4.voiceKey.open": {
+      "text": "スキルを開く",
+      "en": "Open Skills",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l2.upkeep": {
+      "text": "Manutenção da memória",
+      "en": "Memory upkeep",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l4.voiceKey.where": {
+      "text": "Adicione sua chave da AssemblyAI em Habilidades, ao lado de “Ensinar uma habilidade”, para ativar a transcrição.",
+      "en": "Add your AssemblyAI key under Skills, next to Teach a skill, to turn transcription on.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l4.voiceKey.change": {
+      "text": "A chave da AssemblyAI fica em Habilidades, ao lado de “Ensinar uma habilidade”.",
+      "en": "The AssemblyAI key lives under Skills, next to Teach a skill.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.l4.voiceKey.open": {
+      "text": "Abrir Habilidades",
+      "en": "Open Skills",
+      "verdict": "pass"
+    },
+    "zh:settings.l2.upkeep": {
+      "text": "记忆维护",
+      "en": "Memory upkeep",
+      "verdict": "pass"
+    },
+    "zh:settings.l4.voiceKey.where": {
+      "text": "在“技能”中“教一项技能”旁添加你的 AssemblyAI 密钥即可开启转写。",
+      "en": "Add your AssemblyAI key under Skills, next to Teach a skill, to turn transcription on.",
+      "verdict": "pass"
+    },
+    "zh:settings.l4.voiceKey.change": {
+      "text": "AssemblyAI 密钥在“技能”中“教一项技能”旁。",
+      "en": "The AssemblyAI key lives under Skills, next to Teach a skill.",
+      "verdict": "pass"
+    },
+    "zh:settings.l4.voiceKey.open": {
+      "text": "打开技能",
+      "en": "Open Skills",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

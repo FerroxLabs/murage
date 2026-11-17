@@ -15,7 +15,7 @@ import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { withStatementReuse, writeStamp } from "../io-budget.ts";
 import { withBindingScope } from "../human-principals.ts";
 
-interface Pass { db: DatabaseSync; changes: number; roster: object | null; groups: object | null; shape: string; answers: Map<string, string[]>; lookups: Map<string, unknown>; lookupChanges: number }
+interface Pass { db: DatabaseSync; changes: number; roster: object | null; groups: object | null; shape: string; answers: Map<string, readonly string[]>; lookups: Map<string, unknown>; lookupChanges: number }
 let active: Pass | null = null;
 const counters = new WeakMap<object, StatementSync>();
 
@@ -40,18 +40,18 @@ export function inEligibilityPass<T>(db: DatabaseSync, work: () => T): T {
 }
 
 /** The remembered answer for `key` under this roster, or `compute()` (remembered when nothing changed meanwhile). */
-export function eligibilityAnswer(db: DatabaseSync, key: string, roster: { bots: readonly unknown[]; groups: readonly unknown[] }, compute: () => string[]): string[] {
+export function eligibilityAnswer(db: DatabaseSync, key: string, roster: { bots: readonly unknown[]; groups: readonly unknown[] }, compute: () => readonly string[]): readonly string[] {
   const pass = active;
-  if (!pass || pass.db !== db) return compute();
+  if (!pass || pass.db !== db) return Object.freeze(compute());
   const now = totalChanges(db), shape = shapeOf(roster);
   if (now !== pass.changes || pass.roster !== roster.bots || pass.groups !== roster.groups || pass.shape !== shape) {
     pass.answers.clear(); pass.changes = now; pass.roster = roster.bots; pass.groups = roster.groups; pass.shape = shape;
   }
   const known = pass.answers.get(key);
-  if (known) return [...known];
-  const fresh = compute();
+  if (known) return known;
+  const fresh = Object.freeze(compute());
   // computing may itself have written (a scope created on demand): then it is not remembered
-  if (totalChanges(db) === now) pass.answers.set(key, [...fresh]);
+  if (totalChanges(db) === now) pass.answers.set(key, fresh);
   return fresh;
 }
 
