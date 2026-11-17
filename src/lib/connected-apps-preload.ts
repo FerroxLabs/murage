@@ -4,6 +4,29 @@ import { api } from "@/state/store";
 import { readCachedInventory, writeCachedInventory } from "./connected-apps-cache";
 import type { AppCard as ToolkitCard } from "./app-catalog";
 
+export interface ConnectedAppsAdmission {
+  outcome: "held" | "completed" | "deferred" | "failed";
+  reason: string;
+  retryAt?: number;
+  status?: number;
+  attempted?: boolean;
+}
+export let cachedConnectedAppsAdmission: ConnectedAppsAdmission | undefined;
+const admissionListeners = new Set<(status: ConnectedAppsAdmission | undefined) => void>();
+export function rememberConnectedAppsAdmission(value: ConnectedAppsAdmission | undefined) {
+  if (!value) return;
+  // A late unrelated success cannot erase a still-active refusal.
+  const terminalRecovery = value.outcome === "failed" && value.reason === "credential_recovery_failed";
+  if (!terminalRecovery && (cachedConnectedAppsAdmission?.retryAt ?? 0) > Date.now()
+    && (value.retryAt ?? 0) < (cachedConnectedAppsAdmission?.retryAt ?? 0)) return;
+  cachedConnectedAppsAdmission = value;
+  for (const listener of admissionListeners) listener(value);
+}
+export function subscribeConnectedAppsAdmission(listener: (status: ConnectedAppsAdmission | undefined) => void) {
+  admissionListeners.add(listener); listener(cachedConnectedAppsAdmission);
+  return () => { admissionListeners.delete(listener); };
+}
+
 export interface ConnectorStatus {
   connected: boolean;
   pending?: boolean;
@@ -14,6 +37,7 @@ export interface ConnectorStatus {
     id: string;
     alias?: string;
     status: string;
+    needsReconnect?: boolean;
   }>;
 }
 
@@ -34,6 +58,7 @@ export let inventoryApps: Record<string, ToolkitCard> = {};
 let credentialStoreUnreadable = false;
 const CONNECTOR_STATUS_CACHE_MS = 30_000;
 export interface ConnectorInventory {
+  admission?: ConnectedAppsAdmission;
   services: Record<string, ConnectorStatus>;
   /** false when the server could not read the credential store: the list is
    * then "we do not know", and nothing may be cleared on the strength of it */
@@ -54,6 +79,7 @@ export interface ConnectorInventory {
 export function preloadConnectedApps(force = false, serverForce = force): Promise<ConnectorInventory> {
   if (!force && cachedConnectorStatus !== null && Date.now() - cachedConnectorStatusAt < CONNECTOR_STATUS_CACHE_MS) {
     return Promise.resolve({
+      admission: cachedConnectedAppsAdmission,
       services: cachedConnectorStatus,
       authoritative: cachedConnectorStatusAuthoritative,
       apps: inventoryApps,
@@ -62,23 +88,24 @@ export function preloadConnectedApps(force = false, serverForce = force): Promis
   if (connectorStatusRequest) return connectorStatusRequest;
   connectorStatusRequest = api(serverForce ? "/api/connectors/connected?force=1" : "/api/connectors/connected")
     .then((response) => {
+      rememberConnectedAppsAdmission(response.admission);
       const services: Record<string, ConnectorStatus> = response.services ?? {};
       // An unreadable credential store tells us nothing about what is
       // connected. Keep the last inventory we were sure about instead.
       if (response.credentialStore === "unavailable") {
         credentialStoreUnreadable = true;
-        return { services: readCachedInventory()?.services ?? {}, authoritative: false };
+        return { admission: cachedConnectedAppsAdmission, services: cachedConnectorStatus ?? readCachedInventory()?.services ?? {}, authoritative: false };
       }
       credentialStoreUnreadable = false;
       // Not ready yet: remembered accounts, if any, stand; nothing is cached
       // on the strength of an answer that does not know.
       if (response.configured === false) {
-        return { services: readCachedInventory()?.services ?? {}, authoritative: false, backendReady: false };
+        return { admission: cachedConnectedAppsAdmission, services: cachedConnectorStatus ?? readCachedInventory()?.services ?? {}, authoritative: false, backendReady: false };
       }
       // The server has nothing remembered and its first answer has not come
       // back yet: an empty list here is "not yet", never "nothing connected".
       if (response.known === false) {
-        return { services: readCachedInventory()?.services ?? {}, authoritative: false, revalidating: true };
+        return { admission: cachedConnectedAppsAdmission, services: cachedConnectorStatus ?? readCachedInventory()?.services ?? {}, authoritative: false, revalidating: true };
       }
       const revalidating = response.revalidating === true;
       cachedConnectorStatus = services;
@@ -87,9 +114,9 @@ export function preloadConnectedApps(force = false, serverForce = force): Promis
       cachedConnectorStatusAuthoritative = true;
       if (response.apps && typeof response.apps === "object") inventoryApps = { ...inventoryApps, ...response.apps };
       writeCachedInventory(services, Date.now());
-      return { services, authoritative: true, apps: inventoryApps, ...(revalidating ? { revalidating } : { revalidating: false }) };
+      return { admission: cachedConnectedAppsAdmission, services, authoritative: true, apps: inventoryApps, ...(revalidating ? { revalidating } : { revalidating: false }) };
     })
-    .catch(() => ({ services: readCachedInventory()?.services ?? {}, authoritative: false }))
+    .catch(() => ({ admission: cachedConnectedAppsAdmission, services: cachedConnectorStatus ?? readCachedInventory()?.services ?? {}, authoritative: false }))
     .finally(() => {
       connectorStatusRequest = null;
     });

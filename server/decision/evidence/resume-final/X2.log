@@ -1,0 +1,58 @@
+COMMAND node_modules/.bin/vitest run server/decision/base-parity.test.ts -t R3
+
+ RUN  v4.1.12 /work
+
+stdout | server/decision/base-parity.test.ts > R3 content-only email runs its exact registered action without cards
+[memory] index build before listen name=memory_records_pinned ms=1
+[memory] index build before listen name=memory_source_lsn_created ms=1
+[sqlite] storage file=1 wal=2 freelist=0
+
+ ❯ server/decision/base-parity.test.ts (8 tests | 4 failed | 4 skipped) 923ms
+   ↓ R13 405 frozen 1.0.18 verdicts remain byte equal on BASE
+   ↓ R10 outside-marked owner request runs: ssh host 'echo fixture'
+   ↓ R10 outside-marked owner request runs: cd d && ls
+   ↓ R10 outside-marked owner request runs: git commit -am x && git push origin HEAD && rm -f /tmp/x.tmp
+   × R3 data fields never become executable evidence 14ms
+   × R3 content-only email runs its exact registered action without cards 343ms
+   × R3 content-only peer runs its exact registered action without cards 280ms
+   × R3 content-only memory runs its exact registered action without cards 283ms
+
+ Test Files  1 failed (1)
+      Tests  4 failed | 4 skipped (8)
+   Start at  08:16:18
+   Duration  5.39s (transform 3.49s, setup 4.12s, import 240ms, tests 923ms, environment 0ms)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 4 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  server/decision/base-parity.test.ts > R3 data fields never become executable evidence
+AssertionError: expected [ { path: 'root', op: 'delete' } ] to have a length of +0 but got 1
+
+- Expected
++ Received
+
+- 0
++ 1
+
+ ❯ server/decision/base-parity.test.ts:14:180
+     12| });
+     13| it('R3 data fields never become executable evidence',()=>{
+     14|  for(const tool of ['email_send','peer_ask','memory_review','publish']…
+       |                                                                                                                                                                                    ^
+     15| });
+     16|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/4]⎯
+
+ FAIL  server/decision/base-parity.test.ts > R3 content-only email runs its exact registered action without cards
+ FAIL  server/decision/base-parity.test.ts > R3 content-only peer runs its exact registered action without cards
+ FAIL  server/decision/base-parity.test.ts > R3 content-only memory runs its exact registered action without cards
+Error: service-approval-spec-missing
+ ❯ approval server/decision/implementation.ts:156:36
+
+ ❯ Module.decide server/decision/implementation.ts:135:49
+ ❯ Module.decide server/decision/api.ts:11:103
+ ❯ server/decision/base-parity.test.ts:20:11
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/4]⎯
+

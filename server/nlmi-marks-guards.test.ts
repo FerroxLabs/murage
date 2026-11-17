@@ -328,19 +328,29 @@ describe("MARKS r12 mutation witnesses", () => {
   it("M-X1-exec tar -I runs a program", () => expect(reason("tar -I zstd -xf a.tar")).toBe("tokenizer"));
   it("M-X1-climb touch ../etc/passwd doubts in the walk", () => expect(walks("touch ../etc/passwd")).toThrow("value-path"));
   it("M-R7-climb tar -C through a system folder doubts in the walk", () => expect(walks("tar -C /w/../etc/../w/x -xf blob")).toThrow("value-path"));
+  // MAIN RULING 2026-11-13 wipe-only: owner metadata contradicted by automation
+  // does not authenticate a routine; its effective level is Ask.
+  it("M-R7-level an unproven routine turn stays Ask (touch out, no fixed folder)", () =>
+    expect(verdict("touch out", undefined, { automated: true, routineLevel: true, workFolder: undefined } as Partial<AutoContext>)).toEqual({ approve: null, source: "no-grant" }));
   it("M-R7-level a routine No limits run keeps the strict read (touch out, no fixed folder)", () =>
-    expect(verdict("touch out", undefined, { automated: true, routineLevel: true, workFolder: undefined } as Partial<AutoContext>)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" }));
+    // MAIN RULING 2026-11-13 wipe-only: a proven owner routine at No limits runs an ordinary write even without a fixed folder.
+    expect(verdict("touch out", undefined, { fullAccessOrigin: "routine", automated: true, routineLevel: true, workFolder: undefined } as Partial<AutoContext>)).toEqual({ approve: "auto-approved Bash (no limits)", source: "no-limits" }));
   it("M-R10-relief the owner's No limits turn takes the doubt-free read (dd of=./disk.img, no fixed folder)", () =>
     expect(verdict("dd if=/dev/zero of=./disk.img bs=1M count=1", undefined)).toMatchObject({ source: "no-limits" }));
   it("M-R10-owner a turn another origin started keeps the strict read", () =>
-    expect(verdict("dd if=/dev/zero of=./disk.img bs=1M count=1", undefined, { fullAccessOrigin: "other", workFolder: undefined } as Partial<AutoContext>)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" }));
+    // MAIN RULING 2026-11-13 wipe-only: another person's turn has Ask policy, regardless of this bot's No limits flags.
+    expect(verdict("dd if=/dev/zero of=./disk.img bs=1M count=1", undefined, { fullAccessOrigin: "other", workFolder: undefined } as Partial<AutoContext>)).toEqual({ approve: null, source: "no-grant" }));
   it("M-R10-dd dd reads a system folder through if= and writes in the project", () => {
     expect(alwaysAskCommand("dd if=/etc of=./x", "/w")).toBeNull();
     expect(alwaysAskCommand("dd if=/home/tester of=./x", "/w")).toBeNull();
   });
   it("M-R10-inline inline code the family scan reads is no doubt", () => expect(alwaysAskCommand(`python3 -c 'import os; os.system("ls")'`, "/w")).toBeNull());
-  it("M-R11-unseen-lane an unseen script on a marked lane keeps the reader's card", () =>
-    expect(verdict("bash ./build.sh", "/w", { outsideRead: ["interpreter"] } as Partial<AutoContext>)).toMatchObject({ approve: null, source: "always-ask", rule: "unreadable" }));
+  // MAIN RULING 2026-11-13 wipe-only: _small/WIPE-NARROW.md, Resolution:
+  // scripts on disk are outside the breaker. An admitted owner turn runs
+  // without consulting the legacy reader or retaining its n1 marker.
+  it("M-R11-unseen-lane an unseen script on a marked lane runs for the owner's No limits turn", () =>
+    // MAIN RULING 2026-11-13 wipe-only: a marked non-wipe runs directly, without a legacy unreadable hold reason.
+    expect(verdict("bash ./build.sh", "/w", { outsideRead: ["interpreter"] } as Partial<AutoContext>)).toEqual({ approve: "auto-approved Bash (no limits)", source: "no-limits" }));
   it("M-R1-program awk system() runs a program", () => expect(reason(`awk 'BEGIN{system("ls")}'`)).toBe("tokenizer"));
   it("M-R1-path touch out with no fixed folder doubts", () => expect(alwaysAskCommand("touch out")?.doubt).toBe("value-path"));
   it("M-R1-fold a drive root in capitals is a drive root", () => denied("touch C:/")); // FIX A migration (N3): was doubt value-path

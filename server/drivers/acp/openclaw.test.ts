@@ -1,8 +1,10 @@
+// control: retain the isolated turn and mount admission used by server dispatch.
+import { bindFixtureAdapter } from "../../testing/mcp-admission-fixture.ts";
 import { useOutsideStoreFixture } from "../../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../../testing/bot-folder-fixture.ts";
 // Contract tests for the OpenClaw ACP driver. The scripted fake ACP CLI
 // stands in for `openclaw acp`; no real openclaw binary is ever run.
-import { chmodSync, mkdtempSync, readFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,10 +12,11 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { ensureDirs } from "../../config.ts";
 import type { ProviderInstance } from "../../contracts.ts";
-import { recordEvents, type EventRecorder } from "../../testing/events.ts";
+import { recordAdmittedEvents as recordEvents, type EventRecorder } from "../../testing/admitted-events.ts";
 import { removeTempDir } from "../../testing/cleanup.ts";
 import { BUILT_IN_DRIVERS } from "../builtIn.ts";
-import { OpenclawAgentDriver, openclawBridgeArgs } from "./openclaw.ts";
+import { OpenclawAgentDriver, openclawBridgeArgs, openclawSupport, createOpenclawPrePromptGuard } from "./openclaw.ts";
+import { createAcpDriver } from "./core.ts";
 import { TURN_ASK_RULES } from "../../../shared/ask-wording.ts";
 
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "testing", "fake-acp-cli.ts");
@@ -92,7 +95,12 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
   let scratch: string;
 
   const create = async (config: Record<string, unknown> = {}, environment: Record<string, string> = {}) => {
-    instance = await OpenclawAgentDriver.create({
+    const prePrompt = createOpenclawPrePromptGuard({
+      probeVersion: async () => "2026.10.5",
+      call: async (_cli, _method, params) => ({ ok: true, key: params.key, entry: { permissionMode: "read-only" } }),
+      verifyCoverage: async () => ({ refusedReads: true, skillRoots: true, extraTools: true, nativeHarnesses: true, delegation: true, readBoundary: true }),
+    });
+    instance = await createAcpDriver({ ...openclawSupport, prePrompt, fluxReach: () => "elsewhere" as const }).create({
       instanceId: "openclaw-test",
       displayName: "OpenClaw Test",
       environment,
@@ -100,6 +108,7 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
       // The fake CLI stands in for the `openclaw` binary.
       config: { cli: FAKE_CLI, fullAuto: false, ...config },
     });
+    bindFixtureAdapter(instance.adapter);
     recorder = recordEvents(instance.adapter);
   };
 
@@ -187,21 +196,26 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
     process.env.FAKE_ACP_DUMP = dump;
     process.env.FAKE_ACP_MODE = "no-auth";
     await create({ agent: "fred" });
-    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
+    // MAIN RULING INT-CONFLICT-DEFAULT 0aa2d8ccede eb01447e7d1: unsupported consuming mounts must be refused, never silently discarded.
+    await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(),
       threadId: "t-oc-mounts",
       text: "hi",
       integrations: {
         agents: { command: "node", args: ["agents.js"], env: { A: "1" } },
         memory: { command: "node", args: ["memory.js"], env: {} },
       },
-    } as never);
+    } as never)).rejects.toThrow("MEMORY_CONTEXT_REVOKED");
+    expect(existsSync(dump)).toBe(false);
+    expect(recorder.events).toEqual([]);
+    // Preserve the bridge's empty-mount proof on a genuinely mount-free turn.
+    await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-oc-no-mounts", text: "hi" });
     await recorder.until((e) => e.type === "turn.completed");
     expect(recorder.events.at(-1)).toMatchObject({ type: "turn.completed", ok: true });
     const state = JSON.parse(readFileSync(dump, "utf8")) as { mcpServers?: unknown[] };
     expect(state.mcpServers ?? []).toEqual([]);
   });
 
-  it("sends a non-Ask prompt with no /exec directive, as in 1.0.2, so the owner's OpenClaw policy applies (2026.10.5 refused redirects under ask=always)", async () => {
+  it("prepends the deny directive to a non-Ask prompt", async () => {
     const promptDump = join(scratch, "prompt.json");
     process.env.FAKE_ACP_PROMPT_DUMP = promptDump;
     process.env.FAKE_ACP_MODE = "no-auth";
@@ -210,9 +224,9 @@ describe("OpenclawAgentDriver turns (fake CLI)", () => {
     await recorder.until((e) => e.type === "turn.completed");
     const blocks = JSON.parse(readFileSync(promptDump, "utf8")) as Array<{ type: string; text?: string }>;
     const text = blocks.map((b) => b.text ?? "").join("");
-    expect(text).not.toContain("/exec");
+    expect(text.split("\n")[0]).toBe("/exec security=deny");
     // 1.0.4 QW (21e9b0f53): every engine's turn carries the ask rule line after the persona.
-    expect(text.startsWith(`You are Fred.\n\n${TURN_ASK_RULES}\n\nrun it`)).toBe(true);
+    expect(text.startsWith(`/exec security=deny\nYou are Fred.\n\n${TURN_ASK_RULES}\n\nrun it`)).toBe(true);
     delete process.env.FAKE_ACP_PROMPT_DUMP;
   });
 

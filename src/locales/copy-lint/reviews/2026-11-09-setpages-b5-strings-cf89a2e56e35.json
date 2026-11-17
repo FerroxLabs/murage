@@ -1,0 +1,335 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "sol",
+    "account": "gpt-6.1-sol read-only, codex acct2 and acct6"
+  },
+  "author": "sonnet-b5",
+  "date": "2026-11-09",
+  "base": "070edae98",
+  "scope": "setpages-b5-strings",
+  "strings": {
+    "en:settings.about.versionUpdatesTitle": {
+      "text": "Version and updates",
+      "en": "Version and updates",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.reviewRequired": {
+      "text": "This review has expired or is no longer available. Review again.",
+      "en": "This review has expired or is no longer available. Review again.",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.partlyUndone": {
+      "text": "Some changes could not be undone. Check your skills and tools before trying again.",
+      "en": "Some changes could not be undone. Check your skills and tools before trying again.",
+      "verdict": "pass"
+    },
+    "en:settings.claudeCode.importFailed": {
+      "text": "Could not finish importing. Review again before trying again.",
+      "en": "Could not finish importing. Review again before trying again.",
+      "verdict": "pass"
+    },
+    "en:settings.usage.savedLimit": {
+      "text": "Current saved limit: {limit} million tokens.",
+      "en": "Current saved limit: {limit} million tokens.",
+      "verdict": "pass"
+    },
+    "en:settings.usage.learningLoadFailed": {
+      "text": "Could not load learning usage. Try again.",
+      "en": "Could not load learning usage. Try again.",
+      "verdict": "pass"
+    },
+    "en:settings.usage.learningStale": {
+      "text": "Showing last-known values from {time}. They may be out of date.",
+      "en": "Showing last-known values from {time}. They may be out of date.",
+      "verdict": "pass"
+    },
+    "en:settings.usage.learningUnavailable": {
+      "text": "Not available here.",
+      "en": "Not available here.",
+      "verdict": "pass"
+    },
+    "de:settings.about.versionUpdatesTitle": {
+      "text": "Version und Updates",
+      "en": "Version and updates",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.reviewRequired": {
+      "text": "Diese Prüfung ist abgelaufen oder nicht mehr verfügbar. Prüfe noch einmal.",
+      "en": "This review has expired or is no longer available. Review again.",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.partlyUndone": {
+      "text": "Einige Änderungen konnten nicht rückgängig gemacht werden. Sieh dir deine Fähigkeiten und Tools an, bevor du es erneut versuchst.",
+      "en": "Some changes could not be undone. Check your skills and tools before trying again.",
+      "verdict": "pass"
+    },
+    "de:settings.claudeCode.importFailed": {
+      "text": "Der Import konnte nicht abgeschlossen werden. Prüfe noch einmal, bevor du es erneut versuchst.",
+      "en": "Could not finish importing. Review again before trying again.",
+      "verdict": "pass"
+    },
+    "de:settings.usage.savedLimit": {
+      "text": "Aktuell gespeichertes Limit: {limit} Millionen Tokens.",
+      "en": "Current saved limit: {limit} million tokens.",
+      "verdict": "pass"
+    },
+    "de:settings.usage.learningLoadFailed": {
+      "text": "Die Nutzungsdaten der Lernfunktion konnten nicht geladen werden. Versuche es noch einmal.",
+      "en": "Could not load learning usage. Try again.",
+      "verdict": "pass"
+    },
+    "de:settings.usage.learningStale": {
+      "text": "Zuletzt bekannte Werte von {time}. Sie sind möglicherweise nicht mehr aktuell.",
+      "en": "Showing last-known values from {time}. They may be out of date.",
+      "verdict": "pass"
+    },
+    "de:settings.usage.learningUnavailable": {
+      "text": "Hier nicht verfügbar.",
+      "en": "Not available here.",
+      "verdict": "pass"
+    },
+    "es:settings.about.versionUpdatesTitle": {
+      "text": "Versión y actualizaciones",
+      "en": "Version and updates",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.reviewRequired": {
+      "text": "Esta revisión ha caducado o ya no está disponible. Revisa de nuevo.",
+      "en": "This review has expired or is no longer available. Review again.",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.partlyUndone": {
+      "text": "No se pudieron deshacer algunos cambios. Comprueba tus Habilidades y herramientas antes de intentarlo de nuevo.",
+      "en": "Some changes could not be undone. Check your skills and tools before trying again.",
+      "verdict": "pass"
+    },
+    "es:settings.claudeCode.importFailed": {
+      "text": "No se pudo terminar la importación. Revisa de nuevo antes de intentarlo otra vez.",
+      "en": "Could not finish importing. Review again before trying again.",
+      "verdict": "pass"
+    },
+    "es:settings.usage.savedLimit": {
+      "text": "Límite guardado actual: {limit} millones de tokens.",
+      "en": "Current saved limit: {limit} million tokens.",
+      "verdict": "pass"
+    },
+    "es:settings.usage.learningLoadFailed": {
+      "text": "No se pudieron cargar los datos de uso de la función de aprendizaje. Inténtalo de nuevo.",
+      "en": "Could not load learning usage. Try again.",
+      "verdict": "pass"
+    },
+    "es:settings.usage.learningStale": {
+      "text": "Se muestran los últimos valores conocidos de {time}. Puede que ya no estén al día.",
+      "en": "Showing last-known values from {time}. They may be out of date.",
+      "verdict": "pass"
+    },
+    "es:settings.usage.learningUnavailable": {
+      "text": "No disponible en esta pantalla.",
+      "en": "Not available here.",
+      "verdict": "pass"
+    },
+    "fr:settings.about.versionUpdatesTitle": {
+      "text": "Version et mises à jour",
+      "en": "Version and updates",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.reviewRequired": {
+      "text": "Cette vérification a expiré ou n’est plus disponible. Relance la vérification.",
+      "en": "This review has expired or is no longer available. Review again.",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.partlyUndone": {
+      "text": "Certains changements n’ont pas pu être annulés. Vérifie tes Compétences et tes outils avant de réessayer.",
+      "en": "Some changes could not be undone. Check your skills and tools before trying again.",
+      "verdict": "pass"
+    },
+    "fr:settings.claudeCode.importFailed": {
+      "text": "L’importation n’a pas pu aboutir. Relance la vérification avant de réessayer.",
+      "en": "Could not finish importing. Review again before trying again.",
+      "verdict": "pass"
+    },
+    "fr:settings.usage.savedLimit": {
+      "text": "Limite enregistrée actuelle : {limit} millions de jetons.",
+      "en": "Current saved limit: {limit} million tokens.",
+      "verdict": "pass"
+    },
+    "fr:settings.usage.learningLoadFailed": {
+      "text": "Impossible de charger les données d’utilisation de la fonction d’apprentissage. Réessaie.",
+      "en": "Could not load learning usage. Try again.",
+      "verdict": "pass"
+    },
+    "fr:settings.usage.learningStale": {
+      "text": "Dernières valeurs connues de {time}. Elles ne sont peut-être plus à jour.",
+      "en": "Showing last-known values from {time}. They may be out of date.",
+      "verdict": "pass"
+    },
+    "fr:settings.usage.learningUnavailable": {
+      "text": "Non disponible ici.",
+      "en": "Not available here.",
+      "verdict": "pass"
+    },
+    "hi:settings.about.versionUpdatesTitle": {
+      "text": "वर्शन और अपडेट",
+      "en": "Version and updates",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.reviewRequired": {
+      "text": "इस जाँच की समय-सीमा समाप्त हो गई है या यह अब उपलब्ध नहीं है। फिर से जाँच करो।",
+      "en": "This review has expired or is no longer available. Review again.",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.partlyUndone": {
+      "text": "कुछ बदलाव वापस नहीं किए जा सके। दोबारा कोशिश करने से पहले अपने स्किल और टूल जाँच कर लो।",
+      "en": "Some changes could not be undone. Check your skills and tools before trying again.",
+      "verdict": "pass"
+    },
+    "hi:settings.claudeCode.importFailed": {
+      "text": "इंपोर्ट पूरा नहीं हो सका। दोबारा कोशिश करने से पहले फिर से जाँच करो।",
+      "en": "Could not finish importing. Review again before trying again.",
+      "verdict": "pass"
+    },
+    "hi:settings.usage.savedLimit": {
+      "text": "मौजूदा सेव की गई सीमा: {limit} मिलियन टोकन।",
+      "en": "Current saved limit: {limit} million tokens.",
+      "verdict": "pass"
+    },
+    "hi:settings.usage.learningLoadFailed": {
+      "text": "सीखने की सुविधा के उपयोग का डेटा लोड नहीं हो सका। फिर से कोशिश करो।",
+      "en": "Could not load learning usage. Try again.",
+      "verdict": "pass"
+    },
+    "hi:settings.usage.learningStale": {
+      "text": "{time} के आखिरी ज्ञात मान दिखाए जा रहे हैं। हो सकता है वे अब पुराने हों।",
+      "en": "Showing last-known values from {time}. They may be out of date.",
+      "verdict": "pass"
+    },
+    "hi:settings.usage.learningUnavailable": {
+      "text": "यहाँ उपलब्ध नहीं है।",
+      "en": "Not available here.",
+      "verdict": "pass"
+    },
+    "ja:settings.about.versionUpdatesTitle": {
+      "text": "バージョンとアップデート",
+      "en": "Version and updates",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.reviewRequired": {
+      "text": "この確認は期限が切れたか、利用できなくなりました。もう一度確認してください。",
+      "en": "This review has expired or is no longer available. Review again.",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.partlyUndone": {
+      "text": "一部の変更を元に戻せませんでした。もう一度試す前に、スキルとツールを確認してください。",
+      "en": "Some changes could not be undone. Check your skills and tools before trying again.",
+      "verdict": "pass"
+    },
+    "ja:settings.claudeCode.importFailed": {
+      "text": "インポートを完了できませんでした。もう一度試す前に、もう一度確認してください。",
+      "en": "Could not finish importing. Review again before trying again.",
+      "verdict": "pass"
+    },
+    "ja:settings.usage.savedLimit": {
+      "text": "現在保存されている上限: {limit}百万トークン。",
+      "en": "Current saved limit: {limit} million tokens.",
+      "verdict": "pass"
+    },
+    "ja:settings.usage.learningLoadFailed": {
+      "text": "学習の使用量を読み込めませんでした。もう一度お試しください。",
+      "en": "Could not load learning usage. Try again.",
+      "verdict": "pass"
+    },
+    "ja:settings.usage.learningStale": {
+      "text": "{time}時点で最後に確認できた値を表示しています。最新でない場合があります。",
+      "en": "Showing last-known values from {time}. They may be out of date.",
+      "verdict": "pass"
+    },
+    "ja:settings.usage.learningUnavailable": {
+      "text": "この画面では利用できません。",
+      "en": "Not available here.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.about.versionUpdatesTitle": {
+      "text": "Versão e atualizações",
+      "en": "Version and updates",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.reviewRequired": {
+      "text": "Esta revisão expirou ou não está mais disponível. Revise de novo.",
+      "en": "This review has expired or is no longer available. Review again.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.partlyUndone": {
+      "text": "Algumas alterações não puderam ser desfeitas. Confira suas Habilidades e ferramentas antes de tentar de novo.",
+      "en": "Some changes could not be undone. Check your skills and tools before trying again.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.claudeCode.importFailed": {
+      "text": "Não foi possível concluir a importação. Revise de novo antes de tentar outra vez.",
+      "en": "Could not finish importing. Review again before trying again.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.usage.savedLimit": {
+      "text": "Limite salvo atual: {limit} milhões de tokens.",
+      "en": "Current saved limit: {limit} million tokens.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.usage.learningLoadFailed": {
+      "text": "Não foi possível carregar os dados de uso da função de aprendizado. Tente de novo.",
+      "en": "Could not load learning usage. Try again.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.usage.learningStale": {
+      "text": "Mostrando os últimos valores conhecidos de {time}. Eles podem estar desatualizados.",
+      "en": "Showing last-known values from {time}. They may be out of date.",
+      "verdict": "pass"
+    },
+    "pt-br:settings.usage.learningUnavailable": {
+      "text": "Não disponível nesta tela.",
+      "en": "Not available here.",
+      "verdict": "pass"
+    },
+    "zh:settings.about.versionUpdatesTitle": {
+      "text": "版本和更新",
+      "en": "Version and updates",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.reviewRequired": {
+      "text": "此次检查结果已过期或不再可用。请重新检查。",
+      "en": "This review has expired or is no longer available. Review again.",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.partlyUndone": {
+      "text": "部分更改无法撤销。重试之前，请先检查你的技能和工具。",
+      "en": "Some changes could not be undone. Check your skills and tools before trying again.",
+      "verdict": "pass"
+    },
+    "zh:settings.claudeCode.importFailed": {
+      "text": "导入未能完成。重试之前，请重新检查。",
+      "en": "Could not finish importing. Review again before trying again.",
+      "verdict": "pass"
+    },
+    "zh:settings.usage.savedLimit": {
+      "text": "当前已保存的上限：{limit} 百万个令牌。",
+      "en": "Current saved limit: {limit} million tokens.",
+      "verdict": "pass"
+    },
+    "zh:settings.usage.learningLoadFailed": {
+      "text": "无法加载学习用量。请重试。",
+      "en": "Could not load learning usage. Try again.",
+      "verdict": "pass"
+    },
+    "zh:settings.usage.learningStale": {
+      "text": "显示的是 {time} 的最后已知数值，可能已不是最新。",
+      "en": "Showing last-known values from {time}. They may be out of date.",
+      "verdict": "pass"
+    },
+    "zh:settings.usage.learningUnavailable": {
+      "text": "此界面上不可用。",
+      "en": "Not available here.",
+      "verdict": "pass"
+    }
+  },
+  "files": {}
+}

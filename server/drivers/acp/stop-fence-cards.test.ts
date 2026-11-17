@@ -194,7 +194,8 @@ describe("stop-fence r3.2 cards: the provider home and the card gate", () => {
     await instance.adapter.sendTurn(cardTurn({ unattendedAskNote: true }));
     expect(providerHomes().length).toBe(before.length + 1);
     expect(hooks.cleanups, "the card is open: nothing cleaned yet").toBe(0);
-    vi.advanceTimersByTime(QUESTION_TIMEOUT_MS);
+    // Native retirement commits only after its asynchronous delivery receipt.
+    await vi.advanceTimersByTimeAsync(QUESTION_TIMEOUT_MS);
     expect(completions(events)[0]?.stopReason).toBe("cancelled");
     expect(hooks.cleanups).toBe(1);
     expect(providerHomes()).toEqual(before);
@@ -312,7 +313,7 @@ describe("stop-fence r3.2 cards: session setup, the Ask switch and the destinati
   it("T23 an Ask turn, a reset while session/new is held, then release: the Ask switch never runs, the stopped pair [mutant: G9 dropped]", async () => {
     const engine = engineOf(["session/new"]);
     const apply = vi.fn(async () => undefined);
-    const { instance, events } = await boot(engine, { askStop: { apply } });
+    const { instance, events } = await boot(engine, { askStop: { sessionMode: { readOnly: "ask", normal: "normal" }, apply } });
     const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t1", text: "hello", model: "p/m", askLevel: true } as never);
     await waitFor(() => expect(engine.hold("session/new")).toBe(true));
     await applyStop(instance, "reset", "t1");

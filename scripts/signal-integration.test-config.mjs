@@ -1,0 +1,1 @@
+export default { test: { include: ['scripts/signal-sync-proof.test.mjs', 'scripts/signal-path-contract.test.mjs', 'server/channels/signal/evidence-integration.test.ts', 'server/channels/signal/unlink.test.ts', 'server/channels/signal/adapters.test.ts'], fileParallelism: false } };

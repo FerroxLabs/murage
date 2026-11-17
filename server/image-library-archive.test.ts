@@ -10,6 +10,8 @@ import { afterEach, beforeEach, expect, it } from "vitest";
 import { DATA_DIR } from "./config.ts";
 import { closeDatabase, database } from "./database.ts";
 import { Store } from "./store.ts";
+import { stopSearchIndex } from "./message-search-index.ts";
+import { stopWalMaintenance } from "./wal-maintenance.ts";
 import { writeInstallationArchive } from "./installation-archive.ts";
 import { prepareInstallationRestore } from "./installation-restore-preparation.ts";
 import { inspectInstallationDatabase } from "./installation-database-snapshot.ts";
@@ -30,6 +32,10 @@ it("backs up and restores the image library with its pinned pack images", async 
   const tables = ["image_prompt_blocks", "image_reference_packs", "image_render_prompts", "image_model_probes"];
   const before = Object.fromEntries(tables.map(table => [table, db.prepare(`SELECT * FROM ${table}`).all()]));
   const parent = dirname(DATA_DIR), archive = join(parent, "image-library-backup.zip");
+  // Offline backup requires joined writers, including the worker added by 5d5a791f19.
+  closeDatabase();
+  expect(await stopSearchIndex()).toBe(true);
+  expect(await stopWalMaintenance()).toBe(true);
   await writeInstallationArchive(DATA_DIR, archive);
   const prepared = await prepareInstallationRestore(archive, parent);
   const restored = new DatabaseSync(join(prepared.stateDirectory, "messages.db"), { readOnly: true });

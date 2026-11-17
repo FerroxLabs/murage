@@ -133,10 +133,10 @@ export type CodexSandboxMode = "read-only" | "workspace-write" | "danger-full-ac
  *  the owner's No limits (`fullAuto`), otherwise workspace-write. An unknown version gets the gated policy and the current spelling. */
 export function codexTurnPolicy(
   cliVersion: string | undefined,
-  turn: { proposalOnly: boolean; fullAuto: boolean; enforceApproval?: boolean },
+  turn: { proposalOnly: boolean; fullAuto: boolean; noLimits?: boolean; enforceApproval?: boolean },
   floors: CodexFloors = currentCodexFloors(),
 ): { approvalPolicy: string; sandbox: string } {
-  const sandbox: CodexSandboxMode = turn.proposalOnly ? "read-only" : turn.fullAuto ? "danger-full-access" : "workspace-write";
+  const sandbox: CodexSandboxMode = turn.proposalOnly ? "read-only" : (turn.fullAuto || turn.noLimits) ? "danger-full-access" : "workspace-write";
   const known = /(\d+)\.(\d+)\.(\d+)/.test(cliVersion ?? "");
   const legacy = codexGatePlan(cliVersion, floors).mode === "legacy";
   const policy: string = legacy ? (turn.enforceApproval ? "untrusted" : turn.fullAuto ? "never" : "on-request") : CODEX_APPROVAL_POLICY;

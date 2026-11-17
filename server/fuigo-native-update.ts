@@ -4,7 +4,8 @@ import { managedCliConstructors } from "./config-paths.ts";
 import { rebaseStoredPath } from "./stored-paths.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { createHash, randomUUID } from "node:crypto";
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { writeFile } from "./counted-fs-promises.ts";
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, stat } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { brotliDecompressSync, gunzipSync } from "node:zlib";
 import { createFuigoIsolation, type FuigoIsolation } from "./fuigo-probe-isolation.ts";
@@ -45,7 +46,7 @@ export function supportedFuigoVersion(version: string): boolean {
  * can change the ACP contract Murage speaks (Fuigo 1.0.35 asks for every command
  * in a folder trusted under folderTrust v1). An owner already on a newer
  * release is left on it: receipts, rollback and status still accept it. */
-export const QUALIFIED_FUIGO_VERSION = "1.0.40";
+export const QUALIFIED_FUIGO_VERSION = "1.0.43";
 function parts(version: string): number[] { return version.split(".").map(Number); }
 /** True when `a` is a later release than `b` (both x.y.z). */
 export function fuigoVersionNewer(a: string, b: string): boolean {

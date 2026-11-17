@@ -11,6 +11,7 @@
 // The data is the rig's shape: each reply's receipt cites the previous reply as a source and the replies' root sets are a chain. The output
 // lists are the legacy ones (every receipt of the session lists every reply written after it) in the cost test, and the current ones (a
 // reply is listed on its own receipt) where answers are compared with the unbounded check.
+import { observeSqlReads } from "./testing/sql-read-observer.ts";
 import { mkdirSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "vitest";
@@ -40,16 +41,11 @@ beforeEach(() => { resetLineageWarmForTest(); closeDatabase(); removeTempDirSync
 afterEach(() => { setReplayNodeBudgetForTest(null); setTurnLineageNodesForTest(null); });
 
 const tally = { rows: 0, statements: 0 };
+const observer = { includeRuns: true, call() { tally.statements++; }, rows(n: number) { tally.rows += n; } };
 const realPrepare = DatabaseSync.prototype.prepare;
 beforeAll(() => {
   DatabaseSync.prototype.prepare = function (this: DatabaseSync, sql: string) {
-    const statement = realPrepare.call(this, sql);
-    const own = statement as unknown as Record<string, (...args: unknown[]) => unknown>;
-    const get = statement.get.bind(statement), all = statement.all.bind(statement), run = statement.run.bind(statement);
-    own.get = (...args) => { tally.statements++; const row = (get as (...a: unknown[]) => unknown)(...args); if (row) tally.rows++; return row; };
-    own.all = (...args) => { tally.statements++; const rows = (all as (...a: unknown[]) => unknown[])(...args); tally.rows += rows.length; return rows; };
-    own.run = (...args) => { tally.statements++; return (run as (...a: unknown[]) => unknown)(...args); };
-    return statement;
+    return observeSqlReads(realPrepare.call(this, sql), sql, observer);
   } as typeof realPrepare;
 });
 afterAll(() => { DatabaseSync.prototype.prepare = realPrepare; });

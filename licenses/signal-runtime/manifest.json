@@ -1,0 +1,1503 @@
+{
+  "documents": [
+    {
+      "component": "dependency",
+      "path": "README.md",
+      "sha256": "dddf8eae4b59509640f5e820edbe2587529ad6da45801682d8cdba3c1bc357c9"
+    },
+    {
+      "component": "dependency",
+      "path": "SOURCE-OFFER.md",
+      "sha256": "ebeb743a8d69f4e264389491865772ed7bfbaeceba39586b77cbaab306ad8e0a"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/bcprov-jdk18on-1.86/META-INF/LICENSE.md",
+      "sha256": "0e01f1549c9022f406392ac2947d32223b7c2e977d21ea2f8c182fdeb4dae5fd"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/jackson-annotations-2.22/META-INF/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/jackson-annotations-2.22/META-INF/NOTICE",
+      "sha256": "612b14bc77c944ce229cbba0d14919162cfea8ed802cbf06a8e865e032d03201"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/jackson-core-2.22.4/META-INF/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/jackson-core-2.22.4/META-INF/NOTICE",
+      "sha256": "e6aef1c0f4cf5b0f802c16b31fce309b3c3737450b93c40d6291bf6540aae3d1"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/jackson-databind-2.22.4/META-INF/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/jackson-databind-2.22.4/META-INF/NOTICE",
+      "sha256": "612b14bc77c944ce229cbba0d14919162cfea8ed802cbf06a8e865e032d03201"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/jackson-module-kotlin-2.22.4/META-INF/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/jackson-module-kotlin-2.22.4/META-INF/NOTICE",
+      "sha256": "523aa7e837cf8fc6ee81bd414f873592c5e21fbee2a2aa8af69170d986351237"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/jakarta.annotation-api-2.1.1/META-INF/LICENSE.md",
+      "sha256": "6e1f002892b81cbe0647019b150c8a056efc1add565671a4f8af629b6cd2cc7b"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/jakarta.annotation-api-2.1.1/META-INF/NOTICE.md",
+      "sha256": "3852834ebb4c2e04ecc18c9d099a05eab72cbd6edf35fb191390be6306019b4c"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/jakarta.inject-api-2.0.1/META-INF/LICENSE.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/jakarta.inject-api-2.0.1/META-INF/NOTICE.md",
+      "sha256": "992ed62dd3ee17d73ce6a4a5e02dd0fed9eb326bf386aa5304e6a512214df540"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/jul-to-slf4j-2.0.20/META-INF/LICENSE.txt",
+      "sha256": "4e7f90c86ab51278228bce153122f1d8df30149d13ce9ef524c8444a84c32dcc"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/rxjava-3.1.12/META-INF/LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/slf4j-api-2.0.20/META-INF/LICENSE.txt",
+      "sha256": "6632f550c207be8d7d6b5e87f5d7b905bee218d18392d531df457bf60bec1447"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/sqlite-jdbc-3.54.1.0/META-INF/maven/org.xerial/sqlite-jdbc/LICENSE",
+      "sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5"
+    },
+    {
+      "component": "dependency",
+      "path": "embedded/sqlite-jdbc-3.54.1.0/META-INF/maven/org.xerial/sqlite-jdbc/LICENSE.zentus",
+      "sha256": "89167dab92289c7e5e2b65b044f0856b703d05e5d5e35c3548e73d9c7d2f5048"
+    },
+    {
+      "component": "libsignal",
+      "path": "libsignal/LICENSE.txt",
+      "sha256": "0d96a4ff68ad6d4b6f1f30f713b18d5184912ba8dd389f86aa7710db079abcb0"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/ch.qos.logback-logback-classic-1.6.6.pom",
+      "sha256": "e3c14a0a5ab76cb0ffebd08ed19a5766964c52195ede15bdd5408707142d9cc1"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/ch.qos.logback-logback-core-1.6.6.pom",
+      "sha256": "741545bf1c537ad4f9328ff96cddbc53e9a0f1da8476655590ba071a2f1fe284"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/ch.qos.logback-logback-parent-1.6.6.pom",
+      "sha256": "6ee29ad89247ddf2ac2acc7f2015a5fff6cfc24dfceada474fec029d2f9416fc"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.fasterxml.jackson.core-jackson-annotations-2.22.pom",
+      "sha256": "38c3ba52a0eade3e3eacc5b13499d56e1038ccbad8ec4bb79426dc21432b46d0"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.fasterxml.jackson.core-jackson-core-2.22.4.pom",
+      "sha256": "371b6859b58c3fc1c0823fe66e1e6d6ab251ba99b26f7dce883bbb7c43906c21"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.fasterxml.jackson.core-jackson-databind-2.22.4.pom",
+      "sha256": "81867c3c99c0e014d133554f2d30cdad78ec58cf1b56087088204e1e5eb34baa"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.fasterxml.jackson.module-jackson-module-kotlin-2.22.4.pom",
+      "sha256": "aa9c9f974079e8e2e7deef335a78cd502ec2eb8268458e68b1c38ea9e7430bf5"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.github.hypfvieh-dbus-java-core-5.0.0.pom",
+      "sha256": "919542530d70665c9ee9a1c2d566b063e506f075f83ca4b659d27382d46a982c"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.github.hypfvieh-dbus-java-parent-5.0.0.pom",
+      "sha256": "24eced1582d9b2ac3f2c424e89c1a339515f7950dba2ad60df7d913b19b54a9f"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.github.hypfvieh-dbus-java-transport-native-unixsocket-5.0.0.pom",
+      "sha256": "d59971db9a0b35986c9f936c116c37e8b0c6027295573c72945b8c9668507060"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.github.turasa-core-network-2.15.3_unofficial_157.pom",
+      "sha256": "0f452b50bc01b1762a85326cd07ea5cb68fef0efe3ffeb325309c6c8f61d1076"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.github.turasa-serialization-2.15.3_unofficial_157.pom",
+      "sha256": "61e4e3caeb6b67c17a97bed5d798479ca46de22d1e6340ac61d331b7aa89e1c4"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.github.turasa-signal-network-2.15.3_unofficial_157.pom",
+      "sha256": "b3c39e0ece547213ba0d5b12ccc115faf314859ad538980846d647363b104271"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.github.turasa-signal-service-java-2.15.3_unofficial_157.pom",
+      "sha256": "ad0bbdaaff61c1028b190dbfa00259d1fccdde4c70233e184f34234ae327bc9b"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.github.turasa-util-jvm-2.15.3_unofficial_157.pom",
+      "sha256": "b6fb158cad813b35837dff6d2c6cd5c286998016d093b35826481e0b195a59cd"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.google.code.findbugs-jsr305-3.0.2.pom",
+      "sha256": "19889dbdf1b254b2601a5ee645b8147a974644882297684c798afe5d63d78dfe"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.google.zxing-core-3.5.4.pom",
+      "sha256": "502c7368ae869f15428c020a2432eec9dde7436454f3edd1816e0d4b3d0609bf"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.google.zxing-zxing-parent-3.5.4.pom",
+      "sha256": "9133f322d86101c5c478c08ea3d6734dc376423937ddab1aa2a06aae24fc85c9"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.googlecode.libphonenumber-libphonenumber-9.0.41.pom",
+      "sha256": "38933a5d322d8ea60d31f10b1a621dbedab3db3496d9e6e47a35776c0945c6f2"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.googlecode.libphonenumber-libphonenumber-parent-9.0.41.pom",
+      "sha256": "0cf572feab84d54af2b7239e183ad458e5345b4835c52571187b6b457f7d142f"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.squareup.okhttp3-okhttp-coroutines-5.3.2.pom",
+      "sha256": "92db4dba6a0478bf46a868f115df5bb7ec4e7ff670cb206bbf8ea2e54b4f114e"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.squareup.okhttp3-okhttp-jvm-5.3.2.pom",
+      "sha256": "aee87197bbfb2d7424b6241d300eb0cbffb1844c9cab0129cae5390408b33fa4"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.squareup.okio-okio-jvm-3.17.0.pom",
+      "sha256": "e4e44237a66f4091bc0f5b1d5a2bbe228ac014ab3c0f918cd6fc02ba31999030"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.squareup.wire-wire-runtime-jvm-6.0.0-alpha02.pom",
+      "sha256": "7d6bb21decf6e28000ccde914e3e8027e49ae0c36e4d9adbb20703ab12ae81a0"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/com.zaxxer-HikariCP-7.1.0.pom",
+      "sha256": "5b8df2699933ea898aa50d4def4fc2226b15e6f4d993e373a16070f7ed480216"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/io.arrow-kt-arrow-annotations-jvm-2.2.2.1.pom",
+      "sha256": "e2facaada8410c098a203e7cb79895317461379770fe3df39da39f15c807f72b"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/io.arrow-kt-arrow-atomic-jvm-2.2.2.1.pom",
+      "sha256": "17c0b58763bd2c23c618e33f305f5f24e1bea528f50af68e82d1064aecb031a3"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/io.arrow-kt-arrow-core-jvm-2.2.2.1.pom",
+      "sha256": "00de18d1e84726cac426c7c31685f9255c0eb6fc83d1b0990c1e7a674226357d"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/io.arrow-kt-arrow-exception-utils-jvm-2.2.2.1.pom",
+      "sha256": "7a19cf2b7fe06ef748f14d717c3d815058e5c2878731ff891e718e23d13898b0"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/io.micronaut-micronaut-core-5.2.12.pom",
+      "sha256": "9323a2cb059b7231ddf01a7dbf5c47de2e1b9c6312c63ebc0887fc5b56fb29dd"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/io.micronaut-micronaut-inject-5.2.12.pom",
+      "sha256": "12e76a69c02eeb1c8d35ad77166bebac46d75ab17b7fecab3ecb8d914fe6e3de"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/io.micronaut.jsonschema-micronaut-json-schema-annotations-2.3.1.pom",
+      "sha256": "bdf682e79d0fc9130cea7da2903fbf5d40d5113f68f6c99aa4d12b346453f4de"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/io.reactivex.rxjava3-rxjava-3.1.12.pom",
+      "sha256": "72126bafb80a12c7b558524d091923e69612383c4741acb7e00c35c9b0546b34"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/io.reactivex.rxjava3-rxkotlin-3.0.1.pom",
+      "sha256": "28fd4e05b081f03c24091061003eee1cdb8a770430801edb633ca4dc3140673d"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/jakarta.annotation-jakarta.annotation-api-2.1.1.pom",
+      "sha256": "af650eca1de1b98741006acd82507e4408cffedd2fee33a0ea463d61508db7ec"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/jakarta.inject-jakarta.inject-api-2.0.1.pom",
+      "sha256": "e7fd7232e96307a575b2494c9367d68cf43ec98244aace3ccc23e1773ffa6fda"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/javax.inject-javax.inject-1.pom",
+      "sha256": "943e12b100627804638fa285805a0ab788a680266531e650921ebfe4621a8bfa"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/net.sourceforge.argparse4j-argparse4j-0.9.0.pom",
+      "sha256": "2aaf731b1df8f1985258c5202a7c1c0617f0e92715b35d5cd482c180aabb04b5"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/net.sourceforge.argparse4j-argparse4j-root-0.9.0.pom",
+      "sha256": "0c8dd4a71d6fe7a3c48bc4d965948e12260d21ed6577eea59c8359ed44d0aaad"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.bouncycastle-bcprov-jdk18on-1.86.pom",
+      "sha256": "970b70cb75a184639b6fb9ba3c465aca6a4e1a5f3fff4d65ce8574b2fd79ef38"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.jetbrains-annotations-23.0.0.pom",
+      "sha256": "c9490f655132328df2cfbcfdf743f53fc3916d6c1d10437175a6ca6e3a67771c"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.jetbrains.kotlin-kotlin-reflect-2.4.10.pom",
+      "sha256": "4258f0212f4bd72e3047f7daace38e0de2ebff3f7e923e836431fd8f5b19189d"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.jetbrains.kotlin-kotlin-stdlib-2.4.10.pom",
+      "sha256": "9f81f25e96b919153392ded53bd33216e76624909cfd080a3edb278d44fc34f0"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.jetbrains.kotlin-kotlin-stdlib-jdk7-2.4.10.pom",
+      "sha256": "924d4d5d53bc09bc8d03c262319dd01b7fd876d41f4cfe3096f585c42ff6aa48"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.jetbrains.kotlin-kotlin-stdlib-jdk8-2.4.10.pom",
+      "sha256": "3b4fd7c04d7395cafe7e1e1dee849261bfe03c68d05459418cb35605750cda27"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.jetbrains.kotlinx-kotlinx-coroutines-core-jvm-1.10.2.pom",
+      "sha256": "658f576b96c832e7382406adb197d64d8e2e97de10e96dfa3700decfa2a60def"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.jetbrains.kotlinx-kotlinx-serialization-core-jvm-1.9.0.pom",
+      "sha256": "87190d434e6272fed605af0fced15f6bc082d8a55040c5198e6d4b2d6a2fcac2"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.jetbrains.kotlinx-kotlinx-serialization-json-jvm-1.9.0.pom",
+      "sha256": "6b3433c2aa9eb26628dbabf16c96334caab30f6e07710d10ee7f87906ce730dd"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.jspecify-jspecify-1.0.0.pom",
+      "sha256": "cdab929a3b95211f43d2090c5e2d0dfe8465960e378bc32b35841dab324433a6"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.reactivestreams-reactive-streams-1.0.4.pom",
+      "sha256": "54ba23d87a2d438540c99ef8794a0856fc573a256b498678283c3c67ef18ada8"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.signal-libsignal-client-0.106.1.pom",
+      "sha256": "70b9206667c177e1df98321c5731b64c81f25a69b910e31b9b15c124e6b90e9e"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.slf4j-jul-to-slf4j-2.0.20.pom",
+      "sha256": "9bd18149b58303b4d843059d5b135b3b56fa0dd1c27a9db8898d4609cd338a27"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.slf4j-slf4j-api-2.0.20.pom",
+      "sha256": "2e625c3f553cddd49f8554cea9926cbf70673b3d6833464f0c5a02f4d9130594"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.slf4j-slf4j-bom-2.0.20.pom",
+      "sha256": "351a3d34f0886942268efcf291708c48dfadce7f2643837efdb4a6954d4e6c62"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.slf4j-slf4j-parent-2.0.20.pom",
+      "sha256": "d931cf99cfd3554d322809df03c43ef897082cd480d6ff91b44d8f067ca324c8"
+    },
+    {
+      "component": "dependency",
+      "path": "poms/org.xerial-sqlite-jdbc-3.54.1.0.pom",
+      "sha256": "7c6966b225aedf0110b11a68ccbe5d053a45074e4f45aa2e93a48901e31d677e"
+    },
+    {
+      "component": "signal-cli",
+      "path": "signal-cli/LICENSE.txt",
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+    },
+    {
+      "component": "dependency",
+      "path": "temurin/ASSEMBLY_EXCEPTION.txt",
+      "sha256": "75292f03bf23d3db7c985aecc191029b93883200721ed23ed34a2e601463df33"
+    },
+    {
+      "component": "classpath-exception",
+      "path": "temurin/CLASSPATH_EXCEPTION.txt",
+      "sha256": "a69bce275ba7a3570af6579cb0f55682cd75fedfcd49e0e8e9022270c447c916"
+    },
+    {
+      "component": "temurin",
+      "path": "temurin/LICENSE.txt",
+      "sha256": "4b9abebc4338048a7c2dc184e9f800deb349366bdf28eb23c2677a77b4c87726"
+    },
+    {
+      "component": "dependency",
+      "path": "texts/Apache-2.0.txt",
+      "sha256": "074e6e32c86a4c0ef8b3ed25b721ca23aca83df277cd88106ef7177c354615ff"
+    },
+    {
+      "component": "dependency",
+      "path": "texts/BSD-3-Clause.txt",
+      "sha256": "5a93d5831e1297ab10fe643e1a631e83be392896da14ee2951285a79012df69d"
+    },
+    {
+      "component": "dependency",
+      "path": "texts/EPL-1.0.txt",
+      "sha256": "f3d8dc494be2e7ea9cd31ac2fb902e35dce7ff8181b9b30d05861b47c339cb25"
+    },
+    {
+      "component": "dependency",
+      "path": "texts/EPL-2.0.txt",
+      "sha256": "61616a4066701bc7888ad910de1633dbc55eb4d4d30d930feef55afb9492e33c"
+    },
+    {
+      "component": "dependency",
+      "path": "texts/LGPL-2.1.txt",
+      "sha256": "5749785c8bdefafcb5d798270ed0a967036fe2ca63dcedade1627565dfef81d2"
+    },
+    {
+      "component": "dependency",
+      "path": "texts/MIT-0.txt",
+      "sha256": "59746d6285ffa44bfc7ecada352aa5d6a20dc8eab418a60ce091cc739012c135"
+    },
+    {
+      "component": "dependency",
+      "path": "texts/MIT.txt",
+      "sha256": "b05785f9f18e6716bab63424b11454513b9943a222595b70411009202fc592b5"
+    }
+  ],
+  "jars": [
+    {
+      "path": "lib/HikariCP-7.1.0.jar",
+      "sha256": "2be45c641b841e81df87292e181f2c203500c5f0e9a1676f135927387f3cf40b",
+      "coordinate": "com.zaxxer:HikariCP:7.1.0",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.zaxxer-HikariCP-7.1.0.pom",
+          "sha256": "5b8df2699933ea898aa50d4def4fc2226b15e6f4d993e373a16070f7ed480216"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/annotations-23.0.0.jar",
+      "sha256": "7b0f19724082cbfcbc66e5abea2b9bc92cf08a1ea11e191933ed43801eb3cd05",
+      "coordinate": "org.jetbrains:annotations:23.0.0",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/org.jetbrains-annotations-23.0.0.pom",
+          "sha256": "c9490f655132328df2cfbcfdf743f53fc3916d6c1d10437175a6ca6e3a67771c"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/argparse4j-0.9.0.jar",
+      "sha256": "9eb3b54043038bc111bf0e15a8f69895244f92e3c2bc2800158578ca711f6117",
+      "coordinate": "net.sourceforge.argparse4j:argparse4j:0.9.0",
+      "licenses": [
+        {
+          "name": "MIT",
+          "url": "https://raw.github.com/argparse4j/argparse4j/master/LICENSE.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/net.sourceforge.argparse4j-argparse4j-0.9.0.pom",
+          "sha256": "2aaf731b1df8f1985258c5202a7c1c0617f0e92715b35d5cd482c180aabb04b5"
+        },
+        {
+          "path": "poms/net.sourceforge.argparse4j-argparse4j-root-0.9.0.pom",
+          "sha256": "0c8dd4a71d6fe7a3c48bc4d965948e12260d21ed6577eea59c8359ed44d0aaad"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/arrow-annotations-jvm-2.2.2.1.jar",
+      "sha256": "579e6b6918fab3a2ce4fe7b72d70afdef71c4097ef075ca4fc5db032973b9040",
+      "coordinate": "io.arrow-kt:arrow-annotations-jvm:2.2.2.1",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/io.arrow-kt-arrow-annotations-jvm-2.2.2.1.pom",
+          "sha256": "e2facaada8410c098a203e7cb79895317461379770fe3df39da39f15c807f72b"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/arrow-atomic-jvm-2.2.2.1.jar",
+      "sha256": "4bda03d528a74ff76b215487afab361ef9038de5fef669de9f75e337f63d978e",
+      "coordinate": "io.arrow-kt:arrow-atomic-jvm:2.2.2.1",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/io.arrow-kt-arrow-atomic-jvm-2.2.2.1.pom",
+          "sha256": "17c0b58763bd2c23c618e33f305f5f24e1bea528f50af68e82d1064aecb031a3"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/arrow-core-jvm-2.2.2.1.jar",
+      "sha256": "0c7fafac17508f5c50571b7b7730278852e928f0906883936e707d4520a4b557",
+      "coordinate": "io.arrow-kt:arrow-core-jvm:2.2.2.1",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/io.arrow-kt-arrow-core-jvm-2.2.2.1.pom",
+          "sha256": "00de18d1e84726cac426c7c31685f9255c0eb6fc83d1b0990c1e7a674226357d"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/arrow-exception-utils-jvm-2.2.2.1.jar",
+      "sha256": "bd59b9e8b93e3006bb2c8849bd39238e0e9559fd2c0532678983644e56ffad16",
+      "coordinate": "io.arrow-kt:arrow-exception-utils-jvm:2.2.2.1",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/io.arrow-kt-arrow-exception-utils-jvm-2.2.2.1.pom",
+          "sha256": "7a19cf2b7fe06ef748f14d717c3d815058e5c2878731ff891e718e23d13898b0"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/bcprov-jdk18on-1.86.jar",
+      "sha256": "2af190b300cbb0b35e248ccf5f4a06b6072030aeb3da7a98ec73abe5b4cb371f",
+      "coordinate": "org.bouncycastle:bcprov-jdk18on:1.86",
+      "licenses": [
+        {
+          "name": "Bouncy Castle Licence",
+          "url": "https://www.bouncycastle.org/licence.html"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/org.bouncycastle-bcprov-jdk18on-1.86.pom",
+          "sha256": "970b70cb75a184639b6fb9ba3c465aca6a4e1a5f3fff4d65ce8574b2fd79ef38"
+        }
+      ],
+      "embedded": [
+        {
+          "path": "embedded/bcprov-jdk18on-1.86/META-INF/LICENSE.md",
+          "sha256": "0e01f1549c9022f406392ac2947d32223b7c2e977d21ea2f8c182fdeb4dae5fd"
+        }
+      ]
+    },
+    {
+      "path": "lib/core-3.5.4.jar",
+      "sha256": "71de5d89341b5fcf5dd89da7f44e84d825d0e084cdf3ec77c9abe26b0f0ceb13",
+      "coordinate": "com.google.zxing:core:3.5.4",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.google.zxing-core-3.5.4.pom",
+          "sha256": "502c7368ae869f15428c020a2432eec9dde7436454f3edd1816e0d4b3d0609bf"
+        },
+        {
+          "path": "poms/com.google.zxing-zxing-parent-3.5.4.pom",
+          "sha256": "9133f322d86101c5c478c08ea3d6734dc376423937ddab1aa2a06aae24fc85c9"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/core-network-2.15.3_unofficial_157.jar",
+      "sha256": "dbabe9f00ca32dd6cb234102bdbca736d7d179714ad3b578e7b77bedc9fbb3b3",
+      "coordinate": "com.github.turasa:core-network:2.15.3_unofficial_157",
+      "licenses": [
+        {
+          "name": "GPLv3",
+          "url": "https://www.gnu.org/licenses/gpl-3.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.github.turasa-core-network-2.15.3_unofficial_157.pom",
+          "sha256": "0f452b50bc01b1762a85326cd07ea5cb68fef0efe3ffeb325309c6c8f61d1076"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/dbus-java-core-5.0.0.jar",
+      "sha256": "ad975d1a17d3778ddebd631e3d9d5337294aa915bc65fde6e9087d90729bbb45",
+      "coordinate": "com.github.hypfvieh:dbus-java-core:5.0.0",
+      "licenses": [
+        {
+          "name": "MIT License",
+          "url": "https://github.com/hypfvieh/dbus-java/blob/master/LICENSE"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.github.hypfvieh-dbus-java-core-5.0.0.pom",
+          "sha256": "919542530d70665c9ee9a1c2d566b063e506f075f83ca4b659d27382d46a982c"
+        },
+        {
+          "path": "poms/com.github.hypfvieh-dbus-java-parent-5.0.0.pom",
+          "sha256": "24eced1582d9b2ac3f2c424e89c1a339515f7950dba2ad60df7d913b19b54a9f"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/dbus-java-transport-native-unixsocket-5.0.0.jar",
+      "sha256": "ef70874968340139a70903bd08bfa6e4eceb9e811df89a78a6c8b1640612e067",
+      "coordinate": "com.github.hypfvieh:dbus-java-transport-native-unixsocket:5.0.0",
+      "licenses": [
+        {
+          "name": "MIT License",
+          "url": "https://github.com/hypfvieh/dbus-java/blob/master/LICENSE"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.github.hypfvieh-dbus-java-transport-native-unixsocket-5.0.0.pom",
+          "sha256": "d59971db9a0b35986c9f936c116c37e8b0c6027295573c72945b8c9668507060"
+        },
+        {
+          "path": "poms/com.github.hypfvieh-dbus-java-parent-5.0.0.pom",
+          "sha256": "24eced1582d9b2ac3f2c424e89c1a339515f7950dba2ad60df7d913b19b54a9f"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/jackson-annotations-2.22.jar",
+      "sha256": "21ddb598807d3a51a876704eb979d9296e1c6a6f47ab1826ff88c6d6a127a2d0",
+      "coordinate": "com.fasterxml.jackson.core:jackson-annotations:2.22",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.fasterxml.jackson.core-jackson-annotations-2.22.pom",
+          "sha256": "38c3ba52a0eade3e3eacc5b13499d56e1038ccbad8ec4bb79426dc21432b46d0"
+        }
+      ],
+      "embedded": [
+        {
+          "path": "embedded/jackson-annotations-2.22/META-INF/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "path": "embedded/jackson-annotations-2.22/META-INF/NOTICE",
+          "sha256": "612b14bc77c944ce229cbba0d14919162cfea8ed802cbf06a8e865e032d03201"
+        }
+      ]
+    },
+    {
+      "path": "lib/jackson-core-2.22.4.jar",
+      "sha256": "2d30c375cddea9657a1e1ef97547a2694b663b355facb4de53a097782b312d1a",
+      "coordinate": "com.fasterxml.jackson.core:jackson-core:2.22.4",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.fasterxml.jackson.core-jackson-core-2.22.4.pom",
+          "sha256": "371b6859b58c3fc1c0823fe66e1e6d6ab251ba99b26f7dce883bbb7c43906c21"
+        }
+      ],
+      "embedded": [
+        {
+          "path": "embedded/jackson-core-2.22.4/META-INF/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "path": "embedded/jackson-core-2.22.4/META-INF/NOTICE",
+          "sha256": "e6aef1c0f4cf5b0f802c16b31fce309b3c3737450b93c40d6291bf6540aae3d1"
+        }
+      ]
+    },
+    {
+      "path": "lib/jackson-databind-2.22.4.jar",
+      "sha256": "d4cbf8947087f305869826801913abdc50735a1fab2074a1993e7bc67ca974a3",
+      "coordinate": "com.fasterxml.jackson.core:jackson-databind:2.22.4",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.fasterxml.jackson.core-jackson-databind-2.22.4.pom",
+          "sha256": "81867c3c99c0e014d133554f2d30cdad78ec58cf1b56087088204e1e5eb34baa"
+        }
+      ],
+      "embedded": [
+        {
+          "path": "embedded/jackson-databind-2.22.4/META-INF/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "path": "embedded/jackson-databind-2.22.4/META-INF/NOTICE",
+          "sha256": "612b14bc77c944ce229cbba0d14919162cfea8ed802cbf06a8e865e032d03201"
+        }
+      ]
+    },
+    {
+      "path": "lib/jackson-module-kotlin-2.22.4.jar",
+      "sha256": "2db567181c61405c025a5209d1153bcf4947e876fd2a2592bc71634d367379b3",
+      "coordinate": "com.fasterxml.jackson.module:jackson-module-kotlin:2.22.4",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.fasterxml.jackson.module-jackson-module-kotlin-2.22.4.pom",
+          "sha256": "aa9c9f974079e8e2e7deef335a78cd502ec2eb8268458e68b1c38ea9e7430bf5"
+        }
+      ],
+      "embedded": [
+        {
+          "path": "embedded/jackson-module-kotlin-2.22.4/META-INF/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "path": "embedded/jackson-module-kotlin-2.22.4/META-INF/NOTICE",
+          "sha256": "523aa7e837cf8fc6ee81bd414f873592c5e21fbee2a2aa8af69170d986351237"
+        }
+      ]
+    },
+    {
+      "path": "lib/jakarta.annotation-api-2.1.1.jar",
+      "sha256": "5f65fdaf424eee2b55e1d882ba9bb376be93fb09b37b808be6e22e8851c909fe",
+      "coordinate": "jakarta.annotation:jakarta.annotation-api:2.1.1",
+      "licenses": [
+        {
+          "name": "EPL 2.0",
+          "url": "http://www.eclipse.org/legal/epl-2.0"
+        },
+        {
+          "name": "GPL2 w/ CPE",
+          "url": "https://www.gnu.org/software/classpath/license.html"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/jakarta.annotation-jakarta.annotation-api-2.1.1.pom",
+          "sha256": "af650eca1de1b98741006acd82507e4408cffedd2fee33a0ea463d61508db7ec"
+        }
+      ],
+      "embedded": [
+        {
+          "path": "embedded/jakarta.annotation-api-2.1.1/META-INF/LICENSE.md",
+          "sha256": "6e1f002892b81cbe0647019b150c8a056efc1add565671a4f8af629b6cd2cc7b"
+        },
+        {
+          "path": "embedded/jakarta.annotation-api-2.1.1/META-INF/NOTICE.md",
+          "sha256": "3852834ebb4c2e04ecc18c9d099a05eab72cbd6edf35fb191390be6306019b4c"
+        }
+      ]
+    },
+    {
+      "path": "lib/jakarta.inject-api-2.0.1.jar",
+      "sha256": "f7dc98062fccf14126abb751b64fab12c312566e8cbdc8483598bffcea93af7c",
+      "coordinate": "jakarta.inject:jakarta.inject-api:2.0.1",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/jakarta.inject-jakarta.inject-api-2.0.1.pom",
+          "sha256": "e7fd7232e96307a575b2494c9367d68cf43ec98244aace3ccc23e1773ffa6fda"
+        }
+      ],
+      "embedded": [
+        {
+          "path": "embedded/jakarta.inject-api-2.0.1/META-INF/LICENSE.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        },
+        {
+          "path": "embedded/jakarta.inject-api-2.0.1/META-INF/NOTICE.md",
+          "sha256": "992ed62dd3ee17d73ce6a4a5e02dd0fed9eb326bf386aa5304e6a512214df540"
+        }
+      ]
+    },
+    {
+      "path": "lib/javax.inject-1.jar",
+      "sha256": "91c77044a50c481636c32d916fd89c9118a72195390452c81065080f957de7ff",
+      "coordinate": "javax.inject:javax.inject:1",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/javax.inject-javax.inject-1.pom",
+          "sha256": "943e12b100627804638fa285805a0ab788a680266531e650921ebfe4621a8bfa"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/jspecify-1.0.0.jar",
+      "sha256": "1fad6e6be7557781e4d33729d49ae1cdc8fdda6fe477bb0cc68ce351eafdfbab",
+      "coordinate": "org.jspecify:jspecify:1.0.0",
+      "licenses": [
+        {
+          "name": "The Apache License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/org.jspecify-jspecify-1.0.0.pom",
+          "sha256": "cdab929a3b95211f43d2090c5e2d0dfe8465960e378bc32b35841dab324433a6"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/jsr305-3.0.2.jar",
+      "sha256": "766ad2a0783f2687962c8ad74ceecc38a28b9f72a2d085ee438b7813e928d0c7",
+      "coordinate": "com.google.code.findbugs:jsr305:3.0.2",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.google.code.findbugs-jsr305-3.0.2.pom",
+          "sha256": "19889dbdf1b254b2601a5ee645b8147a974644882297684c798afe5d63d78dfe"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/jul-to-slf4j-2.0.20.jar",
+      "sha256": "062249d0677a0e08039120a2292a8db064c69d04282bf562af2e54c53ff06976",
+      "coordinate": "org.slf4j:jul-to-slf4j:2.0.20",
+      "licenses": [
+        {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/org.slf4j-jul-to-slf4j-2.0.20.pom",
+          "sha256": "9bd18149b58303b4d843059d5b135b3b56fa0dd1c27a9db8898d4609cd338a27"
+        },
+        {
+          "path": "poms/org.slf4j-slf4j-parent-2.0.20.pom",
+          "sha256": "d931cf99cfd3554d322809df03c43ef897082cd480d6ff91b44d8f067ca324c8"
+        },
+        {
+          "path": "poms/org.slf4j-slf4j-bom-2.0.20.pom",
+          "sha256": "351a3d34f0886942268efcf291708c48dfadce7f2643837efdb4a6954d4e6c62"
+        }
+      ],
+      "embedded": [
+        {
+          "path": "embedded/jul-to-slf4j-2.0.20/META-INF/LICENSE.txt",
+          "sha256": "4e7f90c86ab51278228bce153122f1d8df30149d13ce9ef524c8444a84c32dcc"
+        }
+      ]
+    },
+    {
+      "path": "lib/kotlin-reflect-2.4.10.jar",
+      "sha256": "25a1aef7454d46548ecaaf51021b0e52e38141a62ed75af124da109b7324c4e5",
+      "coordinate": "org.jetbrains.kotlin:kotlin-reflect:2.4.10",
+      "licenses": [
+        {
+          "name": "Apache-2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/org.jetbrains.kotlin-kotlin-reflect-2.4.10.pom",
+          "sha256": "4258f0212f4bd72e3047f7daace38e0de2ebff3f7e923e836431fd8f5b19189d"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/kotlin-stdlib-2.4.10.jar",
+      "sha256": "4ec0293bc3751423b203f1d8493251c57c42e73eb6377a6b8560d0974ff0a6df",
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib:2.4.10",
+      "licenses": [
+        {
+          "name": "Apache-2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/org.jetbrains.kotlin-kotlin-stdlib-2.4.10.pom",
+          "sha256": "9f81f25e96b919153392ded53bd33216e76624909cfd080a3edb278d44fc34f0"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/kotlin-stdlib-jdk7-2.4.10.jar",
+      "sha256": "e7a8fe7cacf3b9c838f6b3fcb26dfdd41f844551a3ba67fd3f959a0d9d5c0bef",
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib-jdk7:2.4.10",
+      "licenses": [
+        {
+          "name": "Apache-2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/org.jetbrains.kotlin-kotlin-stdlib-jdk7-2.4.10.pom",
+          "sha256": "924d4d5d53bc09bc8d03c262319dd01b7fd876d41f4cfe3096f585c42ff6aa48"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/kotlin-stdlib-jdk8-2.4.10.jar",
+      "sha256": "08346b7f4cfba40c1139161c9f30b68199f425cecf3b63de67838063f34a05c7",
+      "coordinate": "org.jetbrains.kotlin:kotlin-stdlib-jdk8:2.4.10",
+      "licenses": [
+        {
+          "name": "Apache-2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/org.jetbrains.kotlin-kotlin-stdlib-jdk8-2.4.10.pom",
+          "sha256": "3b4fd7c04d7395cafe7e1e1dee849261bfe03c68d05459418cb35605750cda27"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/kotlinx-coroutines-core-jvm-1.10.2.jar",
+      "sha256": "5ca175b38df331fd64155b35cd8cae1251fa9ee369709b36d42e0a288ccce3fd",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2",
+      "licenses": [
+        {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/org.jetbrains.kotlinx-kotlinx-coroutines-core-jvm-1.10.2.pom",
+          "sha256": "658f576b96c832e7382406adb197d64d8e2e97de10e96dfa3700decfa2a60def"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/kotlinx-serialization-core-jvm-1.9.0.jar",
+      "sha256": "1f0afa172110e45a7231ef1b44ae8fd84c1ebaff96f3fc3ad68ef8c48120b59c",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.9.0",
+      "licenses": [
+        {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/org.jetbrains.kotlinx-kotlinx-serialization-core-jvm-1.9.0.pom",
+          "sha256": "87190d434e6272fed605af0fced15f6bc082d8a55040c5198e6d4b2d6a2fcac2"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/kotlinx-serialization-json-jvm-1.9.0.jar",
+      "sha256": "d94cc34cae39246a1af74fda63f9c4812ce12216ef641d5fa3bbbb539a6922d8",
+      "coordinate": "org.jetbrains.kotlinx:kotlinx-serialization-json-jvm:1.9.0",
+      "licenses": [
+        {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/org.jetbrains.kotlinx-kotlinx-serialization-json-jvm-1.9.0.pom",
+          "sha256": "6b3433c2aa9eb26628dbabf16c96334caab30f6e07710d10ee7f87906ce730dd"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/libphonenumber-9.0.41.jar",
+      "sha256": "c9efe6739636308930ecd2d3f282173e7d98a7c07592dbca466c02df8494f4a8",
+      "coordinate": "com.googlecode.libphonenumber:libphonenumber:9.0.41",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.googlecode.libphonenumber-libphonenumber-9.0.41.pom",
+          "sha256": "38933a5d322d8ea60d31f10b1a621dbedab3db3496d9e6e47a35776c0945c6f2"
+        },
+        {
+          "path": "poms/com.googlecode.libphonenumber-libphonenumber-parent-9.0.41.pom",
+          "sha256": "0cf572feab84d54af2b7239e183ad458e5345b4835c52571187b6b457f7d142f"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/libsignal-cli-0.14.11-SNAPSHOT.jar",
+      "sha256": "92d7aa6a973128fe3a69186c7045194f65d353fa7e72c1729cdac54952c9f0ca",
+      "coordinate": "org.asamk:libsignal-cli:0.14.11-SNAPSHOT",
+      "licenses": [
+        {
+          "name": "GPL-3.0",
+          "url": "https://www.gnu.org/licenses/gpl-3.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "signal-cli/LICENSE.txt",
+          "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/libsignal-client-0.106.1.jar",
+      "sha256": "776c28d96fc05eb0ef7cebe2a675f3da3b4118c4c26e3af69d59552d040c9bc5",
+      "coordinate": "org.signal:libsignal-client:0.106.1",
+      "licenses": [
+        {
+          "name": "AGPLv3",
+          "url": "https://www.gnu.org/licenses/agpl-3.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/org.signal-libsignal-client-0.106.1.pom",
+          "sha256": "70b9206667c177e1df98321c5731b64c81f25a69b910e31b9b15c124e6b90e9e"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/logback-classic-1.6.6.jar",
+      "sha256": "5230217ccba7a9d31dda1dd878e5606037a7972282c7d3f8eac1efa80e9463d9",
+      "coordinate": "ch.qos.logback:logback-classic:1.6.6",
+      "licenses": [
+        {
+          "name": "EPL-2.0",
+          "url": "https://www.eclipse.org/legal/epl-v20.html"
+        },
+        {
+          "name": "LGPL-2.1-only",
+          "url": "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/ch.qos.logback-logback-classic-1.6.6.pom",
+          "sha256": "e3c14a0a5ab76cb0ffebd08ed19a5766964c52195ede15bdd5408707142d9cc1"
+        },
+        {
+          "path": "poms/ch.qos.logback-logback-parent-1.6.6.pom",
+          "sha256": "6ee29ad89247ddf2ac2acc7f2015a5fff6cfc24dfceada474fec029d2f9416fc"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/logback-core-1.6.6.jar",
+      "sha256": "5458415d5d58a97ab670632f9b2bdac2d6f7e0e11455b45dd4e64e90d12670ab",
+      "coordinate": "ch.qos.logback:logback-core:1.6.6",
+      "licenses": [
+        {
+          "name": "EPL-2.0",
+          "url": "https://www.eclipse.org/legal/epl-v20.html"
+        },
+        {
+          "name": "LGPL-2.1-only",
+          "url": "https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/ch.qos.logback-logback-core-1.6.6.pom",
+          "sha256": "741545bf1c537ad4f9328ff96cddbc53e9a0f1da8476655590ba071a2f1fe284"
+        },
+        {
+          "path": "poms/ch.qos.logback-logback-parent-1.6.6.pom",
+          "sha256": "6ee29ad89247ddf2ac2acc7f2015a5fff6cfc24dfceada474fec029d2f9416fc"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/micronaut-core-5.2.12.jar",
+      "sha256": "dfa8694430314ab977b6c7e1bc003c7722bb4cc6aa8c14cbf90bacb37be82d2c",
+      "coordinate": "io.micronaut:micronaut-core:5.2.12",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/io.micronaut-micronaut-core-5.2.12.pom",
+          "sha256": "9323a2cb059b7231ddf01a7dbf5c47de2e1b9c6312c63ebc0887fc5b56fb29dd"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/micronaut-inject-5.2.12.jar",
+      "sha256": "fc80abf8689b67fbca1dfadb112741ff972df18c7c1bbcf24231078ced7ce978",
+      "coordinate": "io.micronaut:micronaut-inject:5.2.12",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/io.micronaut-micronaut-inject-5.2.12.pom",
+          "sha256": "12e76a69c02eeb1c8d35ad77166bebac46d75ab17b7fecab3ecb8d914fe6e3de"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/micronaut-json-schema-annotations-2.3.1.jar",
+      "sha256": "f75d172876f35a0c171f0b523434f66db717081bfb8b0798f6c78095af566085",
+      "coordinate": "io.micronaut.jsonschema:micronaut-json-schema-annotations:2.3.1",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/io.micronaut.jsonschema-micronaut-json-schema-annotations-2.3.1.pom",
+          "sha256": "bdf682e79d0fc9130cea7da2903fbf5d40d5113f68f6c99aa4d12b346453f4de"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/okhttp-coroutines-5.3.2.jar",
+      "sha256": "44371091a9a5821f58cc8149781f5f8a05691dc562fa3f96775f4310e6aa277e",
+      "coordinate": "com.squareup.okhttp3:okhttp-coroutines:5.3.2",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.squareup.okhttp3-okhttp-coroutines-5.3.2.pom",
+          "sha256": "92db4dba6a0478bf46a868f115df5bb7ec4e7ff670cb206bbf8ea2e54b4f114e"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/okhttp-jvm-5.3.2.jar",
+      "sha256": "c771f48075b763f6c322055e21129a94b7de4c1faf3f8f58ace320b0c9517a30",
+      "coordinate": "com.squareup.okhttp3:okhttp-jvm:5.3.2",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.squareup.okhttp3-okhttp-jvm-5.3.2.pom",
+          "sha256": "aee87197bbfb2d7424b6241d300eb0cbffb1844c9cab0129cae5390408b33fa4"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/okio-jvm-3.17.0.jar",
+      "sha256": "3b13dcc3e1573047c2d507fc4f7fcb0bb0cbcd9d395da21d20e09406e2cd6a73",
+      "coordinate": "com.squareup.okio:okio-jvm:3.17.0",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.squareup.okio-okio-jvm-3.17.0.pom",
+          "sha256": "e4e44237a66f4091bc0f5b1d5a2bbe228ac014ab3c0f918cd6fc02ba31999030"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/reactive-streams-1.0.4.jar",
+      "sha256": "f75ca597789b3dac58f61857b9ac2e1034a68fa672db35055a8fb4509e325f28",
+      "coordinate": "org.reactivestreams:reactive-streams:1.0.4",
+      "licenses": [
+        {
+          "name": "MIT-0",
+          "url": "https://spdx.org/licenses/MIT-0.html"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/org.reactivestreams-reactive-streams-1.0.4.pom",
+          "sha256": "54ba23d87a2d438540c99ef8794a0856fc573a256b498678283c3c67ef18ada8"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/rxjava-3.1.12.jar",
+      "sha256": "1808a433ef55dcc2965523e512ab914a5d0d727228a2683ed7559d7cccf44e37",
+      "coordinate": "io.reactivex.rxjava3:rxjava:3.1.12",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/io.reactivex.rxjava3-rxjava-3.1.12.pom",
+          "sha256": "72126bafb80a12c7b558524d091923e69612383c4741acb7e00c35c9b0546b34"
+        }
+      ],
+      "embedded": [
+        {
+          "path": "embedded/rxjava-3.1.12/META-INF/LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    {
+      "path": "lib/rxkotlin-3.0.1.jar",
+      "sha256": "c142e3460b676ac51d9e04152173a44e469a95fe220264fde0e6fb38653aff64",
+      "coordinate": "io.reactivex.rxjava3:rxkotlin:3.0.1",
+      "licenses": [
+        {
+          "name": "The Apache License, Version 2.0",
+          "url": "http://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/io.reactivex.rxjava3-rxkotlin-3.0.1.pom",
+          "sha256": "28fd4e05b081f03c24091061003eee1cdb8a770430801edb633ca4dc3140673d"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/serialization-2.15.3_unofficial_157.jar",
+      "sha256": "91b5a72e85981e3b699bf117020cd4ea2fe754352dc557cbd524e084475a3dd2",
+      "coordinate": "com.github.turasa:serialization:2.15.3_unofficial_157",
+      "licenses": [
+        {
+          "name": "GPLv3",
+          "url": "https://www.gnu.org/licenses/gpl-3.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.github.turasa-serialization-2.15.3_unofficial_157.pom",
+          "sha256": "61e4e3caeb6b67c17a97bed5d798479ca46de22d1e6340ac61d331b7aa89e1c4"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "signal-cli.jar",
+      "sha256": "b0d210834534617de7eb9b37e2c1817c18e02db00b2524665fefa6e026e6fff5",
+      "coordinate": "org.asamk:signal-cli:0.14.11-SNAPSHOT",
+      "licenses": [
+        {
+          "name": "GPL-3.0",
+          "url": "https://www.gnu.org/licenses/gpl-3.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "signal-cli/LICENSE.txt",
+          "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/signal-network-2.15.3_unofficial_157.jar",
+      "sha256": "0108a5b75e5e314237f2167a08c61307dfa3ee82ad6f65a2390ef82e5bf4d374",
+      "coordinate": "com.github.turasa:signal-network:2.15.3_unofficial_157",
+      "licenses": [
+        {
+          "name": "GPLv3",
+          "url": "https://www.gnu.org/licenses/gpl-3.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.github.turasa-signal-network-2.15.3_unofficial_157.pom",
+          "sha256": "b3c39e0ece547213ba0d5b12ccc115faf314859ad538980846d647363b104271"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/signal-service-java-2.15.3_unofficial_157.jar",
+      "sha256": "a4e4da0604e62420db20c92c3ff683791a0ebff7ee66e9a428d8b6ff7134654b",
+      "coordinate": "com.github.turasa:signal-service-java:2.15.3_unofficial_157",
+      "licenses": [
+        {
+          "name": "GPLv3",
+          "url": "https://www.gnu.org/licenses/gpl-3.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.github.turasa-signal-service-java-2.15.3_unofficial_157.pom",
+          "sha256": "ad0bbdaaff61c1028b190dbfa00259d1fccdde4c70233e184f34234ae327bc9b"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/slf4j-api-2.0.20.jar",
+      "sha256": "7e1446499b359675d8aabe6af2de86b85e72ae8a2a932c0b40d0e5ba57097439",
+      "coordinate": "org.slf4j:slf4j-api:2.0.20",
+      "licenses": [
+        {
+          "name": "MIT",
+          "url": "https://opensource.org/license/mit"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/org.slf4j-slf4j-api-2.0.20.pom",
+          "sha256": "2e625c3f553cddd49f8554cea9926cbf70673b3d6833464f0c5a02f4d9130594"
+        },
+        {
+          "path": "poms/org.slf4j-slf4j-parent-2.0.20.pom",
+          "sha256": "d931cf99cfd3554d322809df03c43ef897082cd480d6ff91b44d8f067ca324c8"
+        },
+        {
+          "path": "poms/org.slf4j-slf4j-bom-2.0.20.pom",
+          "sha256": "351a3d34f0886942268efcf291708c48dfadce7f2643837efdb4a6954d4e6c62"
+        }
+      ],
+      "embedded": [
+        {
+          "path": "embedded/slf4j-api-2.0.20/META-INF/LICENSE.txt",
+          "sha256": "6632f550c207be8d7d6b5e87f5d7b905bee218d18392d531df457bf60bec1447"
+        }
+      ]
+    },
+    {
+      "path": "lib/sqlite-jdbc-3.54.1.0.jar",
+      "sha256": "f8dce420a6016278497f4f0560f65602b9db858de141b541cf91a4644ebe4639",
+      "coordinate": "org.xerial:sqlite-jdbc:3.54.1.0",
+      "licenses": [
+        {
+          "name": "The Apache Software License, Version 2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/org.xerial-sqlite-jdbc-3.54.1.0.pom",
+          "sha256": "7c6966b225aedf0110b11a68ccbe5d053a45074e4f45aa2e93a48901e31d677e"
+        }
+      ],
+      "embedded": [
+        {
+          "path": "embedded/sqlite-jdbc-3.54.1.0/META-INF/maven/org.xerial/sqlite-jdbc/LICENSE",
+          "sha256": "3ddf9be5c28fe27dad143a5dc76eea25222ad1dd68934a047064e56ed2fa40c5"
+        },
+        {
+          "path": "embedded/sqlite-jdbc-3.54.1.0/META-INF/maven/org.xerial/sqlite-jdbc/LICENSE.zentus",
+          "sha256": "89167dab92289c7e5e2b65b044f0856b703d05e5d5e35c3548e73d9c7d2f5048"
+        }
+      ]
+    },
+    {
+      "path": "lib/util-jvm-2.15.3_unofficial_157.jar",
+      "sha256": "b127556ba0fb7f34c428d83fe458e6a8595d5c873c1f901848efb27b85ebd1ed",
+      "coordinate": "com.github.turasa:util-jvm:2.15.3_unofficial_157",
+      "licenses": [
+        {
+          "name": "GPLv3",
+          "url": "https://www.gnu.org/licenses/gpl-3.0.txt"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.github.turasa-util-jvm-2.15.3_unofficial_157.pom",
+          "sha256": "b6fb158cad813b35837dff6d2c6cd5c286998016d093b35826481e0b195a59cd"
+        }
+      ],
+      "embedded": []
+    },
+    {
+      "path": "lib/wire-runtime-jvm-6.0.0-alpha02.jar",
+      "sha256": "750aa2aac9e923b6388b57fecc53c526d10efee868395ac7f15ccbb95f781520",
+      "coordinate": "com.squareup.wire:wire-runtime-jvm:6.0.0-alpha02",
+      "licenses": [
+        {
+          "name": "Apache-2.0",
+          "url": "https://www.apache.org/licenses/LICENSE-2.0"
+        }
+      ],
+      "pomChain": [
+        {
+          "path": "poms/com.squareup.wire-wire-runtime-jvm-6.0.0-alpha02.pom",
+          "sha256": "7d6bb21decf6e28000ccde914e3e8027e49ae0c36e4d9adbb20703ab12ae81a0"
+        }
+      ],
+      "embedded": []
+    }
+  ]
+}

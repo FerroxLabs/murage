@@ -7,7 +7,7 @@ import org.junit.Test;
 
 /** P21: the scanner hands the launcher only what PairingLink.parse accepts, trimmed like open(). */
 public class QrScannerTest {
-    private static final String LINK = "https://mac.tailnet123.ts.net:8444/enter#murage_pair_abc";
+    private static final String LINK = "https://mac.tail000000.ts.net:8444/enter#murage_pair_abc";
 
     @Test
     public void acceptsThePairingLink() {
@@ -53,9 +53,9 @@ public class QrScannerTest {
         assertNull(QrScanner.accept(null));
         assertNull(QrScanner.accept(""));
         assertNull(QrScanner.accept("WIFI:S:home;T:WPA;P:secret;;"));
-        assertNull(QrScanner.accept("https://mac.tailnet123.ts.net/"));
-        assertNull(QrScanner.accept("http://mac.tailnet123.ts.net/enter#murage_pair_abc"));
-        assertNull(QrScanner.accept("https://mac.tailnet123.ts.net/enter?x=1#murage_pair_abc"));
+        assertNull(QrScanner.accept("https://mac.tail000000.ts.net/"));
+        assertNull(QrScanner.accept("http://mac.tail000000.ts.net/enter#murage_pair_abc"));
+        assertNull(QrScanner.accept("https://mac.tail000000.ts.net/enter?x=1#murage_pair_abc"));
         assertNull(QrScanner.accept(LINK + "&installId=ios-0123456789abcdef"));
         assertNull(QrScanner.accept(LINK + "a".repeat(4096)));
     }

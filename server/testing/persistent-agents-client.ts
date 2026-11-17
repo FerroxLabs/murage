@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawnBoundProxy, boundProxyTerminal, boundProxyState } from "./bound-proxy-fixture.ts";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { waitForExit } from "./cleanup.ts";
@@ -6,8 +6,9 @@ import { waitForExit } from "./cleanup.ts";
 type Result = { isError?: boolean; content?: Array<{ type: string; text?: string }>; tools?: Array<{ name: string }> };
 
 /** Test-only persistent stdio client. Never logs config, credentials or payloads. */
-export function persistentAgentsClient(env: Record<string, string>) {
-  const child = spawn(process.execPath, [fileURLToPath(new URL("../drivers/agents-proxy.ts", import.meta.url))], {
+export async function persistentAgentsClient(env: Record<string, string>) {
+  const child = await spawnBoundProxy("agents", process.execPath, [fileURLToPath(new URL("../drivers/agents-proxy.ts", import.meta.url))], {
+    windowsHide: true,
     env: { PATH: process.env.PATH, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}), ...env },
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -46,6 +47,8 @@ export function persistentAgentsClient(env: Record<string, string>) {
       await request("initialize", { protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "fixture", version: "1" } });
       child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
     },
+    terminal: () => boundProxyTerminal(child),
+    state: () => boundProxyState(child),
     call: (name: "list_bots" | "list_image_models") => request("tools/call", { name, arguments: {} }),
     async close() { child.stdin.end(); await waitForExit(child); lines.close(); },
   };

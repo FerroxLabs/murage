@@ -1,3 +1,6 @@
+import { NotModelRequest } from "../../shared/engine-transport.ts";
+import { registerBusyloopPayloadSite, fluxRouteFor } from "../../shared/flux-route.ts";
+import { inspectFluxResponse } from "./flux-busyloop-readers.ts";
 import { versionAtLeast } from "./codex-hook.ts";
 import { probeFolder } from "../probe-folder.ts";
 // Codex model catalog — official ChatGPT rows stay in the main picker;
@@ -29,6 +32,8 @@ export const STATIC_CODEX_MODELS: ModelCatalog = {
     // Verified in Cloud home's pinned Codex 0.162.1 and public 0.167.0 catalogs.
     // Desktop installs Codex separately; a live CLI catalog remains authoritative.
     { id: "gpt-6.1-sol", label: "GPT-6.1 Sol" },
+    // https://developers.openai.com/codex/models/ publishes this exact CLI id.
+    { id: "gpt-6.1-terra", label: "GPT-6.1 Terra" },
     // gpt-6-sol / gpt-6-luna: released 2026-09-22 (ids per models.dev). Same
     // reasoning as Astra for not defaulting to them on release day.
     { id: "gpt-6-sol", label: "GPT-6 Sol" },
@@ -138,13 +143,13 @@ function spawnCatalog(
       const id = nextId++;
       pending.set(id, kind);
       try {
-        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`);
+        NotModelRequest("Codex initialization or model/list catalog query; no inference request", child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`));
       } catch {
         finish(null);
       }
     };
     const requestModels = (cursor: string | null) => {
-      request("model/list", { cursor, limit: 100 }, "models");
+      NotModelRequest("Codex initialization or model/list catalog query; no inference request", request("model/list", { cursor, limit: 100 }, "models"));
     };
     const timer = setTimeout(() => finish(null), timeoutMs);
     if (signal?.aborted) onStop(); else signal?.addEventListener("abort", onStop, { once: true });
@@ -160,7 +165,7 @@ function spawnCatalog(
         if (!line.trim()) continue;
         let message: any;
         try {
-          message = JSON.parse(line);
+          message = registerBusyloopPayloadSite("read", JSON.parse(line));
         } catch {
           continue;
         }
@@ -173,7 +178,7 @@ function spawnCatalog(
         }
         if (kind === "initialize") {
           try {
-            child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} })}\n`);
+            NotModelRequest("Codex initialization or model/list catalog query; no inference request", child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "initialized", params: {} })}\n`));
           } catch {
             finish(null);
             return;
@@ -215,7 +220,7 @@ function spawnCatalog(
     });
     child.on("error", () => finish(null));
     child.on("close", () => finish(null));
-    request("initialize", { clientInfo: { name: "murage", version: "1" } }, "initialize");
+    NotModelRequest("Codex initialization or model/list catalog query; no inference request", request("initialize", { clientInfo: { name: "murage", version: "1" } }, "initialize"));
   });
 }
 
@@ -339,7 +344,7 @@ function collectCatalogNames(home: string): Map<string, string> {
     if (!raw) continue;
     let parsed: unknown;
     try {
-      parsed = JSON.parse(raw);
+      parsed = registerBusyloopPayloadSite("read", JSON.parse(raw));
     } catch {
       continue;
     }
@@ -393,9 +398,10 @@ async function probeProviderModels(
   const timer = setTimeout(() => controller.abort(), 1000);
   timer.unref?.();
   try {
-    const response = await fetchImpl(url, { signal: controller.signal, headers });
-    if (!response.ok) return [];
-    return idsFromModelsPayload(await response.json());
+    const response = await fetchImpl(fluxRouteFor(url).requestUrl, { signal: controller.signal, headers });
+    const fluxResponse = await inspectFluxResponse(response, fluxRouteFor(url).routed, controller.signal, true);
+    if (!response.ok || (fluxResponse.decision && fluxResponse.decision.action !== "PASS")) return [];
+    return idsFromModelsPayload(fluxResponse.rawBody !== undefined ? registerBusyloopPayloadSite("read", JSON.parse(fluxResponse.rawBody)) : await registerBusyloopPayloadSite("read", response.json()));
   } catch {
     return [];
   } finally {

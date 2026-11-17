@@ -49,16 +49,18 @@ final class PhoneJobsMintClient {
     private let store: PhoneJobsTokenWriting
     private let send: Transport
     private let now: () -> Int64
+    private let pin: AskDevicePin?
     private var minting = false
 
     init(signer: PhoneJobsSigner, store: PhoneJobsTokenWriting, send: @escaping Transport,
          now: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }) {
-        self.signer = signer; self.store = store; self.send = send; self.now = now; self.ask = false
+        self.signer = signer; self.store = store; self.send = send; self.now = now; self.ask = false; self.pin = nil
     }
 
-    init(signer: PhoneAskSigner, store: PhoneJobsTokenWriting, send: @escaping Transport,
+    /// `pin`: the ask mint pins the device id the harness issues in its answer (D8). Nothing else pins it.
+    init(signer: PhoneAskSigner, store: PhoneJobsTokenWriting, send: @escaping Transport, pin: AskDevicePin? = nil,
          now: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }) {
-        self.signer = signer; self.store = store; self.send = send; self.now = now; self.ask = true
+        self.signer = signer; self.store = store; self.send = send; self.now = now; self.ask = true; self.pin = pin
     }
 
     func mint(origin: WorkspaceOrigin) async throws {
@@ -74,6 +76,18 @@ final class PhoneJobsMintClient {
             throw verdict.phoneFlagsOk ? PhoneJobsMintError.turnedOff : PhoneJobsMintError.updateComputer
         }
 
+        do { try await attempt(origin, keyId: keyId, wantDeviceId: ask) }
+        catch is WantRefused {
+            // A computer older than the pin-at-pairing release refuses the unknown `want` field with a 400. Its challenge was used up
+            // by that answer, so one fresh challenge and signature ask again without `want`: a plain token, no pin, and the plain ask.
+            try await attempt(origin, keyId: keyId, wantDeviceId: false)
+        }
+    }
+
+    /// The old computer's refusal of an ask mint that carries `want`: 400 with exactly {"error":"bad request"} (companion/src/phone-door.ts).
+    private struct WantRefused: Error {}
+
+    private func attempt(_ origin: WorkspaceOrigin, keyId: String, wantDeviceId: Bool) async throws {
         let challenge = try object(await send(request(origin, path: "/api/phones/self/challenge", keyId: keyId)))
         guard Set(challenge.keys) == ["nonce", "expiresAt"], let nonce = challenge["nonce"] as? String,
               let expiry = Self.integer(challenge["expiresAt"]), expiry > now() else { throw PhoneJobsMintError.invalidResponse }
@@ -85,14 +99,27 @@ final class PhoneJobsMintClient {
         post.httpMethod = "POST"
         post.setValue("application/json", forHTTPHeaderField: "Content-Type")
         var body: [String: Any] = ["keyId": keyId, "nonce": nonce, "expiresAt": expiry, "signature": signature]
+        // The ask credential opts in to the computer's pairing id, which the phone pins at pairing (D8). Jobs never asks for it.
         if ask { body["scope"] = "ask" }
+        if wantDeviceId { body["want"] = ["deviceId"] }
         post.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let answer = try object(await send(post))
+        let response = try await send(post)
+        if wantDeviceId, Self.isWantRefusal(response) { throw WantRefused() }
+        let answer = try object(response)
         try Task.checkCancellation()
-        guard Set(answer.keys) == ["token"], let token = answer["token"] as? String,
-              (ask ? PhoneAskContract.tokenValid(token) : PhoneJobsContract.tokenValid(token)) else { throw PhoneJobsMintError.invalidResponse }
+        guard let minted = AskMintAnswer.parse(answer),
+              (ask ? PhoneAskContract.tokenValid(minted.token) : PhoneJobsContract.tokenValid(minted.token)) else { throw PhoneJobsMintError.invalidResponse }
+        let token = minted.token
         guard signer.keyId(origin: origin) == keyId else { throw PhoneJobsMintError.noApprovalKey }
         try store.save(token, origin: origin)
+        // Pairing is the only place the device id is pinned. A harness that sends none leaves the phone unpinned.
+        if ask, let deviceId = minted.deviceId { pin?.pin(origin: origin, keyId: keyId, deviceId: deviceId) }
+    }
+
+    static func isWantRefusal(_ response: Response) -> Bool {
+        guard response.status == 400, response.body.count <= 256,
+              let json = try? JSONSerialization.jsonObject(with: response.body) as? [String: Any] else { return false }
+        return Set(json.keys) == ["error"] && json["error"] as? String == "bad request"
     }
 
     private func request(_ origin: WorkspaceOrigin, path: String, keyId: String? = nil) throws -> URLRequest {

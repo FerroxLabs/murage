@@ -37,6 +37,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
+import { rebaseStoredPath } from "./stored-paths.ts";
 
 /** Where this app keeps state it owns outright — receipts, snapshots, scoped
  *  homes. Read from `env` rather than the module constant so a test rig can
@@ -208,7 +209,25 @@ export function readConnectorManifest(manifestPath: string): ConnectorManifest {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { version: 1, tools: {} };
     const tools = (raw as { tools?: unknown }).tools;
     if (!tools || typeof tools !== "object" || Array.isArray(tools)) return { version: 1, tools: {} };
-    return { version: 1, tools: tools as Record<string, ConnectorReceipt> };
+    const manifest: ConnectorManifest = { version: 1, tools: { ...tools as Record<string, ConnectorReceipt> } };
+    let changed = false;
+    for (const [tool, receipt] of Object.entries(manifest.tools)) {
+      if (!/^[\w-]{1,80}$/.test(tool) || !receipt || typeof receipt.backupPath !== "string") continue;
+      const name = basename(receipt.backupPath);
+      if (!/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.\d+\.(?:backup|pre-disconnect)$/.test(name)) continue;
+      const next = rebaseStoredPath(receipt.backupPath, root => [join(root, "flux-connector-backups", tool, name)]);
+      if ("path" in next) { manifest.tools[tool] = { ...receipt, backupPath: next.path }; changed = true; }
+    }
+    if (changed) {
+      const stat = lstatSync(manifestPath);
+      // A read must never turn a copied link into a write through another account's manifest.
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1) return { version: 1, tools: tools as Record<string, ConnectorReceipt> };
+      try { writeConnectorManifest(manifestPath, manifest); }
+      catch {
+        console.warn("[flux-connector] Receipt migration could not be saved; valid receipts were retained.");
+      }
+    }
+    return manifest;
   } catch {
     // No manifest, or one we cannot parse. Treating it as empty is safe: the
     // worst case is that a present block reads as `drifted` and we refuse to

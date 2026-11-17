@@ -1,6 +1,8 @@
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
+// Producer owners: nl-backup-b (owner continuation), warm-keep (bounded readiness).
+// Inventory consumer owner: c4-misc-a3; policy owner: MAIN (INT-CONFLICT-DEFAULT).
 // The reader door (LINEAGE-DESIGN-S6 section D): classification (rule 1), the viewer axis (15), the lineage judge (15a), ownFlag (15b),
 // the carried content reader (15c), and the structural tests 18c and 18e.
 import { copyFileSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
@@ -254,7 +256,20 @@ describe("15c: the judge is carried, never rebuilt", () => {
 describe("18e: viewer and judge literals", () => {
   /** The files that may write the human viewer literal: the door's own type and the owner's routes (filled in as they move to the door). */
   // a file mapped to a pattern may hold the literal only on a line matching it: project-memory-tools.ts's owner page route (OWNER_PAGE)
-  const HUMAN_ALLOW = new Map<string, RegExp | null>([["bot-read.ts", null], ["project-memory-tools.ts", /const ownerPageViewer = \(\): Viewer => \(\{ kind: "human" \}\);/]]);
+  const HUMAN_ALLOW = new Map<string, RegExp | null>([["bot-read.ts", null], ["project-memory-tools.ts", /const ownerPageViewer = \(\): Viewer => \(\{ kind: "human" \}\);/],
+    // Delegation's owner sheet calls this callback only after isOwnerRequest; no other index.ts human reader is admitted.
+    ["index.ts", /^\s*const row = stored && botMessages\(database\(\), \{ kind: "human" \}, threadId, \[stored\]\)\[0\];$/]]);
+  it("the delegation sheet's human reader is scoped to its authenticated owner handler", () => {
+    const source = readFileSync(join(SERVER, "index.ts"), "utf8");
+    const start = source.indexOf('    if (path.startsWith("/api/delegation-packs/")) {');
+    expect(start).toBeGreaterThan(0);
+    const handler = source.slice(start, source.indexOf("\n    }", start));
+    expect(handler).toContain("const answer = answerDelegationPackRoute({ method, path }, {");
+    expect(handler).toContain("isOwnerRequest: () => mayApprove(req, url)");
+    expect(handler).toContain('readOwnerRow: (threadId, id) => {');
+    expect(handler).toContain('const row = stored && botMessages(database(), { kind: "human" }, threadId, [stored])[0];');
+    expect(source.match(/botMessages\(database\(\), \{ kind: "human" \}/g)).toHaveLength(1);
+  });
   it("a human viewer literal appears only in the allowlist", () => {
     expect(statSync(join(SERVER, "bot-read.ts")).isFile()).toBe(true);
     const found: string[] = [];
@@ -338,21 +353,42 @@ describe("16: every bot-facing read goes through the door", () => {
  * - message-db.ts, int's seq order (ROOM-ORDER-DESIGN r7 R2): readThread's two statements (numbered or legacy order), the six PAGE_SQL page
  *   reads (seq and rowid keys) and the branch walk's next-row read. They are the store's own loaders under Store.messagesFor and the page
  *   reads; every bot-facing caller reads their rows through botRows. */
+// 1.0.19 merged delegation/tool-budget reads: boundary-ports ownerInput returns only provenance;
+// index.ts updates a tool-limit notice, collects pack rowids, and reads the owner sheet through its reader;
+// memory/policy validates the pack anchor rowid; thread-recall maps permitted source ids to rowids
+// before the existing packLoan/branch/release checks. No raw words bypass the reader door.
+// 4f6495f025 adds three card/authority lookups to index.ts: parent turn origin and the two setup-card liveness probes.
+// 7bb5b132c7 adds the bounded deny-read role probe; no stored words bypass the bot reader.
+// MAIN RULING INT-CONFLICT-DEFAULT: exact reviewed read-site inventory; every unlisted read still fails.
 const RAW_READS: Record<string, number> = {
+  // MAIN RULING INT-CONFLICT-DEFAULT 9537dc8215 / f685e86827e / 1cda27c601c:
+  // Own approval presentation/terminal rows; no stored words are released by these reads.
+  "channels/registered-questions.ts": 1, "decision/answer-as-send.ts": 1,
+  "decision/implementation.ts": 4, "decision/records.ts": 3, "highlevel/decision-review.ts": 1,
+  // Source-only decision test doubles are scanned too; they are never production readers.
+  "decision-wiring/runtime-fixture.ts": 3,
+  // Replay judges read copy metadata, eligibility and existence; no raw text leaves the judge.
+  "memory/receipt-replay-proof.ts": 1, "memory/replay-walk.ts": 2,
+  // Pre-serving compatibility, restore inspection and id/time-only routine link indexing.
+  "restore-prep-core.ts": 1, "send-attempt-compat.ts": 2, "routine-message-links.ts": 2,
+
   "backup-waiting.ts": 1,
   // 1.0.9 bot calls: settleArmedAtBoot reads only a thread's newest message time (MAX(at)); matchChannelOwed reads one inbound row's json,
   // time and role to match a sender rule and keeps only the sender id and message id. Server-side admission, never handed to a bot.
   "bot-calls-machine.ts": 2,
-  "bot-egress.expect-errors.ts": 2, "boundary-ports.ts": 9, "branch-fill.ts": 5, "branch-index.ts": 7, "branch-store.ts": 4,
-  "browser-extension-approvals.ts": 3, "browser-extension-setup.ts": 1, "card-summary.ts": 3, "conversation-deletion.ts": 3,
+  // 4f6495f025: continue reads its own bot-authority card to carry its origin and pass generation; no row or words reach a bot.
+  "bot-call-authority.ts": 1,
+  "bot-egress.expect-errors.ts": 2, "boundary-ports.ts": 10, "branch-fill.ts": 5, "branch-index.ts": 7, "branch-store.ts": 4,
+  "browser-extension-approvals.ts": 4, "browser-extension-setup.ts": 2, "card-summary.ts": 3, "conversation-deletion.ts": 3,
   // 1.0.4 QW Q4 (0bc0c7c28): findWidget reads the one row whose id is the widget id, in the calling turn's own thread, and only while it holds
   // that widget (the WidgetStore interface line counts as the second). update_widget answers the bot with ids and a fixed line, never the row.
   "chat-widgets.ts": 2,
   // frozen-replies.ts (the boot recovery's scan and the rows it judges), handoff-reply.ts and held-replies.ts (an earlier build's held row, retired),
   // index.ts (the retired hold's result row), boundary-ports.ts (a shared request's closing row, terminalFor): server-side reads, never handed to a bot
   "frozen-replies.ts": 5,
-  "handoff-boundary.ts": 1, "handoff-dispatch.ts": 1, "handoff-evidence.ts": 1, "handoff-reply.ts": 1, "harness/event-log.ts": 5, "held-replies.ts": 1, "host-computer-consent.ts": 1,
-  "human-principals.ts": 1, "image-operations.ts": 2, "inbox-fill-worker.ts": 1, "inbox.base-reference.ts": 4, "inbox.legacy-reference.ts": 1,
+  // HighLevel review cards read their own owner-only card by id to mark it answered; no stored words reach a bot.
+  "highlevel/review-cards.ts": 1,
+  "handoff-boundary.ts": 1, "handoff-dispatch.ts": 1, "handoff-evidence.ts": 1, "handoff-reply.ts": 1, "harness/event-log.ts": 5, "held-replies.ts": 1, "human-principals.ts": 1, "inbox-fill-worker.ts": 1, "inbox.base-reference.ts": 4, "inbox.legacy-reference.ts": 1,
   // 1.0.9 share and ask (S37): index.ts adds the share-orphan reclaim's messageNames probe, `SELECT 1 FROM messages WHERE json LIKE ? LIMIT 1`:
   // it answers only whether a saved file's name appears in some message, and returns no row or words to anyone.
   // 1.0.4 QW (20acb3e0d): roomAnswerReceipt reads the owner's own landed answer row back for the owner's client (the room answer's receipt)
@@ -371,10 +407,22 @@ const RAW_READS: Record<string, number> = {
   // match a site the owner named, and only an id and a yes/no leave it, never a row or its words to a bot.
   // 1.0.18 U22 G20 (63db4b960): the limit failover reads the turn's own source row by its id (messageById) only to see whether it is a
   // share or ask-intent line (via); a via line starts no failover. Only a null return leaves, never a row or its words to a bot.
-  "inbox.ts": 6, "index.ts": 83,"installation-activation.ts": 1, "installation-database-snapshot.ts": 6, "installation-restore-preparation.ts": 1,
-  // 1.0.4: index.ts adds the limit-failover resend (the owner's own user row, through acceptBotSend), the turn's sendIds, and the two owner-only MCP card routes
+  // 1.0.19 NOTIFY (ad20c3987): attentionCardRecord reads the requested open card for the desktop-only attention/card route.
+  // It returns projected ids, display, outsideOk and digest; previewContent gates the display and digest. No stored row goes to a bot.
+  // MAIN RULING INT-CONFLICT-DEFAULT 0ce501d4ce: one keyed own-card read
+  // revalidates the registered skill receipt and exact staged digest at settle.
+  // MAIN RULING INT-CONFLICT-DEFAULT 069673f44c / 944688fa19:
+  // The closed-approval notice probes only its own stable id; explicit Flux
+  // capture reads its triggering owner row by id instead of scanning a thread.
+  // These add two reviewed point reads; every unlisted read still fails.
+  // MAIN RULING INT-CONFLICT-DEFAULT 1cf5ba9211 / c2661cb14b / 6382cfbecd / 49b1e46a4a:
+  // Six additional host-only reads: ownerLimitSnapshot hashes its triggering owner row;
+  // eligibleOwnerLimitCards checks its own card and source against private authority;
+  // shared/project usage keeps only the current source id/origin (two sites);
+  // the indexed engine-limit-notice probe returns existence only. No raw row reaches a bot.
+  "inbox.ts": 6, "index.ts": 114,"installation-activation.ts": 1, "installation-database-snapshot.ts": 7, // 1.0.4: index.ts adds the limit-failover resend (the owner's own user row, through acceptBotSend), the turn's sendIds, and the two owner-only MCP card routes
   // (dismissMcpCards, mcp-enable-cards); mcp-bot-cards.ts reads only the ids of open cards. None hands a stored row to a bot.
-  "mcp-bot-cards.ts": 2, "mcp-signin-card.ts": 1, "memory/branch-change.ts": 3, "murage-anchor.ts": 1, "memory/bring-in.ts": 1, "memory/capture.ts": 3, "memory/deny-read.ts": 1,
+  "mcp-bot-cards.ts": 2, "mcp-signin-card.ts": 1, "memory/branch-change.ts": 3, "murage-anchor.ts": 1, "memory/bring-in.ts": 1, "memory/capture.ts": 5, "memory/deny-read.ts": 2,
   "memory/evolution-forgetting.ts": 1, "memory/learning-wiring.ts": 2, "memory/lineage-backfill.ts": 9,
   // 1.0.18 TURNSTART r16 (lineage warmer): the warm confirm reads only to judge, never to answer. lineage-warm.ts (7): the thread head and the row before
   // a seq (rowid, id), the transcript anchor of a clean confirm (rowid, id), the two rows after the anchor (id, text, json)
@@ -382,23 +430,27 @@ const RAW_READS: Record<string, number> = {
   // scan page. lineage-warm-surface.ts (7) is the test surface that drives those paths (it writes fixture messages, a foreign commit and removes a row).
   // Production results of the warmer are booleans, ids, counts and verdicts; the fixture line index serves only the test surface. No stored row or its words go to a bot.
   "memory/lineage-warm.ts": 7, "memory/lineage-warm-surface.ts": 7,
-  "memory/memory-moments.ts": 5, "memory/outcomes.ts": 4, "memory/past-chats-build.ts": 2, "memory/pip-reflect.ts": 2, "memory/policy.ts": 1, "memory/replay-lineage.ts": 6,
-  "memory/restore.ts": 1, "memory/reveal-capture.ts": 1, "memory/schema.ts": 1, "memory/upgrade-counts.ts": 2, "message-db.ts": 49 /* + S5 site 14 rebaseMessageAttachmentPaths: one SELECT of attachment rows for the data-folder move rebase, decoded through rowToMessage */,
-  "message-search-index.ts": 7, "message-tables.ts": 6, "message-walker.ts": 2, "partition-sources.ts": 2, "peer-approval.ts": 1,
-  "project-digest.ts": 2, "project-goals.ts": 1, "project-memory-tools.ts": 4, "project-routes.ts": 1, "project-tools.ts": 1, "prompt-quotes.ts": 2,
+  // MAIN RULING INT-CONFLICT-DEFAULT 1cf5ba9211 / 4792bb96fa:
+  // finishThreadReadiness reads only lsn metadata for this thread's bounded
+  // certificate check; it returns the strict lineage verdict, never stored words.
+  "memory/continuation-settle.ts": 1,
+  "memory/memory-moments.ts": 5, "memory/outcomes.ts": 4, "memory/past-chats-build.ts": 2, "memory/pip-reflect.ts": 2, "memory/policy.ts": 2, "memory/replay-lineage.ts": 6,
+  "memory/restore.ts": 1, "memory/reveal-capture.ts": 1, "memory/schema.ts": 1, "memory/upgrade-counts.ts": 2, "message-db.ts": 48 /* + S5 site 14 rebaseMessageAttachmentPaths: one SELECT of attachment rows for the data-folder move rebase, decoded through rowToMessage */,
+  // 05c9ae71ff: the isolated search worker owns keyed, byte-bounded index construction reads; never a bot-facing reader.
+  "search-index-worker.ts": 4, "message-tables.ts": 7, "message-walker.ts": 2, "partition-sources.ts": 2, "project-digest.ts": 2, "project-goals.ts": 1, "project-memory-tools.ts": 4, "project-routes.ts": 1, "project-tools.ts": 1, "prompt-quotes.ts": 2,
   // 1.0.10 ROUTINE-DELIVER-1010: routine-delivery.ts reads back only its own result card by its stable id (rrun-<runId>) to patch it; index.ts
   // passes that one lookup through; message-db.ts artifactRowsBetween reads a routine run's own saved-file rows to list their Files ids on the
   // card. None hands a stored row's words to a bot.
   "routine-delivery.ts": 2,
   // 1.0.18 SMOOTH-FTS T7: settle-copy.ts ORPHAN_IDS names `messages` only inside NOT EXISTS, to find search-index ids whose message is gone
   // in a PRIVATE copy being settled (backup, damaged export, pre-prune snapshot). It returns index ids to delete, never a row or its words.
-  "publish/publish-ops.ts": 4, "room-turn-rows.ts": 3, "settle-copy.ts": 1, "setup-thread-facts.ts": 1, "steer-queue.ts": 1, "storage-attachments.ts": 1, "store.ts": 6,
+  "publish/publish-ops.ts": 3, "room-turn-rows.ts": 3, "settle-copy.ts": 1, "setup-thread-facts.ts": 3, "steer-queue.ts": 1, "storage-attachments.ts": 1, "store.ts": 7,
   // C2 previews: one indexed leaf id, a LIMIT 1 existence probe, MAX(rowid) endpoint and a 100-row backfill page.
   // Ancestor walks stop at 50; only the owner chat list reads summary text, never a bot-facing result.
   "thread-summary.ts": 4,
   // 1.0.6 recall-forgotten (bb32902a5): thread_list's newestRememberedAt pages a thread's rowid, id, time and withheld stamp to find the newest
   // line the owner has not forgotten; only that time leaves, never a row or its words.
-  "thread-recall.ts": 1, "transcript-backfill.ts": 11, "transcript-seq.ts": 6,
+  "thread-recall.ts": 2, "transcript-backfill.ts": 11, "transcript-seq.ts": 6,
   // 1.0.18 D24 speech (b320b1a98): storedReplyTarget refuses anyone but the owner first, then reads the one bot reply the owner asked to
   // hear (messageById) to check it is a finished bot text line; its text goes to the owner's own speech provider, never to a bot.
   "tts/reply-target.ts": 1,
@@ -896,5 +948,26 @@ describe("18b: only a BotRow reaches a prompt", () => {
     expect(code).toMatch(/function roomLine\(source: BotRow,/);
     expect(code.match(/roomLine\(/g)?.length, "roomLine is called only from renderRoomContext, with the door's BotRow").toBe(2);
     expect(code).toMatch(/const source = botRowOf\(m, viewer\);\n\s*if \(!source\) return \[\];\n\s*const line = roomLine\(source,/);
+  });
+});
+
+// L8 uses the same surface visibility for receipt notifications as transcript reads.
+describe("DOOR-1 send receipt visibility", () => {
+  it("never broadcasts an unscoped sends frame to the workspace", async () => {
+    const { frameSubject, visibleToCompanion } = await import("./sse-visibility.ts");
+    const store = { bot: () => null, group: () => undefined, botByThread: () => null, groupByThread: () => undefined };
+    for (const threadId of [undefined, null, "", []]) {
+      const subject = frameSubject({kind:"sends",threadId});
+      expect(subject).toEqual({scope:"connection"});
+      expect(visibleToCompanion(store,subject)).toBe(false);
+    }
+  });
+  it("keeps hidden bots, hidden rooms, bot DMs and unknown threads off the phone", async () => {
+    const { frameSubject, visibleToCompanion } = await import("./sse-visibility.ts");
+    const store = { bot: () => null, group: () => undefined,
+      botByThread: (id: string) => id === "visible" ? {hidden:false} : id === "hidden" ? {hidden:true} : null,
+      groupByThread: (id: string) => id === "room" ? {} : id === "hidden-room" ? {hidden:true} : id === "dm" ? {dm:true} : undefined };
+    for (const threadId of ["hidden","hidden-room","dm","missing"]) expect(visibleToCompanion(store,frameSubject({kind:"sends",threadId}))).toBe(false);
+    for (const threadId of ["visible","room"]) expect(visibleToCompanion(store,frameSubject({kind:"sends",threadId}))).toBe(true);
   });
 });

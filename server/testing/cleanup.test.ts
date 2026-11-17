@@ -21,7 +21,7 @@ let scratch: string;
 const holders: ChildProcess[] = [];
 
 const spawnHolder = () => {
-  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { stdio: "ignore" });
+  const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], { windowsHide: true, stdio: "ignore" });
   holders.push(child);
   return child;
 };

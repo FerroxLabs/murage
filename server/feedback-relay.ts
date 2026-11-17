@@ -10,6 +10,7 @@
 // the form builds from, so owner text, a name, a record id, a path or an email has no field to travel in, whoever calls
 // this route. The schema is strict at every level, so a field that is not in the contract is refused, never dropped; the
 // control plane holds the same tables and refuses the same way.
+import { maskVendorLast, tracked, runStages, replaceTracked, type EditCollector } from "../shared/basic-auth-mask.ts";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -107,7 +108,7 @@ export const REMOVED = "[removed]";
  *  redact.ts masks only a closed block (its job is logs); a half-pasted key in feedback is still a key. */
 const PEM_OPEN = /-----BEGIN [A-Z ]*PRIVATE KEY-----/g;
 const PEM_CLOSE = /-----END [A-Z ]*PRIVATE KEY-----/g;
-function removePemBlocks(input: string): string {
+function removePemBlocks(input: string, edits?:EditCollector): string {
   let out = "";
   let pos = 0;
   for (;;) {
@@ -116,18 +117,23 @@ function removePemBlocks(input: string): string {
     if (!open) break;
     PEM_CLOSE.lastIndex = open.index + open[0].length;
     const close = PEM_CLOSE.exec(input);
-    if (!close) return `${out}${input.slice(pos, open.index)}${REMOVED}`;
+    if (!close) {
+      edits?.({start:open.index,end:input.length,length:REMOVED.length});
+      return `${out}${input.slice(pos, open.index)}${REMOVED}`;
+    }
+    edits?.({start:open.index,end:close.index+close[0].length,length:REMOVED.length});
     out += `${input.slice(pos, open.index)}${REMOVED}`;
     pos = close.index + close[0].length;
   }
   return out + input.slice(pos);
 }
 /** Every rule at every length: redactSecretsInText skips text under 8 characters, and `?key=ab` is a whole credential. */
-export function scrubFeedbackText(value: string): string {
-  if (!value) return value;
-  let out = removePemBlocks(value);
-  for (const [, rule] of TEXT_RULES) out = rule(out);
-  return out.replace(REDACTED, REMOVED);
+export const FEEDBACK_RELAY_STAGES = [tracked(removePemBlocks),...TEXT_RULES.map(([,rule])=>tracked(rule)),
+  tracked((text,edits)=>replaceTracked(text,REDACTED,()=>REMOVED,edits))];
+export const baseScrubFeedbackText=(text:string)=>runStages(text,FEEDBACK_RELAY_STAGES);
+export function scrubFeedbackText(value:string):string {
+  if(!value)return value;
+  return maskVendorLast(value,FEEDBACK_RELAY_STAGES,()=>REMOVED);
 }
 
 /** An id shaped like a secret (id characters do not exclude `ghp_...`) is replaced whole; "removed" still passes the id rules. */

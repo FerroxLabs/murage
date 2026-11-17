@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // The serving thread's lock budgets (database.ts invariants 1, 2 and 4), in a leaf module: the slice runners (message tables, branch fill,
 // the memory backfills) take the write lock through beginBackground without importing the whole server, and database.ts re-exports all of it.
+import { isBgDeferred } from "./bg-admission.ts";
 import type { DatabaseSync } from "node:sqlite";
 import { currentBusy, ioBudget, noteBusyTimeout, setBusyWitness } from "./io-budget.ts";
 import { oldestLongOp, rateLimited } from "./observe.ts";
@@ -13,7 +14,7 @@ export const DEFAULT_BUSY_MS = OWNER_BUSY_MS;
 export const BACKGROUND_BUSY_MS = 50;
 /** Work that runs on behalf of the memory worker, the idle notebook steps, an after-listen step and the boot recoveries it starts, and the recovery
  * scheduler's passes takes the background budget without asking (transactions, autocommit writes and bare BEGINs alike: io-budget.ts lowerForHold). */
-const BACKGROUND_SOURCES: ReadonlySet<string> = new Set(["memory-worker", "memory-idle", "memory-notebook", "startup", "recovery"]);
+const BACKGROUND_SOURCES: ReadonlySet<string> = new Set(["memory-worker", "memory-idle", "memory-notebook", "owner-notebook", "startup", "recovery"]);
 /** Whether the ambient I/O source is a background one (its writes take BACKGROUND_BUSY_MS). */
 export function backgroundSourceNow(): boolean { return BACKGROUND_SOURCES.has(ioBudget.currentSource() ?? ""); }
 export { currentBusy };
@@ -26,12 +27,12 @@ export class DatabaseBusyError extends Error {
   readonly op: string;
   readonly waitedMs: number;
   // (no parameter properties: the server runs as TypeScript with types stripped, which cannot express them)
-  constructor(op: string, waitedMs: number) { super("Busy for a moment, try again"); this.op = op; this.waitedMs = waitedMs; }
+  constructor(op: string, waitedMs: number, message = "Busy for a moment, try again") { super(message); this.op = op; this.waitedMs = waitedMs; }
 }
 /** Seconds a client should wait before it repeats a request that met DatabaseBusyError (the Retry-After header). */
 export const DATABASE_BUSY_RETRY_AFTER_S = 1;
 export function isDatabaseBusy(error: unknown): boolean {
-  if (error instanceof DatabaseBusyError) return true;
+  if (error instanceof DatabaseBusyError || isBgDeferred(error)) return true;
   const e = error as { errcode?: unknown; message?: unknown } | null;
   if (!e || typeof e !== "object") return false;
   // SQLITE_BUSY is 5; its extended codes (517 snapshot, 261 recovery) keep 5 in the low byte.
@@ -77,9 +78,14 @@ export async function awaitWriterGateForeground(site?: string): Promise<void> {
 const namedGateWaits = new Map<string, number>();
 /** True while the named gate is waiting out a hold: what a test reads to know a route has reached that gate and no other. */
 export function waitingAtWriterGate(site: string): boolean { return (namedGateWaits.get(site) ?? 0) > 0; }
-/** The request-level gate: an owner write ends the index build and waits (bounded) for the lock; GET, HEAD and OPTIONS (health, reads, static files) never wait. */
-export function gateWriteRequest(method: string | undefined): Promise<void> {
-  return method === "GET" || method === "HEAD" || method === "OPTIONS" ? Promise.resolve() : awaitWriterGateForeground();
+/** POST routes that only read: they never touch messages.db, so a writer hold has nothing to protect them from. Exact method+path, never a prefix. */
+const READ_ONLY_POSTS: ReadonlySet<string> = new Set(["POST /api/teams/export"]);
+/** The request-level gate: an owner write ends the index build and waits (bounded) for the lock; GET, HEAD and OPTIONS (health, reads, static files)
+ * and the listed read-only POSTs never wait. */
+export function gateWriteRequest(method: string | undefined, path?: string): Promise<void> {
+  if (method === "GET" || method === "HEAD" || method === "OPTIONS") return Promise.resolve();
+  if (method === "POST" && path !== undefined && READ_ONLY_POSTS.has(`POST ${path}`)) return Promise.resolve();
+  return awaitWriterGateForeground();
 }
 /** Sets the lock wait of a handle (cached, so a repeat costs nothing). Callers that lower it restore DEFAULT_BUSY_MS in a finally. */
 export function setBusy(db: DatabaseSync, requested: number) {
@@ -128,6 +134,34 @@ export function beginBackground(db: DatabaseSync, op: string): void {
   }
   finally { try { setBusy(db, DEFAULT_BUSY_MS); } catch { /* handle closed */ } }
 }
+/** Foreground settlement shares the background lock ceiling, but keeps FULL durability. */
+export const SETTLE_LOCK_MS = BACKGROUND_BUSY_MS;
+
+/** The caller owns transaction cleanup, including when timeout restoration throws after BEGIN succeeded.
+ * A failed BEGIN keeps its original error even if restoring the usual timeout also fails. */
+export function beginBounded(db: DatabaseSync, op: string, waitMs: number): void {
+  const wholeMs = Math.floor(waitMs);
+  if (!(wholeMs >= 1)) throw new RangeError("beginBounded requires a wait allowance of at least 1 ms");
+  const boundedMs = Math.min(wholeMs, SETTLE_LOCK_MS);
+  let failed = false;
+  const started = performance.now();
+  try {
+    setBusy(db, boundedMs);
+    db.exec("BEGIN IMMEDIATE");
+  } catch (error) {
+    failed = true;
+    if (isDatabaseBusy(error)) {
+      const waited = performance.now() - started;
+      noteBusy(op, waited);
+      throw new DatabaseBusyError(op, waited);
+    }
+    throw error;
+  } finally {
+    try { setBusy(db, DEFAULT_BUSY_MS); }
+    catch (error) { if (!failed) throw error; }
+  }
+}
+
 /** An autocommit write of background work on a handle (a slice runner's progress mark): within BACKGROUND_BUSY_MS, then DatabaseBusyError
  * ("try later"); the handle's usual wait is back either way. */
 export function backgroundWrite<T>(db: DatabaseSync, op: string, run: () => T): T {

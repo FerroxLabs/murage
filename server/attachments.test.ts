@@ -1,20 +1,33 @@
 // attachments.ts: save + read-back, the mime allowlist, size ceiling, and
 // the name-lock that keeps the serving route inside the attachments dir.
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, truncateSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, truncateSync, unlinkSync, utimesSync } from "node:fs";
+import { writeFileSync } from "./counted-fs.ts";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { link, open, unlink } from "node:fs/promises";
+import { link, unlink } from "node:fs/promises";
+import { open } from "./counted-fs-promises.ts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...fs, link: vi.fn(fs.link), unlink: vi.fn(fs.unlink), open: vi.fn(fs.open) };
+  return { ...fs, link: vi.fn(fs.link), unlink: vi.fn(fs.unlink), open: fs.open };
 });
 vi.mock("node:fs", async (importOriginal) => {
   const fs = await importOriginal<typeof import("node:fs")>();
-  return { ...fs, unlinkSync: vi.fn(fs.unlinkSync), readdirSync: vi.fn(fs.readdirSync), writeFileSync: vi.fn(fs.writeFileSync), mkdirSync: vi.fn(fs.mkdirSync) };
+  return { ...fs, unlinkSync: vi.fn(fs.unlinkSync), readdirSync: vi.fn(fs.readdirSync), writeFileSync: fs.writeFileSync, mkdirSync: vi.fn(fs.mkdirSync) };
+});
+// Faults follow the product's write boundary. Setup loads the accounting
+// adapters before this file's node:fs mocks, so spying on the old import cannot
+// inject a disk failure into the writer anymore.
+vi.mock("./counted-fs.ts", async original => {
+  const fs = await original<typeof import("./counted-fs.ts")>();
+  return { ...fs, writeFileSync: vi.fn(fs.writeFileSync) };
+});
+vi.mock("./counted-fs-promises.ts", async original => {
+  const fs = await original<typeof import("./counted-fs-promises.ts")>();
+  return { ...fs, open: vi.fn(fs.open) };
 });
 const realUnlink = (await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")).unlink;
 const realLink = (await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises")).link;

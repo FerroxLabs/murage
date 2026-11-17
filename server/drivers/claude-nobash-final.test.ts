@@ -20,7 +20,7 @@ import { invalidateCliVersions } from "../cli-version-cache.ts";
 import { ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
-import { recordEvents, type EventRecorder } from "../testing/events.ts";
+import { recordAdmittedEvents, type EventRecorder } from "../testing/admitted-events.ts";
 import * as claude from "./claude.ts";
 import { resetClaudeVersionGate } from "./claude-guards.ts";
 
@@ -153,7 +153,7 @@ describe("14.3 item 2 and item 5 through the driver (fake CLI)", () => {
 
   const create = async () => {
     instance = await claude.ClaudeDriver.create({ instanceId: "claude-final-test", displayName: "Claude Final Test", environment: {}, enabled: true, config: { cli: FAKE_CLI, permissionMode: "acceptEdits" } });
-    recorder = recordEvents(instance.adapter);
+    recorder = recordAdmittedEvents(instance.adapter);
   };
 
   beforeEach(() => {

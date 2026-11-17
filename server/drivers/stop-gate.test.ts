@@ -412,8 +412,20 @@ describe("STOP-NONACP s7 strip-only", () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const gateUrl = pathToFileURL(join(here, "stop-gate.ts")).href;
     // the same binary and flag as scripts/control-murage.ts uses to start server/index.ts
-    const out = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", `const m = await import(${JSON.stringify(gateUrl)}); if (typeof m.createStopGate !== "function" || new m.GateStopped("asked").why !== "asked") process.exit(3);`], { encoding: "utf8", timeout: 30_000 });
+    const out = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", `const m = await import(${JSON.stringify(gateUrl)}); if (typeof m.createStopGate !== "function" || new m.GateStopped("asked").why !== "asked") process.exit(3);`], { windowsHide: true, encoding: "utf8", timeout: 30_000 });
     expect(`${out.stderr}`).not.toContain("ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX");
     expect(out.status).toBe(0);
   });
+});
+
+// R1/S1: an exact stopped lease cannot stop its successor while it is still preparing.
+it("exact lease Stop marks only that generation, including before spawn", () => {
+  const { gate } = rig();
+  const old = gate.enter("thread", { turnId: "old" });
+  const current = gate.enter("thread", { turnId: "current" });
+  (gate.ask as (threadId: string, turnId: string) => void)("thread", "old");
+  expect(gate.why(old)).toBe("asked");
+  expect(gate.why(current)).toBeNull();
+  gate.ask("thread");
+  expect(gate.why(current)).toBe("asked");
 });

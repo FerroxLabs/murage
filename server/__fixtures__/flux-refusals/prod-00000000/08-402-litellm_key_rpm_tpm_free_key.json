@@ -1,0 +1,64 @@
+{
+ "status": 402,
+ "headers": {
+  "date": "<HTTP-date>",
+  "server": "uvicorn",
+  "x-flux-alias": "deepseek-v4-flash",
+  "content-length": "308",
+  "content-type": "application/json",
+  "x-frame-options": "DENY",
+  "content-security-policy": "frame-ancestors 'none'",
+  "x-content-type-options": "nosniff",
+  "connection": "close"
+ },
+ "body": {
+  "error": {
+   "message": "free_tier_exhausted",
+   "type": "None",
+   "param": "None",
+   "code": "402",
+   "provider_specific_fields": {
+    "error": "free_tier_exhausted",
+    "message": "Free tier monthly allowance exhausted. Upgrade to Builder ($29/mo) for $20 of included usage + BYOK.",
+    "upgrade_url": "https://fluxrouter.ai/home/billing"
+   }
+  }
+ },
+ "endpoint": "/v1/chat/completions",
+ "per_endpoint": {
+  "/v1/messages": {
+   "status": 429,
+   "headers": {
+    "content-length": "210",
+    "content-type": "application/json"
+   },
+   "body": {
+    "type": "error",
+    "error": {
+     "type": "rate_limit_error",
+     "message": "Rate limit exceeded for api_key: KEYHASH_REDACTED. Limit type: requests. Current limit: 1, Remaining: 0. Limit resets at: 2026-11-10 20:08:21 UTC"
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  },
+  "/v1/responses": {
+   "status": 429,
+   "headers": {
+    "content-length": "214",
+    "content-type": "application/json"
+   },
+   "body": {
+    "error": {
+     "message": "Rate limit exceeded for api_key: KEYHASH_REDACTED. Limit type: requests. Current limit: 1, Remaining: 0. Limit resets at: 2026-11-10 20:08:21 UTC",
+     "type": "api_error",
+     "param": null,
+     "code": "429"
+    }
+   },
+   "method": "from-code (rendered in fixture env with the real Flux renderer)",
+   "headers_note": "content-type and content-length are from the real renderer. The security headers seen on every live chat capture (x-frame-options, content-security-policy, x-content-type-options) are app-wide and expected here too, but these routes were NOT live-captured (staging does not mount the Flux /v1/messages and /v1/responses handlers). x-request-id is echoed on /v1/messages only when the client sent one."
+  }
+ },
+ "notes": "Same LiteLLM limiter on a key with no tier stamp or tier free: rewritten to 402 free_tier_exhausted on chat. Live-captured for both rpm_limit=1 and tpm_limit=1 (identical bodies)."
+}

@@ -15,9 +15,9 @@ import type { Message } from "../store.ts";
 import { denyLookup } from "./deny-read.ts";
 import { resetLineageBackfillForTest } from "./lineage-backfill.ts";
 import { closeTurnLineage, openTurnLineage } from "./lineage-write.ts";
-import type { LineageReader } from "./lineage-types.ts";
+import type { LineageReader, TurnLineage } from "./lineage-types.ts";
 import { drainRevokeMarker, INLINE_REVOCATION, stopMemoryRevocation } from "./memory-revocation.ts";
-import { turnToolText } from "./prompt-parts.ts";
+import { deliveredToolText } from "./testing/delivered-tool-text.ts";
 import { commitRevoke } from "./revoke-commit.ts";
 import { markerSlice, setScopeFlowEdgesRecorded } from "./revoke-marker.ts";
 import { downgradeMemorySchema, MEMORY_SCHEMA, migrateMemorySchema, validateMemorySchema } from "./schema.ts";
@@ -29,13 +29,13 @@ const CONTENT: LineageReader = { audience: null };
 const msg = (id: string, extra: Partial<Message> = {}): Message => ({ id, role: "bot", kind: "text", text: id, at: Date.now(), ...extra });
 const owner = (id: string, parentId?: string): Message => msg(id, { role: "user", ...(parentId ? { parentId } : {}) }); // a parent keeps the branch: no branch-switch revoke
 const verdict = (thread: string, id: string) => denyLookup(database(), { threadId: thread, lines: [{ messageId: id, author: "generated" }] }, CONTENT).get(id)!.state;
-const inTurn = (thread: string, turnId: string, write: () => void) => {
+const inTurn = (thread: string, turnId: string, write: (turn: TurnLineage) => void) => {
   const turn = openTurnLineage(database(), { threadId: thread, turnId });
-  try { write(); } finally { closeTurnLineage(turn); }
+  try { write(turn); } finally { closeTurnLineage(turn); }
 };
 /** B's turn quotes a line of A: a carry and an A -> B flow, stamped now. */
-const quote = (b: string, turnId: string, reply: string, line: string) => inTurn("B", turnId, () => {
-  turnToolText("B", "quoted words", [{ kind: "line", threadId: "A", messageId: line }]);
+const quote = (b: string, turnId: string, reply: string, line: string) => inTurn("B", turnId, turn => {
+  deliveredToolText(turn, "quoted words", [{ kind: "line", threadId: "A", messageId: line }]);
   appendMessage("B", msg(reply, { parentId: b }));
 });
 /** Runs the newest job's flow phase and nothing past it. */

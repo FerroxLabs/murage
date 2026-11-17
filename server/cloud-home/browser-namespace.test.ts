@@ -9,7 +9,7 @@ const fixture = fileURLToPath(new URL("./browser-namespace.fixture.py", import.m
 for (const scenario of ["reuse", "identity", "registry", "stop", "retry", "creation", "fresh", "parent-race", "parent", "manager", "join", "join-child", "network-argv", "kill-scopes"]) {
   // the helper calls os.pidfd_open and os.pipe2, which Python has only on Linux
   it.skipIf(process.platform !== "linux")(`actual namespace helper: ${scenario} with privileged operations replaced`, () => {
-    expect(execFileSync("python3", ["-I", fixture, helper, scenario], { encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] })).toBe(`OK ${scenario}\n`);
+    expect(execFileSync("python3", ["-I", fixture, helper, scenario], { windowsHide: true, encoding: "utf8", timeout: 10_000, stdio: ["ignore", "pipe", "pipe"] })).toBe(`OK ${scenario}\n`);
   });
 }
 it("fresh helper exec precedes profile anchors and uses namespace cleanup rather than browser PID files", () => {

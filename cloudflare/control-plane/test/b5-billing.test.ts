@@ -4,6 +4,8 @@ import { env } from "cloudflare:workers";
 import { createExecutionContext, waitOnExecutionContext } from "cloudflare:test";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWorker, SCHEDULED_SWEEP_DEADLINE_MS } from "../src/index";
+import { sweepFluxEmailAutoSend } from "../src/flux-email-proof";
+import { stripeWebhook } from "../src/b5-billing";
 import { fakeProvider, type ProviderAdapter } from "../src/b3-provider";
 import { PROVISION_MAX_MS, type Home } from "../src/b3-control";
 import { billingConfig } from "../src/b5-config";
@@ -14,6 +16,7 @@ import { backoffFor, defaultNotifier, EVENT_CLAIM_MS, EVENT_MAX_MS, MISS_SETTLES
 import { acquireHomeLease } from "../src/billing-lease";
 import { deliver as deliverAlert } from "../src/ops-monitor";
 import { customerFake } from "./stripe-customer-fake";
+import { stopForBilling as b4StopForBilling } from "../src/b4-flux";
 /** The renewal dropdown, answered (plan §3.2): without it the guard turns the order away. */
 const RENEWAL_YES = [{ key: "renewalconsent", type: "dropdown", dropdown: { value: "renewalyes" } }];
 
@@ -28,14 +31,21 @@ const PRICES = { STRIPE_PRICE_STARTER: "price_starter0001", STRIPE_PRICE_PRO: "p
 const B3 = { reservationMs: 30 * 60_000, graceMs: 3 * DAY, retentionMs: 14 * DAY, imageDigest: IMAGE, quarantineRelayIP: "192.0.2.20",
   engineSubscriptionGates: { claudeAgent: true, codex: false, grokAgent: false, kimiAgent: false, opencodeGo: true },
   capacity: [{ id: "slot-1", projectId: "p1", location: "fsn1", serverType: "cx23", outcome: "available" }] };
+let fpKeys = false; // FirstPromoter secrets present (referral partners); off by default so no other test enrolls anyone
+let fluxOn = false; // Flux serving (launch flow A, the email proof auto-send); off by default
+let salesVars: Record<string, string> = {}; // the sales switch and its invite list (sales-allowlist tests); empty by default
 const baseEnv = (): Env => ({ ...env, CLOUD_ADMIN_TOKEN: ADMIN, CLOUD_KEK_V1: btoa("x".repeat(32)), CLOUD_B3_MODE: "fake",
   CLOUD_B3_CONFIG: JSON.stringify(B3), STRIPE_SECRET_KEY: "sk_test_fixturefixturefixture", STRIPE_WEBHOOK_SECRET: WHSEC,
-  BILLING_RETURN_ORIGIN: "https://cloud.murage.test", ...PRICES } as Env);
+  BILLING_RETURN_ORIGIN: "https://cloud.murage.test", ...PRICES,
+  ...(fpKeys ? { FIRSTPROMOTER_API_KEY: "fp_test_key_not_real", FIRSTPROMOTER_ACCOUNT_ID: "fp_acct_test" } : {}),
+  ...(fluxOn ? { CLOUD_FLUX_ROUTES_ENABLED: "1", FLUX_CLOUD_SERVICE_TOKEN: "s".repeat(40), FLUX_CLOUD_GRANTS_TOKEN: "g".repeat(40) } : {}), ...salesVars } as Env);
 
 interface StripeCall { method: string; path: string; form: URLSearchParams; headers: Headers }
 let stripeCalls: StripeCall[];
 let notices: { id: string; kind: string; homeId: string }[];
 let fluxLog: { hook: string; args: unknown }[];
+/** PRODFLUX r3 (4'): when set, the hook's Stop is THE B4 billing Stop (b4-flux.ts stopForBilling) on real hooks, switched on, with the given env. */
+let realStop: ((homeId: string, options: unknown) => Promise<unknown>) | null = null;
 let cancelFails = false;
 // Stripe's refund listing of pi_1 (GET /v1/refunds): what Stripe shows returned, the only evidence a refund ends anything (Astra JOURNEY-A-6 #1).
 let refundList: { id: string; amount: number; status: string; payment_intent: string; metadata: Record<string, string> }[] = [];
@@ -74,11 +84,34 @@ const flux: FluxEntitlementHooks = {
   async grantMonthlyCredits(_e, input) { fluxLog.push({ hook: "grant", args: input }); },
   async changePlan(_e, input) { fluxLog.push({ hook: "plan", args: input }); },
   async revokeCredits(_e, input) { fluxLog.push({ hook: "revoke", args: input }); },
-  async stopForBilling(_e, homeId, _d, options) { fluxLog.push({ hook: "stop", args: { homeId, ...options } }); },
+  async stopForBilling(_e, homeId, _d, options) {
+    fluxLog.push({ hook: "stop", args: { homeId, ...options } });
+    if (realStop) { const r = await realStop(homeId, options); fluxLog.push({ hook: "stopResult", args: r }); return r; }
+  },
   async usedIncludedCreditMicrocents() { return { usedMicrocents: 0 }; },
   async setAutoRecharge(_e, input) { fluxLog.push({ hook: "autorecharge", args: input }); },
 };
-const deps = (): BillingDependencies => ({ stripeFetch, notifier, flux });
+// FirstPromoter (referral.ts) is a fake: no test reaches the network.
+interface FpCall { method: string; path: string; body: Record<string, any> | null; headers: Headers }
+let fpCalls: FpCall[];
+let fpPost: () => Response = () => Response.json({ id: 777, email: "b5@example.test", promoter_campaigns: [{ campaign_id: 44526, ref_token: "abc123" }] }, { status: 201 });
+let fpGet: () => Response = () => Response.json({ id: 777, promoter_campaigns: [{ campaign_id: 44526, ref_token: "abc123" }] });
+let fpSearch: () => Response = () => Response.json({ data: [] });
+const firstPromoterFetch = (async (input: string | URL | Request, init?: RequestInit) => {
+  const u = new URL(String(input));
+  const path = u.pathname.replace("/api/v2/company", "") + u.search;
+  fpCalls.push({ method: init?.method ?? "GET", path, body: init?.body ? JSON.parse(String(init.body)) : null, headers: new Headers(init?.headers) });
+  if ((init?.method ?? "GET") === "POST") return fpPost();
+  if (path.startsWith("/promoters?search=")) return fpSearch();
+  return fpGet();
+}) as typeof fetch;
+/** The identity reader double for the referral email check: the address Supabase holds now, or a failure. */
+const readerState: { email: string | null; fail: boolean } = { email: "b5@example.test", fail: false };
+const reader = { async emailGen(sub: string) {
+  if (readerState.fail) throw new Error("identity_unavailable");
+  return { id: sub, email: readerState.email ?? "", updatedAt: "2026-10-01T00:00:00Z" };
+} };
+const deps = (): BillingDependencies => ({ stripeFetch, notifier, flux, firstPromoterFetch, reader });
 let purged: string[];
 const provider = (db: D1Database): ProviderAdapter => ({ ...fakeProvider(db), async purge_snapshots(h, g) { purged.push(`${h}:${g}`); } });
 
@@ -125,7 +158,11 @@ async function paidAndRunning() {
 }
 beforeEach(async () => {
   vi.spyOn(Date, "now").mockReturnValue(NOW);
-  stripeCalls = []; notices = []; fluxLog = []; purged = []; cancelFails = false; evtN = 0; retrievable = {}; refundList = [];
+  fpCalls = []; fpKeys = false; fluxOn = false; fpPost = () => Response.json({ id: 777, email: "b5@example.test", promoter_campaigns: [{ campaign_id: 44526, ref_token: "abc123" }] }, { status: 201 });
+  fpSearch = () => Response.json({ data: [] });
+  fpGet = () => Response.json({ id: 777, promoter_campaigns: [{ campaign_id: 44526, ref_token: "abc123" }] });
+  salesVars = {};
+  realStop = null; stripeCalls = []; notices = []; fluxLog = []; purged = []; cancelFails = false; evtN = 0; retrievable = {}; refundList = [];
   await env.DB.prepare(`INSERT INTO "user" (id,name,email,emailVerified,createdAt,updatedAt) VALUES (?, 'B5','b5@example.test',1,?,?)`).bind(OWNER, NOW, NOW).run();
   await env.DB.prepare(`INSERT INTO installations (id,owner_user_id,client_instance_id,display_name,platform,created_at,updated_at)
     VALUES (?,?,?,'B5','linux',?,?)`).bind(INSTALL, OWNER, INSTALL, NOW, NOW).run();
@@ -294,6 +331,50 @@ describe("customer-facing contract (portal): session user + 2FA step-up", () => 
   });
 });
 
+describe("dark launch: an invited buyer checks out and the webhook completes it while sales are shut", () => {
+  const buyer = (email: string): BillingDependencies => ({ ...deps(), accountUser: async () => ({ id: OWNER, email }), stepUp: async () => true });
+  const checkout = (d: BillingDependencies, extra: Record<string, unknown> = {}) =>
+    send("/v1/billing/checkout", { body: { plan: "starter", homeId: "home-1", consent: consentFor("starter", NOW), ...extra } }, d);
+  async function reserveOnly() {
+    expect((await send("/v1/fake-b3/reserve", { body: { homeId: "home-1", installationId: INSTALL, ownerId: OWNER,
+      publicOrigin: "https://home-1.murage.test", idempotencyKey: "reserve-key-home-1-0001" }, headers: admin })).status).toBe(201);
+  }
+  it("an unlisted signed-in buyer is 503 sales_closed and Stripe is never called", async () => {
+    salesVars = { CLOUD_SALES_OPEN: "false", CLOUD_SALES_ALLOWLIST: "invited@example.test" };
+    await reserveOnly();
+    const res = await checkout(buyer("b5@example.test"));
+    expect([res.status, await res.json()]).toEqual([503, { error: "sales_closed" }]);
+    expect(stripeCalls).toEqual([]);
+  });
+  it("the listed buyer (any case, spaces in the var) gets a Checkout session; the paid webhook makes the home paid and running", async () => {
+    salesVars = { CLOUD_SALES_OPEN: "false", CLOUD_SALES_ALLOWLIST: " someone@example.test ,  B5@Example.TEST ," };
+    await reserveOnly();
+    const res = await checkout(buyer("b5@example.test"));
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ sessionId: "cs_test_1", url: "https://checkout.stripe.test/c/cs_test_1" });
+    // The webhook never consults the sales switch: completion runs exactly as it does with sales open.
+    expect((await hook(stripeEvent("checkout.session.completed", await boundSession({ object: "checkout.session", consent: { terms_of_service: "accepted" }, customer_details: { address: { country: "US" } }, id: "cs_test_1", mode: "subscription",
+      payment_status: "paid", customer: "cus_test1", subscription: "sub_test1", invoice: "in_1", client_reference_id: "home-1",
+      metadata: { home_id: "home-1", plan: "starter", consent_id: await latestConsentId("home-1") } }, {}, retrievable)))).status).toBe(200);
+    expect((await hook(stripeEvent("invoice.paid", invoice()))).status).toBe(200);
+    expect((await reconcile()).status).toBe(200);
+    expect((await getHome()).entitlement).toBe("paid");
+    expect((await getHome()).desired_state).toBe("checking");
+    expect(await env.DB.prepare("SELECT * FROM billing_subscriptions").first()).toMatchObject({ subscription_id: "sub_test1", plan: "starter", status: "active" });
+    expect(fluxLog).toEqual([{ hook: "grant", args: { homeId: "home-1", plan: "starter", invoiceId: "in_1", periodStart: NOW, periodEnd: NOW + 30 * 86400_000 } }]);
+  });
+  it("an email in the request body never counts, and an empty list is today's shut behaviour", async () => {
+    salesVars = { CLOUD_SALES_OPEN: "false", CLOUD_SALES_ALLOWLIST: "invited@example.test" };
+    await reserveOnly();
+    const body = await checkout(buyer("b5@example.test"), { email: "invited@example.test" });
+    expect([body.status, await body.json()]).toEqual([503, { error: "sales_closed" }]);
+    salesVars = { CLOUD_SALES_OPEN: "false", CLOUD_SALES_ALLOWLIST: "" };
+    const empty = await checkout(buyer("b5@example.test"));
+    expect([empty.status, await empty.json()]).toEqual([503, { error: "sales_closed" }]);
+    expect(stripeCalls).toEqual([]);
+  });
+});
+
 describe("config safety", () => {
   it("refuses live keys unless explicitly allowed, and keeps Flux top-ups out of the commission allowlist", () => {
     expect(() => billingConfig({ ...baseEnv(), STRIPE_SECRET_KEY: "sk_live_fixturefixturefixture" } as Env)).toThrow("billing_live_not_allowed"); // secret-scan: fixture
@@ -309,6 +390,31 @@ describe("config safety", () => {
     const topup = invoice({ id: "in_topup", lines: { data: [{ price: { id: "price_topup000001" }, period: { start: NOW / 1000, end: NOW / 1000 + 1 } }] } });
     expect((await hook(stripeEvent("invoice.paid", topup, NOW / 1000 + 5))).status).toBe(200);
     expect(fluxLog).toEqual([]);
+  });
+  it("a paid top-up invoice whose attempt was given up raises the paid-without-grant alert once; a live attempt does not", async () => {
+    await paidAndRunning(); fluxLog = [];
+    const ins = (id: string, inv: string, state: string) => env.DB.prepare(`INSERT INTO topup_attempts (attempt_id,home_id,settings_revision,amount_cents,month_key,state,invoice_id,claimed_at,updated_at) VALUES (?,?,1,2000,'2026-11',?,?,1,1)`).bind(id, "home-1", state, inv).run();
+    await ins("ta-1", "in_topup_late", "abandoned"); await ins("ta-2", "in_topup_live", "paid");
+    const pay = (id: string) => hook(stripeEvent("invoice.paid", invoice({ id, subscription: null, lines: { data: [] } }), NOW / 1000 + 5));
+    expect((await pay("in_topup_late")).status).toBe(200); expect((await pay("in_topup_live")).status).toBe(200);
+    const rows = (await env.DB.prepare("SELECT detail FROM cloud_alerts WHERE kind='topup.paid_not_granted' AND resolved_at IS NULL").all<{ detail: string }>()).results;
+    expect(rows.map((r) => JSON.parse(r.detail).invoiceId)).toEqual(["in_topup_late"]);
+    expect(fluxLog).toEqual([]);
+    await env.DB.prepare("DELETE FROM topup_attempts").run();
+  });
+  it("round 4: a crash after Stripe took the money, with CLOUD_AUTOTOPUP_ENABLED off, is still recovered and paged by the sweep, and nothing is charged", async () => {
+    await paidAndRunning(); fluxLog = [];
+    await env.DB.prepare(`INSERT INTO topup_attempts (attempt_id,home_id,settings_revision,amount_cents,month_key,state,invoice_id,claimed_at,updated_at) VALUES ('ta-off','home-1',1,2000,'2026-11','invoiced','in_topup_off',1,1)`).run();
+    retrievable["/v1/invoices/in_topup_off"] = { id: "in_topup_off", object: "invoice", status: "paid", amount_paid: 2160, amount_due: 0, tax: 160 };
+    const before = stripeCalls.length;
+    expect(baseEnv().CLOUD_AUTOTOPUP_ENABLED).toBeUndefined();
+    await sweepBilling(baseEnv(), deps());
+    expect((await env.DB.prepare("SELECT state FROM topup_attempts WHERE attempt_id='ta-off'").first<{ state: string }>())?.state).toBe("paid");
+    const rows = (await env.DB.prepare("SELECT detail FROM cloud_alerts WHERE kind='topup.paid_not_granted' AND resolved_at IS NULL").all<{ detail: string }>()).results;
+    expect(rows.map((r) => JSON.parse(r.detail).invoiceId)).toEqual(["in_topup_off"]);
+    expect(stripeCalls.slice(before).filter((c) => c.method === "POST" && c.path.startsWith("/v1/invoices"))).toEqual([]);
+    await env.DB.prepare("DELETE FROM topup_attempts").run(); await env.DB.prepare("DELETE FROM cloud_alerts WHERE kind='topup.paid_not_granted'").run();
+    delete retrievable["/v1/invoices/in_topup_off"];
   });
 });
 
@@ -424,6 +530,34 @@ describe("cancel, refund, dispute, upgrade", () => {
     expect(fluxLog).toEqual([{ hook: "stop", args: { homeId: "home-1", invoiceId: "in_1", keepGrants: true, line: "sub_test1" } }]);
     expect((await env.DB.prepare("SELECT status FROM billing_subscriptions").first<{ status: string }>())!.status).toBe("disputed");
     expect(notices.some((n) => n.kind === "dispute_opened")).toBe(true);
+  });
+  // PRODFLUX r3 (4'): switched on with the real hooks and FLUX_CLOUD_SERVICE_TOKEN missing, the B4 Stop is journaled and answers "stopping"
+  // (nothing sent, no attempt counted): the dispute and the full refund still notify the customer and end the Stripe subscription.
+  const serviceTokenAbsent = () => {
+    const out = { ...env, CLOUD_FLUX_ROUTES_ENABLED: "1", FLUX_API_BASE: "https://api.fluxrouter.ai", FLUX_CLOUD_GRANTS_TOKEN: "g".repeat(40), FLUX_CLOUD_SERVICE_TOKEN: undefined } as Env;
+    realStop = (homeId, options) => b4StopForBilling(out, homeId, { billingFlux: { stub: false, capabilities: {} } as unknown as FluxEntitlementHooks },
+      options as { invoiceId?: string; keepGrants?: boolean; line?: string | null });
+  };
+  const stopOp = () => env.DB.prepare("SELECT state,attempts FROM flux_home_ops WHERE home_id='home-1' AND kind='stop' ORDER BY seq DESC LIMIT 1").first();
+  it("service token absent: a dispute still suspends, notifies and ends the subscription; the Stop is journaled stopping with attempts 0", async () => {
+    await paidAndRunning(); fluxLog = []; serviceTokenAbsent();
+    await hook(stripeEvent("charge.dispute.created", { object: "dispute", id: "dp_1", charge: "ch_1", reason: "fraudulent" }, NOW / 1000 + 30)); await reconcile();
+    expect(fluxLog.find((f) => f.hook === "stopResult")?.args).toEqual({ state: "stopping", opId: expect.any(String) });
+    expect(await stopOp()).toEqual({ state: "queued", attempts: 0 });
+    expect((await getHome()).desired_state).toBe("suspended");
+    expect((await env.DB.prepare("SELECT status FROM billing_subscriptions").first<{ status: string }>())!.status).toBe("disputed");
+    expect(notices.some((n) => n.kind === "dispute_opened")).toBe(true);
+    expect(stripeCalls.some((c) => c.method === "DELETE" && c.path === "/v1/subscriptions/sub_test1")).toBe(true);
+  });
+  it("service token absent: a full refund still suspends, notifies and ends the subscription; the Stop is journaled stopping with attempts 0", async () => {
+    await paidAndRunning(); fluxLog = []; serviceTokenAbsent();
+    refundList = [{ id: "re_f", amount: 4900, status: "succeeded", payment_intent: "pi_1", metadata: {} }];
+    await hook(stripeEvent("charge.refunded", { object: "charge", id: "ch_1", customer: "cus_test1", invoice: "in_1", refunded: true, amount_refunded: 4900 }, NOW / 1000 + 20)); await reconcile();
+    expect(fluxLog.find((f) => f.hook === "stopResult")?.args).toEqual({ state: "stopping", opId: expect.any(String) });
+    expect(await stopOp()).toEqual({ state: "queued", attempts: 0 });
+    expect((await getHome()).desired_state).toBe("suspended");
+    expect(notices.some((n) => n.kind === "refunded")).toBe(true);
+    expect(stripeCalls.some((c) => c.method === "DELETE" && c.path === "/v1/subscriptions/sub_test1")).toBe(true);
   });
   it("an old event delivered late cannot undo a newer state", async () => {
     await paidAndRunning();
@@ -1378,7 +1512,9 @@ describe("lane C design 3: stored-event retries (earliest due first, claim, time
       expect(refunds).toHaveLength(25);
       expect(fetches.filter((i) => i < refunds[24])).toEqual([]);
       // The alerts were persisted with the obligations (one per home) and delivered only afterwards, by the monitoring sweep (30 s each).
-      expect(seen.log.filter((e) => e === "fetch provision.failed").length).toBeGreaterThan(0);
+      // Two-tier alerts: the 25 homes are ONE page (provision.failed on 2 or more homes), not 25 deliveries.
+      expect(seen.log.filter((e) => e === "fetch page.homes.not_created")).toHaveLength(1);
+      expect(seen.log.filter((e) => e === "fetch provision.failed")).toHaveLength(0);
       const alerts = await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_alerts WHERE kind='provision.failed'").first<{ n: number }>();
       expect(alerts!.n).toBe(25);
     });
@@ -2013,5 +2149,357 @@ describe("Astra MAILRETRY-11: a customer cancel on a given-up home", () => {
     expect(h.payment_version).toBeGreaterThan(version);
     const obligations = await env.DB.prepare("SELECT id FROM cloud_outbox WHERE home_id='home-1' AND kind='refund_required'").all<{ id: string }>();
     expect(obligations.results.map((o) => o.id)).toEqual([expect.stringMatching(/^refund:provision_failed:home-1:/)]);
+  });
+});
+
+describe("referral partners (FirstPromoter auto-enrollment)", () => {
+  const row = () => env.DB.prepare("SELECT * FROM cloud_referral_partners WHERE user_id=?").bind(OWNER).first<Record<string, any>>();
+  const referral = async (who: string | null) => {
+    const r = await send("/v1/account/referral", { method: "GET" }, { ...deps(), accountUser: async () => (who ? { id: who } : null) });
+    return { status: r.status, body: await r.json() as Record<string, unknown> };
+  };
+  const posts = () => fpCalls.filter((c) => c.method === "POST");
+  beforeEach(async () => {
+    readerState.email = "b5@example.test"; readerState.fail = false;
+    await env.DB.prepare("INSERT INTO supabase_identities (sub,user_id,via,created_at,contact_email) VALUES ('sub-b5',?,'created',?,'b5@example.test')").bind(OWNER, NOW).run();
+  });
+
+  it("enrolls the member on the first paid invoice and answers the link", async () => {
+    fpKeys = true;
+    await paidAndRunning();
+    expect(posts()).toHaveLength(1);
+    expect(posts()[0]).toMatchObject({ path: "/promoters", body: { email: "b5@example.test", initial_campaign_id: 44526, always_approve: true, drip_emails: true } });
+    expect(posts()[0]!.headers.get("authorization")).toBe("Bearer fp_test_key_not_real");
+    expect(posts()[0]!.headers.get("account-id")).toBe("fp_acct_test");
+    expect(await row()).toMatchObject({ state: "active", promoter_id: 777, ref_token: "abc123", attempts: 0 });
+    expect(await referral(OWNER)).toEqual({ status: 200, body: { status: "active", link: "https://murage.ai/?fpr=abc123", portalUrl: "https://murage.firstpromoter.com", rate: 20, months: 12 } });
+  });
+  it("is idempotent on a webhook replay, a sweep and a renewal", async () => {
+    fpKeys = true;
+    await paidAndRunning();
+    const again = stripeEvent("invoice.paid", invoice());
+    expect((await hook(again)).status).toBe(200);
+    expect((await hook(again)).status).toBe(200);
+    await hook(stripeEvent("invoice.paid", invoice({ id: "in_3", billing_reason: "subscription_cycle" }), NOW / 1000 + 120)); await reconcile();
+    await sweepBilling(baseEnv(), deps());
+    expect(posts()).toHaveLength(1);
+    expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM cloud_referral_partners").first<{ n: number }>())!.n).toBe(1);
+  });
+  it("a duplicate email is not looked up: no email in any URL, the row waits for a manual link and is never retried", async () => {
+    fpKeys = true;
+    fpPost = () => Response.json({ message: "Validation failed: Email has already been taken", errors: { email: ["has already been taken"] }, code: "invalid_record" }, { status: 400 });
+    await paidAndRunning();
+    expect(fpCalls.map((c) => `${c.method} ${c.path}`)).toEqual(["POST /promoters"]);
+    expect(await row()).toMatchObject({ state: "manual", last_error: "fp_email_taken", ref_token: null, promoter_id: null });
+    expect((await referral(OWNER)).body).toEqual({ status: "pending", link: null, portalUrl: "https://murage.firstpromoter.com" });
+    vi.mocked(Date.now).mockReturnValue(NOW + 30 * 3_600_000);
+    await sweepBilling(baseEnv(), deps());
+    expect(fpCalls).toHaveLength(1);
+  });
+  it("a 400 that is not a duplicate stores nothing and is an error", async () => {
+    fpKeys = true;
+    fpPost = () => Response.json({ message: "Validation failed", errors: { campaign: ["is invalid"] }, code: "invalid_record" }, { status: 400 });
+    await paidAndRunning();
+    expect(fpCalls.map((c) => `${c.method} ${c.path}`)).toEqual(["POST /promoters"]);
+    expect(await row()).toMatchObject({ state: "pending", last_error: "fp_400", ref_token: null, promoter_id: null, attempts: 1 });
+    expect((await referral(OWNER)).body).toMatchObject({ status: "pending", link: null });
+  });
+  it("the address is the one Supabase holds now, and no FirstPromoter request URL ever carries an email", async () => {
+    fpKeys = true;
+    readerState.email = "b5@example.test";
+    await paidAndRunning();
+    expect(posts()[0]!.body).toMatchObject({ email: "b5@example.test" });
+    await sweepBilling(baseEnv(), deps());
+    vi.mocked(Date.now).mockReturnValue(NOW + 30 * 3_600_000);
+    await sweepBilling(baseEnv(), deps());
+    for (const c of fpCalls) { expect(c.path).not.toMatch(/@|%40|search|find_by|[?]/); }
+  });
+  it("a stale stored address moves to Supabase's current one before the first FirstPromoter call", async () => {
+    fpKeys = true;
+    readerState.email = "moved@example.test";
+    await paidAndRunning();
+    expect(posts()).toHaveLength(1);
+    expect(posts()[0]!.body).toMatchObject({ email: "moved@example.test" });
+  });
+  it("the identity reader down (503): no FirstPromoter call, a fixed error, retried by the sweep once it answers", async () => {
+    fpKeys = true;
+    readerState.fail = true;
+    await paidAndRunning();
+    expect(fpCalls).toHaveLength(0);
+    expect(await row()).toMatchObject({ state: "pending", last_error: "identity_unavailable", attempts: 1 });
+    readerState.fail = false;
+    vi.mocked(Date.now).mockReturnValue(NOW + 30 * 3_600_000);
+    await sweepBilling(baseEnv(), deps());
+    expect(posts()).toHaveLength(1);
+    expect(await row()).toMatchObject({ state: "active", ref_token: "abc123" });
+  });
+  it("no reader at all (503): no FirstPromoter call", async () => {
+    fpKeys = true;
+    const noReader = (): BillingDependencies => ({ ...deps(), reader: null });
+    await paidAndRunning(); // enrolled by the normal path first? no: remove and redo without a reader
+    await env.DB.prepare("DELETE FROM cloud_referral_partners").run();
+    fpCalls.length = 0;
+    await sweepBilling(baseEnv(), noReader());
+    expect(fpCalls).toHaveLength(0);
+    expect(await row()).toMatchObject({ state: "pending", last_error: "identity_unavailable" });
+  });
+  it("an email conflict (409): no FirstPromoter call, a fixed error", async () => {
+    fpKeys = true;
+    await env.DB.prepare(`INSERT INTO "user" (id,name,email,emailVerified,createdAt,updatedAt) VALUES ('other','O','o@example.test',1,?,?)`).bind(NOW, NOW).run();
+    await env.DB.prepare("INSERT INTO supabase_identities (sub,user_id,via,created_at,contact_email) VALUES ('sub-other','other','created',?,'taken@example.test')").bind(NOW).run();
+    readerState.email = "taken@example.test";
+    await paidAndRunning();
+    expect(fpCalls).toHaveLength(0);
+    expect(await row()).toMatchObject({ state: "pending", last_error: "email_conflict", attempts: 1 });
+  });
+  it("an account with no Supabase identity (null): no FirstPromoter call, a fixed error", async () => {
+    fpKeys = true;
+    await env.DB.prepare("DELETE FROM supabase_identities WHERE user_id=?").bind(OWNER).run();
+    await paidAndRunning();
+    expect(fpCalls).toHaveLength(0);
+    expect(await row()).toMatchObject({ state: "pending", last_error: "no_email", attempts: 1 });
+  });
+  it.each([["deleting"], ["deleted"]])("a %s home: no link, no enrollment", async (state) => {
+    await seedRow("active", 44526);
+    expect((await referral(OWNER)).body).toMatchObject({ status: "active" });
+    await env.DB.prepare("UPDATE cloud_homes SET desired_state=? WHERE id='home-1'").bind(state).run();
+    expect((await referral(OWNER)).body).toEqual({ status: "none", link: null, portalUrl: "https://murage.firstpromoter.com" });
+    await env.DB.prepare("DELETE FROM cloud_referral_partners").run();
+    fpKeys = true;
+    await sweepBilling(baseEnv(), deps());
+    expect(fpCalls).toHaveLength(0);
+    expect(await row()).toBeNull();
+  });
+  it("a home deleted before the first enrollment attempt is never enrolled", async () => {
+    await paidAndRunning(); // keys off: queued
+    await env.DB.prepare("UPDATE cloud_homes SET desired_state='deleted' WHERE id='home-1'").run();
+    fpKeys = true;
+    vi.mocked(Date.now).mockReturnValue(NOW + 30 * 3_600_000);
+    await sweepBilling(baseEnv(), deps());
+    expect(fpCalls).toHaveLength(0);
+    expect(await row()).toMatchObject({ state: "pending", ref_token: null });
+  });
+  it("a refunded member: no link, no enrollment (backfill included)", async () => {
+    await seedRow("active", 44526);
+    const inv = (await env.DB.prepare("SELECT first_invoice_id AS i FROM billing_subscriptions WHERE home_id='home-1'").first<{ i: string }>())!.i;
+    await env.DB.prepare("INSERT INTO refund_ops (id,kind,home_id,user_id,invoice_id,end_plan,decided_at,amount_cents,created_at,updated_at) VALUES ('withdrawal:t1','withdrawal','home-1',?,?,0,?,100,?,?)")
+      .bind(OWNER, inv, NOW, NOW, NOW).run();
+    expect((await referral(OWNER)).body).toEqual({ status: "none", link: null, portalUrl: "https://murage.firstpromoter.com" });
+    await env.DB.prepare("DELETE FROM cloud_referral_partners").run();
+    fpKeys = true;
+    await sweepBilling(baseEnv(), deps());
+    expect(fpCalls).toHaveLength(0);
+    expect(await row()).toBeNull();
+  });
+  it("a FirstPromoter 5xx never blocks billing; the sweep retries it and alerts after repeated failures", async () => {
+    fpKeys = true;
+    fpPost = () => new Response("down", { status: 503 });
+    await paidAndRunning();
+    expect((await getHome()).entitlement).toBe("paid");
+    expect((await env.DB.prepare("SELECT processed_at,error FROM stripe_events WHERE type='invoice.paid'").first<{ processed_at: number | null; error: string | null }>())).toMatchObject({ error: null });
+    expect(await row()).toMatchObject({ state: "pending", attempts: 1, last_error: "fp_503" });
+    expect((await referral(OWNER)).body).toMatchObject({ status: "pending", link: null });
+    // Not yet due: no new attempt.
+    await sweepBilling(baseEnv(), deps());
+    expect(posts()).toHaveLength(1);
+    let t = NOW;
+    for (let i = 0; i < 4; i++) { t += 7 * 3_600_000; vi.mocked(Date.now).mockReturnValue(t); await sweepBilling(baseEnv(), deps()); }
+    expect(await row()).toMatchObject({ state: "pending", attempts: 5 });
+    expect((await env.DB.prepare("SELECT severity FROM cloud_alerts WHERE kind='referral.enroll_failing'").first<{ severity: string }>())).toEqual({ severity: "warning" });
+    // FirstPromoter recovers: one more attempt enrolls, the alert resolves, and exactly one promoter is made.
+    fpPost = () => Response.json({ id: 777, promoter_campaigns: [{ campaign_id: 44526, ref_token: "abc123" }] }, { status: 201 });
+    t += 7 * 3_600_000; vi.mocked(Date.now).mockReturnValue(t); await sweepBilling(baseEnv(), deps());
+    expect(await row()).toMatchObject({ state: "active", ref_token: "abc123" });
+    expect((await env.DB.prepare("SELECT resolved_at FROM cloud_alerts WHERE kind='referral.enroll_failing'").first<{ resolved_at: number | null }>())!.resolved_at).not.toBeNull();
+  });
+  it("without the FirstPromoter secrets enrollment is skipped, nothing breaks, and the row waits", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    await paidAndRunning();
+    expect(fpCalls).toHaveLength(0);
+    expect(await row()).toMatchObject({ state: "pending", attempts: 0 });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("FirstPromoter is not configured"));
+    expect((await referral(OWNER)).body).toMatchObject({ status: "pending" });
+  });
+  it("never enrolls a reserved or unpaid home", async () => {
+    fpKeys = true;
+    expect((await reserveAndCheckout()).status).toBe(200);
+    await sweepBilling(baseEnv(), deps());
+    expect(fpCalls).toHaveLength(0);
+    expect(await row()).toBeNull();
+    expect((await referral(OWNER)).body).toEqual({ status: "none", link: null, portalUrl: "https://murage.firstpromoter.com" });
+  });
+  it("the sweep enrolls a member who paid before this shipped", async () => {
+    await paidAndRunning(); // keys off: queued, not enrolled
+    await env.DB.prepare("DELETE FROM cloud_referral_partners").run();
+    fpKeys = true;
+    await sweepBilling(baseEnv(), deps());
+    expect(posts()).toHaveLength(1);
+    expect(await row()).toMatchObject({ state: "active", ref_token: "abc123" });
+  });
+  it("the route is the signed-in member's own: another member and a signed-out caller get nothing", async () => {
+    fpKeys = true;
+    await paidAndRunning();
+    expect((await referral("someone-else")).body).toEqual({ status: "none", link: null, portalUrl: "https://murage.firstpromoter.com" });
+    expect((await referral(null)).status).toBe(401);
+    const post = await send("/v1/account/referral", { method: "POST", body: {} }, { ...deps(), accountUser: async () => ({ id: OWNER }) });
+    expect(post.status).toBe(405);
+  });
+  const seedRow = async (state: string, campaign: number | null, token: string | null = "tok1") => { await paidAndRunning(); await env.DB.prepare(
+    "INSERT OR REPLACE INTO cloud_referral_partners (user_id,home_id,state,promoter_id,ref_token,campaign_id,campaign_checked_at,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)")
+    .bind(OWNER, "home-1", state, 777, token, campaign, NOW, NOW, NOW).run(); };
+  it.each([[44526, 20, 12], [44530, 25, 12], [44531, 30, 12], [44527, 25, 12], [44528, 30, 12], [44529, 30, 24]])(
+    "an active member in campaign %i shows %i percent for %i months", async (campaign, rate, months) => {
+      await seedRow("active", campaign);
+      expect((await referral(OWNER)).body).toEqual({ status: "active", link: "https://murage.ai/?fpr=tok1", portalUrl: "https://murage.firstpromoter.com", rate, months });
+    });
+  it("an unknown campaign, a pending member and a non-member carry no rate or months", async () => {
+    await seedRow("active", 99999);
+    expect((await referral(OWNER)).body).toEqual({ status: "active", link: "https://murage.ai/?fpr=tok1", portalUrl: "https://murage.firstpromoter.com" });
+    await env.DB.prepare("UPDATE cloud_referral_partners SET state='pending'").run();
+    expect((await referral(OWNER)).body).toEqual({ status: "pending", link: null, portalUrl: "https://murage.firstpromoter.com" });
+    expect((await referral("someone-else")).body).toEqual({ status: "none", link: null, portalUrl: "https://murage.firstpromoter.com" });
+  });
+  it("enrollment stores the campaign the promoter is really in: the highest rate, the longer term on a tie", async () => {
+    fpKeys = true;
+    fpPost = () => Response.json({ id: 777, promoter_campaigns: [{ campaign_id: 44526, ref_token: "t20" }, { campaign_id: 44528, ref_token: "t30a" },
+      { campaign_id: 44529, ref_token: "t30b" }, { campaign_id: 12345, ref_token: "tother" }] }, { status: 201 });
+    await paidAndRunning();
+    expect(await row()).toMatchObject({ state: "active", campaign_id: 44529, ref_token: "t30b" });
+    expect((await referral(OWNER)).body).toMatchObject({ link: "https://murage.ai/?fpr=t30b", rate: 30, months: 24 });
+  });
+  it("a member created straight into Founders shows 25 percent for 12 months", async () => {
+    fpKeys = true;
+    fpPost = () => Response.json({ id: 777, promoter_campaigns: [{ campaign_id: 44527, ref_token: "fnd" }] }, { status: 201 });
+    await paidAndRunning();
+    expect((await referral(OWNER)).body).toMatchObject({ rate: 25, months: 12 });
+  });
+  it("the sweep re-reads an active member's campaign once a day: an upgrade shows up, with one read-only GET", async () => {
+    fpKeys = true;
+    await paidAndRunning();
+    expect((await referral(OWNER)).body).toMatchObject({ rate: 20, months: 12 });
+    fpGet = () => Response.json({ id: 777, promoter_campaigns: [{ campaign_id: 44526, ref_token: "abc123" }, { campaign_id: 44530, ref_token: "up25" }] });
+    await sweepBilling(baseEnv(), deps());
+    expect(fpCalls.filter((c) => c.method === "GET")).toHaveLength(0); // checked a moment ago: not read again
+    vi.mocked(Date.now).mockReturnValue(NOW + 25 * 3_600_000);
+    await sweepBilling(baseEnv(), deps());
+    expect(fpCalls.filter((c) => c.method === "GET").map((c) => c.path)).toEqual(["/promoters/777"]);
+    expect(await row()).toMatchObject({ campaign_id: 44530, ref_token: "up25" });
+    expect((await referral(OWNER)).body).toMatchObject({ link: "https://murage.ai/?fpr=up25", rate: 25, months: 12 });
+    await sweepBilling(baseEnv(), deps());
+    expect(fpCalls.filter((c) => c.method === "GET")).toHaveLength(1); // once a day
+  });
+  it("a failing daily read keeps the old campaign and waits an hour", async () => {
+    fpKeys = true;
+    await paidAndRunning();
+    fpGet = () => new Response("down", { status: 503 });
+    vi.mocked(Date.now).mockReturnValue(NOW + 25 * 3_600_000);
+    await sweepBilling(baseEnv(), deps());
+    await sweepBilling(baseEnv(), deps());
+    expect(fpCalls.filter((c) => c.method === "GET")).toHaveLength(1);
+    expect(await row()).toMatchObject({ state: "active", campaign_id: 44526 });
+  });
+});
+
+describe("launch flow A: the email proof code mailed once when the checkout completes (FLUX-ENSURE-EMAIL-VERIFIED contract (c))", () => {
+  let proofMail: { to: string; text: string }[];
+  let mailDown: boolean;
+  const proofDeps = (): BillingDependencies => ({ ...deps(), fluxProof: { emailSender: () => ({ async send(m) {
+    if (mailDown) throw new Error("mail down");
+    proofMail.push({ to: m.to, text: m.text });
+  } }) } });
+  const completed = async () => stripeEvent("checkout.session.completed", await boundSession({ object: "checkout.session", consent: { terms_of_service: "accepted" },
+    customer_details: { address: { country: "US" } }, id: "cs_test_1", mode: "subscription", payment_status: "paid", customer: "cus_test1", subscription: "sub_test1",
+    invoice: "in_1", client_reference_id: "home-1", metadata: { home_id: "home-1", plan: "starter", consent_id: await latestConsentId("home-1") } }, {}, retrievable));
+  const deliver = async (event: unknown) => {
+    const raw = JSON.stringify(event);
+    return send("/v1/billing/webhook", { raw, headers: { "stripe-signature": await signStripePayload(raw, WHSEC, NOW / 1000) } }, proofDeps());
+  };
+  const marker = () => env.DB.prepare("SELECT state,tries FROM flux_email_proof_autosend WHERE account_id=?").bind(OWNER).first<{ state: string; tries: number }>();
+  beforeEach(async () => {
+    fluxOn = true; proofMail = []; mailDown = false;
+    // These tables are not in the shared per-test cleanup: each case starts with no proof state for the owner.
+    for (const t of ["flux_email_proof_autosend", "flux_email_proof", "flux_email_proof_events"]) await env.DB.prepare(`DELETE FROM ${t} WHERE account_id=?`).bind(OWNER).run();
+    await env.DB.prepare("DELETE FROM supabase_identities WHERE user_id=?").bind(OWNER).run();
+    await env.DB.prepare("INSERT INTO supabase_identities (sub,user_id,via,created_at,email_revision,contact_email) VALUES ('sub-b5',?,'created',1,0,'b5@example.test')").bind(OWNER).run();
+    expect((await reserveAndCheckout()).status).toBe(200);
+  });
+
+  it("checkout complete sends exactly one code; a second delivery of the webhook sends none", async () => {
+    const event = await completed();
+    expect((await deliver(event)).status).toBe(200);
+    expect(proofMail).toHaveLength(1);
+    expect(proofMail[0]!.to).toBe("b5@example.test");
+    expect(proofMail[0]!.text).toMatch(/Your code is: \d{6}/);
+    expect(await marker()).toEqual({ state: "sent", tries: 1 });
+    expect((await deliver(event)).status).toBe(200);
+    expect(proofMail).toHaveLength(1);
+    expect(await env.DB.prepare("SELECT COUNT(*) AS n FROM flux_email_proof WHERE account_id=?").bind(OWNER).first()).toEqual({ n: 1 });
+  });
+  it("an already-proven account gets none", async () => {
+    await env.DB.prepare("UPDATE supabase_identities SET email_verified_at=1,email_verified_for='b5@example.test' WHERE user_id=?").bind(OWNER).run();
+    expect((await deliver(await completed())).status).toBe(200);
+    expect(proofMail).toHaveLength(0);
+    expect(await marker()).toBeNull();
+  });
+  it("the webhook still succeeds when the send fails: recorded for the sweep's one retry", async () => {
+    mailDown = true;
+    expect((await deliver(await completed())).status).toBe(200);
+    expect(await env.DB.prepare("SELECT processed_at IS NOT NULL AS done, error FROM stripe_events WHERE type='checkout.session.completed'").first()).toEqual({ done: 1, error: null });
+    expect(await getHome()).toBeTruthy();
+    expect(proofMail).toHaveLength(0);
+    expect(await marker()).toEqual({ state: "failed", tries: 1 });
+  });
+  it("ITEM 9 M5: a mailer that hangs neither fails nor delays the webhook: the code is only queued under the lease and sent after the answer, within the send timeout", async () => {
+    const event = await completed();
+    const raw = JSON.stringify(event);
+    await seedPendingQuotes();
+    let sendStarted = false;
+    const hung: BillingDependencies = { ...deps(), fluxProof: { sendTimeoutMs: 300, emailSender: () => ({ send: () => { sendStarted = true; return new Promise<void>(() => undefined); } }) } };
+    const ctx = createExecutionContext();
+    const res = await createWorker(fetch, fetch, { provider }, {}, hung).fetch(new Request("https://admin.murage.test/v1/billing/webhook", { method: "POST", body: raw,
+      headers: { "content-type": "application/json", "CF-Connecting-IP": "203.0.113.10", "stripe-signature": await signStripePayload(raw, WHSEC, NOW / 1000) } }), baseEnv(), ctx);
+    // The answer came back before the mailer did anything conclusive: the event is recorded and the marker is not settled yet.
+    expect(res.status).toBe(200);
+    expect(await env.DB.prepare("SELECT processed_at IS NOT NULL AS done, error FROM stripe_events WHERE type='checkout.session.completed'").first()).toEqual({ done: 1, error: null });
+    expect(["queued", "sending"]).toContain((await marker())!.state);
+    // After the checkpoint, the waitUntil send stops waiting at the timeout: delivery unknown, the code kept live (ITEM 9 r2 H1), no retry.
+    await waitOnExecutionContext(ctx);
+    expect(sendStarted).toBe(true);
+    expect(await marker()).toEqual({ state: "sent", tries: 1 });
+    expect(proofMail).toHaveLength(0);
+  });
+  it("ITEM 9 r2 H2: the queued marker commits in the SAME fenced batch as the checkpoint: a sweep just before the checkpoint sees no marker and mails nothing", async () => {
+    const event = await completed();
+    const raw = JSON.stringify(event);
+    await seedPendingQuotes();
+    const seen: { markers: number; processed: number; sent: number }[] = [];
+    // A D1 whose next batch after the event's checkpoint statement was prepared first runs the proof sweep against the committed state.
+    let checkpointNext = false;
+    const db = env.DB;
+    const watched = new Proxy(db, { get(t, p) {
+      if (p === "prepare") return (sql: string) => { if (/^UPDATE stripe_events SET processed_at=\?,error=\?,next_attempt_at=NULL WHERE id=\?$/.test(sql.trim())) checkpointNext = true; return t.prepare(sql); };
+      if (p === "batch") return async (stmts: D1PreparedStatement[]) => {
+        if (checkpointNext) {
+          checkpointNext = false;
+          const sent = await sweepFluxEmailAutoSend({ ...baseEnv(), DB: db } as Env, { now: () => NOW, emailSender: proofDeps().fluxProof!.emailSender });
+          seen.push({ markers: (await db.prepare("SELECT COUNT(*) AS n FROM flux_email_proof_autosend WHERE account_id=?").bind(OWNER).first<{ n: number }>())!.n,
+            processed: (await db.prepare("SELECT COUNT(*) AS n FROM stripe_events WHERE type='checkout.session.completed' AND processed_at IS NOT NULL").first<{ n: number }>())!.n, sent });
+        }
+        return t.batch(stmts);
+      };
+      const v = Reflect.get(t, p); return typeof v === "function" ? v.bind(t) : v;
+    } });
+    // The webhook handler itself, on the watched D1 (the worker's request wrapper would open its own D1 session past the proxy).
+    const after: Promise<unknown>[] = [];
+    const res = await stripeWebhook(new Request("https://admin.murage.test/v1/billing/webhook", { method: "POST", body: raw,
+      headers: { "content-type": "application/json", "stripe-signature": await signStripePayload(raw, WHSEC, NOW / 1000) } }), { ...baseEnv(), DB: watched } as Env,
+      { ...proofDeps(), waitUntil: (w) => { after.push(w); } });
+    expect(res.status).toBe(200);
+    expect(seen).toEqual([{ markers: 0, processed: 0, sent: 0 }]);
+    expect(proofMail).toHaveLength(0);
+    // After the checkpoint the marker is there and the one code goes out (waitUntil).
+    await Promise.all(after);
+    expect(proofMail).toHaveLength(1);
+    expect(await marker()).toEqual({ state: "sent", tries: 1 });
   });
 });

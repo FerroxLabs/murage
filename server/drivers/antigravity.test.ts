@@ -1,3 +1,10 @@
+import * as procs from "../procs.ts";
+import { antigravityMountRecords } from "./antigravity-relay.ts";
+import { fluxRouteFor } from "../../shared/flux-route.ts";
+vi.mock("../../shared/flux-route.ts", async (original) => {
+  const actual = await original<typeof import("../../shared/flux-route.ts")>();
+  return { ...actual, fluxRouteFor: vi.fn(actual.fluxRouteFor) };
+});
 import { useOutsideStoreFixture } from "../testing/outside-store-fixture.ts";
 import { fixtureBotFolder } from "../testing/bot-folder-fixture.ts";
 // Antigravity driver contract tests, run against the scripted fake `agy` CLI
@@ -16,8 +23,9 @@ import { ensureDirs } from "../config.ts";
 import type { ProviderInstance } from "../contracts.ts";
 import { SPAWNED_PROXIES } from "../proxy-paths.ts";
 import { removeTempDir } from "../testing/cleanup.ts";
-import { recordEvents, type EventRecorder } from "../testing/events.ts";
+import { recordMountedFixtureEvents as recordEvents, type EventRecorder } from "../testing/admitted-events.ts";
 import {
+  ANTIGRAVITY_BROWSER_MCP_KEY,
   ANTIGRAVITY_AGENTS_MCP_KEY,
   ANTIGRAVITY_COMPUTER_MCP_KEY,
   ANTIGRAVITY_PRINT_TIMEOUT,
@@ -39,6 +47,13 @@ import { ASK_STOP_REASON } from "./ask-stop.ts";
 const FAKE_CLI = join(dirname(fileURLToPath(import.meta.url)), "..", "testing", "fake-agy-cli.ts");
 
 describe("Antigravity stream input compatibility", () => {
+  it("P2 mounts the real browser proxy", () => {
+    const browser={command:'node',args:['browser-proxy'],env:{MURAGE_BROWSER_TOKEN:'fixture'}};
+    const servers=antigravityMcpServers({browser});
+    expect(servers[ANTIGRAVITY_BROWSER_MCP_KEY]).toEqual(browser);
+    expect(antigravityMountRecords(servers,{computer:ANTIGRAVITY_COMPUTER_MCP_KEY,agents:ANTIGRAVITY_AGENTS_MCP_KEY,browser:ANTIGRAVITY_BROWSER_MCP_KEY})).toContainEqual({engineName:ANTIGRAVITY_BROWSER_MCP_KEY,mountId:'own:browser',provenance:'own'});
+    expect(antigravityMcpServers({})[ANTIGRAVITY_BROWSER_MCP_KEY]).toBeUndefined();
+  });
   it("requires the release that introduced stream-JSON stdin", () => {
     expect(supportsAntigravityStreamInput("1.1.14")).toBe(false);
     expect(supportsAntigravityStreamInput("1.1.15")).toBe(true);
@@ -48,6 +63,13 @@ describe("Antigravity stream input compatibility", () => {
 });
 
 describe("agy 1.4.3 model list", () => {
+  it("uses unknown live ids with readable labels instead of stale fallback rows", () => {
+    const catalog = catalogFromAgyList(parseAntigravityModelsOutput("gemini-fixture-next-high\t  \n"));
+    expect(catalog).toEqual({ default: "gemini-fixture-next-high", source: "live", options: [
+      { id: "gemini-fixture-next-high", label: "Gemini Fixture Next High" },
+    ] });
+    expect(catalogFromAgyList([{ id: "provider-fixture", label: "Chosen vendor label" }]).options[0].label).toBe("Chosen vendor label");
+  });
   const live = "gemini-4-argon-medium\tGemini 4 Argon (Medium)\ngemini-4-argon-high\tGemini 4 Argon (High)\nFetching available models...\ngpt-oss-120b-medium\tGPT-OSS 120B (Medium)\n";
   it("parses the CLI list and ignores progress lines", () => {
     expect(parseAntigravityModelsOutput(live).map(({ id }) => id)).toEqual(["gemini-4-argon-medium", "gemini-4-argon-high", "gpt-oss-120b-medium"]);
@@ -66,7 +88,8 @@ describe("readAntigravityModelCatalog", () => {
   it("includes the confirmed Gemini 3.8 Flash variants without changing the default", () => {
     const catalog = readAntigravityModelCatalog({ HOME: join(tmpdir(), "murage-agy-missing-home") });
     expect(catalog.default).toBe("gemini-4-argon-high");
-    expect(catalog.options.map(({ id }) => id)).not.toContain("gemini-3.1-pro-high");
+    // MAIN RULING 1114-MODELS-FRESH: the vendor now publishes this exact agy slug.
+    expect(catalog.options.map(({ id }) => id)).toContain("gemini-3.1-pro-high");
     expect(catalog.options.filter(({ id }) => id.startsWith("gemini-3.8-flash-"))).toEqual([
       { id: "gemini-3.8-flash-high", label: "Gemini 3.8 Flash (High)" },
       { id: "gemini-3.8-flash-medium", label: "Gemini 3.8 Flash (Medium)" },
@@ -179,6 +202,42 @@ describe("Antigravity turns (fake CLI)", () => {
     await instance?.dispose();
   });
 
+  it("P1 retains exact native parameters on ACTIVE tools", async () => {
+    const input={command:'printf "exact  bytes"',cwd:'/fixture',nested:{keep:['a','b']}};
+    process.env.FAKE_AGY_TOOL_CALLS=JSON.stringify([{name:'run_command',args:input}]);
+    try{
+      await create();const sent=await instance.adapter.sendTurn({cwd:fixtureBotFolder(),threadId:'p1-agy',text:'fixture'});
+      await recorder.until(e=>e.type==='turn.completed'&&e.turnId===sent.turnId);
+      expect(recorder.events.find(e=>e.type==='item.started'&&e.itemType==='tool'&&e.origin==='engine')).toMatchObject({input});
+    }finally{delete process.env.FAKE_AGY_TOOL_CALLS;}
+  });
+
+  it("R3 reviewer witness: antigravity text hi reaches a URL decision before the engine prompt", async () => {
+    await create();
+    vi.mocked(fluxRouteFor).mockClear();
+    const observed: number[] = [];
+    const spawn = procs.spawnCli;
+    const spy = vi.spyOn(procs, "spawnCli").mockImplementation((...args) => {
+      const child = spawn(...args);
+      const write = child.stdin.end;
+      child.stdin.end = ((...params: unknown[]) => {
+        try {
+          const frame = JSON.parse(String(params[0]));
+          if (frame.event === "user") observed.push(vi.mocked(fluxRouteFor).mock.calls.length);
+        } catch { /* non-prompt control bytes */ }
+        return Reflect.apply(write, child.stdin, params);
+      }) as typeof write;
+      return child;
+    });
+    try {
+      const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "r3-antigravity", text: "hi" });
+      expect(await recorder.until(e => e.type === "turn.completed" && e.turnId === sent.turnId)).toMatchObject({ ok: true });
+      expect(fluxRouteFor).toHaveBeenCalled();
+      expect(observed).toHaveLength(1);
+      expect(observed[0]).toBeGreaterThan(0);
+    } finally { spy.mockRestore(); }
+  });
+
   it("reports exactly one usage total for each of two turns",async()=>{
     await create();
     for(let n=0;n<2;n++){const sent=await instance.adapter.sendTurn({ cwd: fixtureBotFolder(),threadId:"usage-two",text:"hi",model:"gemini-3.1-pro-high"});await recorder.until(e=>e.type==="turn.completed"&&e.turnId===sent.turnId);}
@@ -210,6 +269,7 @@ describe("Antigravity turns (fake CLI)", () => {
     const session = recorder.events.find((e) => e.type === "session.started")!;
     expect((session as any).sessionId).toBe("conv-fake-123");
 
+    expect(recorder.events.find(e=>e.type==='item.started'&&e.itemType==='tool'&&e.origin==='engine')).toMatchObject({input:{}});
     const tool = recorder.events.find((e) => e.type === "item.completed" && (e as any).itemType === "tool")!;
     expect((tool as any).ok).toBe(true);
 
@@ -248,6 +308,31 @@ describe("Antigravity turns (fake CLI)", () => {
       removeTempDirSync(home);
     }
   }, 10_000);
+
+  // CLOSE-STOP source: the server settles a turn only through the source its send was admitted under, so an end made outside the send keeps it.
+  for (const end of ["quit", "Stop"] as const) {
+    it(`CLOSE-STOP ${end}: the turn end carries the source the turn was sent under`, async () => {
+      const home = mkdtempSync(join(tmpdir(), "murage-agy-source-"));
+      const readyFile = join(home, "ready");
+      instance = await AntigravityDriver.create({
+        instanceId: "agy-source",
+        displayName: undefined,
+        environment: { HOME: home, FAKE_AGY_DELAY_MS: "10000", FAKE_AGY_READY_FILE: readyFile },
+        enabled: true,
+        config: { cli: FAKE_CLI, fullAuto: true },
+      });
+      const source = { admission: "close-end-source" } as never;
+      const ends: unknown[] = [];
+      const off = instance.adapter.onEvent((event, endSource) => { if (event.type === "turn.completed") ends.push(endSource); });
+      try {
+        await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-close-source", text: "hold", sourceContext: source });
+        await expect.poll(() => existsSync(readyFile), { timeout: 2_000 }).toBe(true);
+        if (end === "quit") await instance.dispose(); else await instance.adapter.interruptTurn("t-close-source");
+        await vi.waitFor(() => expect(ends).toHaveLength(1));
+      } finally { off(); removeTempDirSync(home); }
+      expect(ends).toEqual([source]);
+    }, 10_000);
+  }
 
   // CLOSE-STOP-1014: a turn only the close (quit, restart) ended reads as the engine closing, never as the owner's Stop.
   for (const stopFirst of [false, true]) {
@@ -506,7 +591,7 @@ describe("Antigravity turns (fake CLI)", () => {
         expect(recorder.events.some((e) => e.type === "item.updated" || e.type === "content.delta")).toBe(false);
         expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
         expect(instance.adapter.hasSession(`t-relay-${kind === "Stop" ? "stop" : "stopall"}`)).toBe(false);
-      } finally { removeTempDirSync(home); }
+      } finally { await instance.dispose(); removeTempDirSync(home); }
     }, 15_000);
 
     // CLOSE-STOP-1014: the dispose is read again after the relay open (listeners are cleared by the dispose, so only the spawn is observable)
@@ -516,7 +601,7 @@ describe("Antigravity turns (fake CLI)", () => {
         await new Promise((resolve) => setTimeout(resolve, 400));
         expect(existsSync(readyFile) && JSON.parse(readFileSync(readyFile, "utf8")).argv.includes("--dangerously-skip-permissions")).toBe(false);
         expect(instance.adapter.hasSession("t-relay-dispose")).toBe(false);
-      } finally { removeTempDirSync(home); }
+      } finally { await instance.dispose(); removeTempDirSync(home); }
     }, 15_000);
 
     it("control: with no Stop the same relay turn spawns agy and runs to its end", async () => {
@@ -526,7 +611,7 @@ describe("Antigravity turns (fake CLI)", () => {
         // (the fake agy's relay turn ends on its own: it runs a tool without the check; the point is that the turn was spawned)
         expect(done).toMatchObject({ turnId, ok: true });
         expect(JSON.parse(readFileSync(readyFile, "utf8")).argv).toContain("--dangerously-skip-permissions");
-      } finally { removeTempDirSync(home); }
+      } finally { await instance.dispose(); removeTempDirSync(home); }
     }, 15_000);
   });
 
@@ -590,7 +675,7 @@ describe("Antigravity turns (fake CLI)", () => {
         await recorder.until((e) => e.type === "turn.completed");
         expect(shape(seen)).toEqual(["turn.completed:true:cancelled"]);      // the pair, not unsupported_cli, no runtime.error card
         expect(recorder.events.filter((e) => e.turnId === turnId && e.type === "turn.completed")).toEqual([expect.objectContaining({ ok: true, stopReason: "cancelled" })]);
-      } finally { removeTempDirSync(home); }
+      } finally { await instance.dispose(); removeTempDirSync(home); }
     }, 15_000);
 
     it("A2b dispose during versionForTurn then an unsupported CLI: engine-closing before dispose resolves, no version card", async () => {
@@ -605,7 +690,7 @@ describe("Antigravity turns (fake CLI)", () => {
         expect(String(seen[0]!.message)).toMatch(/closed/);
         expect(String(seen[0]!.message)).not.toMatch(/agy update/);
         expect(seen.every((s) => s.disposeDone === false)).toBe(true);
-      } finally { removeTempDirSync(home); }
+      } finally { await instance.dispose(); removeTempDirSync(home); }
     }, 15_000);
 
     it("control: with no stop an unsupported CLI still shows its version card and one receipt", async () => {
@@ -615,7 +700,7 @@ describe("Antigravity turns (fake CLI)", () => {
         await recorder.until((e) => e.type === "turn.completed");
         expect(shape(seen)).toEqual(["runtime.error", "turn.completed:false:unsupported_cli"]);
         expect(String(seen[0]!.message)).toMatch(/1\.1\.15\+.*agy update/);
-      } finally { removeTempDirSync(home); }
+      } finally { await instance.dispose(); removeTempDirSync(home); }
     }, 15_000);
 
     it.each(["Stop", "Stop All"] as const)("A3 %s before spawn: the pair, spawn count 0", async (kind) => {
@@ -631,7 +716,7 @@ describe("Antigravity turns (fake CLI)", () => {
         expect(shape(seen)).toEqual(["turn.completed:true:cancelled"]);
         expect(jobProbe.jobs.length).toBe(spawnsBefore);
         expect(instance.adapter.hasSession("t-a3")).toBe(false);
-      } finally { removeTempDirSync(home); }
+      } finally { await instance.dispose(); removeTempDirSync(home); }
     }, 15_000);
 
     it("A4 live child dispose: the closing ending is delivered before dispose resolves, once", async () => {
@@ -665,7 +750,7 @@ describe("Antigravity turns (fake CLI)", () => {
         const done = recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId);
         expect(done).toHaveLength(1);
         expect(done[0]).toMatchObject({ ok: true, stopReason: "cancelled", usage: { input: 105, output: 20 } });
-      } finally { removeTempDirSync(home); }
+      } finally { await instance.dispose(); removeTempDirSync(home); }
     }, 15_000);
 
     it("USAGE-1 antigravity dispose after the step usage: the engine-closing ending carries the last reported usage before dispose resolves", async () => {
@@ -678,7 +763,7 @@ describe("Antigravity turns (fake CLI)", () => {
         await instance.dispose().then(() => { state.disposeDone = true; });
         expect(shape(seen)).toEqual(["turn.started", "runtime.error", "turn.completed:false:exit_before_result"]);
         expect(endings).toEqual([{ usage: { input: 105, output: 20 }, stopReason: "exit_before_result", disposeDone: false }]);
-      } finally { removeTempDirSync(home); }
+      } finally { await instance.dispose(); removeTempDirSync(home); }
     }, 15_000);
 
     it("USAGE-1 antigravity no double count: a result that arrives brings the one usage, its own", async () => {
@@ -689,7 +774,7 @@ describe("Antigravity turns (fake CLI)", () => {
         const done = recorder.events.filter((e) => e.type === "turn.completed" && e.turnId === turnId);
         expect(done).toHaveLength(1);
         expect((done[0] as any).usage).toEqual({ input: 105, output: 77 }); // the result's total, not the step's {105, 20}, never both
-      } finally { removeTempDirSync(home); }
+      } finally { await instance.dispose(); removeTempDirSync(home); }
     }, 15_000);
 
     // USAGE-1 antigravity (MurageMain ruling U, 11-08): every ending after the turn ran carries the usage agy already reported, once:
@@ -710,7 +795,7 @@ describe("Antigravity turns (fake CLI)", () => {
         const done = onlyEnding(turnId);
         expect(done).toMatchObject({ ok: true, stopReason: ASK_STOP_REASON, usage: { input: 105, output: 20 } });
         expect(recorder.events.filter((e) => e.type === "runtime.error")).toEqual([]);
-      } finally { removeTempDirSync(home); }
+      } finally { await instance.dispose(); removeTempDirSync(home); }
     }, 15_000);
 
     it("USAGE-1 antigravity (b) self-crash after a step usage (the child exits on its own, nobody asked, no dispose): the ending carries the usage, once", async () => {
@@ -723,7 +808,7 @@ describe("Antigravity turns (fake CLI)", () => {
         const errors = recorder.events.filter((e) => e.type === "runtime.error").map((e) => String((e as any).message));
         expect(errors).toHaveLength(1);
         expect(errors[0]).toMatch(/closed \(exit code 3\) before it finished its reply/);
-      } finally { removeTempDirSync(home); }
+      } finally { await instance.dispose(); removeTempDirSync(home); }
     }, 15_000);
 
     it("USAGE-1 antigravity (c) a spawn error and a host-power refusal end with NO usage, even after a step usage was reported", async () => {
@@ -780,7 +865,7 @@ describe("Antigravity turns (fake CLI)", () => {
         const { turnId } = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-ctl", text: "hi" });
         await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
         expect(shape(seen)).toEqual(["turn.started", "turn.completed:true:SUCCESS"]);
-      } finally { removeTempDirSync(home); }
+      } finally { await instance.dispose(); removeTempDirSync(home); }
     }, 15_000);
 
     it("control: dispose with no turn resolves with nothing emitted, and a second dispose is harmless", async () => {
@@ -790,7 +875,7 @@ describe("Antigravity turns (fake CLI)", () => {
         await instance.dispose();
         expect(seen).toEqual([]);
         await expect(instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-idle", text: "late" })).rejects.toThrow(/disposed/);
-      } finally { removeTempDirSync(home); }
+      } finally { await instance.dispose(); removeTempDirSync(home); }
     }, 15_000);
   });
 
@@ -1170,3 +1255,56 @@ describe("Antigravity Murage MCP config", () => {
 
 // Adapter turns in this suite use an isolated durable store.
 useOutsideStoreFixture();
+
+it('P-MOUNTS Antigravity mounts memory and connected apps with trusted broker identities',()=>{
+ const memory={command:'fixture-memory',args:['--stdio'],env:{FIXTURE:'memory'}};
+ const composio={command:'fixture-apps',args:['--stdio'],env:{FIXTURE:'apps'}};
+ const servers=antigravityMcpServers({memory,composio});
+ expect(servers['murage-memory']).toEqual(memory);
+ expect(servers['murage_connectors']).toEqual(composio);
+ expect(antigravityMountRecords(servers,{computer:ANTIGRAVITY_COMPUTER_MCP_KEY,agents:ANTIGRAVITY_AGENTS_MCP_KEY,memory:'murage-memory',connector:'murage_connectors'})).toEqual([
+  {engineName:'murage-memory',mountId:'own:memory',provenance:'own'},
+  {engineName:'murage_connectors',mountId:'own:connector',provenance:'own'},
+ ]);
+});
+
+// AGY-ON-CLOUD design section 4 items 3 and 4 (tests 6 of section 9): a refusal for sign-in is one structured 401 and the
+// signin_required stop; a tool's HTTP 403 or prose that merely says "unauthenticated" is not one.
+describe("Antigravity sign-in refusal classification", () => {
+  const run = async (environment: Record<string, string>) => {
+    const home = mkdtempSync(join(tmpdir(), "murage-agy-auth-"));
+    const driver = await AntigravityDriver.create({ instanceId: "agy-auth", displayName: undefined, environment: { HOME: home, ...environment }, enabled: true, config: { cli: FAKE_CLI, fullAuto: true } });
+    const seen = recordEvents(driver.adapter);
+    try {
+      await driver.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId: "t-auth", text: "go" });
+      const done = await seen.until((e) => e.type === "turn.completed");
+      return { done, errors: seen.events.filter((e) => e.type === "runtime.error") as any[] };
+    } finally { await driver.dispose(); removeTempDirSync(home); }
+  };
+  const refused = { authRequired: true, providerError: { httpStatus: 401, kind: "authentication" } };
+  it("stderr Authentication required on an early exit ends as signin_required with a structured 401 (base: a plain closed line)", async () => {
+    const { done, errors } = await run({ FAKE_AGY_CRASH_BEFORE_RESULT: "1", FAKE_AGY_CRASH_STDERR: "Error: Authentication required" });
+    expect(done).toMatchObject({ ok: false, stopReason: "signin_required" });
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toMatchObject(refused);
+  }, 10_000);
+  it("regression control: stderr about a tool's HTTP 403 stays a plain closed line", async () => {
+    const { done, errors } = await run({ FAKE_AGY_CRASH_BEFORE_RESULT: "1", FAKE_AGY_CRASH_STDERR: "tool fetch returned 403 Forbidden" });
+    expect(done).toMatchObject({ ok: false, stopReason: "exit_before_result" });
+    expect(errors[0].authRequired).toBeUndefined();
+    expect(errors[0].providerError).toBeUndefined();
+  }, 10_000);
+  it("a result whose error.code is UNAUTHENTICATED, also nested in error.details[], is the sign-in error (base: generic)", async () => {
+    for (const error of [{ code: "UNAUTHENTICATED", message: "x" }, { message: "outer", details: [{ "@type": "t", status: 401 }] }]) {
+      const { done, errors } = await run({ FAKE_AGY_RESULT_FAILED: JSON.stringify({ error }) });
+      expect(done).toMatchObject({ ok: false, stopReason: "signin_required" });
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject(refused);
+    }
+  }, 10_000);
+  it("regression control: a failed result with only message prose saying unauthenticated is a plain failure", async () => {
+    const { done, errors } = await run({ FAKE_AGY_RESULT_FAILED: JSON.stringify({ message: "the page was unauthenticated" }) });
+    expect(done).toMatchObject({ ok: false, stopReason: "FAILED" });
+    expect(errors[0].authRequired).toBeUndefined();
+  }, 10_000);
+});

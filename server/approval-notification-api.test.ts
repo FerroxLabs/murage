@@ -1,3 +1,5 @@
+import { DatabaseSync } from "node:sqlite";
+import { join } from "node:path";
 import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-murage.ts";
@@ -41,7 +43,14 @@ it.each([false])("human approval includes stable identity with autoApprove=%s",a
     const frame=await stream.until(frame=>frame.kind==="notify"&&frame.notification?.botId===bot.id&&frame.notification.kind==="approval");
     const {messages}=await api<{ messages: Array<{ id: string; card: { requestId: string; answered?: string; held?: string } }> }>("GET",`/api/threads/${bot.threadId}/messages`);
     const card=messages.find(message=>message.id===frame.notification.messageId)!;
-    expect(card.card.requestId).toBe(frame.notification.requestId);
+    expect((card.card as any).requestHandle).toBe(`p.${frame.notification.messageId}`);
+    expect(card.card.requestId).toBeUndefined();
+    const db = new DatabaseSync(join(fixture.info.dataDir, 'messages.db'), { readOnly: true });
+    try {
+      const records = db.prepare('SELECT request_id FROM approval_records WHERE thread_id=? AND chat_message_id=?').all(bot.threadId, card.id);
+      expect(records).toHaveLength(1);
+      expect(records[0].request_id).toBe(frame.notification.requestId);
+    } finally { db.close(); }
     expect(frame.notification.threadId).toBe(bot.threadId);
     expect(frame.notification.requestTurnId).toMatch(/^late-turn-/);
     expect(card.card.answered).toBeUndefined();
@@ -60,8 +69,8 @@ it("an automatic Allow the engine no longer holds raises no card and no notifica
     await stream.until(frame=>frame.kind==="runtime"&&frame.event?.type==="request.opened"&&frame.event?.threadId===bot.threadId);
     await new Promise(resolve=>setTimeout(resolve,1000));
     expect(stream.frames.filter(frame=>frame.kind==="notify"&&frame.notification?.botId===bot.id)).toEqual([]);
-    const {messages}=await api<{ messages: Array<{ card?: { requestId?: string; answered?: string } }> }>("GET",`/api/threads/${bot.threadId}/messages`);
-    expect(messages.filter(message=>message.card?.requestId&&!message.card.answered)).toEqual([]);
+    const {messages}=await api<{ messages: Array<{ card?: { requestId?: string; requestHandle?: string; answered?: string } }> }>("GET",`/api/threads/${bot.threadId}/messages`);
+    expect(messages.filter(message=>(message.card?.requestHandle||message.card?.requestId)&&!message.card.answered)).toEqual([]);
     await api("POST",`/api/bots/${bot.id}/interrupt`,{threadId:bot.threadId});
   }finally{stream.close();}
 },20000);
@@ -73,7 +82,7 @@ it("suppressed bot approvals remain pending without a notification",async()=>{
   try{
     await stream.until(frame=>frame.kind==="hello");
     await api("POST",`/api/bots/${bot.id}/messages`,{text:"Approval fixture",threadId:bot.threadId});
-    await stream.until(frame=>frame.kind==="message"&&frame.threadId===bot.threadId&&frame.message?.card?.requestId);
+    await stream.until(frame=>frame.kind==="message"&&frame.threadId===bot.threadId&&frame.message?.card?.requestHandle);
     await api("PATCH",`/api/bots/${bot.id}`,{name:"Quiet observed"});
     await stream.until(frame=>frame.kind==="bot"&&frame.bot?.name==="Quiet observed");
     expect(stream.frames.filter(frame=>frame.kind==="notify"&&frame.notification?.botId===bot.id)).toEqual([]);
@@ -86,7 +95,7 @@ it("wires harness-native producers through the same pending-card notification ga
   const source=readFileSync(new URL("./index.ts",import.meta.url),"utf8");
   expect(source).toContain("onApproval: notifyApproval");
   expect(source).toContain("notifyApproval(ownerId, threadId, requestId, messageId)");
-  expect(source).toContain("notifyApproval(args.botId, args.threadId, requestId, approvalMessage.id)");
+  expect(source).toContain("notifyApproval(args.botId, args.threadId, requestId, messageId)");
   expect(source).toContain("notifyApproval(from.id, fromThreadId, proposed.requestId, proposed.messageId)");
   expect(source).toContain("notifyApproval(owner.id, owner.threadId, proposal.requestId, proposal.messageId)");
   expect(source).toContain("card.requestId !== requestId || card.answered || card.dismissed");

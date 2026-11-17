@@ -1,5 +1,7 @@
+import { fixtureLink } from "./testing/platform-fixtures.ts";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { BotTurnState } from './bot-turn-state.ts';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, readlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -34,6 +36,23 @@ function fixture() {
   return { parent, data };
 }
 afterEach(() => { for (const root of roots.splice(0)) removeTempDirSync(root); });
+
+it('folds task deltas into the projected roster and leaves native sessions out of the restorable stage',async()=>{
+  const f=fixture(),bots=JSON.parse(readFileSync(join(f.data,'bots.json'),'utf8'));
+  bots[0].turnStateBase='fixture-base';
+  writeFileSync(join(f.data,'bots.json'),JSON.stringify(bots));
+  const deltas=new BotTurnState(f.data);deltas.checkpoint(bots,'fixture-base');
+  const task=bots[0].tasks[0];task.title='Durable title';task.resumeCursors={provider:'task-delta-session-canary'};
+  task.usage={input:7,output:3,turns:1,costUsd:0.25};task.usageTurnKeys=['fixture-usage'];
+  bots[0].usageMonths={'2026-01':{input:7,output:3,replies:1}};
+  deltas.writeTask(bots[0],task);
+  const {directory,manifest}=await stageInstallationState(f.data,f.parent);
+  const bytes=readFileSync(join(directory,'state','bots.json'),'utf8'),projected=JSON.parse(bytes)[0];
+  expect(projected.tasks[0].title).toBe('Durable title');expect(projected.tasks[0].usage.input).toBe(7);
+  expect(projected.usageMonths['2026-01'].input).toBe(7);expect(projected.turnStateBase).toBeUndefined();
+  expect(bytes).not.toContain('task-delta-session-canary');expect(projected.tasks[0].resumeCursors).toBeUndefined();
+  expect(manifest.files.some(file=>file.path.startsWith('bot-task-state/'))).toBe(false);
+});
 
 it("stages private app content under one epoch, excluding credential fields and external folders", async () => {
   const f = fixture();
@@ -101,13 +120,13 @@ it.each(["cancel", "quota", "corruption"])("cleans only owned staging on %s and 
   lease.release();
 });
 
-it.skipIf(process.platform === "win32")("never follows app-owned symlinks into external content", async () => {
+it("never follows app-owned symlinks into external content", async () => {
   const f = fixture();
   mkdirSync(join(f.data, "workspaces"));
-  symlinkSync(join(f.parent, "external"), join(f.data, "workspaces", "outside"));
+  fixtureLink(join(f.parent, "external"), join(f.data, "workspaces", "outside"), "dir");
   const result = await stageInstallationState(f.data, f.parent);
   // Stored as a shortcut (0.1.60 audit A-01), never followed.
-  expect(result.manifest.links).toEqual([{ path: "workspaces/outside", target: join(f.parent, "external"), type: expect.any(String) }]);
+  expect(result.manifest.links).toEqual([{ path: "workspaces/outside", target: readlinkSync(join(f.data, "workspaces", "outside")), type: "dir" }]);
   expect(result.manifest.files.some(file => file.path.includes("untouched"))).toBe(false);
 });
 

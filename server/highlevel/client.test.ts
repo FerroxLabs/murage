@@ -1,3 +1,4 @@
+import { freezeFixtureWrites } from '../testing/highlevel-r4-fixtures.ts';
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 import { describe, expect, it, vi } from "vitest";
@@ -5,10 +6,11 @@ import {
   expiredToken, FAKE_CONNECTION_ID, highLevelHarness, until, malformedSuccess, missingScope, oversized, rateLimited, redirectTo, scriptCrm, serverError,
 } from "../testing/fake-highlevel.ts";
 import { HighLevelError, MAX_RESPONSE_BYTES, RATE_RESOURCES, type HighLevelCallContext } from "./client.ts";
-import { HIGHLEVEL_API_ORIGIN, HIGHLEVEL_CRM_SCOPES } from "./provider-contract.ts";
+import { HIGHLEVEL_API_ORIGIN, HIGHLEVEL_CRM_SCOPES, HIGHLEVEL_ENDPOINTS } from "./provider-contract.ts";
 
 function setup(options: Parameters<typeof highLevelHarness>[0] = {}) {
   const h = highLevelHarness(options);
+  freezeFixtureWrites(h.client);
   const view = h.leases.views.get(FAKE_CONNECTION_ID)!;
   const ctx = (dispatches: number[] = []): HighLevelCallContext => ({
     connection: { ...view }, signal: new AbortController().signal, assertActive: () => {}, onDispatch: (attempt) => { dispatches.push(attempt); },
@@ -38,7 +40,7 @@ describe("the HighLevel client (GAP-HIGHLEVEL-109 sections 7 and 13)", () => {
 
   it("refuses a path outside the manifest before any lease or request", async () => {
     const { h, ctx } = setup();
-    for (const [operation, path] of [["contacts.get", "/conversations/messages"], ["contacts.get", "/contacts/../workflows"], ["contacts.get", "/contacts/a?x=1"], ["locations.get", "/locations/x/customValues"]] as const) {
+    for (const [operation, path] of [["snapshots.list", "/snapshots/"], ["contacts.unknown", "/contacts/contact_1"], ["contacts.get", "/contacts/%252fescape"], ["contacts.get", "/conversations/messages"], ["contacts.get", "/contacts/../workflows"], ["contacts.get", "/contacts/a?x=1"], ["locations.get", "/locations/x/customValues"]] as const) {
       await expect(h.client.request(ctx(), operation, path)).rejects.toThrow(/never sends this request/u);
     }
     expect(h.api.requests).toEqual([]);
@@ -243,10 +245,12 @@ describe("the HighLevel client (GAP-HIGHLEVEL-109 sections 7 and 13)", () => {
     expect(near.h.leases.leaseRequests).toHaveLength(2);
   });
 
-  it("asks for exactly the ten CRM scopes the manifest uses", () => {
-    expect(HIGHLEVEL_CRM_SCOPES).toEqual([
+  it("asks for the qualified management scopes while retaining every original read scope", () => {
+    expect(HIGHLEVEL_CRM_SCOPES).toEqual([...new Set(Object.values(HIGHLEVEL_ENDPOINTS).map(row => row.scope))].sort());
+    expect(HIGHLEVEL_CRM_SCOPES).toEqual(expect.arrayContaining([
       "calendars.readonly", "calendars/events.readonly", "contacts.readonly", "contacts.write", "conversations.readonly",
       "conversations/message.readonly", "locations.readonly", "locations/customFields.readonly", "opportunities.readonly", "opportunities.write",
-    ]);
+      "pipelines.create", "courses.write", "documents_contracts/sendlink.write", "socialplanner/post.write",
+    ]));
   });
 });

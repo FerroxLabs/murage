@@ -1,3 +1,5 @@
+import { composioAdmissionStatus } from "./composio-lifecycle.ts";
+import { setBackoffRandomForTests } from "./upstream-backoff.ts";
 // Copyright 2026 Ferrox Labs
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //
@@ -5,9 +7,9 @@
 // ends; the action does not, its outcome is kept, and the same request made
 // again joins it instead of running again.
 import { createServer, type Server } from "node:http";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetAppCatalogState } from "./app-catalog.ts";
-import { relayConnectedAppCall, resetConnectedAppOperations, restartConnectedAppOperations, setManagedBrokerAccess } from "./composio.ts";
+import { relayConnectedAppCall, resetConnectedAppOperations, restartConnectedAppOperations, resetManagedBrokerState, setManagedBrokerAccess } from "./composio.ts";
 import {
   ConnectedAppOperations, OPERATION_MAX_ENTRIES, OPERATION_MAX_PENDING, OperationRefused, normalizedJson, operationKey, replyMessage, type RelayReply,
 } from "./connected-app-operations.ts";
@@ -24,6 +26,7 @@ let delayMs = 0;
 /** When set, the next tools/call is answered with exactly this (and cleared). */
 let override: { status: number; body: unknown; sse?: boolean; raw?: string } | null = null;
 const hung: Array<() => void> = [];
+let dispatchGate: Promise<void> | undefined;
 
 beforeAll(async () => {
   server = createServer(async (req, res) => {
@@ -32,6 +35,7 @@ beforeAll(async () => {
     const message = body ? JSON.parse(body) : {};
     res.setHeader("content-type", "application/json");
     if (message.method !== "tools/call") { res.end(JSON.stringify({ jsonrpc: "2.0", id: message.id ?? null, result: {} })); return; }
+    await dispatchGate;
     dispatched.push({ id: message.id, name: message.params?.name, args: message.params?.arguments });
     const count = dispatched.length;
     const answer = () => res.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: `sent #${count}` }] } }));
@@ -75,7 +79,10 @@ afterAll(async () => {
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
+// MAIN RULING 1115-COMPOSIO-429-REVIEW: each test is a fresh install, including its broker refusal state.
+afterEach(() => { vi.useRealTimers(); });
 beforeEach(() => {
+  resetManagedBrokerState();
   setManagedBrokerAccess({ url: base, token: "9".repeat(64) });
   resetAppCatalogState({ disk: true });
   resetConnectedAppOperations();
@@ -83,6 +90,7 @@ beforeEach(() => {
   mode = "answer";
   delayMs = 0;
   override = null;
+  dispatchGate = undefined;
 });
 
 const send = (id: number, args: unknown) => ({ jsonrpc: "2.0", id, method: "tools/call", params: { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: args } });
@@ -172,6 +180,7 @@ describe("connected-app operations", () => {
   });
 
   it("an action whose answer never comes is held as unknown until the bot checks and clears it", async () => {
+    setBackoffRandomForTests(() => 1);
     mode = "hang";
     const first = await relay(send(1, sendEmail), { waitMs: 20, lifetimeMs: 120 });
     const handle = handleOf(first);
@@ -183,7 +192,14 @@ describe("connected-app operations", () => {
     const cleared = await relay(status(3, { handle, run_again: true }));
     expect(text(cleared)).toMatch(/was cleared/);
     mode = "answer";
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const deadline = composioAdmissionStatus().retryAt!;
+    vi.setSystemTime(deadline - 1);
+    expect(text(await relay(send(5, sendEmail)))).toMatch(/Connected apps will retry at \d{2}:\d{2}\./); // MAIN RULING 1115-COMPOSIO-A7
+    expect(dispatched).toHaveLength(1); // MAIN RULING 1115-COMPOSIO-A7
+    vi.setSystemTime(deadline);
     expect(text(await relay(send(4, sendEmail)))).toBe("sent #2");
+    setBackoffRandomForTests();
     expect(dispatched).toHaveLength(2);
   });
 
@@ -323,8 +339,14 @@ describe("1.0.2 round 2: replay protection holds through restart, eviction and a
 
   it("restart through the relay: the same email is not sent again", async () => {
     mode = "hang";
+    let arrive!: () => void;
+    dispatchGate = new Promise<void>((resolve) => { arrive = resolve; });
     const first = await relay(send(1, sendEmail), { waitMs: 20, lifetimeMs: 60_000 });
     const handle = handleOf(first);
+    // The caller's wait can end before the local HTTP request arrives. Restart
+    // only once the broker has received it and is holding its response.
+    arrive();
+    await vi.waitFor(() => expect(dispatched).toHaveLength(1));
     expect(dispatched).toHaveLength(1);
     restartConnectedAppOperations();
     mode = "answer";
@@ -381,9 +403,15 @@ describe("1.0.2 round 2: replay protection holds through restart, eviction and a
   });
 
   it("a 503 the broker marks as never dispatched may be repeated", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     mode = "unavailable-undispatched";
     await relay(send(1, sendEmail));
     mode = "answer";
+    // MAIN RULING 1115-COMPOSIO-429-REVIEW: not-sent permits replay after HTTP backoff, never inside it.
+    const held = await relay(send(3, sendEmail));
+    expect(held.delivery).toBe("not-sent");
+    expect(dispatched).toHaveLength(1);
+    vi.setSystemTime(Date.now() + 31_000);
     expect(text(await relay(send(2, sendEmail)))).toBe("sent #2");
     expect(dispatched).toHaveLength(2);
   });
@@ -735,8 +763,13 @@ describe("1.0.2 round 4: what Flux says about whether anything was sent", () => 
 
   for (const code of ["apps_unavailable", "composio_unavailable", "capability_unavailable"]) {
     it(`503 with code ${code} was never sent: the same email may go again`, async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
       override = { status: 503, body: { code, error: "unavailable" } };
       await resend(1);
+      // MAIN RULING 1115-COMPOSIO-429-REVIEW: retain replay assertions after the first 5xx deadline.
+      expect(await blockedAfter()).toBe(true);
+      expect(dispatched).toHaveLength(1);
+      vi.setSystemTime(Date.now() + 31_000);
       expect(await blockedAfter()).toBe(false);
     });
   }
@@ -756,8 +789,13 @@ describe("1.0.2 round 4: what Flux says about whether anything was sent", () => 
     expect(await blockedAfter()).toBe(true);
   });
   it("top-level dispatched:false on a 5xx was never sent", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
     override = { status: 500, body: { error: "x", dispatched: false } };
     await resend(1);
+    // MAIN RULING 1115-COMPOSIO-429-REVIEW: preserve replay after the 5xx hold and assert no request within it.
+    expect(await blockedAfter()).toBe(true);
+    expect(dispatched).toHaveLength(1);
+    vi.setSystemTime(Date.now() + 31_000);
     expect(await blockedAfter()).toBe(false);
   });
   it("an in-band -32000 SSE frame with error.data.dispatched:false was never sent", async () => {

@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "reviewer": {
+    "kind": "agent",
+    "name": "claude-copyrev",
+    "account": "claude sonnet 5.5, copy-review seat for MurageMain"
+  },
+  "author": "fb1d9ab0d75fa21697e83114f4972d55ea339c51",
+  "date": "2026-11-15",
+  "base": "7ed777368bf7c1c63db51363c159e19e14df7825",
+  "scope": "1115-COPY-LEDGER-REVIEW: retained accepted verdicts, corrected last-changing locale-line author",
+  "strings": {
+    "en:ux.l1.level.setupIncluded": {
+      "text": "Included in No limits. No approval card is needed.",
+      "en": "Included in No limits. No approval card is needed.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "en:ux.l1.level.cell.channel-enabled": {
+      "text": "Goes ahead when Channel messages is on",
+      "en": "Goes ahead when Channel messages is on",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "de:ux.l1.level.setupIncluded": {
+      "text": "In Ohne Limits enthalten. Keine Genehmigungskarte nötig.",
+      "en": "Included in No limits. No approval card is needed.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "de:ux.l1.level.cell.channel-enabled": {
+      "text": "Macht weiter, wenn Kanalnachrichten aktiviert sind",
+      "en": "Goes ahead when Channel messages is on",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "es:ux.l1.level.setupIncluded": {
+      "text": "Incluidas en Sin límites. No necesitan una tarjeta de aprobación.",
+      "en": "Included in No limits. No approval card is needed.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "es:ux.l1.level.cell.channel-enabled": {
+      "text": "Continúa cuando Mensajes de canales está activado",
+      "en": "Goes ahead when Channel messages is on",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "fr:ux.l1.level.setupIncluded": {
+      "text": "Incluses dans Sans limites. Aucune carte d’approbation nécessaire.",
+      "en": "Included in No limits. No approval card is needed.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "fr:ux.l1.level.cell.channel-enabled": {
+      "text": "Continue si Messages des canaux est activé",
+      "en": "Goes ahead when Channel messages is on",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "hi:ux.l1.level.setupIncluded": {
+      "text": "बिना सीमा में शामिल हैं। मंज़ूरी कार्ड की ज़रूरत नहीं है।",
+      "en": "Included in No limits. No approval card is needed.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "hi:ux.l1.level.cell.channel-enabled": {
+      "text": "चैनल संदेश चालू होने पर आगे बढ़ता है",
+      "en": "Goes ahead when Channel messages is on",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "ja:ux.l1.level.setupIncluded": {
+      "text": "無制限に含まれます。承認カードは表示されません。",
+      "en": "Included in No limits. No approval card is needed.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "ja:ux.l1.level.cell.channel-enabled": {
+      "text": "チャネルのメッセージがオンなら実行します",
+      "en": "Goes ahead when Channel messages is on",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "pt-br:ux.l1.level.setupIncluded": {
+      "text": "Incluídas em Sem limites. Nenhum cartão de aprovação é necessário.",
+      "en": "Included in No limits. No approval card is needed.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "pt-br:ux.l1.level.cell.channel-enabled": {
+      "text": "Continua quando Mensagens dos canais está ativado",
+      "en": "Goes ahead when Channel messages is on",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "zh:ux.l1.level.setupIncluded": {
+      "text": "已包含在无限制中，无需批准卡。",
+      "en": "Included in No limits. No approval card is needed.",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    },
+    "zh:ux.l1.level.cell.channel-enabled": {
+      "text": "频道消息开启时直接执行",
+      "en": "Goes ahead when Channel messages is on",
+      "verdict": "pass",
+      "note": "Read in its component context: plain words, no AI vocabulary, American spelling, translation matches the English meaning and register."
+    }
+  },
+  "files": {}
+}

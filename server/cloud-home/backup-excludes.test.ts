@@ -38,7 +38,8 @@ describe("backup exclusions (Anthropic hosting terms: no engine credentials in b
   it.each(roots)("excludes every launcher credential path under %s", (root) => {
     for (const rel of credentialPaths) expect(excluded(`${root}/${rel}`), `${root}/${rel}`).toBe(true);
   });
-  it.each([".claude", ".claude.json", ".claude.json.backup", ".codex", ".grok", ".kimi-code", ".config/opencode", ".local/share/opencode"])(
+  // .gemini: Antigravity (agy 1.4.4) keeps its Google sign-in at .gemini/antigravity-cli/antigravity-oauth-token when no keyring exists.
+  it.each([".claude", ".claude.json", ".claude.json.backup", ".codex", ".grok", ".kimi-code", ".config/opencode", ".local/share/opencode", ".gemini"])(
     "excludes the whole %s location and anything below it", (dir) => {
       for (const root of roots) {
         expect(excluded(`${root}/${dir}`)).toBe(true);
@@ -50,6 +51,11 @@ describe("backup exclusions (Anthropic hosting terms: no engine credentials in b
     expect(excluded("/data/browser/bot1/Default/Local Storage/leveldb/000003.log")).toBe(true);
     expect(excluded("/data/home/work/Network/plan.md")).toBe(false);
     expect(excluded("/data/home/work/Sessions/notes.md")).toBe(false);
+  });
+  it("excludes the whole own-server directory (key, connection, host key) and murage-backup requires it", () => {
+    for (const f of ["id_ed25519", "id_ed25519.pub", "connection.json", "known_hosts", "pinned-address", "config", "bin/ssh"]) expect(excluded(`/data/home/own-server/${f}`), f).toBe(true);
+    expect(excluded("/data/home/work/own-server-notes.md")).toBe(false);
+    expect(read("murage-backup")).toMatch(/REQUIRED_EXCLUDES = \([^)]*"\/data\/home\/own-server"/);
   });
   it("excludes the health runtime files, the token key and the page ledger, and nothing with a similar name", () => {
     for (const p of ["/data/home/health", "/data/home/health/server.current.ndjson", "/data/home/health-key", "/data/home/sentinel-delivery.json"]) expect(excluded(p), p).toBe(true);
@@ -82,7 +88,7 @@ describe("backup exclusions (Anthropic hosting terms: no engine credentials in b
     const script = read("murage-backup");
     const required = /REQUIRED_EXCLUDES = \(([^)]*)\)/.exec(script)![1].match(/"[^"]+"/g)!.map((s) => s.slice(1, -1));
     for (const r of required) expect(patterns).toContain(r);
-    expect(required).toEqual(expect.arrayContaining([".claude", ".claude.json", ".codex", ".grok", ".kimi-code"]));
+    expect(required).toEqual(expect.arrayContaining([".claude", ".claude.json", ".codex", ".grok", ".kimi-code", ".gemini", ".antigravity", ".config/opencode", ".local/share/opencode"]));
     // Every sign-in store of the launcher, whatever the engine, bot or generation: one pattern built from the launcher's own layout.
     expect(required).toContain(`${engineRoot}/**/${signinDir}`);
   });

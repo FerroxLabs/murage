@@ -1,3 +1,5 @@
+import { botRole, type RoleBot } from "@/lib/bot-role";
+import { ownerRoutineLevel } from "../../shared/owner-routine-level.ts";
 import type { Bot } from "@/state/store";
 import { t } from "@/lib/i18n";
 
@@ -10,6 +12,20 @@ export function permissionModeOf(bot: Pick<Bot, "autoApprove" | "fullAccess"> & 
   if (!bot.autoApprove) return "ask";
   if (!bot.fullAccess) return "auto";
   return bot.noLimits ? "unlimited" : "full";
+}
+
+/** Settings uses the same live No limits default as server/permission-inheritance.
+ * Stored legacy levels follow it; an owner choice or draft keeps its level. */
+export function ownerBotPermissions<T extends Pick<Bot, "autoApprove" | "fullAccess" | "noLimits" | "permissionExplicit" | "permissionRev"> & { draftOnly?: boolean }>(
+  bot: T,
+  bots: readonly (Pick<Bot, "autoApprove" | "fullAccess" | "noLimits"> & RoleBot)[],
+  newBotLevel?: string,
+): T {
+  if (bot.draftOnly) return { ...bot, autoApprove: false, fullAccess: false, noLimits: false };
+  const chief = bots.find(candidate => botRole(candidate) === "chief");
+  const global = newBotLevel === "no-limits" || !!chief && permissionModeOf(chief) === "unlimited";
+  const explicit = bot.permissionExplicit ?? ((bot.permissionRev ?? 0) > 0);
+  return global && !bot.draftOnly && !explicit ? { ...bot, autoApprove: true, fullAccess: true, noLimits: true } : bot;
 }
 
 /** Full access and No limits are the desktop app's decision alone. */
@@ -129,10 +145,10 @@ export function routineOfConversation<T extends { botId: string; threadId?: stri
  * effectiveRoutinePermissionMode does on the server. With no ceiling of its
  * own, the bot's level. The chip never shows more than a run can do. */
 export function routineEffectiveMode(
-  routine: { permissionMode?: PermissionMode },
-  profile: Pick<Bot, "autoApprove" | "fullAccess"> & { noLimits?: boolean },
+  routine: { permissionMode?: PermissionMode; permissionExplicit?:boolean; draftOnly?: boolean },
+  profile: Pick<Bot, "autoApprove" | "fullAccess"> & { noLimits?: boolean; draftOnly?:boolean },
 ): PermissionMode {
   const current = permissionModeOf(profile);
-  const ceiling = routine.permissionMode ?? current;
-  return levelRank(ceiling) < levelRank(current) ? ceiling : current;
+  const ceiling = current === "unlimited" && routine.permissionExplicit !== true ? current : routine.permissionMode ?? current;
+  return ownerRoutineLevel(current, levelRank(ceiling) < levelRank(current) ? ceiling : current, routine.draftOnly === true || profile.draftOnly === true);
 }

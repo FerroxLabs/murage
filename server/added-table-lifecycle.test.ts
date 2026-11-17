@@ -26,8 +26,8 @@ import { haveV101, realV101 } from "./testing/pm-sends-v101.ts";
 import { removeTempDirSync } from "./testing/cleanup.ts";
 import { settleTestHandles } from "./test-handle-registry.ts";
 
-beforeEach(() => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
-afterEach(() => { vi.restoreAllMocks(); closeDatabase(); });
+beforeEach(async () => { closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true }); });
+afterEach(async () => { vi.restoreAllMocks(); closeDatabase(); });
 
 const CHILDREN = Object.entries(ADDED_TABLE_LIFECYCLE).filter(([, entry]) => entry.kind === "child").map(([name]) => name);
 const lineage = { rootThreadId: "t", origin: "desktop" as const, audienceFingerprint: "owner", notOwnerAudience: false, unattended: false };
@@ -48,12 +48,23 @@ function mapping(id: string): void {
 const rows = (table: string): number => Number((database().prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }).n);
 
 describe("the lifecycle map beside the list of added tables", () => {
-  it("has one entry for every listed table and no entry for a table that is not listed", () => {
+  it("T-SCHEMA-STARTUP: delegation packs are registered and survive reopening; mutant omits initialization", async () => {
+    expect(APP_SCHEMA_102_ADDITIONS.tables).toContain("delegation_packs");
+    expect(ADDED_TABLE_LIFECYCLE.delegation_packs).toMatchObject({ kind: "marker", reason: expect.stringContaining("source or destination") });
+    const db = database();
+    db.exec("INSERT INTO delegation_packs(id,delegation_id,source_thread_id,source_bot_id,target_bot_id,refs,cut_at,created_at) VALUES('pack','job','source','sable','ember','[]',1,1)");
+    expect(db.prepare("SELECT prepared, destination_thread_id FROM delegation_packs").get()).toEqual({ prepared: "[]", destination_thread_id: null });
+    closeDatabase();
+    await settleTestHandles();
+    expect(database().prepare("SELECT id FROM delegation_packs").all()).toEqual([{ id: "pack" }]);
+  });
+
+  it("has one entry for every listed table and no entry for a table that is not listed", async () => {
     const listed = [...APP_SCHEMA_102_ADDITIONS.tables].sort();
     expect(Object.keys(ADDED_TABLE_LIFECYCLE).sort()).toEqual(listed);
   });
 
-  it("a retained entry names a function that exists, and a child entry carries its cascade in a fresh database", () => {
+  it("a retained entry names a function that exists, and a child entry carries its cascade in a fresh database", async () => {
     const sources = readdirSync(__dirname).filter(file => file.endsWith(".ts") && !file.endsWith(".test.ts")).map(file => readFileSync(join(__dirname, file), "utf8")).join("\n");
     for (const [name, entry] of Object.entries(ADDED_TABLE_LIFECYCLE)) {
       if (entry.kind === "retained") expect(sources, `${name} is retained by ${entry.by}`).toMatch(new RegExp(`\\b${entry.by}\\b`));
@@ -66,7 +77,7 @@ describe("the lifecycle map beside the list of added tables", () => {
     }
   });
 
-  it("every child entry is reached by the sweep, and the sweep is reached from pruning and from project deletion", () => {
+  it("every child entry is reached by the sweep, and the sweep is reached from pruning and from project deletion", async () => {
     const db = database();
     db.exec("PRAGMA foreign_keys=OFF");
     for (const name of CHILDREN) {
@@ -86,7 +97,7 @@ describe("the lifecycle map beside the list of added tables", () => {
 });
 
 describe("rows that belong to a request leave with it", () => {
-  it("pruning 1,000 finished requests leaves no mapping behind", () => {
+  it("pruning 1,000 finished requests leaves no mapping behind", async () => {
     const db = database();
     const old = Date.now() - ROOM_REQUEST_RETENTION_MS - 60_000;
     db.exec("BEGIN");
@@ -98,7 +109,7 @@ describe("rows that belong to a request leave with it", () => {
     for (const name of CHILDREN) expect(rows(name), name).toBe(1);
   });
 
-  it("deleting a project group takes its mappings with it", () => {
+  it("deleting a project group takes its mappings with it", async () => {
     request("in-group", "doomed"); request("elsewhere", "kept");
     mapping("in-group"); mapping("elsewhere");
     deleteProjectRows(database(), "doomed", Date.now());
@@ -118,7 +129,7 @@ describe("rows that belong to a request leave with it", () => {
     for (const name of CHILDREN) expect(rows(name), name).toBe(0);
   });
 
-  it("a table an earlier build made without the cascade is rebuilt once, keeping only rows whose request exists", () => {
+  it("a table an earlier build made without the cascade is rebuilt once, keeping only rows whose request exists", async () => {
     request("live", "g");
     const db = database();
     db.exec("PRAGMA foreign_keys=OFF");
@@ -140,7 +151,7 @@ describe("rows that belong to a request leave with it", () => {
     expect(rows("shared_request_events")).toBe(1);
   });
 
-  it("an archive written before the cascade still passes the inspector", () => {
+  it("an archive written before the cascade still passes the inspector", async () => {
     const file = join(DATA_DIR, "legacy.db");
     const db = database();
     db.exec("PRAGMA foreign_keys=OFF; DROP TABLE shared_request_events");
@@ -155,7 +166,7 @@ describe("rows that belong to a request leave with it", () => {
 });
 
 describe("R5-04: a card result still owed to its project room is never discarded by the downgrade", () => {
-  it("refuses with a plain sentence, leaves the owed row and its payload where they were, and goes through once the delivery is done", () => {
+  it("refuses with a plain sentence, leaves the owed row and its payload where they were, and goes through once the delivery is done", async () => {
     const db = database();
     request("card", "g", 1);
     db.prepare("INSERT INTO project_card_delivery_owed (request_id, payload, created_at) VALUES (?,?,?)").run("card", '{"text":"the card result"}', 1);
@@ -185,7 +196,9 @@ describe("against the real 1.0.1 (git archive d950cbf67)", () => {
     const addedTables = new Set<string>(APP_SCHEMA_102_ADDITIONS.tables);
     // 1.0.2 objects the list does not name (an auto-index of a listed table goes with its table). The inbox projection and the forget table stay in a stepped
     // file, 1.0.2's own step included: that is why a step to schema 6 is 1.0.2's to run, and why the test below judges the file without the projection.
-    const unlisted = current.filter(row => !old.has(row.name) && !listed.has(row.name) && !isInboxProjectionObject(row) && !(row.name.startsWith("sqlite_autoindex_") && addedTables.has(row.tbl_name))).map(row => row.name);
+    // SQLite retains this internal allocator after AUTOINCREMENT tables
+    // leave; referenceSchema excludes it and older inspectors ignore it.
+    const unlisted = current.filter(row => row.name !== "sqlite_sequence" && !old.has(row.name) && !listed.has(row.name) && !isInboxProjectionObject(row) && !(row.name.startsWith("sqlite_autoindex_") && addedTables.has(row.tbl_name))).map(row => row.name);
     expect(unlisted.sort(), "added in 1.0.2 but missing from APP_SCHEMA_102_ADDITIONS").toEqual(["event_log_forgets", "sqlite_autoindex_event_log_forgets_1"]);
     // listed objects that exist here must be new: a 1.0.1 object on the list would be dropped by the downgrade
     const present = new Set(current.map(row => row.name));
@@ -200,10 +213,10 @@ describe("against the real 1.0.1 (git archive d950cbf67)", () => {
     expect(rows("shared_request_events")).toBe(2);
     // the owed deliveries must be delivered first: the downgrade refuses until they are
     closeDatabase();
-    expect(() => downgradeInstallationMemorySchema(DATA_DIR, 6, { testOnlyBefore102: true })).toThrow(expect.objectContaining({ code: DOWNGRADE_CARD_DELIVERY_OWED }));
+    await expect(downgradeInstallationMemorySchema(DATA_DIR, 6, { testOnlyBefore102: true })).rejects.toThrow(expect.objectContaining({ code: DOWNGRADE_CARD_DELIVERY_OWED }));
     database().prepare("DELETE FROM project_card_delivery_owed").run();
     closeDatabase();
-    const result = downgradeInstallationMemorySchema(DATA_DIR, 6, { testOnlyBefore102: true });
+    const result = await downgradeInstallationMemorySchema(DATA_DIR, 6, { testOnlyBefore102: true });
     expect(result).toMatchObject({ status: "downgraded", to: 6 });
     const { inspectInstallationDatabase: inspect101 } = await realV101();
     const down = new DatabaseSync(join(DATA_DIR, "messages.db"));
@@ -229,7 +242,9 @@ it.skipIf(!haveV101)("C2 adds zero objects to the real 1.0.1 base inventory", as
     const listed = new Set<string>([...APP_SCHEMA_102_ADDITIONS.triggers, ...APP_SCHEMA_102_ADDITIONS.indexes, ...APP_SCHEMA_102_ADDITIONS.tables]);
     const addedTables = new Set<string>(APP_SCHEMA_102_ADDITIONS.tables);
     // 1.0.2 objects the list does not name (an auto-index of a listed table goes with its table)
-    const unlisted = current.filter(row => !old.has(row.name) && !listed.has(row.name) && !(row.name.startsWith("sqlite_autoindex_") && addedTables.has(row.tbl_name))).map(row => row.name);
+    // SQLite retains this internal allocator after AUTOINCREMENT tables
+    // leave; referenceSchema excludes it and older inspectors ignore it.
+    const unlisted = current.filter(row => row.name !== "sqlite_sequence" && !old.has(row.name) && !listed.has(row.name) && !(row.name.startsWith("sqlite_autoindex_") && addedTables.has(row.tbl_name))).map(row => row.name);
     expect(unlisted).toEqual([
   "flux_capture_hold",
   "messages_thread_seq",
@@ -237,36 +252,36 @@ it.skipIf(!haveV101)("C2 adds zero objects to the real 1.0.1 base inventory", as
   "upgrade_scrub_pass",
   "inbox_raw",
   "sqlite_autoindex_inbox_raw_1",
-  "inbox_raw_rank_4",
+  "inbox_raw_rank_5",
   "inbox_keys",
   "inbox_items",
   "sqlite_autoindex_inbox_items_1",
-  "inbox_items_v_all_4",
-  "inbox_items_l_all_4",
-  "inbox_items_v_approvals_4",
-  "inbox_items_l_approvals_4",
-  "inbox_items_v_decisions_4",
-  "inbox_items_l_decisions_4",
-  "inbox_items_v_questions_4",
-  "inbox_items_l_questions_4",
-  "inbox_items_v_connections_4",
-  "inbox_items_l_connections_4",
-  "inbox_items_v_routines_4",
-  "inbox_items_l_routines_4",
-  "inbox_items_v_to_read_4",
-  "inbox_items_l_to_read_4",
-  "inbox_items_v_results_4",
-  "inbox_items_l_results_4",
-  "inbox_items_routine_at_4",
-  "inbox_items_snoozed_4",
+  "inbox_items_v_all_5",
+  "inbox_items_l_all_5",
+  "inbox_items_v_approvals_5",
+  "inbox_items_l_approvals_5",
+  "inbox_items_v_decisions_5",
+  "inbox_items_l_decisions_5",
+  "inbox_items_v_questions_5",
+  "inbox_items_l_questions_5",
+  "inbox_items_v_connections_5",
+  "inbox_items_l_connections_5",
+  "inbox_items_v_routines_5",
+  "inbox_items_l_routines_5",
+  "inbox_items_v_to_read_5",
+  "inbox_items_l_to_read_5",
+  "inbox_items_v_results_5",
+  "inbox_items_l_results_5",
+  "inbox_items_routine_at_5",
+  "inbox_items_snoozed_5",
   "inbox_counts",
   "inbox_projection_state",
   "setup_marks",
-  "setup_marks_message_4",
-  "setup_marks_tail_4",
-  "setup_marks_solid_4",
+  "setup_marks_message_5",
+  "setup_marks_tail_5",
+  "setup_marks_solid_5",
   "inbox_fill_deferred",
-  "inbox_fill_deferred_thread_4",
+  "inbox_fill_deferred_thread_5",
   "inbox_deferred_removed",
   "inbox_deferred_reinserted",
   "inbox_deferred_updated",
@@ -352,13 +367,13 @@ it.skipIf(!haveV101)("C2 adds zero objects to the real 1.0.1 base inventory", as
 
 import * as servingAccess from "./database.ts";
 import { readChatsGen } from "./thread-summary.ts";
-it.each([6, 10, 12] as const)("T-DOWNGRADE offline orchestration to %s drops previews without serving acquisition", target => {
+it.each([6, 10, 12] as const)("T-DOWNGRADE offline orchestration to %s drops previews without serving acquisition", async target => {
   const original=readChatsGen(database()); closeDatabase();
   const acquire=vi.spyOn(servingAccess,"database").mockImplementation(()=>{throw Error("offline serving acquisition");});
   const transaction=vi.spyOn(servingAccess,"transaction").mockImplementation(()=>{throw Error("offline serving transaction");});
   try {
-    expect(downgradeInstallationMemorySchema(DATA_DIR,target, { testOnlyBefore102: true }).status).toBe("downgraded");
-    downgradeInstallationMemorySchema(DATA_DIR,target, { testOnlyBefore102: true });
+    expect((await downgradeInstallationMemorySchema(DATA_DIR,target, { testOnlyBefore102: true })).status).toBe("downgraded");
+    await downgradeInstallationMemorySchema(DATA_DIR,target, { testOnlyBefore102: true });
     expect(acquire).not.toHaveBeenCalled();expect(transaction).not.toHaveBeenCalled();
     expect(servingAccess.databaseSharedRowsStamp()).toBeUndefined();
     const db=new DatabaseSync(join(DATA_DIR,"messages.db"),{readOnly:true});
@@ -367,11 +382,11 @@ it.each([6, 10, 12] as const)("T-DOWNGRADE offline orchestration to %s drops pre
   } finally {acquire.mockRestore();transaction.mockRestore();}
   expect(readChatsGen(database()).epoch).not.toBe(original.epoch);
 });
-it("T-DOWNGRADE offline orchestration rolls both preview drops back after the second drop fails",()=>{
+it("T-DOWNGRADE offline orchestration rolls both preview drops back after the second drop fails",async ()=>{
   const original=readChatsGen(database());closeDatabase();
   const raw=DatabaseSync.prototype.exec;
   const spy=vi.spyOn(DatabaseSync.prototype,"exec").mockImplementation(function(this:DatabaseSync,sql:string){if(sql===`DROP TABLE IF EXISTS ${CHATS_PREVIEW_TABLES[1]}`)throw Error("second preview drop");return raw.call(this,sql);});
-  try {expect(()=>downgradeInstallationMemorySchema(DATA_DIR,10)).toThrow("second preview drop");expect(servingAccess.databaseSharedRowsStamp()).toBeUndefined();}
+  try {await expect(downgradeInstallationMemorySchema(DATA_DIR,10)).rejects.toThrow("second preview drop");expect(servingAccess.databaseSharedRowsStamp()).toBeUndefined();}
   finally {spy.mockRestore();}
   const db=new DatabaseSync(join(DATA_DIR,"messages.db"),{readOnly:true});
   try {expect(readChatsGen(db)).toEqual(original);for(const table of CHATS_PREVIEW_TABLES)expect(db.prepare("SELECT name FROM sqlite_schema WHERE name=?").get(table)).toBeDefined();}

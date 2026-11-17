@@ -37,7 +37,7 @@ const DISPLAY = process.env.MURAGE_REAL_DISPLAY ?? ":95";
 const ENGINE = process.env.MURAGE_REAL_AGENT_BROWSER ?? "";
 const EVIDENCE = process.env.MURAGE_UMC_EVIDENCE ?? "/tmp/umc-real-evidence";
 const run = promisify(execFile);
-const x = (command: string, args: string[]) => run(command, args, { env: { ...process.env, DISPLAY } });
+const x = (command: string, args: string[]) => run(command, args, { windowsHide: true, env: { ...process.env, DISPLAY } });
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const note = (line: string) => { appendFileSync(join(EVIDENCE, "steps.log"), `${new Date().toISOString()} ${line}\n`); };
 let shots = 0;
@@ -67,7 +67,7 @@ const waitForPrompt = async (count: number, timeoutMs = 60_000) => {
 // Chrome ignores a click that lands right after its dialog opens; a person takes a moment too.
 const clickAllow = async () => { await pause(1_500); await x("xdotool", ["mousemove", String(ALLOW[0]), String(ALLOW[1]), "click", "1"]); note("clicked Allow"); await pause(1_000); };
 
-const launchChrome = (userData: string) => spawn("google-chrome", [`--user-data-dir=${userData}`, "--no-first-run", "--no-default-browser-check", "--password-store=basic", "about:blank"], { env: { ...process.env, DISPLAY }, stdio: "ignore" });
+const launchChrome = (userData: string) => spawn("google-chrome", [`--user-data-dir=${userData}`, "--no-first-run", "--no-default-browser-check", "--password-store=basic", "about:blank"], { windowsHide: true, env: { ...process.env, DISPLAY }, stdio: "ignore" });
 let fixture: VerificationServer;
 let chrome: ChildProcess | undefined;
 let page: Server;
@@ -155,7 +155,7 @@ describe.skipIf(!REAL)("Use my Chrome with real Google Chrome", () => {
     for (let wait = 0; wait < 60 && !existsSync(join(userData, "DevToolsActivePort")); wait += 1) await pause(250);
     if (!existsSync(join(userData, "DevToolsActivePort"))) throw new Error("Chrome did not turn on remote debugging");
     await screenshot("remote-debugging-on");
-    note(`google-chrome ${(await run("google-chrome", ["--version"])).stdout.trim()}; remote debugging on`);
+    note(`google-chrome ${(await run("google-chrome", ["--version"], { windowsHide: true })).stdout.trim()}; remote debugging on`);
     void watcher();
   }, 120_000);
 

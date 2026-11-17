@@ -280,17 +280,17 @@ out.append(sorted(os.listdir(m.ENGINE_ROOT+"/codex/bots"))); out.append(os.listd
     expect(text).not.toContain("NEVER-REPORTED");
     expect(JSON.parse(text)).toEqual([
       { tombstoned: false, engines: {
-        claudeAgent: { mode: "oauth-token", signedIn: true, expiresAt: 1800000000000 },
-        codex: { mode: "apikey", signedIn: true, expiresAt: null },
-        grokAgent: { mode: "oauth", signedIn: true, expiresAt: null },
-        kimiAgent: { mode: "oauth", signedIn: false, expiresAt: null },
-        opencodeGo: { mode: null, signedIn: false, expiresAt: null },
-        fuigoAgent: { mode: "oauth", signedIn: true, expiresAt: null },
+        claudeAgent: { mode: "oauth-token", signedIn: true, expiresAt: 1800000000000, source: "home" },
+        codex: { mode: "apikey", signedIn: true, expiresAt: null, source: "home" },
+        grokAgent: { mode: "oauth", signedIn: true, expiresAt: null, source: "bot" },
+        kimiAgent: { mode: "oauth", signedIn: false, expiresAt: null, source: "bot" },
+        opencodeGo: { mode: null, signedIn: false, expiresAt: null, source: "home" },
+        fuigoAgent: { mode: "oauth", signedIn: true, expiresAt: null, source: "bot" },
       } },
       { tombstoned: false, engines: {
-        claudeAgent: { mode: "oauth-token", signedIn: true, expiresAt: 1800000000000 },
-        codex: { mode: "apikey", signedIn: true, expiresAt: null },
-        opencodeGo: { mode: null, signedIn: false, expiresAt: null },
+        claudeAgent: { mode: "oauth-token", signedIn: true, expiresAt: 1800000000000, source: "home" },
+        codex: { mode: "apikey", signedIn: true, expiresAt: null, source: "home" },
+        opencodeGo: { mode: null, signedIn: false, expiresAt: null, source: "home" },
       } },
     ]);
     expect(() => run(`m.bot_state_query({"mode":"bot-state-query","bot":"../x"})`)).toThrow(/Invalid cloud bot state request/u);

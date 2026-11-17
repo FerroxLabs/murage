@@ -3,10 +3,13 @@
 //
 // The fast upgrade (docs: lanes/int102-gate/UPGRADE-DESIGN.md). A 1.0.1 history (memory v6) opens after the structure check and the migration
 // alone; the proofs that read rows run in the background pass and hold what depends on them until they pass.
-import { mkdirSync } from "node:fs";
+import { mkdirSync, mkdtempSync, statSync } from "node:fs";
+import { copyFileSync } from "../counted-fs.ts";
+import { ioMeterBytes } from "../io-meter.ts";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { beforeEach, expect, it } from "vitest";
+import { beforeEach, expect, it, onTestFinished } from "vitest";
 import { DATA_DIR } from "../config.ts";
 import { ancestryUnrepaired, backgroundUpgradeRunning, closeDatabase, database, finishBackgroundUpgradeWorkNow, memoryIntegrityStatus, pendingBackgroundUpgradeWork, startBackgroundUpgrade } from "../database.ts";
 import { MEMORY_SCHEMA_VERSION, outputIndexDiffers, validateMemorySchema, migrateMemorySchema, downgradeMemorySchema } from "./schema.ts";
@@ -20,6 +23,7 @@ import { indexBrowserCheckChunk } from "../message-tables.ts";
 import { indexOpenCardsChunk } from "../transcript-backfill.ts";
 import { removeTempDirSync } from "../testing/cleanup.ts";
 import { settleTestHandles } from "../test-handle-registry.ts";
+import { ioBudget } from "../io-budget.ts";
 
 const FILE = () => join(DATA_DIR, "messages.db");
 const SHAPE = { threads: 30, perThread: 40, payloadBytes: 200, receiptsPerThread: 3, setThreads: 3, repliesPerSetThread: 10 };
@@ -117,18 +121,32 @@ it("an output-index row that is missing is rewritten from the receipts' JSON, re
 
 it("the pass is resumable: killed after any number of slices, the final state equals an uninterrupted run", async () => {
   v6(); // the uninterrupted run
+  // Reuse exactly the same closed v6 input for the three crash points. Building
+  // four unrelated installations also charges their redundant setup/migrations
+  // to this process's real minute ledger. Copying the input keeps the data and
+  // all restart work identical, and the logical copy bytes are still metered.
+  const seedDir = mkdtempSync(join(tmpdir(), "upgrade-resume-input-"));
+  onTestFinished(() => removeTempDirSync(seedDir));
+  const seed = join(seedDir, "messages.db");
+  const copiedBefore = ioMeterBytes("native-copies");
+  copyFileSync(FILE(), seed);
+  expect(ioMeterBytes("native-copies") - copiedBefore).toBe(statSync(FILE()).size);
   let db = database();
   finishBackgroundUpgradeWorkNow();
   const whole = signature(db);
-  closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
+  closeDatabase(); await settleTestHandles(DATA_DIR); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
   for (const kill of [1, 3, 9]) {
-    closeDatabase(); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
-    v6();
+    // Join the old search/checkpoint threads before replacing this file. The
+    // native admission ledger still spans every kill and restart in this test.
+    closeDatabase(); await settleTestHandles(DATA_DIR); removeTempDirSync(DATA_DIR); mkdirSync(DATA_DIR, { recursive: true });
+    copyFileSync(seed, FILE());
     db = database();
     // slices of one receipt-run, one-row reference runs and a zero-length repair slice, so every job has many slices to be killed between
     const handle = startBackgroundUpgrade({ afterSlice: killOnce(kill), integrity: { receiptSlice: 5, referenceSlice: 40, learningSlice: 5 }, sliceMs: 0, pauseMs: 1, busy: () => false });
-    await handle.done;
-    closeDatabase();
+    const stalled = setTimeout(() => console.log("UPGRADE resumability stalled", JSON.stringify({ kill, slices: handle.slices,
+      pending: pendingBackgroundUpgradeWork(), admission: ioBudget.admissionState(), room: ioBudget.backgroundRoom() })), 20_000);
+    try { await handle.done; } finally { clearTimeout(stalled); }
+    closeDatabase(); await settleTestHandles(DATA_DIR);
     db = database(); // a new process would find the committed places
     finishBackgroundUpgradeWorkNow();
     expect(signature(db), `killed after ${kill} slices`).toEqual(whole);

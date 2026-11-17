@@ -199,6 +199,26 @@ export function recheckSnapshot(parsed) {
   };
 }
 
+/** Refresh published values without erasing rows or fields the bundled
+ * snapshot already knew. An omitted upstream field is not a retraction.
+ * Retained facts keep their earlier models.dev provenance; fetchedAt marks
+ * the latest refresh, not a claim that every retained fact was republished. */
+export function retainSnapshotData(snapshot, previous) {
+  for (const input of [snapshot, previous]) {
+    if (!recheckSnapshot(input).digestMatches) throw new Error("cannot retain data from a snapshot with an invalid digest");
+  }
+  const providers = structuredClone(previous.providers);
+  for (const [id, provider] of Object.entries(snapshot.providers)) {
+    const models = providers[id]?.models ?? {};
+    for (const [modelId, model] of Object.entries(provider.models)) {
+      models[modelId] = { ...models[modelId], ...model };
+    }
+    providers[id] = { ...provider, models };
+  }
+  // Reuse the offline canonical renderer for field/key order and the digest.
+  return JSON.parse(recheckSnapshot({ ...snapshot, providers }).rendered);
+}
+
 /** Where the server's image fact lands (server/model-vision.ts). The server
  *  cannot import the 1.6 MB snapshot, so it gets only what it asks: for a
  *  model id, does every provider that lists it take image input, or none? */
@@ -300,10 +320,11 @@ if (invokedDirectly) {
     // The date, not the clock: the snapshot is a statement about a day's prices
     // and a timestamp would make every rebuild a diff.
     const fetchedAt = new Date().toISOString().slice(0, 10);
-    const snapshot = buildSnapshot(api, { fetchedAt, etag });
+    const fetched = buildSnapshot(api, { fetchedAt, etag });
+    const current = existsSync(file) ? readFileSync(file, "utf8") : null;
+    const snapshot = current ? retainSnapshotData(fetched, JSON.parse(current)) : fetched;
     const rendered = renderSnapshot(snapshot);
     const stats = snapshotStats(snapshot);
-    const current = existsSync(file) ? readFileSync(file, "utf8") : null;
     console.log(`providers          ${stats.providers}`);
     console.log(`models             ${stats.models}`);
     console.log(`with a price       ${stats.priced}`);

@@ -300,13 +300,45 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     await removeTempDir(state);
   });
 
+  it("T-R3-HERMES-ABSENT-BINDING-IS-UNBOUND", async () => {
+    const managed = join(home, "managed");
+    mkdirSync(managed);
+    const ownerHook = { command: "owner-hook", matcher: "terminal" };
+    writeFileSync(join(managed, "config.yaml"), "hooks:\n  pre_tool_call:\n    - command: owner-hook\n      matcher: terminal\n");
+    // spawnFor sends a turn without releaseBinding. Bound Hermes refuses
+    // this administrator hook; unbound Hermes may run after D5 drops it.
+    const dump = await spawnFor(undefined, { HERMES_MANAGED_DIR: managed, FAKE_ACP_TEXT_ONLY: "1" });
+    expect(recorder!.events).toContainEqual(expect.objectContaining({ type: "turn.completed", ok: true }));
+    const overlay = parseYaml(readFileSync(join(dump.env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8"));
+    // MAIN RULING INT-CONFLICT-DEFAULT ea29a3a531 eb01447e7d: D5 drops administrator hooks on bot turns; unbound operation still succeeds with only Murage's fail-closed hook.
+    expect(overlay.hooks.pre_tool_call).not.toContainEqual(ownerHook);
+    expect(overlay.hooks.pre_tool_call).toHaveLength(1);
+    expect(overlay.hooks.pre_tool_call[0].command).toContain("ask-hook-");
+    expect(overlay.hooks.pre_tool_call[0].fail_closed).toBe(true);
+    expect(dump.env.HERMES_MANAGED_DIR).not.toBe(managed);
+  });
+
   // Gap 4: Hermes must hand an enforced turn's permission request to Murage.
+  // Request-only fixture: no unrelated, unapproved tool executes before that request.
   it("routeAsks overrides only Hermes skip-all permission answers", async () => {
     for (const fullAuto of [false, true]) {
       if (fullAuto) { recorder!.stop(); await instance!.dispose(); }
+      const wire = join(home, `permissions-${fullAuto}.jsonl`);
       instance = await HermesAgentDriver.create({
         instanceId: "hermes-enforce", displayName: "Hermes", enabled: true,
-        environment: { ...scopedEnv(), FAKE_ACP_MODE: "permission", FAKE_ACP_VERSION: "Hermes Agent v0.21.3 (2026.9.14)" },
+        environment: { ...scopedEnv(), FAKE_ACP_MODE: "fuigo-script", FAKE_ACP_VERSION: "Hermes Agent v0.21.3 (2026.9.14)",
+          FAKE_ACP_SCRIPT_LOG: wire,
+          // The generic permission fixture completes an unapproved tool before
+          // asking. Hermes must stop that. This peer asks before any execution.
+          FAKE_ACP_SCRIPT: JSON.stringify([
+            { at: 1, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working' } } },
+            { at: 5, request: { id: 71, method: 'session/request_permission', params: {
+              toolCall: { toolCallId: 'command', title: 'echo hi', kind: 'execute', status: 'pending', rawInput: { command: 'echo hi' } },
+              options: [{ optionId: 'yes', kind: 'allow_once' }, { optionId: 'no', kind: 'reject_once' }],
+            } } },
+            { after: 71, at: 5, result: { stopReason: 'end_turn' } },
+          ]),
+        },
         config: { cli: FAKE_ACP, fullAuto },
       });
       recorder = recordEvents(instance.adapter);
@@ -317,12 +349,61 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
         });
         const event = await recorder.until((event) => event.turnId === sent.turnId &&
           (event.type === "request.opened" || event.type === "turn.completed"));
-        expect(event.type).toBe(!fullAuto || enforced ? "request.opened" : "turn.completed");
+        expect(event.type, JSON.stringify(recorder.events.filter(e => e.turnId === sent.turnId))).toBe(!fullAuto || enforced ? "request.opened" : "turn.completed");
+        if (event.type === "turn.completed") expect(event).toMatchObject({ ok: true });
+        expect(recorder.events.filter(e => e.turnId === sent.turnId && e.type === "runtime.error")).toEqual([]);
         if (event.type === "request.opened") {
           expect(event).toMatchObject({ requestType: "permission", toolCall: { name: "shell", input: { command: "echo hi" } } });
           await instance.adapter.respondToRequest(threadId, event.requestId!, { behavior: "deny" });
           await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
         }
+        const replies = readFileSync(wire, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        expect(replies).toHaveLength(turn + 1);
+        expect(replies.at(-1).result).toEqual({ outcome: { outcome: 'selected', optionId: fullAuto && !enforced ? 'yes' : 'no' } });
+      }
+    }
+  });
+
+  it("pinned Hermes correlation retains routeAsks permission routing", async () => {
+    for (const fullAuto of [false, true]) {
+      if (fullAuto) { recorder!.stop(); await instance!.dispose(); }
+      const wire = join(home, `permissions-${fullAuto}.jsonl`);
+      instance = await HermesAgentDriver.create({
+        instanceId: "hermes-enforce", displayName: "Hermes", enabled: true,
+        environment: { ...scopedEnv(), FAKE_ACP_MODE: "fuigo-script", FAKE_ACP_VERSION: "Hermes Agent v0.22.2 (2026.9.24) · upstream d923a5eb",
+          FAKE_ACP_SCRIPT_LOG: wire, FAKE_ACP_AGENT_VERSION: "0.22.2", FAKE_ACP_SESSION_MODES: JSON.stringify({ currentModeId: "default" }),
+          // The generic permission fixture completes an unapproved tool before
+          // asking. Hermes must stop that. This peer asks before any execution.
+          FAKE_ACP_SCRIPT: JSON.stringify([
+            { at: 1, update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'working' } } },
+            { at: 5, request: { id: 71, method: 'session/request_permission', params: {
+              toolCall: { toolCallId: 'command', title: 'echo hi', kind: 'execute', status: 'pending', rawInput: { command: '<terminal> (plugin approval rule)', description: JSON.stringify({ murage: 1, v: 1, tool: 'terminal', input: { command: 'echo hi' }, truncated: false }) } },
+              options: [{ optionId: 'yes', kind: 'allow_once' }, { optionId: 'no', kind: 'reject_once' }],
+            } } },
+            { after: 71, at: 5, result: { stopReason: 'end_turn' } },
+          ]),
+        },
+        config: { cli: FAKE_ACP, fullAuto },
+      });
+      recorder = recordEvents(instance.adapter);
+      for (const [turn, enforced] of [false, true, false].entries()) {
+        const threadId = `t-enforce-${fullAuto}-${turn}`;
+        const sent = await instance.adapter.sendTurn({ cwd: fixtureBotFolder(), threadId, text: "go", model: "flux-auto",
+          ...(enforced ? { routeAsks: true as const } : {}),
+        });
+        const event = await recorder.until((event) => event.turnId === sent.turnId &&
+          (event.type === "request.opened" || event.type === "turn.completed"));
+        expect(event.type, JSON.stringify(recorder.events.filter(e => e.turnId === sent.turnId))).toBe(!fullAuto || enforced ? "request.opened" : "turn.completed");
+        if (event.type === "turn.completed") expect(event).toMatchObject({ ok: true });
+        expect(recorder.events.filter(e => e.turnId === sent.turnId && e.type === "runtime.error")).toEqual([]);
+        if (event.type === "request.opened") {
+          expect(event).toMatchObject({ requestType: "permission", toolCall: { name: "shell", input: { command: "echo hi" } } });
+          await instance.adapter.respondToRequest(threadId, event.requestId!, { behavior: "deny" });
+          await recorder.until((event) => event.type === "turn.completed" && event.turnId === sent.turnId);
+        }
+        const replies = readFileSync(wire, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+        expect(replies).toHaveLength(turn + 1);
+        expect(replies.at(-1).result).toEqual({ outcome: { outcome: 'selected', optionId: fullAuto && !enforced ? 'yes' : 'no' } });
       }
     }
   });
@@ -342,6 +423,10 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     expect(yaml).toContain(`  api_key: ${FLUX_KEY}`);
     expect(yaml).not.toContain("key_env");
     expect(yaml).toContain("providers: {}");
+    // Explicit-only capture: Murage's own home says capture off on every request, quoted so PyYAML (YAML 1.1)
+    // reads a string and not the boolean false; no per-turn header (inject, space) ever lands in the shared file.
+    expect(yaml).toContain('  extra_headers:\n    x-flux-memory-app: "murage"\n    x-flux-memory-capture: "off"\n');
+    expect(yaml).not.toMatch(/x-flux-memory-(inject|space|read)/);
   });
 
   it("leaves ~/.hermes alone and passes no -m", async () => {
@@ -371,8 +456,8 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
   });
 
   const decision = (capture: "on" | "off", inject: "on" | "off") => {
-    const headers: Record<string, string> = { "x-flux-memory-app": "murage" };
-    if (capture === "off") headers["x-flux-memory-capture"] = "off";
+    // explicit-only capture: every decision's headers say capture off (flux-memory-headers.ts decisionOf)
+    const headers: Record<string, string> = { "x-flux-memory-app": "murage", "x-flux-memory-capture": "off" };
     if (inject === "off") headers["x-flux-memory-inject"] = "off";
     return { capture, inject, reason: "owner" as const, audience: "owner" as never, signature: `${capture}${inject}`, headers };
   };
@@ -382,7 +467,7 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     applyHermesFluxMemory(env, d);
     return env;
   };
-  const overlayOf = (env: Record<string, string | undefined>) => parseYaml(readFileSync(join(env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")) as { model: { default?: string; extra_headers: Record<string, string> } };
+  const overlayOf = (env: Record<string, string | undefined>) => parseYaml(readFileSync(join(env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8"), { version: "1.1" }) as { model: { default?: string; extra_headers: Record<string, string> } };
 
   // Audit 03-4 / G03-1: every Flux Hermes bot shares one config.yaml, and its
   // `model.default` was rewritten per spawn, so the last writer picked the tier
@@ -435,15 +520,21 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
       expect(env.HERMES_HOME).toBe(fluxHermesHome(scopedEnv()));
       expect(env.MURAGE_HERMES_ROUTED_HOME).toBe(env.HERMES_HOME);
     }
-    // distinct overlays per contract, the same one for the same contract
-    expect(new Set([owner, off, noRecall].map((env) => env.HERMES_MANAGED_DIR)).size).toBe(3);
+    // distinct overlays per wire contract, the same one for the same contract: with capture off on every request
+    // (explicit-only), "off" and "no recall" send the same headers and so share one overlay
+    expect(new Set([owner, off, noRecall].map((env) => env.HERMES_MANAGED_DIR)).size).toBe(2);
+    expect(noRecall.HERMES_MANAGED_DIR).toBe(off.HERMES_MANAGED_DIR);
     expect(owner2.HERMES_MANAGED_DIR).toBe(owner.HERMES_MANAGED_DIR);
-    // a later turn never changed what an earlier child reads
-    expect(overlayOf(owner)).toEqual({ model: { default: "flux-auto", extra_headers: { "x-flux-memory-app": "murage" } } });
+    // a later turn never changed what an earlier child reads; every overlay says capture off, the owner's included
+    expect(overlayOf(owner)).toEqual({ model: { default: "flux-auto", extra_headers: { "x-flux-memory-app": "murage", "x-flux-memory-capture": "off" } } });
     expect(overlayOf(off)).toEqual({ model: { default: "flux-auto", extra_headers: { "x-flux-memory-app": "murage", "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" } } });
-    expect(overlayOf(noRecall)).toEqual({ model: { default: "flux-auto", extra_headers: { "x-flux-memory-app": "murage", "x-flux-memory-inject": "off" } } });
-    // the shared home's file is never edited for a turn, and no overlay holds the key
-    expect(readFileSync(scopedYaml(), "utf8")).not.toContain("extra_headers");
+    expect(overlayOf(noRecall)).toEqual({ model: { default: "flux-auto", extra_headers: { "x-flux-memory-app": "murage", "x-flux-memory-capture": "off", "x-flux-memory-inject": "off" } } });
+    // written as YAML 1.1 strings: PyYAML would read a bare off as the boolean false
+    for (const env of [owner, off]) expect(readFileSync(join(env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")).toMatch(/x-flux-memory-capture: ["']off["']/);
+    // the shared home's file is the same bytes for every turn (capture off only), and no overlay holds the key
+    const sharedText = readFileSync(scopedYaml(), "utf8");
+    expect(sharedText).not.toMatch(/x-flux-memory-(inject|space|read)/);
+    expect(sharedText).toContain('x-flux-memory-capture: "off"');
     for (const env of [owner, off, noRecall]) expect(readFileSync(join(env.HERMES_MANAGED_DIR!, "config.yaml"), "utf8")).not.toContain(FLUX_KEY);
   });
 
@@ -489,13 +580,32 @@ describe("hermes Flux routing — the scoped HERMES_HOME", () => {
     expect(existsSync(join(shared(off), "sessions", `${sid}.jsonl`))).toBe(false);
   });
 
-  it("refuses a capture-off or inject-off turn when the home is not Murage's own, and lets an owner turn through", () => {
+  it("refuses every Flux turn, the owner's included, when the routed home is not Murage's own shape", () => {
     const foreign = () => ({ HOME: home, MURAGE_DATA_DIR: state, HERMES_HOME: join(home, "x"), MURAGE_HERMES_ROUTED_HOME: join(home, "x") });
     expect(() => applyHermesFluxMemory(foreign(), decision("off", "off"))).toThrow(/cannot carry Flux Memory choices/);
     expect(() => applyHermesFluxMemory(foreign(), decision("on", "off"))).toThrow(/cannot carry Flux Memory choices/);
     const ownerEnv: Record<string, string | undefined> = foreign();
-    expect(() => applyHermesFluxMemory(ownerEnv, decision("on", "on"))).not.toThrow();
+    expect(() => applyHermesFluxMemory(ownerEnv, decision("on", "on"))).toThrow(/cannot carry Flux Memory choices/);
     expect(ownerEnv.HERMES_MANAGED_DIR).toBeUndefined();
+  });
+
+  it("refuses instead of writing when the user's own Hermes home reaches Flux; a native home elsewhere is left alone", () => {
+    const own = join(home, ".hermes");
+    const native = (): Record<string, string | undefined> => ({ HOME: home, MURAGE_DATA_DIR: state, HERMES_HOME: own, HERMES_MANAGED_DIR: join(home, "no-admin") });
+    mkdirSync(own, { recursive: true });
+    writeFileSync(join(own, "config.yaml"), "model:\n  provider: custom\n  base_url: https://openrouter.ai/api/v1\n");
+    const elsewhere = native();
+    expect(() => applyHermesFluxMemory(elsewhere, decision("on", "on"))).not.toThrow();
+    expect(elsewhere.HERMES_MANAGED_DIR).toBe(join(home, "no-admin"));
+    const userText = "model:\n  provider: custom\n  base_url: https://api.fluxrouter.ai/v1\n";
+    writeFileSync(join(own, "config.yaml"), userText);
+    for (const d of [decision("on", "on"), decision("off", "off")]) {
+      const env = native();
+      expect(() => applyHermesFluxMemory(env, d)).toThrow(FLUX_HEADER_REFUSAL);
+      expect(env.HERMES_MANAGED_DIR).toBe(join(home, "no-admin"));
+    }
+    // the user's file is never written
+    expect(readFileSync(join(own, "config.yaml"), "utf8")).toBe(userText);
   });
 
   it("POSITIVE CONTROL — the same helper touches nothing for a native id", () => {
@@ -665,9 +775,11 @@ describe("hermesFluxHeaderGate (managed-scope minimum 0.17.0)", () => {
     for (const v of ["0.17.0", "0.17.1", "0.20.6", "0.21.3", "1.0.0"]) expect(hermesFluxHeaderGate(banner(v), dec("off", "off"))).toBeNull();
   });
 
-  it("runs an all-on turn on 0.17.0 and later, or when the version is unknown", () => {
-    for (const v of ["", "0.17.0", "0.21.3"]) expect(hermesFluxHeaderGate(v && banner(v), dec("on", "on"))).toBeNull();
-    expect(hermesFluxHeaderGate("something else", dec("on", "on"))).toBeNull();
+  it("runs an all-on turn on 0.17.0 and later, and refuses it when the version is unknown (its capture off rides the overlay)", () => {
+    for (const v of ["0.17.0", "0.21.3"]) expect(hermesFluxHeaderGate(banner(v), dec("on", "on"))).toBeNull();
+    expect(hermesFluxHeaderGate("", dec("on", "on"))).toBe(FLUX_HEADER_REFUSAL);
+    expect(hermesFluxHeaderGate("something else", dec("on", "on"))).toBe(FLUX_HEADER_REFUSAL);
+    expect(hermesFluxHeaderGate("something else", dec("on", "on"), { providerRoute: true })).toBe(FLUX_HEADER_REFUSAL);
   });
 
   // The tier rides the overlay (03-4), so a Hermes known to ignore it would run the wrong tier.
@@ -682,7 +794,7 @@ describe("hermesFluxHeaderGate (managed-scope minimum 0.17.0)", () => {
     resetHermesUnknownVersionLog();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      for (let i = 0; i < 3; i++) expect(hermesFluxHeaderGate("something else", dec("on", "on"))).toBeNull();
+      for (let i = 0; i < 3; i++) expect(hermesFluxHeaderGate("something else", dec("on", "on"))).toBe(FLUX_HEADER_REFUSAL);
       expect(warn).toHaveBeenCalledTimes(1);
       expect(String(warn.mock.calls[0]![0])).toContain("something else");
       hermesFluxHeaderGate(banner("0.21.3"), dec("on", "on"));
@@ -691,8 +803,9 @@ describe("hermesFluxHeaderGate (managed-scope minimum 0.17.0)", () => {
     } finally { warn.mockRestore(); resetHermesUnknownVersionLog(); }
   });
 
-  it("leaves an all-on provider-connection turn alone: its own home names its model", () => {
-    for (const v of ["0.2.0", "0.16.9"]) expect(hermesFluxHeaderGate(banner(v), dec("on", "on"), { providerRoute: true })).toBeNull();
+  it("refuses an all-on Flux provider-connection turn on a Hermes known to predate the overlay: capture off rides it too", () => {
+    for (const v of ["0.2.0", "0.16.9"]) expect(hermesFluxHeaderGate(banner(v), dec("on", "on"), { providerRoute: true })).toBe(HERMES_FLUX_UPDATE_COPY);
+    expect(hermesFluxHeaderGate(banner("0.17.0"), dec("on", "on"), { providerRoute: true })).toBeNull();
   });
 });
 
@@ -730,8 +843,8 @@ describe("hermes ask hook: every action asks at Ask (real hermes 0.22.2: an ordi
   it("asks for shell, code and every MCP tool, and leaves reads and Hermes's own edit approval alone", async () => {
     const { hermesAskMatcher } = await import("./hermes.ts");
     const m = hermesAskMatcher(false);
-    for (const tool of ["terminal", "execute_code", "process_manage", "browser_exec", "computer_use", "delegate_task", "cronjob_manage", "mcp__computer__click", "mcp__other__thing"]) expect(matches(m, tool)).toBe(true);
-    for (const tool of ["read_file", "search_files", "tool_describe", "write_file", "patch", "web_search"]) expect(matches(m, tool)).toBe(false);
+    for (const tool of ["tool_describe", "memory", "todo_list", "read_terminal", "terminal", "execute_code", "process_manage", "browser_exec", "computer_use", "delegate_task", "cronjob_manage", "mcp__computer__click", "mcp__other__thing"]) expect(matches(m, tool)).toBe(true);
+    for (const tool of ["read_file", "search_files", "write_file", "patch", "web_search"]) expect(matches(m, tool)).toBe(false);
   });
 
   it("lets Murage's computer mount through only on a host-computer turn", async () => {
@@ -769,23 +882,37 @@ describe("hermes ask hook: every action asks at Ask (real hermes 0.22.2: an ordi
     expect(matches(overlayOf(host).hooks.pre_tool_call[0].matcher, "mcp__computer__click")).toBe(false);
   });
 
+  // Keep the historical test ID. MAIN D5 (bld2-toolid-s1/prompt.txt) changes
+  // only the admin pre_tool_call expectation: default drop, fallback refuse.
   it("keeps the managed config it was given (Flux Memory headers, an administrator's hooks) and drops the owner's other hooks", async () => {
     const { hermesAcpSupport } = await import("./hermes.ts");
     const root = mkdtempSync(join(tmpdir(), "murage-hermes-admin-"));
     dirs.push(root);
-    writeFileSync(join(root, "config.yaml"), "model:\n  extra_headers:\n    x-flux-memory-capture: on\nhooks:\n  pre_tool_call:\n    - command: /opt/admin-hook\n  post_tool_call:\n    - command: /opt/other\n");
+    // quoted, as a header string must be for Hermes (PyYAML reads YAML 1.1, where a bare on is the boolean true)
+    writeFileSync(join(root, "config.yaml"), "model:\n  extra_headers:\n    x-flux-memory-capture: \"on\"\nhooks:\n  pre_tool_call:\n    - command: /opt/admin-hook\n  post_tool_call:\n    - command: /opt/other\n");
     const env = turnEnv({ HERMES_MANAGED_DIR: root });
     hermesAcpSupport.spawnArgs({} as any, { integrations: {} } as any, { env });
     const overlay = overlayOf(env);
     expect((overlay.model as any).extra_headers["x-flux-memory-capture"]).toBe("on");
-    expect(overlay.hooks.pre_tool_call.map((h) => h.command)).toEqual([expect.stringContaining("ask-hook-"), "/opt/admin-hook"]);
+    expect(overlay.hooks.pre_tool_call.map((h) => h.command)).toEqual([expect.stringContaining("ask-hook-")]);
     expect(overlay.hooks.post_tool_call).toEqual([]);
+  });
+
+  it("D5 refuse fallback stops before writing a bot-turn overlay", async () => {
+    const { applyHermesAskHook, HERMES_ADMIN_HOOK_REFUSAL } = await import("./hermes.ts");
+    const root = mkdtempSync(join(tmpdir(), "murage-hermes-refuse-"));
+    dirs.push(root);
+    writeFileSync(join(root, "config.yaml"), "hooks:\n  pre_tool_call:\n    - command: /opt/admin-hook\n");
+    const env = turnEnv({ HERMES_MANAGED_DIR: root });
+    // MAIN RULING INT-CONFLICT-DEFAULT a114521c3b ea29a3a531: pin the reviewed context-free administrator-hook refusal; refusal before overlay creation stays required.
+    expect(() => applyHermesAskHook(env, {hostComputer:false,d5Policy:"refuse"})).toThrow(HERMES_ADMIN_HOOK_REFUSAL);
+    expect(env.HERMES_MANAGED_DIR).toBe(root);
   });
 
   it("the hook program answers approve with the command, whatever it is told", async () => {
     const { HERMES_ASK_HOOK_SOURCE } = await import("./hermes.ts");
     const { spawnSync } = await import("node:child_process");
-    const run = (stdin: string) => JSON.parse(spawnSync(process.execPath, ["-e", HERMES_ASK_HOOK_SOURCE], { input: stdin, encoding: "utf8" }).stdout);
+    const run = (stdin: string) => JSON.parse(spawnSync(process.execPath, ["-e", HERMES_ASK_HOOK_SOURCE], { windowsHide: true, input: stdin, encoding: "utf8" }).stdout);
     expect(run(JSON.stringify({ tool_name: "terminal", tool_input: { command: "echo PROBE > ran.txt" } }))).toEqual({ action: "approve",
       message: JSON.stringify({ murage: 1, v: 1, tool: "terminal", input: { command: "echo PROBE > ran.txt" }, truncated: false }) });
     expect(run("not json").action).toBe("approve");
